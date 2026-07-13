@@ -1,0 +1,22 @@
+# Normalize line endings: LF in the repository for everything text.
+* text=auto eol=lf
+
+# These must ALWAYS be LF — a CRLF shell script or template silently breaks on Linux servers.
+*.sh text eol=lf
+*.bash text eol=lf
+*.tmpl text eol=lf
+*.sql text eol=lf
+*.proto text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+Makefile text eol=lf
+Dockerfile text eol=lf
+
+# Windows-only files keep CRLF
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary
+*.png binary
+*.jpg binary
+*.ico binary

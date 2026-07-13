@@ -1,0 +1,65 @@
+// CypherCore <-> CypherAgent contract. This file is the source of truth
+// (plan.md: API Contract & Repository Strategy). Never reuse or renumber a
+// field once shipped — only add new optional fields — because Core and Agent
+// versions will drift during rolling upgrades across the fleet.
+syntax = "proto3";
+
+package cypherpanel.agent.v1;
+
+option go_package = "github.com/MaramHarsha/CypherPanel/gen/agent/v1;agentv1";
+
+// AgentService is served by CypherCore; agents dial in over mTLS.
+service AgentService {
+  // Register introduces a new agent to the control plane (first boot).
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+
+  // Heartbeat reports liveness and basic host stats.
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  // ReportTaskResult delivers the outcome of an asynchronous task the agent
+  // picked up from the job queue. Tasks are idempotent and identified by
+  // task_id, so redelivery after a network failure is safe.
+  rpc ReportTaskResult(ReportTaskResultRequest) returns (ReportTaskResultResponse);
+}
+
+message RegisterRequest {
+  string hostname = 1;
+  string ip_address = 2;
+  string agent_version = 3;
+  string distro_family = 4; // "debian" | "rhel" | "unknown"
+  string distro_pretty_name = 5;
+}
+
+message RegisterResponse {
+  string server_id = 1; // control-plane UUID for this server
+}
+
+message HeartbeatRequest {
+  string server_id = 1;
+  HostStats stats = 2;
+}
+
+message HostStats {
+  double load_1m = 1;
+  uint64 memory_total_bytes = 2;
+  uint64 memory_used_bytes = 3;
+  uint64 disk_total_bytes = 4;
+  uint64 disk_used_bytes = 5;
+}
+
+message HeartbeatResponse {}
+
+message ReportTaskResultRequest {
+  string server_id = 1;
+  string task_id = 2;
+  TaskStatus status = 3;
+  string error_message = 4; // set when status is TASK_STATUS_FAILED
+}
+
+enum TaskStatus {
+  TASK_STATUS_UNSPECIFIED = 0;
+  TASK_STATUS_SUCCEEDED = 1;
+  TASK_STATUS_FAILED = 2;
+}
+
+message ReportTaskResultResponse {}

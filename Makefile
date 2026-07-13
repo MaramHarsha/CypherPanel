@@ -1,0 +1,53 @@
+# CypherPanel build entrypoints. Works from Windows (Git Bash / make), macOS, and Linux.
+# The product targets Linux servers; `make build` cross-compiles Linux binaries from any OS.
+
+MODULE   := github.com/MaramHarsha/CypherPanel
+BIN_DIR  := bin
+GOFLAGS  := CGO_ENABLED=0
+
+.PHONY: all build build-local test vet proto tools compose-up compose-down migrate-up migrate-down clean
+
+all: vet test build
+
+## Production binaries (always Linux — that's where CypherPanel runs).
+build:
+	$(GOFLAGS) GOOS=linux GOARCH=amd64 go build -trimpath -o $(BIN_DIR)/linux-amd64/cypher-core ./cmd/core
+	$(GOFLAGS) GOOS=linux GOARCH=amd64 go build -trimpath -o $(BIN_DIR)/linux-amd64/cypher-agent ./cmd/agent
+	$(GOFLAGS) GOOS=linux GOARCH=arm64 go build -trimpath -o $(BIN_DIR)/linux-arm64/cypher-core ./cmd/core
+	$(GOFLAGS) GOOS=linux GOARCH=arm64 go build -trimpath -o $(BIN_DIR)/linux-arm64/cypher-agent ./cmd/agent
+
+## Native binaries for the current dev machine (for running cypher-core locally).
+build-local:
+	$(GOFLAGS) go build -o $(BIN_DIR)/local/ ./cmd/...
+
+test:
+	go test ./...
+
+vet:
+	go vet ./...
+
+## Regenerate gRPC code from proto/ (buf needs no system protoc).
+proto: tools
+	buf generate
+
+tools:
+	go install github.com/bufbuild/buf/cmd/buf@latest
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+
+compose-up:
+	docker compose up -d --wait
+
+compose-down:
+	docker compose down
+
+## Apply migrations against the dev-stack database.
+DEV_DB_URL ?= postgres://cypher:cypher-dev-only@localhost:5432/cypherpanel?sslmode=disable
+migrate-up:
+	go run -tags postgres github.com/golang-migrate/migrate/v4/cmd/migrate@latest -path migrations -database "$(DEV_DB_URL)" up
+
+migrate-down:
+	go run -tags postgres github.com/golang-migrate/migrate/v4/cmd/migrate@latest -path migrations -database "$(DEV_DB_URL)" down 1
+
+clean:
+	rm -rf $(BIN_DIR)

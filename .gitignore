@@ -1,0 +1,27 @@
+# Binaries
+/bin/
+/dist/
+*.exe
+
+# Go
+/vendor/
+coverage.out
+
+# Node / Next.js (Phase 2)
+node_modules/
+.next/
+
+# Local environment & secrets — never commit these
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+
+# Editor / OS noise
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+.DS_Store
