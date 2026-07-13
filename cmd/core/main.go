@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/nats-io/nats.go"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -32,6 +33,7 @@ import (
 	"github.com/MaramHarsha/CypherPanel/internal/audit"
 	"github.com/MaramHarsha/CypherPanel/internal/auth"
 	"github.com/MaramHarsha/CypherPanel/internal/config"
+	"github.com/MaramHarsha/CypherPanel/internal/jobs"
 	"github.com/MaramHarsha/CypherPanel/internal/pki"
 	"github.com/MaramHarsha/CypherPanel/internal/store"
 )
@@ -88,10 +90,22 @@ func run() error {
 		return createAdmin(ctx, users, auditLog, os.Args[2:])
 	}
 
+	nc, err := nats.Connect(cfg.NATSURL, nats.Name("cypher-core"))
+	if err != nil {
+		return fmt.Errorf("connecting to NATS: %w", err)
+	}
+	defer nc.Drain()
+	publisher, err := jobs.NewPublisher(ctx, nc)
+	if err != nil {
+		return err
+	}
+
+	tasksStore := store.NewTasks(pool)
 	router := api.NewRouter(api.Deps{
 		Config: cfg,
 		Tokens: tokens,
 		Auth:   &api.AuthHandler{Users: users, Tokens: tokens, Audit: auditLog},
+		Tasks:  &api.TasksHandler{Tasks: tasksStore, Publisher: publisher, Audit: auditLog},
 	})
 
 	srv := &http.Server{
@@ -106,6 +120,7 @@ func run() error {
 	}
 	agentv1.RegisterAgentServiceServer(grpcSrv, &agentrpc.Server{
 		Servers: store.NewServers(pool),
+		Tasks:   tasksStore,
 		Audit:   auditLog,
 	})
 

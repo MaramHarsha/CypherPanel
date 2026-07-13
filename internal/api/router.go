@@ -15,6 +15,7 @@ type Deps struct {
 	Config config.Core
 	Tokens *auth.TokenService
 	Auth   *AuthHandler
+	Tasks  *TasksHandler
 }
 
 func NewRouter(d Deps) *gin.Engine {
@@ -39,9 +40,10 @@ func NewRouter(d Deps) *gin.Engine {
 	authed.POST("/auth/logout", d.Auth.Logout)
 	authed.GET("/me", d.Auth.Me)
 
-	// Role-gated groups grow here as features land (Phase 2+):
-	//   admin := authed.Group("/admin", auth.RequireRole(auth.RoleRootAdmin))
-	//   reseller := authed.Group("/reseller", auth.RequireRole(auth.RoleRootAdmin, auth.RoleReseller))
+	// Root-admin-only surface.
+	admin := authed.Group("/admin", auth.RequireRole(auth.RoleRootAdmin))
+	admin.POST("/servers/:id/tasks", d.Tasks.Create)
+	admin.GET("/tasks/:id", d.Tasks.Get)
 
 	return r
 }

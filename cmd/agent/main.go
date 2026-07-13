@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nats-io/nats.go"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -21,8 +22,10 @@ import (
 
 	agentv1 "github.com/MaramHarsha/CypherPanel/gen/agent/v1"
 	"github.com/MaramHarsha/CypherPanel/internal/config"
+	"github.com/MaramHarsha/CypherPanel/internal/jobs"
 	"github.com/MaramHarsha/CypherPanel/internal/paths"
 	"github.com/MaramHarsha/CypherPanel/internal/pki"
+	"github.com/MaramHarsha/CypherPanel/internal/platform"
 )
 
 // version is stamped via -ldflags at release time.
@@ -71,6 +74,18 @@ func run() error {
 	}
 	slog.Info("registered with control plane", "server_id", serverID)
 
+	// Task consumer: pull provisioning jobs for this server from JetStream.
+	nc, err := nats.Connect(cfg.NATSURL, nats.Name("cypher-agent"))
+	if err != nil {
+		return err
+	}
+	defer nc.Drain()
+	executor := &taskExecutor{layout: layout, users: platform.New()}
+	consumerErr := make(chan error, 1)
+	go func() {
+		consumerErr <- jobs.Consume(ctx, nc, serverID, executor.Handle, reportResult(client, serverID))
+	}()
+
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
 	for {
@@ -78,6 +93,8 @@ func run() error {
 		case <-ctx.Done():
 			slog.Info("cypher-agent shutting down")
 			return nil
+		case err := <-consumerErr:
+			return err
 		case <-ticker.C:
 			hbCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			_, err := client.Heartbeat(hbCtx, &agentv1.HeartbeatRequest{ServerId: serverID})

@@ -36,6 +36,7 @@ type Core struct {
 type Agent struct {
 	Env      string
 	CoreAddr string
+	NATSURL  string
 	// mTLS material locations are configuration, never constants.
 	TLSCertFile string
 	TLSKeyFile  string
@@ -86,6 +87,7 @@ func LoadAgent() (Agent, error) {
 	a := Agent{
 		Env:         envOr("CYPHER_ENV", EnvDevelopment),
 		CoreAddr:    envOr("CYPHER_AGENT_CORE_ADDR", "localhost:9090"),
+		NATSURL:     envOr("CYPHER_AGENT_NATS_URL", "nats://localhost:4222"),
 		TLSCertFile: os.Getenv("CYPHER_AGENT_TLS_CERT"),
 		TLSKeyFile:  os.Getenv("CYPHER_AGENT_TLS_KEY"),
 		TLSCAFile:   os.Getenv("CYPHER_AGENT_TLS_CA"),

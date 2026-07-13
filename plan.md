@@ -258,7 +258,9 @@ The important design rule this implies: nothing in Phase 1-2 should require a re
   ├── Auth (JWT + refresh tokens), RBAC middleware & audit logging foundation (per Section 6)
   ├── Database schema migrations (PostgreSQL)
   ├── CypherAgent installation & gRPC/mTLS channel
-  └── User/Group creation & system daemon architecture
+  ├── User/Group creation & system daemon architecture
+  └── Project agent skills (.claude/skills/) — encode repo conventions for AI-assisted
+      development (see "Phase 1 Exit: Project Agent Skills" below)
 
   Phase 2: Admin Plane & Provisioning
   ├── UI shell & design system foundation (shadcn/ui tokens, sidebar layout, auth screens,
@@ -292,6 +294,23 @@ The important design rule this implies: nothing in Phase 1-2 should require a re
   ├── Audit log dashboards & retention policies (logging itself starts in Phase 1)
   └── Security hardening and release candidate packaging
 ```
+
+### Phase 1 Exit: Project Agent Skills (`.claude/skills/`)
+
+Following the pattern used by Coolify (which ships `.claude/skills/` with skills like `laravel-best-practices`, `pest-testing`, and `tailwindcss-development`), CypherPanel maintains its own project skills so that AI coding agents (Claude Code and compatible tools) working in this repo automatically follow its conventions instead of generic defaults. Each skill is a directory containing a `SKILL.md` (instructions + decision rules), optionally with `references/` files for templates and examples.
+
+These are written at the **end of Phase 1**, once the conventions they encode actually exist in code — a skill written before the pattern it describes is speculation, not guidance. They are living documents: each later phase updates the relevant skill when it introduces a new pattern (e.g., Phase 3 adds config-generator conventions to `agent-config-generators`).
+
+Skills to ship (only what this project actually needs — no generic filler):
+
+1.  **`go-backend-conventions`** — How Go code is written in this repo: Gin handler/middleware structure, error-wrapping style, the central config/defaults package, the **no-hardcoded-paths rule** (`filepath.Join` or config only), `CGO_ENABLED=0`, and the `_linux.go` build-tag pattern that keeps Linux-only syscall code behind interfaces so everything else stays unit-testable on Windows/macOS.
+2.  **`database-and-migrations`** — pgx/sqlx hand-written SQL patterns (explicitly: **no GORM**), query/scan conventions, how to create and apply `golang-migrate` migrations (paired `.up.sql`/`.down.sql`, never editing a shipped migration), and indexing expectations for tables that will reach millions of rows.
+3.  **`grpc-proto-contracts`** — Rules for evolving the Core↔Agent `.proto` files: never reuse or renumber a shipped field, only add optional fields, regeneration workflow, and the mTLS/versioning assumptions that let mixed Core/Agent versions coexist during rolling upgrades.
+4.  **`jobs-and-agent-tasks`** — How to add a NATS JetStream job type: subject naming/partitioning, the idempotency requirement (every task must be safely re-runnable), retry/dead-letter handling, and reporting results back through `ReportTaskResult`.
+5.  **`auth-and-rbac`** — How to secure a new endpoint: JWT claim structure, the centralized policy middleware (never ad-hoc `if role == admin` checks in handlers), resource-scoping rules (reseller/account ownership), and when an action must write to the audit trail (any provisioning/suspension/permission change).
+6.  **`api-contract-workflow`** — Adding/changing a REST endpoint end to end: `/api/v1` versioning rules, OpenAPI annotations so the spec stays generated (never hand-edited), and regenerating the TypeScript client for CypherUI so frontend and backend cannot drift.
+7.  **`testing-conventions`** — Table-driven Go tests, what runs natively on any dev OS vs. what requires the docker-compose stack or a Linux container (agent E2E), and the expectation that platform-neutral logic is tested without Linux.
+8.  **`ui-development`** *(added at the start of Phase 2, alongside the UI shell it describes)* — shadcn/ui component usage (copied into repo, themed via design tokens — never inline colors, so white-labeling stays a config file), Tailwind token conventions, light/dark theming, React Query data-fetching patterns (no raw `fetch` in components), Lucide icons, and the accessibility bar (WCAG 2.1 AA, keyboard nav, focus states).
 
 ---
 

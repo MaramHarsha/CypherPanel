@@ -7,7 +7,7 @@
 
 | Phase | Scope | Status |
 |-------|-------|--------|
-| **1** | Core Foundation & Agent Comms | 🟨 In progress (~85%) |
+| **1** | Core Foundation & Agent Comms | 🟨 In progress (~95%) |
 | **2** | Admin Plane & Provisioning + UI Shell | ⬜ Not started |
 | **3** | Web Server & PHP Management | ⬜ Not started |
 | **4** | Files, FTP, & Databases | ⬜ Not started |
@@ -51,14 +51,17 @@
 - [x] Servers table wiring: registration upserts row, heartbeat updates `last_seen_at`/`agent_status`, unknown ID → agent re-registers
 - [x] Agent: mTLS dial, Register with retry/backoff, 30s Heartbeat loop
 - [x] E2E verified with real mTLS: CA → certs → register → heartbeat advanced `last_seen_at`; certless client rejected at handshake ✅
+- [x] NATS JetStream job pipeline: WorkQueue stream, per-server subjects, task-ID dedup, durable per-agent consumers, max-5 redelivery + permanent-error dead-lettering
+- [x] Tasks table (migration 000002) + admin API: `POST /api/v1/admin/servers/:id/tasks`, `GET /api/v1/admin/tasks/:id` (root-admin RBAC-gated — first live use of RequireRole)
+- [x] Agent task executor (noop, system_user.create) + result reporting via gRPC with retry
+- [x] **First real provisioning action verified**: system user created inside a Debian container via API → NATS → agent → `useradd` (idempotent re-run also succeeds); on Windows dev the same task dead-letters immediately with a clear "Linux only" error
+- [x] Agent RSS measured under real load: **3.6 MiB** (budget: <50MB; cPanel minimum: 2GB) ✅
 
 ### Pending
-- [ ] NATS JetStream job pipeline: publish tasks from Core, agent consumer, idempotent handling + dead-letter
-- [ ] System user creation task end-to-end (first real provisioning action, tested in a Linux container)
 - [ ] Host stats in heartbeat (load, memory, disk — currently unset)
 - [ ] OpenAPI spec generation for the REST API (swaggo/huma per plan)
 - [ ] CI pipeline (GitHub Actions): build + vet + test + Linux cross-compile on every push
-- [ ] Agent idle-RSS measurement harness (verify <50MB budget from day one)
+- [ ] NATS auth/TLS for agent connections (currently open in dev; must be locked before production)
 
 ## Phase 2 — Admin Plane & Provisioning + UI Shell ⬜
 

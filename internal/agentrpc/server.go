@@ -19,6 +19,7 @@ import (
 type Server struct {
 	agentv1.UnimplementedAgentServiceServer
 	Servers *store.Servers
+	Tasks   *store.Tasks
 	Audit   *audit.Logger
 }
 
@@ -64,13 +65,27 @@ func (s *Server) Heartbeat(ctx context.Context, req *agentv1.HeartbeatRequest) (
 }
 
 func (s *Server) ReportTaskResult(ctx context.Context, req *agentv1.ReportTaskResultRequest) (*agentv1.ReportTaskResultResponse, error) {
-	// Task persistence lands with the NATS job pipeline; record the outcome
-	// in the audit trail so results are never silently dropped meanwhile.
+	if req.GetTaskId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "task_id is required")
+	}
+
+	result := "failed"
+	if req.GetStatus() == agentv1.TaskStatus_TASK_STATUS_SUCCEEDED {
+		result = "succeeded"
+	}
+	if err := s.Tasks.SetResult(ctx, req.GetTaskId(), result, req.GetErrorMessage()); err != nil {
+		if err == store.ErrNotFound {
+			return nil, status.Error(codes.NotFound, "unknown task_id")
+		}
+		slog.Error("recording task result", "task_id", req.GetTaskId(), "error", err)
+		return nil, status.Error(codes.Internal, "could not record result")
+	}
+
 	_ = s.Audit.Record(ctx, audit.Entry{
 		ActorRole: "agent", Action: "task.result", TargetType: "task", TargetID: req.GetTaskId(),
 		Detail: map[string]any{
 			"server_id": req.GetServerId(),
-			"status":    req.GetStatus().String(),
+			"status":    result,
 			"error":     req.GetErrorMessage(),
 		},
 	})
