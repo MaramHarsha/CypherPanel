@@ -259,8 +259,9 @@ The important design rule this implies: nothing in Phase 1-2 should require a re
   ├── Database schema migrations (PostgreSQL)
   ├── CypherAgent installation & gRPC/mTLS channel
   ├── User/Group creation & system daemon architecture
-  └── Project agent skills (.claude/skills/) — encode repo conventions for AI-assisted
-      development (see "Phase 1 Exit: Project Agent Skills" below)
+  └── Project agent skills (.claude/skills/) — write the Phase 1 batch of the full
+      skills catalog (see "Project Agent Skills" below); every later phase ends by
+      writing/updating its own batch
 
   Phase 2: Admin Plane & Provisioning
   ├── UI shell & design system foundation (shadcn/ui tokens, sidebar layout, auth screens,
@@ -295,22 +296,49 @@ The important design rule this implies: nothing in Phase 1-2 should require a re
   └── Security hardening and release candidate packaging
 ```
 
-### Phase 1 Exit: Project Agent Skills (`.claude/skills/`)
+### Project Agent Skills (`.claude/skills/`) — Full Catalog
 
 Following the pattern used by Coolify (which ships `.claude/skills/` with skills like `laravel-best-practices`, `pest-testing`, and `tailwindcss-development`), CypherPanel maintains its own project skills so that AI coding agents (Claude Code and compatible tools) working in this repo automatically follow its conventions instead of generic defaults. Each skill is a directory containing a `SKILL.md` (instructions + decision rules), optionally with `references/` files for templates and examples.
 
-These are written at the **end of Phase 1**, once the conventions they encode actually exist in code — a skill written before the pattern it describes is speculation, not guidance. They are living documents: each later phase updates the relevant skill when it introduces a new pattern (e.g., Phase 3 adds config-generator conventions to `agent-config-generators`).
+This is the catalog for the **entire project**. Timing rule: each skill is written **at the end of the phase that establishes its conventions** (a skill written before the pattern it describes exists in code is speculation, not guidance), so it is ready on day one of the phases that consume it. Skills are living documents — when a later phase extends a pattern, it updates the corresponding skill in the same PR (e.g., the post-MVP Apache adapter updates `agent-config-generators`).
 
-Skills to ship (only what this project actually needs — no generic filler):
+#### Written at end of Phase 1 (used by every later phase)
 
 1.  **`go-backend-conventions`** — How Go code is written in this repo: Gin handler/middleware structure, error-wrapping style, the central config/defaults package, the **no-hardcoded-paths rule** (`filepath.Join` or config only), `CGO_ENABLED=0`, and the `_linux.go` build-tag pattern that keeps Linux-only syscall code behind interfaces so everything else stays unit-testable on Windows/macOS.
 2.  **`database-and-migrations`** — pgx/sqlx hand-written SQL patterns (explicitly: **no GORM**), query/scan conventions, how to create and apply `golang-migrate` migrations (paired `.up.sql`/`.down.sql`, never editing a shipped migration), and indexing expectations for tables that will reach millions of rows.
 3.  **`grpc-proto-contracts`** — Rules for evolving the Core↔Agent `.proto` files: never reuse or renumber a shipped field, only add optional fields, regeneration workflow, and the mTLS/versioning assumptions that let mixed Core/Agent versions coexist during rolling upgrades.
-4.  **`jobs-and-agent-tasks`** — How to add a NATS JetStream job type: subject naming/partitioning, the idempotency requirement (every task must be safely re-runnable), retry/dead-letter handling, and reporting results back through `ReportTaskResult`.
+4.  **`jobs-and-agent-tasks`** — How to add a NATS JetStream job type: subject naming/partitioning, the idempotency requirement (every task must be safely re-runnable), retry/dead-letter handling, and reporting results back through `ReportTaskResult`. Used by every phase that adds an agent-executed operation (provisioning, SSL, backups, mail, DNS).
 5.  **`auth-and-rbac`** — How to secure a new endpoint: JWT claim structure, the centralized policy middleware (never ad-hoc `if role == admin` checks in handlers), resource-scoping rules (reseller/account ownership), and when an action must write to the audit trail (any provisioning/suspension/permission change).
 6.  **`api-contract-workflow`** — Adding/changing a REST endpoint end to end: `/api/v1` versioning rules, OpenAPI annotations so the spec stays generated (never hand-edited), and regenerating the TypeScript client for CypherUI so frontend and backend cannot drift.
 7.  **`testing-conventions`** — Table-driven Go tests, what runs natively on any dev OS vs. what requires the docker-compose stack or a Linux container (agent E2E), and the expectation that platform-neutral logic is tested without Linux.
-8.  **`ui-development`** *(added at the start of Phase 2, alongside the UI shell it describes)* — shadcn/ui component usage (copied into repo, themed via design tokens — never inline colors, so white-labeling stays a config file), Tailwind token conventions, light/dark theming, React Query data-fetching patterns (no raw `fetch` in components), Lucide icons, and the accessibility bar (WCAG 2.1 AA, keyboard nav, focus states).
+8.  **`linux-system-integration`** — Creating system users/groups, systemd unit and slice management, cgroups v2 limit enforcement, and the per-distro path-mapping layer (Debian vs. RHEL-family locations) — the conventions established by Phase 1's user/group creation work and reused by every phase that touches the OS.
+
+#### Written at end of Phase 2 (UI foundations + provisioning exist)
+
+9.  **`ui-development`** — shadcn/ui component usage (copied into repo, themed via design tokens — never inline colors, so white-labeling stays a config file), Tailwind token conventions, light/dark theming, React Query data-fetching patterns (no raw `fetch` in components), Lucide icons, i18n string extraction (`next-intl` — no hardcoded UI strings), and the accessibility bar (WCAG 2.1 AA, keyboard nav, focus states). Consumed by every feature screen in Phases 3-6.
+10. **`async-ui-patterns`** — How UI surfaces long-running jobs: wiring a mutation to the NATS job pipeline, live progress via WebSocket/SSE into the notification center, optimistic updates vs. pending states, empty-state and skeleton-loader conventions, and type-to-confirm for destructive actions.
+
+#### Written at end of Phase 3 (config generation + SSL patterns exist)
+
+11. **`agent-config-generators`** — Adding a service config generator: Go `text/template` conventions, template testing (golden files), resolving output paths through the distro path-mapping layer, validate-then-reload sequencing (e.g., `nginx -t` before reload, never blind restarts), and the adapter interface that post-MVP alternatives (Apache, OpenLiteSpeed, BIND) must implement. Consumed heavily by Phases 4-5 (FTP, mail, DNS configs).
+12. **`php-runtime-management`** — Multi-PHP install layout, per-account PHP-FPM pool file conventions and socket isolation, INI override handling, and how EOL PHP branches are flagged.
+13. **`ssl-acme`** — Lego library usage: HTTP-01 vs. DNS-01 challenge selection, certificate storage paths and permissions, renewal job scheduling, and web-server reload coordination after issuance.
+
+#### Written at end of Phase 4 (file/database surfaces exist)
+
+14. **`filesystem-operations-safety`** — The rules for any code that touches user files (File Manager, FTP, backups): path-traversal prevention (canonicalize + verify under the account root), operating with the account user's privileges (never root), quota/inode accounting, and safe handling of uploads, archives (zip-slip), and symlinks.
+15. **`user-database-provisioning`** — MariaDB database/user/grant provisioning conventions, credential generation and storage, phpMyAdmin/Adminer session handoff, and the adapter interface PostgreSQL user-DBs will implement post-MVP.
+
+#### Written at end of Phase 5 (mail + DNS stacks exist)
+
+16. **`mail-stack`** — Postfix/Dovecot config conventions, virtual mailbox/domain layout, quota enforcement, Rspamd integration points, and DKIM/SPF/DMARC record generation.
+17. **`dns-management`** — PowerDNS REST API usage patterns, zone/record CRUD conventions, validation rules per record type (A, AAAA, CNAME, MX, TXT, SRV, CAA), and primary/secondary cluster synchronization.
+
+#### Written during Phase 6 (hardening & release)
+
+18. **`observability-and-metrics`** — What goes to the time-series store (Prometheus/VictoriaMetrics) vs. Postgres (never high-cardinality metrics in Postgres), metric naming conventions, structured logging fields, and audit-log query/retention patterns.
+19. **`backups`** — restic/Borg invocation conventions (incremental/deduplicated — raw tar only for one-off manual exports), endpoint configuration (S3/SFTP/local), db-dump coordination, and restore-path testing requirements.
+20. **`installer-and-packaging`** — Shell installer conventions from Appendix A: GPG-verify every artifact, LF-only line endings, detect-and-ask (never silently purge conflicting services), no auto-reboot, release tiers (`stable`/`edge`), working uninstaller, and the 1GB-RAM install target.
 
 ---
 
