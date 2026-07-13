@@ -7,7 +7,7 @@
 
 | Phase | Scope | Status |
 |-------|-------|--------|
-| **1** | Core Foundation & Agent Comms | 🟨 In progress (~70%) |
+| **1** | Core Foundation & Agent Comms | 🟨 In progress (~85%) |
 | **2** | Admin Plane & Provisioning + UI Shell | ⬜ Not started |
 | **3** | Web Server & PHP Management | ⬜ Not started |
 | **4** | Files, FTP, & Databases | ⬜ Not started |
@@ -45,14 +45,17 @@
 - [x] gRPC contract `proto/agent/v1/agent.proto` (Register / Heartbeat / ReportTaskResult) + buf config
 - [x] CypherAgent skeleton: config load, distro detection, signal handling (3.1MB static Linux binary)
 - [x] E2E verified on dev stack: login → token → protected route → refresh rotation → audit rows ✅
+- [x] gRPC codegen via buf (`gen/agent/v1`), no system protoc needed
+- [x] PKI package + CLI: `pki init` (CA), `pki issue-server`, `pki issue-agent` (ECDSA P-256, TLS 1.3)
+- [x] gRPC AgentService in CypherCore on :9090 — Register / Heartbeat / ReportTaskResult, mTLS when certs configured (enforced in production)
+- [x] Servers table wiring: registration upserts row, heartbeat updates `last_seen_at`/`agent_status`, unknown ID → agent re-registers
+- [x] Agent: mTLS dial, Register with retry/backoff, 30s Heartbeat loop
+- [x] E2E verified with real mTLS: CA → certs → register → heartbeat advanced `last_seen_at`; certless client rejected at handshake ✅
 
 ### Pending
-- [ ] gRPC server in CypherCore (AgentService implementation) on a dedicated port
-- [ ] mTLS certificate authority + agent cert issuance/enrollment flow
-- [ ] Agent: dial Core with mTLS, run Register + Heartbeat loop (needs `make proto` codegen)
-- [ ] Servers table wiring: registration persists server row, heartbeat updates `last_seen_at`/`agent_status`
 - [ ] NATS JetStream job pipeline: publish tasks from Core, agent consumer, idempotent handling + dead-letter
 - [ ] System user creation task end-to-end (first real provisioning action, tested in a Linux container)
+- [ ] Host stats in heartbeat (load, memory, disk — currently unset)
 - [ ] OpenAPI spec generation for the REST API (swaggo/huma per plan)
 - [ ] CI pipeline (GitHub Actions): build + vet + test + Linux cross-compile on every push
 - [ ] Agent idle-RSS measurement harness (verify <50MB budget from day one)

@@ -18,12 +18,18 @@ const (
 type Core struct {
 	Env             string
 	HTTPAddr        string
+	GRPCAddr        string
 	DatabaseURL     string
 	RedisURL        string
 	NATSURL         string
 	JWTSecret       string
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
+	// mTLS material for the agent gRPC listener. Required in production;
+	// in development an empty set means plaintext gRPC (local only).
+	GRPCTLSCert     string
+	GRPCTLSKey      string
+	GRPCTLSClientCA string
 }
 
 // Agent holds CypherAgent (per-server daemon) configuration.
@@ -43,12 +49,16 @@ const insecureDevSecret = "cypherpanel-dev-secret-do-not-use-in-production"
 // LoadCore reads CypherCore configuration from the environment.
 func LoadCore() (Core, error) {
 	c := Core{
-		Env:         envOr("CYPHER_ENV", EnvDevelopment),
-		HTTPAddr:    envOr("CYPHER_HTTP_ADDR", ":8080"),
-		DatabaseURL: envOr("CYPHER_DATABASE_URL", "postgres://cypher:cypher-dev-only@localhost:5432/cypherpanel?sslmode=disable"),
-		RedisURL:    envOr("CYPHER_REDIS_URL", "redis://localhost:6379/0"),
-		NATSURL:     envOr("CYPHER_NATS_URL", "nats://localhost:4222"),
-		JWTSecret:   os.Getenv("CYPHER_JWT_SECRET"),
+		Env:             envOr("CYPHER_ENV", EnvDevelopment),
+		HTTPAddr:        envOr("CYPHER_HTTP_ADDR", ":8080"),
+		GRPCAddr:        envOr("CYPHER_GRPC_ADDR", ":9090"),
+		DatabaseURL:     envOr("CYPHER_DATABASE_URL", "postgres://cypher:cypher-dev-only@localhost:5432/cypherpanel?sslmode=disable"),
+		RedisURL:        envOr("CYPHER_REDIS_URL", "redis://localhost:6379/0"),
+		NATSURL:         envOr("CYPHER_NATS_URL", "nats://localhost:4222"),
+		JWTSecret:       os.Getenv("CYPHER_JWT_SECRET"),
+		GRPCTLSCert:     os.Getenv("CYPHER_GRPC_TLS_CERT"),
+		GRPCTLSKey:      os.Getenv("CYPHER_GRPC_TLS_KEY"),
+		GRPCTLSClientCA: os.Getenv("CYPHER_GRPC_TLS_CLIENT_CA"),
 	}
 
 	var err error
@@ -64,6 +74,9 @@ func LoadCore() (Core, error) {
 			return Core{}, fmt.Errorf("CYPHER_JWT_SECRET is required when CYPHER_ENV=production")
 		}
 		c.JWTSecret = insecureDevSecret
+	}
+	if c.Env == EnvProduction && (c.GRPCTLSCert == "" || c.GRPCTLSKey == "" || c.GRPCTLSClientCA == "") {
+		return Core{}, fmt.Errorf("CYPHER_GRPC_TLS_CERT, CYPHER_GRPC_TLS_KEY and CYPHER_GRPC_TLS_CLIENT_CA are required when CYPHER_ENV=production")
 	}
 	return c, nil
 }
