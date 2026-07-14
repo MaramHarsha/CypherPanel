@@ -8,6 +8,90 @@ const docTemplate = `{
     "schemes": {{ marshal .Schemes }},
     "components": {
         "schemas": {
+            "api.accountResponse": {
+                "properties": {
+                    "created_at": {
+                        "type": "string"
+                    },
+                    "email": {
+                        "type": "string"
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "package_id": {
+                        "type": "string"
+                    },
+                    "package_name": {
+                        "type": "string"
+                    },
+                    "primary_domain": {
+                        "type": "string"
+                    },
+                    "server_id": {
+                        "type": "string"
+                    },
+                    "server_name": {
+                        "type": "string"
+                    },
+                    "status": {
+                        "type": "string"
+                    },
+                    "system_username": {
+                        "type": "string"
+                    },
+                    "username": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "api.createAccountRequest": {
+                "properties": {
+                    "domain": {
+                        "type": "string"
+                    },
+                    "email": {
+                        "type": "string"
+                    },
+                    "package_id": {
+                        "type": "string"
+                    },
+                    "password": {
+                        "minLength": 12,
+                        "type": "string"
+                    },
+                    "server_id": {
+                        "type": "string"
+                    },
+                    "username": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "domain",
+                    "email",
+                    "package_id",
+                    "password",
+                    "server_id",
+                    "username"
+                ],
+                "type": "object"
+            },
+            "api.createPackageRequest": {
+                "properties": {
+                    "limits": {
+                        "$ref": "#/components/schemas/api.packageLimits"
+                    },
+                    "name": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "name"
+                ],
+                "type": "object"
+            },
             "api.createTaskRequest": {
                 "type": "object"
             },
@@ -29,6 +113,49 @@ const docTemplate = `{
             "api.logoutRequest": {
                 "properties": {
                     "refresh_token": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "api.packageLimits": {
+                "properties": {
+                    "bandwidth_mb": {
+                        "type": "integer"
+                    },
+                    "cpu_quota_pct": {
+                        "type": "integer"
+                    },
+                    "databases": {
+                        "type": "integer"
+                    },
+                    "disk_mb": {
+                        "type": "integer"
+                    },
+                    "domains": {
+                        "type": "integer"
+                    },
+                    "email_accounts": {
+                        "type": "integer"
+                    },
+                    "memory_max_mb": {
+                        "type": "integer"
+                    }
+                },
+                "type": "object"
+            },
+            "api.packageResponse": {
+                "properties": {
+                    "created_at": {
+                        "type": "string"
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "limits": {
+                        "$ref": "#/components/schemas/api.packageLimits"
+                    },
+                    "name": {
                         "type": "string"
                     }
                 },
@@ -124,6 +251,395 @@ const docTemplate = `{
         "url": ""
     },
     "paths": {
+        "/admin/accounts": {
+            "get": {
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "items": {
+                                        "$ref": "#/components/schemas/api.accountResponse"
+                                    },
+                                    "type": "array"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "List accounts (root admin only)",
+                "tags": [
+                    "admin"
+                ]
+            },
+            "post": {
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/api.createAccountRequest",
+                                        "summary": "request",
+                                        "description": "Account definition"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "Account definition",
+                    "required": true
+                },
+                "responses": {
+                    "202": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.accountResponse"
+                                }
+                            }
+                        },
+                        "description": "Accepted"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Create a hosting account (root admin only)",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
+        "/admin/accounts/{id}/suspend": {
+            "post": {
+                "parameters": [
+                    {
+                        "description": "Account ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Suspend an account (root admin only)",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
+        "/admin/accounts/{id}/terminate": {
+            "post": {
+                "parameters": [
+                    {
+                        "description": "Account ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Accepted"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Terminate an account (root admin only, irreversible)",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
+        "/admin/accounts/{id}/unsuspend": {
+            "post": {
+                "parameters": [
+                    {
+                        "description": "Account ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Unsuspend an account (root admin only)",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
+        "/admin/packages": {
+            "get": {
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "items": {
+                                        "$ref": "#/components/schemas/api.packageResponse"
+                                    },
+                                    "type": "array"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "List packages (root admin only)",
+                "tags": [
+                    "admin"
+                ]
+            },
+            "post": {
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/api.createPackageRequest",
+                                        "summary": "request",
+                                        "description": "Package definition"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "Package definition",
+                    "required": true
+                },
+                "responses": {
+                    "201": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.packageResponse"
+                                }
+                            }
+                        },
+                        "description": "Created"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Create a package (root admin only)",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
+        "/admin/packages/{id}": {
+            "delete": {
+                "parameters": [
+                    {
+                        "description": "Package ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Conflict"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Delete a package (root admin only)",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
         "/admin/servers": {
             "get": {
                 "responses": {

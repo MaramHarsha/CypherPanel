@@ -21,8 +21,8 @@ import { hasSession, logout } from "@/lib/api";
 const nav = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/servers", label: "Servers", icon: Server },
-  { href: "/packages", label: "Packages", icon: Package, disabled: true },
-  { href: "/accounts", label: "Accounts", icon: Users, disabled: true },
+  { href: "/packages", label: "Packages", icon: Package },
+  { href: "/accounts", label: "Accounts", icon: Users },
 ] as const;
 
 export default function ShellLayout({ children }: { children: React.ReactNode }) {
@@ -54,19 +54,6 @@ export default function ShellLayout({ children }: { children: React.ReactNode })
           {nav.map((item) => {
             const active = pathname.startsWith(item.href);
             const Icon = item.icon;
-            if ("disabled" in item && item.disabled) {
-              return (
-                <span
-                  key={item.href}
-                  aria-disabled
-                  className="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground/60"
-                  title="Coming soon"
-                >
-                  <Icon className="h-4 w-4" />
-                  {item.label}
-                </span>
-              );
-            }
             return (
               <Link
                 key={item.href}

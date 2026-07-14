@@ -18,9 +18,10 @@ import (
 
 type Server struct {
 	agentv1.UnimplementedAgentServiceServer
-	Servers *store.Servers
-	Tasks   *store.Tasks
-	Audit   *audit.Logger
+	Servers  *store.Servers
+	Tasks    *store.Tasks
+	Accounts *store.Accounts
+	Audit    *audit.Logger
 }
 
 func (s *Server) Register(ctx context.Context, req *agentv1.RegisterRequest) (*agentv1.RegisterResponse, error) {
@@ -96,5 +97,32 @@ func (s *Server) ReportTaskResult(ctx context.Context, req *agentv1.ReportTaskRe
 			"error":     req.GetErrorMessage(),
 		},
 	})
+
+	s.applyAccountTransition(ctx, req.GetTaskId(), result)
 	return &agentv1.ReportTaskResultResponse{}, nil
+}
+
+// applyAccountTransition drives account lifecycle from provisioning task
+// outcomes: create-success → active, create-failure → failed,
+// remove-success → account (and its panel user) deleted.
+func (s *Server) applyAccountTransition(ctx context.Context, taskID, result string) {
+	task, err := s.Tasks.GetByID(ctx, taskID)
+	if err != nil || task.AccountID == "" {
+		return
+	}
+
+	var terr error
+	switch {
+	case task.Type == "system_user.create" && result == "succeeded":
+		terr = s.Accounts.SetStatus(ctx, task.AccountID, "active")
+	case task.Type == "system_user.create" && result == "failed":
+		terr = s.Accounts.SetStatus(ctx, task.AccountID, "failed")
+	case task.Type == "system_user.remove" && result == "succeeded":
+		terr = s.Accounts.Delete(ctx, task.AccountID)
+	default:
+		return
+	}
+	if terr != nil && terr != store.ErrNotFound {
+		slog.Error("applying account transition", "task_id", taskID, "account_id", task.AccountID, "error", terr)
+	}
 }

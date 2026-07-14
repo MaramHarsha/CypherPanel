@@ -14,11 +14,13 @@ import (
 )
 
 type Deps struct {
-	Config  config.Core
-	Tokens  *auth.TokenService
-	Auth    *AuthHandler
-	Tasks   *TasksHandler
-	Servers *ServersHandler
+	Config   config.Core
+	Tokens   *auth.TokenService
+	Auth     *AuthHandler
+	Tasks    *TasksHandler
+	Servers  *ServersHandler
+	Packages *PackagesHandler
+	Accounts *AccountsHandler
 }
 
 func NewRouter(d Deps) *gin.Engine {
@@ -58,6 +60,14 @@ func NewRouter(d Deps) *gin.Engine {
 	admin.GET("/servers", d.Servers.List)
 	admin.POST("/servers/:id/tasks", d.Tasks.Create)
 	admin.GET("/tasks/:id", d.Tasks.Get)
+	admin.GET("/packages", d.Packages.List)
+	admin.POST("/packages", d.Packages.Create)
+	admin.DELETE("/packages/:id", d.Packages.Delete)
+	admin.GET("/accounts", d.Accounts.List)
+	admin.POST("/accounts", d.Accounts.Create)
+	admin.POST("/accounts/:id/suspend", d.Accounts.Suspend)
+	admin.POST("/accounts/:id/unsuspend", d.Accounts.Unsuspend)
+	admin.POST("/accounts/:id/terminate", d.Accounts.Terminate)
 
 	return r
 }

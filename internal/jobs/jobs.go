@@ -21,6 +21,7 @@ const (
 const (
 	TypeNoop             = "noop"               // health/testing: always succeeds
 	TypeSystemUserCreate = "system_user.create" // payload: SystemUserCreatePayload
+	TypeSystemUserRemove = "system_user.remove" // payload: SystemUserRemovePayload
 )
 
 // Task is the wire format published to JetStream.
@@ -39,12 +40,18 @@ type SystemUserCreatePayload struct {
 	HomeDir  string `json:"home_dir,omitempty"`
 }
 
+// SystemUserRemovePayload removes a hosted account's Linux user (and home
+// directory) during account termination.
+type SystemUserRemovePayload struct {
+	Username string `json:"username"`
+}
+
 // ValidType reports whether the task type is known to this build. Core
 // rejects unknown types at the API boundary rather than letting them fail
 // on every agent redelivery.
 func ValidType(t string) bool {
 	switch t {
-	case TypeNoop, TypeSystemUserCreate:
+	case TypeNoop, TypeSystemUserCreate, TypeSystemUserRemove:
 		return true
 	}
 	return false

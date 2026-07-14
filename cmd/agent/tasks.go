@@ -47,6 +47,20 @@ func (e *taskExecutor) Handle(ctx context.Context, t jobs.Task) error {
 		}
 		return err
 
+	case jobs.TypeSystemUserRemove:
+		var p jobs.SystemUserRemovePayload
+		if err := json.Unmarshal(t.Payload, &p); err != nil {
+			return jobs.Permanent(fmt.Errorf("invalid payload: %w", err))
+		}
+		if p.Username == "" {
+			return jobs.Permanent(errors.New("username is required"))
+		}
+		err := e.users.Remove(ctx, p.Username)
+		if errors.Is(err, platform.ErrUnsupported) {
+			return jobs.Permanent(err)
+		}
+		return err
+
 	default:
 		// Unknown type: this agent build is older than the control plane.
 		// Permanent-fail so it surfaces instead of retrying forever.

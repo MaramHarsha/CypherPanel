@@ -115,12 +115,16 @@ func run() error {
 	}
 
 	tasksStore := store.NewTasks(pool)
+	serversStore := store.NewServers(pool)
+	accountsStore := store.NewAccounts(pool)
 	router := api.NewRouter(api.Deps{
-		Config: cfg,
-		Tokens: tokens,
-		Auth:   &api.AuthHandler{Users: users, Tokens: tokens, Audit: auditLog},
-		Tasks:   &api.TasksHandler{Tasks: tasksStore, Publisher: publisher, Audit: auditLog},
-		Servers: &api.ServersHandler{Servers: store.NewServers(pool)},
+		Config:   cfg,
+		Tokens:   tokens,
+		Auth:     &api.AuthHandler{Users: users, Tokens: tokens, Audit: auditLog},
+		Tasks:    &api.TasksHandler{Tasks: tasksStore, Publisher: publisher, Audit: auditLog},
+		Servers:  &api.ServersHandler{Servers: serversStore},
+		Packages: &api.PackagesHandler{Packages: store.NewPackages(pool), Audit: auditLog},
+		Accounts: &api.AccountsHandler{Accounts: accountsStore, Tasks: tasksStore, Publisher: publisher, Audit: auditLog},
 	})
 
 	srv := &http.Server{
@@ -134,9 +138,10 @@ func run() error {
 		return err
 	}
 	agentv1.RegisterAgentServiceServer(grpcSrv, &agentrpc.Server{
-		Servers: store.NewServers(pool),
-		Tasks:   tasksStore,
-		Audit:   auditLog,
+		Servers:  serversStore,
+		Tasks:    tasksStore,
+		Accounts: accountsStore,
+		Audit:    auditLog,
 	})
 
 	errCh := make(chan error, 2)

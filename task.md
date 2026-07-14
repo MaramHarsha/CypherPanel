@@ -79,6 +79,11 @@
 - [x] Servers page: registered-nodes table with liveness ("last seen Xs ago")
 - [x] E2E verified: login + servers list through the Next proxy against the live control plane with a containerized Linux agent reporting real stats ✅
 
+- [x] Package templating system: `packages` store + REST (`GET/POST/DELETE /api/v1/admin/packages`) with limits (disk, bandwidth, domains, DBs, email, CPU%, memory) + Packages UI (create dialog, cards, delete)
+- [x] Account provisioning: `accounts` store (atomic user+account tx), REST create/suspend/unsuspend/terminate, `system_user.create`/`system_user.remove` tasks, agent-reported results drive status transitions (provisioning→active/failed, terminating→deleted)
+- [x] Accounts UI: create dialog (server/package selects), status badges, suspend/unsuspend, type-to-confirm terminate; 5s polling to reflect provisioning→active
+- [~] E2E verification of full provisioning flow — **code complete, build+run blocked by temporary auto-mode classifier outage; pending retry**
+
 ### Pending
 - [ ] Server node detail view + register/remove flows in UI
 - [ ] Package templating system (limits: disk, bandwidth, domains, DBs, mail, cgroup caps)

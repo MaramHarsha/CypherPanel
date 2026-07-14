@@ -53,7 +53,7 @@ func (h *TasksHandler) Create(c *gin.Context) {
 	}
 
 	claims := auth.ClaimsFrom(c)
-	task, err := h.Tasks.Create(c.Request.Context(), serverID, req.Type, req.Payload, claims.Subject)
+	task, err := h.Tasks.Create(c.Request.Context(), serverID, req.Type, req.Payload, claims.Subject, "")
 	if err != nil {
 		slog.Error("creating task", "server_id", serverID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not create task"})

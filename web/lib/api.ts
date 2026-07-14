@@ -10,6 +10,10 @@ import type { components } from "./api-types";
 
 export type ServerInfo = components["schemas"]["api.serverResponse"];
 export type TokenPair = components["schemas"]["api.tokenResponse"];
+export type PackageInfo = components["schemas"]["api.packageResponse"];
+export type PackageLimits = components["schemas"]["api.packageLimits"];
+export type AccountInfo = components["schemas"]["api.accountResponse"];
+export type CreateAccountRequest = components["schemas"]["api.createAccountRequest"];
 
 const REFRESH_KEY = "cypher.refresh_token";
 
@@ -98,6 +102,36 @@ export function hasSession(): boolean {
 
 export function listServers(): Promise<ServerInfo[]> {
   return apiFetch<ServerInfo[]>("/api/v1/admin/servers");
+}
+
+export function listPackages(): Promise<PackageInfo[]> {
+  return apiFetch<PackageInfo[]>("/api/v1/admin/packages");
+}
+
+export function createPackage(name: string, limits: PackageLimits): Promise<PackageInfo> {
+  return apiFetch<PackageInfo>("/api/v1/admin/packages", {
+    method: "POST",
+    body: JSON.stringify({ name, limits }),
+  });
+}
+
+export function deletePackage(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/admin/packages/${id}`, { method: "DELETE" });
+}
+
+export function listAccounts(): Promise<AccountInfo[]> {
+  return apiFetch<AccountInfo[]>("/api/v1/admin/accounts");
+}
+
+export function createAccount(req: CreateAccountRequest): Promise<AccountInfo> {
+  return apiFetch<AccountInfo>("/api/v1/admin/accounts", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+export function accountAction(id: string, action: "suspend" | "unsuspend" | "terminate"): Promise<void> {
+  return apiFetch<void>(`/api/v1/admin/accounts/${id}/${action}`, { method: "POST" });
 }
 
 export interface Me {
