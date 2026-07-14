@@ -9,11 +9,13 @@ import (
 
 	"github.com/MaramHarsha/CypherPanel/internal/audit"
 	"github.com/MaramHarsha/CypherPanel/internal/auth"
+	"github.com/MaramHarsha/CypherPanel/internal/events"
 	"github.com/MaramHarsha/CypherPanel/internal/store"
 )
 
 type PackagesHandler struct {
 	Packages *store.Packages
+	Events   *events.Bus
 	Audit    *audit.Logger
 }
 
@@ -97,6 +99,8 @@ func (h *PackagesHandler) Create(c *gin.Context) {
 		Action: "package.create", TargetType: "package", TargetID: pkg.ID,
 		Detail: map[string]any{"name": pkg.Name}, IP: c.ClientIP(),
 	})
+	h.Events.Publish(c.Request.Context(), events.SubjectPackageCreated, "package", pkg.ID,
+		map[string]any{"id": pkg.ID, "name": pkg.Name})
 	c.JSON(http.StatusCreated, toPackageResponse(*pkg))
 }
 
@@ -131,5 +135,6 @@ func (h *PackagesHandler) Delete(c *gin.Context) {
 		ActorID: claims.Subject, ActorRole: string(claims.Role),
 		Action: "package.delete", TargetType: "package", TargetID: id, IP: c.ClientIP(),
 	})
+	h.Events.Publish(c.Request.Context(), events.SubjectPackageDeleted, "package", id, map[string]any{"id": id})
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
 }

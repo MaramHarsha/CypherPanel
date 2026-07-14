@@ -33,6 +33,7 @@ import (
 	"github.com/MaramHarsha/CypherPanel/internal/audit"
 	"github.com/MaramHarsha/CypherPanel/internal/auth"
 	"github.com/MaramHarsha/CypherPanel/internal/config"
+	"github.com/MaramHarsha/CypherPanel/internal/events"
 	"github.com/MaramHarsha/CypherPanel/internal/jobs"
 	"github.com/MaramHarsha/CypherPanel/internal/pki"
 	"github.com/MaramHarsha/CypherPanel/internal/store"
@@ -114,6 +115,16 @@ func run() error {
 		return err
 	}
 
+	eventBus, err := events.NewBus(ctx, nc)
+	if err != nil {
+		return err
+	}
+	// Example in-process subscriber: log every domain event. Real reactions
+	// (webhooks, plugins) subscribe here too once those land.
+	eventBus.Subscribe(events.SubjectWildcard, func(_ context.Context, e events.Event) {
+		slog.Info("domain event", "subject", e.Subject, "aggregate_id", e.AggregateID)
+	})
+
 	tasksStore := store.NewTasks(pool)
 	serversStore := store.NewServers(pool)
 	accountsStore := store.NewAccounts(pool)
@@ -123,8 +134,9 @@ func run() error {
 		Auth:     &api.AuthHandler{Users: users, Tokens: tokens, Audit: auditLog},
 		Tasks:    &api.TasksHandler{Tasks: tasksStore, Publisher: publisher, Audit: auditLog},
 		Servers:  &api.ServersHandler{Servers: serversStore},
-		Packages: &api.PackagesHandler{Packages: store.NewPackages(pool), Audit: auditLog},
-		Accounts: &api.AccountsHandler{Accounts: accountsStore, Tasks: tasksStore, Publisher: publisher, Audit: auditLog},
+		Packages: &api.PackagesHandler{Packages: store.NewPackages(pool), Events: eventBus, Audit: auditLog},
+		Accounts: &api.AccountsHandler{Accounts: accountsStore, Tasks: tasksStore, Publisher: publisher, Events: eventBus, Audit: auditLog},
+		Plugins:  &api.PluginsHandler{Plugins: store.NewPlugins(pool)},
 	})
 
 	srv := &http.Server{
@@ -141,6 +153,7 @@ func run() error {
 		Servers:  serversStore,
 		Tasks:    tasksStore,
 		Accounts: accountsStore,
+		Events:   eventBus,
 		Audit:    auditLog,
 	})
 

@@ -13,6 +13,7 @@ import (
 
 	agentv1 "github.com/MaramHarsha/CypherPanel/gen/agent/v1"
 	"github.com/MaramHarsha/CypherPanel/internal/audit"
+	"github.com/MaramHarsha/CypherPanel/internal/events"
 	"github.com/MaramHarsha/CypherPanel/internal/store"
 )
 
@@ -21,6 +22,7 @@ type Server struct {
 	Servers  *store.Servers
 	Tasks    *store.Tasks
 	Accounts *store.Accounts
+	Events   *events.Bus
 	Audit    *audit.Logger
 }
 
@@ -43,6 +45,10 @@ func (s *Server) Register(ctx context.Context, req *agentv1.RegisterRequest) (*a
 			"distro_family": req.GetDistroFamily(),
 		},
 		IP: req.GetIpAddress(),
+	})
+
+	s.Events.Publish(ctx, events.SubjectServerRegistered, "server", srv.ID, map[string]any{
+		"id": srv.ID, "hostname": srv.Hostname, "distro_family": req.GetDistroFamily(),
 	})
 
 	slog.Info("agent registered", "server_id", srv.ID, "hostname", srv.Hostname, "distro", req.GetDistroFamily())
@@ -112,17 +118,23 @@ func (s *Server) applyAccountTransition(ctx context.Context, taskID, result stri
 	}
 
 	var terr error
+	var subject string
 	switch {
 	case task.Type == "system_user.create" && result == "succeeded":
 		terr = s.Accounts.SetStatus(ctx, task.AccountID, "active")
+		subject = events.SubjectAccountActivated
 	case task.Type == "system_user.create" && result == "failed":
 		terr = s.Accounts.SetStatus(ctx, task.AccountID, "failed")
+		subject = events.SubjectAccountFailed
 	case task.Type == "system_user.remove" && result == "succeeded":
 		terr = s.Accounts.Delete(ctx, task.AccountID)
+		subject = events.SubjectAccountTerminated
 	default:
 		return
 	}
 	if terr != nil && terr != store.ErrNotFound {
 		slog.Error("applying account transition", "task_id", taskID, "account_id", task.AccountID, "error", terr)
+		return
 	}
+	s.Events.Publish(ctx, subject, "account", task.AccountID, map[string]any{"id": task.AccountID})
 }

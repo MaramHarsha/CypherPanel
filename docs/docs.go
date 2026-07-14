@@ -161,6 +161,26 @@ const docTemplate = `{
                 },
                 "type": "object"
             },
+            "api.pluginResponse": {
+                "properties": {
+                    "enabled": {
+                        "type": "boolean"
+                    },
+                    "installed_at": {
+                        "type": "string"
+                    },
+                    "kind": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "version": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
             "api.refreshRequest": {
                 "properties": {
                     "refresh_token": {
@@ -635,6 +655,60 @@ const docTemplate = `{
                     }
                 ],
                 "summary": "Delete a package (root admin only)",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
+        "/admin/plugins": {
+            "get": {
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "items": {
+                                        "$ref": "#/components/schemas/api.pluginResponse"
+                                    },
+                                    "type": "array"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "List installed plugins (root admin only)",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
+        "/admin/plugins/manifest-schema": {
+            "get": {
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {},
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Plugin manifest schema info (root admin only)",
                 "tags": [
                     "admin"
                 ]

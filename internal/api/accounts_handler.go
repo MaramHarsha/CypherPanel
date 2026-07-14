@@ -15,6 +15,7 @@ import (
 
 	"github.com/MaramHarsha/CypherPanel/internal/audit"
 	"github.com/MaramHarsha/CypherPanel/internal/auth"
+	"github.com/MaramHarsha/CypherPanel/internal/events"
 	"github.com/MaramHarsha/CypherPanel/internal/jobs"
 	"github.com/MaramHarsha/CypherPanel/internal/store"
 )
@@ -23,7 +24,17 @@ type AccountsHandler struct {
 	Accounts  *store.Accounts
 	Tasks     *store.Tasks
 	Publisher *jobs.Publisher
+	Events    *events.Bus
 	Audit     *audit.Logger
+}
+
+// accountEvent is the minimal, secret-free snapshot carried on account events.
+type accountEvent struct {
+	ID       string `json:"id"`
+	Username string `json:"username"`
+	Domain   string `json:"domain"`
+	ServerID string `json:"server_id"`
+	Status   string `json:"status"`
 }
 
 type accountResponse struct {
@@ -151,6 +162,10 @@ func (h *AccountsHandler) Create(c *gin.Context) {
 		Detail: map[string]any{"username": req.Username, "domain": req.Domain, "server_id": req.ServerID},
 		IP:     c.ClientIP(),
 	})
+	h.Events.Publish(c.Request.Context(), events.SubjectAccountCreated, "account", account.ID, accountEvent{
+		ID: account.ID, Username: account.Username, Domain: account.PrimaryDomain,
+		ServerID: account.ServerID, Status: account.Status,
+	})
 	c.JSON(http.StatusAccepted, toAccountResponse(*account))
 }
 
@@ -165,7 +180,7 @@ func (h *AccountsHandler) Create(c *gin.Context) {
 //	@Security BearerAuth
 //	@Router   /admin/accounts/{id}/suspend [post]
 func (h *AccountsHandler) Suspend(c *gin.Context) {
-	h.setStatus(c, "suspended", "account.suspend")
+	h.setStatus(c, "suspended", "account.suspend", events.SubjectAccountSuspended)
 }
 
 // Unsuspend re-enables a suspended account.
@@ -179,10 +194,10 @@ func (h *AccountsHandler) Suspend(c *gin.Context) {
 //	@Security BearerAuth
 //	@Router   /admin/accounts/{id}/unsuspend [post]
 func (h *AccountsHandler) Unsuspend(c *gin.Context) {
-	h.setStatus(c, "active", "account.unsuspend")
+	h.setStatus(c, "active", "account.unsuspend", events.SubjectAccountUnsuspended)
 }
 
-func (h *AccountsHandler) setStatus(c *gin.Context, status, action string) {
+func (h *AccountsHandler) setStatus(c *gin.Context, status, action, subject string) {
 	id := c.Param("id")
 	if err := h.Accounts.SetStatus(c.Request.Context(), id, status); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -197,6 +212,7 @@ func (h *AccountsHandler) setStatus(c *gin.Context, status, action string) {
 		ActorID: claims.Subject, ActorRole: string(claims.Role),
 		Action: action, TargetType: "account", TargetID: id, IP: c.ClientIP(),
 	})
+	h.Events.Publish(c.Request.Context(), subject, "account", id, accountEvent{ID: id, Status: status})
 	c.JSON(http.StatusOK, gin.H{"status": status})
 }
 
@@ -246,6 +262,9 @@ func (h *AccountsHandler) Terminate(c *gin.Context) {
 		ActorID: claims.Subject, ActorRole: string(claims.Role),
 		Action: "account.terminate", TargetType: "account", TargetID: id,
 		Detail: map[string]any{"system_username": account.SystemUsername}, IP: c.ClientIP(),
+	})
+	h.Events.Publish(c.Request.Context(), events.SubjectAccountTerminating, "account", id, accountEvent{
+		ID: id, Username: account.Username, ServerID: account.ServerID, Status: "terminating",
 	})
 	c.JSON(http.StatusAccepted, gin.H{"status": "terminating"})
 }

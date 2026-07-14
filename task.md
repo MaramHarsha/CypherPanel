@@ -91,9 +91,8 @@
 - [ ] Server node detail view + register/remove flows in UI
 - [ ] Automated systemd service monitors
 - [ ] Reseller resource pools
-- [ ] Reserve `/api/v1/plugins/` route namespace + `plugins` table stub (no loader yet — `plan.md` §11)
-- [ ] Reserve NATS `events.>` subject namespace for the internal Event Bus, separate from agent-task subjects (`plan.md` §12)
-- [ ] Finalize plugin manifest (`plugin.yaml`) schema before any third-party plugin exists (`plan.md` §11)
+- [x] **Event Bus** (`internal/events`, §12): `EVENTS` JetStream stream (`events.>`, Limits retention, 14d) strictly separate from `tasks.*`; JetStream publish + in-process pub/sub fan-out; emits `server.registered`, `package.created`/`deleted`, `account.created`/`activated`/`suspended`/`unsuspended`/`terminating`/`terminated`/`failed` — secret-free snapshots. **E2E verified**: 5 events in the stream + all logged by an in-process subscriber ✅
+- [x] **Plugin reservations** (§11): migration 000005 `plugins` table; finalized `plugin.yaml` manifest schema (`internal/plugins`, `api_version: v1`, validated, unit-tested) + `docs/plugin-manifest.md`; read-only `GET /api/v1/admin/plugins` and `/plugins/manifest-schema` reserving the namespace (no loader yet)
 - [x] **Phase 2 skills batch** (catalog #9-11): `ui-development`, `async-ui-patterns`, `extensibility-and-events`
 
 ## Phase 3 — Web Server & PHP Management ⬜

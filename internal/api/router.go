@@ -21,6 +21,7 @@ type Deps struct {
 	Servers  *ServersHandler
 	Packages *PackagesHandler
 	Accounts *AccountsHandler
+	Plugins  *PluginsHandler
 }
 
 func NewRouter(d Deps) *gin.Engine {
@@ -68,6 +69,9 @@ func NewRouter(d Deps) *gin.Engine {
 	admin.POST("/accounts/:id/suspend", d.Accounts.Suspend)
 	admin.POST("/accounts/:id/unsuspend", d.Accounts.Unsuspend)
 	admin.POST("/accounts/:id/terminate", d.Accounts.Terminate)
+	// Plugin surface reservation (§11) — read-only until the runtime lands.
+	admin.GET("/plugins", d.Plugins.List)
+	admin.GET("/plugins/manifest-schema", d.Plugins.ManifestSchema)
 
 	return r
 }
