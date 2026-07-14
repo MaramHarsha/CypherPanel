@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Ban, CirclePlay, Plus, Trash2, Users } from "lucide-react";
+import { Ban, CirclePlay, Lock, LockOpen, Plus, Trash2, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -45,6 +45,7 @@ import {
   accountAction,
   ApiError,
   createAccount,
+  issueSSL,
   listAccounts,
   listPackages,
   listServers,
@@ -263,6 +264,11 @@ export default function AccountsPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["accounts"] }),
   });
 
+  const ssl = useMutation({
+    mutationFn: (id: string) => issueSSL(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["accounts"] }),
+  });
+
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between">
@@ -293,6 +299,7 @@ export default function AccountsPage() {
                     <th className="py-2 pr-4 font-medium">Server</th>
                     <th className="py-2 pr-4 font-medium">Package</th>
                     <th className="py-2 pr-4 font-medium">PHP</th>
+                    <th className="py-2 pr-4 font-medium">SSL</th>
                     <th className="py-2 pr-4 font-medium">Status</th>
                     <th className="py-2 pr-4 font-medium text-right">Actions</th>
                   </tr>
@@ -305,6 +312,29 @@ export default function AccountsPage() {
                       <td className="py-2 pr-4">{a.server_name}</td>
                       <td className="py-2 pr-4">{a.package_name}</td>
                       <td className="py-2 pr-4 font-mono text-xs">{a.php_version || "—"}</td>
+                      <td className="py-2 pr-4">
+                        {a.ssl_status === "active" ? (
+                          <span
+                            className="inline-flex items-center gap-1 text-green-600 dark:text-green-400"
+                            title={a.ssl_expires_at ? `Expires ${new Date(a.ssl_expires_at).toLocaleDateString()}` : "Active"}
+                          >
+                            <Lock className="h-3.5 w-3.5" /> HTTPS
+                          </span>
+                        ) : a.ssl_status === "issuing" ? (
+                          <span className="text-xs text-muted-foreground">issuing…</span>
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 gap-1 px-2 text-xs"
+                            disabled={a.status !== "active" || ssl.isPending}
+                            onClick={() => ssl.mutate(a.id!)}
+                          >
+                            <LockOpen className="h-3.5 w-3.5" />
+                            {a.ssl_status === "failed" ? "Retry" : "Issue"}
+                          </Button>
+                        )}
+                      </td>
                       <td className="py-2 pr-4">
                         <Badge variant={statusVariant[a.status ?? ""] ?? "secondary"}>
                           {a.status}

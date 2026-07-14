@@ -49,6 +49,9 @@ type Agent struct {
 	TLSCertFile string
 	TLSKeyFile  string
 	TLSCAFile   string
+	// ACMEDirectory is the ACME v2 directory URL for SSL issuance (default
+	// Let's Encrypt production). Point at a staging/test directory for testing.
+	ACMEDirectory string
 }
 
 // insecureDevSecret is only ever used when CYPHER_ENV=development and no
@@ -58,18 +61,18 @@ const insecureDevSecret = "cypherpanel-dev-secret-do-not-use-in-production"
 // LoadCore reads CypherCore configuration from the environment.
 func LoadCore() (Core, error) {
 	c := Core{
-		Env:             envOr("CYPHER_ENV", EnvDevelopment),
-		HTTPAddr:        envOr("CYPHER_HTTP_ADDR", ":8080"),
-		GRPCAddr:        envOr("CYPHER_GRPC_ADDR", ":9090"),
-		DatabaseURL:     envOr("CYPHER_DATABASE_URL", "postgres://cypher:cypher-dev-only@localhost:5432/cypherpanel?sslmode=disable"),
-		RedisURL:        envOr("CYPHER_REDIS_URL", "redis://localhost:6379/0"),
-		NATSURL:         envOr("CYPHER_NATS_URL", "nats://localhost:4222"),
+		Env:               envOr("CYPHER_ENV", EnvDevelopment),
+		HTTPAddr:          envOr("CYPHER_HTTP_ADDR", ":8080"),
+		GRPCAddr:          envOr("CYPHER_GRPC_ADDR", ":9090"),
+		DatabaseURL:       envOr("CYPHER_DATABASE_URL", "postgres://cypher:cypher-dev-only@localhost:5432/cypherpanel?sslmode=disable"),
+		RedisURL:          envOr("CYPHER_REDIS_URL", "redis://localhost:6379/0"),
+		NATSURL:           envOr("CYPHER_NATS_URL", "nats://localhost:4222"),
 		NATSCreds:         os.Getenv("CYPHER_NATS_CREDS"),
 		JWTSecret:         os.Getenv("CYPHER_JWT_SECRET"),
 		DefaultPHPVersion: envOr("CYPHER_DEFAULT_PHP_VERSION", "8.3"),
 		GRPCTLSCert:       os.Getenv("CYPHER_GRPC_TLS_CERT"),
-		GRPCTLSKey:      os.Getenv("CYPHER_GRPC_TLS_KEY"),
-		GRPCTLSClientCA: os.Getenv("CYPHER_GRPC_TLS_CLIENT_CA"),
+		GRPCTLSKey:        os.Getenv("CYPHER_GRPC_TLS_KEY"),
+		GRPCTLSClientCA:   os.Getenv("CYPHER_GRPC_TLS_CLIENT_CA"),
 	}
 
 	var err error
@@ -95,13 +98,14 @@ func LoadCore() (Core, error) {
 // LoadAgent reads CypherAgent configuration from the environment.
 func LoadAgent() (Agent, error) {
 	a := Agent{
-		Env:         envOr("CYPHER_ENV", EnvDevelopment),
-		CoreAddr:    envOr("CYPHER_AGENT_CORE_ADDR", "localhost:9090"),
-		NATSURL:     envOr("CYPHER_AGENT_NATS_URL", "nats://localhost:4222"),
-		NATSCreds:   os.Getenv("CYPHER_AGENT_NATS_CREDS"),
-		TLSCertFile: os.Getenv("CYPHER_AGENT_TLS_CERT"),
-		TLSKeyFile:  os.Getenv("CYPHER_AGENT_TLS_KEY"),
-		TLSCAFile:   os.Getenv("CYPHER_AGENT_TLS_CA"),
+		Env:           envOr("CYPHER_ENV", EnvDevelopment),
+		CoreAddr:      envOr("CYPHER_AGENT_CORE_ADDR", "localhost:9090"),
+		NATSURL:       envOr("CYPHER_AGENT_NATS_URL", "nats://localhost:4222"),
+		NATSCreds:     os.Getenv("CYPHER_AGENT_NATS_CREDS"),
+		ACMEDirectory: envOr("CYPHER_ACME_DIRECTORY", "https://acme-v02.api.letsencrypt.org/directory"),
+		TLSCertFile:   os.Getenv("CYPHER_AGENT_TLS_CERT"),
+		TLSKeyFile:    os.Getenv("CYPHER_AGENT_TLS_KEY"),
+		TLSCAFile:     os.Getenv("CYPHER_AGENT_TLS_CA"),
 	}
 	if a.Env == EnvProduction {
 		if a.TLSCertFile == "" || a.TLSKeyFile == "" || a.TLSCAFile == "" {

@@ -24,6 +24,7 @@ const (
 	TypeSystemUserRemove = "system_user.remove" // payload: SystemUserRemovePayload
 	TypeSiteProvision    = "site.provision"     // payload: SiteProvisionPayload
 	TypeSiteDeprovision  = "site.deprovision"   // payload: SiteDeprovisionPayload
+	TypeSSLIssue         = "ssl.issue"          // payload: SSLIssuePayload
 )
 
 // Task is the wire format published to JetStream.
@@ -51,10 +52,10 @@ type SystemUserRemovePayload struct {
 // SiteProvisionPayload sets up an account's web serving: web root + logs dirs,
 // nginx vhost, and a dedicated PHP-FPM pool.
 type SiteProvisionPayload struct {
-	Username   string            `json:"username"`
-	Domain     string            `json:"domain"`
-	PHPVersion string            `json:"php_version"`
-	MemoryMB   int               `json:"memory_mb,omitempty"`    // package memory limit (0 = default)
+	Username    string            `json:"username"`
+	Domain      string            `json:"domain"`
+	PHPVersion  string            `json:"php_version"`
+	MemoryMB    int               `json:"memory_mb,omitempty"`    // package memory limit (0 = default)
 	PHPSettings map[string]string `json:"php_settings,omitempty"` // validated php.ini overrides
 }
 
@@ -65,12 +66,25 @@ type SiteDeprovisionPayload struct {
 	PHPVersion string `json:"php_version"`
 }
 
+// SSLIssuePayload issues (or renews) a Let's Encrypt certificate for a domain
+// and switches its vhost to HTTPS.
+type SSLIssuePayload struct {
+	Username string `json:"username"`
+	Domain   string `json:"domain"`
+	Email    string `json:"email"`
+}
+
+// Result metadata keys reported back with ssl.issue.
+const (
+	MetaSSLNotAfter = "ssl_not_after" // RFC3339 certificate expiry
+)
+
 // ValidType reports whether the task type is known to this build. Core
 // rejects unknown types at the API boundary rather than letting them fail
 // on every agent redelivery.
 func ValidType(t string) bool {
 	switch t {
-	case TypeNoop, TypeSystemUserCreate, TypeSystemUserRemove, TypeSiteProvision, TypeSiteDeprovision:
+	case TypeNoop, TypeSystemUserCreate, TypeSystemUserRemove, TypeSiteProvision, TypeSiteDeprovision, TypeSSLIssue:
 		return true
 	}
 	return false

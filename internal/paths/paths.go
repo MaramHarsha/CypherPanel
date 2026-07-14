@@ -31,6 +31,7 @@ type Layout struct {
 	ACMEWebRoot    string // HTTP-01 challenge directory
 	RunDir         string // sockets, pidfiles
 	WebServerUser  string // system user the web server runs as (socket group owner)
+	SSLDir         string // issued certificates + ACME account keys
 }
 
 // ForFamily returns the default layout for a distro family, with any
@@ -43,6 +44,7 @@ func ForFamily(f Family) Layout {
 		WebRootName:    "public_html",
 		ACMEWebRoot:    "/var/lib/cypherpanel/acme",
 		RunDir:         "/run/cypherpanel",
+		SSLDir:         "/var/lib/cypherpanel/ssl",
 	}
 	switch f {
 	case FamilyDebian:
@@ -101,6 +103,21 @@ func (l Layout) PHPFPMPoolPath(phpVersion, username string) string {
 	return filepath.Join(l.PHPFPMPoolDir, phpVersion, "fpm", "pool.d", username+".conf")
 }
 
+// SSLCertPath / SSLKeyPath are the issued fullchain + private key for a domain.
+func (l Layout) SSLCertPath(domain string) string {
+	return filepath.Join(l.SSLDir, domain, "fullchain.pem")
+}
+
+func (l Layout) SSLKeyPath(domain string) string {
+	return filepath.Join(l.SSLDir, domain, "privkey.pem")
+}
+
+// ACMEAccountDir holds the persistent ACME account key (reused across issues
+// so we don't register a new account each time).
+func (l Layout) ACMEAccountDir() string {
+	return filepath.Join(l.SSLDir, "accounts")
+}
+
 func (l *Layout) applyEnvOverrides() {
 	override := func(dst *string, key string) {
 		if v := os.Getenv(key); v != "" {
@@ -116,4 +133,5 @@ func (l *Layout) applyEnvOverrides() {
 	override(&l.WebRootName, "CYPHER_PATH_WEB_ROOT_NAME")
 	override(&l.ACMEWebRoot, "CYPHER_PATH_ACME_WEB_ROOT")
 	override(&l.RunDir, "CYPHER_PATH_RUN_DIR")
+	override(&l.SSLDir, "CYPHER_PATH_SSL_DIR")
 }

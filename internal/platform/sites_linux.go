@@ -62,6 +62,34 @@ func (linuxSites) Deprovision(ctx context.Context, vhostPath, poolPath string) e
 	return nil
 }
 
+func (linuxSites) InstallCertificate(_ context.Context, certPath string, certPEM []byte, keyPath string, keyPEM []byte) error {
+	if err := os.MkdirAll(filepath.Dir(certPath), 0o755); err != nil {
+		return fmt.Errorf("platform: mkdir %s: %w", filepath.Dir(certPath), err)
+	}
+	if err := os.WriteFile(certPath, certPEM, 0o644); err != nil {
+		return fmt.Errorf("platform: writing cert %s: %w", certPath, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(keyPath), 0o700); err != nil {
+		return fmt.Errorf("platform: mkdir %s: %w", filepath.Dir(keyPath), err)
+	}
+	// Private key must never be world-readable.
+	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+		return fmt.Errorf("platform: writing key %s: %w", keyPath, err)
+	}
+	return nil
+}
+
+func (linuxSites) ApplyVHost(ctx context.Context, vhostPath string, config []byte) error {
+	if err := writeRootConfig(vhostPath, config); err != nil {
+		return err
+	}
+	if err := validateAndReloadNginx(ctx); err != nil {
+		_ = os.Remove(vhostPath)
+		return err
+	}
+	return nil
+}
+
 func lookupIDs(username string) (int, int, error) {
 	u, err := user.Lookup(username)
 	if err != nil {

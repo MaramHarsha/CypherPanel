@@ -33,6 +33,7 @@ const (
 	SubjectAccountTerminating = "events.account.terminating"
 	SubjectAccountTerminated  = "events.account.terminated"
 	SubjectAccountFailed      = "events.account.failed"
+	SubjectAccountSSLIssued   = "events.account.ssl_issued"
 	SubjectPackageCreated     = "events.package.created"
 	SubjectPackageDeleted     = "events.package.deleted"
 	SubjectServerRegistered   = "events.server.registered"

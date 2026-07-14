@@ -7,6 +7,7 @@ package agentrpc
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -108,16 +109,22 @@ func (s *Server) ReportTaskResult(ctx context.Context, req *agentv1.ReportTaskRe
 		},
 	})
 
-	s.applyAccountTransition(ctx, req.GetTaskId(), result)
+	s.applyAccountTransition(ctx, req.GetTaskId(), result, req.GetMetadata())
 	return &agentv1.ReportTaskResultResponse{}, nil
 }
 
 // applyAccountTransition drives account lifecycle from provisioning task
 // outcomes: create-success → active, create-failure → failed,
 // remove-success → account (and its panel user) deleted.
-func (s *Server) applyAccountTransition(ctx context.Context, taskID, result string) {
+func (s *Server) applyAccountTransition(ctx context.Context, taskID, result string, meta map[string]string) {
 	task, err := s.Tasks.GetByID(ctx, taskID)
 	if err != nil || task.AccountID == "" {
+		return
+	}
+
+	// SSL issuance drives ssl_status, not account status.
+	if task.Type == "ssl.issue" {
+		s.applySSLResult(ctx, task.AccountID, result, meta)
 		return
 	}
 
@@ -141,4 +148,22 @@ func (s *Server) applyAccountTransition(ctx context.Context, taskID, result stri
 		return
 	}
 	s.Events.Publish(ctx, subject, "account", task.AccountID, map[string]any{"id": task.AccountID})
+}
+
+func (s *Server) applySSLResult(ctx context.Context, accountID, result string, meta map[string]string) {
+	if result != "succeeded" {
+		_ = s.Accounts.SetSSL(ctx, accountID, "failed", nil)
+		return
+	}
+	var expires *time.Time
+	if v := meta["ssl_not_after"]; v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			expires = &t
+		}
+	}
+	if err := s.Accounts.SetSSL(ctx, accountID, "active", expires); err != nil && err != store.ErrNotFound {
+		slog.Error("applying ssl result", "account_id", accountID, "error", err)
+		return
+	}
+	s.Events.Publish(ctx, events.SubjectAccountSSLIssued, "account", accountID, map[string]any{"id": accountID})
 }

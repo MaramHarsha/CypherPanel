@@ -26,6 +26,8 @@ type Account struct {
 	Status         string
 	PHPVersion     string
 	PHPSettings    map[string]string
+	SSLStatus      string
+	SSLExpiresAt   *time.Time
 	CreatedAt      time.Time
 }
 
@@ -40,7 +42,8 @@ func NewAccounts(pool *pgxpool.Pool) *Accounts {
 const accountSelect = `
 	SELECT a.id, a.user_id, u.username, u.email, COALESCE(u.reseller_id::text, ''),
 	       a.server_id, s.name, a.package_id, p.name,
-	       a.system_username, a.primary_domain, a.status, a.php_version, a.php_settings, a.created_at
+	       a.system_username, a.primary_domain, a.status, a.php_version, a.php_settings,
+	       a.ssl_status, a.ssl_expires_at, a.created_at
 	FROM accounts a
 	JOIN users u ON u.id = a.user_id
 	JOIN servers s ON s.id = a.server_id
@@ -175,7 +178,7 @@ func scanAccount(row pgx.Row) (*Account, error) {
 	var phpSettings []byte
 	err := row.Scan(&a.ID, &a.UserID, &a.Username, &a.Email, &a.ResellerID, &a.ServerID, &a.ServerName,
 		&a.PackageID, &a.PackageName, &a.SystemUsername, &a.PrimaryDomain, &a.Status,
-		&a.PHPVersion, &phpSettings, &a.CreatedAt)
+		&a.PHPVersion, &phpSettings, &a.SSLStatus, &a.SSLExpiresAt, &a.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -186,6 +189,20 @@ func scanAccount(row pgx.Row) (*Account, error) {
 		_ = json.Unmarshal(phpSettings, &a.PHPSettings)
 	}
 	return &a, nil
+}
+
+// SetSSL updates an account's certificate status and expiry.
+func (s *Accounts) SetSSL(ctx context.Context, id, status string, expiresAt *time.Time) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE accounts SET ssl_status = $2, ssl_expires_at = $3, updated_at = now() WHERE id = $1`,
+		id, status, expiresAt)
+	if err != nil {
+		return fmt.Errorf("store: setting ssl status: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // UpdatePHPSettings replaces an account's php.ini override map.

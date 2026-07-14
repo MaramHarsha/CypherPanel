@@ -422,11 +422,14 @@ func (*HeartbeatResponse) Descriptor() ([]byte, []int) {
 }
 
 type ReportTaskResultRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ServerId      string                 `protobuf:"bytes,1,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
-	TaskId        string                 `protobuf:"bytes,2,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	Status        TaskStatus             `protobuf:"varint,3,opt,name=status,proto3,enum=cypherpanel.agent.v1.TaskStatus" json:"status,omitempty"`
-	ErrorMessage  string                 `protobuf:"bytes,4,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"` // set when status is TASK_STATUS_FAILED
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	ServerId     string                 `protobuf:"bytes,1,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
+	TaskId       string                 `protobuf:"bytes,2,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	Status       TaskStatus             `protobuf:"varint,3,opt,name=status,proto3,enum=cypherpanel.agent.v1.TaskStatus" json:"status,omitempty"`
+	ErrorMessage string                 `protobuf:"bytes,4,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"` // set when status is TASK_STATUS_FAILED
+	// Task-type-specific result data (add-only). e.g. ssl.issue reports
+	// "ssl_not_after" (RFC3339) so Core can schedule renewal.
+	Metadata      map[string]string `protobuf:"bytes,5,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -487,6 +490,13 @@ func (x *ReportTaskResultRequest) GetErrorMessage() string {
 		return x.ErrorMessage
 	}
 	return ""
+}
+
+func (x *ReportTaskResultRequest) GetMetadata() map[string]string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
 }
 
 type ReportTaskResultResponse struct {
@@ -552,12 +562,16 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\x11memory_used_bytes\x18\x03 \x01(\x04R\x0fmemoryUsedBytes\x12(\n" +
 	"\x10disk_total_bytes\x18\x04 \x01(\x04R\x0ediskTotalBytes\x12&\n" +
 	"\x0fdisk_used_bytes\x18\x05 \x01(\x04R\rdiskUsedBytes\"\x13\n" +
-	"\x11HeartbeatResponse\"\xae\x01\n" +
+	"\x11HeartbeatResponse\"\xc4\x02\n" +
 	"\x17ReportTaskResultRequest\x12\x1b\n" +
 	"\tserver_id\x18\x01 \x01(\tR\bserverId\x12\x17\n" +
 	"\atask_id\x18\x02 \x01(\tR\x06taskId\x128\n" +
 	"\x06status\x18\x03 \x01(\x0e2 .cypherpanel.agent.v1.TaskStatusR\x06status\x12#\n" +
-	"\rerror_message\x18\x04 \x01(\tR\ferrorMessage\"\x1a\n" +
+	"\rerror_message\x18\x04 \x01(\tR\ferrorMessage\x12W\n" +
+	"\bmetadata\x18\x05 \x03(\v2;.cypherpanel.agent.v1.ReportTaskResultRequest.MetadataEntryR\bmetadata\x1a;\n" +
+	"\rMetadataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x1a\n" +
 	"\x18ReportTaskResultResponse*\\\n" +
 	"\n" +
 	"TaskStatus\x12\x1b\n" +
@@ -582,7 +596,7 @@ func file_agent_v1_agent_proto_rawDescGZIP() []byte {
 }
 
 var file_agent_v1_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_agent_v1_agent_proto_goTypes = []any{
 	(TaskStatus)(0),                  // 0: cypherpanel.agent.v1.TaskStatus
 	(*RegisterRequest)(nil),          // 1: cypherpanel.agent.v1.RegisterRequest
@@ -593,22 +607,24 @@ var file_agent_v1_agent_proto_goTypes = []any{
 	(*HeartbeatResponse)(nil),        // 6: cypherpanel.agent.v1.HeartbeatResponse
 	(*ReportTaskResultRequest)(nil),  // 7: cypherpanel.agent.v1.ReportTaskResultRequest
 	(*ReportTaskResultResponse)(nil), // 8: cypherpanel.agent.v1.ReportTaskResultResponse
+	nil,                              // 9: cypherpanel.agent.v1.ReportTaskResultRequest.MetadataEntry
 }
 var file_agent_v1_agent_proto_depIdxs = []int32{
 	5, // 0: cypherpanel.agent.v1.HeartbeatRequest.stats:type_name -> cypherpanel.agent.v1.HostStats
 	4, // 1: cypherpanel.agent.v1.HeartbeatRequest.services:type_name -> cypherpanel.agent.v1.ServiceStatus
 	0, // 2: cypherpanel.agent.v1.ReportTaskResultRequest.status:type_name -> cypherpanel.agent.v1.TaskStatus
-	1, // 3: cypherpanel.agent.v1.AgentService.Register:input_type -> cypherpanel.agent.v1.RegisterRequest
-	3, // 4: cypherpanel.agent.v1.AgentService.Heartbeat:input_type -> cypherpanel.agent.v1.HeartbeatRequest
-	7, // 5: cypherpanel.agent.v1.AgentService.ReportTaskResult:input_type -> cypherpanel.agent.v1.ReportTaskResultRequest
-	2, // 6: cypherpanel.agent.v1.AgentService.Register:output_type -> cypherpanel.agent.v1.RegisterResponse
-	6, // 7: cypherpanel.agent.v1.AgentService.Heartbeat:output_type -> cypherpanel.agent.v1.HeartbeatResponse
-	8, // 8: cypherpanel.agent.v1.AgentService.ReportTaskResult:output_type -> cypherpanel.agent.v1.ReportTaskResultResponse
-	6, // [6:9] is the sub-list for method output_type
-	3, // [3:6] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	9, // 3: cypherpanel.agent.v1.ReportTaskResultRequest.metadata:type_name -> cypherpanel.agent.v1.ReportTaskResultRequest.MetadataEntry
+	1, // 4: cypherpanel.agent.v1.AgentService.Register:input_type -> cypherpanel.agent.v1.RegisterRequest
+	3, // 5: cypherpanel.agent.v1.AgentService.Heartbeat:input_type -> cypherpanel.agent.v1.HeartbeatRequest
+	7, // 6: cypherpanel.agent.v1.AgentService.ReportTaskResult:input_type -> cypherpanel.agent.v1.ReportTaskResultRequest
+	2, // 7: cypherpanel.agent.v1.AgentService.Register:output_type -> cypherpanel.agent.v1.RegisterResponse
+	6, // 8: cypherpanel.agent.v1.AgentService.Heartbeat:output_type -> cypherpanel.agent.v1.HeartbeatResponse
+	8, // 9: cypherpanel.agent.v1.AgentService.ReportTaskResult:output_type -> cypherpanel.agent.v1.ReportTaskResultResponse
+	7, // [7:10] is the sub-list for method output_type
+	4, // [4:7] is the sub-list for method input_type
+	4, // [4:4] is the sub-list for extension type_name
+	4, // [4:4] is the sub-list for extension extendee
+	0, // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_agent_v1_agent_proto_init() }
@@ -622,7 +638,7 @@ func file_agent_v1_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agent_v1_agent_proto_rawDesc), len(file_agent_v1_agent_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   8,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

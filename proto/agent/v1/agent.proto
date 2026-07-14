@@ -62,6 +62,9 @@ message ReportTaskResultRequest {
   string task_id = 2;
   TaskStatus status = 3;
   string error_message = 4; // set when status is TASK_STATUS_FAILED
+  // Task-type-specific result data (add-only). e.g. ssl.issue reports
+  // "ssl_not_after" (RFC3339) so Core can schedule renewal.
+  map<string, string> metadata = 5;
 }
 
 enum TaskStatus {

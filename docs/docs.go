@@ -43,6 +43,12 @@ const docTemplate = `{
                     "server_name": {
                         "type": "string"
                     },
+                    "ssl_expires_at": {
+                        "type": "string"
+                    },
+                    "ssl_status": {
+                        "type": "string"
+                    },
                     "status": {
                         "type": "string"
                     },
@@ -523,6 +529,71 @@ const docTemplate = `{
                     }
                 ],
                 "summary": "Update an account's PHP INI settings (MultiPHP INI editor)",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
+        "/admin/accounts/{id}/ssl": {
+            "post": {
+                "parameters": [
+                    {
+                        "description": "Account ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Accepted"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Conflict"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Issue/renew an SSL certificate for the account domain",
                 "tags": [
                     "admin"
                 ]

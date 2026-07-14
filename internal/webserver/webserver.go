@@ -16,6 +16,15 @@ type VHostSpec struct {
 	PHPSocket string // unix socket of this account's PHP-FPM pool
 	AccessLog string
 	ErrorLog  string
+	// TLS: when both are set, the vhost serves HTTPS on 443 and redirects
+	// HTTP→HTTPS (keeping /.well-known/acme-challenge on 80 for renewals).
+	TLSCertPath string
+	TLSKeyPath  string
+}
+
+// TLSEnabled reports whether the spec has a certificate to serve.
+func (s VHostSpec) TLSEnabled() bool {
+	return s.TLSCertPath != "" && s.TLSKeyPath != ""
 }
 
 // VHostRenderer renders a virtual-host config. Name identifies the engine and

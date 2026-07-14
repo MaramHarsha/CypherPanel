@@ -12,10 +12,57 @@ type Nginx struct{}
 func (Nginx) Name() string { return "nginx" }
 
 var nginxTmpl = template.Must(template.New("nginx-vhost").Parse(`# Managed by CypherPanel — do not edit by hand.
+{{- $names := printf "%s" .Domain }}{{ range .Aliases }}{{ $names = printf "%s %s" $names . }}{{ end }}
+{{- if .TLSEnabled }}
 server {
     listen 80;
     listen [::]:80;
-    server_name {{ .Domain }}{{ range .Aliases }} {{ . }}{{ end }};
+    server_name {{ $names }};
+
+    # Serve ACME challenges over HTTP; redirect everything else to HTTPS.
+    location /.well-known/acme-challenge/ {
+        root {{ .WebRoot }};
+    }
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name {{ $names }};
+
+    ssl_certificate {{ .TLSCertPath }};
+    ssl_certificate_key {{ .TLSKeyPath }};
+
+    root {{ .WebRoot }};
+    index index.php index.html index.htm;
+
+    access_log {{ .AccessLog }};
+    error_log {{ .ErrorLog }};
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_pass unix:{{ .PHPSocket }};
+        fastcgi_index index.php;
+    }
+
+    location ~ /\.(?!well-known).* {
+        deny all;
+    }
+}
+{{- else }}
+server {
+    listen 80;
+    listen [::]:80;
+    server_name {{ $names }};
 
     root {{ .WebRoot }};
     index index.php index.html index.htm;
@@ -39,6 +86,7 @@ server {
         deny all;
     }
 }
+{{- end }}
 `))
 
 func (Nginx) Render(spec VHostSpec) ([]byte, error) {

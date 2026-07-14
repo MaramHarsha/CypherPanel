@@ -43,6 +43,23 @@ func TestNginxRenderGolden(t *testing.T) {
 	checkGolden(t, "vhost.golden", got)
 }
 
+func TestNginxRenderTLSGolden(t *testing.T) {
+	got, err := Nginx{}.Render(VHostSpec{
+		Domain:      "alice.example.com",
+		Aliases:     []string{"www.alice.example.com"},
+		WebRoot:     "/home/cyph_alice/public_html",
+		PHPSocket:   "/run/cypherpanel/php-cyph_alice.sock",
+		AccessLog:   "/home/cyph_alice/logs/alice.example.com.access.log",
+		ErrorLog:    "/home/cyph_alice/logs/alice.example.com.error.log",
+		TLSCertPath: "/var/lib/cypherpanel/ssl/alice.example.com/fullchain.pem",
+		TLSKeyPath:  "/var/lib/cypherpanel/ssl/alice.example.com/privkey.pem",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkGolden(t, "vhost_tls.golden", got)
+}
+
 func TestPHPFPMPoolRenderGolden(t *testing.T) {
 	got, err := RenderPHPFPMPool(PoolSpec{
 		User:          "cyph_alice",

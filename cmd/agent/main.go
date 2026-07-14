@@ -21,6 +21,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	agentv1 "github.com/MaramHarsha/CypherPanel/gen/agent/v1"
+	"github.com/MaramHarsha/CypherPanel/internal/acme"
 	"github.com/MaramHarsha/CypherPanel/internal/config"
 	"github.com/MaramHarsha/CypherPanel/internal/hoststats"
 	"github.com/MaramHarsha/CypherPanel/internal/jobs"
@@ -92,6 +93,7 @@ func run() error {
 		users:  platform.New(),
 		sites:  platform.NewSites(),
 		vhost:  webserver.Nginx{},
+		acme:   acme.NewIssuer(cfg.ACMEDirectory, layout.ACMEAccountDir()),
 	}
 	consumerErr := make(chan error, 1)
 	go func() {

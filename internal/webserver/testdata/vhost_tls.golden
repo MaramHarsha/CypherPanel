@@ -1,0 +1,45 @@
+# Managed by CypherPanel — do not edit by hand.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name alice.example.com www.alice.example.com;
+
+    # Serve ACME challenges over HTTP; redirect everything else to HTTPS.
+    location /.well-known/acme-challenge/ {
+        root /home/cyph_alice/public_html;
+    }
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name alice.example.com www.alice.example.com;
+
+    ssl_certificate /var/lib/cypherpanel/ssl/alice.example.com/fullchain.pem;
+    ssl_certificate_key /var/lib/cypherpanel/ssl/alice.example.com/privkey.pem;
+
+    root /home/cyph_alice/public_html;
+    index index.php index.html index.htm;
+
+    access_log /home/cyph_alice/logs/alice.example.com.access.log;
+    error_log /home/cyph_alice/logs/alice.example.com.error.log;
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_pass unix:/run/cypherpanel/php-cyph_alice.sock;
+        fastcgi_index index.php;
+    }
+
+    location ~ /\.(?!well-known).* {
+        deny all;
+    }
+}

@@ -147,6 +147,10 @@ export function updatePHPSettings(id: string, settings: Record<string, string>):
   });
 }
 
+export function issueSSL(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/admin/accounts/${id}/ssl`, { method: "POST" });
+}
+
 export function listResellers(): Promise<ResellerInfo[]> {
   return apiFetch<ResellerInfo[]>("/api/v1/admin/resellers");
 }

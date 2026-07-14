@@ -71,6 +71,8 @@ type accountResponse struct {
 	Status         string            `json:"status"`
 	PHPVersion     string            `json:"php_version"`
 	PHPSettings    map[string]string `json:"php_settings"`
+	SSLStatus      string            `json:"ssl_status"`
+	SSLExpiresAt   *time.Time        `json:"ssl_expires_at"`
 	CreatedAt      time.Time         `json:"created_at"`
 }
 
@@ -96,6 +98,7 @@ func toAccountResponse(a store.Account) accountResponse {
 		PackageID: a.PackageID, PackageName: a.PackageName,
 		SystemUsername: a.SystemUsername, PrimaryDomain: a.PrimaryDomain,
 		Status: a.Status, PHPVersion: a.PHPVersion, PHPSettings: settings,
+		SSLStatus: a.SSLStatus, SSLExpiresAt: a.SSLExpiresAt,
 		CreatedAt: a.CreatedAt,
 	}
 }
@@ -378,6 +381,57 @@ func (h *AccountsHandler) UpdatePHPSettings(c *gin.Context) {
 		Detail: map[string]any{"settings": clean}, IP: c.ClientIP(),
 	})
 	c.JSON(http.StatusAccepted, gin.H{"status": "applying", "settings": clean})
+}
+
+// IssueSSL requests a Let's Encrypt certificate for the account's primary
+// domain and switches it to HTTPS. Only meaningful for active accounts.
+//
+//	@Summary  Issue/renew an SSL certificate for the account domain
+//	@Tags     admin
+//	@Produce  json
+//	@Param    id path string true "Account ID"
+//	@Success  202 {object} map[string]string
+//	@Failure  404 {object} map[string]string
+//	@Failure  409 {object} map[string]string
+//	@Security BearerAuth
+//	@Router   /admin/accounts/{id}/ssl [post]
+func (h *AccountsHandler) IssueSSL(c *gin.Context) {
+	id := c.Param("id")
+	claims := auth.ClaimsFrom(c)
+
+	account, err := h.Accounts.GetByID(c.Request.Context(), id)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && !auth.CanAct(claims, account.ResellerID)) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "account not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	if account.Status != "active" {
+		c.JSON(http.StatusConflict, gin.H{"error": "account must be active to issue a certificate"})
+		return
+	}
+
+	if err := h.Accounts.SetSSL(c.Request.Context(), id, "issuing", account.SSLExpiresAt); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	if err := h.dispatch(c.Request.Context(), account.ServerID, jobs.TypeSSLIssue,
+		jobs.SSLIssuePayload{Username: account.SystemUsername, Domain: account.PrimaryDomain, Email: account.Email},
+		claims.Subject, account.ID); err != nil {
+		slog.Error("dispatching ssl issue", "account_id", id, "error", err)
+		_ = h.Accounts.SetSSL(c.Request.Context(), id, "failed", account.SSLExpiresAt)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ssl issuance dispatch failed"})
+		return
+	}
+
+	_ = h.Audit.Record(c.Request.Context(), audit.Entry{
+		ActorID: claims.Subject, ActorRole: string(claims.Role),
+		Action: "account.ssl_issue", TargetType: "account", TargetID: id,
+		Detail: map[string]any{"domain": account.PrimaryDomain}, IP: c.ClientIP(),
+	})
+	c.JSON(http.StatusAccepted, gin.H{"status": "issuing"})
 }
 
 // Terminate starts account removal: status → terminating, then a

@@ -114,11 +114,14 @@
 - [x] **MultiPHP INI Editor** (§4B): per-account `php_version` + allowlisted `php_settings` (migration 000008); `internal/phpini` bounded allowlist + value validation (unit-tested); `PATCH /admin/accounts/:id/php-settings` (scoped, audited) re-provisions via idempotent `site.provision`; overrides applied as pool-level `php_admin_value` (user setting overrides package memory default); `GET /admin/php/ini-keys`; PHP column + settings dialog in the accounts UI
   - **E2E verified** ✅: non-allowlisted directive → 400, newline-injection value → 400, valid update → 202 → FPM pool regenerated with new `php_admin_value` lines (memory_limit 256M→1024M, upload_max_filesize, max_execution_time), settings persisted
 
+- [x] **Lego ACME / SSL issuance** (§4B): `internal/acme` Lego HTTP-01 webroot issuer (idempotent — valid cert >30d = no-op), persistent ACME account key; nginx vhost TLS variant (443 + HTTP→HTTPS redirect, ACME path stays on 80) golden-tested; `platform.Sites.InstallCertificate` (key 0600) + `ApplyVHost` (validate-then-reload); `ssl.issue` task; proto add-only `metadata` on ReportTaskResult carries cert expiry; account `ssl_status`/`ssl_expires_at` (migration 000009) driven by task result; `POST /admin/accounts/:id/ssl` (scoped, audited); SSL column + issue button in accounts UI; `CYPHER_ACME_DIRECTORY` config
+  - **E2E verified against Pebble** (offline ACME test server, `PEBBLE_VA_ALWAYS_VALID`): _[in progress — issuance trigger pending classifier recovery]_
+
 ### Pending
 - [ ] Multi-PHP install scripts (install/manage PHP branches on a server)
 - [ ] PHP version selection per account (change version → move pool between version dirs; UI dropdown from php.net supported list)
-- [ ] Lego ACME integration (Let's Encrypt / ZeroSSL)
-- [x] **Phase 3 skills batch** (catalog #12-14): `agent-config-generators` + `php-runtime-management` *(now code-grounded)*, `ssl-acme` *(still design-intent)*
+- [ ] SSL auto-renewal scheduler (reuse ssl.issue; renew at ~30d remaining) + DNS-01 for wildcards
+- [x] **Phase 3 skills batch** (catalog #12-14): `agent-config-generators` + `php-runtime-management` + `ssl-acme` *(now code-grounded)*
 
 ## Phase 4 — Files, FTP, & Databases ⬜
 

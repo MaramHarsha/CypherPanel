@@ -13,12 +13,14 @@ import (
 
 // Handler executes one task. It must be idempotent: JetStream redelivers
 // unacknowledged messages, and the same task may arrive more than once.
-// A returned error means "retry later" (nak); nil means done (ack).
-type Handler func(ctx context.Context, t Task) error
+// A returned error means "retry later" (nak); nil means done (ack). The
+// returned metadata (may be nil) is reported back with the result — e.g.
+// ssl.issue returns the certificate's not-after.
+type Handler func(ctx context.Context, t Task) (map[string]string, error)
 
 // ResultReporter delivers the task outcome back to the control plane
 // (implemented by the agent's gRPC client).
-type ResultReporter func(ctx context.Context, t Task, taskErr error)
+type ResultReporter func(ctx context.Context, t Task, meta map[string]string, taskErr error)
 
 const maxDeliveries = 5
 
@@ -76,24 +78,25 @@ func processMessage(ctx context.Context, msg jetstream.Msg, handle Handler, repo
 		return
 	}
 
-	meta, _ := msg.Metadata()
+	md, _ := msg.Metadata()
 	attempt := uint64(1)
-	if meta != nil {
-		attempt = meta.NumDelivered
+	if md != nil {
+		attempt = md.NumDelivered
 	}
 
-	taskCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
-	taskErr := handle(taskCtx, task)
+	// SSL issuance can take a while (challenge + finalize); give tasks room.
+	taskCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	resultMeta, taskErr := handle(taskCtx, task)
 	cancel()
 
 	switch {
 	case taskErr == nil:
 		slog.Info("task succeeded", "task_id", task.ID, "type", task.Type)
-		report(ctx, task, nil)
+		report(ctx, task, resultMeta, nil)
 		_ = msg.Ack()
 	case IsPermanent(taskErr) || attempt >= maxDeliveries:
 		slog.Error("task failed permanently", "task_id", task.ID, "type", task.Type, "attempts", attempt, "error", taskErr)
-		report(ctx, task, taskErr)
+		report(ctx, task, nil, taskErr)
 		_ = msg.Term()
 	default:
 		slog.Warn("task failed; will be redelivered", "task_id", task.ID, "type", task.Type, "attempt", attempt, "error", taskErr)

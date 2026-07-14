@@ -51,6 +51,12 @@ type Sites interface {
 	Provision(ctx context.Context, spec SiteSpec) error
 	// Deprovision removes a site's configs and reloads. Idempotent.
 	Deprovision(ctx context.Context, vhostPath, poolPath string) error
+	// InstallCertificate writes an issued cert (0644) and private key (0600)
+	// to their paths, creating parent dirs.
+	InstallCertificate(ctx context.Context, certPath string, certPEM []byte, keyPath string, keyPEM []byte) error
+	// ApplyVHost writes a vhost config and validate-then-reloads the web
+	// server with rollback (used to switch a site to HTTPS after issuance).
+	ApplyVHost(ctx context.Context, vhostPath string, config []byte) error
 }
 
 // NewSites returns the platform Sites implementation for the current OS.
