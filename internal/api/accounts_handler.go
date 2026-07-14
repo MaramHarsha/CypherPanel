@@ -22,6 +22,8 @@ import (
 
 type AccountsHandler struct {
 	Accounts  *store.Accounts
+	Packages  *store.Packages
+	Resellers *store.Resellers
 	Tasks     *store.Tasks
 	Publisher *jobs.Publisher
 	Events    *events.Bus
@@ -81,7 +83,8 @@ func toAccountResponse(a store.Account) accountResponse {
 //	@Security BearerAuth
 //	@Router   /admin/accounts [get]
 func (h *AccountsHandler) List(c *gin.Context) {
-	accounts, err := h.Accounts.List(c.Request.Context())
+	// Root admin sees all accounts; a reseller sees only their pool.
+	accounts, err := h.Accounts.List(c.Request.Context(), auth.OwnerFilter(auth.ClaimsFrom(c)))
 	if err != nil {
 		slog.Error("listing accounts", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
@@ -118,6 +121,30 @@ func (h *AccountsHandler) Create(c *gin.Context) {
 		return
 	}
 
+	claims := auth.ClaimsFrom(c)
+	// resellerID is "" for a root admin (unrestricted) or the reseller's own
+	// ID (scoped). A scoped caller may only use their own packages and is
+	// bound by their pool quota — checked BEFORE any provisioning.
+	resellerID := auth.OwnerFilter(claims)
+	if resellerID != "" {
+		pkg, perr := h.Packages.GetByID(c.Request.Context(), req.PackageID)
+		if errors.Is(perr, store.ErrNotFound) || (perr == nil && !auth.CanAct(claims, pkg.OwnerID)) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "package not found"})
+			return
+		}
+		if perr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return
+		}
+		if pool, perr := h.Resellers.GetPool(c.Request.Context(), resellerID); perr == nil && pool.MaxAccounts > 0 {
+			count, cerr := h.Accounts.CountByReseller(c.Request.Context(), resellerID)
+			if cerr == nil && count >= pool.MaxAccounts {
+				c.JSON(http.StatusForbidden, gin.H{"error": "account pool limit reached"})
+				return
+			}
+		}
+	}
+
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
@@ -134,14 +161,13 @@ func (h *AccountsHandler) Create(c *gin.Context) {
 	sysUser := fmt.Sprintf("cyph_%.10s%s", req.Username, hex.EncodeToString(suffix))
 
 	account, err := h.Accounts.CreateWithUser(c.Request.Context(),
-		req.Username, req.Email, hash, req.ServerID, req.PackageID, sysUser, req.Domain)
+		req.Username, req.Email, hash, resellerID, req.ServerID, req.PackageID, sysUser, req.Domain)
 	if err != nil {
 		slog.Error("creating account", "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "could not create account (duplicate username/email/domain, or bad server/package id?)"})
 		return
 	}
 
-	claims := auth.ClaimsFrom(c)
 	payload, _ := json.Marshal(jobs.SystemUserCreatePayload{Username: sysUser})
 	task, err := h.Tasks.Create(c.Request.Context(), req.ServerID, jobs.TypeSystemUserCreate, payload, claims.Subject, account.ID)
 	if err == nil {
@@ -197,8 +223,28 @@ func (h *AccountsHandler) Unsuspend(c *gin.Context) {
 	h.setStatus(c, "active", "account.unsuspend", events.SubjectAccountUnsuspended)
 }
 
+// ownedByCaller verifies the account is within the caller's scope, writing a
+// 404 (indistinguishable from "missing", so scope can't be probed) and
+// returning false if not. Root admins always pass.
+func (h *AccountsHandler) ownedByCaller(c *gin.Context, claims *auth.Claims, id string) bool {
+	account, err := h.Accounts.GetByID(c.Request.Context(), id)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && !auth.CanAct(claims, account.ResellerID)) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "account not found"})
+		return false
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return false
+	}
+	return true
+}
+
 func (h *AccountsHandler) setStatus(c *gin.Context, status, action, subject string) {
 	id := c.Param("id")
+	claims := auth.ClaimsFrom(c)
+	if !h.ownedByCaller(c, claims, id) {
+		return // response already written
+	}
 	if err := h.Accounts.SetStatus(c.Request.Context(), id, status); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "account not found"})
@@ -207,7 +253,6 @@ func (h *AccountsHandler) setStatus(c *gin.Context, status, action, subject stri
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
-	claims := auth.ClaimsFrom(c)
 	_ = h.Audit.Record(c.Request.Context(), audit.Entry{
 		ActorID: claims.Subject, ActorRole: string(claims.Role),
 		Action: action, TargetType: "account", TargetID: id, IP: c.ClientIP(),
@@ -229,8 +274,9 @@ func (h *AccountsHandler) setStatus(c *gin.Context, status, action, subject stri
 //	@Router   /admin/accounts/{id}/terminate [post]
 func (h *AccountsHandler) Terminate(c *gin.Context) {
 	id := c.Param("id")
+	claims := auth.ClaimsFrom(c)
 	account, err := h.Accounts.GetByID(c.Request.Context(), id)
-	if errors.Is(err, store.ErrNotFound) {
+	if errors.Is(err, store.ErrNotFound) || (err == nil && !auth.CanAct(claims, account.ResellerID)) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "account not found"})
 		return
 	}
@@ -244,7 +290,6 @@ func (h *AccountsHandler) Terminate(c *gin.Context) {
 		return
 	}
 
-	claims := auth.ClaimsFrom(c)
 	payload, _ := json.Marshal(jobs.SystemUserRemovePayload{Username: account.SystemUsername})
 	task, err := h.Tasks.Create(c.Request.Context(), account.ServerID, jobs.TypeSystemUserRemove, payload, claims.Subject, account.ID)
 	if err == nil {

@@ -19,9 +19,10 @@ type Deps struct {
 	Auth     *AuthHandler
 	Tasks    *TasksHandler
 	Servers  *ServersHandler
-	Packages *PackagesHandler
-	Accounts *AccountsHandler
-	Plugins  *PluginsHandler
+	Packages  *PackagesHandler
+	Accounts  *AccountsHandler
+	Plugins   *PluginsHandler
+	Resellers *ResellersHandler
 }
 
 func NewRouter(d Deps) *gin.Engine {
@@ -56,22 +57,28 @@ func NewRouter(d Deps) *gin.Engine {
 	authed.POST("/auth/logout", d.Auth.Logout)
 	authed.GET("/me", d.Auth.Me)
 
-	// Root-admin-only surface.
+	// Root-admin-only surface: fleet, reseller management, plugin registry.
 	admin := authed.Group("/admin", auth.RequireRole(auth.RoleRootAdmin))
-	admin.GET("/servers", d.Servers.List)
 	admin.POST("/servers/:id/tasks", d.Tasks.Create)
 	admin.GET("/tasks/:id", d.Tasks.Get)
-	admin.GET("/packages", d.Packages.List)
-	admin.POST("/packages", d.Packages.Create)
-	admin.DELETE("/packages/:id", d.Packages.Delete)
-	admin.GET("/accounts", d.Accounts.List)
-	admin.POST("/accounts", d.Accounts.Create)
-	admin.POST("/accounts/:id/suspend", d.Accounts.Suspend)
-	admin.POST("/accounts/:id/unsuspend", d.Accounts.Unsuspend)
-	admin.POST("/accounts/:id/terminate", d.Accounts.Terminate)
-	// Plugin surface reservation (§11) — read-only until the runtime lands.
+	admin.GET("/resellers", d.Resellers.List)
+	admin.POST("/resellers", d.Resellers.Create)
 	admin.GET("/plugins", d.Plugins.List)
 	admin.GET("/plugins/manifest-schema", d.Plugins.ManifestSchema)
+
+	// Shared management surface: root admin AND resellers. Every handler here
+	// scopes results/actions to the caller (root = unrestricted, reseller =
+	// own pool) via the auth scoping helpers — role gating alone is not enough.
+	mgr := authed.Group("/admin", auth.RequireRole(auth.RoleRootAdmin, auth.RoleReseller))
+	mgr.GET("/servers", d.Servers.List)
+	mgr.GET("/packages", d.Packages.List)
+	mgr.POST("/packages", d.Packages.Create)
+	mgr.DELETE("/packages/:id", d.Packages.Delete)
+	mgr.GET("/accounts", d.Accounts.List)
+	mgr.POST("/accounts", d.Accounts.Create)
+	mgr.POST("/accounts/:id/suspend", d.Accounts.Suspend)
+	mgr.POST("/accounts/:id/unsuspend", d.Accounts.Unsuspend)
+	mgr.POST("/accounts/:id/terminate", d.Accounts.Terminate)
 
 	return r
 }

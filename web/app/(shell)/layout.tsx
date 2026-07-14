@@ -10,6 +10,7 @@ import {
   Package,
   Server,
   Shield,
+  Store,
   Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,7 @@ const nav = [
   { href: "/servers", label: "Servers", icon: Server },
   { href: "/packages", label: "Packages", icon: Package },
   { href: "/accounts", label: "Accounts", icon: Users },
+  { href: "/resellers", label: "Resellers", icon: Store },
 ] as const;
 
 export default function ShellLayout({ children }: { children: React.ReactNode }) {

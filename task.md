@@ -87,10 +87,13 @@
 - [x] **Full provisioning E2E verified** ✅: create package → create account (`provisioning`) → agent created real Linux user `cyph_alicedb00f2` → status auto-flipped to `active`; suspend blocked alice's login, unsuspend restored it; terminate → account row deleted + Linux user removed from the container
 - [x] Web build green (Next.js 16 / Base UI): `render` prop + Select `string|null` fixes compile; all 7 routes build
 
+- [x] **Reseller resource pools** (§4A): `reseller_pools` table (migration 000006) + resellers store; centralized scoping helpers `auth.OwnerFilter`/`auth.CanAct` (unit-tested, no ad-hoc role checks in handlers); packages/accounts stores scoped by owner; `POST/GET /admin/resellers`; packages+accounts shared under a root-admin+reseller route group with per-handler scoping, package-ownership check, and pool-quota enforcement on account create; Resellers admin UI (create + usage table). `reseller.created` event emitted.
+  - **Security E2E verified** ✅: reseller sees only own packages/accounts; **IDOR blocked** (reseller suspending admin's account → 404); **quota enforced** (3rd account over max_accounts=2 → 403); admin unrestricted; reseller-provisioned account fully provisioned a real Linux user through the same pipeline
+- [ ] Reseller-facing UI shell (separate from admin shell, scoped nav) — deferred; API + scoping done, admin manages resellers today
+
 ### Pending
 - [ ] Server node detail view + register/remove flows in UI
 - [ ] Automated systemd service monitors
-- [ ] Reseller resource pools
 - [x] **Event Bus** (`internal/events`, §12): `EVENTS` JetStream stream (`events.>`, Limits retention, 14d) strictly separate from `tasks.*`; JetStream publish + in-process pub/sub fan-out; emits `server.registered`, `package.created`/`deleted`, `account.created`/`activated`/`suspended`/`unsuspended`/`terminating`/`terminated`/`failed` — secret-free snapshots. **E2E verified**: 5 events in the stream + all logged by an in-process subscriber ✅
 - [x] **Plugin reservations** (§11): migration 000005 `plugins` table; finalized `plugin.yaml` manifest schema (`internal/plugins`, `api_version: v1`, validated, unit-tested) + `docs/plugin-manifest.md`; read-only `GET /api/v1/admin/plugins` and `/plugins/manifest-schema` reserving the namespace (no loader yet)
 - [x] **Phase 2 skills batch** (catalog #9-11): `ui-development`, `async-ui-patterns`, `extensibility-and-events`

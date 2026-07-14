@@ -128,15 +128,21 @@ func run() error {
 	tasksStore := store.NewTasks(pool)
 	serversStore := store.NewServers(pool)
 	accountsStore := store.NewAccounts(pool)
+	packagesStore := store.NewPackages(pool)
+	resellersStore := store.NewResellers(pool)
 	router := api.NewRouter(api.Deps{
 		Config:   cfg,
 		Tokens:   tokens,
 		Auth:     &api.AuthHandler{Users: users, Tokens: tokens, Audit: auditLog},
 		Tasks:    &api.TasksHandler{Tasks: tasksStore, Publisher: publisher, Audit: auditLog},
 		Servers:  &api.ServersHandler{Servers: serversStore},
-		Packages: &api.PackagesHandler{Packages: store.NewPackages(pool), Events: eventBus, Audit: auditLog},
-		Accounts: &api.AccountsHandler{Accounts: accountsStore, Tasks: tasksStore, Publisher: publisher, Events: eventBus, Audit: auditLog},
-		Plugins:  &api.PluginsHandler{Plugins: store.NewPlugins(pool)},
+		Packages: &api.PackagesHandler{Packages: packagesStore, Events: eventBus, Audit: auditLog},
+		Accounts: &api.AccountsHandler{
+			Accounts: accountsStore, Packages: packagesStore, Resellers: resellersStore,
+			Tasks: tasksStore, Publisher: publisher, Events: eventBus, Audit: auditLog,
+		},
+		Plugins:   &api.PluginsHandler{Plugins: store.NewPlugins(pool)},
+		Resellers: &api.ResellersHandler{Resellers: resellersStore, Events: eventBus, Audit: auditLog},
 	})
 
 	srv := &http.Server{

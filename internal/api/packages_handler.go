@@ -57,7 +57,8 @@ func toPackageResponse(p store.Package) packageResponse {
 //	@Security BearerAuth
 //	@Router   /admin/packages [get]
 func (h *PackagesHandler) List(c *gin.Context) {
-	pkgs, err := h.Packages.List(c.Request.Context())
+	// Root admin sees all packages; a reseller sees only their own.
+	pkgs, err := h.Packages.List(c.Request.Context(), auth.OwnerFilter(auth.ClaimsFrom(c)))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
@@ -117,7 +118,22 @@ func (h *PackagesHandler) Create(c *gin.Context) {
 //	@Router   /admin/packages/{id} [delete]
 func (h *PackagesHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
-	err := h.Packages.Delete(c.Request.Context(), id)
+	claims := auth.ClaimsFrom(c)
+
+	// Ownership check BEFORE acting: a reseller may only delete its own
+	// packages (root admin may delete any). Same 404 for missing and
+	// not-owned, so a reseller can't probe other resellers' package IDs.
+	pkg, err := h.Packages.GetByID(c.Request.Context(), id)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && !auth.CanAct(claims, pkg.OwnerID)) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "package not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+
+	err = h.Packages.Delete(c.Request.Context(), id)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": "package not found"})
@@ -130,7 +146,6 @@ func (h *PackagesHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	claims := auth.ClaimsFrom(c)
 	_ = h.Audit.Record(c.Request.Context(), audit.Entry{
 		ActorID: claims.Subject, ActorRole: string(claims.Role),
 		Action: "package.delete", TargetType: "package", TargetID: id, IP: c.ClientIP(),

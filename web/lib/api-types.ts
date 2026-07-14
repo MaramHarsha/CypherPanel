@@ -367,6 +367,152 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/plugins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List installed plugins (root admin only) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["api.pluginResponse"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/plugins/manifest-schema": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Plugin manifest schema info (root admin only) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/resellers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List resellers (root admin only) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["api.resellerResponse"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create a reseller (root admin only) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            /** @description Reseller definition */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["api.createResellerRequest"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["api.resellerResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/servers": {
         parameters: {
             query?: never;
@@ -759,6 +905,13 @@ export interface components {
             limits?: components["schemas"]["api.packageLimits"];
             name: string;
         };
+        "api.createResellerRequest": {
+            email: string;
+            max_accounts?: number;
+            max_disk_mb?: number;
+            password: string;
+            username: string;
+        };
         "api.createTaskRequest": Record<string, never>;
         "api.loginRequest": {
             password: string;
@@ -782,8 +935,24 @@ export interface components {
             limits?: components["schemas"]["api.packageLimits"];
             name?: string;
         };
+        "api.pluginResponse": {
+            enabled?: boolean;
+            installed_at?: string;
+            kind?: string;
+            name?: string;
+            version?: string;
+        };
         "api.refreshRequest": {
             refresh_token: string;
+        };
+        "api.resellerResponse": {
+            account_count?: number;
+            created_at?: string;
+            email?: string;
+            id?: string;
+            max_accounts?: number;
+            max_disk_mb?: number;
+            username?: string;
         };
         "api.serverResponse": {
             agent_status?: string;

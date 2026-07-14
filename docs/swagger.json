@@ -85,6 +85,32 @@
                 ],
                 "type": "object"
             },
+            "api.createResellerRequest": {
+                "properties": {
+                    "email": {
+                        "type": "string"
+                    },
+                    "max_accounts": {
+                        "type": "integer"
+                    },
+                    "max_disk_mb": {
+                        "type": "integer"
+                    },
+                    "password": {
+                        "minLength": 12,
+                        "type": "string"
+                    },
+                    "username": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "email",
+                    "password",
+                    "username"
+                ],
+                "type": "object"
+            },
             "api.createTaskRequest": {
                 "type": "object"
             },
@@ -183,6 +209,32 @@
                 "required": [
                     "refresh_token"
                 ],
+                "type": "object"
+            },
+            "api.resellerResponse": {
+                "properties": {
+                    "account_count": {
+                        "type": "integer"
+                    },
+                    "created_at": {
+                        "type": "string"
+                    },
+                    "email": {
+                        "type": "string"
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "max_accounts": {
+                        "type": "integer"
+                    },
+                    "max_disk_mb": {
+                        "type": "integer"
+                    },
+                    "username": {
+                        "type": "string"
+                    }
+                },
                 "type": "object"
             },
             "api.serverResponse": {
@@ -702,6 +754,90 @@
                     }
                 ],
                 "summary": "Plugin manifest schema info (root admin only)",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
+        "/admin/resellers": {
+            "get": {
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "items": {
+                                        "$ref": "#/components/schemas/api.resellerResponse"
+                                    },
+                                    "type": "array"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "List resellers (root admin only)",
+                "tags": [
+                    "admin"
+                ]
+            },
+            "post": {
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/api.createResellerRequest",
+                                        "summary": "request",
+                                        "description": "Reseller definition"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "Reseller definition",
+                    "required": true
+                },
+                "responses": {
+                    "201": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.resellerResponse"
+                                }
+                            }
+                        },
+                        "description": "Created"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Create a reseller (root admin only)",
                 "tags": [
                     "admin"
                 ]

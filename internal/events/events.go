@@ -36,6 +36,7 @@ const (
 	SubjectPackageCreated     = "events.package.created"
 	SubjectPackageDeleted     = "events.package.deleted"
 	SubjectServerRegistered   = "events.server.registered"
+	SubjectResellerCreated    = "events.reseller.created"
 )
 
 // Event is the wire format on the bus. Data is a minimal, immutable snapshot

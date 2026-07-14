@@ -15,6 +15,7 @@ type Account struct {
 	UserID         string
 	Username       string // joined from users
 	Email          string // joined from users
+	ResellerID     string // end user's owning reseller ("" if admin-created)
 	ServerID       string
 	ServerName     string // joined from servers
 	PackageID      string
@@ -34,8 +35,9 @@ func NewAccounts(pool *pgxpool.Pool) *Accounts {
 }
 
 const accountSelect = `
-	SELECT a.id, a.user_id, u.username, u.email, a.server_id, s.name,
-	       a.package_id, p.name, a.system_username, a.primary_domain, a.status, a.created_at
+	SELECT a.id, a.user_id, u.username, u.email, COALESCE(u.reseller_id::text, ''),
+	       a.server_id, s.name, a.package_id, p.name,
+	       a.system_username, a.primary_domain, a.status, a.created_at
 	FROM accounts a
 	JOIN users u ON u.id = a.user_id
 	JOIN servers s ON s.id = a.server_id
@@ -43,8 +45,9 @@ const accountSelect = `
 
 // CreateWithUser atomically creates the panel user (end_user role) and the
 // hosting account in one transaction — an account without a login or a login
-// without an account are both invalid states.
-func (s *Accounts) CreateWithUser(ctx context.Context, username, email, passwordHash, serverID, packageID, systemUsername, domain string) (*Account, error) {
+// without an account are both invalid states. resellerID owns the end user
+// when a reseller provisions the account ("" when a root admin does).
+func (s *Accounts) CreateWithUser(ctx context.Context, username, email, passwordHash, resellerID, serverID, packageID, systemUsername, domain string) (*Account, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("store: beginning tx: %w", err)
@@ -53,8 +56,9 @@ func (s *Accounts) CreateWithUser(ctx context.Context, username, email, password
 
 	var userID string
 	err = tx.QueryRow(ctx, `
-		INSERT INTO users (username, email, password_hash, role)
-		VALUES ($1, $2, $3, 'end_user') RETURNING id`, username, email, passwordHash).Scan(&userID)
+		INSERT INTO users (username, email, password_hash, role, reseller_id)
+		VALUES ($1, $2, $3, 'end_user', NULLIF($4, '')::uuid) RETURNING id`,
+		username, email, passwordHash, resellerID).Scan(&userID)
 	if err != nil {
 		return nil, fmt.Errorf("store: creating account user: %w", err)
 	}
@@ -78,8 +82,12 @@ func (s *Accounts) GetByID(ctx context.Context, id string) (*Account, error) {
 	return scanAccount(s.pool.QueryRow(ctx, accountSelect+` WHERE a.id = $1`, id))
 }
 
-func (s *Accounts) List(ctx context.Context) ([]Account, error) {
-	rows, err := s.pool.Query(ctx, accountSelect+` ORDER BY a.created_at DESC`)
+// List returns accounts visible to a caller: all when resellerID is empty
+// (root admin), or only the reseller's own pool when set.
+func (s *Accounts) List(ctx context.Context, resellerID string) ([]Account, error) {
+	rows, err := s.pool.Query(ctx, accountSelect+`
+		WHERE ($1 = '' OR u.reseller_id = $1::uuid)
+		ORDER BY a.created_at DESC`, resellerID)
 	if err != nil {
 		return nil, fmt.Errorf("store: listing accounts: %w", err)
 	}
@@ -94,6 +102,19 @@ func (s *Accounts) List(ctx context.Context) ([]Account, error) {
 		out = append(out, *a)
 	}
 	return out, rows.Err()
+}
+
+// CountByReseller returns how many accounts a reseller currently owns (for
+// pool-quota enforcement).
+func (s *Accounts) CountByReseller(ctx context.Context, resellerID string) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		SELECT count(*) FROM accounts a JOIN users u ON u.id = a.user_id
+		WHERE u.reseller_id = $1::uuid`, resellerID).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("store: counting reseller accounts: %w", err)
+	}
+	return n, nil
 }
 
 // SetStatus transitions an account and keeps the panel user's suspension flag
@@ -148,7 +169,7 @@ func (s *Accounts) Delete(ctx context.Context, id string) error {
 
 func scanAccount(row pgx.Row) (*Account, error) {
 	var a Account
-	err := row.Scan(&a.ID, &a.UserID, &a.Username, &a.Email, &a.ServerID, &a.ServerName,
+	err := row.Scan(&a.ID, &a.UserID, &a.Username, &a.Email, &a.ResellerID, &a.ServerID, &a.ServerName,
 		&a.PackageID, &a.PackageName, &a.SystemUsername, &a.PrimaryDomain, &a.Status, &a.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound

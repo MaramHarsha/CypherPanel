@@ -14,6 +14,8 @@ export type PackageInfo = components["schemas"]["api.packageResponse"];
 export type PackageLimits = components["schemas"]["api.packageLimits"];
 export type AccountInfo = components["schemas"]["api.accountResponse"];
 export type CreateAccountRequest = components["schemas"]["api.createAccountRequest"];
+export type ResellerInfo = components["schemas"]["api.resellerResponse"];
+export type CreateResellerRequest = components["schemas"]["api.createResellerRequest"];
 
 const REFRESH_KEY = "cypher.refresh_token";
 
@@ -132,6 +134,17 @@ export function createAccount(req: CreateAccountRequest): Promise<AccountInfo> {
 
 export function accountAction(id: string, action: "suspend" | "unsuspend" | "terminate"): Promise<void> {
   return apiFetch<void>(`/api/v1/admin/accounts/${id}/${action}`, { method: "POST" });
+}
+
+export function listResellers(): Promise<ResellerInfo[]> {
+  return apiFetch<ResellerInfo[]>("/api/v1/admin/resellers");
+}
+
+export function createReseller(req: CreateResellerRequest): Promise<ResellerInfo> {
+  return apiFetch<ResellerInfo>("/api/v1/admin/resellers", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
 }
 
 export interface Me {

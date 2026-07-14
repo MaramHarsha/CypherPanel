@@ -55,9 +55,13 @@ func (s *Packages) Create(ctx context.Context, name, ownerID string, limits Pack
 	return scanPackage(row)
 }
 
-func (s *Packages) List(ctx context.Context) ([]Package, error) {
+// List returns packages visible to a caller: all packages when ownerID is
+// empty (root admin), or only the caller's own when set (reseller).
+func (s *Packages) List(ctx context.Context, ownerID string) ([]Package, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, name, owner_id, limits, created_at FROM packages ORDER BY created_at DESC`)
+		SELECT id, name, owner_id, limits, created_at FROM packages
+		WHERE ($1 = '' OR owner_id = $1::uuid)
+		ORDER BY created_at DESC`, ownerID)
 	if err != nil {
 		return nil, fmt.Errorf("store: listing packages: %w", err)
 	}
@@ -72,6 +76,11 @@ func (s *Packages) List(ctx context.Context) ([]Package, error) {
 		out = append(out, *p)
 	}
 	return out, rows.Err()
+}
+
+func (s *Packages) GetByID(ctx context.Context, id string) (*Package, error) {
+	return scanPackage(s.pool.QueryRow(ctx, `
+		SELECT id, name, owner_id, limits, created_at FROM packages WHERE id = $1`, id))
 }
 
 func (s *Packages) Delete(ctx context.Context, id string) error {
