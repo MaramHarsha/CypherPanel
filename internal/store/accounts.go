@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -23,6 +24,8 @@ type Account struct {
 	SystemUsername string
 	PrimaryDomain  string
 	Status         string
+	PHPVersion     string
+	PHPSettings    map[string]string
 	CreatedAt      time.Time
 }
 
@@ -37,7 +40,7 @@ func NewAccounts(pool *pgxpool.Pool) *Accounts {
 const accountSelect = `
 	SELECT a.id, a.user_id, u.username, u.email, COALESCE(u.reseller_id::text, ''),
 	       a.server_id, s.name, a.package_id, p.name,
-	       a.system_username, a.primary_domain, a.status, a.created_at
+	       a.system_username, a.primary_domain, a.status, a.php_version, a.php_settings, a.created_at
 	FROM accounts a
 	JOIN users u ON u.id = a.user_id
 	JOIN servers s ON s.id = a.server_id
@@ -47,7 +50,7 @@ const accountSelect = `
 // hosting account in one transaction — an account without a login or a login
 // without an account are both invalid states. resellerID owns the end user
 // when a reseller provisions the account ("" when a root admin does).
-func (s *Accounts) CreateWithUser(ctx context.Context, username, email, passwordHash, resellerID, serverID, packageID, systemUsername, domain string) (*Account, error) {
+func (s *Accounts) CreateWithUser(ctx context.Context, username, email, passwordHash, resellerID, serverID, packageID, systemUsername, domain, phpVersion string) (*Account, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("store: beginning tx: %w", err)
@@ -65,9 +68,9 @@ func (s *Accounts) CreateWithUser(ctx context.Context, username, email, password
 
 	var accountID string
 	err = tx.QueryRow(ctx, `
-		INSERT INTO accounts (user_id, server_id, package_id, system_username, primary_domain)
-		VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-		userID, serverID, packageID, systemUsername, domain).Scan(&accountID)
+		INSERT INTO accounts (user_id, server_id, package_id, system_username, primary_domain, php_version)
+		VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+		userID, serverID, packageID, systemUsername, domain, phpVersion).Scan(&accountID)
 	if err != nil {
 		return nil, fmt.Errorf("store: creating account: %w", err)
 	}
@@ -169,13 +172,35 @@ func (s *Accounts) Delete(ctx context.Context, id string) error {
 
 func scanAccount(row pgx.Row) (*Account, error) {
 	var a Account
+	var phpSettings []byte
 	err := row.Scan(&a.ID, &a.UserID, &a.Username, &a.Email, &a.ResellerID, &a.ServerID, &a.ServerName,
-		&a.PackageID, &a.PackageName, &a.SystemUsername, &a.PrimaryDomain, &a.Status, &a.CreatedAt)
+		&a.PackageID, &a.PackageName, &a.SystemUsername, &a.PrimaryDomain, &a.Status,
+		&a.PHPVersion, &phpSettings, &a.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("store: scanning account: %w", err)
 	}
+	if len(phpSettings) > 0 {
+		_ = json.Unmarshal(phpSettings, &a.PHPSettings)
+	}
 	return &a, nil
+}
+
+// UpdatePHPSettings replaces an account's php.ini override map.
+func (s *Accounts) UpdatePHPSettings(ctx context.Context, id string, settings map[string]string) error {
+	blob, err := json.Marshal(settings)
+	if err != nil {
+		return fmt.Errorf("store: encoding php settings: %w", err)
+	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE accounts SET php_settings = $2, updated_at = now() WHERE id = $1`, id, blob)
+	if err != nil {
+		return fmt.Errorf("store: updating php settings: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }

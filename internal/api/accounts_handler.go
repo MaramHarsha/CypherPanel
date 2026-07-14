@@ -18,6 +18,7 @@ import (
 	"github.com/MaramHarsha/CypherPanel/internal/auth"
 	"github.com/MaramHarsha/CypherPanel/internal/events"
 	"github.com/MaramHarsha/CypherPanel/internal/jobs"
+	"github.com/MaramHarsha/CypherPanel/internal/phpini"
 	"github.com/MaramHarsha/CypherPanel/internal/store"
 )
 
@@ -58,17 +59,19 @@ type accountEvent struct {
 }
 
 type accountResponse struct {
-	ID             string    `json:"id"`
-	Username       string    `json:"username"`
-	Email          string    `json:"email"`
-	ServerID       string    `json:"server_id"`
-	ServerName     string    `json:"server_name"`
-	PackageID      string    `json:"package_id"`
-	PackageName    string    `json:"package_name"`
-	SystemUsername string    `json:"system_username"`
-	PrimaryDomain  string    `json:"primary_domain"`
-	Status         string    `json:"status"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID             string            `json:"id"`
+	Username       string            `json:"username"`
+	Email          string            `json:"email"`
+	ServerID       string            `json:"server_id"`
+	ServerName     string            `json:"server_name"`
+	PackageID      string            `json:"package_id"`
+	PackageName    string            `json:"package_name"`
+	SystemUsername string            `json:"system_username"`
+	PrimaryDomain  string            `json:"primary_domain"`
+	Status         string            `json:"status"`
+	PHPVersion     string            `json:"php_version"`
+	PHPSettings    map[string]string `json:"php_settings"`
+	CreatedAt      time.Time         `json:"created_at"`
 }
 
 type createAccountRequest struct {
@@ -83,12 +86,17 @@ type createAccountRequest struct {
 var usernameRe = regexp.MustCompile(`^[a-z][a-z0-9_-]{2,31}$`)
 
 func toAccountResponse(a store.Account) accountResponse {
+	settings := a.PHPSettings
+	if settings == nil {
+		settings = map[string]string{}
+	}
 	return accountResponse{
 		ID: a.ID, Username: a.Username, Email: a.Email,
 		ServerID: a.ServerID, ServerName: a.ServerName,
 		PackageID: a.PackageID, PackageName: a.PackageName,
 		SystemUsername: a.SystemUsername, PrimaryDomain: a.PrimaryDomain,
-		Status: a.Status, CreatedAt: a.CreatedAt,
+		Status: a.Status, PHPVersion: a.PHPVersion, PHPSettings: settings,
+		CreatedAt: a.CreatedAt,
 	}
 }
 
@@ -179,7 +187,7 @@ func (h *AccountsHandler) Create(c *gin.Context) {
 	sysUser := fmt.Sprintf("cyph_%.10s%s", req.Username, hex.EncodeToString(suffix))
 
 	account, err := h.Accounts.CreateWithUser(c.Request.Context(),
-		req.Username, req.Email, hash, resellerID, req.ServerID, req.PackageID, sysUser, req.Domain)
+		req.Username, req.Email, hash, resellerID, req.ServerID, req.PackageID, sysUser, req.Domain, h.PHPVersion)
 	if err != nil {
 		slog.Error("creating account", "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "could not create account (duplicate username/email/domain, or bad server/package id?)"})
@@ -287,6 +295,89 @@ func (h *AccountsHandler) setStatus(c *gin.Context, status, action, subject stri
 	})
 	h.Events.Publish(c.Request.Context(), subject, "account", id, accountEvent{ID: id, Status: status})
 	c.JSON(http.StatusOK, gin.H{"status": status})
+}
+
+type updatePHPSettingsRequest struct {
+	Settings map[string]string `json:"settings"`
+}
+
+// PHPINIKeys returns the allowlisted php.ini directives the INI editor exposes.
+//
+//	@Summary  List editable php.ini directive keys
+//	@Tags     admin
+//	@Produce  json
+//	@Success  200 {array} string
+//	@Security BearerAuth
+//	@Router   /admin/php/ini-keys [get]
+func (h *AccountsHandler) PHPINIKeys(c *gin.Context) {
+	c.JSON(http.StatusOK, phpini.AllowedKeys())
+}
+
+// UpdatePHPSettings validates and stores an account's php.ini overrides, then
+// re-provisions the site so the PHP-FPM pool is regenerated and reloaded.
+//
+//	@Summary  Update an account's PHP INI settings (MultiPHP INI editor)
+//	@Tags     admin
+//	@Accept   json
+//	@Produce  json
+//	@Param    id      path string                   true "Account ID"
+//	@Param    request body updatePHPSettingsRequest true "Allowlisted php.ini overrides"
+//	@Success  202 {object} map[string]any
+//	@Failure  400 {object} map[string]string
+//	@Failure  404 {object} map[string]string
+//	@Security BearerAuth
+//	@Router   /admin/accounts/{id}/php-settings [patch]
+func (h *AccountsHandler) UpdatePHPSettings(c *gin.Context) {
+	id := c.Param("id")
+	claims := auth.ClaimsFrom(c)
+
+	account, err := h.Accounts.GetByID(c.Request.Context(), id)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && !auth.CanAct(claims, account.ResellerID)) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "account not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+
+	var req updatePHPSettingsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "settings object is required"})
+		return
+	}
+	clean, err := phpini.Validate(req.Settings)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := h.Accounts.UpdatePHPSettings(c.Request.Context(), id, clean); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+
+	// Re-provision to apply the new pool config (site.provision is idempotent).
+	memoryMB := 0
+	if pkg, perr := h.Packages.GetByID(c.Request.Context(), account.PackageID); perr == nil {
+		memoryMB = pkg.Limits.MemoryMaxMB
+	}
+	if err := h.dispatch(c.Request.Context(), account.ServerID, jobs.TypeSiteProvision,
+		jobs.SiteProvisionPayload{
+			Username: account.SystemUsername, Domain: account.PrimaryDomain,
+			PHPVersion: account.PHPVersion, MemoryMB: memoryMB, PHPSettings: clean,
+		}, claims.Subject, account.ID); err != nil {
+		slog.Error("dispatching php reconfigure", "account_id", id, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "settings saved but reconfigure dispatch failed"})
+		return
+	}
+
+	_ = h.Audit.Record(c.Request.Context(), audit.Entry{
+		ActorID: claims.Subject, ActorRole: string(claims.Role),
+		Action: "account.php_settings_update", TargetType: "account", TargetID: id,
+		Detail: map[string]any{"settings": clean}, IP: c.ClientIP(),
+	})
+	c.JSON(http.StatusAccepted, gin.H{"status": "applying", "settings": clean})
 }
 
 // Terminate starts account removal: status → terminating, then a

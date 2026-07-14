@@ -136,6 +136,17 @@ export function accountAction(id: string, action: "suspend" | "unsuspend" | "ter
   return apiFetch<void>(`/api/v1/admin/accounts/${id}/${action}`, { method: "POST" });
 }
 
+export function phpIniKeys(): Promise<string[]> {
+  return apiFetch<string[]>("/api/v1/admin/php/ini-keys");
+}
+
+export function updatePHPSettings(id: string, settings: Record<string, string>): Promise<void> {
+  return apiFetch<void>(`/api/v1/admin/accounts/${id}/php-settings`, {
+    method: "PATCH",
+    body: JSON.stringify({ settings }),
+  });
+}
+
 export function listResellers(): Promise<ResellerInfo[]> {
   return apiFetch<ResellerInfo[]>("/api/v1/admin/resellers");
 }

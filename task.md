@@ -111,12 +111,14 @@
 - [x] Agent tasks `site.provision` / `site.deprovision`; dispatched on account create/terminate (after user create / before user remove); `CYPHER_DEFAULT_PHP_VERSION` config
 - [x] **E2E verified** ✅ (real agent in container): account create → generated correct nginx vhost + PHP-FPM pool + web root/logs owned by the account user; terminate → vhost, pool, Linux user, and DB row all removed (symmetric teardown)
 
+- [x] **MultiPHP INI Editor** (§4B): per-account `php_version` + allowlisted `php_settings` (migration 000008); `internal/phpini` bounded allowlist + value validation (unit-tested); `PATCH /admin/accounts/:id/php-settings` (scoped, audited) re-provisions via idempotent `site.provision`; overrides applied as pool-level `php_admin_value` (user setting overrides package memory default); `GET /admin/php/ini-keys`; PHP column + settings dialog in the accounts UI
+  - **E2E verified** ✅: non-allowlisted directive → 400, newline-injection value → 400, valid update → 202 → FPM pool regenerated with new `php_admin_value` lines (memory_limit 256M→1024M, upload_max_filesize, max_execution_time), settings persisted
+
 ### Pending
-- [ ] Multi-PHP install scripts (install/manage PHP branches on a server) + reload FPM after pool changes
-- [ ] PHP INI Editor API (per-account `php_admin_value` overrides surfaced in UI)
-- [ ] PHP version selection per account (UI + payload; default is `CYPHER_DEFAULT_PHP_VERSION` today)
+- [ ] Multi-PHP install scripts (install/manage PHP branches on a server)
+- [ ] PHP version selection per account (change version → move pool between version dirs; UI dropdown from php.net supported list)
 - [ ] Lego ACME integration (Let's Encrypt / ZeroSSL)
-- [x] **Phase 3 skills batch** (catalog #12-14): `agent-config-generators` *(now code-grounded)*, `php-runtime-management`, `ssl-acme` *(latter two still design-intent)*
+- [x] **Phase 3 skills batch** (catalog #12-14): `agent-config-generators` + `php-runtime-management` *(now code-grounded)*, `ssl-acme` *(still design-intent)*
 
 ## Phase 4 — Files, FTP, & Databases ⬜
 

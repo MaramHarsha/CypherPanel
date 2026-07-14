@@ -25,6 +25,15 @@ const docTemplate = `{
                     "package_name": {
                         "type": "string"
                     },
+                    "php_settings": {
+                        "additionalProperties": {
+                            "type": "string"
+                        },
+                        "type": "object"
+                    },
+                    "php_version": {
+                        "type": "string"
+                    },
                     "primary_domain": {
                         "type": "string"
                     },
@@ -316,6 +325,17 @@ const docTemplate = `{
                     }
                 },
                 "type": "object"
+            },
+            "api.updatePHPSettingsRequest": {
+                "properties": {
+                    "settings": {
+                        "additionalProperties": {
+                            "type": "string"
+                        },
+                        "type": "object"
+                    }
+                },
+                "type": "object"
             }
         },
         "securitySchemes": {
@@ -420,6 +440,89 @@ const docTemplate = `{
                     }
                 ],
                 "summary": "Create a hosting account (root admin only)",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
+        "/admin/accounts/{id}/php-settings": {
+            "patch": {
+                "parameters": [
+                    {
+                        "description": "Account ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/api.updatePHPSettingsRequest",
+                                        "summary": "request",
+                                        "description": "Allowlisted php.ini overrides"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "Allowlisted php.ini overrides",
+                    "required": true
+                },
+                "responses": {
+                    "202": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {},
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Accepted"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Update an account's PHP INI settings (MultiPHP INI editor)",
                 "tags": [
                     "admin"
                 ]
@@ -725,6 +828,34 @@ const docTemplate = `{
                     }
                 ],
                 "summary": "Delete a package (root admin only)",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
+        "/admin/php/ini-keys": {
+            "get": {
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "items": {
+                                        "type": "string"
+                                    },
+                                    "type": "array"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "List editable php.ini directive keys",
                 "tags": [
                     "admin"
                 ]

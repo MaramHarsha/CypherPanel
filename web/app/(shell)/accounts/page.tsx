@@ -50,6 +50,7 @@ import {
   listServers,
   type AccountInfo,
 } from "@/lib/api";
+import { PHPSettingsDialog } from "./php-settings-dialog";
 
 const statusVariant: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
   active: "default",
@@ -291,6 +292,7 @@ export default function AccountsPage() {
                     <th className="py-2 pr-4 font-medium">Domain</th>
                     <th className="py-2 pr-4 font-medium">Server</th>
                     <th className="py-2 pr-4 font-medium">Package</th>
+                    <th className="py-2 pr-4 font-medium">PHP</th>
                     <th className="py-2 pr-4 font-medium">Status</th>
                     <th className="py-2 pr-4 font-medium text-right">Actions</th>
                   </tr>
@@ -302,6 +304,7 @@ export default function AccountsPage() {
                       <td className="py-2 pr-4 font-mono text-xs">{a.primary_domain}</td>
                       <td className="py-2 pr-4">{a.server_name}</td>
                       <td className="py-2 pr-4">{a.package_name}</td>
+                      <td className="py-2 pr-4 font-mono text-xs">{a.php_version || "—"}</td>
                       <td className="py-2 pr-4">
                         <Badge variant={statusVariant[a.status ?? ""] ?? "secondary"}>
                           {a.status}
@@ -309,6 +312,7 @@ export default function AccountsPage() {
                       </td>
                       <td className="py-2 pr-4">
                         <div className="flex justify-end gap-1">
+                          <PHPSettingsDialog account={a} />
                           {a.status === "suspended" ? (
                             <Button
                               variant="ghost"

@@ -5,7 +5,7 @@ description: Multi-PHP install layout, per-account PHP-FPM pool isolation, INI o
 
 # PHP Runtime Management
 
-> **Status: design-intent (pre-implementation).** Grounded in plan.md Sections 4B/5B and the isolation model (Section 7). Lands in Phase 3. Verify against code then, updating in the same PR. Read [[agent-config-generators]] and [[linux-system-integration]] first.
+> **Status: code-grounded (Phase 3).** Per-account PHP-FPM pool generation lives in `internal/webserver` (pool renderer) + `internal/platform` `Sites`; the INI editor is `internal/phpini` (allowlist) + `PATCH /admin/accounts/:id/php-settings` re-provisioning via the idempotent `site.provision` task. Follow those. Still pending: multi-PHP install and per-account version *change*. Read [[agent-config-generators]] and [[linux-system-integration]] first.
 
 ## Version policy
 

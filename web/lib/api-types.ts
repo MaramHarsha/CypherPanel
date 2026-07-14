@@ -76,6 +76,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/accounts/{id}/php-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update an account's PHP INI settings (MultiPHP INI editor) */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Account ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            /** @description Allowlisted php.ini overrides */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["api.updatePHPSettingsRequest"];
+                };
+            };
+            responses: {
+                /** @description Accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
     "/admin/accounts/{id}/suspend": {
         parameters: {
             query?: never;
@@ -362,6 +430,42 @@ export interface paths {
                 };
             };
         };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/php/ini-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List editable php.ini directive keys */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": string[];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -886,6 +990,10 @@ export interface components {
             id?: string;
             package_id?: string;
             package_name?: string;
+            php_settings?: {
+                [key: string]: string;
+            };
+            php_version?: string;
             primary_domain?: string;
             server_id?: string;
             server_name?: string;
@@ -977,6 +1085,11 @@ export interface components {
             access_token?: string;
             refresh_token?: string;
             token_type?: string;
+        };
+        "api.updatePHPSettingsRequest": {
+            settings?: {
+                [key: string]: string;
+            };
         };
     };
     responses: never;

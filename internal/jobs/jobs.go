@@ -51,10 +51,11 @@ type SystemUserRemovePayload struct {
 // SiteProvisionPayload sets up an account's web serving: web root + logs dirs,
 // nginx vhost, and a dedicated PHP-FPM pool.
 type SiteProvisionPayload struct {
-	Username   string `json:"username"`
-	Domain     string `json:"domain"`
-	PHPVersion string `json:"php_version"`
-	MemoryMB   int    `json:"memory_mb,omitempty"` // package memory limit (0 = default)
+	Username   string            `json:"username"`
+	Domain     string            `json:"domain"`
+	PHPVersion string            `json:"php_version"`
+	MemoryMB   int               `json:"memory_mb,omitempty"`    // package memory limit (0 = default)
+	PHPSettings map[string]string `json:"php_settings,omitempty"` // validated php.ini overrides
 }
 
 // SiteDeprovisionPayload removes an account's web/PHP configs on termination.

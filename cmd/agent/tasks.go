@@ -104,9 +104,14 @@ func (e *taskExecutor) provisionSite(ctx context.Context, raw []byte) error {
 		return jobs.Permanent(err)
 	}
 
+	// Package memory limit is the baseline; per-account INI overrides (already
+	// allowlist-validated by Core) win where set.
 	admin := map[string]string{}
 	if p.MemoryMB > 0 {
 		admin["memory_limit"] = fmt.Sprintf("%dM", p.MemoryMB)
+	}
+	for k, v := range p.PHPSettings {
+		admin[k] = v
 	}
 	poolCfg, err := webserver.RenderPHPFPMPool(webserver.PoolSpec{
 		User:          p.Username,

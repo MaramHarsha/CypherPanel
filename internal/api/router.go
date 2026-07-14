@@ -79,6 +79,8 @@ func NewRouter(d Deps) *gin.Engine {
 	mgr.POST("/accounts/:id/suspend", d.Accounts.Suspend)
 	mgr.POST("/accounts/:id/unsuspend", d.Accounts.Unsuspend)
 	mgr.POST("/accounts/:id/terminate", d.Accounts.Terminate)
+	mgr.PATCH("/accounts/:id/php-settings", d.Accounts.UpdatePHPSettings)
+	mgr.GET("/php/ini-keys", d.Accounts.PHPINIKeys)
 
 	return r
 }
