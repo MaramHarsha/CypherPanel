@@ -16,6 +16,7 @@ type Server struct {
 	AgentStatus string
 	LastSeenAt  *time.Time
 	CreatedAt   time.Time
+	Stats       HostStats
 }
 
 type Servers struct {
@@ -37,7 +38,7 @@ func (s *Servers) UpsertByHostname(ctx context.Context, hostname, ip string) (*S
 			    ip_address = EXCLUDED.ip_address,
 			    agent_status = 'online',
 			    last_seen_at = now()
-		RETURNING id, name, hostname, ip_address::text, agent_status, last_seen_at, created_at`,
+		RETURNING id, name, hostname, host(ip_address), agent_status, last_seen_at, created_at`,
 		hostname, ip)
 
 	var srv Server
@@ -45,6 +46,35 @@ func (s *Servers) UpsertByHostname(ctx context.Context, hostname, ip string) (*S
 		return nil, fmt.Errorf("store: upserting server %s: %w", hostname, err)
 	}
 	return &srv, nil
+}
+
+// List returns all registered servers, most recently seen first.
+func (s *Servers) List(ctx context.Context) ([]Server, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, name, hostname, host(ip_address), agent_status, last_seen_at, created_at,
+		       load_1m, memory_total_bytes, memory_used_bytes, disk_total_bytes, disk_used_bytes
+		FROM servers ORDER BY last_seen_at DESC NULLS LAST`)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing servers: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Server
+	for rows.Next() {
+		var srv Server
+		var memTotal, memUsed, diskTotal, diskUsed int64
+		if err := rows.Scan(&srv.ID, &srv.Name, &srv.Hostname, &srv.IPAddress, &srv.AgentStatus,
+			&srv.LastSeenAt, &srv.CreatedAt,
+			&srv.Stats.Load1m, &memTotal, &memUsed, &diskTotal, &diskUsed); err != nil {
+			return nil, fmt.Errorf("store: scanning server: %w", err)
+		}
+		srv.Stats.MemoryTotalBytes = uint64(memTotal)
+		srv.Stats.MemoryUsedBytes = uint64(memUsed)
+		srv.Stats.DiskTotalBytes = uint64(diskTotal)
+		srv.Stats.DiskUsedBytes = uint64(diskUsed)
+		out = append(out, srv)
+	}
+	return out, rows.Err()
 }
 
 // HostStats is the latest host snapshot reported with a heartbeat.

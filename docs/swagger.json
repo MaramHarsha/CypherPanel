@@ -38,6 +38,47 @@
                 ],
                 "type": "object"
             },
+            "api.serverResponse": {
+                "properties": {
+                    "agent_status": {
+                        "type": "string"
+                    },
+                    "created_at": {
+                        "type": "string"
+                    },
+                    "disk_total_bytes": {
+                        "type": "integer"
+                    },
+                    "disk_used_bytes": {
+                        "type": "integer"
+                    },
+                    "hostname": {
+                        "type": "string"
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "ip_address": {
+                        "type": "string"
+                    },
+                    "last_seen_at": {
+                        "type": "string"
+                    },
+                    "load_1m": {
+                        "type": "number"
+                    },
+                    "memory_total_bytes": {
+                        "type": "integer"
+                    },
+                    "memory_used_bytes": {
+                        "type": "integer"
+                    },
+                    "name": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
             "api.tokenResponse": {
                 "properties": {
                     "access_token": {
@@ -76,6 +117,34 @@
         "url": ""
     },
     "paths": {
+        "/admin/servers": {
+            "get": {
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "items": {
+                                        "$ref": "#/components/schemas/api.serverResponse"
+                                    },
+                                    "type": "array"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "List servers (root admin only)",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
         "/admin/servers/{id}/tasks": {
             "post": {
                 "parameters": [

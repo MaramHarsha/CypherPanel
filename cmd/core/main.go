@@ -119,7 +119,8 @@ func run() error {
 		Config: cfg,
 		Tokens: tokens,
 		Auth:   &api.AuthHandler{Users: users, Tokens: tokens, Audit: auditLog},
-		Tasks:  &api.TasksHandler{Tasks: tasksStore, Publisher: publisher, Audit: auditLog},
+		Tasks:   &api.TasksHandler{Tasks: tasksStore, Publisher: publisher, Audit: auditLog},
+		Servers: &api.ServersHandler{Servers: store.NewServers(pool)},
 	})
 
 	srv := &http.Server{

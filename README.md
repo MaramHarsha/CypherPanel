@@ -24,7 +24,11 @@ docker compose up -d --wait   # PostgreSQL + Redis + NATS JetStream
 make migrate-up               # apply database schema
 make build-local              # native binaries into bin/local/
 bin/local/cypher-core         # http://localhost:8080/healthz
+
+cd web && npm install && npm run dev   # CypherUI at http://localhost:3000
 ```
+
+The UI proxies `/api/*` to CypherCore (set `CYPHER_CORE_API_URL` if not on localhost:8080), so there is no CORS setup. Regenerate the typed API client after backend API changes: `make openapi && cd web && npm run gen:api`.
 
 Create the first admin user:
 

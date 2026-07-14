@@ -14,10 +14,11 @@ import (
 )
 
 type Deps struct {
-	Config config.Core
-	Tokens *auth.TokenService
-	Auth   *AuthHandler
-	Tasks  *TasksHandler
+	Config  config.Core
+	Tokens  *auth.TokenService
+	Auth    *AuthHandler
+	Tasks   *TasksHandler
+	Servers *ServersHandler
 }
 
 func NewRouter(d Deps) *gin.Engine {
@@ -54,6 +55,7 @@ func NewRouter(d Deps) *gin.Engine {
 
 	// Root-admin-only surface.
 	admin := authed.Group("/admin", auth.RequireRole(auth.RoleRootAdmin))
+	admin.GET("/servers", d.Servers.List)
 	admin.POST("/servers/:id/tasks", d.Tasks.Create)
 	admin.GET("/tasks/:id", d.Tasks.Get)
 

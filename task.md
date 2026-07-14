@@ -8,7 +8,7 @@
 | Phase | Scope | Status |
 |-------|-------|--------|
 | **1** | Core Foundation & Agent Comms | ✅ Complete (2 minor deploy-time items deferred) |
-| **2** | Admin Plane & Provisioning + UI Shell | ⬜ Not started |
+| **2** | Admin Plane & Provisioning + UI Shell | 🟨 In progress (UI shell ✅) |
 | **3** | Web Server & PHP Management | ⬜ Not started |
 | **4** | Files, FTP, & Databases | ⬜ Not started |
 | **5** | Email & DNS Servers | ⬜ Not started |
@@ -68,10 +68,19 @@
 - [ ] NATS server-side auth config in production deployments (client support ready; server config is an installer/deploy concern)
 - [ ] Frontend TypeScript client generation from the OpenAPI spec (do when web/ lands in Phase 2)
 
-## Phase 2 — Admin Plane & Provisioning + UI Shell ⬜
+## Phase 2 — Admin Plane & Provisioning + UI Shell 🟨
 
-- [ ] UI shell & design system foundation (Next.js + shadcn/ui, sidebar layout, auth screens, light/dark theming)
-- [ ] Server node registration API + UI
+### Done
+- [x] UI shell & design system foundation: Next.js 16 (App Router, Turbopack, `output: "standalone"`) + Tailwind + shadcn/ui in `web/`; sidebar admin shell, login screen, light/dark/system theming (next-themes), Lucide icons
+- [x] Typed API client: TS types generated from the OpenAPI spec (`npm run gen:api`), fetch wrapper with in-memory access token + single-use refresh rotation and one-shot retry on 401
+- [x] No-CORS architecture: Next.js rewrites proxy `/api/*` to CypherCore (`CYPHER_CORE_API_URL`) — same-origin in dev and prod
+- [x] `GET /api/v1/admin/servers` (root-admin, with latest host stats; `host()` cast so IPs render clean) + OpenAPI regen
+- [x] Dashboard: live server cards (status badge, load, memory/disk usage bars) refreshing every 15s; skeleton loaders; designed-empty-first states
+- [x] Servers page: registered-nodes table with liveness ("last seen Xs ago")
+- [x] E2E verified: login + servers list through the Next proxy against the live control plane with a containerized Linux agent reporting real stats ✅
+
+### Pending
+- [ ] Server node detail view + register/remove flows in UI
 - [ ] Package templating system (limits: disk, bandwidth, domains, DBs, mail, cgroup caps)
 - [ ] Account creation, suspension, termination flows
 - [ ] Automated systemd service monitors
