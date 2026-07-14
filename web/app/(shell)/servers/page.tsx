@@ -10,6 +10,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ServiceChips } from "@/components/service-chips";
 import { listServers } from "@/lib/api";
 
 function since(iso?: string | null): string {
@@ -58,6 +59,7 @@ export default function ServersPage() {
                     <th className="py-2 pr-4 font-medium">Name</th>
                     <th className="py-2 pr-4 font-medium">IP address</th>
                     <th className="py-2 pr-4 font-medium">Status</th>
+                    <th className="py-2 pr-4 font-medium">Services</th>
                     <th className="py-2 pr-4 font-medium">Last seen</th>
                   </tr>
                 </thead>
@@ -73,6 +75,9 @@ export default function ServersPage() {
                           {s.agent_status}
                         </Badge>
                       </td>
+                      <td className="py-2 pr-4">
+                        <ServiceChips services={s.services} />
+                      </td>
                       <td className="py-2 pr-4 text-muted-foreground">
                         {since(s.last_seen_at)}
                       </td>
@@ -80,7 +85,7 @@ export default function ServersPage() {
                   ))}
                   {data?.length === 0 && (
                     <tr>
-                      <td colSpan={4} className="py-8 text-center text-muted-foreground">
+                      <td colSpan={5} className="py-8 text-center text-muted-foreground">
                         No servers registered yet.
                       </td>
                     </tr>

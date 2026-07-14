@@ -2,11 +2,18 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// ServiceStatus is a managed system service's latest reported state.
+type ServiceStatus struct {
+	Name  string `json:"name"`
+	State string `json:"state"`
+}
 
 type Server struct {
 	ID          string
@@ -17,6 +24,7 @@ type Server struct {
 	LastSeenAt  *time.Time
 	CreatedAt   time.Time
 	Stats       HostStats
+	Services    []ServiceStatus
 }
 
 type Servers struct {
@@ -52,7 +60,7 @@ func (s *Servers) UpsertByHostname(ctx context.Context, hostname, ip string) (*S
 func (s *Servers) List(ctx context.Context) ([]Server, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, name, hostname, host(ip_address), agent_status, last_seen_at, created_at,
-		       load_1m, memory_total_bytes, memory_used_bytes, disk_total_bytes, disk_used_bytes
+		       load_1m, memory_total_bytes, memory_used_bytes, disk_total_bytes, disk_used_bytes, services
 		FROM servers ORDER BY last_seen_at DESC NULLS LAST`)
 	if err != nil {
 		return nil, fmt.Errorf("store: listing servers: %w", err)
@@ -63,15 +71,19 @@ func (s *Servers) List(ctx context.Context) ([]Server, error) {
 	for rows.Next() {
 		var srv Server
 		var memTotal, memUsed, diskTotal, diskUsed int64
+		var svcBlob []byte
 		if err := rows.Scan(&srv.ID, &srv.Name, &srv.Hostname, &srv.IPAddress, &srv.AgentStatus,
 			&srv.LastSeenAt, &srv.CreatedAt,
-			&srv.Stats.Load1m, &memTotal, &memUsed, &diskTotal, &diskUsed); err != nil {
+			&srv.Stats.Load1m, &memTotal, &memUsed, &diskTotal, &diskUsed, &svcBlob); err != nil {
 			return nil, fmt.Errorf("store: scanning server: %w", err)
 		}
 		srv.Stats.MemoryTotalBytes = uint64(memTotal)
 		srv.Stats.MemoryUsedBytes = uint64(memUsed)
 		srv.Stats.DiskTotalBytes = uint64(diskTotal)
 		srv.Stats.DiskUsedBytes = uint64(diskUsed)
+		if len(svcBlob) > 0 {
+			_ = json.Unmarshal(svcBlob, &srv.Services)
+		}
 		out = append(out, srv)
 	}
 	return out, rows.Err()
@@ -87,8 +99,15 @@ type HostStats struct {
 }
 
 // Heartbeat marks a server online, refreshes last_seen_at, and stores the
-// latest host snapshot.
-func (s *Servers) Heartbeat(ctx context.Context, serverID string, stats HostStats) error {
+// latest host snapshot and managed-service states.
+func (s *Servers) Heartbeat(ctx context.Context, serverID string, stats HostStats, svcs []ServiceStatus) error {
+	if svcs == nil {
+		svcs = []ServiceStatus{}
+	}
+	svcBlob, err := json.Marshal(svcs)
+	if err != nil {
+		return fmt.Errorf("store: encoding services: %w", err)
+	}
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE servers SET
 			agent_status = 'online',
@@ -97,11 +116,12 @@ func (s *Servers) Heartbeat(ctx context.Context, serverID string, stats HostStat
 			memory_total_bytes = $3,
 			memory_used_bytes = $4,
 			disk_total_bytes = $5,
-			disk_used_bytes = $6
+			disk_used_bytes = $6,
+			services = $7
 		WHERE id = $1`,
 		serverID, stats.Load1m,
 		int64(stats.MemoryTotalBytes), int64(stats.MemoryUsedBytes),
-		int64(stats.DiskTotalBytes), int64(stats.DiskUsedBytes))
+		int64(stats.DiskTotalBytes), int64(stats.DiskUsedBytes), svcBlob)
 	if err != nil {
 		return fmt.Errorf("store: heartbeat for %s: %w", serverID, err)
 	}

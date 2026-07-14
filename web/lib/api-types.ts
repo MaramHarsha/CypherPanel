@@ -967,6 +967,11 @@ export interface components {
             memory_total_bytes?: number;
             memory_used_bytes?: number;
             name?: string;
+            services?: components["schemas"]["api.serviceStatus"][];
+        };
+        "api.serviceStatus": {
+            name?: string;
+            state?: string;
         };
         "api.tokenResponse": {
             access_token?: string;

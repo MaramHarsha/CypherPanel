@@ -25,6 +25,7 @@ import (
 	"github.com/MaramHarsha/CypherPanel/internal/hoststats"
 	"github.com/MaramHarsha/CypherPanel/internal/jobs"
 	"github.com/MaramHarsha/CypherPanel/internal/paths"
+	"github.com/MaramHarsha/CypherPanel/internal/services"
 	"github.com/MaramHarsha/CypherPanel/internal/pki"
 	"github.com/MaramHarsha/CypherPanel/internal/platform"
 )
@@ -102,6 +103,10 @@ func run() error {
 			return err
 		case <-ticker.C:
 			stats := hoststats.Sample()
+			var svcs []*agentv1.ServiceStatus
+			for _, s := range services.Sample() {
+				svcs = append(svcs, &agentv1.ServiceStatus{Name: s.Name, State: s.State})
+			}
 			hbCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			_, err := client.Heartbeat(hbCtx, &agentv1.HeartbeatRequest{
 				ServerId: serverID,
@@ -112,6 +117,7 @@ func run() error {
 					DiskTotalBytes:   stats.DiskTotalBytes,
 					DiskUsedBytes:    stats.DiskUsedBytes,
 				},
+				Services: svcs,
 			})
 			cancel()
 			switch {

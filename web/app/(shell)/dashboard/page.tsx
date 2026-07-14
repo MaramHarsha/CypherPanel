@@ -11,6 +11,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ServiceChips } from "@/components/service-chips";
 import { listServers, type ServerInfo } from "@/lib/api";
 
 function formatBytes(n?: number): string {
@@ -94,6 +95,9 @@ function ServerCard({ server }: { server: ServerInfo }) {
           used={server.disk_used_bytes}
           total={server.disk_total_bytes}
         />
+        <div className="pt-1">
+          <ServiceChips services={server.services} />
+        </div>
       </CardContent>
     </Card>
   );

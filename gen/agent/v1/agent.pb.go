@@ -196,9 +196,12 @@ func (x *RegisterResponse) GetServerId() string {
 }
 
 type HeartbeatRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ServerId      string                 `protobuf:"bytes,1,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
-	Stats         *HostStats             `protobuf:"bytes,2,opt,name=stats,proto3" json:"stats,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	ServerId string                 `protobuf:"bytes,1,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
+	Stats    *HostStats             `protobuf:"bytes,2,opt,name=stats,proto3" json:"stats,omitempty"`
+	// Status of managed system services (nginx, mariadb, ...). Add-only field;
+	// older agents simply omit it.
+	Services      []*ServiceStatus `protobuf:"bytes,3,rep,name=services,proto3" json:"services,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -247,6 +250,65 @@ func (x *HeartbeatRequest) GetStats() *HostStats {
 	return nil
 }
 
+func (x *HeartbeatRequest) GetServices() []*ServiceStatus {
+	if x != nil {
+		return x.Services
+	}
+	return nil
+}
+
+type ServiceStatus struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	State         string                 `protobuf:"bytes,2,opt,name=state,proto3" json:"state,omitempty"` // active | inactive | failed | activating | unknown
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ServiceStatus) Reset() {
+	*x = ServiceStatus{}
+	mi := &file_agent_v1_agent_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ServiceStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ServiceStatus) ProtoMessage() {}
+
+func (x *ServiceStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_agent_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ServiceStatus.ProtoReflect.Descriptor instead.
+func (*ServiceStatus) Descriptor() ([]byte, []int) {
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *ServiceStatus) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ServiceStatus) GetState() string {
+	if x != nil {
+		return x.State
+	}
+	return ""
+}
+
 type HostStats struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	Load_1M          float64                `protobuf:"fixed64,1,opt,name=load_1m,json=load1m,proto3" json:"load_1m,omitempty"`
@@ -260,7 +322,7 @@ type HostStats struct {
 
 func (x *HostStats) Reset() {
 	*x = HostStats{}
-	mi := &file_agent_v1_agent_proto_msgTypes[3]
+	mi := &file_agent_v1_agent_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -272,7 +334,7 @@ func (x *HostStats) String() string {
 func (*HostStats) ProtoMessage() {}
 
 func (x *HostStats) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[3]
+	mi := &file_agent_v1_agent_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -285,7 +347,7 @@ func (x *HostStats) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HostStats.ProtoReflect.Descriptor instead.
 func (*HostStats) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{3}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *HostStats) GetLoad_1M() float64 {
@@ -331,7 +393,7 @@ type HeartbeatResponse struct {
 
 func (x *HeartbeatResponse) Reset() {
 	*x = HeartbeatResponse{}
-	mi := &file_agent_v1_agent_proto_msgTypes[4]
+	mi := &file_agent_v1_agent_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -343,7 +405,7 @@ func (x *HeartbeatResponse) String() string {
 func (*HeartbeatResponse) ProtoMessage() {}
 
 func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[4]
+	mi := &file_agent_v1_agent_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -356,7 +418,7 @@ func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatResponse.ProtoReflect.Descriptor instead.
 func (*HeartbeatResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{4}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{5}
 }
 
 type ReportTaskResultRequest struct {
@@ -371,7 +433,7 @@ type ReportTaskResultRequest struct {
 
 func (x *ReportTaskResultRequest) Reset() {
 	*x = ReportTaskResultRequest{}
-	mi := &file_agent_v1_agent_proto_msgTypes[5]
+	mi := &file_agent_v1_agent_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -383,7 +445,7 @@ func (x *ReportTaskResultRequest) String() string {
 func (*ReportTaskResultRequest) ProtoMessage() {}
 
 func (x *ReportTaskResultRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[5]
+	mi := &file_agent_v1_agent_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -396,7 +458,7 @@ func (x *ReportTaskResultRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportTaskResultRequest.ProtoReflect.Descriptor instead.
 func (*ReportTaskResultRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{5}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ReportTaskResultRequest) GetServerId() string {
@@ -435,7 +497,7 @@ type ReportTaskResultResponse struct {
 
 func (x *ReportTaskResultResponse) Reset() {
 	*x = ReportTaskResultResponse{}
-	mi := &file_agent_v1_agent_proto_msgTypes[6]
+	mi := &file_agent_v1_agent_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -447,7 +509,7 @@ func (x *ReportTaskResultResponse) String() string {
 func (*ReportTaskResultResponse) ProtoMessage() {}
 
 func (x *ReportTaskResultResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_agent_proto_msgTypes[6]
+	mi := &file_agent_v1_agent_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -460,7 +522,7 @@ func (x *ReportTaskResultResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportTaskResultResponse.ProtoReflect.Descriptor instead.
 func (*ReportTaskResultResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_agent_proto_rawDescGZIP(), []int{6}
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{7}
 }
 
 var File_agent_v1_agent_proto protoreflect.FileDescriptor
@@ -476,10 +538,14 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\rdistro_family\x18\x04 \x01(\tR\fdistroFamily\x12,\n" +
 	"\x12distro_pretty_name\x18\x05 \x01(\tR\x10distroPrettyName\"/\n" +
 	"\x10RegisterResponse\x12\x1b\n" +
-	"\tserver_id\x18\x01 \x01(\tR\bserverId\"f\n" +
+	"\tserver_id\x18\x01 \x01(\tR\bserverId\"\xa7\x01\n" +
 	"\x10HeartbeatRequest\x12\x1b\n" +
 	"\tserver_id\x18\x01 \x01(\tR\bserverId\x125\n" +
-	"\x05stats\x18\x02 \x01(\v2\x1f.cypherpanel.agent.v1.HostStatsR\x05stats\"\xd0\x01\n" +
+	"\x05stats\x18\x02 \x01(\v2\x1f.cypherpanel.agent.v1.HostStatsR\x05stats\x12?\n" +
+	"\bservices\x18\x03 \x03(\v2#.cypherpanel.agent.v1.ServiceStatusR\bservices\"9\n" +
+	"\rServiceStatus\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
+	"\x05state\x18\x02 \x01(\tR\x05state\"\xd0\x01\n" +
 	"\tHostStats\x12\x17\n" +
 	"\aload_1m\x18\x01 \x01(\x01R\x06load1m\x12,\n" +
 	"\x12memory_total_bytes\x18\x02 \x01(\x04R\x10memoryTotalBytes\x12*\n" +
@@ -516,31 +582,33 @@ func file_agent_v1_agent_proto_rawDescGZIP() []byte {
 }
 
 var file_agent_v1_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_agent_v1_agent_proto_goTypes = []any{
 	(TaskStatus)(0),                  // 0: cypherpanel.agent.v1.TaskStatus
 	(*RegisterRequest)(nil),          // 1: cypherpanel.agent.v1.RegisterRequest
 	(*RegisterResponse)(nil),         // 2: cypherpanel.agent.v1.RegisterResponse
 	(*HeartbeatRequest)(nil),         // 3: cypherpanel.agent.v1.HeartbeatRequest
-	(*HostStats)(nil),                // 4: cypherpanel.agent.v1.HostStats
-	(*HeartbeatResponse)(nil),        // 5: cypherpanel.agent.v1.HeartbeatResponse
-	(*ReportTaskResultRequest)(nil),  // 6: cypherpanel.agent.v1.ReportTaskResultRequest
-	(*ReportTaskResultResponse)(nil), // 7: cypherpanel.agent.v1.ReportTaskResultResponse
+	(*ServiceStatus)(nil),            // 4: cypherpanel.agent.v1.ServiceStatus
+	(*HostStats)(nil),                // 5: cypherpanel.agent.v1.HostStats
+	(*HeartbeatResponse)(nil),        // 6: cypherpanel.agent.v1.HeartbeatResponse
+	(*ReportTaskResultRequest)(nil),  // 7: cypherpanel.agent.v1.ReportTaskResultRequest
+	(*ReportTaskResultResponse)(nil), // 8: cypherpanel.agent.v1.ReportTaskResultResponse
 }
 var file_agent_v1_agent_proto_depIdxs = []int32{
-	4, // 0: cypherpanel.agent.v1.HeartbeatRequest.stats:type_name -> cypherpanel.agent.v1.HostStats
-	0, // 1: cypherpanel.agent.v1.ReportTaskResultRequest.status:type_name -> cypherpanel.agent.v1.TaskStatus
-	1, // 2: cypherpanel.agent.v1.AgentService.Register:input_type -> cypherpanel.agent.v1.RegisterRequest
-	3, // 3: cypherpanel.agent.v1.AgentService.Heartbeat:input_type -> cypherpanel.agent.v1.HeartbeatRequest
-	6, // 4: cypherpanel.agent.v1.AgentService.ReportTaskResult:input_type -> cypherpanel.agent.v1.ReportTaskResultRequest
-	2, // 5: cypherpanel.agent.v1.AgentService.Register:output_type -> cypherpanel.agent.v1.RegisterResponse
-	5, // 6: cypherpanel.agent.v1.AgentService.Heartbeat:output_type -> cypherpanel.agent.v1.HeartbeatResponse
-	7, // 7: cypherpanel.agent.v1.AgentService.ReportTaskResult:output_type -> cypherpanel.agent.v1.ReportTaskResultResponse
-	5, // [5:8] is the sub-list for method output_type
-	2, // [2:5] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	5, // 0: cypherpanel.agent.v1.HeartbeatRequest.stats:type_name -> cypherpanel.agent.v1.HostStats
+	4, // 1: cypherpanel.agent.v1.HeartbeatRequest.services:type_name -> cypherpanel.agent.v1.ServiceStatus
+	0, // 2: cypherpanel.agent.v1.ReportTaskResultRequest.status:type_name -> cypherpanel.agent.v1.TaskStatus
+	1, // 3: cypherpanel.agent.v1.AgentService.Register:input_type -> cypherpanel.agent.v1.RegisterRequest
+	3, // 4: cypherpanel.agent.v1.AgentService.Heartbeat:input_type -> cypherpanel.agent.v1.HeartbeatRequest
+	7, // 5: cypherpanel.agent.v1.AgentService.ReportTaskResult:input_type -> cypherpanel.agent.v1.ReportTaskResultRequest
+	2, // 6: cypherpanel.agent.v1.AgentService.Register:output_type -> cypherpanel.agent.v1.RegisterResponse
+	6, // 7: cypherpanel.agent.v1.AgentService.Heartbeat:output_type -> cypherpanel.agent.v1.HeartbeatResponse
+	8, // 8: cypherpanel.agent.v1.AgentService.ReportTaskResult:output_type -> cypherpanel.agent.v1.ReportTaskResultResponse
+	6, // [6:9] is the sub-list for method output_type
+	3, // [3:6] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_agent_v1_agent_proto_init() }
@@ -554,7 +622,7 @@ func file_agent_v1_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agent_v1_agent_proto_rawDesc), len(file_agent_v1_agent_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   7,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

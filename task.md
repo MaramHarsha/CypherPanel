@@ -91,9 +91,12 @@
   - **Security E2E verified** ✅: reseller sees only own packages/accounts; **IDOR blocked** (reseller suspending admin's account → 404); **quota enforced** (3rd account over max_accounts=2 → 403); admin unrestricted; reseller-provisioned account fully provisioned a real Linux user through the same pipeline
 - [ ] Reseller-facing UI shell (separate from admin shell, scoped nav) — deferred; API + scoping done, admin manages resellers today
 
+- [x] **Automated systemd service monitors** (§4A): `internal/services` probes managed units (nginx/mariadb/postfix/dovecot/pdns, `CYPHER_MANAGED_SERVICES` override) via `systemctl show` — Linux impl + `!linux` stub, telemetry never fails a heartbeat, not-installed units omitted; pure parser unit-tested. Proto add-only `repeated ServiceStatus services` on heartbeat; persisted to `servers.services` jsonb (migration 000007); surfaced in `GET /admin/servers` and as color-coded **service health chips** on the dashboard cards + servers table.
+  - **E2E verified** ✅ (fake `systemctl` fixture in the container exercised the real probe→parse→heartbeat→DB→API path): reported nginx=active, mariadb=active, postfix=failed, pdns=inactive; dovecot correctly omitted as not-installed
+
 ### Pending
 - [ ] Server node detail view + register/remove flows in UI
-- [ ] Automated systemd service monitors
+- [ ] Global service control actions (start/stop/restart via agent tasks) — monitoring done; control is the natural follow-up
 - [x] **Event Bus** (`internal/events`, §12): `EVENTS` JetStream stream (`events.>`, Limits retention, 14d) strictly separate from `tasks.*`; JetStream publish + in-process pub/sub fan-out; emits `server.registered`, `package.created`/`deleted`, `account.created`/`activated`/`suspended`/`unsuspended`/`terminating`/`terminated`/`failed` — secret-free snapshots. **E2E verified**: 5 events in the stream + all logged by an in-process subscriber ✅
 - [x] **Plugin reservations** (§11): migration 000005 `plugins` table; finalized `plugin.yaml` manifest schema (`internal/plugins`, `api_version: v1`, validated, unit-tested) + `docs/plugin-manifest.md`; read-only `GET /api/v1/admin/plugins` and `/plugins/manifest-schema` reserving the namespace (no loader yet)
 - [x] **Phase 2 skills batch** (catalog #9-11): `ui-development`, `async-ui-patterns`, `extensibility-and-events`

@@ -281,6 +281,24 @@ const docTemplate = `{
                     },
                     "name": {
                         "type": "string"
+                    },
+                    "services": {
+                        "items": {
+                            "$ref": "#/components/schemas/api.serviceStatus"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    }
+                },
+                "type": "object"
+            },
+            "api.serviceStatus": {
+                "properties": {
+                    "name": {
+                        "type": "string"
+                    },
+                    "state": {
+                        "type": "string"
                     }
                 },
                 "type": "object"

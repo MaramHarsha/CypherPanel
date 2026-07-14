@@ -66,7 +66,11 @@ func (s *Server) Heartbeat(ctx context.Context, req *agentv1.HeartbeatRequest) (
 		DiskTotalBytes:   req.GetStats().GetDiskTotalBytes(),
 		DiskUsedBytes:    req.GetStats().GetDiskUsedBytes(),
 	}
-	if err := s.Servers.Heartbeat(ctx, req.GetServerId(), stats); err != nil {
+	svcs := make([]store.ServiceStatus, 0, len(req.GetServices()))
+	for _, s := range req.GetServices() {
+		svcs = append(svcs, store.ServiceStatus{Name: s.GetName(), State: s.GetState()})
+	}
+	if err := s.Servers.Heartbeat(ctx, req.GetServerId(), stats, svcs); err != nil {
 		if err == store.ErrNotFound {
 			// Unknown ID: tell the agent to re-register (e.g. server row was
 			// deleted from the panel).

@@ -37,6 +37,14 @@ message RegisterResponse {
 message HeartbeatRequest {
   string server_id = 1;
   HostStats stats = 2;
+  // Status of managed system services (nginx, mariadb, ...). Add-only field;
+  // older agents simply omit it.
+  repeated ServiceStatus services = 3;
+}
+
+message ServiceStatus {
+  string name = 1;
+  string state = 2; // active | inactive | failed | activating | unknown
 }
 
 message HostStats {
