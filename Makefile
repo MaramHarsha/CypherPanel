@@ -30,6 +30,10 @@ vet:
 proto: tools
 	buf generate
 
+## Regenerate the OpenAPI 3.1 spec from handler annotations.
+openapi:
+	go run github.com/swaggo/swag/v2/cmd/swag@latest init -g cmd/core/main.go -o docs --v3.1
+
 tools:
 	go install github.com/bufbuild/buf/cmd/buf@latest
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest

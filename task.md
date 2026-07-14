@@ -7,13 +7,14 @@
 
 | Phase | Scope | Status |
 |-------|-------|--------|
-| **1** | Core Foundation & Agent Comms | 🟨 In progress (~95%) |
+| **1** | Core Foundation & Agent Comms | ✅ Complete (2 minor deploy-time items deferred) |
 | **2** | Admin Plane & Provisioning + UI Shell | ⬜ Not started |
 | **3** | Web Server & PHP Management | ⬜ Not started |
 | **4** | Files, FTP, & Databases | ⬜ Not started |
 | **5** | Email & DNS Servers | ⬜ Not started |
 | **6** | Logging, Auditing, & Hardening | ⬜ Not started |
 | — | Post-MVP (`upcoming-features.md`) | ⬜ After MVP |
+| — | Extensibility, SDKs & Ops (`plan.md` §11-19) | ⬜ Reservations start Phase 2; most items post-MVP — see below |
 
 ---
 
@@ -30,7 +31,7 @@
 - [x] Go module renamed to `github.com/MaramHarsha/CypherPanel`
 - [ ] Initial git commit & push to GitHub *(waiting on user go-ahead)*
 
-## Phase 1 — Core Foundation & Agent Comms 🟨
+## Phase 1 — Core Foundation & Agent Comms ✅
 
 ### Done
 - [x] Central env-driven config package (`internal/config`) — no hardcoded endpoints/secrets; prod-mode hard requirements
@@ -57,11 +58,15 @@
 - [x] **First real provisioning action verified**: system user created inside a Debian container via API → NATS → agent → `useradd` (idempotent re-run also succeeds); on Windows dev the same task dead-letters immediately with a clear "Linux only" error
 - [x] Agent RSS measured under real load: **3.6 MiB** (budget: <50MB; cPanel minimum: 2GB) ✅
 
+- [x] Host stats in heartbeat (load/mem/disk from /proc + statfs on Linux, zeros on dev machines) persisted to servers table (migration 000003)
+- [x] OpenAPI 3.1 spec generated from handler annotations (swaggo v2), served at `GET /api/v1/openapi.json`, regenerate with `make openapi`
+- [x] CI pipeline (GitHub Actions): build + vet + test + linux amd64/arm64 cross-compile + buf proto lint on every push/PR
+- [x] NATS credentials support (`CYPHER_NATS_CREDS` / `CYPHER_AGENT_NATS_CREDS`)
+- [x] **Phase 1 agent-skills batch** (`.claude/skills/`, per `plan.md` §9 catalog #1-8): `go-backend-conventions`, `database-and-migrations`, `grpc-proto-contracts`, `jobs-and-agent-tasks`, `auth-and-rbac`, `api-contract-workflow`, `testing-conventions`, `linux-system-integration` — each grounded in the shipped Phase 1 code, not speculation
+
 ### Pending
-- [ ] Host stats in heartbeat (load, memory, disk — currently unset)
-- [ ] OpenAPI spec generation for the REST API (swaggo/huma per plan)
-- [ ] CI pipeline (GitHub Actions): build + vet + test + Linux cross-compile on every push
-- [ ] NATS auth/TLS for agent connections (currently open in dev; must be locked before production)
+- [ ] NATS server-side auth config in production deployments (client support ready; server config is an installer/deploy concern)
+- [ ] Frontend TypeScript client generation from the OpenAPI spec (do when web/ lands in Phase 2)
 
 ## Phase 2 — Admin Plane & Provisioning + UI Shell ⬜
 
@@ -71,6 +76,10 @@
 - [ ] Account creation, suspension, termination flows
 - [ ] Automated systemd service monitors
 - [ ] Reseller resource pools
+- [ ] Reserve `/api/v1/plugins/` route namespace + `plugins` table stub (no loader yet — `plan.md` §11)
+- [ ] Reserve NATS `events.>` subject namespace for the internal Event Bus, separate from agent-task subjects (`plan.md` §12)
+- [ ] Finalize plugin manifest (`plugin.yaml`) schema before any third-party plugin exists (`plan.md` §11)
+- [ ] **Phase 2 skills batch** (end of phase, catalog #9-11): `ui-development`, `async-ui-patterns`, `extensibility-and-events`
 
 ## Phase 3 — Web Server & PHP Management ⬜
 
@@ -78,6 +87,7 @@
 - [ ] Multi-PHP install scripts + per-account PHP-FPM pool configs
 - [ ] PHP INI Editor API
 - [ ] Lego ACME integration (Let's Encrypt / ZeroSSL)
+- [ ] **Phase 3 skills batch** (end of phase, catalog #12-14): `agent-config-generators`, `php-runtime-management`, `ssl-acme`
 
 ## Phase 4 — Files, FTP, & Databases ⬜
 
@@ -85,6 +95,7 @@
 - [ ] Pure-FTPd virtual users (MVP default)
 - [ ] MariaDB provisioning APIs (MVP default)
 - [ ] phpMyAdmin / Adminer auto-setup
+- [ ] **Phase 4 skills batch** (end of phase, catalog #15-16): `filesystem-operations-safety`, `user-database-provisioning`
 
 ## Phase 5 — Email & DNS Servers ⬜
 
@@ -92,6 +103,7 @@
 - [ ] Mail user auth database & quotas
 - [ ] PowerDNS zone configuration (MVP default)
 - [ ] DNS cluster synchronization engine
+- [ ] **Phase 5 skills batch** (end of phase, catalog #17-18): `mail-stack`, `dns-management`
 
 ## Phase 6 — Logging, Auditing, & Hardening ⬜
 
@@ -100,3 +112,25 @@
 - [ ] Audit log dashboards & retention policies
 - [ ] Security hardening + release candidate packaging
 - [ ] Single-command installer (per Appendix A rules: consent-based takeover, uninstaller, no forced bundling)
+- [ ] Version Upgrade & Migration Framework: `system_version` tracking, sequential migration replay, mandatory pre-upgrade backup, rollback path (`plan.md` §13) — **release-candidate gate, must exist before first production update ships**
+- [ ] Compatibility matrix doc (`docs/compatibility-matrix.md`): Core ↔ Agent ↔ plugin API version ranges, enforced at registration (`plan.md` §13)
+- [ ] Metrics API: `GET /api/v1/metrics/{scope}` (server/account/domain) + raw Prometheus `/metrics` scrape endpoint (`plan.md` §16)
+- [ ] CI: add load-test, security-test, and UI-test (Playwright) job tiers alongside existing unit/integration/cross-compile jobs (`plan.md` §19)
+- [ ] **Phase 6 skills batch** (during hardening, catalog #19-23): `observability-and-metrics`, `backups`, `installer-and-packaging`, `upgrade-and-compatibility`, `public-interfaces`
+
+## Extensibility & Operability Backlog — post-MVP (`plan.md` §11-19) ⬜
+
+> Reservations (route namespace, event subject namespace, upgrade framework, metrics API) are tracked inline in the phases above since they gate MVP correctness. Everything below is the full post-MVP build-out.
+
+- [ ] Plugin runtime: process-isolated backend plugin loader, permission enforcement against the manifest, plugin lifecycle (install/enable/disable/uninstall) (`plan.md` §11)
+- [ ] UI plugin slots: sidebar entries, dashboard cards, settings pages registered from a manifest (`plan.md` §11)
+- [ ] Themes and language packs as installable plugin types on top of the white-labeling/i18n scaffolding (`plan.md` §11)
+- [ ] Plugin marketplace (hosted registry, review/signing) — deferred indefinitely, own product scope (`plan.md` §11)
+- [ ] Internal Event Bus: core domain events (`account.created`, `account.suspended`, `domain.added`, `dns.record.changed`, …) wired to JetStream `events.>`, plus in-process pub/sub for same-binary subscribers (`plan.md` §12)
+- [ ] `cypherctl` CLI: account/server/dns/backup/ssl commands + `upgrade`/`rollback` (`plan.md` §14)
+- [ ] Go SDK generated from OpenAPI (`oapi-codegen`) (`plan.md` §14)
+- [ ] Node SDK generated from OpenAPI, shared generator config with the CypherUI TS client (`plan.md` §14)
+- [ ] Python SDK generated from OpenAPI (`plan.md` §14)
+- [ ] Webhooks: signed (HMAC-SHA256) delivery via dedicated JetStream consumer, retry/dead-letter, management UI + delivery log + manual redelivery (`plan.md` §15)
+- [ ] Multi-region: `region` field on server registration, region-aware NATS partitioning, admin UI fleet grouping/filtering by region, data-residency query filters (`plan.md` §17)
+- [ ] Billing integration adapter contract generalized from the WHMCS module; publish spec so community can build Blesta/HostBill adapters without touching CypherCore (`plan.md` §18)

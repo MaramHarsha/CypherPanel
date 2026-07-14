@@ -38,6 +38,16 @@ import (
 	"github.com/MaramHarsha/CypherPanel/internal/store"
 )
 
+// @title           CypherPanel API
+// @version         0.1.0
+// @description     Control-plane REST API for CypherPanel, the open-source cPanel/WHM alternative.
+// @license.name    Apache-2.0
+// @license.url     https://www.apache.org/licenses/LICENSE-2.0
+// @BasePath        /api/v1
+// @securityDefinitions.apikey BearerAuth
+// @in              header
+// @name            Authorization
+// @description     Type "Bearer" followed by a space and the access token.
 func main() {
 	if err := run(); err != nil {
 		slog.Error("cypher-core failed", "error", err)
@@ -90,7 +100,11 @@ func run() error {
 		return createAdmin(ctx, users, auditLog, os.Args[2:])
 	}
 
-	nc, err := nats.Connect(cfg.NATSURL, nats.Name("cypher-core"))
+	natsOpts := []nats.Option{nats.Name("cypher-core")}
+	if cfg.NATSCreds != "" {
+		natsOpts = append(natsOpts, nats.UserCredentials(cfg.NATSCreds))
+	}
+	nc, err := nats.Connect(cfg.NATSURL, natsOpts...)
 	if err != nil {
 		return fmt.Errorf("connecting to NATS: %w", err)
 	}

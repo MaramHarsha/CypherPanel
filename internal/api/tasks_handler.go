@@ -28,6 +28,18 @@ type createTaskRequest struct {
 // Create dispatches a task to a server's agent: persist first (durable
 // record), then publish; the task ID doubles as the JetStream dedup key so a
 // republish after a crash between the two steps is safe.
+//
+//	@Summary  Dispatch a task to a server's agent (root admin only)
+//	@Tags     admin
+//	@Accept   json
+//	@Produce  json
+//	@Param    id      path string            true "Server ID"
+//	@Param    request body createTaskRequest true "Task type and payload"
+//	@Success  202 {object} map[string]string
+//	@Failure  400 {object} map[string]string
+//	@Failure  403 {object} map[string]string
+//	@Security BearerAuth
+//	@Router   /admin/servers/{id}/tasks [post]
 func (h *TasksHandler) Create(c *gin.Context) {
 	serverID := c.Param("id")
 	var req createTaskRequest
@@ -65,6 +77,16 @@ func (h *TasksHandler) Create(c *gin.Context) {
 	c.JSON(http.StatusAccepted, gin.H{"id": task.ID, "status": task.Status})
 }
 
+// Get returns a task's current status.
+//
+//	@Summary  Inspect a task (root admin only)
+//	@Tags     admin
+//	@Produce  json
+//	@Param    id path string true "Task ID"
+//	@Success  200 {object} map[string]string
+//	@Failure  404 {object} map[string]string
+//	@Security BearerAuth
+//	@Router   /admin/tasks/{id} [get]
 func (h *TasksHandler) Get(c *gin.Context) {
 	task, err := h.Tasks.GetByID(c.Request.Context(), c.Param("id"))
 	if errors.Is(err, store.ErrNotFound) {

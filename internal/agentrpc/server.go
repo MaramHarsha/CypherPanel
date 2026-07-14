@@ -52,7 +52,14 @@ func (s *Server) Heartbeat(ctx context.Context, req *agentv1.HeartbeatRequest) (
 	if req.GetServerId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "server_id is required")
 	}
-	if err := s.Servers.Heartbeat(ctx, req.GetServerId()); err != nil {
+	stats := store.HostStats{
+		Load1m:           req.GetStats().GetLoad_1M(),
+		MemoryTotalBytes: req.GetStats().GetMemoryTotalBytes(),
+		MemoryUsedBytes:  req.GetStats().GetMemoryUsedBytes(),
+		DiskTotalBytes:   req.GetStats().GetDiskTotalBytes(),
+		DiskUsedBytes:    req.GetStats().GetDiskUsedBytes(),
+	}
+	if err := s.Servers.Heartbeat(ctx, req.GetServerId(), stats); err != nil {
 		if err == store.ErrNotFound {
 			// Unknown ID: tell the agent to re-register (e.g. server row was
 			// deleted from the panel).

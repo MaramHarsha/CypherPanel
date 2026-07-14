@@ -296,6 +296,8 @@ The important design rule this implies: nothing in Phase 1-2 should require a re
   └── Security hardening and release candidate packaging
 ```
 
+> **Extensibility & Operability Additions (Sections 11-19):** these are architecture chapters, not new phases. Where a section's MVP-relevant piece is reserved rather than fully built: the plugin route/table reservation and Event Bus subject reservation (Sections 11-12) land in Phase 2 alongside the UI shell; the CLI/SDKs (Section 14), Webhooks (Section 15), and Metrics API (Section 16) land at the end of Phase 6 / post-MVP, once the OpenAPI spec, Event Bus, and metrics store they depend on are stable; the Upgrade & Migration Framework (Section 13) must exist before the first production update ships, i.e. as a Phase 6 release-candidate gate; Multi-Region (Section 17) and the Billing Integration Layer (Section 18) are post-MVP per `upcoming-features.md`; the Testing Strategy (Section 19) applies continuously from Phase 1 onward, not as a separate phase.
+
 ### Project Agent Skills (`.claude/skills/`) — Full Catalog
 
 Following the pattern used by Coolify (which ships `.claude/skills/` with skills like `laravel-best-practices`, `pest-testing`, and `tailwindcss-development`), CypherPanel maintains its own project skills so that AI coding agents (Claude Code and compatible tools) working in this repo automatically follow its conventions instead of generic defaults. Each skill is a directory containing a `SKILL.md` (instructions + decision rules), optionally with `references/` files for templates and examples.
@@ -317,28 +319,31 @@ This is the catalog for the **entire project**. Timing rule: each skill is writt
 
 9.  **`ui-development`** — shadcn/ui component usage (copied into repo, themed via design tokens — never inline colors, so white-labeling stays a config file), Tailwind token conventions, light/dark theming, React Query data-fetching patterns (no raw `fetch` in components), Lucide icons, i18n string extraction (`next-intl` — no hardcoded UI strings), and the accessibility bar (WCAG 2.1 AA, keyboard nav, focus states). Consumed by every feature screen in Phases 3-6.
 10. **`async-ui-patterns`** — How UI surfaces long-running jobs: wiring a mutation to the NATS job pipeline, live progress via WebSocket/SSE into the notification center, optimistic updates vs. pending states, empty-state and skeleton-loader conventions, and type-to-confirm for destructive actions.
+11. **`extensibility-and-events`** — The plugin manifest schema and permission model (Section 11), the `/api/v1/plugins/` and `plugins` table reservation, Event Bus subject-naming conventions and the `events.>` vs. agent-task subject split (Section 12), and the rule for what stays a direct call vs. becomes an event. Consumed by every later phase that emits or reacts to a domain event.
 
 #### Written at end of Phase 3 (config generation + SSL patterns exist)
 
-11. **`agent-config-generators`** — Adding a service config generator: Go `text/template` conventions, template testing (golden files), resolving output paths through the distro path-mapping layer, validate-then-reload sequencing (e.g., `nginx -t` before reload, never blind restarts), and the adapter interface that post-MVP alternatives (Apache, OpenLiteSpeed, BIND) must implement. Consumed heavily by Phases 4-5 (FTP, mail, DNS configs).
-12. **`php-runtime-management`** — Multi-PHP install layout, per-account PHP-FPM pool file conventions and socket isolation, INI override handling, and how EOL PHP branches are flagged.
-13. **`ssl-acme`** — Lego library usage: HTTP-01 vs. DNS-01 challenge selection, certificate storage paths and permissions, renewal job scheduling, and web-server reload coordination after issuance.
+12. **`agent-config-generators`** — Adding a service config generator: Go `text/template` conventions, template testing (golden files), resolving output paths through the distro path-mapping layer, validate-then-reload sequencing (e.g., `nginx -t` before reload, never blind restarts), and the adapter interface that post-MVP alternatives (Apache, OpenLiteSpeed, BIND) must implement. Consumed heavily by Phases 4-5 (FTP, mail, DNS configs).
+13. **`php-runtime-management`** — Multi-PHP install layout, per-account PHP-FPM pool file conventions and socket isolation, INI override handling, and how EOL PHP branches are flagged.
+14. **`ssl-acme`** — Lego library usage: HTTP-01 vs. DNS-01 challenge selection, certificate storage paths and permissions, renewal job scheduling, and web-server reload coordination after issuance.
 
 #### Written at end of Phase 4 (file/database surfaces exist)
 
-14. **`filesystem-operations-safety`** — The rules for any code that touches user files (File Manager, FTP, backups): path-traversal prevention (canonicalize + verify under the account root), operating with the account user's privileges (never root), quota/inode accounting, and safe handling of uploads, archives (zip-slip), and symlinks.
-15. **`user-database-provisioning`** — MariaDB database/user/grant provisioning conventions, credential generation and storage, phpMyAdmin/Adminer session handoff, and the adapter interface PostgreSQL user-DBs will implement post-MVP.
+15. **`filesystem-operations-safety`** — The rules for any code that touches user files (File Manager, FTP, backups): path-traversal prevention (canonicalize + verify under the account root), operating with the account user's privileges (never root), quota/inode accounting, and safe handling of uploads, archives (zip-slip), and symlinks.
+16. **`user-database-provisioning`** — MariaDB database/user/grant provisioning conventions, credential generation and storage, phpMyAdmin/Adminer session handoff, and the adapter interface PostgreSQL user-DBs will implement post-MVP.
 
 #### Written at end of Phase 5 (mail + DNS stacks exist)
 
-16. **`mail-stack`** — Postfix/Dovecot config conventions, virtual mailbox/domain layout, quota enforcement, Rspamd integration points, and DKIM/SPF/DMARC record generation.
-17. **`dns-management`** — PowerDNS REST API usage patterns, zone/record CRUD conventions, validation rules per record type (A, AAAA, CNAME, MX, TXT, SRV, CAA), and primary/secondary cluster synchronization.
+17. **`mail-stack`** — Postfix/Dovecot config conventions, virtual mailbox/domain layout, quota enforcement, Rspamd integration points, and DKIM/SPF/DMARC record generation.
+18. **`dns-management`** — PowerDNS REST API usage patterns, zone/record CRUD conventions, validation rules per record type (A, AAAA, CNAME, MX, TXT, SRV, CAA), and primary/secondary cluster synchronization.
 
 #### Written during Phase 6 (hardening & release)
 
-18. **`observability-and-metrics`** — What goes to the time-series store (Prometheus/VictoriaMetrics) vs. Postgres (never high-cardinality metrics in Postgres), metric naming conventions, structured logging fields, and audit-log query/retention patterns.
-19. **`backups`** — restic/Borg invocation conventions (incremental/deduplicated — raw tar only for one-off manual exports), endpoint configuration (S3/SFTP/local), db-dump coordination, and restore-path testing requirements.
-20. **`installer-and-packaging`** — Shell installer conventions from Appendix A: GPG-verify every artifact, LF-only line endings, detect-and-ask (never silently purge conflicting services), no auto-reboot, release tiers (`stable`/`edge`), working uninstaller, and the 1GB-RAM install target.
+19. **`observability-and-metrics`** — What goes to the time-series store (Prometheus/VictoriaMetrics) vs. Postgres (never high-cardinality metrics in Postgres), metric naming conventions, structured logging fields, audit-log query/retention patterns, and the Metrics API surface (Section 16).
+20. **`backups`** — restic/Borg invocation conventions (incremental/deduplicated — raw tar only for one-off manual exports), endpoint configuration (S3/SFTP/local), db-dump coordination, and restore-path testing requirements.
+21. **`installer-and-packaging`** — Shell installer conventions from Appendix A: GPG-verify every artifact, LF-only line endings, detect-and-ask (never silently purge conflicting services), no auto-reboot, release tiers (`stable`/`edge`), working uninstaller, and the 1GB-RAM install target.
+22. **`upgrade-and-compatibility`** — The `cypherctl upgrade`/`rollback` workflow (Section 13): sequential migration replay rules, the mandatory pre-upgrade backup step, the compatibility-matrix format, and how Core/Agent/plugin version ranges are enforced at registration time.
+23. **`public-interfaces`** — Conventions for everything built on top of the OpenAPI spec: generating the Go/Node/Python SDKs and `cypherctl` CLI commands (Section 14), the webhook signing/delivery/retry pattern (Section 15), and the billing-adapter contract (Section 18) — all treated as generated/thin layers over the existing REST surface, never hand-maintained parallel clients.
 
 ---
 
@@ -346,6 +351,115 @@ This is the catalog for the **entire project**. Timing rule: each skill is writt
 
 *   **License:** Apache-2.0 — pick one license, not "or MIT". Apache-2.0 is the better default for infrastructure software: it includes an explicit patent grant, which matters more here than for a typical app since hosting-provider adopters and contributors are more exposed to patent risk than end users.
 *   **Governance:** Open-source project governed by community pull requests. All development occurs in public repositories, with dedicated tests and documentation.
+
+---
+
+## 11. Extensibility Architecture: Plugins, Extensions & Marketplace
+
+Without this, third-party developers cannot extend CypherPanel without forking it — this is the single biggest structural gap in the plan as it stood, and the biggest lever for organic ecosystem growth once the MVP ships. MVP does **not** ship a plugin runtime or marketplace, but Phase 1-2 architecture must reserve the extension points now, since retrofitting a manifest/permission model after third parties have already built against an ad-hoc one is exactly the kind of breaking change Section 3's proto-versioning rules warn against.
+
+*   **Plugin types:** Extensions (backend logic — subscribe to Event Bus events per Section 12, register API routes under `/api/v1/plugins/{id}/...`), UI Plugins (register sidebar entries, dashboard cards, or settings pages into the CypherUI shell), Themes (design-token overrides layered on the white-labeling system already planned in Section 5), Language Packs (i18n bundles on top of the `next-intl` scaffolding already planned in Section 5).
+*   **Plugin manifest:** a `plugin.yaml` declaring name, version, the required CypherPanel core version range (semver — ties into Section 13's compatibility matrix), the permissions requested (which event subjects it may subscribe to, which API scopes it may call), and entry points. Finalize this schema during Phase 2 rather than later — it is the contract every future plugin builds against.
+*   **Isolation:** backend plugins run as separate OS processes (never loaded in-process into CypherCore), communicating over local gRPC or the Event Bus — the same isolation philosophy Section 7 applies to hosted accounts, applied here so a buggy or malicious plugin cannot crash or gain root inside the control plane.
+*   **Marketplace:** deferred entirely post-MVP — a hosted registry with review/signing is a product in its own right, not Phase 1-6 scope.
+*   **Reserve now, build later:** reserve the `/api/v1/plugins/` route namespace and a `plugins` table (id, name, version, enabled, permissions) during Phase 2 even with no loader behind them yet. An empty, reserved namespace costs nothing and prevents a collision once the loader exists.
+
+---
+
+## 12. Internal Event System (Event Bus)
+
+Adopted. Domain events — `account.created`, `account.suspended`, `domain.added`, `dns.record.changed`, and similar — let features react to what happened instead of calling each other directly, and it's what makes Section 11's plugin system tractable: a plugin (or the Email, DNS, Backup, or Analytics module) just subscribes to the events it cares about instead of every module needing a bespoke integration point per consumer.
+
+*   **Reuse NATS JetStream, don't build a second bus:** JetStream is already the CypherAgent task queue (Section 3). Use a separate subject namespace for domain events (e.g. `events.>`) from the existing agent-task subjects, since the two have different durability needs — events are fire-and-forget fan-out to any number of subscribers, while agent tasks are exactly-once-executed with dead-lettering. Sharing consumer groups between them would be a bug waiting to happen, not a simplification.
+*   **In-process vs. cross-process:** same-binary subscribers (e.g., an audit-log write that must happen inside the same request) can use a lightweight in-memory pub/sub for low-latency synchronous reactions; cross-service and plugin reactions go through JetStream. Don't force everything through NATS when both sides are in the same process — that's a network hop for no isolation benefit.
+*   **Boundary — what stays a direct call:** core provisioning logic that must succeed-or-fail atomically before a request returns (e.g., creating the Linux user before an account-creation endpoint responds `201`) stays a direct synchronous call, never an event chain. Event-driven core mutations make failure handling and debugging significantly harder; that trade only pays off for genuinely decoupled reactions (notifications, analytics, plugin hooks, webhooks per Section 15).
+
+---
+
+## 13. Version Upgrade, Migration & Compatibility Framework
+
+A production install must never be put in a broken or ambiguous state by an update — regardless of which version it was last on, how many releases it skipped, or whether the operator wants the latest version or a specific pinned one.
+
+*   **Version tracking:** every installed instance records its current version — Core, Agent, and DB schema tracked separately in a `system_version` table — since Core, Agent, and schema can be at different points during a rolling upgrade across a large fleet (Section 3 already assumes Core/Agent version skew for this reason).
+*   **Sequential migration replay, never a version-to-version diff jump:** upgrading from 1.0.0 to 1.0.2 replays the 1.0.0→1.0.1 and 1.0.1→1.0.2 migration steps in order, exactly the way `golang-migrate` already replays schema migrations sequentially (Section 3). Never skip an intermediate step even when the end state "looks the same" — intermediate steps may carry one-time data backfills or renames that a direct jump would silently miss. This is what guarantees a user who skipped a release and one who upgraded on every release both land in the same, tested end state.
+*   **`cypherctl upgrade` workflow** (Section 14):
+    1.  Detect the currently installed version.
+    2.  Compute the migration chain to the target version — latest by default, or an explicit version the operator selects ("select the version they want to update to").
+    3.  **Mandatory backup before touching production**: snapshot PostgreSQL (`pg_dump` or volume snapshot) and config/state directories using the same restic/Borg engine already planned for account backups (Section 4A), not a second backup mechanism. The upgrade refuses to proceed without a fresh backup unless the operator passes an explicit `--skip-backup` override — never a silent skip.
+    4.  Apply migrations one version at a time, each wrapped in a transaction where possible; halt immediately on failure rather than continuing partially applied.
+    5.  Health-check the upgraded instance (`/healthz`, agent connectivity) before declaring success.
+*   **Rollback strategy:** every migration ships as a paired up/down (the existing `golang-migrate` convention), so `cypherctl rollback` walks backward through the same chain. For changes that aren't cleanly reversible via SQL alone (a destructive data transform), the pre-upgrade backup from step 3 **is** the rollback path — restore it rather than trusting a down-migration to perfectly undo a lossy change.
+*   **Compatibility matrix:** maintained in-repo (`docs/compatibility-matrix.md`), mapping CypherCore version ↔ min/max supported CypherAgent version ↔ min supported plugin API version (Section 11), enforced at runtime — an Agent or plugin outside the supported range is refused registration with a clear error, not allowed to connect and fail unpredictably later.
+*   **Land before the first production update ships**, not as a nice-to-have — this framework is what "the update should not break production no matter what" actually cashes out to operationally. Treat it as a Phase 6 release-candidate gate.
+
+---
+
+## 14. Public SDKs & CLI
+
+Because the REST API is OpenAPI-spec-driven and the CypherUI TypeScript client is already generated from that spec (Section 3), SDKs are thin, mostly-generated clients on top of a contract that already exists — not a second API surface to hand-maintain.
+
+*   **CLI (`cypherctl`):** a Go binary in the existing `cmd/` monorepo layout, wrapping the REST API for day-to-day operations — `cypherctl account create`, `cypherctl server list`, `cypherctl dns create`, `cypherctl backup run`, `cypherctl ssl renew` — plus the upgrade/rollback workflow from Section 13. Cross-compiled the same way as Core/Agent (see "Portability" above). Also the natural home for the `cypher pull` / `cypher push` local-dev-sync differentiator already planned in `upcoming-features.md` §8.
+*   **Go SDK:** generate typed client bindings from the OpenAPI spec (e.g., `oapi-codegen`) rather than hand-writing a second HTTP client.
+*   **Node SDK:** generated from the same OpenAPI spec used for the CypherUI TypeScript client — the SDK and the UI's internal client are two build targets of the same generator config, not separate maintenance burdens.
+*   **Python SDK:** generated from OpenAPI as well (e.g., `openapi-python-client`) — the SDK most likely to matter for hosting-automation scripts and CI integrations, so keep its examples at parity with the CLI.
+*   **Ordering:** none of this blocks MVP. Build it once the OpenAPI spec (a pending Phase 1 item) and the core REST surface (Phases 2-5) are stable enough that regenerating SDKs on every breaking change isn't constant churn — track as end-of-Phase-6/post-MVP. The `/api/v1` versioning discipline already in Section 3 is what keeps this cheap when the time comes.
+
+---
+
+## 15. Webhooks & Outbound Integrations
+
+The external counterpart to the Event Bus (Section 12): the same domain events that flow to internal subscribers also fan out to operator-configured HTTP endpoints, so "notify Slack/Discord/WHMCS/a custom billing system when X happens" is one subscription mechanism, not N one-off integrations.
+
+*   **Delivery:** signed payloads (HMAC-SHA256 over the body with a per-endpoint shared secret — the same pattern Stripe/GitHub use) so receivers can trust the source without mTLS. Delivered via a dedicated JetStream consumer for webhook fan-out, with retry/backoff and dead-lettering after N attempts — reusing the idempotent-retryable-job pattern already required for agent tasks (Section 8), not a new delivery mechanism.
+*   **Management UI:** endpoint URL, event-type subscriptions, secret rotation, a delivery log (response codes, latency), and manual redelivery of a failed event — visibility into delivery success/failure is what makes this trustworthy enough for a host to wire up billing automation on top of it.
+*   **Ordering:** depends on the Event Bus (Section 12) existing first — realistically a Phase 5/6-or-later item, not Phase 1.
+
+---
+
+## 16. Metrics API
+
+Section 8 already commits metrics storage to Prometheus/VictoriaMetrics rather than Postgres. This section defines the API surface *on top of* that store — "we store metrics" and "an operator, plugin, or UI can query metrics programmatically" are different pieces of work.
+
+*   **`GET /api/v1/metrics/{scope}`** (scope = server, account, domain), backed by PromQL queries against VictoriaMetrics, covering: CPU, RAM, bandwidth, disk (space + inodes), HTTP request rate/latency, PHP-FPM worker pool utilization, MariaDB connections/slow queries, Nginx active connections, SSL certificate expiry countdown, and mail queue depth. This is the same metric set already implied by Section 5's "live resource meters" and Section 8's per-account CPU/RAM/IO tracking — this section makes it a documented, stable API instead of an internal-only dashboard query.
+*   **Raw scrape endpoint:** also expose Prometheus-format `/metrics` for operators who want to scrape directly into their own monitoring stack (the Prometheus/Grafana bridge already planned in `upcoming-features.md` §3). The REST wrapper and the raw scrape endpoint serve different consumers — UI/CLI/SDK vs. an operator's existing Grafana — and both are cheap once the underlying store exists.
+*   **Ordering:** lands alongside Phase 6's metrics-collection work (Section 9) — an API on top of a store that doesn't exist yet is nothing to build against.
+
+---
+
+## 17. Multi-Region / Multi-Fleet Support
+
+Design goal: one CypherCore control plane (or a small number of geo-distributed control planes) manages CypherAgent fleets across multiple regions — India, Singapore, Germany, USA, etc. — from a single dashboard, without an operator needing a separate CypherPanel install per region.
+
+*   **Region-aware registration:** add a `region` field to server registration (Section 4A already defines a server record per node) so the admin UI can filter/group the fleet by region, and packages can express region-scoped provisioning (e.g., data-residency requirements).
+*   **Reuses existing scaling plans, not a new mechanism:** NATS subject partitioning per-server/region is already the planned strategy (Section 8) for fleet communication at 10,000+ nodes — region-awareness is "use the region as part of that partitioning key," not new infrastructure.
+*   **Two real architectural choices for when this is actually built** (post-MVP — don't build speculatively now, but don't preclude either): (a) a single global CypherCore with cross-region latency to remote agents — simpler, but control-plane-to-agent latency and a single regional point of failure; or (b) regional CypherCore replicas sharing one Postgres primary/read-replica topology with region-local NATS clusters — matches Section 8's read-replica plan, keeps control latency local, more moving parts. Lean toward (b) once fleet size or data-residency requirements justify the added complexity.
+*   **Data residency:** because packages/accounts carry a region, GDPR-style "this customer's data must stay in the EU" requirements become a query filter and provisioning constraint, not a redesign.
+
+---
+
+## 18. Billing Integration Layer
+
+`upcoming-features.md` §4 already plans a WHMCS provisioning module and an optional built-in `CypherBilling`. This section generalizes that into a documented adapter interface so WHMCS isn't a one-off integration — Blesta and HostBill (the other two billing platforms hosting providers actually run) get the same contract for free, without CypherCore needing to know they exist.
+
+*   **Inbound (billing system → CypherPanel):** provisioning calls — create/suspend/unsuspend/terminate account, change package — map directly onto the account-lifecycle API already planned for Phase 2 (Section 4A). No new endpoints; a billing adapter is documented usage of existing ones.
+*   **Outbound (CypherPanel → billing system):** usage/overage data and account state changes flow through the webhook mechanism (Section 15) — so a billing adapter is "a webhook receiver plus a thin call-out library," not a bespoke module per platform.
+*   **Ship one reference adapter, document the rest:** WHMCS as the official reference implementation (incumbent, already planned), plus a published adapter contract/spec so community contributors can build Blesta/HostBill adapters without touching CypherCore itself — a meaningful adoption lever per the plan's own framing in `upcoming-features.md` §4 ("meeting the industry where it already is").
+*   **Ordering:** depends on the account-lifecycle API (Phase 2) and webhooks (Section 15) — realistically post-MVP, but write the adapter contract once Phase 2's account API is stable rather than after three billing integrations have already been hand-rolled inconsistently.
+
+---
+
+## 19. Testing Strategy
+
+Expands the `testing-conventions` skill (Section 9) into a dedicated chapter covering every test tier the project needs, not just unit tests.
+
+*   **Unit Tests:** table-driven Go tests for all platform-neutral logic — config generation, validation, business logic — runnable on any dev OS without Linux or the docker-compose stack.
+*   **Integration Tests:** exercise CypherCore against real PostgreSQL/Redis/NATS via the docker-compose dev stack — API handler → store → DB round trips, JetStream publish/consume, Redis session/refresh-token flows.
+*   **Agent Tests:** CypherAgent's Linux-only code (systemd, cgroups, PAM, config generation) tested inside a Linux container/WSL2/CI runner, per the `_linux.go` build-tag isolation already established (Section 3) — the platform-neutral parts of the Agent stay unit-tested without Linux; only the syscall layer needs the container.
+*   **E2E Tests:** the full-stack flows already used to hand-verify Phase 1 (login → token → protected route; register → heartbeat; provision system user) should become a repeatable, CI-runnable suite — Phase 1's "E2E verified" checkmarks in `task.md` were done manually and need to become automated regression tests before Phase 2 builds on top of them.
+*   **Load Tests:** validate the Section 8 scale targets (p95 < 200ms for CRUD ops, agent idle RSS budget) don't regress — k6 or similar against a seeded dataset approaching the Phase 1-2 targets (50k accounts, 200 agent nodes). Run periodically, not on every PR, and always before a phase's "done" declaration.
+*   **Security Tests:** automated authorization/IDOR checks against the centralized policy layer (Section 6) — a Reseller- or End-User-scoped token must not be able to read/mutate another tenant's resources by guessing an ID — plus dependency vulnerability scanning in CI and a dedicated `/security-review` pass before each release candidate.
+*   **UI Tests:** component tests for shadcn/ui-based components plus Playwright E2E for the critical golden paths (first-run onboarding wizard, account provisioning, DNS record edit) called out in Section 5 — the flows where a regression is most visible in a new adopter's first 10 minutes.
+*   **CI wiring:** all of the above land as GitHub Actions jobs (build + vet + test + Linux cross-compile is already a pending Phase 1 item in `task.md`) — unit/integration run on every push; agent/E2E/load/security/UI run as separate gated jobs so a slow load-test run never blocks every commit.
 
 ---
 

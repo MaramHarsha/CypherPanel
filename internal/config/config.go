@@ -16,13 +16,16 @@ const (
 
 // Core holds CypherCore (control-plane API) configuration.
 type Core struct {
-	Env             string
-	HTTPAddr        string
-	GRPCAddr        string
-	DatabaseURL     string
-	RedisURL        string
-	NATSURL         string
-	JWTSecret       string
+	Env         string
+	HTTPAddr    string
+	GRPCAddr    string
+	DatabaseURL string
+	RedisURL    string
+	NATSURL     string
+	// NATSCreds is an optional NATS credentials file. The URL may also carry
+	// user:pass; either way, production NATS must not run open (task.md).
+	NATSCreds string
+	JWTSecret string
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
 	// mTLS material for the agent gRPC listener. Required in production;
@@ -34,9 +37,10 @@ type Core struct {
 
 // Agent holds CypherAgent (per-server daemon) configuration.
 type Agent struct {
-	Env      string
-	CoreAddr string
-	NATSURL  string
+	Env       string
+	CoreAddr  string
+	NATSURL   string
+	NATSCreds string // optional NATS credentials file
 	// mTLS material locations are configuration, never constants.
 	TLSCertFile string
 	TLSKeyFile  string
@@ -56,6 +60,7 @@ func LoadCore() (Core, error) {
 		DatabaseURL:     envOr("CYPHER_DATABASE_URL", "postgres://cypher:cypher-dev-only@localhost:5432/cypherpanel?sslmode=disable"),
 		RedisURL:        envOr("CYPHER_REDIS_URL", "redis://localhost:6379/0"),
 		NATSURL:         envOr("CYPHER_NATS_URL", "nats://localhost:4222"),
+		NATSCreds:       os.Getenv("CYPHER_NATS_CREDS"),
 		JWTSecret:       os.Getenv("CYPHER_JWT_SECRET"),
 		GRPCTLSCert:     os.Getenv("CYPHER_GRPC_TLS_CERT"),
 		GRPCTLSKey:      os.Getenv("CYPHER_GRPC_TLS_KEY"),
@@ -88,6 +93,7 @@ func LoadAgent() (Agent, error) {
 		Env:         envOr("CYPHER_ENV", EnvDevelopment),
 		CoreAddr:    envOr("CYPHER_AGENT_CORE_ADDR", "localhost:9090"),
 		NATSURL:     envOr("CYPHER_AGENT_NATS_URL", "nats://localhost:4222"),
+		NATSCreds:   os.Getenv("CYPHER_AGENT_NATS_CREDS"),
 		TLSCertFile: os.Getenv("CYPHER_AGENT_TLS_CERT"),
 		TLSKeyFile:  os.Getenv("CYPHER_AGENT_TLS_KEY"),
 		TLSCAFile:   os.Getenv("CYPHER_AGENT_TLS_CA"),

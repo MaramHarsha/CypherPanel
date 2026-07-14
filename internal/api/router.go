@@ -6,7 +6,9 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/swaggo/swag/v2"
 
+	_ "github.com/MaramHarsha/CypherPanel/docs" // registers the generated OpenAPI spec
 	"github.com/MaramHarsha/CypherPanel/internal/auth"
 	"github.com/MaramHarsha/CypherPanel/internal/config"
 )
@@ -30,6 +32,16 @@ func NewRouter(d Deps) *gin.Engine {
 	})
 
 	v1 := r.Group("/api/v1")
+
+	// Machine-readable API contract (regenerate with `make openapi`).
+	v1.GET("/openapi.json", func(c *gin.Context) {
+		doc, err := swag.ReadDoc()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "spec unavailable"})
+			return
+		}
+		c.Data(http.StatusOK, "application/json", []byte(doc))
+	})
 
 	// Unauthenticated
 	v1.POST("/auth/login", d.Auth.Login)

@@ -29,6 +29,17 @@ type tokenResponse struct {
 	TokenType    string `json:"token_type"`
 }
 
+// Login authenticates a user.
+//
+//	@Summary  Log in with username and password
+//	@Tags     auth
+//	@Accept   json
+//	@Produce  json
+//	@Param    request body loginRequest true "Credentials"
+//	@Success  200 {object} tokenResponse
+//	@Failure  400 {object} map[string]string
+//	@Failure  401 {object} map[string]string
+//	@Router   /auth/login [post]
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req loginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -75,6 +86,16 @@ type refreshRequest struct {
 	RefreshToken string `json:"refresh_token" binding:"required"`
 }
 
+// Refresh rotates a refresh token for a new token pair.
+//
+//	@Summary  Exchange a refresh token for new tokens (single-use rotation)
+//	@Tags     auth
+//	@Accept   json
+//	@Produce  json
+//	@Param    request body refreshRequest true "Refresh token"
+//	@Success  200 {object} tokenResponse
+//	@Failure  401 {object} map[string]string
+//	@Router   /auth/refresh [post]
 func (h *AuthHandler) Refresh(c *gin.Context) {
 	var req refreshRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -106,6 +127,16 @@ type logoutRequest struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
+// Logout revokes the caller's refresh token.
+//
+//	@Summary  Log out (revokes the refresh token)
+//	@Tags     auth
+//	@Accept   json
+//	@Produce  json
+//	@Param    request body logoutRequest false "Refresh token to revoke"
+//	@Success  200 {object} map[string]string
+//	@Security BearerAuth
+//	@Router   /auth/logout [post]
 func (h *AuthHandler) Logout(c *gin.Context) {
 	var req logoutRequest
 	_ = c.ShouldBindJSON(&req)
@@ -121,6 +152,15 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "logged out"})
 }
 
+// Me returns the authenticated user's profile.
+//
+//	@Summary  Current user profile
+//	@Tags     auth
+//	@Produce  json
+//	@Success  200 {object} map[string]string
+//	@Failure  401 {object} map[string]string
+//	@Security BearerAuth
+//	@Router   /me [get]
 func (h *AuthHandler) Me(c *gin.Context) {
 	claims := auth.ClaimsFrom(c)
 	user, err := h.Users.GetByID(c.Request.Context(), claims.Subject)

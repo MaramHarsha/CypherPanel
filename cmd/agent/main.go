@@ -22,6 +22,7 @@ import (
 
 	agentv1 "github.com/MaramHarsha/CypherPanel/gen/agent/v1"
 	"github.com/MaramHarsha/CypherPanel/internal/config"
+	"github.com/MaramHarsha/CypherPanel/internal/hoststats"
 	"github.com/MaramHarsha/CypherPanel/internal/jobs"
 	"github.com/MaramHarsha/CypherPanel/internal/paths"
 	"github.com/MaramHarsha/CypherPanel/internal/pki"
@@ -75,7 +76,11 @@ func run() error {
 	slog.Info("registered with control plane", "server_id", serverID)
 
 	// Task consumer: pull provisioning jobs for this server from JetStream.
-	nc, err := nats.Connect(cfg.NATSURL, nats.Name("cypher-agent"))
+	natsOpts := []nats.Option{nats.Name("cypher-agent")}
+	if cfg.NATSCreds != "" {
+		natsOpts = append(natsOpts, nats.UserCredentials(cfg.NATSCreds))
+	}
+	nc, err := nats.Connect(cfg.NATSURL, natsOpts...)
 	if err != nil {
 		return err
 	}
@@ -96,8 +101,18 @@ func run() error {
 		case err := <-consumerErr:
 			return err
 		case <-ticker.C:
+			stats := hoststats.Sample()
 			hbCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			_, err := client.Heartbeat(hbCtx, &agentv1.HeartbeatRequest{ServerId: serverID})
+			_, err := client.Heartbeat(hbCtx, &agentv1.HeartbeatRequest{
+				ServerId: serverID,
+				Stats: &agentv1.HostStats{
+					Load_1M:          stats.Load1m,
+					MemoryTotalBytes: stats.MemoryTotalBytes,
+					MemoryUsedBytes:  stats.MemoryUsedBytes,
+					DiskTotalBytes:   stats.DiskTotalBytes,
+					DiskUsedBytes:    stats.DiskUsedBytes,
+				},
+			})
 			cancel()
 			switch {
 			case err == nil:

@@ -47,10 +47,31 @@ func (s *Servers) UpsertByHostname(ctx context.Context, hostname, ip string) (*S
 	return &srv, nil
 }
 
-// Heartbeat marks a server online and refreshes last_seen_at.
-func (s *Servers) Heartbeat(ctx context.Context, serverID string) error {
+// HostStats is the latest host snapshot reported with a heartbeat.
+type HostStats struct {
+	Load1m           float64
+	MemoryTotalBytes uint64
+	MemoryUsedBytes  uint64
+	DiskTotalBytes   uint64
+	DiskUsedBytes    uint64
+}
+
+// Heartbeat marks a server online, refreshes last_seen_at, and stores the
+// latest host snapshot.
+func (s *Servers) Heartbeat(ctx context.Context, serverID string, stats HostStats) error {
 	tag, err := s.pool.Exec(ctx, `
-		UPDATE servers SET agent_status = 'online', last_seen_at = now() WHERE id = $1`, serverID)
+		UPDATE servers SET
+			agent_status = 'online',
+			last_seen_at = now(),
+			load_1m = $2,
+			memory_total_bytes = $3,
+			memory_used_bytes = $4,
+			disk_total_bytes = $5,
+			disk_used_bytes = $6
+		WHERE id = $1`,
+		serverID, stats.Load1m,
+		int64(stats.MemoryTotalBytes), int64(stats.MemoryUsedBytes),
+		int64(stats.DiskTotalBytes), int64(stats.DiskUsedBytes))
 	if err != nil {
 		return fmt.Errorf("store: heartbeat for %s: %w", serverID, err)
 	}

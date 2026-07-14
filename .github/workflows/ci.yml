@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build, vet & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          check-latest: true
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Proto lint & breaking-change check
+        uses: bufbuild/buf-action@v1
+        with:
+          push: false
+          # Breaking-change check needs history; skip on first push to a branch.
+        continue-on-error: true
+
+  cross-compile:
+    name: Cross-compile Linux binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          check-latest: true
+
+      - name: Build linux/amd64 + linux/arm64
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          GOOS=linux GOARCH=amd64 go build -trimpath -o /dev/null ./cmd/core
+          GOOS=linux GOARCH=amd64 go build -trimpath -o /dev/null ./cmd/agent
+          GOOS=linux GOARCH=arm64 go build -trimpath -o /dev/null ./cmd/core
+          GOOS=linux GOARCH=arm64 go build -trimpath -o /dev/null ./cmd/agent
