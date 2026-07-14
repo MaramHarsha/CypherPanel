@@ -2,6 +2,8 @@
 
 > Living document: update whenever a task starts or finishes. `[x]` done · `[~]` in progress · `[ ]` pending.
 > Phases follow `plan.md` Section 9 (Implementation Roadmap).
+>
+> **Agent skills:** the full 23-skill catalog (`.claude/skills/`) was written upfront (2026-07) at the user's request, overriding the plan's write-at-end-of-phase timing. Skills for not-yet-built phases carry a `Status: design-intent` line and must be re-verified against real code when their phase lands (updated in the same PR). Read the relevant SKILL.md before writing code in any area.
 
 ## Progress at a Glance
 
@@ -82,18 +84,17 @@
 - [x] Package templating system: `packages` store + REST (`GET/POST/DELETE /api/v1/admin/packages`) with limits (disk, bandwidth, domains, DBs, email, CPU%, memory) + Packages UI (create dialog, cards, delete)
 - [x] Account provisioning: `accounts` store (atomic user+account tx), REST create/suspend/unsuspend/terminate, `system_user.create`/`system_user.remove` tasks, agent-reported results drive status transitions (provisioning→active/failed, terminating→deleted)
 - [x] Accounts UI: create dialog (server/package selects), status badges, suspend/unsuspend, type-to-confirm terminate; 5s polling to reflect provisioning→active
-- [~] E2E verification of full provisioning flow — **code complete, build+run blocked by temporary auto-mode classifier outage; pending retry**
+- [x] **Full provisioning E2E verified** ✅: create package → create account (`provisioning`) → agent created real Linux user `cyph_alicedb00f2` → status auto-flipped to `active`; suspend blocked alice's login, unsuspend restored it; terminate → account row deleted + Linux user removed from the container
+- [x] Web build green (Next.js 16 / Base UI): `render` prop + Select `string|null` fixes compile; all 7 routes build
 
 ### Pending
 - [ ] Server node detail view + register/remove flows in UI
-- [ ] Package templating system (limits: disk, bandwidth, domains, DBs, mail, cgroup caps)
-- [ ] Account creation, suspension, termination flows
 - [ ] Automated systemd service monitors
 - [ ] Reseller resource pools
 - [ ] Reserve `/api/v1/plugins/` route namespace + `plugins` table stub (no loader yet — `plan.md` §11)
 - [ ] Reserve NATS `events.>` subject namespace for the internal Event Bus, separate from agent-task subjects (`plan.md` §12)
 - [ ] Finalize plugin manifest (`plugin.yaml`) schema before any third-party plugin exists (`plan.md` §11)
-- [ ] **Phase 2 skills batch** (end of phase, catalog #9-11): `ui-development`, `async-ui-patterns`, `extensibility-and-events`
+- [x] **Phase 2 skills batch** (catalog #9-11): `ui-development`, `async-ui-patterns`, `extensibility-and-events`
 
 ## Phase 3 — Web Server & PHP Management ⬜
 
@@ -101,7 +102,7 @@
 - [ ] Multi-PHP install scripts + per-account PHP-FPM pool configs
 - [ ] PHP INI Editor API
 - [ ] Lego ACME integration (Let's Encrypt / ZeroSSL)
-- [ ] **Phase 3 skills batch** (end of phase, catalog #12-14): `agent-config-generators`, `php-runtime-management`, `ssl-acme`
+- [x] **Phase 3 skills batch** (catalog #12-14): `agent-config-generators`, `php-runtime-management`, `ssl-acme` *(design-intent — verify vs code when built)*
 
 ## Phase 4 — Files, FTP, & Databases ⬜
 
@@ -109,7 +110,7 @@
 - [ ] Pure-FTPd virtual users (MVP default)
 - [ ] MariaDB provisioning APIs (MVP default)
 - [ ] phpMyAdmin / Adminer auto-setup
-- [ ] **Phase 4 skills batch** (end of phase, catalog #15-16): `filesystem-operations-safety`, `user-database-provisioning`
+- [x] **Phase 4 skills batch** (catalog #15-16): `filesystem-operations-safety`, `user-database-provisioning` *(design-intent — verify vs code when built)*
 
 ## Phase 5 — Email & DNS Servers ⬜
 
@@ -117,7 +118,7 @@
 - [ ] Mail user auth database & quotas
 - [ ] PowerDNS zone configuration (MVP default)
 - [ ] DNS cluster synchronization engine
-- [ ] **Phase 5 skills batch** (end of phase, catalog #17-18): `mail-stack`, `dns-management`
+- [x] **Phase 5 skills batch** (catalog #17-18): `mail-stack`, `dns-management` *(design-intent — verify vs code when built)*
 
 ## Phase 6 — Logging, Auditing, & Hardening ⬜
 
@@ -130,7 +131,7 @@
 - [ ] Compatibility matrix doc (`docs/compatibility-matrix.md`): Core ↔ Agent ↔ plugin API version ranges, enforced at registration (`plan.md` §13)
 - [ ] Metrics API: `GET /api/v1/metrics/{scope}` (server/account/domain) + raw Prometheus `/metrics` scrape endpoint (`plan.md` §16)
 - [ ] CI: add load-test, security-test, and UI-test (Playwright) job tiers alongside existing unit/integration/cross-compile jobs (`plan.md` §19)
-- [ ] **Phase 6 skills batch** (during hardening, catalog #19-23): `observability-and-metrics`, `backups`, `installer-and-packaging`, `upgrade-and-compatibility`, `public-interfaces`
+- [x] **Phase 6 skills batch** (catalog #19-23): `observability-and-metrics`, `backups`, `installer-and-packaging`, `upgrade-and-compatibility`, `public-interfaces` *(partly design-intent — verify vs code when built)*
 
 ## Extensibility & Operability Backlog — post-MVP (`plan.md` §11-19) ⬜
 
