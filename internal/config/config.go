@@ -24,10 +24,14 @@ type Core struct {
 	NATSURL     string
 	// NATSCreds is an optional NATS credentials file. The URL may also carry
 	// user:pass; either way, production NATS must not run open (task.md).
-	NATSCreds string
-	JWTSecret string
+	NATSCreds       string
+	JWTSecret       string
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
+	// DefaultPHPVersion is the PHP branch new accounts are provisioned on until
+	// per-account selection lands. Not a hardcoded constant — set it to a
+	// version actually installed on your servers (see plan.md Version Policy).
+	DefaultPHPVersion string
 	// mTLS material for the agent gRPC listener. Required in production;
 	// in development an empty set means plaintext gRPC (local only).
 	GRPCTLSCert     string
@@ -60,9 +64,10 @@ func LoadCore() (Core, error) {
 		DatabaseURL:     envOr("CYPHER_DATABASE_URL", "postgres://cypher:cypher-dev-only@localhost:5432/cypherpanel?sslmode=disable"),
 		RedisURL:        envOr("CYPHER_REDIS_URL", "redis://localhost:6379/0"),
 		NATSURL:         envOr("CYPHER_NATS_URL", "nats://localhost:4222"),
-		NATSCreds:       os.Getenv("CYPHER_NATS_CREDS"),
-		JWTSecret:       os.Getenv("CYPHER_JWT_SECRET"),
-		GRPCTLSCert:     os.Getenv("CYPHER_GRPC_TLS_CERT"),
+		NATSCreds:         os.Getenv("CYPHER_NATS_CREDS"),
+		JWTSecret:         os.Getenv("CYPHER_JWT_SECRET"),
+		DefaultPHPVersion: envOr("CYPHER_DEFAULT_PHP_VERSION", "8.3"),
+		GRPCTLSCert:       os.Getenv("CYPHER_GRPC_TLS_CERT"),
 		GRPCTLSKey:      os.Getenv("CYPHER_GRPC_TLS_KEY"),
 		GRPCTLSClientCA: os.Getenv("CYPHER_GRPC_TLS_CLIENT_CA"),
 	}

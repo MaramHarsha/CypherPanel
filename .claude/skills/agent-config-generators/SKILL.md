@@ -5,14 +5,15 @@ description: How CypherAgent generates service config files (nginx vhosts, PHP-F
 
 # Agent Config Generators
 
-> **Status: design-intent (pre-implementation).** Grounded in plan.md (CypherAgent Config Generators, Section 4C) and the established Phase 1 patterns. First real generator lands in Phase 3 (nginx). Verify/expand against code then, updating in the same PR. Also read [[linux-system-integration]] and [[jobs-and-agent-tasks]].
+> **Status: code-grounded (Phase 3).** Realized by `internal/webserver` (nginx vhost + PHP-FPM pool renderers) and `internal/platform` `Sites` (apply layer), wired via the `site.provision`/`site.deprovision` agent tasks. Follow those as the reference implementation. Also read [[linux-system-integration]] and [[jobs-and-agent-tasks]].
 
 ## Core rules
 
-- Configs are rendered with Go's `text/template` from typed structs — no string concatenation to build config bodies.
-- **All output paths resolve through the distro path-mapping layer (`internal/paths.Layout`)** — never hardcode `/etc/nginx/...`. Debian and RHEL differ; the Layout already encodes this and honors `CYPHER_PATH_*` overrides. Add a `Layout` field if a needed path isn't there.
-- **Validate, then reload — never blind restart.** Sequence: write to a temp file → run the service's own validator (`nginx -t`, `postfix check`, `named-checkconf`, `pdnsutil check-zone`) → atomically move into place → reload (not restart) the service. If validation fails, discard and fail the task; never leave a broken config that takes down every site on the box.
-- Generators run inside agent task handlers, so they inherit the idempotency requirement: rendering + applying the same desired state twice must converge, not error or duplicate.
+- Configs are rendered with Go's `text/template` from typed structs — no string concatenation to build config bodies. **Rendering is pure and separate from applying**: renderers (`internal/webserver`) take a spec and return `[]byte` with no I/O, so they unit-test on any OS; the `platform.Sites` layer does the OS-touching apply. Keep that split.
+- **All output paths resolve through the distro path-mapping layer (`internal/paths.Layout`)** — never hardcode `/etc/nginx/...`. Debian and RHEL differ; the Layout already encodes this and honors `CYPHER_PATH_*` overrides. Add a `Layout` field + helper if a needed path isn't there (as `VhostConfPath`, `PHPFPMPoolPath`, `PHPFPMSocketPath`, `AccountLogDir` do).
+- **Validate, then reload — never blind restart.** Write the config, run the service's own validator (`nginx -t`, `postfix check`, `named-checkconf`, `pdnsutil check-zone`), and on failure **roll back the file** and return an error — never leave a broken config that takes down every site on the box (see `validateAndReloadNginx` + rollback in `sites_linux.go`). Reload, not restart. If the service binary isn't installed yet, degrade gracefully (write configs, skip reload) rather than failing — a box can be staged before the service lands.
+- Generators run inside agent task handlers, so they inherit the idempotency requirement: rendering + applying the same desired state twice must converge, not error or duplicate. Deterministic output (e.g. sort map keys before templating) keeps it golden-stable.
+- Files written into an account's tree (web root, logs) are created **owned by the account's system user** (mkdir+chown via the account uid/gid); system configs (vhost, pool) are root-owned.
 
 ## Testing (golden files)
 

@@ -11,7 +11,7 @@
 |-------|-------|--------|
 | **1** | Core Foundation & Agent Comms | ✅ Complete (2 minor deploy-time items deferred) |
 | **2** | Admin Plane & Provisioning + UI Shell | 🟨 In progress (UI shell ✅) |
-| **3** | Web Server & PHP Management | ⬜ Not started |
+| **3** | Web Server & PHP Management | 🟨 In progress (nginx vhost + PHP-FPM pool gen ✅) |
 | **4** | Files, FTP, & Databases | ⬜ Not started |
 | **5** | Email & DNS Servers | ⬜ Not started |
 | **6** | Logging, Auditing, & Hardening | ⬜ Not started |
@@ -101,13 +101,22 @@
 - [x] **Plugin reservations** (§11): migration 000005 `plugins` table; finalized `plugin.yaml` manifest schema (`internal/plugins`, `api_version: v1`, validated, unit-tested) + `docs/plugin-manifest.md`; read-only `GET /api/v1/admin/plugins` and `/plugins/manifest-schema` reserving the namespace (no loader yet)
 - [x] **Phase 2 skills batch** (catalog #9-11): `ui-development`, `async-ui-patterns`, `extensibility-and-events`
 
-## Phase 3 — Web Server & PHP Management ⬜
+## Phase 3 — Web Server & PHP Management 🟨
 
-- [ ] Nginx virtual-host config generator (MVP default)
-- [ ] Multi-PHP install scripts + per-account PHP-FPM pool configs
-- [ ] PHP INI Editor API
+### Done
+- [x] **Nginx vhost generator** (`internal/webserver`): `text/template` from typed `VHostSpec` behind a `VHostRenderer` interface (Apache/OpenLiteSpeed adapters drop in later); golden-file tested
+- [x] **Per-account PHP-FPM pool generator**: dedicated user/group + private socket per account (plan.md §7 isolation), `listen.group` = web-server user, package memory → `memory_limit`; golden-file tested
+- [x] `paths.Layout` extended: `WebServerUser`, PHP socket/pool-path/account-log-dir helpers (Debian layout; `CYPHER_PATH_*` overridable)
+- [x] `platform.Sites` apply layer (`_linux` + stub): account-owned dirs (mkdir+chown), root-owned configs, **validate-then-reload nginx with rollback**, idempotent; nginx-absent degrades gracefully (writes, skips reload)
+- [x] Agent tasks `site.provision` / `site.deprovision`; dispatched on account create/terminate (after user create / before user remove); `CYPHER_DEFAULT_PHP_VERSION` config
+- [x] **E2E verified** ✅ (real agent in container): account create → generated correct nginx vhost + PHP-FPM pool + web root/logs owned by the account user; terminate → vhost, pool, Linux user, and DB row all removed (symmetric teardown)
+
+### Pending
+- [ ] Multi-PHP install scripts (install/manage PHP branches on a server) + reload FPM after pool changes
+- [ ] PHP INI Editor API (per-account `php_admin_value` overrides surfaced in UI)
+- [ ] PHP version selection per account (UI + payload; default is `CYPHER_DEFAULT_PHP_VERSION` today)
 - [ ] Lego ACME integration (Let's Encrypt / ZeroSSL)
-- [x] **Phase 3 skills batch** (catalog #12-14): `agent-config-generators`, `php-runtime-management`, `ssl-acme` *(design-intent — verify vs code when built)*
+- [x] **Phase 3 skills batch** (catalog #12-14): `agent-config-generators` *(now code-grounded)*, `php-runtime-management`, `ssl-acme` *(latter two still design-intent)*
 
 ## Phase 4 — Files, FTP, & Databases ⬜
 

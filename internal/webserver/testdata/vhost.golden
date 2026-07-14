@@ -1,0 +1,28 @@
+# Managed by CypherPanel — do not edit by hand.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name alice.example.com www.alice.example.com;
+
+    root /home/cyph_alice/public_html;
+    index index.php index.html index.htm;
+
+    access_log /home/cyph_alice/logs/alice.example.com.access.log;
+    error_log /home/cyph_alice/logs/alice.example.com.error.log;
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_pass unix:/run/cypherpanel/php-cyph_alice.sock;
+        fastcgi_index index.php;
+    }
+
+    # Deny access to hidden files except ACME challenges.
+    location ~ /\.(?!well-known).* {
+        deny all;
+    }
+}

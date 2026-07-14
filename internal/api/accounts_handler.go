@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -21,13 +22,30 @@ import (
 )
 
 type AccountsHandler struct {
-	Accounts  *store.Accounts
-	Packages  *store.Packages
-	Resellers *store.Resellers
-	Tasks     *store.Tasks
-	Publisher *jobs.Publisher
-	Events    *events.Bus
-	Audit     *audit.Logger
+	Accounts   *store.Accounts
+	Packages   *store.Packages
+	Resellers  *store.Resellers
+	Tasks      *store.Tasks
+	Publisher  *jobs.Publisher
+	Events     *events.Bus
+	Audit      *audit.Logger
+	PHPVersion string // default PHP version for new sites
+}
+
+// dispatch records a task and publishes it to the target server's agent. The
+// task ID doubles as the JetStream dedup key, so this is crash-retry safe.
+func (h *AccountsHandler) dispatch(ctx context.Context, serverID, taskType string, payload any, actorID, accountID string) error {
+	blob, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	task, err := h.Tasks.Create(ctx, serverID, taskType, blob, actorID, accountID)
+	if err != nil {
+		return err
+	}
+	return h.Publisher.Publish(ctx, jobs.Task{
+		ID: task.ID, ServerID: task.ServerID, Type: task.Type, Payload: task.Payload,
+	})
 }
 
 // accountEvent is the minimal, secret-free snapshot carried on account events.
@@ -168,18 +186,28 @@ func (h *AccountsHandler) Create(c *gin.Context) {
 		return
 	}
 
-	payload, _ := json.Marshal(jobs.SystemUserCreatePayload{Username: sysUser})
-	task, err := h.Tasks.Create(c.Request.Context(), req.ServerID, jobs.TypeSystemUserCreate, payload, claims.Subject, account.ID)
-	if err == nil {
-		err = h.Publisher.Publish(c.Request.Context(), jobs.Task{
-			ID: task.ID, ServerID: task.ServerID, Type: task.Type, Payload: task.Payload,
-		})
+	// Package memory limit feeds the PHP-FPM pool. Best-effort: a missing
+	// package here shouldn't block provisioning the system user.
+	memoryMB := 0
+	if pkg, perr := h.Packages.GetByID(c.Request.Context(), req.PackageID); perr == nil {
+		memoryMB = pkg.Limits.MemoryMaxMB
 	}
+
+	// 1) Create the Linux user (drives account → active on success).
+	err = h.dispatch(c.Request.Context(), req.ServerID, jobs.TypeSystemUserCreate,
+		jobs.SystemUserCreatePayload{Username: sysUser}, claims.Subject, account.ID)
 	if err != nil {
 		slog.Error("dispatching provisioning task", "account_id", account.ID, "error", err)
 		_ = h.Accounts.SetStatus(c.Request.Context(), account.ID, "failed")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "account recorded but provisioning dispatch failed"})
 		return
+	}
+	// 2) Provision the site (nginx vhost + PHP-FPM pool). Runs after the user
+	//    on the same agent consumer; retries harmlessly if it races ahead.
+	if err := h.dispatch(c.Request.Context(), req.ServerID, jobs.TypeSiteProvision,
+		jobs.SiteProvisionPayload{Username: sysUser, Domain: req.Domain, PHPVersion: h.PHPVersion, MemoryMB: memoryMB},
+		claims.Subject, account.ID); err != nil {
+		slog.Error("dispatching site provision task", "account_id", account.ID, "error", err)
 	}
 
 	_ = h.Audit.Record(c.Request.Context(), audit.Entry{
@@ -290,14 +318,15 @@ func (h *AccountsHandler) Terminate(c *gin.Context) {
 		return
 	}
 
-	payload, _ := json.Marshal(jobs.SystemUserRemovePayload{Username: account.SystemUsername})
-	task, err := h.Tasks.Create(c.Request.Context(), account.ServerID, jobs.TypeSystemUserRemove, payload, claims.Subject, account.ID)
-	if err == nil {
-		err = h.Publisher.Publish(c.Request.Context(), jobs.Task{
-			ID: task.ID, ServerID: task.ServerID, Type: task.Type, Payload: task.Payload,
-		})
+	// Remove the site's configs first, then the system user (whose success
+	// deletes the account row).
+	if err := h.dispatch(c.Request.Context(), account.ServerID, jobs.TypeSiteDeprovision,
+		jobs.SiteDeprovisionPayload{Username: account.SystemUsername, Domain: account.PrimaryDomain, PHPVersion: h.PHPVersion},
+		claims.Subject, account.ID); err != nil {
+		slog.Error("dispatching site deprovision task", "account_id", id, "error", err)
 	}
-	if err != nil {
+	if err := h.dispatch(c.Request.Context(), account.ServerID, jobs.TypeSystemUserRemove,
+		jobs.SystemUserRemovePayload{Username: account.SystemUsername}, claims.Subject, account.ID); err != nil {
 		slog.Error("dispatching termination task", "account_id", id, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "termination dispatch failed; account left in terminating state"})
 		return

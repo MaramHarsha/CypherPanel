@@ -25,9 +25,10 @@ import (
 	"github.com/MaramHarsha/CypherPanel/internal/hoststats"
 	"github.com/MaramHarsha/CypherPanel/internal/jobs"
 	"github.com/MaramHarsha/CypherPanel/internal/paths"
-	"github.com/MaramHarsha/CypherPanel/internal/services"
 	"github.com/MaramHarsha/CypherPanel/internal/pki"
 	"github.com/MaramHarsha/CypherPanel/internal/platform"
+	"github.com/MaramHarsha/CypherPanel/internal/services"
+	"github.com/MaramHarsha/CypherPanel/internal/webserver"
 )
 
 // version is stamped via -ldflags at release time.
@@ -86,7 +87,12 @@ func run() error {
 		return err
 	}
 	defer nc.Drain()
-	executor := &taskExecutor{layout: layout, users: platform.New()}
+	executor := &taskExecutor{
+		layout: layout,
+		users:  platform.New(),
+		sites:  platform.NewSites(),
+		vhost:  webserver.Nginx{},
+	}
 	consumerErr := make(chan error, 1)
 	go func() {
 		consumerErr <- jobs.Consume(ctx, nc, serverID, executor.Handle, reportResult(client, serverID))

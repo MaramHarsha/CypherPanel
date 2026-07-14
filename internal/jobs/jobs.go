@@ -22,6 +22,8 @@ const (
 	TypeNoop             = "noop"               // health/testing: always succeeds
 	TypeSystemUserCreate = "system_user.create" // payload: SystemUserCreatePayload
 	TypeSystemUserRemove = "system_user.remove" // payload: SystemUserRemovePayload
+	TypeSiteProvision    = "site.provision"     // payload: SiteProvisionPayload
+	TypeSiteDeprovision  = "site.deprovision"   // payload: SiteDeprovisionPayload
 )
 
 // Task is the wire format published to JetStream.
@@ -46,12 +48,28 @@ type SystemUserRemovePayload struct {
 	Username string `json:"username"`
 }
 
+// SiteProvisionPayload sets up an account's web serving: web root + logs dirs,
+// nginx vhost, and a dedicated PHP-FPM pool.
+type SiteProvisionPayload struct {
+	Username   string `json:"username"`
+	Domain     string `json:"domain"`
+	PHPVersion string `json:"php_version"`
+	MemoryMB   int    `json:"memory_mb,omitempty"` // package memory limit (0 = default)
+}
+
+// SiteDeprovisionPayload removes an account's web/PHP configs on termination.
+type SiteDeprovisionPayload struct {
+	Username   string `json:"username"`
+	Domain     string `json:"domain"`
+	PHPVersion string `json:"php_version"`
+}
+
 // ValidType reports whether the task type is known to this build. Core
 // rejects unknown types at the API boundary rather than letting them fail
 // on every agent redelivery.
 func ValidType(t string) bool {
 	switch t {
-	case TypeNoop, TypeSystemUserCreate, TypeSystemUserRemove:
+	case TypeNoop, TypeSystemUserCreate, TypeSystemUserRemove, TypeSiteProvision, TypeSiteDeprovision:
 		return true
 	}
 	return false

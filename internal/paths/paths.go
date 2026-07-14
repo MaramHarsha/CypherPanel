@@ -30,6 +30,7 @@ type Layout struct {
 	WebRootName    string // directory name inside an account home, e.g. "public_html"
 	ACMEWebRoot    string // HTTP-01 challenge directory
 	RunDir         string // sockets, pidfiles
+	WebServerUser  string // system user the web server runs as (socket group owner)
 }
 
 // ForFamily returns the default layout for a distro family, with any
@@ -47,12 +48,15 @@ func ForFamily(f Family) Layout {
 	case FamilyDebian:
 		l.NginxConfDir = "/etc/nginx/sites-enabled"
 		l.PHPFPMPoolDir = "/etc/php"
+		l.WebServerUser = "www-data"
 	case FamilyRHEL:
 		l.NginxConfDir = "/etc/nginx/conf.d"
 		l.PHPFPMPoolDir = "/etc/opt/remi" // multi-PHP via Remi/SCL-style trees
+		l.WebServerUser = "nginx"
 	default:
 		l.NginxConfDir = "/etc/nginx/conf.d"
 		l.PHPFPMPoolDir = "/etc/php"
+		l.WebServerUser = "www-data"
 	}
 	l.applyEnvOverrides()
 	return l
@@ -80,12 +84,30 @@ func (l Layout) VhostConfPath(domain string) string {
 	return filepath.Join(l.NginxConfDir, domain+".conf")
 }
 
+// AccountLogDir returns the per-account web log directory.
+func (l Layout) AccountLogDir(username string) string {
+	return filepath.Join(l.HomeRoot, username, "logs")
+}
+
+// PHPFPMSocketPath returns the dedicated PHP-FPM socket for an account
+// (plan.md §7 — one socket per user for isolation).
+func (l Layout) PHPFPMSocketPath(username string) string {
+	return filepath.Join(l.RunDir, "php-"+username+".sock")
+}
+
+// PHPFPMPoolPath returns the pool config file for an account on a given PHP
+// version (Debian multi-PHP layout: /etc/php/<version>/fpm/pool.d/<user>.conf).
+func (l Layout) PHPFPMPoolPath(phpVersion, username string) string {
+	return filepath.Join(l.PHPFPMPoolDir, phpVersion, "fpm", "pool.d", username+".conf")
+}
+
 func (l *Layout) applyEnvOverrides() {
 	override := func(dst *string, key string) {
 		if v := os.Getenv(key); v != "" {
 			*dst = v
 		}
 	}
+	override(&l.WebServerUser, "CYPHER_PATH_WEB_SERVER_USER")
 	override(&l.NginxConfDir, "CYPHER_PATH_NGINX_CONF_DIR")
 	override(&l.NginxMainConf, "CYPHER_PATH_NGINX_MAIN_CONF")
 	override(&l.PHPFPMPoolDir, "CYPHER_PATH_PHPFPM_POOL_DIR")

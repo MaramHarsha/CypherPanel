@@ -140,6 +140,7 @@ func run() error {
 		Accounts: &api.AccountsHandler{
 			Accounts: accountsStore, Packages: packagesStore, Resellers: resellersStore,
 			Tasks: tasksStore, Publisher: publisher, Events: eventBus, Audit: auditLog,
+			PHPVersion: cfg.DefaultPHPVersion,
 		},
 		Plugins:   &api.PluginsHandler{Plugins: store.NewPlugins(pool)},
 		Resellers: &api.ResellersHandler{Resellers: resellersStore, Events: eventBus, Audit: auditLog},

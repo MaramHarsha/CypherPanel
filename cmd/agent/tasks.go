@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -15,6 +16,7 @@ import (
 	"github.com/MaramHarsha/CypherPanel/internal/jobs"
 	"github.com/MaramHarsha/CypherPanel/internal/paths"
 	"github.com/MaramHarsha/CypherPanel/internal/platform"
+	"github.com/MaramHarsha/CypherPanel/internal/webserver"
 )
 
 // taskExecutor dispatches queued tasks to their handlers. Every handler must
@@ -22,6 +24,8 @@ import (
 type taskExecutor struct {
 	layout paths.Layout
 	users  platform.SystemUsers
+	sites  platform.Sites
+	vhost  webserver.VHostRenderer
 }
 
 func (e *taskExecutor) Handle(ctx context.Context, t jobs.Task) error {
@@ -61,11 +65,89 @@ func (e *taskExecutor) Handle(ctx context.Context, t jobs.Task) error {
 		}
 		return err
 
+	case jobs.TypeSiteProvision:
+		return e.provisionSite(ctx, t.Payload)
+
+	case jobs.TypeSiteDeprovision:
+		return e.deprovisionSite(ctx, t.Payload)
+
 	default:
 		// Unknown type: this agent build is older than the control plane.
 		// Permanent-fail so it surfaces instead of retrying forever.
 		return jobs.Permanent(fmt.Errorf("unknown task type %q (agent version %s)", t.Type, version))
 	}
+}
+
+// provisionSite renders this account's nginx vhost + PHP-FPM pool and applies
+// them (dirs owned by the account user, configs validated + reloaded).
+func (e *taskExecutor) provisionSite(ctx context.Context, raw []byte) error {
+	var p jobs.SiteProvisionPayload
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return jobs.Permanent(fmt.Errorf("invalid payload: %w", err))
+	}
+	if p.Username == "" || p.Domain == "" || p.PHPVersion == "" {
+		return jobs.Permanent(errors.New("username, domain and php_version are required"))
+	}
+
+	webRoot := e.layout.AccountWebRoot(p.Username)
+	logDir := e.layout.AccountLogDir(p.Username)
+	socket := e.layout.PHPFPMSocketPath(p.Username)
+
+	vhostCfg, err := e.vhost.Render(webserver.VHostSpec{
+		Domain:    p.Domain,
+		WebRoot:   webRoot,
+		PHPSocket: socket,
+		AccessLog: filepath.Join(logDir, p.Domain+".access.log"),
+		ErrorLog:  filepath.Join(logDir, p.Domain+".error.log"),
+	})
+	if err != nil {
+		return jobs.Permanent(err)
+	}
+
+	admin := map[string]string{}
+	if p.MemoryMB > 0 {
+		admin["memory_limit"] = fmt.Sprintf("%dM", p.MemoryMB)
+	}
+	poolCfg, err := webserver.RenderPHPFPMPool(webserver.PoolSpec{
+		User:          p.Username,
+		Socket:        socket,
+		WebServerUser: e.layout.WebServerUser,
+		AdminValues:   admin,
+	})
+	if err != nil {
+		return jobs.Permanent(err)
+	}
+
+	spec := platform.SiteSpec{
+		Username:    p.Username,
+		AccountDirs: []string{webRoot, logDir},
+		VHostPath:   e.layout.VhostConfPath(p.Domain),
+		VHostConfig: vhostCfg,
+		PoolPath:    e.layout.PHPFPMPoolPath(p.PHPVersion, p.Username),
+		PoolConfig:  poolCfg,
+	}
+	err = e.sites.Provision(ctx, spec)
+	if errors.Is(err, platform.ErrUnsupported) {
+		return jobs.Permanent(err)
+	}
+	return err
+}
+
+func (e *taskExecutor) deprovisionSite(ctx context.Context, raw []byte) error {
+	var p jobs.SiteDeprovisionPayload
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return jobs.Permanent(fmt.Errorf("invalid payload: %w", err))
+	}
+	if p.Username == "" || p.Domain == "" || p.PHPVersion == "" {
+		return jobs.Permanent(errors.New("username, domain and php_version are required"))
+	}
+	err := e.sites.Deprovision(ctx,
+		e.layout.VhostConfPath(p.Domain),
+		e.layout.PHPFPMPoolPath(p.PHPVersion, p.Username))
+	if errors.Is(err, platform.ErrUnsupported) {
+		return jobs.Permanent(err)
+	}
+	return err
 }
 
 // reportResult delivers the outcome to CypherCore over gRPC, retrying
