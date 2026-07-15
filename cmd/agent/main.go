@@ -31,6 +31,7 @@ import (
 	"github.com/MaramHarsha/CypherPanel/internal/ftp"
 	"github.com/MaramHarsha/CypherPanel/internal/hoststats"
 	"github.com/MaramHarsha/CypherPanel/internal/jobs"
+	"github.com/MaramHarsha/CypherPanel/internal/mailstore"
 	"github.com/MaramHarsha/CypherPanel/internal/paths"
 	"github.com/MaramHarsha/CypherPanel/internal/pki"
 	"github.com/MaramHarsha/CypherPanel/internal/platform"
@@ -119,6 +120,16 @@ func run() error {
 		defer mdb.Close()
 		executor.usersDB = mdb
 		slog.Info("user-database provisioning enabled (MariaDB)")
+	}
+	// Mailbox provisioning is available only when a mail auth-DB DSN is set.
+	if cfg.MailDSN != "" {
+		mail, err := mailstore.OpenMariaDB(cfg.MailDSN)
+		if err != nil {
+			return err
+		}
+		defer mail.Close()
+		executor.mail = mail
+		slog.Info("mailbox provisioning enabled (Postfix/Dovecot virtual users)")
 	}
 	// File-manager request-reply: Core sends synchronous FS operations on this
 	// server's subject; the handler runs them as the account uid/gid.

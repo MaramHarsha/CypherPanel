@@ -4,6 +4,7 @@ package api
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/swaggo/swag/v2"
@@ -30,6 +31,7 @@ type Deps struct {
 	Metrics     *MetricsHandler
 	AuditLog    *AuditHandler
 	Cron        *CronHandler
+	Mail        *MailHandler
 }
 
 func NewRouter(d Deps) *gin.Engine {
@@ -37,7 +39,7 @@ func NewRouter(d Deps) *gin.Engine {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	r := gin.New()
-	r.Use(gin.Logger(), gin.Recovery())
+	r.Use(gin.Logger(), gin.Recovery(), SecurityHeaders())
 
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -59,9 +61,11 @@ func NewRouter(d Deps) *gin.Engine {
 		c.Data(http.StatusOK, "application/json", []byte(doc))
 	})
 
-	// Unauthenticated
-	v1.POST("/auth/login", d.Auth.Login)
-	v1.POST("/auth/refresh", d.Auth.Refresh)
+	// Unauthenticated auth endpoints, rate-limited per IP to blunt credential
+	// stuffing / refresh abuse (20 requests / minute / IP).
+	authLimited := v1.Group("", RateLimit(20, time.Minute))
+	authLimited.POST("/auth/login", d.Auth.Login)
+	authLimited.POST("/auth/refresh", d.Auth.Refresh)
 
 	// Authenticated
 	authed := v1.Group("", auth.Middleware(d.Tokens))
@@ -113,6 +117,7 @@ func NewRouter(d Deps) *gin.Engine {
 	mgr.DELETE("/accounts/:id/files", d.FileManager.Delete)
 	mgr.POST("/accounts/:id/files/dir", d.FileManager.Mkdir)
 	mgr.POST("/accounts/:id/files/rename", d.FileManager.Rename)
+	mgr.POST("/accounts/:id/files/extract", d.FileManager.Extract)
 	mgr.GET("/accounts/:id/file", d.FileManager.ReadFile)
 	mgr.PUT("/accounts/:id/file", d.FileManager.WriteFile)
 	mgr.GET("/accounts/:id/dns", d.DNS.List)
@@ -122,6 +127,9 @@ func NewRouter(d Deps) *gin.Engine {
 	mgr.GET("/metrics/:scope", d.Metrics.Scoped)
 	mgr.GET("/accounts/:id/cron", d.Cron.Get)
 	mgr.PUT("/accounts/:id/cron", d.Cron.Set)
+	mgr.GET("/accounts/:id/mail", d.Mail.List)
+	mgr.POST("/accounts/:id/mail", d.Mail.Create)
+	mgr.DELETE("/accounts/:id/mail/:mailid", d.Mail.Delete)
 
 	return r
 }

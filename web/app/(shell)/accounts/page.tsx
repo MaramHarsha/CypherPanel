@@ -58,6 +58,7 @@ import { DatabasesDialog } from "./databases-dialog";
 import { FTPDialog } from "./ftp-dialog";
 import { DNSDialog } from "./dns-dialog";
 import { CronDialog } from "./cron-dialog";
+import { MailDialog } from "./mail-dialog";
 
 const statusVariant: Record<
   string,
@@ -364,6 +365,7 @@ export default function AccountsPage() {
                           <DatabasesDialog account={a} />
                           <FTPDialog account={a} />
                           <DNSDialog account={a} />
+                          <MailDialog account={a} />
                           <CronDialog account={a} />
                           <PHPSettingsDialog account={a} />
                           {a.status === "suspended" ? (

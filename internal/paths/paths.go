@@ -32,6 +32,8 @@ type Layout struct {
 	RunDir         string // sockets, pidfiles
 	WebServerUser  string // system user the web server runs as (socket group owner)
 	SSLDir         string // issued certificates + ACME account keys
+	MailRoot       string // virtual-mailbox Maildir storage root
+	DKIMDir        string // per-domain DKIM signing keys
 }
 
 // ForFamily returns the default layout for a distro family, with any
@@ -45,6 +47,8 @@ func ForFamily(f Family) Layout {
 		ACMEWebRoot:    "/var/lib/cypherpanel/acme",
 		RunDir:         "/run/cypherpanel",
 		SSLDir:         "/var/lib/cypherpanel/ssl",
+		MailRoot:       "/var/mail/vhosts",
+		DKIMDir:        "/var/lib/cypherpanel/dkim",
 	}
 	switch f {
 	case FamilyDebian:
@@ -134,4 +138,11 @@ func (l *Layout) applyEnvOverrides() {
 	override(&l.ACMEWebRoot, "CYPHER_PATH_ACME_WEB_ROOT")
 	override(&l.RunDir, "CYPHER_PATH_RUN_DIR")
 	override(&l.SSLDir, "CYPHER_PATH_SSL_DIR")
+	override(&l.MailRoot, "CYPHER_PATH_MAIL_ROOT")
+	override(&l.DKIMDir, "CYPHER_PATH_DKIM_DIR")
+}
+
+// MaildirPath returns the absolute Maildir for a mailbox (rel is domain/user/).
+func (l Layout) MaildirPath(rel string) string {
+	return filepath.Join(l.MailRoot, rel)
 }

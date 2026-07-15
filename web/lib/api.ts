@@ -366,6 +366,34 @@ export function createReseller(req: CreateResellerRequest): Promise<ResellerInfo
   });
 }
 
+export interface MailInfo {
+  id: string;
+  address: string;
+  quota_mb: number;
+  status: string;
+  created_at: string;
+}
+
+export function listMail(accountId: string): Promise<MailInfo[]> {
+  return apiFetch<MailInfo[]>(`/api/v1/admin/accounts/${accountId}/mail`);
+}
+
+export function createMail(
+  accountId: string,
+  body: { local_part: string; password: string; quota_mb: number },
+): Promise<MailInfo> {
+  return apiFetch<MailInfo>(`/api/v1/admin/accounts/${accountId}/mail`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteMail(accountId: string, mailId: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/admin/accounts/${accountId}/mail/${mailId}`, {
+    method: "DELETE",
+  });
+}
+
 export function getCron(accountId: string): Promise<{ content: string }> {
   return apiFetch<{ content: string }>(`/api/v1/admin/accounts/${accountId}/cron`);
 }

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -20,6 +21,7 @@ import (
 // enforces path safety and account-uid isolation.
 type FileManagerHandler struct {
 	Accounts *store.Accounts
+	Packages *store.Packages
 	NC       *nats.Conn
 	Audit    *audit.Logger
 	Timeout  time.Duration
@@ -46,9 +48,15 @@ func (h *FileManagerHandler) scopedAccount(c *gin.Context) *store.Account {
 	return account
 }
 
-// do sends one request to the account's agent and returns the response.
+// do sends one request to the account's agent and returns the response. It
+// stamps the account's disk quota so the agent can enforce it on writes/extracts.
 func (h *FileManagerHandler) do(account *store.Account, req filemanager.Request) (filemanager.Response, error) {
 	req.Username = account.SystemUsername
+	if h.Packages != nil {
+		if pkg, err := h.Packages.GetByID(context.Background(), account.PackageID); err == nil && pkg.Limits.DiskMB > 0 {
+			req.QuotaBytes = int64(pkg.Limits.DiskMB) << 20
+		}
+	}
 	data, err := json.Marshal(req)
 	if err != nil {
 		return filemanager.Response{}, err
@@ -216,6 +224,35 @@ func (h *FileManagerHandler) Delete(c *gin.Context) {
 type renameRequest struct {
 	Path    string `json:"path" binding:"required"`
 	NewPath string `json:"new_path" binding:"required"`
+}
+
+// Extract unpacks a zip archive already in the account tree (zip-slip-safe,
+// quota-enforced on the agent).
+//
+//	@Summary  Extract a zip archive
+//	@Tags     admin
+//	@Accept   json
+//	@Produce  json
+//	@Param    id      path string      true "Account ID"
+//	@Param    request body pathRequest true "Archive path"
+//	@Success  200 {object} map[string]string
+//	@Security BearerAuth
+//	@Router   /admin/accounts/{id}/files/extract [post]
+func (h *FileManagerHandler) Extract(c *gin.Context) {
+	account := h.scopedAccount(c)
+	if account == nil {
+		return
+	}
+	var req pathRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "path is required"})
+		return
+	}
+	resp, err := h.do(account, filemanager.Request{Op: filemanager.OpExtract, Path: req.Path})
+	if err == nil && resp.Error == "" {
+		h.audit(c, account.ID, "file.extract", req.Path)
+	}
+	respondFS(c, resp, err)
 }
 
 // Rename moves/renames a file or directory.

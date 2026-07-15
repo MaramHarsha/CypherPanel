@@ -14,22 +14,24 @@ import (
 type Op string
 
 const (
-	OpList   Op = "list"
-	OpRead   Op = "read"
-	OpWrite  Op = "write"
-	OpMkdir  Op = "mkdir"
-	OpDelete Op = "delete"
-	OpRename Op = "rename"
+	OpList    Op = "list"
+	OpRead    Op = "read"
+	OpWrite   Op = "write"
+	OpMkdir   Op = "mkdir"
+	OpDelete  Op = "delete"
+	OpRename  Op = "rename"
+	OpExtract Op = "extract" // unpack a zip archive already in the account tree
 )
 
 // Request is a single file operation, addressed to one hosting account. Path
 // and NewPath are relative to the account root; the agent resolves them.
 type Request struct {
-	Op       Op     `json:"op"`
-	Username string `json:"username"` // account system user (root + uid/gid owner)
-	Path     string `json:"path"`
-	NewPath  string `json:"new_path,omitempty"` // rename destination
-	Content  []byte `json:"content,omitempty"`  // write body
+	Op         Op     `json:"op"`
+	Username   string `json:"username"` // account system user (root + uid/gid owner)
+	Path       string `json:"path"`
+	NewPath    string `json:"new_path,omitempty"` // rename destination
+	Content    []byte `json:"content,omitempty"`  // write body
+	QuotaBytes int64  `json:"quota_bytes,omitempty"` // account disk limit (0 = unlimited)
 }
 
 // Entry is one directory listing item.

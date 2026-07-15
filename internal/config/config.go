@@ -49,6 +49,9 @@ type Core struct {
 	PDNSAPIURL     string
 	PDNSAPIKey     string
 	DNSNameservers []string
+	// DNSSecondaries are secondary PowerDNS nodes ("url|apikey" entries) that
+	// zone/record writes fan out to (cluster sync). Empty → single-node DNS.
+	DNSSecondaries []string
 	// SSL auto-renewal: scan every SSLRenewInterval and renew certs expiring
 	// within SSLRenewThreshold. The threshold matches the agent's own >30-day
 	// re-issue skip guard so a due cert is actually renewed, not skipped.
@@ -88,6 +91,9 @@ type Agent struct {
 	// certificates are unavailable and requests fail with a clear error.
 	PDNSAPIURL string
 	PDNSAPIKey string
+	// MailDSN is the admin connection to the virtual-mailbox auth DB (MariaDB)
+	// that Postfix/Dovecot query. Empty → mailbox provisioning is unavailable.
+	MailDSN string
 }
 
 // insecureDevSecret is only ever used when CYPHER_ENV=development and no
@@ -111,6 +117,7 @@ func LoadCore() (Core, error) {
 		PDNSAPIURL:        os.Getenv("CYPHER_PDNS_API_URL"),
 		PDNSAPIKey:        os.Getenv("CYPHER_PDNS_API_KEY"),
 		DNSNameservers:    splitList(envOr("CYPHER_DNS_NAMESERVERS", "ns1.cypherpanel.local,ns2.cypherpanel.local")),
+		DNSSecondaries:    splitList(os.Getenv("CYPHER_DNS_SECONDARIES")),
 		GRPCTLSCert:       os.Getenv("CYPHER_GRPC_TLS_CERT"),
 		GRPCTLSKey:        os.Getenv("CYPHER_GRPC_TLS_KEY"),
 		GRPCTLSClientCA:   os.Getenv("CYPHER_GRPC_TLS_CLIENT_CA"),
@@ -181,6 +188,7 @@ func LoadAgent() (Agent, error) {
 		MariaDBDSN:    os.Getenv("CYPHER_AGENT_MARIADB_DSN"),
 		PDNSAPIURL:    os.Getenv("CYPHER_AGENT_PDNS_API_URL"),
 		PDNSAPIKey:    os.Getenv("CYPHER_AGENT_PDNS_API_KEY"),
+		MailDSN:       os.Getenv("CYPHER_AGENT_MAIL_DSN"),
 		TLSCertFile:   os.Getenv("CYPHER_AGENT_TLS_CERT"),
 		TLSKeyFile:    os.Getenv("CYPHER_AGENT_TLS_KEY"),
 		TLSCAFile:     os.Getenv("CYPHER_AGENT_TLS_CA"),

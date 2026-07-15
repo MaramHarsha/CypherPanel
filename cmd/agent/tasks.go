@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/MaramHarsha/CypherPanel/internal/acme"
 	"github.com/MaramHarsha/CypherPanel/internal/ftp"
 	"github.com/MaramHarsha/CypherPanel/internal/jobs"
+	"github.com/MaramHarsha/CypherPanel/internal/mailstore"
 	"github.com/MaramHarsha/CypherPanel/internal/paths"
 	"github.com/MaramHarsha/CypherPanel/internal/phpruntime"
 	"github.com/MaramHarsha/CypherPanel/internal/platform"
@@ -35,6 +37,7 @@ type taskExecutor struct {
 	acme    *acme.Issuer
 	usersDB usersdb.Manager // nil when no user-DB backend is configured
 	ftp     ftp.Manager
+	mail    mailstore.Manager // nil when no mail backend is configured
 }
 
 // Handle runs a task and returns optional result metadata (reported back with
@@ -105,6 +108,12 @@ func (e *taskExecutor) Handle(ctx context.Context, t jobs.Task) (map[string]stri
 
 	case jobs.TypeFTPDelete:
 		return nil, e.deleteFTP(ctx, t.Payload)
+
+	case jobs.TypeMailCreate:
+		return nil, e.createMail(ctx, t.Payload)
+
+	case jobs.TypeMailDelete:
+		return nil, e.deleteMail(ctx, t.Payload)
 
 	default:
 		// Unknown type: this agent build is older than the control plane.
@@ -252,6 +261,52 @@ func (e *taskExecutor) phpRuntime(ctx context.Context, raw []byte) error {
 		return jobs.Permanent(err)
 	}
 	return err // a package-manager failure (network, repo) is retryable
+}
+
+// createMail provisions a virtual mailbox: it upserts the auth-DB row (address
+// → bcrypt hash / maildir / quota) and creates the Maildir on disk. The
+// password never appears here — Core sends only the bcrypt hash.
+func (e *taskExecutor) createMail(ctx context.Context, raw []byte) error {
+	var p jobs.MailCreatePayload
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return jobs.Permanent(fmt.Errorf("invalid payload: %w", err))
+	}
+	if e.mail == nil {
+		return jobs.Permanent(mailstore.ErrUnsupported)
+	}
+	if err := e.mail.EnsureSchema(ctx); err != nil {
+		return err
+	}
+	if err := e.mail.UpsertMailbox(ctx, mailstore.Mailbox{
+		Address: p.Address, Domain: p.Domain, Maildir: p.Maildir,
+		PasswordHash: p.PasswordHash, QuotaBytes: int64(p.QuotaMB) << 20,
+	}); err != nil {
+		return err
+	}
+	// Create the Maildir (cur/new/tmp) so the MTA can deliver immediately.
+	base := e.layout.MaildirPath(p.Maildir)
+	for _, sub := range []string{"cur", "new", "tmp"} {
+		if err := os.MkdirAll(filepath.Join(base, sub), 0o700); err != nil {
+			return fmt.Errorf("creating maildir: %w", err)
+		}
+	}
+	return nil
+}
+
+// deleteMail removes the mailbox row and its Maildir (idempotent).
+func (e *taskExecutor) deleteMail(ctx context.Context, raw []byte) error {
+	var p jobs.MailDeletePayload
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return jobs.Permanent(fmt.Errorf("invalid payload: %w", err))
+	}
+	if e.mail == nil {
+		return jobs.Permanent(mailstore.ErrUnsupported)
+	}
+	if err := e.mail.DeleteMailbox(ctx, p.Address); err != nil {
+		return err
+	}
+	_ = os.RemoveAll(e.layout.MaildirPath(p.Maildir))
+	return nil
 }
 
 // createFTP provisions a Pure-FTPd virtual user. Like db.create, the password

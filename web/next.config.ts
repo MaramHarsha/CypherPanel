@@ -5,6 +5,33 @@ import type { NextConfig } from "next";
 // CORS configuration is needed anywhere. Core address is env-driven.
 const coreApiUrl = process.env.CYPHER_CORE_API_URL ?? "http://localhost:8080";
 
+// Security headers for the UI. The CSP is deliberately strict; 'unsafe-inline'
+// on styles is required by the Tailwind/Base UI runtime, and connect-src stays
+// same-origin because all API access is proxied through /api.
+const securityHeaders = [
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "X-Frame-Options", value: "DENY" },
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  {
+    key: "Strict-Transport-Security",
+    value: "max-age=63072000; includeSubDomains; preload",
+  },
+  {
+    key: "Content-Security-Policy",
+    value: [
+      "default-src 'self'",
+      "img-src 'self' data:",
+      "style-src 'self' 'unsafe-inline'",
+      "script-src 'self' 'unsafe-inline'",
+      "connect-src 'self'",
+      "font-src 'self' data:",
+      "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+    ].join("; "),
+  },
+];
+
 const nextConfig: NextConfig = {
   output: "standalone",
   async rewrites() {
@@ -14,6 +41,9 @@ const nextConfig: NextConfig = {
         destination: `${coreApiUrl}/api/:path*`,
       },
     ];
+  },
+  async headers() {
+    return [{ source: "/:path*", headers: securityHeaders }];
   },
 };
 

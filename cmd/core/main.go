@@ -150,17 +150,33 @@ func run() error {
 	resellersStore := store.NewResellers(pool)
 	databasesStore := store.NewDatabases(pool)
 	ftpStore := store.NewFTPAccounts(pool)
+	mailStore := store.NewMailAccounts(pool)
 
 	crypt, err := secretcrypt.New(cfg.DBEncryptionKey)
 	if err != nil {
 		return fmt.Errorf("initializing secret cipher: %w", err)
 	}
 
-	// DNS is optional: only wired when a PowerDNS API is configured.
+	// DNS is optional: only wired when a PowerDNS API is configured. When
+	// secondaries are set, writes fan out to them (cluster sync).
 	var dnsProvider dns.Provider
 	if cfg.PDNSAPIURL != "" {
-		dnsProvider = dns.NewPowerDNS(cfg.PDNSAPIURL, cfg.PDNSAPIKey)
-		slog.Info("DNS management enabled (PowerDNS)")
+		primary := dns.NewPowerDNS(cfg.PDNSAPIURL, cfg.PDNSAPIKey)
+		var secondaries []dns.Provider
+		for _, entry := range cfg.DNSSecondaries {
+			url, key, found := strings.Cut(entry, "|")
+			if !found {
+				return fmt.Errorf("CYPHER_DNS_SECONDARIES entries must be 'url|apikey': %q", entry)
+			}
+			secondaries = append(secondaries, dns.NewPowerDNS(url, key))
+		}
+		if len(secondaries) > 0 {
+			dnsProvider = dns.NewClustered(primary, secondaries)
+			slog.Info("DNS management enabled (PowerDNS cluster)", "secondaries", len(secondaries))
+		} else {
+			dnsProvider = primary
+			slog.Info("DNS management enabled (PowerDNS)")
+		}
 	}
 	router := api.NewRouter(api.Deps{
 		Config:   cfg,
@@ -189,7 +205,7 @@ func run() error {
 			Accounts: accountsStore, FTP: ftpStore,
 			Tasks: tasksStore, Publisher: publisher, Audit: auditLog, Crypt: crypt,
 		},
-		FileManager: &api.FileManagerHandler{Accounts: accountsStore, NC: nc, Audit: auditLog},
+		FileManager: &api.FileManagerHandler{Accounts: accountsStore, Packages: packagesStore, NC: nc, Audit: auditLog},
 		DNS: &api.DNSHandler{
 			Accounts: accountsStore, Servers: serversStore, Provider: dnsProvider,
 			Nameservers: cfg.DNSNameservers, Audit: auditLog,
@@ -200,6 +216,11 @@ func run() error {
 		},
 		AuditLog: &api.AuditHandler{Audit: auditLog},
 		Cron:     &api.CronHandler{Accounts: accountsStore, NC: nc, Audit: auditLog},
+		Mail: &api.MailHandler{
+			Accounts: accountsStore, Mail: mailStore, Packages: packagesStore, Servers: serversStore,
+			Tasks: tasksStore, Publisher: publisher, Audit: auditLog,
+			DNS: dnsProvider, Nameservers: cfg.DNSNameservers,
+		},
 	})
 
 	// SSL auto-renewal: re-dispatches the idempotent ssl.issue task for certs
@@ -269,6 +290,7 @@ func run() error {
 		Accounts:  accountsStore,
 		Databases: databasesStore,
 		FTP:       ftpStore,
+		Mail:      mailStore,
 		Events:    eventBus,
 		Audit:     auditLog,
 		Crypt:     crypt,

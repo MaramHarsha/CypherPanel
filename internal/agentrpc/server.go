@@ -28,6 +28,7 @@ type Server struct {
 	Accounts  *store.Accounts
 	Databases *store.Databases
 	FTP       *store.FTPAccounts
+	Mail      *store.MailAccounts
 	Events    *events.Bus
 	Audit     *audit.Logger
 	// Crypt encrypts secrets returned in task metadata (DB passwords) before
@@ -156,6 +157,11 @@ func (s *Server) applyAccountTransition(ctx context.Context, taskID, result stri
 		s.applyFTPResult(ctx, task, result, meta)
 		return
 	}
+	// Mail tasks drive the mail_account record, keyed by address.
+	if task.Type == "mail.create" || task.Type == "mail.delete" {
+		s.applyMailResult(ctx, task, result)
+		return
+	}
 
 	var terr error
 	var subject string
@@ -276,6 +282,44 @@ func (s *Server) applyFTPResult(ctx context.Context, task *store.Task, result st
 		_ = s.FTP.Delete(ctx, rec.ID)
 	} else {
 		_ = s.FTP.SetStatus(ctx, rec.ID, "failed")
+	}
+}
+
+// applyMailResult applies a mail task's outcome to its record (keyed by the
+// address in the payload): create-success → active, create-failure → failed,
+// delete-success → removed.
+func (s *Server) applyMailResult(ctx context.Context, task *store.Task, result string) {
+	var address string
+	switch task.Type {
+	case "mail.create":
+		var p jobs.MailCreatePayload
+		if err := json.Unmarshal(task.Payload, &p); err != nil {
+			return
+		}
+		address = p.Address
+	case "mail.delete":
+		var p jobs.MailDeletePayload
+		if err := json.Unmarshal(task.Payload, &p); err != nil {
+			return
+		}
+		address = p.Address
+	}
+	rec, err := s.Mail.GetByAddress(ctx, address)
+	if err != nil {
+		return
+	}
+	if task.Type == "mail.create" {
+		if result == "succeeded" {
+			_ = s.Mail.SetStatus(ctx, rec.ID, "active")
+		} else {
+			_ = s.Mail.SetStatus(ctx, rec.ID, "failed")
+		}
+		return
+	}
+	if result == "succeeded" {
+		_ = s.Mail.Delete(ctx, rec.ID)
+	} else {
+		_ = s.Mail.SetStatus(ctx, rec.ID, "failed")
 	}
 }
 

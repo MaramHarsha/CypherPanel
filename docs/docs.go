@@ -1620,6 +1620,65 @@ const docTemplate = `{
                 ]
             }
         },
+        "/admin/accounts/{id}/files/extract": {
+            "post": {
+                "parameters": [
+                    {
+                        "description": "Account ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/api.pathRequest",
+                                        "summary": "request",
+                                        "description": "Archive path"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "Archive path",
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Extract a zip archive",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
         "/admin/accounts/{id}/files/rename": {
             "post": {
                 "parameters": [

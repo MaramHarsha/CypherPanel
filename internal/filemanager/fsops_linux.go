@@ -3,7 +3,9 @@
 package filemanager
 
 import (
+	"archive/zip"
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -56,6 +58,9 @@ func (h *Handler) Handle(req Request) Response {
 			resp.Content = content
 			return err
 		case OpWrite:
+			if err := checkQuota(root, req.QuotaBytes, int64(len(req.Content))); err != nil {
+				return err
+			}
 			return writeFile(target, req.Content)
 		case OpMkdir:
 			return os.Mkdir(target, 0o755)
@@ -67,6 +72,8 @@ func (h *Handler) Handle(req Request) Response {
 				return err
 			}
 			return os.Rename(target, dst)
+		case OpExtract:
+			return extractZip(target, root, req.QuotaBytes)
 		default:
 			return fmt.Errorf("unknown op %q", req.Op)
 		}
@@ -185,6 +192,117 @@ func writeFile(p string, content []byte) error {
 		return fmt.Errorf("content exceeds the %d-byte limit", maxWriteBytes)
 	}
 	return os.WriteFile(p, content, 0o644)
+}
+
+// dirSize sums the on-disk size of a directory tree (used for quota checks).
+func dirSize(root string) int64 {
+	var total int64
+	_ = filepath.Walk(root, func(_ string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
+}
+
+// checkQuota rejects a write that would push the account over its disk limit.
+func checkQuota(root string, quota, incoming int64) error {
+	if quota <= 0 {
+		return nil // unlimited
+	}
+	if dirSize(root)+incoming > quota {
+		return fmt.Errorf("disk quota exceeded")
+	}
+	return nil
+}
+
+// Extraction limits guard against zip bombs.
+const (
+	maxExtractEntries = 10000
+	maxExtractBytes   = 200 << 20 // 200 MiB expanded
+)
+
+// extractZip unpacks a zip archive into its own directory, validating EVERY
+// entry's destination against the account root (zip-slip: an entry named
+// `../../etc/passwd` is rejected before any write). Symlinks and oversized
+// expansions are refused, and the account's disk quota is honoured.
+func extractZip(archivePath, root string, quota int64) error {
+	zr, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return fmt.Errorf("cannot open archive: %w", err)
+	}
+	defer zr.Close()
+
+	if len(zr.File) > maxExtractEntries {
+		return fmt.Errorf("archive has too many entries")
+	}
+	destDir := filepath.Dir(archivePath)
+
+	used := dirSize(root)
+	var expanded int64
+	for _, f := range zr.File {
+		// Reject entries that escape the root (zip-slip) or are symlinks.
+		dst, err := safePathUnder(destDir, root, f.Name)
+		if err != nil {
+			return err
+		}
+		if f.FileInfo().Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("archive contains a symlink (%s) — refused", f.Name)
+		}
+		if f.FileInfo().IsDir() {
+			if err := os.MkdirAll(dst, 0o755); err != nil {
+				return err
+			}
+			continue
+		}
+		expanded += int64(f.UncompressedSize64)
+		if expanded > maxExtractBytes {
+			return fmt.Errorf("archive expands beyond the extraction limit")
+		}
+		if quota > 0 && used+expanded > quota {
+			return fmt.Errorf("extraction would exceed the disk quota")
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return err
+		}
+		if err := writeZipEntry(f, dst); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// safePathUnder joins base+rel and verifies the result stays under root
+// (base is itself already under root).
+func safePathUnder(base, root, rel string) (string, error) {
+	rootReal, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", err
+	}
+	target := filepath.Join(base, filepath.FromSlash(CleanRel(rel)))
+	if !underRoot(rootReal, target) {
+		return "", fmt.Errorf("archive entry %q escapes the account root", rel)
+	}
+	return target, nil
+}
+
+func writeZipEntry(f *zip.File, dst string) error {
+	rc, err := f.Open()
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.CopyN(out, rc, maxExtractBytes)
+	if err != nil && err != io.EOF {
+		return err
+	}
+	return nil
 }
 
 func lookupIDs(username string) (int, int, error) {

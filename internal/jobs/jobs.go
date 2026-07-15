@@ -32,6 +32,8 @@ const (
 	TypeDBDrop           = "db.drop"             // payload: DBDropPayload
 	TypeFTPCreate        = "ftp.create"          // payload: FTPCreatePayload
 	TypeFTPDelete        = "ftp.delete"          // payload: FTPDeletePayload
+	TypeMailCreate       = "mail.create"         // payload: MailCreatePayload
+	TypeMailDelete       = "mail.delete"         // payload: MailDeletePayload
 )
 
 // Task is the wire format published to JetStream.
@@ -102,6 +104,23 @@ type PHPRuntimePayload struct {
 	Action  string `json:"action"`  // install | uninstall
 }
 
+// MailCreatePayload provisions an email mailbox. The password travels as a
+// **bcrypt hash** computed by Core (Dovecot BLF-CRYPT compatible) — plaintext
+// never leaves Core, and the agent writes only the hash into the mail auth DB.
+type MailCreatePayload struct {
+	Address      string `json:"address"`       // user@domain
+	Domain       string `json:"domain"`        // mail domain
+	Maildir      string `json:"maildir"`       // relative maildir path (domain/user/)
+	PasswordHash string `json:"password_hash"` // bcrypt ($2a$...)
+	QuotaMB      int    `json:"quota_mb"`
+}
+
+// MailDeletePayload removes a mailbox and its Maildir.
+type MailDeletePayload struct {
+	Address string `json:"address"`
+	Maildir string `json:"maildir"`
+}
+
 // ServiceControlPayload runs a lifecycle action on a managed system service.
 // The agent restricts Service to its managed allowlist and Action to the known
 // verbs — the payload is never trusted to name an arbitrary systemd unit.
@@ -153,7 +172,7 @@ const (
 // on every agent redelivery.
 func ValidType(t string) bool {
 	switch t {
-	case TypeNoop, TypeSystemUserCreate, TypeSystemUserRemove, TypeSiteProvision, TypeSiteDeprovision, TypeSSLIssue, TypePHPVersionChange, TypeServiceControl, TypePHPRuntime, TypeDBCreate, TypeDBDrop, TypeFTPCreate, TypeFTPDelete:
+	case TypeNoop, TypeSystemUserCreate, TypeSystemUserRemove, TypeSiteProvision, TypeSiteDeprovision, TypeSSLIssue, TypePHPVersionChange, TypeServiceControl, TypePHPRuntime, TypeDBCreate, TypeDBDrop, TypeFTPCreate, TypeFTPDelete, TypeMailCreate, TypeMailDelete:
 		return true
 	}
 	return false

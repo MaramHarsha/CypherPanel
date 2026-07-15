@@ -155,10 +155,11 @@
   - **E2E verified** ✅ (real PowerDNS 4.9 + MariaDB backend): auto-zone created; add TXT (stored quoted) + MX (dotted) → 200; validation rejects bad IP / CNAME-coexistence / out-of-zone name (400); delete works; zone present in PowerDNS; **live resolution** `dig @pdns dbuser.example.com A` → the server IP.
 - [x] **SSL DNS-01 for wildcards** (closes the Phase 3 loose end): `dns.ACMEProvider` implements lego's `challenge.Provider` (sets/removes `_acme-challenge` TXT, longest-suffix zone match), wired into `acme.Issuer.SetDNSProvider` on the agent when `CYPHER_AGENT_PDNS_API_URL` is set (logs "wildcard SSL enabled").
   - **E2E verified** ✅ (live PowerDNS integration test): `Present` created the `_acme-challenge` TXT, `CleanUp` removed it.
-- [ ] Postfix SMTP + Dovecot IMAP/POP3 configuration
-- [ ] Mail user auth database & quotas
-- [ ] DNS cluster synchronization engine (primary/secondary AXFR/native replication)
-- [x] **Phase 5 skills batch** (catalog #17-18): `mail-stack` *(design-intent)*, `dns-management` *(now code-grounded)*
+- [x] **Mail stack — virtual mailboxes + quotas + deliverability DNS** (§4B/5, Postfix/Dovecot MVP): `internal/mailstore` (MariaDB `virtual_domains`/`virtual_users` auth DB behind a `Manager` interface); `mail.create`/`mail.delete` agent tasks that upsert the auth-DB row + create the Maildir (cur/new/tmp); **passwords bcrypt-hashed in Core** (Dovecot BLF-CRYPT compatible) — plaintext never leaves Core, the payload carries only the hash. Migration 000013 (`mail_accounts`); account-scoped REST (list/create/delete) with **package `email_accounts` limit** + per-mailbox quota; on creation Core **auto-publishes MX/SPF/DMARC (+ mail A)** via the DNS layer; mail dialog in the accounts UI; reference Postfix/Dovecot SQL-backend config in `docs/mail-setup.md`. *(DKIM signer + key, and Rspamd, are the remaining mail sub-task — documented.)*
+  - **Status: code-complete; build + E2E verification pending** (command classifier outage blocked the final `go build`/container E2E this turn — mailbox row + Maildir + MX/SPF/DMARC-in-PowerDNS check queued).
+- [x] **DNS cluster synchronization engine** (§5): `dns.Clustered` fans out every zone/record write (EnsureZone/Upsert/Delete) to the primary + all secondary PowerDNS nodes (app-layer sync; `CYPHER_DNS_SECONDARIES="url|key,…"`), with a `Resync` repair path; secondary failures are logged, not fatal, so a briefly-down replica never blocks an edit.
+  - **Status: code-complete; build verification pending** (same classifier outage).
+- [x] **Phase 5 skills batch** (catalog #17-18): `mail-stack` + `dns-management` *(now code-grounded)*
 
 ## Phase 6 — Logging, Auditing, & Hardening 🟨
 
@@ -175,7 +176,10 @@
   - **Verified** ✅: `sh -n` clean on both; `--help`/parse works.
 - [x] **CI job tiers** (§19): added `security` (**govulncheck** + ShellCheck + gitleaks), `ui` (typecheck + build + Playwright tier), `install-test` (installer syntax + dry-run — protects the 1GB claim), and a `load-test` placeholder to `.github/workflows/ci.yml`.
 - [x] **Security hardening pass**: `docs/security.md` (auth/secrets/transport/injection/isolation posture + RC checklist); **govulncheck run locally** → bumped `quic-go` v0.59.0→v0.60.0 (HTTP/3 QPACK advisory fixed); remaining item is a Go-stdlib advisory resolved by building on current stable Go (CI pins `go-version: stable`).
-- [ ] **Remaining**: web terminal (SSH-in-browser); per-account disk/inode **quota** + zip-slip guards (file-manager hardening); rate-limiting auth endpoints + UI security headers; NATS server-side auth config in the installer.
+- [x] **Auth rate-limiting + security headers**: in-memory per-IP fixed-window limiter on `/auth/login` + `/auth/refresh` (20/min); `SecurityHeaders` middleware on the API (CSP/X-Frame-Options/nosniff/Referrer-Policy) + full CSP/HSTS set on the UI via `next.config.ts` headers.
+  - **E2E verified** ✅: headers present on API responses; 20 logins pass then 429.
+- [x] **File-manager disk-quota + zip-slip-safe extract**: writes/extracts enforce the account's package `disk_mb` quota (agent computes tree size); new `extract` op unpacks zips with **per-entry zip-slip validation** (the E2E-proven `CleanRel` under-root check), symlink rejection, and zip-bomb size caps. *(Build-verified; reuses the already-E2E-verified path-safety primitive.)*
+- [ ] **Remaining**: **web terminal** (SSH-in-browser — needs a bidirectional PTY-over-websocket/NATS streaming transport, the one architecturally-novel piece); inode-count quota (byte quota done); DKIM signer for mail; NATS server-side auth config in the installer.
 - [x] **Phase 6 skills batch** (catalog #19-23): `observability-and-metrics` *(now grounded)*, `installer-and-packaging` + `upgrade-and-compatibility` *(now code-grounded)*, `backups` + `public-interfaces` *(design-intent)*
 
 ## Extensibility & Operability Backlog — post-MVP (`plan.md` §11-19) ⬜
