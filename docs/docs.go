@@ -169,6 +169,14 @@ const docTemplate = `{
             "api.createTaskRequest": {
                 "type": "object"
             },
+            "api.cronResponse": {
+                "properties": {
+                    "content": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
             "api.databaseResponse": {
                 "properties": {
                     "created_at": {
@@ -481,6 +489,14 @@ const docTemplate = `{
                 },
                 "type": "object"
             },
+            "api.setCronRequest": {
+                "properties": {
+                    "content": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
             "api.tokenResponse": {
                 "properties": {
                     "access_token": {
@@ -518,6 +534,39 @@ const docTemplate = `{
                 "required": [
                     "path"
                 ],
+                "type": "object"
+            },
+            "audit.Record": {
+                "properties": {
+                    "action": {
+                        "type": "string"
+                    },
+                    "actor_name": {
+                        "type": "string"
+                    },
+                    "actor_role": {
+                        "type": "string"
+                    },
+                    "created_at": {
+                        "type": "string"
+                    },
+                    "detail": {
+                        "additionalProperties": {},
+                        "type": "object"
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "ip_address": {
+                        "type": "string"
+                    },
+                    "target_id": {
+                        "type": "string"
+                    },
+                    "target_type": {
+                        "type": "string"
+                    }
+                },
                 "type": "object"
             },
             "dns.Record": {
@@ -691,6 +740,112 @@ const docTemplate = `{
                     }
                 ],
                 "summary": "Create a hosting account (root admin only)",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
+        "/admin/accounts/{id}/cron": {
+            "get": {
+                "parameters": [
+                    {
+                        "description": "Account ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.cronResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Get an account's crontab",
+                "tags": [
+                    "admin"
+                ]
+            },
+            "put": {
+                "parameters": [
+                    {
+                        "description": "Account ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/api.setCronRequest",
+                                        "summary": "request",
+                                        "description": "Crontab content"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "Crontab content",
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Replace an account's crontab",
                 "tags": [
                     "admin"
                 ]
@@ -2167,6 +2322,60 @@ const docTemplate = `{
                 ]
             }
         },
+        "/admin/audit": {
+            "get": {
+                "parameters": [
+                    {
+                        "description": "Filter by action prefix (e.g. account.)",
+                        "in": "query",
+                        "name": "action",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Max entries (default 100, max 500)",
+                        "in": "query",
+                        "name": "limit",
+                        "schema": {
+                            "type": "integer"
+                        }
+                    },
+                    {
+                        "description": "Offset for pagination",
+                        "in": "query",
+                        "name": "offset",
+                        "schema": {
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "items": {
+                                        "$ref": "#/components/schemas/audit.Record"
+                                    },
+                                    "type": "array"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "List audit-log entries (root admin only)",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
         "/admin/dns/record-types": {
             "get": {
                 "responses": {
@@ -2190,6 +2399,56 @@ const docTemplate = `{
                     }
                 ],
                 "summary": "List supported DNS record types",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
+        "/admin/metrics/{scope}": {
+            "get": {
+                "parameters": [
+                    {
+                        "description": "server | account | domain",
+                        "in": "path",
+                        "name": "scope",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {},
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Metrics for a scope (server, account, domain)",
                 "tags": [
                     "admin"
                 ]
@@ -3198,6 +3457,26 @@ const docTemplate = `{
                 "summary": "Current user profile",
                 "tags": [
                     "auth"
+                ]
+            }
+        },
+        "/metrics": {
+            "get": {
+                "responses": {
+                    "200": {
+                        "content": {
+                            "text/plain": {
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    }
+                },
+                "summary": "Prometheus metrics scrape endpoint",
+                "tags": [
+                    "metrics"
                 ]
             }
         }

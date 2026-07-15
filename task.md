@@ -14,7 +14,7 @@
 | **3** | Web Server & PHP Management | ✅ Complete (DNS-01 *live* solver awaits Phase 5 PowerDNS; selection + seam done) |
 | **4** | Files, FTP, & Databases | ✅ Complete (MariaDB, Pure-FTPd, File Manager, Adminer handoff) |
 | **5** | Email & DNS Servers | ⬜ Not started |
-| **6** | Logging, Auditing, & Hardening | ⬜ Not started |
+| **6** | Logging, Auditing, & Hardening | 🟨 Most items landed (metrics, audit+retention, cron, versioning, installer, CI, hardening); web terminal + quotas remain |
 | — | Post-MVP (`upcoming-features.md`) | ⬜ After MVP |
 | — | Extensibility, SDKs & Ops (`plan.md` §11-19) | ⬜ Reservations start Phase 2; most items post-MVP — see below |
 
@@ -160,18 +160,23 @@
 - [ ] DNS cluster synchronization engine (primary/secondary AXFR/native replication)
 - [x] **Phase 5 skills batch** (catalog #17-18): `mail-stack` *(design-intent)*, `dns-management` *(now code-grounded)*
 
-## Phase 6 — Logging, Auditing, & Hardening ⬜
+## Phase 6 — Logging, Auditing, & Hardening 🟨
 
-- [ ] System metrics collection (CPU/memory/disk IO → time-series store, not Postgres)
-- [ ] User terminal & cron job managers
-- [ ] Audit log dashboards & retention policies
-- [ ] Security hardening + release candidate packaging
-- [ ] Single-command installer (per Appendix A rules: consent-based takeover, uninstaller, no forced bundling) — **includes NATS server-side auth config** (accounts/users/permissions; client credential support already shipped in Phase 1)
-- [ ] Version Upgrade & Migration Framework: `system_version` tracking, sequential migration replay, mandatory pre-upgrade backup, rollback path (`plan.md` §13) — **release-candidate gate, must exist before first production update ships**
-- [ ] Compatibility matrix doc (`docs/compatibility-matrix.md`): Core ↔ Agent ↔ plugin API version ranges, enforced at registration (`plan.md` §13)
-- [ ] Metrics API: `GET /api/v1/metrics/{scope}` (server/account/domain) + raw Prometheus `/metrics` scrape endpoint (`plan.md` §16)
-- [ ] CI: add load-test, security-test, and UI-test (Playwright) job tiers alongside existing unit/integration/cross-compile jobs (`plan.md` §19)
-- [x] **Phase 6 skills batch** (catalog #19-23): `observability-and-metrics`, `backups`, `installer-and-packaging`, `upgrade-and-compatibility`, `public-interfaces` *(partly design-intent — verify vs code when built)*
+- [x] **Metrics + Metrics API** (§16): hand-written Prometheus exposition at top-level `GET /metrics` (unauth like /healthz; `cypher_server_up`/`load1`/`memory`/`disk`, `cypher_servers_total`/`online`, `cypher_accounts_total{status}`) + scoped JSON `GET /admin/metrics/{scope}` (server/account/domain, reseller-scoped). Time-series history stays in the operator's TSDB scraping /metrics — **never Postgres** (observability skill's cardinal rule; current-state only).
+  - **E2E verified** ✅: /metrics returns per-server + aggregate gauges; /admin/metrics/account → by-status counts; /server → 200; bad scope → 400.
+- [x] **Cron job manager** (part of "terminal & cron"): per-account crontab over Core↔Agent NATS request-reply (`internal/cron`), jobs run **as the account user** (`crontab -u`); get/set with the account-scoped `GET/PUT /admin/accounts/:id/cron` + cron dialog in the UI. *(Web terminal is a heavier follow-up — noted.)*
+  - **E2E verified** ✅ (real `cron` in the container): set → 200 → `crontab -u cyph_… -l` shows the job under the account user; invalid crontab → 400 with crontab's own error.
+- [x] **Audit log dashboard + retention** (§16): `GET /admin/audit` (root-admin, action-prefix filter, paginated, actor-joined) + audit page in the UI (admin-only nav); age-based **retention pruner** (`CYPHER_AUDIT_RETENTION_DAYS`, daily, append-only — pruning never in-place edits).
+  - **E2E verified** ✅: list + `action=dns.` filter return real entries; reseller → 403.
+- [x] **Version compatibility enforcement** (§13): `internal/version` (Core/MinAgent + semver compare, unit-tested); Core **refuses agents below MinAgent** at registration (`FailedPrecondition`), dev builds allowed-with-warning; `docs/compatibility-matrix.md`.
+- [x] **Version upgrade framework** (§13): `system_version` table (migration 000012) recorded on Core startup; `cypher-core version` subcommand; forward-only migration replay via golang-migrate; **backup-first** upgrade + rollback procedure in `docs/upgrade.md`. *(Fully-automated `cypherctl upgrade/rollback` is post-MVP §14.)*
+  - **Verified** ✅: `cypher-core version` prints identity; `system_version` row = 0.1.0 after startup.
+- [x] **Single-command installer + uninstaller** (Appendix A): `scripts/install.sh` + `scripts/uninstall.sh` — distro-detect via /etc/os-release, **detect-and-ask (never purge, `--take-over`)**, **never auto-reboot**, GPG+sha256 verify, `--dry-run`/`--noexec`, opt-in add-ons, first-install secret generation, systemd unit, **working uninstaller from v1**, 1GB-RAM target. POSIX sh, LF. *(NATS server-side auth config is the installer's remaining sub-task.)*
+  - **Verified** ✅: `sh -n` clean on both; `--help`/parse works.
+- [x] **CI job tiers** (§19): added `security` (**govulncheck** + ShellCheck + gitleaks), `ui` (typecheck + build + Playwright tier), `install-test` (installer syntax + dry-run — protects the 1GB claim), and a `load-test` placeholder to `.github/workflows/ci.yml`.
+- [x] **Security hardening pass**: `docs/security.md` (auth/secrets/transport/injection/isolation posture + RC checklist); **govulncheck run locally** → bumped `quic-go` v0.59.0→v0.60.0 (HTTP/3 QPACK advisory fixed); remaining item is a Go-stdlib advisory resolved by building on current stable Go (CI pins `go-version: stable`).
+- [ ] **Remaining**: web terminal (SSH-in-browser); per-account disk/inode **quota** + zip-slip guards (file-manager hardening); rate-limiting auth endpoints + UI security headers; NATS server-side auth config in the installer.
+- [x] **Phase 6 skills batch** (catalog #19-23): `observability-and-metrics` *(now grounded)*, `installer-and-packaging` + `upgrade-and-compatibility` *(now code-grounded)*, `backups` + `public-interfaces` *(design-intent)*
 
 ## Extensibility & Operability Backlog — post-MVP (`plan.md` §11-19) ⬜
 

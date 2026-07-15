@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -53,6 +54,8 @@ type Core struct {
 	// re-issue skip guard so a due cert is actually renewed, not skipped.
 	SSLRenewInterval  time.Duration
 	SSLRenewThreshold time.Duration
+	// AuditRetentionDays prunes audit rows older than this (0 = keep forever).
+	AuditRetentionDays int
 	// mTLS material for the agent gRPC listener. Required in production;
 	// in development an empty set means plaintext gRPC (local only).
 	GRPCTLSCert     string
@@ -124,6 +127,9 @@ func LoadCore() (Core, error) {
 		return Core{}, err
 	}
 	if c.SSLRenewThreshold, err = durationOr("CYPHER_SSL_RENEW_THRESHOLD", 30*24*time.Hour); err != nil {
+		return Core{}, err
+	}
+	if c.AuditRetentionDays, err = intOr("CYPHER_AUDIT_RETENTION_DAYS", 90); err != nil {
 		return Core{}, err
 	}
 
@@ -203,6 +209,18 @@ func splitList(v string) []string {
 		}
 	}
 	return out
+}
+
+func intOr(key string, def int) (int, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, fmt.Errorf("%s: invalid integer %q: %w", key, v, err)
+	}
+	return n, nil
 }
 
 func durationOr(key string, def time.Duration) (time.Duration, error) {

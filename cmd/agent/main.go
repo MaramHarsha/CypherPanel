@@ -25,6 +25,7 @@ import (
 	agentv1 "github.com/MaramHarsha/CypherPanel/gen/agent/v1"
 	"github.com/MaramHarsha/CypherPanel/internal/acme"
 	"github.com/MaramHarsha/CypherPanel/internal/config"
+	"github.com/MaramHarsha/CypherPanel/internal/cron"
 	"github.com/MaramHarsha/CypherPanel/internal/dns"
 	"github.com/MaramHarsha/CypherPanel/internal/filemanager"
 	"github.com/MaramHarsha/CypherPanel/internal/ftp"
@@ -140,6 +141,25 @@ func run() error {
 		return fmt.Errorf("subscribing to file-manager subject: %w", err)
 	}
 	defer fsSub.Unsubscribe()
+
+	// Cron request-reply: per-account crontab get/set (runs as the account user).
+	cronSub, err := nc.Subscribe(cron.Subject(serverID), func(msg *nats.Msg) {
+		var req cron.Request
+		if err := json.Unmarshal(msg.Data, &req); err != nil {
+			resp, _ := json.Marshal(cron.Response{Error: "bad request"})
+			_ = msg.Respond(resp)
+			return
+		}
+		data, err := json.Marshal(cron.Handle(req))
+		if err != nil {
+			data, _ = json.Marshal(cron.Response{Error: "encode failed"})
+		}
+		_ = msg.Respond(data)
+	})
+	if err != nil {
+		return fmt.Errorf("subscribing to cron subject: %w", err)
+	}
+	defer cronSub.Unsubscribe()
 
 	consumerErr := make(chan error, 1)
 	go func() {

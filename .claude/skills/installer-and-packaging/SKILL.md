@@ -5,7 +5,7 @@ description: Shell installer & packaging conventions from the cPanel-installer a
 
 # Installer & Packaging
 
-> **Status: design-intent (pre-implementation), grounded in real analysis.** Derived from plan.md Appendix A (teardown of cPanel's actual installer) and the repo's existing `.gitattributes` LF rule. Lands in Phase 6. Verify against code then, updating in the same PR.
+> **Status: code-grounded (Phase 6).** `scripts/install.sh` + `scripts/uninstall.sh` implement the principles below — distro-detect via /etc/os-release, detect-and-ask (`--take-over`, never purge), no auto-reboot, GPG+sha256 verify, `--dry-run`/`--noexec`, opt-in add-ons, working uninstaller, 1GB target, POSIX sh + LF. Follow/extend those. **Still to add:** NATS server-side auth config generation, and the full 1GB-VM CI install test (a dry-run tier exists).
 
 ## What to copy from cPanel's installer
 

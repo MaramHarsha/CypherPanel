@@ -27,6 +27,9 @@ type Deps struct {
 	FTP         *FTPHandler
 	FileManager *FileManagerHandler
 	DNS         *DNSHandler
+	Metrics     *MetricsHandler
+	AuditLog    *AuditHandler
+	Cron        *CronHandler
 }
 
 func NewRouter(d Deps) *gin.Engine {
@@ -39,6 +42,10 @@ func NewRouter(d Deps) *gin.Engine {
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+
+	// Prometheus scrape endpoint (unauthenticated like /healthz — operators must
+	// network-restrict it). Time-series history lives in the scraping TSDB.
+	r.GET("/metrics", d.Metrics.Prometheus)
 
 	v1 := r.Group("/api/v1")
 
@@ -73,6 +80,7 @@ func NewRouter(d Deps) *gin.Engine {
 	admin.POST("/resellers", d.Resellers.Create)
 	admin.GET("/plugins", d.Plugins.List)
 	admin.GET("/plugins/manifest-schema", d.Plugins.ManifestSchema)
+	admin.GET("/audit", d.AuditLog.List)
 
 	// Shared management surface: root admin AND resellers. Every handler here
 	// scopes results/actions to the caller (root = unrestricted, reseller =
@@ -111,6 +119,9 @@ func NewRouter(d Deps) *gin.Engine {
 	mgr.POST("/accounts/:id/dns", d.DNS.Upsert)
 	mgr.DELETE("/accounts/:id/dns", d.DNS.Delete)
 	mgr.GET("/dns/record-types", d.DNS.RecordTypes)
+	mgr.GET("/metrics/:scope", d.Metrics.Scoped)
+	mgr.GET("/accounts/:id/cron", d.Cron.Get)
+	mgr.PUT("/accounts/:id/cron", d.Cron.Set)
 
 	return r
 }

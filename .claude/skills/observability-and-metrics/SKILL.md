@@ -5,7 +5,7 @@ description: What goes to the time-series store vs Postgres, metric/log naming, 
 
 # Observability & Metrics
 
-> **Status: partially grounded.** Structured logging (`slog`), the `audit_log` table, and latest-snapshot host stats exist today; the time-series store and Metrics API (§16) are Phase 6. Verify/expand against code as they land, updating in the same PR.
+> **Status: code-grounded (Phase 6).** Structured logging (`slog`), `audit_log` + its dashboard (`GET /admin/audit`) and age-based retention pruner, latest-snapshot host stats, the Prometheus `/metrics` scrape endpoint, and the scoped Metrics API (`GET /admin/metrics/{scope}`) all exist — see `internal/api/metrics_handler.go` and `audit_handler.go`. Historical time-series still live only in the operator's TSDB scraping /metrics, never Postgres. Follow those.
 
 ## The cardinal rule: time-series data does NOT go in Postgres
 

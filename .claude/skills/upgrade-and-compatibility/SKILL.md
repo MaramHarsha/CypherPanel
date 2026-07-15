@@ -5,7 +5,7 @@ description: The cypherctl upgrade/rollback workflow, migration replay rules, pr
 
 # Upgrade & Compatibility
 
-> **Status: design-intent (pre-implementation).** Grounded in plan.md §13. This is a **release-candidate gate — it must exist before the first production update ships.** Verify against code as it lands, updating in the same PR. Read [[database-and-migrations]] and [[grpc-proto-contracts]].
+> **Status: partially code-grounded (Phase 6).** Version identity + Core↔Agent compatibility (`internal/version`, enforced at registration), `system_version` tracking (migration 000012, recorded on startup), the `cypher-core version` command, `docs/compatibility-matrix.md`, and the backup-first `docs/upgrade.md` procedure all exist. **Still to build:** the fully-automated `cypherctl upgrade`/`rollback` that performs the mandatory pre-upgrade backup (post-MVP §14). Read [[database-and-migrations]] and [[grpc-proto-contracts]].
 
 ## Upgrade workflow (`cypherctl upgrade` / `rollback`)
 

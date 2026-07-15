@@ -41,6 +41,7 @@ import (
 	"github.com/MaramHarsha/CypherPanel/internal/secretcrypt"
 	"github.com/MaramHarsha/CypherPanel/internal/sslrenew"
 	"github.com/MaramHarsha/CypherPanel/internal/store"
+	"github.com/MaramHarsha/CypherPanel/internal/version"
 )
 
 // @title           CypherPanel API
@@ -65,6 +66,11 @@ func run() error {
 	if len(os.Args) > 1 && os.Args[1] == "pki" {
 		return pkiCommand(os.Args[2:])
 	}
+	// `version` prints the build's version identity without touching the DB.
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		fmt.Printf("cypher-core %s (minimum supported agent %s)\n", version.Core, version.MinAgent)
+		return nil
+	}
 
 	cfg, err := config.LoadCore()
 	if err != nil {
@@ -84,6 +90,14 @@ func run() error {
 	defer pool.Close()
 	if err := pool.Ping(ctx); err != nil {
 		return fmt.Errorf("pinging postgres (is the dev stack up? `docker compose up -d`): %w", err)
+	}
+	// Record the running Core version so upgrades/rollbacks have a definitive
+	// "from" version (best-effort; a fresh DB before migrations won't have the
+	// table yet, which is fine).
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO system_version (id, version) VALUES (true, $1)
+		ON CONFLICT (id) DO UPDATE SET version = $1, updated_at = now()`, version.Core); err != nil {
+		slog.Debug("recording system version (table may not exist yet)", "error", err)
 	}
 
 	redisOpts, err := redis.ParseURL(cfg.RedisURL)
@@ -180,6 +194,12 @@ func run() error {
 			Accounts: accountsStore, Servers: serversStore, Provider: dnsProvider,
 			Nameservers: cfg.DNSNameservers, Audit: auditLog,
 		},
+		Metrics: &api.MetricsHandler{
+			Servers: serversStore, Accounts: accountsStore,
+			Databases: databasesStore, FTP: ftpStore,
+		},
+		AuditLog: &api.AuditHandler{Audit: auditLog},
+		Cron:     &api.CronHandler{Accounts: accountsStore, NC: nc, Audit: auditLog},
 	})
 
 	// SSL auto-renewal: re-dispatches the idempotent ssl.issue task for certs
@@ -206,6 +226,32 @@ func run() error {
 		},
 	}
 	go renewer.Run(ctx)
+
+	// Audit retention: prune rows older than the policy once a day (append-only
+	// log; retention is age-based pruning, never in-place edits).
+	if cfg.AuditRetentionDays > 0 {
+		go func() {
+			t := time.NewTicker(24 * time.Hour)
+			defer t.Stop()
+			prune := func() {
+				cutoff := time.Now().AddDate(0, 0, -cfg.AuditRetentionDays)
+				if n, err := auditLog.Prune(ctx, cutoff); err != nil {
+					slog.Error("audit retention prune", "error", err)
+				} else if n > 0 {
+					slog.Info("audit retention pruned old entries", "removed", n, "older_than_days", cfg.AuditRetentionDays)
+				}
+			}
+			prune() // once on boot
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					prune()
+				}
+			}
+		}()
+	}
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,

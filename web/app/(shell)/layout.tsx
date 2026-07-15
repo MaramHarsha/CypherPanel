@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   LogOut,
   Package,
+  ScrollText,
   Server,
   Shield,
   Store,
@@ -27,7 +28,10 @@ const navGroups = [
   },
   {
     label: "Infrastructure",
-    items: [{ href: "/servers", label: "Servers", icon: Server, adminOnly: true }],
+    items: [
+      { href: "/servers", label: "Servers", icon: Server, adminOnly: true },
+      { href: "/audit", label: "Audit log", icon: ScrollText, adminOnly: true },
+    ],
   },
   {
     label: "Hosting",

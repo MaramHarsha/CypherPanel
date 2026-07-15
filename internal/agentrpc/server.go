@@ -18,6 +18,7 @@ import (
 	"github.com/MaramHarsha/CypherPanel/internal/events"
 	"github.com/MaramHarsha/CypherPanel/internal/jobs"
 	"github.com/MaramHarsha/CypherPanel/internal/store"
+	"github.com/MaramHarsha/CypherPanel/internal/version"
 )
 
 type Server struct {
@@ -39,6 +40,15 @@ type Server struct {
 func (s *Server) Register(ctx context.Context, req *agentv1.RegisterRequest) (*agentv1.RegisterResponse, error) {
 	if req.GetHostname() == "" || req.GetIpAddress() == "" {
 		return nil, status.Error(codes.InvalidArgument, "hostname and ip_address are required")
+	}
+
+	// Refuse an agent older than the supported minimum so a too-old node fails
+	// loudly here rather than mysteriously mid-operation (compatibility matrix).
+	if ok, reason := version.AgentCompatible(req.GetAgentVersion()); !ok {
+		slog.Warn("rejecting incompatible agent", "hostname", req.GetHostname(), "agent_version", req.GetAgentVersion(), "reason", reason)
+		return nil, status.Errorf(codes.FailedPrecondition, "incompatible agent: %s (Core %s requires agent >= %s)", reason, version.Core, version.MinAgent)
+	} else if reason != "" {
+		slog.Warn("agent registered with a non-release version", "hostname", req.GetHostname(), "agent_version", req.GetAgentVersion(), "note", reason)
 	}
 
 	srv, err := s.Servers.UpsertByHostname(ctx, req.GetHostname(), req.GetIpAddress())

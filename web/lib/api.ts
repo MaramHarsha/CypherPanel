@@ -366,6 +366,34 @@ export function createReseller(req: CreateResellerRequest): Promise<ResellerInfo
   });
 }
 
+export function getCron(accountId: string): Promise<{ content: string }> {
+  return apiFetch<{ content: string }>(`/api/v1/admin/accounts/${accountId}/cron`);
+}
+
+export function setCron(accountId: string, content: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/admin/accounts/${accountId}/cron`, {
+    method: "PUT",
+    body: JSON.stringify({ content }),
+  });
+}
+
+export interface AuditRecord {
+  id: string;
+  actor_name: string;
+  actor_role: string;
+  action: string;
+  target_type: string;
+  target_id: string;
+  detail: Record<string, unknown> | null;
+  ip_address: string;
+  created_at: string;
+}
+
+export function listAudit(action = "", limit = 100, offset = 0): Promise<AuditRecord[]> {
+  const q = new URLSearchParams({ action, limit: String(limit), offset: String(offset) });
+  return apiFetch<AuditRecord[]>(`/api/v1/admin/audit?${q.toString()}`);
+}
+
 export interface Me {
   id: string;
   username: string;
