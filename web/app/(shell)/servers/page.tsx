@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -11,6 +12,7 @@ import {
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ServiceChips } from "@/components/service-chips";
+import { PageHeader } from "@/components/page-header";
 import { listServers } from "@/lib/api";
 
 function since(iso?: string | null): string {
@@ -29,13 +31,11 @@ export default function ServersPage() {
   });
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Servers</h1>
-        <p className="text-sm text-muted-foreground">
-          Every node running CypherAgent, with registration and liveness state.
-        </p>
-      </div>
+    <div>
+      <PageHeader
+        title="Servers"
+        description="Every node running CypherAgent, with registration and liveness state."
+      />
 
       <Card>
         <CardHeader>
@@ -65,12 +65,22 @@ export default function ServersPage() {
                 </thead>
                 <tbody>
                   {(data ?? []).map((s) => (
-                    <tr key={s.id} className="border-b last:border-0">
-                      <td className="py-2 pr-4 font-medium">{s.name}</td>
-                      <td className="py-2 pr-4 font-mono text-xs">{s.ip_address}</td>
-                      <td className="py-2 pr-4">
+                    <tr
+                      key={s.id}
+                      className="border-b transition-colors last:border-0 hover:bg-muted/50"
+                    >
+                      <td className="py-2.5 pr-4 font-medium">
+                        <Link
+                          href={`/servers/${s.id}`}
+                          className="text-primary hover:underline"
+                        >
+                          {s.name}
+                        </Link>
+                      </td>
+                      <td className="py-2.5 pr-4 font-mono text-xs">{s.ip_address}</td>
+                      <td className="py-2.5 pr-4">
                         <Badge
-                          variant={s.agent_status === "online" ? "default" : "destructive"}
+                          variant={s.agent_status === "online" ? "success" : "destructive"}
                         >
                           {s.agent_status}
                         </Badge>

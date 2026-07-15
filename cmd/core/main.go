@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -36,6 +37,8 @@ import (
 	"github.com/MaramHarsha/CypherPanel/internal/events"
 	"github.com/MaramHarsha/CypherPanel/internal/jobs"
 	"github.com/MaramHarsha/CypherPanel/internal/pki"
+	"github.com/MaramHarsha/CypherPanel/internal/secretcrypt"
+	"github.com/MaramHarsha/CypherPanel/internal/sslrenew"
 	"github.com/MaramHarsha/CypherPanel/internal/store"
 )
 
@@ -130,21 +133,60 @@ func run() error {
 	accountsStore := store.NewAccounts(pool)
 	packagesStore := store.NewPackages(pool)
 	resellersStore := store.NewResellers(pool)
+	databasesStore := store.NewDatabases(pool)
+
+	crypt, err := secretcrypt.New(cfg.DBEncryptionKey)
+	if err != nil {
+		return fmt.Errorf("initializing secret cipher: %w", err)
+	}
 	router := api.NewRouter(api.Deps{
 		Config:   cfg,
 		Tokens:   tokens,
 		Auth:     &api.AuthHandler{Users: users, Tokens: tokens, Audit: auditLog},
 		Tasks:    &api.TasksHandler{Tasks: tasksStore, Publisher: publisher, Audit: auditLog},
-		Servers:  &api.ServersHandler{Servers: serversStore},
+		Servers: &api.ServersHandler{
+			Servers: serversStore, Accounts: accountsStore,
+			Tasks: tasksStore, Publisher: publisher, Audit: auditLog,
+			PHPVersions: cfg.PHPVersions,
+		},
 		Packages: &api.PackagesHandler{Packages: packagesStore, Events: eventBus, Audit: auditLog},
 		Accounts: &api.AccountsHandler{
 			Accounts: accountsStore, Packages: packagesStore, Resellers: resellersStore,
 			Tasks: tasksStore, Publisher: publisher, Events: eventBus, Audit: auditLog,
-			PHPVersion: cfg.DefaultPHPVersion,
+			PHPVersion: cfg.DefaultPHPVersion, PHPVersions: cfg.PHPVersions,
 		},
 		Plugins:   &api.PluginsHandler{Plugins: store.NewPlugins(pool)},
 		Resellers: &api.ResellersHandler{Resellers: resellersStore, Events: eventBus, Audit: auditLog},
+		Databases: &api.DatabasesHandler{
+			Accounts: accountsStore, Databases: databasesStore, Packages: packagesStore,
+			Tasks: tasksStore, Publisher: publisher, Audit: auditLog, Crypt: crypt,
+		},
 	})
+
+	// SSL auto-renewal: re-dispatches the idempotent ssl.issue task for certs
+	// nearing expiry. Runs for the lifetime of the process; stops on ctx cancel.
+	renewer := &sslrenew.Scheduler{
+		Accounts:  accountsStore,
+		Threshold: cfg.SSLRenewThreshold,
+		Interval:  cfg.SSLRenewInterval,
+		Dispatch: func(ctx context.Context, a store.Account) error {
+			payload, err := json.Marshal(jobs.SSLIssuePayload{
+				Username: a.SystemUsername, Domain: a.PrimaryDomain, Email: a.Email,
+			})
+			if err != nil {
+				return err
+			}
+			// createdBy "" → NULL: this is a system-initiated task, no actor.
+			task, err := tasksStore.Create(ctx, a.ServerID, jobs.TypeSSLIssue, payload, "", a.ID)
+			if err != nil {
+				return err
+			}
+			return publisher.Publish(ctx, jobs.Task{
+				ID: task.ID, ServerID: task.ServerID, Type: task.Type, Payload: task.Payload,
+			})
+		},
+	}
+	go renewer.Run(ctx)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -157,11 +199,13 @@ func run() error {
 		return err
 	}
 	agentv1.RegisterAgentServiceServer(grpcSrv, &agentrpc.Server{
-		Servers:  serversStore,
-		Tasks:    tasksStore,
-		Accounts: accountsStore,
-		Events:   eventBus,
-		Audit:    auditLog,
+		Servers:   serversStore,
+		Tasks:     tasksStore,
+		Accounts:  accountsStore,
+		Databases: databasesStore,
+		Events:    eventBus,
+		Audit:     auditLog,
+		Crypt:     crypt,
 	})
 
 	errCh := make(chan error, 2)

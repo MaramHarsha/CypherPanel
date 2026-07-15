@@ -16,18 +16,23 @@ import (
 	"github.com/MaramHarsha/CypherPanel/internal/acme"
 	"github.com/MaramHarsha/CypherPanel/internal/jobs"
 	"github.com/MaramHarsha/CypherPanel/internal/paths"
+	"github.com/MaramHarsha/CypherPanel/internal/phpruntime"
 	"github.com/MaramHarsha/CypherPanel/internal/platform"
+	"github.com/MaramHarsha/CypherPanel/internal/services"
+	"github.com/MaramHarsha/CypherPanel/internal/usersdb"
 	"github.com/MaramHarsha/CypherPanel/internal/webserver"
 )
 
 // taskExecutor dispatches queued tasks to their handlers. Every handler must
 // be idempotent — JetStream may deliver the same task more than once.
 type taskExecutor struct {
-	layout paths.Layout
-	users  platform.SystemUsers
-	sites  platform.Sites
-	vhost  webserver.VHostRenderer
-	acme   *acme.Issuer
+	layout  paths.Layout
+	family  paths.Family
+	users   platform.SystemUsers
+	sites   platform.Sites
+	vhost   webserver.VHostRenderer
+	acme    *acme.Issuer
+	usersDB usersdb.Manager // nil when no user-DB backend is configured
 }
 
 // Handle runs a task and returns optional result metadata (reported back with
@@ -75,8 +80,23 @@ func (e *taskExecutor) Handle(ctx context.Context, t jobs.Task) (map[string]stri
 	case jobs.TypeSiteDeprovision:
 		return nil, e.deprovisionSite(ctx, t.Payload)
 
+	case jobs.TypePHPVersionChange:
+		return nil, e.changePHPVersion(ctx, t.Payload)
+
 	case jobs.TypeSSLIssue:
 		return e.issueSSL(ctx, t.Payload)
+
+	case jobs.TypeServiceControl:
+		return nil, e.controlService(ctx, t.Payload)
+
+	case jobs.TypePHPRuntime:
+		return nil, e.phpRuntime(ctx, t.Payload)
+
+	case jobs.TypeDBCreate:
+		return e.createDB(ctx, t.Payload)
+
+	case jobs.TypeDBDrop:
+		return nil, e.dropDB(ctx, t.Payload)
 
 	default:
 		// Unknown type: this agent build is older than the control plane.
@@ -95,18 +115,61 @@ func (e *taskExecutor) provisionSite(ctx context.Context, raw []byte) error {
 	if p.Username == "" || p.Domain == "" || p.PHPVersion == "" {
 		return jobs.Permanent(errors.New("username, domain and php_version are required"))
 	}
+	return e.applySite(ctx, p.Username, p.Domain, p.PHPVersion, p.MemoryMB, p.PHPSettings)
+}
 
-	webRoot := e.layout.AccountWebRoot(p.Username)
-	logDir := e.layout.AccountLogDir(p.Username)
-	socket := e.layout.PHPFPMSocketPath(p.Username)
+// changePHPVersion moves an account from one PHP branch to another. Because the
+// account's FPM socket is version-independent, the old version's pool must be
+// removed (releasing the socket) before the new version's pool is written, or
+// two FPM masters would contend for the same socket.
+func (e *taskExecutor) changePHPVersion(ctx context.Context, raw []byte) error {
+	var p jobs.PHPVersionChangePayload
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return jobs.Permanent(fmt.Errorf("invalid payload: %w", err))
+	}
+	if p.Username == "" || p.Domain == "" || p.NewPHPVersion == "" {
+		return jobs.Permanent(errors.New("username, domain and new_php_version are required"))
+	}
 
-	vhostCfg, err := e.vhost.Render(webserver.VHostSpec{
-		Domain:    p.Domain,
+	// Release the socket from the old pool first (idempotent; skips when the
+	// version is unchanged or the old pool is already gone).
+	if p.OldPHPVersion != "" && p.OldPHPVersion != p.NewPHPVersion {
+		oldPool := e.layout.PHPFPMPoolPath(p.OldPHPVersion, p.Username)
+		if err := e.sites.RemovePHPPool(ctx, oldPool, p.OldPHPVersion); err != nil {
+			if errors.Is(err, platform.ErrUnsupported) {
+				return jobs.Permanent(err)
+			}
+			return err
+		}
+	}
+	return e.applySite(ctx, p.Username, p.Domain, p.NewPHPVersion, p.MemoryMB, p.PHPSettings)
+}
+
+// applySite renders and applies an account's vhost + PHP-FPM pool for a given
+// PHP version. Shared by first provisioning, INI changes, and version changes,
+// so all three converge on the same desired state. It is TLS-aware: if a
+// certificate is already installed for the domain, the regenerated vhost keeps
+// HTTPS instead of silently dropping the site back to plain HTTP.
+func (e *taskExecutor) applySite(ctx context.Context, username, domain, phpVersion string, memoryMB int, phpSettings map[string]string) error {
+	webRoot := e.layout.AccountWebRoot(username)
+	logDir := e.layout.AccountLogDir(username)
+	socket := e.layout.PHPFPMSocketPath(username)
+
+	spec := webserver.VHostSpec{
+		Domain:    domain,
 		WebRoot:   webRoot,
 		PHPSocket: socket,
-		AccessLog: filepath.Join(logDir, p.Domain+".access.log"),
-		ErrorLog:  filepath.Join(logDir, p.Domain+".error.log"),
-	})
+		AccessLog: filepath.Join(logDir, domain+".access.log"),
+		ErrorLog:  filepath.Join(logDir, domain+".error.log"),
+	}
+	// Preserve HTTPS across re-provisioning: a present, parseable cert means the
+	// site is already on TLS and the vhost must stay on TLS.
+	certPath := e.layout.SSLCertPath(domain)
+	if !acme.CertValidUntil(certPath).IsZero() {
+		spec.TLSCertPath = certPath
+		spec.TLSKeyPath = e.layout.SSLKeyPath(domain)
+	}
+	vhostCfg, err := e.vhost.Render(spec)
 	if err != nil {
 		return jobs.Permanent(err)
 	}
@@ -114,14 +177,14 @@ func (e *taskExecutor) provisionSite(ctx context.Context, raw []byte) error {
 	// Package memory limit is the baseline; per-account INI overrides (already
 	// allowlist-validated by Core) win where set.
 	admin := map[string]string{}
-	if p.MemoryMB > 0 {
-		admin["memory_limit"] = fmt.Sprintf("%dM", p.MemoryMB)
+	if memoryMB > 0 {
+		admin["memory_limit"] = fmt.Sprintf("%dM", memoryMB)
 	}
-	for k, v := range p.PHPSettings {
+	for k, v := range phpSettings {
 		admin[k] = v
 	}
 	poolCfg, err := webserver.RenderPHPFPMPool(webserver.PoolSpec{
-		User:          p.Username,
+		User:          username,
 		Socket:        socket,
 		WebServerUser: e.layout.WebServerUser,
 		AdminValues:   admin,
@@ -130,15 +193,15 @@ func (e *taskExecutor) provisionSite(ctx context.Context, raw []byte) error {
 		return jobs.Permanent(err)
 	}
 
-	spec := platform.SiteSpec{
-		Username:    p.Username,
+	err = e.sites.Provision(ctx, platform.SiteSpec{
+		Username:    username,
 		AccountDirs: []string{webRoot, logDir},
-		VHostPath:   e.layout.VhostConfPath(p.Domain),
+		VHostPath:   e.layout.VhostConfPath(domain),
 		VHostConfig: vhostCfg,
-		PoolPath:    e.layout.PHPFPMPoolPath(p.PHPVersion, p.Username),
+		PoolPath:    e.layout.PHPFPMPoolPath(phpVersion, username),
 		PoolConfig:  poolCfg,
-	}
-	err = e.sites.Provision(ctx, spec)
+		PHPVersion:  phpVersion,
+	})
 	if errors.Is(err, platform.ErrUnsupported) {
 		return jobs.Permanent(err)
 	}
@@ -157,6 +220,83 @@ func (e *taskExecutor) deprovisionSite(ctx context.Context, raw []byte) error {
 		e.layout.VhostConfPath(p.Domain),
 		e.layout.PHPFPMPoolPath(p.PHPVersion, p.Username))
 	if errors.Is(err, platform.ErrUnsupported) {
+		return jobs.Permanent(err)
+	}
+	return err
+}
+
+// phpRuntime installs or removes a PHP-FPM branch via the distro package
+// manager. Version + action are re-validated here; an unknown distro family or
+// non-Linux platform is a permanent failure (nothing to retry).
+func (e *taskExecutor) phpRuntime(ctx context.Context, raw []byte) error {
+	var p jobs.PHPRuntimePayload
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return jobs.Permanent(fmt.Errorf("invalid payload: %w", err))
+	}
+	if !phpruntime.ValidVersion(p.Version) {
+		return jobs.Permanent(fmt.Errorf("invalid php version %q", p.Version))
+	}
+	if !phpruntime.ValidAction(p.Action) {
+		return jobs.Permanent(fmt.Errorf("invalid action %q", p.Action))
+	}
+	err := phpruntime.Run(ctx, e.family, p.Version, p.Action)
+	if errors.Is(err, phpruntime.ErrUnsupported) {
+		return jobs.Permanent(err)
+	}
+	return err // a package-manager failure (network, repo) is retryable
+}
+
+// createDB provisions a hosted-account database + user. The password is
+// GENERATED here (never carried in the task payload / stream) and returned as
+// result metadata so Core can encrypt-and-store it and show it to the user once.
+func (e *taskExecutor) createDB(ctx context.Context, raw []byte) (map[string]string, error) {
+	var p jobs.DBCreatePayload
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, jobs.Permanent(fmt.Errorf("invalid payload: %w", err))
+	}
+	if e.usersDB == nil {
+		return nil, jobs.Permanent(usersdb.ErrUnsupported)
+	}
+	password, err := usersdb.GeneratePassword()
+	if err != nil {
+		return nil, err
+	}
+	if err := e.usersDB.Provision(ctx, usersdb.Spec{
+		Database: p.Name, User: p.DBUser, Host: p.DBHost, Password: password,
+	}); err != nil {
+		return nil, err // DB connectivity issues are retryable
+	}
+	return map[string]string{jobs.MetaDBPassword: password}, nil
+}
+
+// dropDB removes a hosted-account database and its user (idempotent).
+func (e *taskExecutor) dropDB(ctx context.Context, raw []byte) error {
+	var p jobs.DBDropPayload
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return jobs.Permanent(fmt.Errorf("invalid payload: %w", err))
+	}
+	if e.usersDB == nil {
+		return jobs.Permanent(usersdb.ErrUnsupported)
+	}
+	return e.usersDB.Deprovision(ctx, usersdb.Spec{Database: p.Name, User: p.DBUser, Host: p.DBHost})
+}
+
+// controlService runs a lifecycle action on a managed system service. The
+// service and action are re-validated here (never trust the payload) so a
+// task can only ever target an allowlisted unit with a known verb.
+func (e *taskExecutor) controlService(ctx context.Context, raw []byte) error {
+	var p jobs.ServiceControlPayload
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return jobs.Permanent(fmt.Errorf("invalid payload: %w", err))
+	}
+	if !services.ValidAction(p.Action) {
+		return jobs.Permanent(fmt.Errorf("unsupported service action %q", p.Action))
+	}
+	if !services.IsManaged(p.Service) {
+		return jobs.Permanent(fmt.Errorf("service %q is not managed", p.Service))
+	}
+	err := services.Control(ctx, p.Service, p.Action)
+	if errors.Is(err, services.ErrUnsupported) {
 		return jobs.Permanent(err)
 	}
 	return err
@@ -186,6 +326,9 @@ func (e *taskExecutor) issueSSL(ctx context.Context, raw []byte) (map[string]str
 	}
 
 	res, err := e.acme.Obtain(p.Domain, p.Email, e.layout.AccountWebRoot(p.Username))
+	if errors.Is(err, acme.ErrWildcardNeedsDNS) {
+		return nil, jobs.Permanent(err) // config error, not transient
+	}
 	if err != nil {
 		return nil, err // transient (network, propagation) → retryable
 	}

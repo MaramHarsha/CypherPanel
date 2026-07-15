@@ -9,10 +9,10 @@
 
 | Phase | Scope | Status |
 |-------|-------|--------|
-| **1** | Core Foundation & Agent Comms | ✅ Complete (2 minor deploy-time items deferred) |
-| **2** | Admin Plane & Provisioning + UI Shell | 🟨 In progress (UI shell ✅) |
-| **3** | Web Server & PHP Management | 🟨 In progress (nginx vhost + PHP-FPM pool gen ✅) |
-| **4** | Files, FTP, & Databases | ⬜ Not started |
+| **1** | Core Foundation & Agent Comms | ✅ Complete (NATS server-side auth re-homed to the Phase 6 installer) |
+| **2** | Admin Plane & Provisioning + UI Shell | ✅ Complete (service control, server detail/remove, reseller shell all landed) |
+| **3** | Web Server & PHP Management | ✅ Complete (DNS-01 *live* solver awaits Phase 5 PowerDNS; selection + seam done) |
+| **4** | Files, FTP, & Databases | 🟨 In progress |
 | **5** | Email & DNS Servers | ⬜ Not started |
 | **6** | Logging, Auditing, & Hardening | ⬜ Not started |
 | — | Post-MVP (`upcoming-features.md`) | ⬜ After MVP |
@@ -67,8 +67,8 @@
 - [x] **Phase 1 agent-skills batch** (`.claude/skills/`, per `plan.md` §9 catalog #1-8): `go-backend-conventions`, `database-and-migrations`, `grpc-proto-contracts`, `jobs-and-agent-tasks`, `auth-and-rbac`, `api-contract-workflow`, `testing-conventions`, `linux-system-integration` — each grounded in the shipped Phase 1 code, not speculation
 
 ### Pending
-- [ ] NATS server-side auth config in production deployments (client support ready; server config is an installer/deploy concern)
-- [ ] Frontend TypeScript client generation from the OpenAPI spec (do when web/ lands in Phase 2)
+- [x] Frontend TypeScript client generation from the OpenAPI spec — **done** in Phase 2: `npm run gen:api` (openapi-typescript) generates `web/lib/api-types.ts` from `docs/swagger.json`; every endpoint added since is regenerated and consumed via `web/lib/api.ts`. No hand-written endpoint shapes.
+- [ ] NATS server-side auth config — **not application code**; the client already supports credentials (`CYPHER_NATS_CREDS`/`CYPHER_AGENT_NATS_CREDS`). Generating the NATS server's accounts/users/permissions is a deploy concern owned by the **Phase 6 single-command installer** (tracked there).
 
 ## Phase 2 — Admin Plane & Provisioning + UI Shell 🟨
 
@@ -89,14 +89,19 @@
 
 - [x] **Reseller resource pools** (§4A): `reseller_pools` table (migration 000006) + resellers store; centralized scoping helpers `auth.OwnerFilter`/`auth.CanAct` (unit-tested, no ad-hoc role checks in handlers); packages/accounts stores scoped by owner; `POST/GET /admin/resellers`; packages+accounts shared under a root-admin+reseller route group with per-handler scoping, package-ownership check, and pool-quota enforcement on account create; Resellers admin UI (create + usage table). `reseller.created` event emitted.
   - **Security E2E verified** ✅: reseller sees only own packages/accounts; **IDOR blocked** (reseller suspending admin's account → 404); **quota enforced** (3rd account over max_accounts=2 → 403); admin unrestricted; reseller-provisioned account fully provisioned a real Linux user through the same pipeline
-- [ ] Reseller-facing UI shell (separate from admin shell, scoped nav) — deferred; API + scoping done, admin manages resellers today
+- [x] **Reseller-facing scoped UI shell**: the admin shell is now role-aware — resellers see a filtered nav (Dashboard + Packages + Accounts; **Servers and Resellers hidden** as root-admin/fleet concerns) and an account-focused dashboard (their accounts + packages summary, not fleet server cards) instead of the fleet view. Driven by `GET /me` role; the API remains the real enforcement (defense in depth).
+  - **E2E verified** ✅: created reseller `shelltest` → `/me` role=`reseller`; reseller may `GET /admin/servers` (200, needed to create accounts) but is **403** on `GET /admin/resellers` and on service control — exactly the surfaces hidden from their nav.
 
 - [x] **Automated systemd service monitors** (§4A): `internal/services` probes managed units (nginx/mariadb/postfix/dovecot/pdns, `CYPHER_MANAGED_SERVICES` override) via `systemctl show` — Linux impl + `!linux` stub, telemetry never fails a heartbeat, not-installed units omitted; pure parser unit-tested. Proto add-only `repeated ServiceStatus services` on heartbeat; persisted to `servers.services` jsonb (migration 000007); surfaced in `GET /admin/servers` and as color-coded **service health chips** on the dashboard cards + servers table.
   - **E2E verified** ✅ (fake `systemctl` fixture in the container exercised the real probe→parse→heartbeat→DB→API path): reported nginx=active, mariadb=active, postfix=failed, pdns=inactive; dovecot correctly omitted as not-installed
 
+- [x] **Global service control actions** (§4A): `service.control` task (start/stop/restart/reload) — `services.Control` (Linux systemd) + `!linux` stub, **allowlist-validated twice** (`services.IsManaged`/`ValidAction` at the core boundary *and* re-checked on the agent so a payload can never target an arbitrary unit); root-admin-only `POST /admin/servers/:id/services/:name/control`, audited.
+  - **E2E verified** ✅ (fake `systemctl` in the container logging invocations): `restart nginx` → 202 → task succeeded → fake log recorded `restart nginx`; unmanaged `sshd` → 400; bad action `nuke` → 400.
+- [x] **Server node detail view + remove flow** (UI): `GET /admin/servers/:id` (detail) + `DELETE /admin/servers/:id` (root-admin, **refused with 409 while accounts exist**, audited); new server detail page (`/servers/[id]`) with stat tiles, per-service control menu, type-safe remove confirm, and agent-enrollment instructions (self-registration over mTLS — no manual entry); servers table links to detail.
+  - **E2E verified** ✅: `GET` detail → 200; `DELETE` on a server hosting `tls1` → 409; `DELETE` on an account-free (stale) server → 200 `removed` → subsequent `GET` → 404; both UI routes compile (200).
+
 ### Pending
-- [ ] Server node detail view + register/remove flows in UI
-- [ ] Global service control actions (start/stop/restart via agent tasks) — monitoring done; control is the natural follow-up
+- [ ] Register-new-server UX beyond the shown enrollment command (optional; agents self-register today)
 - [x] **Event Bus** (`internal/events`, §12): `EVENTS` JetStream stream (`events.>`, Limits retention, 14d) strictly separate from `tasks.*`; JetStream publish + in-process pub/sub fan-out; emits `server.registered`, `package.created`/`deleted`, `account.created`/`activated`/`suspended`/`unsuspended`/`terminating`/`terminated`/`failed` — secret-free snapshots. **E2E verified**: 5 events in the stream + all logged by an in-process subscriber ✅
 - [x] **Plugin reservations** (§11): migration 000005 `plugins` table; finalized `plugin.yaml` manifest schema (`internal/plugins`, `api_version: v1`, validated, unit-tested) + `docs/plugin-manifest.md`; read-only `GET /api/v1/admin/plugins` and `/plugins/manifest-schema` reserving the namespace (no loader yet)
 - [x] **Phase 2 skills batch** (catalog #9-11): `ui-development`, `async-ui-patterns`, `extensibility-and-events`
@@ -115,21 +120,31 @@
   - **E2E verified** ✅: non-allowlisted directive → 400, newline-injection value → 400, valid update → 202 → FPM pool regenerated with new `php_admin_value` lines (memory_limit 256M→1024M, upload_max_filesize, max_execution_time), settings persisted
 
 - [x] **Lego ACME / SSL issuance** (§4B): `internal/acme` Lego HTTP-01 webroot issuer (idempotent — valid cert >30d = no-op), persistent ACME account key; nginx vhost TLS variant (443 + HTTP→HTTPS redirect, ACME path stays on 80) golden-tested; `platform.Sites.InstallCertificate` (key 0600) + `ApplyVHost` (validate-then-reload); `ssl.issue` task; proto add-only `metadata` on ReportTaskResult carries cert expiry; account `ssl_status`/`ssl_expires_at` (migration 000009) driven by task result; `POST /admin/accounts/:id/ssl` (scoped, audited); SSL column + issue button in accounts UI; `CYPHER_ACME_DIRECTORY` config
-  - **E2E verified against Pebble** (offline ACME test server, `PEBBLE_VA_ALWAYS_VALID`): _[in progress — issuance trigger pending classifier recovery]_
+  - **E2E verified against Pebble** ✅ (offline ACME test server, `PEBBLE_VA_ALWAYS_VALID`; Lego trusts Pebble CA via `LEGO_CA_CERTIFICATES`/`LEGO_CA_SERVER_NAME`): account create→active (webroot exists) → `POST /ssl` (202, `issuing`) → agent ran Lego HTTP-01 (register→validate→obtain) → `fullchain.pem` (0644) + `privkey.pem` (**0600**) + persistent account key written; nginx vhost gained the **443 ssl block** (cert paths) with ACME challenge staying on :80 + HTTP→HTTPS redirect; account `ssl_status=active` + `ssl_expires_at` set. **Idempotency proven**: a second `POST /ssl` completed the task but obtained **no** new cert (ACME "Obtaining certificate" logged exactly once) — valid cert >30d = no-op.
 
-### Pending
-- [ ] Multi-PHP install scripts (install/manage PHP branches on a server)
-- [ ] PHP version selection per account (change version → move pool between version dirs; UI dropdown from php.net supported list)
-- [ ] SSL auto-renewal scheduler (reuse ssl.issue; renew at ~30d remaining) + DNS-01 for wildcards
+- [x] **SSL auto-renewal scheduler** (`internal/sslrenew`): core-side background scheduler scans every `CYPHER_SSL_RENEW_INTERVAL` (default 12h) and re-dispatches the idempotent `ssl.issue` task for active certs expiring within `CYPHER_SSL_RENEW_THRESHOLD` (default 30d, matching the agent's >30d skip guard so a due cert is actually renewed). New account store query `ListExpiringSSL`; per-account failures logged and skipped (one bad cert never stalls the batch); loop unit-tested (dispatch-each, failure-continues, no-op, list-error, cutoff-uses-threshold) with no DB/NATS.
+  - **E2E verified** ✅: with an inflated threshold the boot scan reported `certificates due count=2` → marked `issuing` → dispatched `ssl.issue` → live agent processed the renewal and correctly **skipped** actual re-issue (cert >30d; ACME "Obtaining" stayed at 1) → account returned to `active`; with the default 30d threshold the scan is a correct no-op (all certs ~90d out). (Note: a mid-flight core restart exposed a pre-existing, all-task-types robustness gap — an agent that exhausts its result-report retries leaves the account stuck in the transitional state; tracked separately, not renewal-specific.)
+
+- [x] **Per-account PHP version selection** (§4B): `php.version.change` task carries old+new version; agent removes the old version's pool (releasing the per-account, version-independent socket) then writes the new version's pool — via a shared, **TLS-aware** `applySite` that also fixed a latent SSL-clobber (re-provisioning previously regenerated a plain-HTTP vhost, dropping the 443 block for any account with a cert; now it preserves HTTPS when a cert is installed). Added best-effort **PHP-FPM reload** to the platform layer (`reloadPHPFPM`, systemd `reload` not restart, skips absent versions — mirrors the nginx pattern) + `RemovePHPPool`. `CYPHER_PHP_VERSIONS` config (default `8.2,8.3,8.4`); store `SetPHPVersion`; `PATCH /admin/accounts/:id/php-version` (scoped, audited, allowlist-validated, active-only, same-version no-op) + `GET /admin/php/versions`; version dropdown added to the accounts PHP-settings dialog. Executor unit tests (remove-before-provision ordering, same-version skip, TLS-preserved vs plain-HTTP) pass on any OS.
+  - **E2E verified** ✅ (live agent, on the SSL-active `tls1` account): `PATCH php-version 8.3→8.4` → task succeeded → **old `8.3` pool.d emptied, new `8.4` pool written** with the **same socket**, account `php_version=8.4`, and the vhost **kept `listen 443 ssl` + cert path** (HTTPS preserved through the version change). Guards verified: same-version → 200 `unchanged` (no dispatch); unsupported `9.9` → 400; `GET /php/versions` → `["8.2","8.3","8.4"]`.
+
+- [x] **Multi-PHP install/uninstall** (§4B): `php.runtime` task installs/removes a PHP-FPM branch via the distro package manager. `internal/phpruntime` builds the package-manager commands **distro-aware** (Debian `apt-get update` + `install -y php8.3-fpm` + common extensions; RHEL/Remi `dnf install php83-php-*` dotless naming) as a **pure, unit-tested** function (injection-proof: version must match `^\d+\.\d+$`); Linux `Run` + `!linux` stub. Root-admin `POST /admin/servers/:id/php` (version must be in the `CYPHER_PHP_VERSIONS` allowlist; agent re-validates); PHP runtimes card on the server detail page with Install/Uninstall per version.
+  - **E2E verified** ✅ (fake `apt-get` logging invocations): install 8.4 → 202 → task succeeded → apt log recorded `update` then `install -y php8.4-fpm php8.4-cli … php8.4-bcmath`; unpermitted `7.0` → 400; bad action `purge` → 400. Command-construction unit tests cover Debian/RHEL, install/uninstall, and injection rejection.
+
+- [x] **SSL DNS-01 challenge selection** (§4B): the `acme.Issuer` now auto-selects the challenge by domain shape — single hostnames keep HTTP-01 (webroot); **wildcards (`*.`) route to DNS-01** via an injectable `challenge.Provider` seam (`SetDNSProvider`). Until DNS management lands, a wildcard request fails **fast and permanently** with `ErrWildcardNeedsDNS` (no confusing HTTP-01 attempt, no pointless retries — the agent marks it `jobs.Permanent`). Unit-tested (wildcard detection + fast-fail). **The concrete PowerDNS-backed provider is wired in Phase 5** (DNS management) — the seam is ready; live wildcard issuance activates then.
+
+### Pending (Phase 3)
+- [ ] Wire the PowerDNS DNS-01 provider into `acme.Issuer.SetDNSProvider` — lands with Phase 5 DNS management
 - [x] **Phase 3 skills batch** (catalog #12-14): `agent-config-generators` + `php-runtime-management` + `ssl-acme` *(now code-grounded)*
 
-## Phase 4 — Files, FTP, & Databases ⬜
+## Phase 4 — Files, FTP, & Databases 🟨
 
+- [x] **MariaDB database provisioning** (§4B, MVP default): `internal/usersdb` **adapter** (`Manager` interface — MariaDB impl via go-sql-driver, PostgreSQL adapter can drop in later) with **idempotent** provision (CREATE DB/USER IF NOT EXISTS + ALTER USER to re-assert password + **least-privilege** `GRANT ALL ON <db>.*` only) and drop; identifiers regex-guarded against injection. `db.create`/`db.drop` agent tasks (enabled by `CYPHER_AGENT_MARIADB_DSN`). **Secret-safe credential flow**: the password is **generated on the agent** (never in a task payload/stream), returned as result metadata, **encrypted at rest** with AES-256-GCM (`internal/secretcrypt`, key from `CYPHER_DB_ENCRYPTION_KEY`, dev-derived from JWT secret) — no plaintext column. Migration 000010 (`account_databases`); account-scoped REST (list/create/delete + one-shot password reveal) with **package `databases` limit** enforcement; databases dialog in the accounts UI (create/status/reveal/delete). Unit tests: secretcrypt round-trip/tamper, usersdb identifier-injection + password safety.
+  - **E2E verified** ✅ (real agent + MariaDB container): create `blog` → db + user created with **least-privilege grants** (`USAGE ON *.*` + `ALL ON <own_db>.*`, no globals); revealed password **authenticates** and the user sees only its own DB (isolation); **limit** enforced (3rd db over `databases=2` → 403); invalid name → 400; delete → db + user + record all removed.
 - [ ] Web File Manager (Next.js client + Go filesystem handler)
 - [ ] Pure-FTPd virtual users (MVP default)
-- [ ] MariaDB provisioning APIs (MVP default)
 - [ ] phpMyAdmin / Adminer auto-setup
-- [x] **Phase 4 skills batch** (catalog #15-16): `filesystem-operations-safety`, `user-database-provisioning` *(design-intent — verify vs code when built)*
+- [x] **Phase 4 skills batch** (catalog #15-16): `filesystem-operations-safety` *(design-intent)*, `user-database-provisioning` *(now code-grounded)*
 
 ## Phase 5 — Email & DNS Servers ⬜
 
@@ -145,7 +160,7 @@
 - [ ] User terminal & cron job managers
 - [ ] Audit log dashboards & retention policies
 - [ ] Security hardening + release candidate packaging
-- [ ] Single-command installer (per Appendix A rules: consent-based takeover, uninstaller, no forced bundling)
+- [ ] Single-command installer (per Appendix A rules: consent-based takeover, uninstaller, no forced bundling) — **includes NATS server-side auth config** (accounts/users/permissions; client credential support already shipped in Phase 1)
 - [ ] Version Upgrade & Migration Framework: `system_version` tracking, sequential migration replay, mandatory pre-upgrade backup, rollback path (`plan.md` §13) — **release-candidate gate, must exist before first production update ships**
 - [ ] Compatibility matrix doc (`docs/compatibility-matrix.md`): Core ↔ Agent ↔ plugin API version ranges, enforced at registration (`plan.md` §13)
 - [ ] Metrics API: `GET /api/v1/metrics/{scope}` (server/account/domain) + raw Prometheus `/metrics` scrape endpoint (`plan.md` §16)

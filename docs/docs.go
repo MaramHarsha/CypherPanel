@@ -61,6 +61,17 @@ const docTemplate = `{
                 },
                 "type": "object"
             },
+            "api.changePHPVersionRequest": {
+                "properties": {
+                    "version": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "version"
+                ],
+                "type": "object"
+            },
             "api.createAccountRequest": {
                 "properties": {
                     "domain": {
@@ -90,6 +101,17 @@ const docTemplate = `{
                     "password",
                     "server_id",
                     "username"
+                ],
+                "type": "object"
+            },
+            "api.createDatabaseRequest": {
+                "properties": {
+                    "name": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "name"
                 ],
                 "type": "object"
             },
@@ -134,6 +156,29 @@ const docTemplate = `{
                 "type": "object"
             },
             "api.createTaskRequest": {
+                "type": "object"
+            },
+            "api.databaseResponse": {
+                "properties": {
+                    "created_at": {
+                        "type": "string"
+                    },
+                    "db_host": {
+                        "type": "string"
+                    },
+                    "db_user": {
+                        "type": "string"
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "status": {
+                        "type": "string"
+                    }
+                },
                 "type": "object"
             },
             "api.loginRequest": {
@@ -200,6 +245,22 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "type": "object"
+            },
+            "api.phpRuntimeRequest": {
+                "properties": {
+                    "action": {
+                        "description": "install | uninstall",
+                        "type": "string"
+                    },
+                    "version": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "action",
+                    "version"
+                ],
                 "type": "object"
             },
             "api.pluginResponse": {
@@ -305,6 +366,17 @@ const docTemplate = `{
                         "uniqueItems": false
                     }
                 },
+                "type": "object"
+            },
+            "api.serviceControlRequest": {
+                "properties": {
+                    "action": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "action"
+                ],
                 "type": "object"
             },
             "api.serviceStatus": {
@@ -451,6 +523,273 @@ const docTemplate = `{
                 ]
             }
         },
+        "/admin/accounts/{id}/databases": {
+            "get": {
+                "parameters": [
+                    {
+                        "description": "Account ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "items": {
+                                        "$ref": "#/components/schemas/api.databaseResponse"
+                                    },
+                                    "type": "array"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "List an account's databases",
+                "tags": [
+                    "admin"
+                ]
+            },
+            "post": {
+                "parameters": [
+                    {
+                        "description": "Account ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/api.createDatabaseRequest",
+                                        "summary": "request",
+                                        "description": "Database name (suffix)"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "Database name (suffix)",
+                    "required": true
+                },
+                "responses": {
+                    "202": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.databaseResponse"
+                                }
+                            }
+                        },
+                        "description": "Accepted"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Forbidden"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Create a database for an account",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
+        "/admin/accounts/{id}/databases/{dbid}": {
+            "delete": {
+                "parameters": [
+                    {
+                        "description": "Account ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Database ID",
+                        "in": "path",
+                        "name": "dbid",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Accepted"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Delete an account database",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
+        "/admin/accounts/{id}/databases/{dbid}/password": {
+            "get": {
+                "parameters": [
+                    {
+                        "description": "Account ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Database ID",
+                        "in": "path",
+                        "name": "dbid",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Conflict"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Reveal an account database password",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
         "/admin/accounts/{id}/php-settings": {
             "patch": {
                 "parameters": [
@@ -529,6 +868,104 @@ const docTemplate = `{
                     }
                 ],
                 "summary": "Update an account's PHP INI settings (MultiPHP INI editor)",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
+        "/admin/accounts/{id}/php-version": {
+            "patch": {
+                "parameters": [
+                    {
+                        "description": "Account ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/api.changePHPVersionRequest",
+                                        "summary": "request",
+                                        "description": "Target PHP version"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "Target PHP version",
+                    "required": true
+                },
+                "responses": {
+                    "202": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Accepted"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Conflict"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Change an account's PHP version",
                 "tags": [
                     "admin"
                 ]
@@ -932,6 +1369,34 @@ const docTemplate = `{
                 ]
             }
         },
+        "/admin/php/versions": {
+            "get": {
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "items": {
+                                        "type": "string"
+                                    },
+                                    "type": "array"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "List selectable PHP versions",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
         "/admin/plugins": {
             "get": {
                 "responses": {
@@ -1093,6 +1558,297 @@ const docTemplate = `{
                     }
                 ],
                 "summary": "List servers (root admin only)",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
+        "/admin/servers/{id}": {
+            "delete": {
+                "parameters": [
+                    {
+                        "description": "Server ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Conflict"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Remove a server (root admin only)",
+                "tags": [
+                    "admin"
+                ]
+            },
+            "get": {
+                "parameters": [
+                    {
+                        "description": "Server ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.serverResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Get a server (root admin only)",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
+        "/admin/servers/{id}/php": {
+            "post": {
+                "parameters": [
+                    {
+                        "description": "Server ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/api.phpRuntimeRequest",
+                                        "summary": "request",
+                                        "description": "Version + action"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "Version + action",
+                    "required": true
+                },
+                "responses": {
+                    "202": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Accepted"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Install or uninstall a PHP version on a server (root admin only)",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
+        "/admin/servers/{id}/services/{name}/control": {
+            "post": {
+                "parameters": [
+                    {
+                        "description": "Server ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Service name",
+                        "in": "path",
+                        "name": "name",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/api.serviceControlRequest",
+                                        "summary": "request",
+                                        "description": "Action"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "Action",
+                    "required": true
+                },
+                "responses": {
+                    "202": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Accepted"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Control a managed service on a server (root admin only)",
                 "tags": [
                     "admin"
                 ]

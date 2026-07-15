@@ -23,14 +23,15 @@ import (
 )
 
 type AccountsHandler struct {
-	Accounts   *store.Accounts
-	Packages   *store.Packages
-	Resellers  *store.Resellers
-	Tasks      *store.Tasks
-	Publisher  *jobs.Publisher
-	Events     *events.Bus
-	Audit      *audit.Logger
-	PHPVersion string // default PHP version for new sites
+	Accounts    *store.Accounts
+	Packages    *store.Packages
+	Resellers   *store.Resellers
+	Tasks       *store.Tasks
+	Publisher   *jobs.Publisher
+	Events      *events.Bus
+	Audit       *audit.Logger
+	PHPVersion  string   // default PHP version for new sites
+	PHPVersions []string // PHP branches accounts may switch between (UI dropdown)
 }
 
 // dispatch records a task and publishes it to the target server's agent. The
@@ -381,6 +382,113 @@ func (h *AccountsHandler) UpdatePHPSettings(c *gin.Context) {
 		Detail: map[string]any{"settings": clean}, IP: c.ClientIP(),
 	})
 	c.JSON(http.StatusAccepted, gin.H{"status": "applying", "settings": clean})
+}
+
+type changePHPVersionRequest struct {
+	Version string `json:"version" binding:"required"`
+}
+
+// PHPVersions lists the PHP branches accounts may be switched to.
+//
+//	@Summary  List selectable PHP versions
+//	@Tags     admin
+//	@Produce  json
+//	@Success  200 {array} string
+//	@Security BearerAuth
+//	@Router   /admin/php/versions [get]
+func (h *AccountsHandler) PHPVersionList(c *gin.Context) {
+	versions := h.PHPVersions
+	if versions == nil {
+		versions = []string{}
+	}
+	c.JSON(http.StatusOK, versions)
+}
+
+// ChangePHPVersion switches an account to a different PHP branch: it updates the
+// stored version and dispatches a php.version.change task that moves the
+// account's PHP-FPM pool between version trees (removing the old, writing the
+// new) while preserving the account's INI overrides and HTTPS.
+//
+//	@Summary  Change an account's PHP version
+//	@Tags     admin
+//	@Accept   json
+//	@Produce  json
+//	@Param    id      path string                   true "Account ID"
+//	@Param    request body changePHPVersionRequest  true "Target PHP version"
+//	@Success  202 {object} map[string]string
+//	@Failure  400 {object} map[string]string
+//	@Failure  404 {object} map[string]string
+//	@Failure  409 {object} map[string]string
+//	@Security BearerAuth
+//	@Router   /admin/accounts/{id}/php-version [patch]
+func (h *AccountsHandler) ChangePHPVersion(c *gin.Context) {
+	id := c.Param("id")
+	claims := auth.ClaimsFrom(c)
+
+	account, err := h.Accounts.GetByID(c.Request.Context(), id)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && !auth.CanAct(claims, account.ResellerID)) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "account not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+
+	var req changePHPVersionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "version is required"})
+		return
+	}
+	if !h.phpVersionAllowed(req.Version) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported php version"})
+		return
+	}
+	if account.Status != "active" {
+		c.JSON(http.StatusConflict, gin.H{"error": "account must be active to change PHP version"})
+		return
+	}
+	if account.PHPVersion == req.Version {
+		c.JSON(http.StatusOK, gin.H{"status": "unchanged", "php_version": req.Version})
+		return
+	}
+
+	oldVersion := account.PHPVersion
+	if err := h.Accounts.SetPHPVersion(c.Request.Context(), id, req.Version); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+
+	memoryMB := 0
+	if pkg, perr := h.Packages.GetByID(c.Request.Context(), account.PackageID); perr == nil {
+		memoryMB = pkg.Limits.MemoryMaxMB
+	}
+	if err := h.dispatch(c.Request.Context(), account.ServerID, jobs.TypePHPVersionChange,
+		jobs.PHPVersionChangePayload{
+			Username: account.SystemUsername, Domain: account.PrimaryDomain,
+			OldPHPVersion: oldVersion, NewPHPVersion: req.Version,
+			MemoryMB: memoryMB, PHPSettings: account.PHPSettings,
+		}, claims.Subject, account.ID); err != nil {
+		slog.Error("dispatching php version change", "account_id", id, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "version saved but reconfigure dispatch failed"})
+		return
+	}
+
+	_ = h.Audit.Record(c.Request.Context(), audit.Entry{
+		ActorID: claims.Subject, ActorRole: string(claims.Role),
+		Action: "account.php_version_change", TargetType: "account", TargetID: id,
+		Detail: map[string]any{"from": oldVersion, "to": req.Version}, IP: c.ClientIP(),
+	})
+	c.JSON(http.StatusAccepted, gin.H{"status": "applying", "php_version": req.Version})
+}
+
+func (h *AccountsHandler) phpVersionAllowed(v string) bool {
+	for _, allowed := range h.PHPVersions {
+		if allowed == v {
+			return true
+		}
+	}
+	return false
 }
 
 // IssueSSL requests a Let's Encrypt certificate for the account's primary

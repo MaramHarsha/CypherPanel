@@ -23,6 +23,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PageHeader } from "@/components/page-header";
 import { ApiError, createReseller, listResellers } from "@/lib/api";
 
 function limit(n?: number) {
@@ -133,16 +134,13 @@ export default function ResellersPage() {
   const { data, isLoading } = useQuery({ queryKey: ["resellers"], queryFn: listResellers });
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Resellers</h1>
-          <p className="text-sm text-muted-foreground">
-            Allocate resource pools to resellers who manage their own accounts.
-          </p>
-        </div>
+    <div>
+      <PageHeader
+        title="Resellers"
+        description="Allocate resource pools to resellers who manage their own accounts."
+      >
         <CreateResellerDialog />
-      </div>
+      </PageHeader>
 
       <Card>
         <CardContent className="pt-6">
@@ -165,9 +163,12 @@ export default function ResellersPage() {
                 </thead>
                 <tbody>
                   {data.map((r) => (
-                    <tr key={r.id} className="border-b last:border-0">
-                      <td className="py-2 pr-4 font-medium">{r.username}</td>
-                      <td className="py-2 pr-4 text-muted-foreground">{r.email}</td>
+                    <tr
+                      key={r.id}
+                      className="border-b transition-colors last:border-0 hover:bg-muted/50"
+                    >
+                      <td className="py-2.5 pr-4 font-medium">{r.username}</td>
+                      <td className="py-2.5 pr-4 text-muted-foreground">{r.email}</td>
                       <td className="py-2 pr-4">
                         {r.account_count ?? 0} / {limit(r.max_accounts)}
                       </td>

@@ -39,6 +39,7 @@ type SiteSpec struct {
 	VHostConfig []byte
 	PoolPath    string // php-fpm pool config destination (root-owned)
 	PoolConfig  []byte
+	PHPVersion  string // PHP branch this pool belongs to (drives which FPM to reload)
 }
 
 // Sites applies rendered web/PHP configs to the host. Applying (mkdir+chown,
@@ -51,6 +52,10 @@ type Sites interface {
 	Provision(ctx context.Context, spec SiteSpec) error
 	// Deprovision removes a site's configs and reloads. Idempotent.
 	Deprovision(ctx context.Context, vhostPath, poolPath string) error
+	// RemovePHPPool deletes one PHP-FPM pool file and reloads that version's
+	// FPM so the (per-account, version-independent) socket is released before a
+	// new version's pool reclaims it. Idempotent; used on version change.
+	RemovePHPPool(ctx context.Context, poolPath, phpVersion string) error
 	// InstallCertificate writes an issued cert (0644) and private key (0600)
 	// to their paths, creating parent dirs.
 	InstallCertificate(ctx context.Context, certPath string, certPEM []byte, keyPath string, keyPEM []byte) error

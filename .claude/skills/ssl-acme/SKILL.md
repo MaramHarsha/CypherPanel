@@ -5,7 +5,7 @@ description: Let's Encrypt / ACME certificate issuance with the Lego library —
 
 # SSL / ACME
 
-> **Status: design-intent (pre-implementation).** Grounded in plan.md (SSL Engine: Lego; CypherAgent SSL Issuance). Lands in Phase 3. Verify against code then, updating in the same PR. Read [[jobs-and-agent-tasks]] and [[agent-config-generators]] first.
+> **Status: code-grounded (Phase 3, shipped).** HTTP-01 webroot issuance is implemented and E2E-verified against Pebble: `internal/acme` (Lego issuer, idempotent), nginx TLS vhost variant (`internal/webserver`), `platform.Sites.InstallCertificate`/`ApplyVHost`, the `ssl.issue` agent task, and `POST /admin/accounts/:id/ssl`. Not yet built: auto-renewal scheduler and DNS-01/wildcards (Phase 3 pending). Read [[jobs-and-agent-tasks]] and [[agent-config-generators]] first.
 
 ## Library & challenge selection
 

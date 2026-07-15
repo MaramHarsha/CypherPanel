@@ -5,9 +5,33 @@
 package services
 
 import (
+	"errors"
 	"os"
 	"strings"
 )
+
+// ErrUnsupported is returned by Control on non-Linux/dev platforms.
+var ErrUnsupported = errors.New("services: control only supported on Linux servers with systemd")
+
+// controlActions are the lifecycle verbs a service may be driven through. Kept
+// deliberately small — no arbitrary systemctl subcommands.
+var controlActions = map[string]bool{
+	"start": true, "stop": true, "restart": true, "reload": true,
+}
+
+// ValidAction reports whether action is a permitted lifecycle verb.
+func ValidAction(action string) bool { return controlActions[action] }
+
+// IsManaged reports whether name is in the managed-services allowlist. Control
+// refuses anything else so a task payload can never target an arbitrary unit.
+func IsManaged(name string) bool {
+	for _, s := range ManagedServices() {
+		if s == name {
+			return true
+		}
+	}
+	return false
+}
 
 // Status is a managed service's current state.
 type Status struct {

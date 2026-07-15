@@ -110,6 +110,33 @@ func (s *Accounts) List(ctx context.Context, resellerID string) ([]Account, erro
 	return out, rows.Err()
 }
 
+// ListExpiringSSL returns active accounts whose live certificate expires before
+// the given cutoff — the input to the auto-renewal scheduler. Only accounts
+// that already hold a cert (ssl_status = 'active') and are themselves active
+// are candidates; issuing/failed/none are left alone (manual concern).
+func (s *Accounts) ListExpiringSSL(ctx context.Context, before time.Time) ([]Account, error) {
+	rows, err := s.pool.Query(ctx, accountSelect+`
+		WHERE a.status = 'active'
+		  AND a.ssl_status = 'active'
+		  AND a.ssl_expires_at IS NOT NULL
+		  AND a.ssl_expires_at < $1
+		ORDER BY a.ssl_expires_at ASC`, before)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing expiring ssl accounts: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Account
+	for rows.Next() {
+		a, err := scanAccount(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *a)
+	}
+	return out, rows.Err()
+}
+
 // CountByReseller returns how many accounts a reseller currently owns (for
 // pool-quota enforcement).
 func (s *Accounts) CountByReseller(ctx context.Context, resellerID string) (int, error) {
@@ -119,6 +146,16 @@ func (s *Accounts) CountByReseller(ctx context.Context, resellerID string) (int,
 		WHERE u.reseller_id = $1::uuid`, resellerID).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("store: counting reseller accounts: %w", err)
+	}
+	return n, nil
+}
+
+// CountByServer returns how many accounts are provisioned on a server (used to
+// block removing a server that still hosts accounts).
+func (s *Accounts) CountByServer(ctx context.Context, serverID string) (int, error) {
+	var n int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM accounts WHERE server_id = $1`, serverID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("store: counting server accounts: %w", err)
 	}
 	return n, nil
 }
@@ -198,6 +235,19 @@ func (s *Accounts) SetSSL(ctx context.Context, id, status string, expiresAt *tim
 		id, status, expiresAt)
 	if err != nil {
 		return fmt.Errorf("store: setting ssl status: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetPHPVersion changes the PHP branch an account runs on.
+func (s *Accounts) SetPHPVersion(ctx context.Context, id, version string) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE accounts SET php_version = $2, updated_at = now() WHERE id = $1`, id, version)
+	if err != nil {
+		return fmt.Errorf("store: setting php version: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound

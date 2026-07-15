@@ -37,52 +37,78 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-muted/40 p-4">
-      <div className="absolute right-4 top-4">
+    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background p-4">
+      {/* Ambient brand glow + grid backdrop */}
+      <div className="pointer-events-none absolute inset-0 bg-brand-glow" aria-hidden />
+      <div
+        className="pointer-events-none absolute inset-0 opacity-[0.15] [background-image:linear-gradient(to_right,var(--border)_1px,transparent_1px),linear-gradient(to_bottom,var(--border)_1px,transparent_1px)] [background-size:44px_44px] [mask-image:radial-gradient(ellipse_60%_60%_at_50%_35%,black,transparent)]"
+        aria-hidden
+      />
+
+      <div className="absolute right-4 top-4 z-10">
         <ThemeToggle />
       </div>
-      <Card className="w-full max-w-sm">
-        <CardHeader className="items-center text-center">
-          <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-            <Shield className="h-6 w-6" />
+
+      <div className="relative z-10 w-full max-w-sm">
+        <div className="mb-8 flex flex-col items-center text-center">
+          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-primary/60 text-primary-foreground shadow-xl shadow-primary/30">
+            <Shield className="h-7 w-7" />
           </div>
-          <CardTitle className="text-2xl">CypherPanel</CardTitle>
-          <CardDescription>Sign in to manage your servers</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={onSubmit} className="grid gap-4">
-            <div className="grid gap-2">
-              <Label htmlFor="username">Username</Label>
-              <Input
-                id="username"
-                autoComplete="username"
-                required
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                autoComplete="current-password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </div>
-            {error && (
-              <p role="alert" className="text-sm text-destructive">
-                {error}
-              </p>
-            )}
-            <Button type="submit" disabled={busy}>
-              {busy ? "Signing in…" : "Sign in"}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Cypher<span className="text-gradient-brand">Panel</span>
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Open-source hosting control panel
+          </p>
+        </div>
+
+        <Card className="shadow-2xl shadow-black/5">
+          <CardHeader>
+            <CardTitle className="text-lg">Welcome back</CardTitle>
+            <CardDescription>Sign in to manage your servers.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={onSubmit} className="grid gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="username">Username</Label>
+                <Input
+                  id="username"
+                  autoComplete="username"
+                  required
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="password">Password</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </div>
+              {error && (
+                <p
+                  role="alert"
+                  className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+                >
+                  {error}
+                </p>
+              )}
+              <Button type="submit" size="lg" disabled={busy} className="mt-1">
+                {busy ? "Signing in…" : "Sign in"}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+
+        <p className="mt-6 text-center text-xs text-muted-foreground">
+          Secured with mTLS · Argon2id · short-lived tokens
+        </p>
+      </div>
     </main>
   );
 }

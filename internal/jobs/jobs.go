@@ -25,6 +25,11 @@ const (
 	TypeSiteProvision    = "site.provision"     // payload: SiteProvisionPayload
 	TypeSiteDeprovision  = "site.deprovision"   // payload: SiteDeprovisionPayload
 	TypeSSLIssue         = "ssl.issue"          // payload: SSLIssuePayload
+	TypePHPVersionChange = "php.version.change"  // payload: PHPVersionChangePayload
+	TypeServiceControl   = "service.control"     // payload: ServiceControlPayload
+	TypePHPRuntime       = "php.runtime"         // payload: PHPRuntimePayload
+	TypeDBCreate         = "db.create"           // payload: DBCreatePayload
+	TypeDBDrop           = "db.drop"             // payload: DBDropPayload
 )
 
 // Task is the wire format published to JetStream.
@@ -66,6 +71,19 @@ type SiteDeprovisionPayload struct {
 	PHPVersion string `json:"php_version"`
 }
 
+// PHPVersionChangePayload switches an account to a different PHP branch. The
+// per-account socket is version-independent, so the agent must remove the old
+// version's pool (releasing the socket) and write the new version's pool
+// (reclaiming it) — old and new both travel in the payload.
+type PHPVersionChangePayload struct {
+	Username      string            `json:"username"`
+	Domain        string            `json:"domain"`
+	OldPHPVersion string            `json:"old_php_version"`
+	NewPHPVersion string            `json:"new_php_version"`
+	MemoryMB      int               `json:"memory_mb,omitempty"`
+	PHPSettings   map[string]string `json:"php_settings,omitempty"`
+}
+
 // SSLIssuePayload issues (or renews) a Let's Encrypt certificate for a domain
 // and switches its vhost to HTTPS.
 type SSLIssuePayload struct {
@@ -74,9 +92,42 @@ type SSLIssuePayload struct {
 	Email    string `json:"email"`
 }
 
-// Result metadata keys reported back with ssl.issue.
+// PHPRuntimePayload installs or removes a PHP-FPM branch on a server via the
+// distro package manager. Version is validated against a strict pattern before
+// it is ever interpolated into a package name.
+type PHPRuntimePayload struct {
+	Version string `json:"version"` // e.g. "8.3"
+	Action  string `json:"action"`  // install | uninstall
+}
+
+// ServiceControlPayload runs a lifecycle action on a managed system service.
+// The agent restricts Service to its managed allowlist and Action to the known
+// verbs — the payload is never trusted to name an arbitrary systemd unit.
+type ServiceControlPayload struct {
+	Service string `json:"service"`
+	Action  string `json:"action"` // start | stop | restart | reload
+}
+
+// DBCreatePayload provisions a hosted-account MariaDB database + user. It is
+// deliberately secret-free: the agent GENERATES the user's password (so it
+// never lands in stream storage) and returns it as result metadata.
+type DBCreatePayload struct {
+	Name   string `json:"name"`    // namespaced database name
+	DBUser string `json:"db_user"` // namespaced database user
+	DBHost string `json:"db_host"` // host the user connects from (e.g. localhost)
+}
+
+// DBDropPayload removes a hosted-account database and its user.
+type DBDropPayload struct {
+	Name   string `json:"name"`
+	DBUser string `json:"db_user"`
+	DBHost string `json:"db_host"`
+}
+
+// Result metadata keys.
 const (
-	MetaSSLNotAfter = "ssl_not_after" // RFC3339 certificate expiry
+	MetaSSLNotAfter = "ssl_not_after" // RFC3339 certificate expiry (ssl.issue)
+	MetaDBPassword  = "db_password"   // generated DB password (db.create) — secret, never logged/audited
 )
 
 // ValidType reports whether the task type is known to this build. Core
@@ -84,7 +135,7 @@ const (
 // on every agent redelivery.
 func ValidType(t string) bool {
 	switch t {
-	case TypeNoop, TypeSystemUserCreate, TypeSystemUserRemove, TypeSiteProvision, TypeSiteDeprovision, TypeSSLIssue:
+	case TypeNoop, TypeSystemUserCreate, TypeSystemUserRemove, TypeSiteProvision, TypeSiteDeprovision, TypeSSLIssue, TypePHPVersionChange, TypeServiceControl, TypePHPRuntime, TypeDBCreate, TypeDBDrop:
 		return true
 	}
 	return false

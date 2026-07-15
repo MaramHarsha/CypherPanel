@@ -29,6 +29,7 @@ import (
 	"github.com/MaramHarsha/CypherPanel/internal/pki"
 	"github.com/MaramHarsha/CypherPanel/internal/platform"
 	"github.com/MaramHarsha/CypherPanel/internal/services"
+	"github.com/MaramHarsha/CypherPanel/internal/usersdb"
 	"github.com/MaramHarsha/CypherPanel/internal/webserver"
 )
 
@@ -90,10 +91,22 @@ func run() error {
 	defer nc.Drain()
 	executor := &taskExecutor{
 		layout: layout,
+		family: family,
 		users:  platform.New(),
 		sites:  platform.NewSites(),
 		vhost:  webserver.Nginx{},
 		acme:   acme.NewIssuer(cfg.ACMEDirectory, layout.ACMEAccountDir()),
+	}
+	// User-database provisioning is available only when an admin MariaDB DSN is
+	// configured for this server; otherwise db.* tasks fail permanently.
+	if cfg.MariaDBDSN != "" {
+		mdb, err := usersdb.OpenMariaDB(cfg.MariaDBDSN)
+		if err != nil {
+			return err
+		}
+		defer mdb.Close()
+		executor.usersDB = mdb
+		slog.Info("user-database provisioning enabled (MariaDB)")
 	}
 	consumerErr := make(chan error, 1)
 	go func() {

@@ -15,8 +15,17 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   ApiError,
+  changePHPVersion,
   phpIniKeys,
+  phpVersions,
   updatePHPSettings,
   type AccountInfo,
 } from "@/lib/api";
@@ -36,6 +45,7 @@ export function PHPSettingsDialog({ account }: { account: AccountInfo }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [values, setValues] = useState<Record<string, string>>({});
+  const [version, setVersion] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
 
   const { data: keys } = useQuery({
@@ -43,21 +53,35 @@ export function PHPSettingsDialog({ account }: { account: AccountInfo }) {
     queryFn: phpIniKeys,
     enabled: open,
   });
+  const { data: versions } = useQuery({
+    queryKey: ["php-versions"],
+    queryFn: phpVersions,
+    enabled: open,
+  });
 
   // Seed the form from the account's current settings when opened.
   useEffect(() => {
     if (open) {
       setValues({ ...(account.php_settings ?? {}) } as Record<string, string>);
+      setVersion(account.php_version ?? "");
       setError(null);
     }
-  }, [open, account.php_settings]);
+  }, [open, account.php_settings, account.php_version]);
 
   const save = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
+      // Version change first (re-provisions the pool onto the new branch),
+      // then INI overrides. Each is a no-op when unchanged.
+      if (version && version !== account.php_version) {
+        await changePHPVersion(account.id!, version);
+      }
       const cleaned = Object.fromEntries(
         Object.entries(values).filter(([, v]) => v.trim() !== ""),
       );
-      return updatePHPSettings(account.id!, cleaned);
+      const before = JSON.stringify(account.php_settings ?? {});
+      if (JSON.stringify(cleaned) !== before) {
+        await updatePHPSettings(account.id!, cleaned);
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["accounts"] });
@@ -80,11 +104,29 @@ export function PHPSettingsDialog({ account }: { account: AccountInfo }) {
         <DialogHeader>
           <DialogTitle>PHP settings — {account.username}</DialogTitle>
           <DialogDescription>
-            PHP {account.php_version || "default"}. Overrides apply as pool-level
-            php_admin_value; blank uses the server default.
+            Choose the PHP version and override directives. Overrides apply as
+            pool-level php_admin_value; blank uses the server default.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
+          <div className="grid grid-cols-3 items-center gap-3">
+            <Label htmlFor="php-version" className="text-xs font-mono">
+              php_version
+            </Label>
+            <Select value={version} onValueChange={(v) => setVersion(v ?? "")}>
+              <SelectTrigger id="php-version" className="col-span-2">
+                <SelectValue placeholder="Select version" />
+              </SelectTrigger>
+              <SelectContent>
+                {(versions ?? []).map((v) => (
+                  <SelectItem key={v} value={v}>
+                    PHP {v}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="h-px bg-border" />
           {(keys ?? []).map((k) => (
             <div key={k} className="grid grid-cols-3 items-center gap-3">
               <Label htmlFor={`php-${k}`} className="text-xs font-mono">

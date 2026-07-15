@@ -5,7 +5,7 @@ description: MariaDB database/user/grant provisioning for hosting accounts, cred
 
 # User Database Provisioning
 
-> **Status: design-intent (pre-implementation).** Grounded in plan.md Section 4B (Database Management) and the MVP-default decision (MariaDB). Lands in Phase 4. Verify against code then, updating in the same PR. Read [[jobs-and-agent-tasks]], [[auth-and-rbac]], and [[database-and-migrations]] (note: that skill is about CypherCore's *own* Postgres; this is about *hosted-account* MariaDB — different concern).
+> **Status: code-grounded (Phase 4, shipped).** MariaDB provisioning is implemented and E2E-verified: `internal/usersdb` (`Manager` interface + MariaDB impl, idempotent, least-privilege grants, injection-guarded identifiers); `db.create`/`db.drop` agent tasks (agent generates the password, returns it as result metadata — never in the payload); `internal/secretcrypt` (AES-256-GCM) encrypts it at rest; account-scoped REST with package-limit enforcement + one-shot reveal; migration 000010. Follow those. Read [[jobs-and-agent-tasks]], [[auth-and-rbac]], and [[database-and-migrations]] (that skill is CypherCore's *own* Postgres; this is *hosted-account* MariaDB — different concern).
 
 ## MVP default & adapter
 

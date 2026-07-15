@@ -3,9 +3,11 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -87,6 +89,47 @@ func (s *Servers) List(ctx context.Context) ([]Server, error) {
 		out = append(out, srv)
 	}
 	return out, rows.Err()
+}
+
+// GetByID returns one server with its latest host snapshot and service states.
+func (s *Servers) GetByID(ctx context.Context, id string) (*Server, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT id, name, hostname, host(ip_address), agent_status, last_seen_at, created_at,
+		       load_1m, memory_total_bytes, memory_used_bytes, disk_total_bytes, disk_used_bytes, services
+		FROM servers WHERE id = $1`, id)
+
+	var srv Server
+	var memTotal, memUsed, diskTotal, diskUsed int64
+	var svcBlob []byte
+	if err := row.Scan(&srv.ID, &srv.Name, &srv.Hostname, &srv.IPAddress, &srv.AgentStatus,
+		&srv.LastSeenAt, &srv.CreatedAt,
+		&srv.Stats.Load1m, &memTotal, &memUsed, &diskTotal, &diskUsed, &svcBlob); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("store: getting server %s: %w", id, err)
+	}
+	srv.Stats.MemoryTotalBytes = uint64(memTotal)
+	srv.Stats.MemoryUsedBytes = uint64(memUsed)
+	srv.Stats.DiskTotalBytes = uint64(diskTotal)
+	srv.Stats.DiskUsedBytes = uint64(diskUsed)
+	if len(svcBlob) > 0 {
+		_ = json.Unmarshal(svcBlob, &srv.Services)
+	}
+	return &srv, nil
+}
+
+// Delete removes a server row (used to de-register a decommissioned node). The
+// caller must ensure no accounts still reference it.
+func (s *Servers) Delete(ctx context.Context, id string) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM servers WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("store: deleting server %s: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // HostStats is the latest host snapshot reported with a heartbeat.

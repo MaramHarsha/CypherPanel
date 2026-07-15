@@ -8,11 +8,11 @@ type Service = NonNullable<ServerInfo["services"]>[number];
 function toneFor(state?: string): string {
   switch (state) {
     case "active":
-      return "bg-green-500/15 text-green-700 dark:text-green-400";
+      return "bg-success/12 text-success";
     case "activating":
-      return "bg-amber-500/15 text-amber-700 dark:text-amber-400";
+      return "bg-warning/15 text-warning-foreground dark:text-warning";
     default:
-      return "bg-red-500/15 text-red-700 dark:text-red-400";
+      return "bg-destructive/12 text-destructive";
   }
 }
 

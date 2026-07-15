@@ -106,6 +106,38 @@ export function listServers(): Promise<ServerInfo[]> {
   return apiFetch<ServerInfo[]>("/api/v1/admin/servers");
 }
 
+export function getServer(id: string): Promise<ServerInfo> {
+  return apiFetch<ServerInfo>(`/api/v1/admin/servers/${id}`);
+}
+
+export function deleteServer(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/admin/servers/${id}`, { method: "DELETE" });
+}
+
+export function managePHPRuntime(
+  serverId: string,
+  version: string,
+  action: "install" | "uninstall",
+): Promise<void> {
+  return apiFetch<void>(`/api/v1/admin/servers/${serverId}/php`, {
+    method: "POST",
+    body: JSON.stringify({ version, action }),
+  });
+}
+
+export type ServiceAction = "start" | "stop" | "restart" | "reload";
+
+export function controlService(
+  serverId: string,
+  service: string,
+  action: ServiceAction,
+): Promise<void> {
+  return apiFetch<void>(
+    `/api/v1/admin/servers/${serverId}/services/${service}/control`,
+    { method: "POST", body: JSON.stringify({ action }) },
+  );
+}
+
 export function listPackages(): Promise<PackageInfo[]> {
   return apiFetch<PackageInfo[]>("/api/v1/admin/packages");
 }
@@ -149,6 +181,48 @@ export function updatePHPSettings(id: string, settings: Record<string, string>):
 
 export function issueSSL(id: string): Promise<void> {
   return apiFetch<void>(`/api/v1/admin/accounts/${id}/ssl`, { method: "POST" });
+}
+
+export function phpVersions(): Promise<string[]> {
+  return apiFetch<string[]>("/api/v1/admin/php/versions");
+}
+
+export function changePHPVersion(id: string, version: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/admin/accounts/${id}/php-version`, {
+    method: "PATCH",
+    body: JSON.stringify({ version }),
+  });
+}
+
+export type DatabaseInfo = components["schemas"]["api.databaseResponse"];
+
+export function listDatabases(accountId: string): Promise<DatabaseInfo[]> {
+  return apiFetch<DatabaseInfo[]>(`/api/v1/admin/accounts/${accountId}/databases`);
+}
+
+export function createDatabase(accountId: string, name: string): Promise<DatabaseInfo> {
+  return apiFetch<DatabaseInfo>(`/api/v1/admin/accounts/${accountId}/databases`, {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+}
+
+export function deleteDatabase(accountId: string, dbId: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/admin/accounts/${accountId}/databases/${dbId}`, {
+    method: "DELETE",
+  });
+}
+
+export interface DBCredentials {
+  username: string;
+  host: string;
+  password: string;
+}
+
+export function revealDBPassword(accountId: string, dbId: string): Promise<DBCredentials> {
+  return apiFetch<DBCredentials>(
+    `/api/v1/admin/accounts/${accountId}/databases/${dbId}/password`,
+  );
 }
 
 export function listResellers(): Promise<ResellerInfo[]> {

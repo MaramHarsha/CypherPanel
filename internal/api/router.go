@@ -23,6 +23,7 @@ type Deps struct {
 	Accounts  *AccountsHandler
 	Plugins   *PluginsHandler
 	Resellers *ResellersHandler
+	Databases *DatabasesHandler
 }
 
 func NewRouter(d Deps) *gin.Engine {
@@ -60,6 +61,10 @@ func NewRouter(d Deps) *gin.Engine {
 	// Root-admin-only surface: fleet, reseller management, plugin registry.
 	admin := authed.Group("/admin", auth.RequireRole(auth.RoleRootAdmin))
 	admin.POST("/servers/:id/tasks", d.Tasks.Create)
+	admin.GET("/servers/:id", d.Servers.Get)
+	admin.DELETE("/servers/:id", d.Servers.Delete)
+	admin.POST("/servers/:id/services/:name/control", d.Servers.ControlService)
+	admin.POST("/servers/:id/php", d.Servers.ManagePHPRuntime)
 	admin.GET("/tasks/:id", d.Tasks.Get)
 	admin.GET("/resellers", d.Resellers.List)
 	admin.POST("/resellers", d.Resellers.Create)
@@ -80,8 +85,14 @@ func NewRouter(d Deps) *gin.Engine {
 	mgr.POST("/accounts/:id/unsuspend", d.Accounts.Unsuspend)
 	mgr.POST("/accounts/:id/terminate", d.Accounts.Terminate)
 	mgr.PATCH("/accounts/:id/php-settings", d.Accounts.UpdatePHPSettings)
+	mgr.PATCH("/accounts/:id/php-version", d.Accounts.ChangePHPVersion)
 	mgr.POST("/accounts/:id/ssl", d.Accounts.IssueSSL)
 	mgr.GET("/php/ini-keys", d.Accounts.PHPINIKeys)
+	mgr.GET("/php/versions", d.Accounts.PHPVersionList)
+	mgr.GET("/accounts/:id/databases", d.Databases.List)
+	mgr.POST("/accounts/:id/databases", d.Databases.Create)
+	mgr.DELETE("/accounts/:id/databases/:dbid", d.Databases.Delete)
+	mgr.GET("/accounts/:id/databases/:dbid/password", d.Databases.RevealPassword)
 
 	return r
 }

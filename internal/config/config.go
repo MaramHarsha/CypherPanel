@@ -4,8 +4,11 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -28,15 +31,29 @@ type Core struct {
 	JWTSecret       string
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
-	// DefaultPHPVersion is the PHP branch new accounts are provisioned on until
-	// per-account selection lands. Not a hardcoded constant — set it to a
-	// version actually installed on your servers (see plan.md Version Policy).
+	// DefaultPHPVersion is the PHP branch new accounts are provisioned on when
+	// none is chosen. Not a hardcoded constant — set it to a version actually
+	// installed on your servers (see plan.md Version Policy).
 	DefaultPHPVersion string
+	// PHPVersions is the set of PHP branches accounts may switch between,
+	// offered in the UI. Set it to the branches actually installed across your
+	// fleet (plan.md Version Policy: resolve against php.net's supported list,
+	// don't ship an EOL set). Default is a current-branch starting point.
+	PHPVersions []string
+	// SSL auto-renewal: scan every SSLRenewInterval and renew certs expiring
+	// within SSLRenewThreshold. The threshold matches the agent's own >30-day
+	// re-issue skip guard so a due cert is actually renewed, not skipped.
+	SSLRenewInterval  time.Duration
+	SSLRenewThreshold time.Duration
 	// mTLS material for the agent gRPC listener. Required in production;
 	// in development an empty set means plaintext gRPC (local only).
 	GRPCTLSCert     string
 	GRPCTLSKey      string
 	GRPCTLSClientCA string
+	// DBEncryptionKey is the 32-byte AES key used to encrypt stored secrets
+	// (hosted-account DB passwords). Required in production; in development it
+	// is derived from the JWT secret so local setups work without extra config.
+	DBEncryptionKey []byte
 }
 
 // Agent holds CypherAgent (per-server daemon) configuration.
@@ -52,6 +69,10 @@ type Agent struct {
 	// ACMEDirectory is the ACME v2 directory URL for SSL issuance (default
 	// Let's Encrypt production). Point at a staging/test directory for testing.
 	ACMEDirectory string
+	// MariaDBDSN is the admin connection (go-sql-driver/mysql DSN) the agent
+	// uses to provision hosted-account databases on this server, e.g.
+	// "root:pw@tcp(127.0.0.1:3306)/". Empty → DB provisioning is unavailable.
+	MariaDBDSN string
 }
 
 // insecureDevSecret is only ever used when CYPHER_ENV=development and no
@@ -70,6 +91,7 @@ func LoadCore() (Core, error) {
 		NATSCreds:         os.Getenv("CYPHER_NATS_CREDS"),
 		JWTSecret:         os.Getenv("CYPHER_JWT_SECRET"),
 		DefaultPHPVersion: envOr("CYPHER_DEFAULT_PHP_VERSION", "8.3"),
+		PHPVersions:       splitList(envOr("CYPHER_PHP_VERSIONS", "8.2,8.3,8.4")),
 		GRPCTLSCert:       os.Getenv("CYPHER_GRPC_TLS_CERT"),
 		GRPCTLSKey:        os.Getenv("CYPHER_GRPC_TLS_KEY"),
 		GRPCTLSClientCA:   os.Getenv("CYPHER_GRPC_TLS_CLIENT_CA"),
@@ -82,6 +104,12 @@ func LoadCore() (Core, error) {
 	if c.RefreshTokenTTL, err = durationOr("CYPHER_REFRESH_TOKEN_TTL", 30*24*time.Hour); err != nil {
 		return Core{}, err
 	}
+	if c.SSLRenewInterval, err = durationOr("CYPHER_SSL_RENEW_INTERVAL", 12*time.Hour); err != nil {
+		return Core{}, err
+	}
+	if c.SSLRenewThreshold, err = durationOr("CYPHER_SSL_RENEW_THRESHOLD", 30*24*time.Hour); err != nil {
+		return Core{}, err
+	}
 
 	if c.JWTSecret == "" {
 		if c.Env == EnvProduction {
@@ -92,7 +120,32 @@ func LoadCore() (Core, error) {
 	if c.Env == EnvProduction && (c.GRPCTLSCert == "" || c.GRPCTLSKey == "" || c.GRPCTLSClientCA == "") {
 		return Core{}, fmt.Errorf("CYPHER_GRPC_TLS_CERT, CYPHER_GRPC_TLS_KEY and CYPHER_GRPC_TLS_CLIENT_CA are required when CYPHER_ENV=production")
 	}
+
+	if c.DBEncryptionKey, err = loadEncryptionKey(os.Getenv("CYPHER_DB_ENCRYPTION_KEY"), c.Env, c.JWTSecret); err != nil {
+		return Core{}, err
+	}
 	return c, nil
+}
+
+// loadEncryptionKey resolves the 32-byte secrets key. In production it must be
+// an explicit 64-char hex value; in development it is derived from the JWT
+// secret so no extra setup is needed.
+func loadEncryptionKey(hexKey, env, jwtSecret string) ([]byte, error) {
+	if hexKey != "" {
+		key, err := hex.DecodeString(hexKey)
+		if err != nil {
+			return nil, fmt.Errorf("CYPHER_DB_ENCRYPTION_KEY: invalid hex: %w", err)
+		}
+		if len(key) != 32 {
+			return nil, fmt.Errorf("CYPHER_DB_ENCRYPTION_KEY must decode to 32 bytes, got %d", len(key))
+		}
+		return key, nil
+	}
+	if env == EnvProduction {
+		return nil, fmt.Errorf("CYPHER_DB_ENCRYPTION_KEY (64 hex chars) is required when CYPHER_ENV=production")
+	}
+	sum := sha256.Sum256([]byte("cypher-db-key:" + jwtSecret))
+	return sum[:], nil
 }
 
 // LoadAgent reads CypherAgent configuration from the environment.
@@ -103,6 +156,7 @@ func LoadAgent() (Agent, error) {
 		NATSURL:       envOr("CYPHER_AGENT_NATS_URL", "nats://localhost:4222"),
 		NATSCreds:     os.Getenv("CYPHER_AGENT_NATS_CREDS"),
 		ACMEDirectory: envOr("CYPHER_ACME_DIRECTORY", "https://acme-v02.api.letsencrypt.org/directory"),
+		MariaDBDSN:    os.Getenv("CYPHER_AGENT_MARIADB_DSN"),
 		TLSCertFile:   os.Getenv("CYPHER_AGENT_TLS_CERT"),
 		TLSKeyFile:    os.Getenv("CYPHER_AGENT_TLS_KEY"),
 		TLSCAFile:     os.Getenv("CYPHER_AGENT_TLS_CA"),
@@ -120,6 +174,17 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// splitList parses a comma-separated env value into trimmed, non-empty items.
+func splitList(v string) []string {
+	var out []string
+	for _, part := range strings.Split(v, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func durationOr(key string, def time.Duration) (time.Duration, error) {

@@ -4,9 +4,24 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"time"
 )
+
+// Control runs a lifecycle action (start|stop|restart|reload) on a managed
+// service via systemd. Callers must validate service and action first
+// (ValidAction / IsManaged); this only refuses to run without systemd.
+func Control(ctx context.Context, service, action string) error {
+	if _, err := exec.LookPath("systemctl"); err != nil {
+		return ErrUnsupported
+	}
+	out, err := exec.CommandContext(ctx, "systemctl", action, service).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("services: systemctl %s %s: %w: %s", action, service, err, out)
+	}
+	return nil
+}
 
 // probe queries systemd for each managed unit. If systemctl is unavailable
 // (no systemd), it returns nil — monitoring is simply unavailable, never an

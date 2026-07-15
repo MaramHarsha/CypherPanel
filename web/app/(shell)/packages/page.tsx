@@ -23,6 +23,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PageHeader } from "@/components/page-header";
 import {
   ApiError,
   createPackage,
@@ -78,14 +79,11 @@ export default function PackagesPage() {
   });
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Packages</h1>
-          <p className="text-sm text-muted-foreground">
-            Hosting templates that define an account&apos;s resource limits.
-          </p>
-        </div>
+    <div>
+      <PageHeader
+        title="Packages"
+        description="Hosting templates that define an account's resource limits."
+      >
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger render={<Button />}>
             <Plus className="h-4 w-4" /> New package
@@ -137,7 +135,7 @@ export default function PackagesPage() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
-      </div>
+      </PageHeader>
 
       {isLoading ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

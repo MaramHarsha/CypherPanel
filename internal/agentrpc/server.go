@@ -6,6 +6,7 @@ package agentrpc
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"time"
 
@@ -15,16 +16,23 @@ import (
 	agentv1 "github.com/MaramHarsha/CypherPanel/gen/agent/v1"
 	"github.com/MaramHarsha/CypherPanel/internal/audit"
 	"github.com/MaramHarsha/CypherPanel/internal/events"
+	"github.com/MaramHarsha/CypherPanel/internal/jobs"
 	"github.com/MaramHarsha/CypherPanel/internal/store"
 )
 
 type Server struct {
 	agentv1.UnimplementedAgentServiceServer
-	Servers  *store.Servers
-	Tasks    *store.Tasks
-	Accounts *store.Accounts
-	Events   *events.Bus
-	Audit    *audit.Logger
+	Servers   *store.Servers
+	Tasks     *store.Tasks
+	Accounts  *store.Accounts
+	Databases *store.Databases
+	Events    *events.Bus
+	Audit     *audit.Logger
+	// Crypt encrypts secrets returned in task metadata (DB passwords) before
+	// they are persisted. Never nil in production wiring.
+	Crypt interface {
+		Encrypt([]byte) ([]byte, error)
+	}
 }
 
 func (s *Server) Register(ctx context.Context, req *agentv1.RegisterRequest) (*agentv1.RegisterResponse, error) {
@@ -127,6 +135,11 @@ func (s *Server) applyAccountTransition(ctx context.Context, taskID, result stri
 		s.applySSLResult(ctx, task.AccountID, result, meta)
 		return
 	}
+	// Database tasks drive the database record, keyed by account + name.
+	if task.Type == "db.create" || task.Type == "db.drop" {
+		s.applyDBResult(ctx, task, result, meta)
+		return
+	}
 
 	var terr error
 	var subject string
@@ -148,6 +161,57 @@ func (s *Server) applyAccountTransition(ctx context.Context, taskID, result stri
 		return
 	}
 	s.Events.Publish(ctx, subject, "account", task.AccountID, map[string]any{"id": task.AccountID})
+}
+
+// applyDBResult applies a database task's outcome to its record. The record is
+// found by (account, name) from the task payload. On successful create the
+// generated password (in result metadata) is encrypted before storage; it is
+// never logged.
+func (s *Server) applyDBResult(ctx context.Context, task *store.Task, result string, meta map[string]string) {
+	var name string
+	switch task.Type {
+	case "db.create":
+		var p jobs.DBCreatePayload
+		if err := json.Unmarshal(task.Payload, &p); err != nil {
+			return
+		}
+		name = p.Name
+	case "db.drop":
+		var p jobs.DBDropPayload
+		if err := json.Unmarshal(task.Payload, &p); err != nil {
+			return
+		}
+		name = p.Name
+	}
+
+	rec, err := s.Databases.GetByAccountAndName(ctx, task.AccountID, name)
+	if err != nil {
+		return
+	}
+
+	if task.Type == "db.create" {
+		if result != "succeeded" {
+			_ = s.Databases.SetStatus(ctx, rec.ID, "failed")
+			return
+		}
+		var enc []byte
+		if pw := meta[jobs.MetaDBPassword]; pw != "" && s.Crypt != nil {
+			if e, cerr := s.Crypt.Encrypt([]byte(pw)); cerr == nil {
+				enc = e
+			}
+		}
+		if err := s.Databases.SetActive(ctx, rec.ID, enc); err != nil {
+			slog.Error("activating database", "db_id", rec.ID, "error", err)
+		}
+		return
+	}
+
+	// db.drop: remove the record on success, mark failed otherwise.
+	if result == "succeeded" {
+		_ = s.Databases.Delete(ctx, rec.ID)
+	} else {
+		_ = s.Databases.SetStatus(ctx, rec.ID, "failed")
+	}
 }
 
 func (s *Server) applySSLResult(ctx context.Context, accountID, result string, meta map[string]string) {

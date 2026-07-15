@@ -5,7 +5,7 @@ description: Multi-PHP install layout, per-account PHP-FPM pool isolation, INI o
 
 # PHP Runtime Management
 
-> **Status: code-grounded (Phase 3).** Per-account PHP-FPM pool generation lives in `internal/webserver` (pool renderer) + `internal/platform` `Sites`; the INI editor is `internal/phpini` (allowlist) + `PATCH /admin/accounts/:id/php-settings` re-provisioning via the idempotent `site.provision` task. Follow those. Still pending: multi-PHP install and per-account version *change*. Read [[agent-config-generators]] and [[linux-system-integration]] first.
+> **Status: code-grounded (Phase 3).** Per-account PHP-FPM pool generation lives in `internal/webserver` (pool renderer) + `internal/platform` `Sites`; the INI editor is `internal/phpini` (allowlist) + `PATCH /admin/accounts/:id/php-settings`. Per-account **version change** is the `php.version.change` task + `PATCH /admin/accounts/:id/php-version` (`CYPHER_PHP_VERSIONS` allowlist): the agent removes the old version's pool then writes the new one via the shared, TLS-preserving `applySite` in `cmd/agent/tasks.go`; `platform.Sites.RemovePHPPool` + best-effort `reloadPHPFPM` (reload, not restart; skips absent versions) handle the FPM side. Still pending: multi-PHP *install* scripts (the versions must already be installed on the box). Read [[agent-config-generators]] and [[linux-system-integration]] first.
 
 ## Version policy
 

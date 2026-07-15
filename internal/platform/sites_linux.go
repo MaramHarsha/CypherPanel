@@ -5,6 +5,7 @@ package platform
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"os/user"
@@ -37,6 +38,10 @@ func (linuxSites) Provision(ctx context.Context, spec SiteSpec) error {
 		return err
 	}
 
+	// Reload this account's PHP-FPM version so the new/updated pool is picked
+	// up (best-effort: a box without that FPM installed still provisions).
+	reloadPHPFPM(ctx, spec.PHPVersion)
+
 	// Web-server vhost: write, then validate-then-reload with rollback so a
 	// bad config never takes the web server down.
 	if err := writeRootConfig(spec.VHostPath, spec.VHostConfig); err != nil {
@@ -46,6 +51,16 @@ func (linuxSites) Provision(ctx context.Context, spec SiteSpec) error {
 		_ = os.Remove(spec.VHostPath) // roll back the offending vhost
 		return err
 	}
+	return nil
+}
+
+func (linuxSites) RemovePHPPool(ctx context.Context, poolPath, phpVersion string) error {
+	if err := os.Remove(poolPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("platform: removing pool %s: %w", poolPath, err)
+	}
+	// Reload the old FPM so it drops the pool and releases the account socket
+	// before the new version's pool claims it.
+	reloadPHPFPM(ctx, phpVersion)
 	return nil
 }
 
@@ -108,6 +123,32 @@ func writeRootConfig(path string, content []byte) error {
 		return fmt.Errorf("platform: writing %s: %w", path, err)
 	}
 	return nil
+}
+
+// reloadPHPFPM reloads the given PHP branch's FPM service so pool changes take
+// effect — reload, never restart (in-flight requests survive). Best-effort and
+// version-independent: if systemd or that FPM service is absent (dev boxes,
+// staging before PHP lands), it is a silent no-op, mirroring the nginx path.
+// The Debian service name is php<version>-fpm (e.g. php8.3-fpm).
+func reloadPHPFPM(ctx context.Context, phpVersion string) {
+	if phpVersion == "" {
+		return
+	}
+	if _, err := exec.LookPath("systemctl"); err != nil {
+		return // no systemd — nothing to reload here
+	}
+	service := "php" + phpVersion + "-fpm"
+	// Only reload a service that exists and is active; ignore otherwise so a
+	// version not installed on this box never fails the task.
+	if err := exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", service).Run(); err != nil {
+		return
+	}
+	if out, err := exec.CommandContext(ctx, "systemctl", "reload", service).CombinedOutput(); err != nil {
+		// Log-worthy but non-fatal: the pool file is in place; an operator can
+		// reload manually. Surfacing via error would fail an otherwise-applied
+		// change and trigger pointless retries.
+		slog.Warn("php-fpm reload failed", "service", service, "error", err, "output", string(out))
+	}
 }
 
 // validateAndReloadNginx runs `nginx -t` then reloads. If nginx is not

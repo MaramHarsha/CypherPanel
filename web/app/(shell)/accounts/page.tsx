@@ -41,6 +41,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PageHeader } from "@/components/page-header";
 import {
   accountAction,
   ApiError,
@@ -52,12 +53,16 @@ import {
   type AccountInfo,
 } from "@/lib/api";
 import { PHPSettingsDialog } from "./php-settings-dialog";
+import { DatabasesDialog } from "./databases-dialog";
 
-const statusVariant: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
-  active: "default",
-  provisioning: "secondary",
+const statusVariant: Record<
+  string,
+  "default" | "secondary" | "destructive" | "outline" | "success" | "warning"
+> = {
+  active: "success",
+  provisioning: "warning",
   suspended: "outline",
-  terminating: "secondary",
+  terminating: "warning",
   failed: "destructive",
 };
 
@@ -270,16 +275,13 @@ export default function AccountsPage() {
   });
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Accounts</h1>
-          <p className="text-sm text-muted-foreground">
-            Hosting accounts across the fleet, with live provisioning status.
-          </p>
-        </div>
+    <div>
+      <PageHeader
+        title="Accounts"
+        description="Hosting accounts across the fleet, with live provisioning status."
+      >
         <CreateAccountDialog />
-      </div>
+      </PageHeader>
 
       <Card>
         <CardContent className="pt-6">
@@ -306,16 +308,19 @@ export default function AccountsPage() {
                 </thead>
                 <tbody>
                   {data.map((a) => (
-                    <tr key={a.id} className="border-b last:border-0">
-                      <td className="py-2 pr-4 font-medium">{a.username}</td>
-                      <td className="py-2 pr-4 font-mono text-xs">{a.primary_domain}</td>
-                      <td className="py-2 pr-4">{a.server_name}</td>
-                      <td className="py-2 pr-4">{a.package_name}</td>
-                      <td className="py-2 pr-4 font-mono text-xs">{a.php_version || "—"}</td>
-                      <td className="py-2 pr-4">
+                    <tr
+                      key={a.id}
+                      className="border-b transition-colors last:border-0 hover:bg-muted/50"
+                    >
+                      <td className="py-2.5 pr-4 font-medium">{a.username}</td>
+                      <td className="py-2.5 pr-4 font-mono text-xs">{a.primary_domain}</td>
+                      <td className="py-2.5 pr-4">{a.server_name}</td>
+                      <td className="py-2.5 pr-4">{a.package_name}</td>
+                      <td className="py-2.5 pr-4 font-mono text-xs">{a.php_version || "—"}</td>
+                      <td className="py-2.5 pr-4">
                         {a.ssl_status === "active" ? (
                           <span
-                            className="inline-flex items-center gap-1 text-green-600 dark:text-green-400"
+                            className="inline-flex items-center gap-1 font-medium text-success"
                             title={a.ssl_expires_at ? `Expires ${new Date(a.ssl_expires_at).toLocaleDateString()}` : "Active"}
                           >
                             <Lock className="h-3.5 w-3.5" /> HTTPS
@@ -335,13 +340,14 @@ export default function AccountsPage() {
                           </Button>
                         )}
                       </td>
-                      <td className="py-2 pr-4">
+                      <td className="py-2.5 pr-4">
                         <Badge variant={statusVariant[a.status ?? ""] ?? "secondary"}>
                           {a.status}
                         </Badge>
                       </td>
-                      <td className="py-2 pr-4">
+                      <td className="py-2.5 pr-4">
                         <div className="flex justify-end gap-1">
+                          <DatabasesDialog account={a} />
                           <PHPSettingsDialog account={a} />
                           {a.status === "suspended" ? (
                             <Button
@@ -350,7 +356,7 @@ export default function AccountsPage() {
                               aria-label="Unsuspend"
                               onClick={() => toggle.mutate({ id: a.id!, action: "unsuspend" })}
                             >
-                              <CirclePlay className="h-4 w-4 text-green-600" />
+                              <CirclePlay className="h-4 w-4 text-success" />
                             </Button>
                           ) : (
                             <Button
