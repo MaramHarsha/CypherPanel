@@ -26,6 +26,7 @@ type Deps struct {
 	Databases   *DatabasesHandler
 	FTP         *FTPHandler
 	FileManager *FileManagerHandler
+	DNS         *DNSHandler
 }
 
 func NewRouter(d Deps) *gin.Engine {
@@ -106,6 +107,10 @@ func NewRouter(d Deps) *gin.Engine {
 	mgr.POST("/accounts/:id/files/rename", d.FileManager.Rename)
 	mgr.GET("/accounts/:id/file", d.FileManager.ReadFile)
 	mgr.PUT("/accounts/:id/file", d.FileManager.WriteFile)
+	mgr.GET("/accounts/:id/dns", d.DNS.List)
+	mgr.POST("/accounts/:id/dns", d.DNS.Upsert)
+	mgr.DELETE("/accounts/:id/dns", d.DNS.Delete)
+	mgr.GET("/dns/record-types", d.DNS.RecordTypes)
 
 	return r
 }

@@ -5,7 +5,7 @@ description: PowerDNS zone/record management — REST API usage, per-record-type
 
 # DNS Management
 
-> **Status: design-intent (pre-implementation).** Grounded in plan.md Sections 4B/5 (PowerDNS MVP default). Lands in Phase 5. Verify against code then, updating in the same PR. Read [[agent-config-generators]] and [[jobs-and-agent-tasks]].
+> **Status: code-grounded (Phase 5, zone editor shipped).** `internal/dns`: `Provider` interface + PowerDNS REST client (`powerdns.go`), per-record-type validation + CNAME-coexistence (`dns.go`, unit-tested), and `ACMEProvider` (`acme.go`) for DNS-01 wildcard solving (wired into `acme.Issuer.SetDNSProvider`). Account-scoped zone editor in `internal/api/dns_handler.go` (auto-creates the zone on first view). Follow those. **Still to build:** the primary/secondary cluster sync engine (below). Read [[agent-config-generators]] and [[jobs-and-agent-tasks]].
 
 ## Engine (MVP default)
 

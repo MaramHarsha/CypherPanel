@@ -34,6 +34,7 @@ import (
 	"github.com/MaramHarsha/CypherPanel/internal/audit"
 	"github.com/MaramHarsha/CypherPanel/internal/auth"
 	"github.com/MaramHarsha/CypherPanel/internal/config"
+	"github.com/MaramHarsha/CypherPanel/internal/dns"
 	"github.com/MaramHarsha/CypherPanel/internal/events"
 	"github.com/MaramHarsha/CypherPanel/internal/jobs"
 	"github.com/MaramHarsha/CypherPanel/internal/pki"
@@ -140,6 +141,13 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("initializing secret cipher: %w", err)
 	}
+
+	// DNS is optional: only wired when a PowerDNS API is configured.
+	var dnsProvider dns.Provider
+	if cfg.PDNSAPIURL != "" {
+		dnsProvider = dns.NewPowerDNS(cfg.PDNSAPIURL, cfg.PDNSAPIKey)
+		slog.Info("DNS management enabled (PowerDNS)")
+	}
 	router := api.NewRouter(api.Deps{
 		Config:   cfg,
 		Tokens:   tokens,
@@ -168,6 +176,10 @@ func run() error {
 			Tasks: tasksStore, Publisher: publisher, Audit: auditLog, Crypt: crypt,
 		},
 		FileManager: &api.FileManagerHandler{Accounts: accountsStore, NC: nc, Audit: auditLog},
+		DNS: &api.DNSHandler{
+			Accounts: accountsStore, Servers: serversStore, Provider: dnsProvider,
+			Nameservers: cfg.DNSNameservers, Audit: auditLog,
+		},
 	})
 
 	// SSL auto-renewal: re-dispatches the idempotent ssl.issue task for certs

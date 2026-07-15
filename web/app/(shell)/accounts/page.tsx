@@ -56,6 +56,7 @@ import {
 import { PHPSettingsDialog } from "./php-settings-dialog";
 import { DatabasesDialog } from "./databases-dialog";
 import { FTPDialog } from "./ftp-dialog";
+import { DNSDialog } from "./dns-dialog";
 
 const statusVariant: Record<
   string,
@@ -361,6 +362,7 @@ export default function AccountsPage() {
                           )}
                           <DatabasesDialog account={a} />
                           <FTPDialog account={a} />
+                          <DNSDialog account={a} />
                           <PHPSettingsDialog account={a} />
                           {a.status === "suspended" ? (
                             <Button

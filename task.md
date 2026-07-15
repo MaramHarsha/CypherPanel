@@ -134,7 +134,7 @@
 - [x] **SSL DNS-01 challenge selection** (§4B): the `acme.Issuer` now auto-selects the challenge by domain shape — single hostnames keep HTTP-01 (webroot); **wildcards (`*.`) route to DNS-01** via an injectable `challenge.Provider` seam (`SetDNSProvider`). Until DNS management lands, a wildcard request fails **fast and permanently** with `ErrWildcardNeedsDNS` (no confusing HTTP-01 attempt, no pointless retries — the agent marks it `jobs.Permanent`). Unit-tested (wildcard detection + fast-fail). **The concrete PowerDNS-backed provider is wired in Phase 5** (DNS management) — the seam is ready; live wildcard issuance activates then.
 
 ### Pending (Phase 3)
-- [ ] Wire the PowerDNS DNS-01 provider into `acme.Issuer.SetDNSProvider` — lands with Phase 5 DNS management
+- [x] Wire the PowerDNS DNS-01 provider into `acme.Issuer.SetDNSProvider` — **done in Phase 5** (`dns.ACMEProvider`, E2E-verified against live PowerDNS)
 - [x] **Phase 3 skills batch** (catalog #12-14): `agent-config-generators` + `php-runtime-management` + `ssl-acme` *(now code-grounded)*
 
 ## Phase 4 — Files, FTP, & Databases ✅
@@ -149,13 +149,16 @@
   - **E2E verified** ✅: handoff returns `url` + `driver=server` + `server=localhost` + least-privilege `username`/`db` + decrypted password.
 - [x] **Phase 4 skills batch** (catalog #15-16): `filesystem-operations-safety` + `user-database-provisioning` *(both now code-grounded)*
 
-## Phase 5 — Email & DNS Servers ⬜
+## Phase 5 — Email & DNS Servers 🟨
 
+- [x] **PowerDNS zone/record management** (§4B/5, MVP default): `internal/dns` — `Provider` interface (PowerDNS via its **REST API**; BIND can drop in later) + **per-record-type validation** (A/AAAA/CNAME/MX/TXT/SRV/CAA/NS, CNAME-can't-coexist, unit-tested) + PowerDNS content canonicalisation (TXT quoted, hostnames dotted). Account-scoped zone editor (`GET/POST/DELETE /admin/accounts/:id/dns`, `NameInZone` scoping), **zone auto-created on first view** with apex+www A → the account's server IP + NS records; DNS zone-editor dialog in the accounts UI.
+  - **E2E verified** ✅ (real PowerDNS 4.9 + MariaDB backend): auto-zone created; add TXT (stored quoted) + MX (dotted) → 200; validation rejects bad IP / CNAME-coexistence / out-of-zone name (400); delete works; zone present in PowerDNS; **live resolution** `dig @pdns dbuser.example.com A` → the server IP.
+- [x] **SSL DNS-01 for wildcards** (closes the Phase 3 loose end): `dns.ACMEProvider` implements lego's `challenge.Provider` (sets/removes `_acme-challenge` TXT, longest-suffix zone match), wired into `acme.Issuer.SetDNSProvider` on the agent when `CYPHER_AGENT_PDNS_API_URL` is set (logs "wildcard SSL enabled").
+  - **E2E verified** ✅ (live PowerDNS integration test): `Present` created the `_acme-challenge` TXT, `CleanUp` removed it.
 - [ ] Postfix SMTP + Dovecot IMAP/POP3 configuration
 - [ ] Mail user auth database & quotas
-- [ ] PowerDNS zone configuration (MVP default)
-- [ ] DNS cluster synchronization engine
-- [x] **Phase 5 skills batch** (catalog #17-18): `mail-stack`, `dns-management` *(design-intent — verify vs code when built)*
+- [ ] DNS cluster synchronization engine (primary/secondary AXFR/native replication)
+- [x] **Phase 5 skills batch** (catalog #17-18): `mail-stack` *(design-intent)*, `dns-management` *(now code-grounded)*
 
 ## Phase 6 — Logging, Auditing, & Hardening ⬜
 

@@ -25,6 +25,7 @@ import (
 	agentv1 "github.com/MaramHarsha/CypherPanel/gen/agent/v1"
 	"github.com/MaramHarsha/CypherPanel/internal/acme"
 	"github.com/MaramHarsha/CypherPanel/internal/config"
+	"github.com/MaramHarsha/CypherPanel/internal/dns"
 	"github.com/MaramHarsha/CypherPanel/internal/filemanager"
 	"github.com/MaramHarsha/CypherPanel/internal/ftp"
 	"github.com/MaramHarsha/CypherPanel/internal/hoststats"
@@ -101,6 +102,11 @@ func run() error {
 		vhost:  webserver.Nginx{},
 		acme:   acme.NewIssuer(cfg.ACMEDirectory, layout.ACMEAccountDir()),
 		ftp:    ftp.NewPureFTPd(), // self-checks pure-pw availability at task time
+	}
+	// Wildcard SSL needs a DNS-01 solver; wire it when PowerDNS is configured.
+	if cfg.PDNSAPIURL != "" {
+		executor.acme.SetDNSProvider(dns.NewACMEProvider(dns.NewPowerDNS(cfg.PDNSAPIURL, cfg.PDNSAPIKey)))
+		slog.Info("wildcard SSL enabled (DNS-01 via PowerDNS)")
 	}
 	// User-database provisioning is available only when an admin MariaDB DSN is
 	// configured for this server; otherwise db.* tasks fail permanently.

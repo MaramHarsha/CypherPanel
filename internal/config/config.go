@@ -43,6 +43,11 @@ type Core struct {
 	// AdminerURL is where an Adminer instance is served (per-account DB admin
 	// handoff). Empty → the "Open in Adminer" action is unavailable.
 	AdminerURL string
+	// PowerDNS authoritative API for the DNS zone editor. Empty PDNSAPIURL →
+	// DNS management is unavailable. DNSNameservers seed each zone's NS records.
+	PDNSAPIURL     string
+	PDNSAPIKey     string
+	DNSNameservers []string
 	// SSL auto-renewal: scan every SSLRenewInterval and renew certs expiring
 	// within SSLRenewThreshold. The threshold matches the agent's own >30-day
 	// re-issue skip guard so a due cert is actually renewed, not skipped.
@@ -76,6 +81,10 @@ type Agent struct {
 	// uses to provision hosted-account databases on this server, e.g.
 	// "root:pw@tcp(127.0.0.1:3306)/". Empty → DB provisioning is unavailable.
 	MariaDBDSN string
+	// PowerDNS API for DNS-01 challenge solving (wildcard SSL). Empty → wildcard
+	// certificates are unavailable and requests fail with a clear error.
+	PDNSAPIURL string
+	PDNSAPIKey string
 }
 
 // insecureDevSecret is only ever used when CYPHER_ENV=development and no
@@ -96,6 +105,9 @@ func LoadCore() (Core, error) {
 		DefaultPHPVersion: envOr("CYPHER_DEFAULT_PHP_VERSION", "8.3"),
 		PHPVersions:       splitList(envOr("CYPHER_PHP_VERSIONS", "8.2,8.3,8.4")),
 		AdminerURL:        os.Getenv("CYPHER_ADMINER_URL"),
+		PDNSAPIURL:        os.Getenv("CYPHER_PDNS_API_URL"),
+		PDNSAPIKey:        os.Getenv("CYPHER_PDNS_API_KEY"),
+		DNSNameservers:    splitList(envOr("CYPHER_DNS_NAMESERVERS", "ns1.cypherpanel.local,ns2.cypherpanel.local")),
 		GRPCTLSCert:       os.Getenv("CYPHER_GRPC_TLS_CERT"),
 		GRPCTLSKey:        os.Getenv("CYPHER_GRPC_TLS_KEY"),
 		GRPCTLSClientCA:   os.Getenv("CYPHER_GRPC_TLS_CLIENT_CA"),
@@ -161,6 +173,8 @@ func LoadAgent() (Agent, error) {
 		NATSCreds:     os.Getenv("CYPHER_AGENT_NATS_CREDS"),
 		ACMEDirectory: envOr("CYPHER_ACME_DIRECTORY", "https://acme-v02.api.letsencrypt.org/directory"),
 		MariaDBDSN:    os.Getenv("CYPHER_AGENT_MARIADB_DSN"),
+		PDNSAPIURL:    os.Getenv("CYPHER_AGENT_PDNS_API_URL"),
+		PDNSAPIKey:    os.Getenv("CYPHER_AGENT_PDNS_API_KEY"),
 		TLSCertFile:   os.Getenv("CYPHER_AGENT_TLS_CERT"),
 		TLSKeyFile:    os.Getenv("CYPHER_AGENT_TLS_KEY"),
 		TLSCAFile:     os.Getenv("CYPHER_AGENT_TLS_CA"),

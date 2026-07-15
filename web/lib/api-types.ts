@@ -371,6 +371,116 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/accounts/{id}/dns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List an account's DNS records */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Account ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["dns.Record"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create or update a DNS record */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Account ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            /** @description DNS record */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["api.dnsRecordRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+            };
+        };
+        /** Delete a DNS record */
+        delete: {
+            parameters: {
+                query: {
+                    /** @description Record name */
+                    name: string;
+                    /** @description Record type */
+                    type: string;
+                };
+                header?: never;
+                path: {
+                    /** @description Account ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/accounts/{id}/file": {
         parameters: {
             query?: never;
@@ -1162,6 +1272,42 @@ export interface paths {
                 };
             };
         };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/dns/record-types": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List supported DNS record types */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": string[];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2179,6 +2325,12 @@ export interface components {
             name?: string;
             status?: string;
         };
+        "api.dnsRecordRequest": {
+            contents: string[];
+            name: string;
+            ttl?: number;
+            type: string;
+        };
         "api.fileContentResponse": {
             content?: string;
         };
@@ -2277,6 +2429,16 @@ export interface components {
         "api.writeFileRequest": {
             content?: string;
             path: string;
+        };
+        "dns.Record": {
+            /** @description record data lines (e.g. "10 mail.example.com.") */
+            contents?: string[];
+            /** @description FQDN (trailing dot normalised by the provider) */
+            name?: string;
+            /** @description seconds */
+            ttl?: number;
+            /** @description A, AAAA, CNAME, MX, TXT, SRV, CAA, NS */
+            type?: string;
         };
         "filemanager.Entry": {
             is_dir?: boolean;

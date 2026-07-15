@@ -192,6 +192,32 @@ const docTemplate = `{
                 },
                 "type": "object"
             },
+            "api.dnsRecordRequest": {
+                "properties": {
+                    "contents": {
+                        "items": {
+                            "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "ttl": {
+                        "type": "integer"
+                    },
+                    "type": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "contents",
+                    "name",
+                    "type"
+                ],
+                "type": "object"
+            },
             "api.fileContentResponse": {
                 "properties": {
                     "content": {
@@ -492,6 +518,31 @@ const docTemplate = `{
                 "required": [
                     "path"
                 ],
+                "type": "object"
+            },
+            "dns.Record": {
+                "properties": {
+                    "contents": {
+                        "description": "record data lines (e.g. \"10 mail.example.com.\")",
+                        "items": {
+                            "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "name": {
+                        "description": "FQDN (trailing dot normalised by the provider)",
+                        "type": "string"
+                    },
+                    "ttl": {
+                        "description": "seconds",
+                        "type": "integer"
+                    },
+                    "type": {
+                        "description": "A, AAAA, CNAME, MX, TXT, SRV, CAA, NS",
+                        "type": "string"
+                    }
+                },
                 "type": "object"
             },
             "filemanager.Entry": {
@@ -994,6 +1045,170 @@ const docTemplate = `{
                     }
                 ],
                 "summary": "Reveal an account database password",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
+        "/admin/accounts/{id}/dns": {
+            "delete": {
+                "parameters": [
+                    {
+                        "description": "Account ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Record name",
+                        "in": "query",
+                        "name": "name",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Record type",
+                        "in": "query",
+                        "name": "type",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Delete a DNS record",
+                "tags": [
+                    "admin"
+                ]
+            },
+            "get": {
+                "parameters": [
+                    {
+                        "description": "Account ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "items": {
+                                        "$ref": "#/components/schemas/dns.Record"
+                                    },
+                                    "type": "array"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "List an account's DNS records",
+                "tags": [
+                    "admin"
+                ]
+            },
+            "post": {
+                "parameters": [
+                    {
+                        "description": "Account ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/api.dnsRecordRequest",
+                                        "summary": "request",
+                                        "description": "DNS record"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "DNS record",
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Create or update a DNS record",
                 "tags": [
                     "admin"
                 ]
@@ -1947,6 +2162,34 @@ const docTemplate = `{
                     }
                 ],
                 "summary": "Unsuspend an account (root admin only)",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
+        "/admin/dns/record-types": {
+            "get": {
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "items": {
+                                        "type": "string"
+                                    },
+                                    "type": "array"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "List supported DNS record types",
                 "tags": [
                     "admin"
                 ]

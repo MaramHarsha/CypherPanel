@@ -326,6 +326,35 @@ export function fmRename(accountId: string, path: string, newPath: string): Prom
   });
 }
 
+export interface DNSRecord {
+  name: string;
+  type: string;
+  ttl: number;
+  contents: string[];
+}
+
+export function dnsList(accountId: string): Promise<DNSRecord[]> {
+  return apiFetch<DNSRecord[]>(`/api/v1/admin/accounts/${accountId}/dns`);
+}
+
+export function dnsRecordTypes(): Promise<string[]> {
+  return apiFetch<string[]>("/api/v1/admin/dns/record-types");
+}
+
+export function dnsUpsert(accountId: string, record: DNSRecord): Promise<void> {
+  return apiFetch<void>(`/api/v1/admin/accounts/${accountId}/dns`, {
+    method: "POST",
+    body: JSON.stringify(record),
+  });
+}
+
+export function dnsDelete(accountId: string, name: string, type: string): Promise<void> {
+  return apiFetch<void>(
+    `/api/v1/admin/accounts/${accountId}/dns?name=${encodeURIComponent(name)}&type=${encodeURIComponent(type)}`,
+    { method: "DELETE" },
+  );
+}
+
 export function listResellers(): Promise<ResellerInfo[]> {
   return apiFetch<ResellerInfo[]>("/api/v1/admin/resellers");
 }
