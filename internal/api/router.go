@@ -22,8 +22,10 @@ type Deps struct {
 	Packages  *PackagesHandler
 	Accounts  *AccountsHandler
 	Plugins   *PluginsHandler
-	Resellers *ResellersHandler
-	Databases *DatabasesHandler
+	Resellers   *ResellersHandler
+	Databases   *DatabasesHandler
+	FTP         *FTPHandler
+	FileManager *FileManagerHandler
 }
 
 func NewRouter(d Deps) *gin.Engine {
@@ -93,6 +95,17 @@ func NewRouter(d Deps) *gin.Engine {
 	mgr.POST("/accounts/:id/databases", d.Databases.Create)
 	mgr.DELETE("/accounts/:id/databases/:dbid", d.Databases.Delete)
 	mgr.GET("/accounts/:id/databases/:dbid/password", d.Databases.RevealPassword)
+	mgr.GET("/accounts/:id/databases/:dbid/adminer", d.Databases.AdminerHandoff)
+	mgr.GET("/accounts/:id/ftp", d.FTP.List)
+	mgr.POST("/accounts/:id/ftp", d.FTP.Create)
+	mgr.DELETE("/accounts/:id/ftp/:ftpid", d.FTP.Delete)
+	mgr.GET("/accounts/:id/ftp/:ftpid/password", d.FTP.RevealPassword)
+	mgr.GET("/accounts/:id/files", d.FileManager.List)
+	mgr.DELETE("/accounts/:id/files", d.FileManager.Delete)
+	mgr.POST("/accounts/:id/files/dir", d.FileManager.Mkdir)
+	mgr.POST("/accounts/:id/files/rename", d.FileManager.Rename)
+	mgr.GET("/accounts/:id/file", d.FileManager.ReadFile)
+	mgr.PUT("/accounts/:id/file", d.FileManager.WriteFile)
 
 	return r
 }

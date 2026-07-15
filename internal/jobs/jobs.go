@@ -30,6 +30,8 @@ const (
 	TypePHPRuntime       = "php.runtime"         // payload: PHPRuntimePayload
 	TypeDBCreate         = "db.create"           // payload: DBCreatePayload
 	TypeDBDrop           = "db.drop"             // payload: DBDropPayload
+	TypeFTPCreate        = "ftp.create"          // payload: FTPCreatePayload
+	TypeFTPDelete        = "ftp.delete"          // payload: FTPDeletePayload
 )
 
 // Task is the wire format published to JetStream.
@@ -124,10 +126,26 @@ type DBDropPayload struct {
 	DBHost string `json:"db_host"`
 }
 
+// FTPCreatePayload provisions a Pure-FTPd virtual user bound to the account's
+// system user + home. The home directory is derived agent-side from the distro
+// path layout (no hardcoded paths in Core) and returned in metadata alongside
+// the generated password (both secret-free in the payload itself).
+type FTPCreatePayload struct {
+	Username   string `json:"username"`    // namespaced ftp login
+	SystemUser string `json:"system_user"` // owning account system user (uid/gid map)
+}
+
+// FTPDeletePayload removes a Pure-FTPd virtual user.
+type FTPDeletePayload struct {
+	Username string `json:"username"`
+}
+
 // Result metadata keys.
 const (
 	MetaSSLNotAfter = "ssl_not_after" // RFC3339 certificate expiry (ssl.issue)
 	MetaDBPassword  = "db_password"   // generated DB password (db.create) — secret, never logged/audited
+	MetaFTPPassword = "ftp_password"  // generated FTP password (ftp.create) — secret
+	MetaFTPHome     = "ftp_home"      // agent-derived home dir (ftp.create)
 )
 
 // ValidType reports whether the task type is known to this build. Core
@@ -135,7 +153,7 @@ const (
 // on every agent redelivery.
 func ValidType(t string) bool {
 	switch t {
-	case TypeNoop, TypeSystemUserCreate, TypeSystemUserRemove, TypeSiteProvision, TypeSiteDeprovision, TypeSSLIssue, TypePHPVersionChange, TypeServiceControl, TypePHPRuntime, TypeDBCreate, TypeDBDrop:
+	case TypeNoop, TypeSystemUserCreate, TypeSystemUserRemove, TypeSiteProvision, TypeSiteDeprovision, TypeSSLIssue, TypePHPVersionChange, TypeServiceControl, TypePHPRuntime, TypeDBCreate, TypeDBDrop, TypeFTPCreate, TypeFTPDelete:
 		return true
 	}
 	return false

@@ -5,7 +5,7 @@ description: Safety rules for any code touching user files — File Manager, FTP
 
 # Filesystem Operations Safety
 
-> **Status: design-intent (pre-implementation).** Grounded in plan.md Sections 4B/7 (File Manager, isolation model). Lands in Phase 4. This is the highest-risk surface in the product — a bug here is a cross-account breach. Verify against code as it lands, updating in the same PR. Read [[linux-system-integration]].
+> **Status: code-grounded (Phase 4, shipped).** The File Manager is implemented in `internal/filemanager`: `CleanRel` neutralises traversal (unit-tested), `safePath` does a symlink-resolved under-root re-check, and every op runs **as the account uid/gid** via `setfsuid`/`setfsgid` on a locked OS thread (refuses uid 0). Transport is NATS request-reply (`Subject`); Core proxies via `internal/api/filemanager_handler.go`. FTP (`internal/ftp`) maps virtual users to the account uid/gid + home. **Still to add** (this skill's remaining rules): archive/zip-slip extraction guards and disk/inode **quota** enforcement (the size caps exist; package-quota checks do not yet). This remains the highest-risk surface — a bug here is a cross-account breach. Read [[linux-system-integration]].
 
 ## Path-traversal prevention (mandatory on every path input)
 

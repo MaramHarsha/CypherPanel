@@ -26,6 +26,7 @@ type Server struct {
 	Tasks     *store.Tasks
 	Accounts  *store.Accounts
 	Databases *store.Databases
+	FTP       *store.FTPAccounts
 	Events    *events.Bus
 	Audit     *audit.Logger
 	// Crypt encrypts secrets returned in task metadata (DB passwords) before
@@ -140,6 +141,11 @@ func (s *Server) applyAccountTransition(ctx context.Context, taskID, result stri
 		s.applyDBResult(ctx, task, result, meta)
 		return
 	}
+	// FTP tasks drive the ftp_account record, keyed by username.
+	if task.Type == "ftp.create" || task.Type == "ftp.delete" {
+		s.applyFTPResult(ctx, task, result, meta)
+		return
+	}
 
 	var terr error
 	var subject string
@@ -211,6 +217,55 @@ func (s *Server) applyDBResult(ctx context.Context, task *store.Task, result str
 		_ = s.Databases.Delete(ctx, rec.ID)
 	} else {
 		_ = s.Databases.SetStatus(ctx, rec.ID, "failed")
+	}
+}
+
+// applyFTPResult applies an FTP task's outcome to its record (keyed by the
+// username in the payload). On successful create the generated password is
+// encrypted and the agent-derived home dir stored; never logged.
+func (s *Server) applyFTPResult(ctx context.Context, task *store.Task, result string, meta map[string]string) {
+	var username string
+	switch task.Type {
+	case "ftp.create":
+		var p jobs.FTPCreatePayload
+		if err := json.Unmarshal(task.Payload, &p); err != nil {
+			return
+		}
+		username = p.Username
+	case "ftp.delete":
+		var p jobs.FTPDeletePayload
+		if err := json.Unmarshal(task.Payload, &p); err != nil {
+			return
+		}
+		username = p.Username
+	}
+
+	rec, err := s.FTP.GetByUsername(ctx, username)
+	if err != nil {
+		return
+	}
+
+	if task.Type == "ftp.create" {
+		if result != "succeeded" {
+			_ = s.FTP.SetStatus(ctx, rec.ID, "failed")
+			return
+		}
+		var enc []byte
+		if pw := meta[jobs.MetaFTPPassword]; pw != "" && s.Crypt != nil {
+			if e, cerr := s.Crypt.Encrypt([]byte(pw)); cerr == nil {
+				enc = e
+			}
+		}
+		if err := s.FTP.SetActive(ctx, rec.ID, meta[jobs.MetaFTPHome], enc); err != nil {
+			slog.Error("activating ftp account", "ftp_id", rec.ID, "error", err)
+		}
+		return
+	}
+
+	if result == "succeeded" {
+		_ = s.FTP.Delete(ctx, rec.ID)
+	} else {
+		_ = s.FTP.SetStatus(ctx, rec.ID, "failed")
 	}
 }
 

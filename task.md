@@ -12,7 +12,7 @@
 | **1** | Core Foundation & Agent Comms | ✅ Complete (NATS server-side auth re-homed to the Phase 6 installer) |
 | **2** | Admin Plane & Provisioning + UI Shell | ✅ Complete (service control, server detail/remove, reseller shell all landed) |
 | **3** | Web Server & PHP Management | ✅ Complete (DNS-01 *live* solver awaits Phase 5 PowerDNS; selection + seam done) |
-| **4** | Files, FTP, & Databases | 🟨 In progress |
+| **4** | Files, FTP, & Databases | ✅ Complete (MariaDB, Pure-FTPd, File Manager, Adminer handoff) |
 | **5** | Email & DNS Servers | ⬜ Not started |
 | **6** | Logging, Auditing, & Hardening | ⬜ Not started |
 | — | Post-MVP (`upcoming-features.md`) | ⬜ After MVP |
@@ -137,14 +137,17 @@
 - [ ] Wire the PowerDNS DNS-01 provider into `acme.Issuer.SetDNSProvider` — lands with Phase 5 DNS management
 - [x] **Phase 3 skills batch** (catalog #12-14): `agent-config-generators` + `php-runtime-management` + `ssl-acme` *(now code-grounded)*
 
-## Phase 4 — Files, FTP, & Databases 🟨
+## Phase 4 — Files, FTP, & Databases ✅
 
 - [x] **MariaDB database provisioning** (§4B, MVP default): `internal/usersdb` **adapter** (`Manager` interface — MariaDB impl via go-sql-driver, PostgreSQL adapter can drop in later) with **idempotent** provision (CREATE DB/USER IF NOT EXISTS + ALTER USER to re-assert password + **least-privilege** `GRANT ALL ON <db>.*` only) and drop; identifiers regex-guarded against injection. `db.create`/`db.drop` agent tasks (enabled by `CYPHER_AGENT_MARIADB_DSN`). **Secret-safe credential flow**: the password is **generated on the agent** (never in a task payload/stream), returned as result metadata, **encrypted at rest** with AES-256-GCM (`internal/secretcrypt`, key from `CYPHER_DB_ENCRYPTION_KEY`, dev-derived from JWT secret) — no plaintext column. Migration 000010 (`account_databases`); account-scoped REST (list/create/delete + one-shot password reveal) with **package `databases` limit** enforcement; databases dialog in the accounts UI (create/status/reveal/delete). Unit tests: secretcrypt round-trip/tamper, usersdb identifier-injection + password safety.
   - **E2E verified** ✅ (real agent + MariaDB container): create `blog` → db + user created with **least-privilege grants** (`USAGE ON *.*` + `ALL ON <own_db>.*`, no globals); revealed password **authenticates** and the user sees only its own DB (isolation); **limit** enforced (3rd db over `databases=2` → 403); invalid name → 400; delete → db + user + record all removed.
-- [ ] Web File Manager (Next.js client + Go filesystem handler)
-- [ ] Pure-FTPd virtual users (MVP default)
-- [ ] phpMyAdmin / Adminer auto-setup
-- [x] **Phase 4 skills batch** (catalog #15-16): `filesystem-operations-safety` *(design-intent)*, `user-database-provisioning` *(now code-grounded)*
+- [x] **Pure-FTPd virtual users** (§4B, MVP default): `internal/ftp` adapter (`Manager` interface — Pure-FTPd via `pure-pw`; ProFTPD can drop in later), each virtual user mapped to the account's **system uid/gid + home** so uploads are account-owned (isolation); idempotent (userdel-then-useradd). `ftp.create`/`ftp.delete` tasks; **secret-safe** (agent generates the password → result metadata → AES-GCM encrypted at rest); home dir **agent-derived** from the distro layout (no hardcoded path in Core). Migration 000011; account-scoped REST (list/create/delete/reveal); FTP dialog in the accounts UI.
+  - **E2E verified** ✅ (fake `pure-pw` logging invocations): create → 202 → task succeeded → log recorded `useradd cyph_..._deploy -u cyph_... -g cyph_... -d /home/cyph_... -m`; `home_dir` returned `/home/cyph_...`; encrypted password reveals (32 chars).
+- [x] **Web File Manager** (§4B, highest-risk surface): Core↔Agent **NATS request-reply** transport (`filemanager.Subject`), synchronous FS ops (list/read/write/mkdir/delete/rename) run on the agent **as the account uid/gid** (`setfsuid`/`setfsgid` on a locked OS thread — OS-enforced isolation, refuses uid/gid 0). **Path-traversal defence**: `CleanRel` neutralises `..`/absolute/backslash inputs (pure, unit-tested), then a **symlink-resolved under-root re-check** before every op. Account-scoped REST + a full file-browser UI (breadcrumb nav, tree, in-browser text editor, new file/folder, delete).
+  - **E2E verified** ✅ (real agent + provisioned account): list/mkdir/write/read all work; created file **owned by the account user, not root** (operate-as-user confirmed); `../../../../etc/passwd` resolved to `/home/<acct>/etc/passwd` — **never escaped** to the real `/etc` (traversal blocked).
+- [x] **phpMyAdmin / Adminer handoff** (§4B): one-click, auto-login **Adminer** handoff (`GET /admin/accounts/:id/databases/:dbid/adminer`, `CYPHER_ADMINER_URL`) — the UI builds an auto-submitting POST form with the account's DB credentials. **Scoped by construction**: the DB user is least-privilege (own database only), so the session can't reach other accounts' data; audited without the secret; 503 when unconfigured.
+  - **E2E verified** ✅: handoff returns `url` + `driver=server` + `server=localhost` + least-privilege `username`/`db` + decrypted password.
+- [x] **Phase 4 skills batch** (catalog #15-16): `filesystem-operations-safety` + `user-database-provisioning` *(both now code-grounded)*
 
 ## Phase 5 — Email & DNS Servers ⬜
 

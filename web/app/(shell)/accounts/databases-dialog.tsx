@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Database, Eye, Plus, Trash2 } from "lucide-react";
+import { Database, ExternalLink, Eye, Plus, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
+  adminerHandoff,
   ApiError,
   createDatabase,
   deleteDatabase,
@@ -22,6 +23,36 @@ import {
   type AccountInfo,
   type DBCredentials,
 } from "@/lib/api";
+
+// openAdminer builds a one-shot auto-submitting POST form and opens Adminer in
+// a new tab, logged in with the account's (least-privilege) DB credentials.
+function openAdminer(h: {
+  url: string;
+  driver: string;
+  server: string;
+  username: string;
+  password: string;
+  db: string;
+}) {
+  const win = window.open("about:blank", "_blank");
+  if (!win) return;
+  const fields: Record<string, string> = {
+    "auth[driver]": h.driver,
+    "auth[server]": h.server,
+    "auth[username]": h.username,
+    "auth[password]": h.password,
+    "auth[db]": h.db,
+  };
+  const inputs = Object.entries(fields)
+    .map(
+      ([k, v]) =>
+        `<input type="hidden" name="${k}" value="${v.replace(/"/g, "&quot;")}">`,
+    )
+    .join("");
+  win.document.write(
+    `<form id="a" method="post" action="${h.url}">${inputs}</form><script>document.getElementById('a').submit()</script>`,
+  );
+}
 
 export function DatabasesDialog({ account }: { account: AccountInfo }) {
   const qc = useQueryClient();
@@ -58,6 +89,13 @@ export function DatabasesDialog({ account }: { account: AccountInfo }) {
       revealDBPassword(account.id!, id).then((c) => ({ ...c, db })),
     onSuccess: (c) => setCreds(c),
     onError: (e) => setError(e instanceof ApiError ? e.message : "Could not reveal password"),
+  });
+
+  const adminer = useMutation({
+    mutationFn: (id: string) => adminerHandoff(account.id!, id),
+    onSuccess: (h) => openAdminer(h),
+    onError: (e) =>
+      setError(e instanceof ApiError ? e.message : "Adminer is not configured"),
   });
 
   return (
@@ -115,6 +153,16 @@ export function DatabasesDialog({ account }: { account: AccountInfo }) {
                   <Badge variant={d.status === "active" ? "success" : "secondary"}>
                     {d.status}
                   </Badge>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Open in Adminer"
+                    title="Open in Adminer"
+                    disabled={d.status !== "active" || adminer.isPending}
+                    onClick={() => adminer.mutate(d.id!)}
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                  </Button>
                   <Button
                     variant="ghost"
                     size="icon-sm"

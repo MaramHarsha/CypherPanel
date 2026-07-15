@@ -20,13 +20,14 @@ import (
 // DatabasesHandler manages hosted-account MariaDB databases. Actions are scoped
 // to the caller's owned accounts (root = all, reseller = own pool).
 type DatabasesHandler struct {
-	Accounts  *store.Accounts
-	Databases *store.Databases
-	Packages  *store.Packages
-	Tasks     *store.Tasks
-	Publisher *jobs.Publisher
-	Audit     *audit.Logger
-	Crypt     *secretcrypt.Cipher
+	Accounts   *store.Accounts
+	Databases  *store.Databases
+	Packages   *store.Packages
+	Tasks      *store.Tasks
+	Publisher  *jobs.Publisher
+	Audit      *audit.Logger
+	Crypt      *secretcrypt.Cipher
+	AdminerURL string // where Adminer is served ("" = handoff disabled)
 }
 
 // dbNameRe validates the operator-supplied database suffix (namespaced with the
@@ -248,6 +249,66 @@ func (h *DatabasesHandler) RevealPassword(c *gin.Context) {
 		Detail: map[string]any{"database": rec.Name}, IP: c.ClientIP(),
 	})
 	c.JSON(http.StatusOK, gin.H{"username": rec.DBUser, "host": rec.DBHost, "password": string(plain)})
+}
+
+// AdminerHandoff returns a one-click, auto-login payload for opening the
+// account's database in Adminer. Scoped by design: the DB user is
+// least-privilege (only its own database), so the Adminer session can never
+// reach another account's data. Audited (without the secret).
+//
+//	@Summary  One-click Adminer handoff for a database
+//	@Tags     admin
+//	@Produce  json
+//	@Param    id   path string true "Account ID"
+//	@Param    dbid path string true "Database ID"
+//	@Success  200 {object} map[string]string
+//	@Failure  404 {object} map[string]string
+//	@Failure  409 {object} map[string]string
+//	@Failure  503 {object} map[string]string
+//	@Security BearerAuth
+//	@Router   /admin/accounts/{id}/databases/{dbid}/adminer [get]
+func (h *DatabasesHandler) AdminerHandoff(c *gin.Context) {
+	account := h.scopedAccount(c)
+	if account == nil {
+		return
+	}
+	if h.AdminerURL == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Adminer is not configured on this server"})
+		return
+	}
+	claims := auth.ClaimsFrom(c)
+	rec, err := h.Databases.GetByID(c.Request.Context(), c.Param("dbid"))
+	if errors.Is(err, store.ErrNotFound) || (err == nil && rec.AccountID != account.ID) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "database not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	if len(rec.PasswordEnc) == 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "database not ready"})
+		return
+	}
+	plain, err := h.Crypt.Decrypt(rec.PasswordEnc)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decrypt password"})
+		return
+	}
+	_ = h.Audit.Record(c.Request.Context(), audit.Entry{
+		ActorID: claims.Subject, ActorRole: string(claims.Role),
+		Action: "database.adminer_handoff", TargetType: "account", TargetID: account.ID,
+		Detail: map[string]any{"database": rec.Name}, IP: c.ClientIP(),
+	})
+	// The UI builds an auto-submitting POST form to Adminer from these fields.
+	c.JSON(http.StatusOK, gin.H{
+		"url":      h.AdminerURL,
+		"driver":   "server", // Adminer's MySQL/MariaDB driver
+		"server":   rec.DBHost,
+		"username": rec.DBUser,
+		"password": string(plain),
+		"db":       rec.Name,
+	})
 }
 
 // dispatch records + publishes a task (mirrors AccountsHandler.dispatch).

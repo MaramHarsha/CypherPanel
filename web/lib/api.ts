@@ -225,6 +225,107 @@ export function revealDBPassword(accountId: string, dbId: string): Promise<DBCre
   );
 }
 
+export interface AdminerHandoff {
+  url: string;
+  driver: string;
+  server: string;
+  username: string;
+  password: string;
+  db: string;
+}
+
+export function adminerHandoff(accountId: string, dbId: string): Promise<AdminerHandoff> {
+  return apiFetch<AdminerHandoff>(
+    `/api/v1/admin/accounts/${accountId}/databases/${dbId}/adminer`,
+  );
+}
+
+export interface FTPInfo {
+  id: string;
+  username: string;
+  home_dir: string;
+  status: string;
+  created_at: string;
+}
+
+export function listFTP(accountId: string): Promise<FTPInfo[]> {
+  return apiFetch<FTPInfo[]>(`/api/v1/admin/accounts/${accountId}/ftp`);
+}
+
+export function createFTP(accountId: string, name: string): Promise<FTPInfo> {
+  return apiFetch<FTPInfo>(`/api/v1/admin/accounts/${accountId}/ftp`, {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+}
+
+export function deleteFTP(accountId: string, ftpId: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/admin/accounts/${accountId}/ftp/${ftpId}`, {
+    method: "DELETE",
+  });
+}
+
+export interface FTPCredentials {
+  username: string;
+  home_dir: string;
+  password: string;
+}
+
+export function revealFTPPassword(accountId: string, ftpId: string): Promise<FTPCredentials> {
+  return apiFetch<FTPCredentials>(
+    `/api/v1/admin/accounts/${accountId}/ftp/${ftpId}/password`,
+  );
+}
+
+export interface FSEntry {
+  name: string;
+  is_dir: boolean;
+  size: number;
+  mode: string;
+  mod_time: string;
+}
+
+const fmBase = (id: string) => `/api/v1/admin/accounts/${id}`;
+
+export function fmList(accountId: string, path: string): Promise<{ entries: FSEntry[] }> {
+  return apiFetch<{ entries: FSEntry[] }>(
+    `${fmBase(accountId)}/files?path=${encodeURIComponent(path)}`,
+  );
+}
+
+export function fmRead(accountId: string, path: string): Promise<{ content: string }> {
+  return apiFetch<{ content: string }>(
+    `${fmBase(accountId)}/file?path=${encodeURIComponent(path)}`,
+  );
+}
+
+export function fmWrite(accountId: string, path: string, content: string): Promise<void> {
+  return apiFetch<void>(`${fmBase(accountId)}/file`, {
+    method: "PUT",
+    body: JSON.stringify({ path, content }),
+  });
+}
+
+export function fmMkdir(accountId: string, path: string): Promise<void> {
+  return apiFetch<void>(`${fmBase(accountId)}/files/dir`, {
+    method: "POST",
+    body: JSON.stringify({ path }),
+  });
+}
+
+export function fmDelete(accountId: string, path: string): Promise<void> {
+  return apiFetch<void>(`${fmBase(accountId)}/files?path=${encodeURIComponent(path)}`, {
+    method: "DELETE",
+  });
+}
+
+export function fmRename(accountId: string, path: string, newPath: string): Promise<void> {
+  return apiFetch<void>(`${fmBase(accountId)}/files/rename`, {
+    method: "POST",
+    body: JSON.stringify({ path, new_path: newPath }),
+  });
+}
+
 export function listResellers(): Promise<ResellerInfo[]> {
   return apiFetch<ResellerInfo[]>("/api/v1/admin/resellers");
 }

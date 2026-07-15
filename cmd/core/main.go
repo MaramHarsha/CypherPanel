@@ -134,6 +134,7 @@ func run() error {
 	packagesStore := store.NewPackages(pool)
 	resellersStore := store.NewResellers(pool)
 	databasesStore := store.NewDatabases(pool)
+	ftpStore := store.NewFTPAccounts(pool)
 
 	crypt, err := secretcrypt.New(cfg.DBEncryptionKey)
 	if err != nil {
@@ -160,7 +161,13 @@ func run() error {
 		Databases: &api.DatabasesHandler{
 			Accounts: accountsStore, Databases: databasesStore, Packages: packagesStore,
 			Tasks: tasksStore, Publisher: publisher, Audit: auditLog, Crypt: crypt,
+			AdminerURL: cfg.AdminerURL,
 		},
+		FTP: &api.FTPHandler{
+			Accounts: accountsStore, FTP: ftpStore,
+			Tasks: tasksStore, Publisher: publisher, Audit: auditLog, Crypt: crypt,
+		},
+		FileManager: &api.FileManagerHandler{Accounts: accountsStore, NC: nc, Audit: auditLog},
 	})
 
 	// SSL auto-renewal: re-dispatches the idempotent ssl.issue task for certs
@@ -203,6 +210,7 @@ func run() error {
 		Tasks:     tasksStore,
 		Accounts:  accountsStore,
 		Databases: databasesStore,
+		FTP:       ftpStore,
 		Events:    eventBus,
 		Audit:     auditLog,
 		Crypt:     crypt,

@@ -40,6 +40,9 @@ type Core struct {
 	// fleet (plan.md Version Policy: resolve against php.net's supported list,
 	// don't ship an EOL set). Default is a current-branch starting point.
 	PHPVersions []string
+	// AdminerURL is where an Adminer instance is served (per-account DB admin
+	// handoff). Empty → the "Open in Adminer" action is unavailable.
+	AdminerURL string
 	// SSL auto-renewal: scan every SSLRenewInterval and renew certs expiring
 	// within SSLRenewThreshold. The threshold matches the agent's own >30-day
 	// re-issue skip guard so a due cert is actually renewed, not skipped.
@@ -92,6 +95,7 @@ func LoadCore() (Core, error) {
 		JWTSecret:         os.Getenv("CYPHER_JWT_SECRET"),
 		DefaultPHPVersion: envOr("CYPHER_DEFAULT_PHP_VERSION", "8.3"),
 		PHPVersions:       splitList(envOr("CYPHER_PHP_VERSIONS", "8.2,8.3,8.4")),
+		AdminerURL:        os.Getenv("CYPHER_ADMINER_URL"),
 		GRPCTLSCert:       os.Getenv("CYPHER_GRPC_TLS_CERT"),
 		GRPCTLSKey:        os.Getenv("CYPHER_GRPC_TLS_KEY"),
 		GRPCTLSClientCA:   os.Getenv("CYPHER_GRPC_TLS_CLIENT_CA"),

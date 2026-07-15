@@ -6,6 +6,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -23,6 +25,8 @@ import (
 	agentv1 "github.com/MaramHarsha/CypherPanel/gen/agent/v1"
 	"github.com/MaramHarsha/CypherPanel/internal/acme"
 	"github.com/MaramHarsha/CypherPanel/internal/config"
+	"github.com/MaramHarsha/CypherPanel/internal/filemanager"
+	"github.com/MaramHarsha/CypherPanel/internal/ftp"
 	"github.com/MaramHarsha/CypherPanel/internal/hoststats"
 	"github.com/MaramHarsha/CypherPanel/internal/jobs"
 	"github.com/MaramHarsha/CypherPanel/internal/paths"
@@ -96,6 +100,7 @@ func run() error {
 		sites:  platform.NewSites(),
 		vhost:  webserver.Nginx{},
 		acme:   acme.NewIssuer(cfg.ACMEDirectory, layout.ACMEAccountDir()),
+		ftp:    ftp.NewPureFTPd(), // self-checks pure-pw availability at task time
 	}
 	// User-database provisioning is available only when an admin MariaDB DSN is
 	// configured for this server; otherwise db.* tasks fail permanently.
@@ -108,6 +113,28 @@ func run() error {
 		executor.usersDB = mdb
 		slog.Info("user-database provisioning enabled (MariaDB)")
 	}
+	// File-manager request-reply: Core sends synchronous FS operations on this
+	// server's subject; the handler runs them as the account uid/gid.
+	fsHandler := &filemanager.Handler{HomeRoot: layout.AccountHome}
+	fsSub, err := nc.Subscribe(filemanager.Subject(serverID), func(msg *nats.Msg) {
+		var req filemanager.Request
+		if err := json.Unmarshal(msg.Data, &req); err != nil {
+			resp, _ := json.Marshal(filemanager.Response{Error: "bad request"})
+			_ = msg.Respond(resp)
+			return
+		}
+		out := fsHandler.Handle(req)
+		data, err := json.Marshal(out)
+		if err != nil {
+			data, _ = json.Marshal(filemanager.Response{Error: "encode failed"})
+		}
+		_ = msg.Respond(data)
+	})
+	if err != nil {
+		return fmt.Errorf("subscribing to file-manager subject: %w", err)
+	}
+	defer fsSub.Unsubscribe()
+
 	consumerErr := make(chan error, 1)
 	go func() {
 		consumerErr <- jobs.Consume(ctx, nc, serverID, executor.Handle, reportResult(client, serverID))

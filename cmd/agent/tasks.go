@@ -14,6 +14,7 @@ import (
 
 	agentv1 "github.com/MaramHarsha/CypherPanel/gen/agent/v1"
 	"github.com/MaramHarsha/CypherPanel/internal/acme"
+	"github.com/MaramHarsha/CypherPanel/internal/ftp"
 	"github.com/MaramHarsha/CypherPanel/internal/jobs"
 	"github.com/MaramHarsha/CypherPanel/internal/paths"
 	"github.com/MaramHarsha/CypherPanel/internal/phpruntime"
@@ -33,6 +34,7 @@ type taskExecutor struct {
 	vhost   webserver.VHostRenderer
 	acme    *acme.Issuer
 	usersDB usersdb.Manager // nil when no user-DB backend is configured
+	ftp     ftp.Manager
 }
 
 // Handle runs a task and returns optional result metadata (reported back with
@@ -97,6 +99,12 @@ func (e *taskExecutor) Handle(ctx context.Context, t jobs.Task) (map[string]stri
 
 	case jobs.TypeDBDrop:
 		return nil, e.dropDB(ctx, t.Payload)
+
+	case jobs.TypeFTPCreate:
+		return e.createFTP(ctx, t.Payload)
+
+	case jobs.TypeFTPDelete:
+		return nil, e.deleteFTP(ctx, t.Payload)
 
 	default:
 		// Unknown type: this agent build is older than the control plane.
@@ -244,6 +252,44 @@ func (e *taskExecutor) phpRuntime(ctx context.Context, raw []byte) error {
 		return jobs.Permanent(err)
 	}
 	return err // a package-manager failure (network, repo) is retryable
+}
+
+// createFTP provisions a Pure-FTPd virtual user. Like db.create, the password
+// is generated here (never in the payload) and returned as result metadata for
+// Core to encrypt-and-store.
+func (e *taskExecutor) createFTP(ctx context.Context, raw []byte) (map[string]string, error) {
+	var p jobs.FTPCreatePayload
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, jobs.Permanent(fmt.Errorf("invalid payload: %w", err))
+	}
+	home := e.layout.AccountHome(p.SystemUser) // distro-aware, agent-derived
+	password, err := ftp.GeneratePassword()
+	if err != nil {
+		return nil, err
+	}
+	err = e.ftp.Provision(ctx, ftp.Spec{
+		Username: p.Username, SystemUser: p.SystemUser, HomeDir: home, Password: password,
+	})
+	if errors.Is(err, ftp.ErrUnsupported) {
+		return nil, jobs.Permanent(err)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return map[string]string{jobs.MetaFTPPassword: password, jobs.MetaFTPHome: home}, nil
+}
+
+// deleteFTP removes a Pure-FTPd virtual user (idempotent).
+func (e *taskExecutor) deleteFTP(ctx context.Context, raw []byte) error {
+	var p jobs.FTPDeletePayload
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return jobs.Permanent(fmt.Errorf("invalid payload: %w", err))
+	}
+	err := e.ftp.Deprovision(ctx, p.Username)
+	if errors.Is(err, ftp.ErrUnsupported) {
+		return jobs.Permanent(err)
+	}
+	return err
 }
 
 // createDB provisions a hosted-account database + user. The password is
