@@ -5,7 +5,7 @@ description: Postfix/Dovecot mail provisioning — virtual mailbox/domain layout
 
 # Mail Stack
 
-> **Status: design-intent (pre-implementation).** Grounded in plan.md Sections 4B/5 (Postfix + Dovecot MVP default). Lands in Phase 5. Verify against code then, updating in the same PR. Read [[agent-config-generators]] and [[dns-management]] (for auth records).
+> **Status: code-grounded (Phase 5).** Virtual-mailbox provisioning is implemented: `internal/mailstore` (MariaDB `virtual_domains`/`virtual_users` behind a `Manager` interface), `mail.create`/`mail.delete` agent tasks (auth-DB row + Maildir), bcrypt hashing in Core (BLF-CRYPT compatible — plaintext never in the payload), `mail_accounts` (migration 000013) + account-scoped REST with the `email_accounts` package limit, and auto-published MX/SPF/DMARC via [[dns-management]]. Reference MTA config: `docs/mail-setup.md`. **Still to build:** the DKIM signer + per-domain key, and Rspamd. Read [[agent-config-generators]] and [[dns-management]].
 
 ## Components (MVP default)
 

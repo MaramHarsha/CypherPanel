@@ -749,6 +749,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/accounts/{id}/files/extract": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Extract a zip archive */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Account ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            /** @description Archive path */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["api.pathRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/accounts/{id}/files/rename": {
         parameters: {
             query?: never;
@@ -987,6 +1033,149 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/accounts/{id}/mail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List an account's mailboxes */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Account ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["api.mailResponse"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create a mailbox for an account */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Account ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            /** @description Mailbox */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["api.createMailRequest"];
+                };
+            };
+            responses: {
+                /** @description Accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["api.mailResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+                /** @description Forbidden */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/accounts/{id}/mail/{mailid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a mailbox */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Account ID */
+                    id: string;
+                    /** @description Mailbox ID */
+                    mailid: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
@@ -1248,6 +1437,32 @@ export interface paths {
                 };
             };
         };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/accounts/{id}/terminal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Open a web terminal for an account (WebSocket) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: never;
+        };
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2516,6 +2731,11 @@ export interface components {
         "api.createFTPRequest": {
             name: string;
         };
+        "api.createMailRequest": {
+            local_part: string;
+            password: string;
+            quota_mb?: number;
+        };
         "api.createPackageRequest": {
             limits?: components["schemas"]["api.packageLimits"];
             name: string;
@@ -2561,6 +2781,13 @@ export interface components {
         };
         "api.logoutRequest": {
             refresh_token?: string;
+        };
+        "api.mailResponse": {
+            address?: string;
+            created_at?: string;
+            id?: string;
+            quota_mb?: number;
+            status?: string;
         };
         "api.packageLimits": {
             bandwidth_mb?: number;

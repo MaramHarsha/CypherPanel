@@ -36,6 +36,7 @@ import (
 	"github.com/MaramHarsha/CypherPanel/internal/pki"
 	"github.com/MaramHarsha/CypherPanel/internal/platform"
 	"github.com/MaramHarsha/CypherPanel/internal/services"
+	"github.com/MaramHarsha/CypherPanel/internal/terminal"
 	"github.com/MaramHarsha/CypherPanel/internal/usersdb"
 	"github.com/MaramHarsha/CypherPanel/internal/webserver"
 )
@@ -171,6 +172,15 @@ func run() error {
 		return fmt.Errorf("subscribing to cron subject: %w", err)
 	}
 	defer cronSub.Unsubscribe()
+
+	// Web terminal: PTY sessions spawned as the account user, streamed over NATS.
+	termSub, err := terminal.Serve(nc, serverID)
+	if err != nil {
+		return fmt.Errorf("subscribing to terminal subject: %w", err)
+	}
+	if termSub != nil {
+		defer termSub.Unsubscribe()
+	}
 
 	consumerErr := make(chan error, 1)
 	go func() {

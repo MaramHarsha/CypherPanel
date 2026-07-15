@@ -102,6 +102,14 @@ export function hasSession(): boolean {
   return accessToken !== null || localStorage.getItem(REFRESH_KEY) !== null;
 }
 
+/** Current in-memory access token, refreshing first if absent. Used to build
+ *  the WebSocket URL for the terminal (a WS can't carry an auth header). */
+export async function accessTokenForWS(): Promise<string | null> {
+  if (accessToken) return accessToken;
+  if (await tryRefresh()) return accessToken;
+  return null;
+}
+
 export function listServers(): Promise<ServerInfo[]> {
   return apiFetch<ServerInfo[]>("/api/v1/admin/servers");
 }

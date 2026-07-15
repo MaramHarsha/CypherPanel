@@ -32,6 +32,7 @@ type Deps struct {
 	AuditLog    *AuditHandler
 	Cron        *CronHandler
 	Mail        *MailHandler
+	Terminal    *TerminalHandler
 }
 
 func NewRouter(d Deps) *gin.Engine {
@@ -66,6 +67,11 @@ func NewRouter(d Deps) *gin.Engine {
 	authLimited := v1.Group("", RateLimit(20, time.Minute))
 	authLimited.POST("/auth/login", d.Auth.Login)
 	authLimited.POST("/auth/refresh", d.Auth.Refresh)
+
+	// Web terminal (WebSocket). Self-authenticates from a query token because a
+	// browser cannot set an Authorization header on a WebSocket, so it lives
+	// outside the header-auth middleware group.
+	v1.GET("/admin/accounts/:id/terminal", d.Terminal.Serve)
 
 	// Authenticated
 	authed := v1.Group("", auth.Middleware(d.Tokens))

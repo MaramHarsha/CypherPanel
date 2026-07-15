@@ -221,6 +221,7 @@ func run() error {
 			Tasks: tasksStore, Publisher: publisher, Audit: auditLog,
 			DNS: dnsProvider, Nameservers: cfg.DNSNameservers,
 		},
+		Terminal: &api.TerminalHandler{Accounts: accountsStore, Tokens: tokens, NC: nc},
 	})
 
 	// SSL auto-renewal: re-dispatches the idempotent ssl.issue task for certs

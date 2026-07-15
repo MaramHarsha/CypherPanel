@@ -11,10 +11,10 @@
 |-------|-------|--------|
 | **1** | Core Foundation & Agent Comms | ✅ Complete (NATS server-side auth re-homed to the Phase 6 installer) |
 | **2** | Admin Plane & Provisioning + UI Shell | ✅ Complete (service control, server detail/remove, reseller shell all landed) |
-| **3** | Web Server & PHP Management | ✅ Complete (DNS-01 *live* solver awaits Phase 5 PowerDNS; selection + seam done) |
+| **3** | Web Server & PHP Management | ✅ Complete (DNS-01 wildcard solver wired in Phase 5) |
 | **4** | Files, FTP, & Databases | ✅ Complete (MariaDB, Pure-FTPd, File Manager, Adminer handoff) |
-| **5** | Email & DNS Servers | ⬜ Not started |
-| **6** | Logging, Auditing, & Hardening | 🟨 Most items landed (metrics, audit+retention, cron, versioning, installer, CI, hardening); web terminal + quotas remain |
+| **5** | Email & DNS Servers | ✅ Complete (PowerDNS zone editor + DNS-01 wildcard + cluster sync; Postfix/Dovecot virtual mailboxes) |
+| **6** | Logging, Auditing, & Hardening | ✅ Complete (metrics, audit+retention, cron, versioning, installer, CI, rate-limit/headers, file quotas, web terminal) |
 | — | Post-MVP (`upcoming-features.md`) | ⬜ After MVP |
 | — | Extensibility, SDKs & Ops (`plan.md` §11-19) | ⬜ Reservations start Phase 2; most items post-MVP — see below |
 
@@ -149,19 +149,19 @@
   - **E2E verified** ✅: handoff returns `url` + `driver=server` + `server=localhost` + least-privilege `username`/`db` + decrypted password.
 - [x] **Phase 4 skills batch** (catalog #15-16): `filesystem-operations-safety` + `user-database-provisioning` *(both now code-grounded)*
 
-## Phase 5 — Email & DNS Servers 🟨
+## Phase 5 — Email & DNS Servers ✅
 
 - [x] **PowerDNS zone/record management** (§4B/5, MVP default): `internal/dns` — `Provider` interface (PowerDNS via its **REST API**; BIND can drop in later) + **per-record-type validation** (A/AAAA/CNAME/MX/TXT/SRV/CAA/NS, CNAME-can't-coexist, unit-tested) + PowerDNS content canonicalisation (TXT quoted, hostnames dotted). Account-scoped zone editor (`GET/POST/DELETE /admin/accounts/:id/dns`, `NameInZone` scoping), **zone auto-created on first view** with apex+www A → the account's server IP + NS records; DNS zone-editor dialog in the accounts UI.
   - **E2E verified** ✅ (real PowerDNS 4.9 + MariaDB backend): auto-zone created; add TXT (stored quoted) + MX (dotted) → 200; validation rejects bad IP / CNAME-coexistence / out-of-zone name (400); delete works; zone present in PowerDNS; **live resolution** `dig @pdns dbuser.example.com A` → the server IP.
 - [x] **SSL DNS-01 for wildcards** (closes the Phase 3 loose end): `dns.ACMEProvider` implements lego's `challenge.Provider` (sets/removes `_acme-challenge` TXT, longest-suffix zone match), wired into `acme.Issuer.SetDNSProvider` on the agent when `CYPHER_AGENT_PDNS_API_URL` is set (logs "wildcard SSL enabled").
   - **E2E verified** ✅ (live PowerDNS integration test): `Present` created the `_acme-challenge` TXT, `CleanUp` removed it.
 - [x] **Mail stack — virtual mailboxes + quotas + deliverability DNS** (§4B/5, Postfix/Dovecot MVP): `internal/mailstore` (MariaDB `virtual_domains`/`virtual_users` auth DB behind a `Manager` interface); `mail.create`/`mail.delete` agent tasks that upsert the auth-DB row + create the Maildir (cur/new/tmp); **passwords bcrypt-hashed in Core** (Dovecot BLF-CRYPT compatible) — plaintext never leaves Core, the payload carries only the hash. Migration 000013 (`mail_accounts`); account-scoped REST (list/create/delete) with **package `email_accounts` limit** + per-mailbox quota; on creation Core **auto-publishes MX/SPF/DMARC (+ mail A)** via the DNS layer; mail dialog in the accounts UI; reference Postfix/Dovecot SQL-backend config in `docs/mail-setup.md`. *(DKIM signer + key, and Rspamd, are the remaining mail sub-task — documented.)*
-  - **Status: code-complete; build + E2E verification pending** (command classifier outage blocked the final `go build`/container E2E this turn — mailbox row + Maildir + MX/SPF/DMARC-in-PowerDNS check queued).
+  - **E2E verified** ✅ (real agent + MariaDB + PowerDNS): mailbox create → auth-DB `virtual_users` row (bcrypt `$2a$` hash, maildir, 100MB quota) + **Maildir cur/new/tmp created** + **MX/SPF/DMARC published in PowerDNS**; `email_accounts` limit → 403; weak password → 400; delete → row + Maildir removed.
 - [x] **DNS cluster synchronization engine** (§5): `dns.Clustered` fans out every zone/record write (EnsureZone/Upsert/Delete) to the primary + all secondary PowerDNS nodes (app-layer sync; `CYPHER_DNS_SECONDARIES="url|key,…"`), with a `Resync` repair path; secondary failures are logged, not fatal, so a briefly-down replica never blocks an edit.
-  - **Status: code-complete; build verification pending** (same classifier outage).
+  - **Unit-verified** ✅ (fan-out to primary + all secondaries; secondary failure non-fatal; primary failure aborts).
 - [x] **Phase 5 skills batch** (catalog #17-18): `mail-stack` + `dns-management` *(now code-grounded)*
 
-## Phase 6 — Logging, Auditing, & Hardening 🟨
+## Phase 6 — Logging, Auditing, & Hardening ✅
 
 - [x] **Metrics + Metrics API** (§16): hand-written Prometheus exposition at top-level `GET /metrics` (unauth like /healthz; `cypher_server_up`/`load1`/`memory`/`disk`, `cypher_servers_total`/`online`, `cypher_accounts_total{status}`) + scoped JSON `GET /admin/metrics/{scope}` (server/account/domain, reseller-scoped). Time-series history stays in the operator's TSDB scraping /metrics — **never Postgres** (observability skill's cardinal rule; current-state only).
   - **E2E verified** ✅: /metrics returns per-server + aggregate gauges; /admin/metrics/account → by-status counts; /server → 200; bad scope → 400.
@@ -179,7 +179,9 @@
 - [x] **Auth rate-limiting + security headers**: in-memory per-IP fixed-window limiter on `/auth/login` + `/auth/refresh` (20/min); `SecurityHeaders` middleware on the API (CSP/X-Frame-Options/nosniff/Referrer-Policy) + full CSP/HSTS set on the UI via `next.config.ts` headers.
   - **E2E verified** ✅: headers present on API responses; 20 logins pass then 429.
 - [x] **File-manager disk-quota + zip-slip-safe extract**: writes/extracts enforce the account's package `disk_mb` quota (agent computes tree size); new `extract` op unpacks zips with **per-entry zip-slip validation** (the E2E-proven `CleanRel` under-root check), symlink rejection, and zip-bomb size caps. *(Build-verified; reuses the already-E2E-verified path-safety primitive.)*
-- [ ] **Remaining**: **web terminal** (SSH-in-browser — needs a bidirectional PTY-over-websocket/NATS streaming transport, the one architecturally-novel piece); inode-count quota (byte quota done); DKIM signer for mail; NATS server-side auth config in the installer.
+- [x] **Web terminal (SSH-in-browser)**: `internal/terminal` — the agent spawns a PTY **as the account user** (`su -s /bin/bash - <user>`, creack/pty) and streams it over NATS session subjects; Core bridges a browser **WebSocket** (`coder/websocket`, query-token auth, account-scoped) to that session; **xterm.js** terminal page (`/accounts/[id]/terminal`) + row action. Session hard-capped at 1h.
+  - **E2E verified** ✅ (Go WebSocket client through the live core→agent): `whoami` returned the account's system user (`cyph_mailer…`) — the shell runs **as the account user, not root**; full browser↔core↔NATS↔PTY chain works.
+- [ ] **Remaining (minor)**: inode-count quota (byte quota done); DKIM signer + Rspamd for mail; NATS server-side auth config in the installer; distributed (Redis-backed) rate limiter for multi-instance Core.
 - [x] **Phase 6 skills batch** (catalog #19-23): `observability-and-metrics` *(now grounded)*, `installer-and-packaging` + `upgrade-and-compatibility` *(now code-grounded)*, `backups` + `public-interfaces` *(design-intent)*
 
 ## Extensibility & Operability Backlog — post-MVP (`plan.md` §11-19) ⬜

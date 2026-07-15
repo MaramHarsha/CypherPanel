@@ -119,6 +119,25 @@
                 ],
                 "type": "object"
             },
+            "api.createMailRequest": {
+                "properties": {
+                    "local_part": {
+                        "type": "string"
+                    },
+                    "password": {
+                        "minLength": 8,
+                        "type": "string"
+                    },
+                    "quota_mb": {
+                        "type": "integer"
+                    }
+                },
+                "required": [
+                    "local_part",
+                    "password"
+                ],
+                "type": "object"
+            },
             "api.createPackageRequest": {
                 "properties": {
                     "limits": {
@@ -265,6 +284,26 @@
             "api.logoutRequest": {
                 "properties": {
                     "refresh_token": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "api.mailResponse": {
+                "properties": {
+                    "address": {
+                        "type": "string"
+                    },
+                    "created_at": {
+                        "type": "string"
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "quota_mb": {
+                        "type": "integer"
+                    },
+                    "status": {
                         "type": "string"
                     }
                 },
@@ -1972,6 +2011,186 @@
                 ]
             }
         },
+        "/admin/accounts/{id}/mail": {
+            "get": {
+                "parameters": [
+                    {
+                        "description": "Account ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "items": {
+                                        "$ref": "#/components/schemas/api.mailResponse"
+                                    },
+                                    "type": "array"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "List an account's mailboxes",
+                "tags": [
+                    "admin"
+                ]
+            },
+            "post": {
+                "parameters": [
+                    {
+                        "description": "Account ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/api.createMailRequest",
+                                        "summary": "request",
+                                        "description": "Mailbox"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "Mailbox",
+                    "required": true
+                },
+                "responses": {
+                    "202": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/api.mailResponse"
+                                }
+                            }
+                        },
+                        "description": "Accepted"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Forbidden"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Create a mailbox for an account",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
+        "/admin/accounts/{id}/mail/{mailid}": {
+            "delete": {
+                "parameters": [
+                    {
+                        "description": "Account ID",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Mailbox ID",
+                        "in": "path",
+                        "name": "mailid",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Accepted"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Delete a mailbox",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
         "/admin/accounts/{id}/php-settings": {
             "patch": {
                 "parameters": [
@@ -2265,6 +2484,15 @@
                     }
                 ],
                 "summary": "Suspend an account (root admin only)",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
+        "/admin/accounts/{id}/terminal": {
+            "get": {
+                "responses": null,
+                "summary": "Open a web terminal for an account (WebSocket)",
                 "tags": [
                     "admin"
                 ]

@@ -3,6 +3,8 @@ module github.com/MaramHarsha/CypherPanel
 go 1.26.4
 
 require (
+	github.com/coder/websocket v1.8.15
+	github.com/creack/pty v1.1.24
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-acme/lego/v4 v4.35.2
 	github.com/go-sql-driver/mysql v1.10.0

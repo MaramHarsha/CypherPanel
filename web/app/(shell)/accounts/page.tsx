@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { Ban, CirclePlay, FolderTree, Lock, LockOpen, Plus, Trash2, Users } from "lucide-react";
+import { Ban, CirclePlay, FolderTree, Lock, LockOpen, Plus, SquareTerminal, Trash2, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -353,14 +353,24 @@ export default function AccountsPage() {
                       <td className="py-2.5 pr-4">
                         <div className="flex justify-end gap-1">
                           {a.status === "active" && (
-                            <Link
-                              href={`/accounts/${a.id}/files`}
-                              aria-label="File manager"
-                              title="File manager"
-                              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-foreground transition-colors hover:bg-muted"
-                            >
-                              <FolderTree className="h-4 w-4" />
-                            </Link>
+                            <>
+                              <Link
+                                href={`/accounts/${a.id}/files`}
+                                aria-label="File manager"
+                                title="File manager"
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-foreground transition-colors hover:bg-muted"
+                              >
+                                <FolderTree className="h-4 w-4" />
+                              </Link>
+                              <Link
+                                href={`/accounts/${a.id}/terminal`}
+                                aria-label="Terminal"
+                                title="Terminal"
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-foreground transition-colors hover:bg-muted"
+                              >
+                                <SquareTerminal className="h-4 w-4" />
+                              </Link>
+                            </>
                           )}
                           <DatabasesDialog account={a} />
                           <FTPDialog account={a} />
