@@ -19,6 +19,9 @@ node_modules/
 *.key
 *.crt
 
+# Reference clones of other open-source hosting panels (research only, not part of this repo)
+/Website-references/
+
 # Editor / OS noise
 .idea/
 .vscode/
