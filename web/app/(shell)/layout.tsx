@@ -4,44 +4,13 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import {
-  LayoutDashboard,
-  LogOut,
-  Package,
-  ScrollText,
-  Server,
-  Shield,
-  Store,
-  Users,
-} from "lucide-react";
+import { LogOut, Search, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { CommandPalette } from "@/components/command-palette";
+import { visibleNavGroups } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 import { getMe, hasSession, logout } from "@/lib/api";
-
-// adminOnly items are hidden from resellers (fleet infrastructure + managing
-// other resellers are root-admin concerns; the API enforces this too).
-const navGroups = [
-  {
-    label: "Overview",
-    items: [{ href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, adminOnly: false }],
-  },
-  {
-    label: "Infrastructure",
-    items: [
-      { href: "/servers", label: "Servers", icon: Server, adminOnly: true },
-      { href: "/audit", label: "Audit log", icon: ScrollText, adminOnly: true },
-    ],
-  },
-  {
-    label: "Hosting",
-    items: [
-      { href: "/packages", label: "Packages", icon: Package, adminOnly: false },
-      { href: "/accounts", label: "Accounts", icon: Users, adminOnly: false },
-      { href: "/resellers", label: "Resellers", icon: Store, adminOnly: true },
-    ],
-  },
-] as const;
 
 function Brand() {
   return (
@@ -60,9 +29,7 @@ function Brand() {
 }
 
 function NavLinks({ pathname, isAdmin }: { pathname: string; isAdmin: boolean }) {
-  const groups = navGroups
-    .map((g) => ({ ...g, items: g.items.filter((i) => isAdmin || !i.adminOnly) }))
-    .filter((g) => g.items.length > 0);
+  const groups = visibleNavGroups(isAdmin);
   return (
     <nav className="flex flex-1 flex-col gap-5 overflow-y-auto px-3 py-4">
       {groups.map((group) => (
@@ -140,6 +107,7 @@ export default function ShellLayout({ children }: { children: React.ReactNode })
   const router = useRouter();
   const pathname = usePathname();
   const [ready, setReady] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: getMe, enabled: ready });
   const isAdmin = me?.role === "root_admin";
 
@@ -152,6 +120,19 @@ export default function ShellLayout({ children }: { children: React.ReactNode })
       setReady(true);
     }
   }, [router]);
+
+  // Global command-palette shortcut (Design.md §5) — the escape hatch for a
+  // deep feature set, so it needs to work from anywhere in the shell.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key.toLowerCase() === "k" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   if (!ready) return null;
 
@@ -171,7 +152,28 @@ export default function ShellLayout({ children }: { children: React.ReactNode })
             <Shield className="h-5 w-5 text-primary" />
             CypherPanel
           </div>
+          <button
+            type="button"
+            onClick={() => setPaletteOpen(true)}
+            className="hidden items-center gap-2 rounded-lg border border-input bg-muted/40 px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted sm:flex sm:w-64 md:w-80"
+          >
+            <Search className="h-4 w-4 shrink-0" />
+            <span className="flex-1 text-left">Search…</span>
+            <kbd className="pointer-events-none inline-flex h-5 shrink-0 select-none items-center gap-0.5 rounded border border-border bg-background px-1.5 font-mono text-[10px] font-medium text-muted-foreground">
+              Ctrl K
+            </kbd>
+          </button>
           <div className="ml-auto flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Search"
+              title="Search (Ctrl K)"
+              className="sm:hidden"
+              onClick={() => setPaletteOpen(true)}
+            >
+              <Search className="h-[18px] w-[18px]" />
+            </Button>
             <ThemeToggle />
           </div>
         </header>
@@ -179,6 +181,8 @@ export default function ShellLayout({ children }: { children: React.ReactNode })
           <div className="mx-auto w-full max-w-7xl">{children}</div>
         </main>
       </div>
+
+      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} isAdmin={isAdmin} />
     </div>
   );
 }

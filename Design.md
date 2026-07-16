@@ -28,9 +28,9 @@ For an open-source cPanel challenger, the UI is not cosmetic — it's the primar
 
 ## 5. Layout & Navigation
 
-- **Persistent, collapsible left sidebar**, grouped by domain area (Domains, Files, Databases, Email, Security, Advanced) + breadcrumbs. This directly replaces cPanel's icon-grid homepage, which forces a full navigation for every single action.
+- **Persistent, collapsible left sidebar** for the admin/WHM-equivalent shell (fleet/servers/packages/resellers/accounts list), grouped by domain area + breadcrumbs — this is the top-level navigation an admin uses to get *to* an account in the first place.
 - **Command palette (Ctrl/Cmd+K)** — fuzzy search across every feature, domain, database, and email account (e.g. "pma" → phpMyAdmin for database X, "ssl example.com" → that domain's cert manager). This is deliberately the single highest-leverage feature for making the panel feel modern, and it's the direct answer to "cPanel has 100 features and I can't find any of them."
-- **Separate Admin and User shells** — the WHM-equivalent (fleet/servers/packages/resellers) and cPanel-equivalent (one account's hosting) share the design system and component library, but are distinct navigation structures. An admin managing 200 nodes and an end user managing one WordPress site have opposite information-density needs — don't force one nav shape onto both.
+- **Separate Admin and User shells, and they look genuinely different, not just differently populated.** The WHM-equivalent (fleet/servers/packages/resellers, the sidebar above) and the cPanel-equivalent (one account's hosting) share the design system and component library but are distinct navigation *shapes*: an admin managing 200 nodes needs the dense sidebar+table; a single account's hosting features (`/accounts/[id]`, per `web/app/(shell)/accounts/[id]/page.tsx`) instead get a **big-tile icon grid landing page** — one large, clearly labeled card per feature (File Manager, Databases, Email, FTP, DNS, Cron, PHP), each linking to its own full page, matching real cPanel and every other open-source panel researched. This is the one place a cPanel-style icon grid is the *right* call, not the anti-pattern the admin-shell sidebar above replaces — don't collapse these back into dialogs or cram them into the admin accounts table as row-icons; that WHM-style density is exactly what a single account's owner shouldn't have to navigate.
 - Shared `web/components/page-header.tsx` for consistent page tops across every screen.
 
 ### Navigation anti-patterns to actively avoid
@@ -43,7 +43,20 @@ For an open-source cPanel challenger, the UI is not cosmetic — it's the primar
 - **No near-duplicate/confusingly-named menu items** competing for attention (e.g. three separate "SSL" entries, three "backup" systems).
 - The command palette above exists specifically as the escape hatch for a deep feature set — build it early rather than retrofitting once the nav is already too deep to search.
 
-## 6. Interaction Patterns
+## 6. Option & Form Design
+
+Section 5 is about finding a feature; this section is about actually *using* it once you're there — the level the "hard to select options" complaint that motivated this whole project actually lives at. Verified against the same 7 cloned competitor panels, at the field level rather than the navigation level (full findings: project memory `competitor-panel-ux-research`, applied concretely in `web/app/(shell)/accounts/[id]/php/page.tsx`, `.../dns/page.tsx`, `.../cron/page.tsx`, and `packages/page.tsx` — the first three were originally built as dialogs and later converted to standalone pages per Section 5's per-account icon-grid pattern, but the option-level UX inside them is unchanged by that move).
+
+- **Plain-language labels, not raw config keys.** A field's primary label is what it does in plain English ("Memory limit"), never the underlying directive name (`memory_limit`). If the raw key is worth surfacing for transparency/power users, show it as small secondary text under the label — never as the only label. This was Webmin's single biggest failure mode (raw Apache directive names as the only label, 40-80+ per page) and the thing every other panel researched got at least partially right.
+- **One-line description under every non-obvious field.** What it controls and, where relevant, a valid-range/example (`"e.g. 512M"`, `"Seconds a script may run before PHP stops it"`). Every panel that scored well on this (Froxlor's `desc` key, HestiaCP's `form-text`, CyberPanel's range hints) rendered it as small muted text directly under the label — not a tooltip you have to hover to discover.
+- **Group related options into labeled sections**, not one flat list. A "Version" vs. "Performance & limits" split, or Froxlor/CyberPanel's titled cards, beats Webmin's single continuous table every time. Group *before* a form gets long — don't wait until it's already unwieldy to add structure.
+- **Real controls for the actual number of states, not fewer or more than that.** A true on/off gets a `Switch` (`components/ui/switch.tsx`). A setting that can also be *unset* to inherit a default (common in override forms) is genuinely three states and needs a three-way control (segmented buttons: `Default / On / Off`) — collapsing it into a 2-state switch silently drops the "inherit default" case. Never make a boolean a free-text field the user has to type "On"/"Off" into.
+- **Plain-language presets for anything schedule- or syntax-shaped**, with the raw syntax still available underneath for power users. Cron is the canonical case — three of the panels researched (HestiaCP, CyberPanel, VestaCP) independently arrived at the same shape: pick "Every day at 2am" from a list, it fills in the raw fields, and the raw form is still right there if you actually know cron syntax. Apply the same idea anywhere else a field's valid syntax isn't obvious from looking at it.
+- **Numeric limits get a unit shown inline and an explicit affordance for "no limit"** — never a bare number input where the user has to already know that `0` (or `-1`, or blank) means unlimited. An "Unlimited" `Switch` next to the input (disabling it, matching Froxlor's `input_ul` / HestiaCP's infinity-toggle) makes the convention visible instead of tribal knowledge.
+- **Adaptive hints beat one generic hint for every case.** Where a field's valid shape depends on another field (DNS record value format depends on the selected record type), make the hint reactive to that selection instead of writing one placeholder that's only really correct for the most common case.
+- **A `<Select>`'s displayed value must resolve through a label lookup, not the raw stored value**, whenever the two differ (an id, a raw cron string, a raw seconds count). Base UI's `Select.Value` renders the raw `value` unless given a `children` mapping function — this is an easy, silent trap (it broke the account-creation dialog's Server/Package pickers, which showed a raw UUID after selection instead of the row's name). Check this on every new `<Select>` where the option's `value` isn't already the text you want shown.
+
+## 7. Interaction Patterns
 
 - **No full-page reloads.** All mutations via React Query, optimistic updates where safe (DNS record edits, cron toggles), pending states where not (account provisioning).
 - **Async job transparency.** Long-running operations (provisioning, backups, SSL issuance) already flow through the NATS job pipeline — surface them in a persistent notification center with live progress and success/failure states over WebSocket/SSE. Never leave a user staring at a spinner wondering if a backup actually started.
@@ -51,7 +64,7 @@ For an open-source cPanel challenger, the UI is not cosmetic — it's the primar
 - **Empty states & first-run onboarding.** Every list screen is designed empty-first (clear CTA, one-line explanation); the admin shell has a guided first-run wizard (add server → create package → create first account). Open-source tools live or die in the first 10 minutes after `curl | bash`.
 - **Destructive-action safety.** Type-to-confirm for irreversible operations (terminate account, delete database, delete domain) — never a bare "Are you sure?" modal.
 
-## 7. Performance Budget (UI)
+## 8. Performance Budget (UI)
 
 The panel must feel fast on the cheap VPSes it actually runs on:
 

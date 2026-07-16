@@ -37,7 +37,23 @@ async function rawFetch(path: string, init: RequestInit = {}): Promise<Response>
   return fetch(path, { ...init, headers });
 }
 
-async function tryRefresh(): Promise<boolean> {
+// The refresh token is single-use (rotated server-side on every refresh), so
+// concurrent 401s — e.g. every query on a page firing at once after a hard
+// reload with no in-memory access token — must share one refresh call rather
+// than each independently redeeming it: only the first would succeed and the
+// rest would burn the already-rotated token and fail.
+let refreshPromise: Promise<boolean> | null = null;
+
+function tryRefresh(): Promise<boolean> {
+  if (!refreshPromise) {
+    refreshPromise = doRefresh().finally(() => {
+      refreshPromise = null;
+    });
+  }
+  return refreshPromise;
+}
+
+async function doRefresh(): Promise<boolean> {
   const refresh = localStorage.getItem(REFRESH_KEY);
   if (!refresh) return false;
   const res = await fetch("/api/v1/auth/refresh", {

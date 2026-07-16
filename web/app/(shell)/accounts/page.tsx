@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { Ban, CirclePlay, FolderTree, Lock, LockOpen, Plus, SquareTerminal, Trash2, Users } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Ban, CirclePlay, Lock, LockOpen, Plus, Settings2, Trash2, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -53,12 +54,6 @@ import {
   listServers,
   type AccountInfo,
 } from "@/lib/api";
-import { PHPSettingsDialog } from "./php-settings-dialog";
-import { DatabasesDialog } from "./databases-dialog";
-import { FTPDialog } from "./ftp-dialog";
-import { DNSDialog } from "./dns-dialog";
-import { CronDialog } from "./cron-dialog";
-import { MailDialog } from "./mail-dialog";
 
 const statusVariant: Record<
   string,
@@ -71,12 +66,12 @@ const statusVariant: Record<
   failed: "destructive",
 };
 
-function CreateAccountDialog() {
+function CreateAccountDialog({ defaultOpen = false }: { defaultOpen?: boolean }) {
   const qc = useQueryClient();
   const { data: servers } = useQuery({ queryKey: ["servers"], queryFn: listServers });
   const { data: packages } = useQuery({ queryKey: ["packages"], queryFn: listPackages });
 
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [form, setForm] = useState({
     username: "",
     email: "",
@@ -161,7 +156,11 @@ function CreateAccountDialog() {
                 onValueChange={(v) => setForm((f) => ({ ...f, server_id: v ?? "" }))}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select server" />
+                  <SelectValue>
+                    {(v: string | null) =>
+                      v ? (servers ?? []).find((s) => s.id === v)?.name ?? v : "Select server"
+                    }
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {(servers ?? [])
@@ -181,7 +180,11 @@ function CreateAccountDialog() {
                 onValueChange={(v) => setForm((f) => ({ ...f, package_id: v ?? "" }))}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select package" />
+                  <SelectValue>
+                    {(v: string | null) =>
+                      v ? (packages ?? []).find((p) => p.id === v)?.name ?? v : "Select package"
+                    }
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {(packages ?? []).map((p) => (
@@ -260,8 +263,21 @@ function TerminateButton({ account }: { account: AccountInfo }) {
   );
 }
 
-export default function AccountsPage() {
+function AccountsPageInner() {
   const qc = useQueryClient();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  // Captured once from the URL the palette/deep-link landed with, then the
+  // URL is stripped so refreshing/sharing the page doesn't re-trigger it.
+  const [autoOpenCreate] = useState(() => searchParams.get("new") === "1");
+
+  useEffect(() => {
+    if (autoOpenCreate) {
+      router.replace("/accounts", { scroll: false });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const { data, isLoading } = useQuery({
     queryKey: ["accounts"],
     queryFn: listAccounts,
@@ -285,7 +301,7 @@ export default function AccountsPage() {
         title="Accounts"
         description="Hosting accounts across the fleet, with live provisioning status."
       >
-        <CreateAccountDialog />
+        <CreateAccountDialog defaultOpen={autoOpenCreate} />
       </PageHeader>
 
       <Card>
@@ -352,32 +368,12 @@ export default function AccountsPage() {
                       </td>
                       <td className="py-2.5 pr-4">
                         <div className="flex justify-end gap-1">
-                          {a.status === "active" && (
-                            <>
-                              <Link
-                                href={`/accounts/${a.id}/files`}
-                                aria-label="File manager"
-                                title="File manager"
-                                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-foreground transition-colors hover:bg-muted"
-                              >
-                                <FolderTree className="h-4 w-4" />
-                              </Link>
-                              <Link
-                                href={`/accounts/${a.id}/terminal`}
-                                aria-label="Terminal"
-                                title="Terminal"
-                                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-foreground transition-colors hover:bg-muted"
-                              >
-                                <SquareTerminal className="h-4 w-4" />
-                              </Link>
-                            </>
-                          )}
-                          <DatabasesDialog account={a} />
-                          <FTPDialog account={a} />
-                          <DNSDialog account={a} />
-                          <MailDialog account={a} />
-                          <CronDialog account={a} />
-                          <PHPSettingsDialog account={a} />
+                          <Link
+                            href={`/accounts/${a.id}`}
+                            className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+                          >
+                            <Settings2 className="h-3.5 w-3.5" /> Manage
+                          </Link>
                           {a.status === "suspended" ? (
                             <Button
                               variant="ghost"
@@ -418,5 +414,13 @@ export default function AccountsPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+export default function AccountsPage() {
+  return (
+    <Suspense fallback={null}>
+      <AccountsPageInner />
+    </Suspense>
   );
 }

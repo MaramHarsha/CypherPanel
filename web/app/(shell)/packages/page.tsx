@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Package, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { PageHeader } from "@/components/page-header";
 import {
   ApiError,
@@ -32,14 +34,14 @@ import {
   type PackageLimits,
 } from "@/lib/api";
 
-const limitFields: { key: keyof PackageLimits; label: string; hint: string }[] = [
-  { key: "disk_mb", label: "Disk (MB)", hint: "0 = unlimited" },
-  { key: "bandwidth_mb", label: "Bandwidth (MB/mo)", hint: "0 = unlimited" },
-  { key: "domains", label: "Domains", hint: "0 = unlimited" },
-  { key: "databases", label: "Databases", hint: "0 = unlimited" },
-  { key: "email_accounts", label: "Email accounts", hint: "0 = unlimited" },
-  { key: "cpu_quota_pct", label: "CPU quota (%)", hint: "0 = no cap" },
-  { key: "memory_max_mb", label: "Memory max (MB)", hint: "0 = no cap" },
+const limitFields: { key: keyof PackageLimits; label: string; unit?: string; hint: string }[] = [
+  { key: "disk_mb", label: "Disk space", unit: "MB", hint: "Total storage this account may use." },
+  { key: "bandwidth_mb", label: "Bandwidth", unit: "MB/mo", hint: "Monthly data transfer allowance." },
+  { key: "domains", label: "Domains", hint: "Addon domains, subdomains, and aliases combined." },
+  { key: "databases", label: "Databases", hint: "MariaDB databases the account may create." },
+  { key: "email_accounts", label: "Email accounts", hint: "Mailboxes the account may create." },
+  { key: "cpu_quota_pct", label: "CPU quota", unit: "%", hint: "Max CPU share under the account's cgroup slice." },
+  { key: "memory_max_mb", label: "Memory limit", unit: "MB", hint: "Hard memory cap enforced by the account's cgroup slice." },
 ];
 
 const emptyLimits: PackageLimits = {
@@ -52,11 +54,68 @@ const emptyLimits: PackageLimits = {
   memory_max_mb: 0,
 };
 
-export default function PackagesPage() {
+// Number input + "Unlimited" switch, matching the number+unlimited-checkbox
+// pattern found in Froxlor's `input_ul` and HestiaCP's infinity-icon toggle —
+// both exist because a bare "0 = unlimited" convention (which this API uses)
+// is easy to miss unless the UI makes "unlimited" its own explicit choice.
+function LimitField({
+  field,
+  value,
+  onChange,
+}: {
+  field: (typeof limitFields)[number];
+  value: number;
+  onChange: (v: number) => void;
+}) {
+  const unlimited = value === 0;
+  return (
+    <div className="grid gap-1.5 rounded-lg border border-border p-3">
+      <div className="flex items-center justify-between gap-2">
+        <Label htmlFor={field.key} className="text-sm font-medium">
+          {field.label}
+        </Label>
+        <label className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+          Unlimited
+          <Switch
+            size="sm"
+            checked={unlimited}
+            onCheckedChange={(checked) => onChange(checked ? 0 : 1)}
+          />
+        </label>
+      </div>
+      <div className="flex items-center gap-2">
+        <Input
+          id={field.key}
+          type="number"
+          min={1}
+          disabled={unlimited}
+          value={unlimited ? "" : value}
+          placeholder={unlimited ? "Unlimited" : "0"}
+          onChange={(e) => onChange(Number(e.target.value))}
+        />
+        {field.unit && (
+          <span className="shrink-0 text-xs text-muted-foreground">{field.unit}</span>
+        )}
+      </div>
+      <p className="text-xs text-muted-foreground">{field.hint}</p>
+    </div>
+  );
+}
+
+function PackagesPageInner() {
   const qc = useQueryClient();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { data, isLoading } = useQuery({ queryKey: ["packages"], queryFn: listPackages });
 
-  const [open, setOpen] = useState(false);
+  // Deep-linked from the command palette's "New package" quick action.
+  const [open, setOpen] = useState(() => searchParams.get("new") === "1");
+  useEffect(() => {
+    if (searchParams.get("new") === "1") {
+      router.replace("/packages", { scroll: false });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [name, setName] = useState("");
   const [limits, setLimits] = useState<PackageLimits>(emptyLimits);
   const [error, setError] = useState<string | null>(null);
@@ -88,11 +147,11 @@ export default function PackagesPage() {
           <DialogTrigger render={<Button />}>
             <Plus className="h-4 w-4" /> New package
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="sm:max-w-xl">
             <DialogHeader>
               <DialogTitle>New package</DialogTitle>
               <DialogDescription>
-                Set the resource limits for accounts on this plan. 0 means unlimited.
+                Set the resource limits for accounts on this plan.
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4">
@@ -107,20 +166,12 @@ export default function PackagesPage() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 {limitFields.map((f) => (
-                  <div key={f.key} className="grid gap-1.5">
-                    <Label htmlFor={f.key} className="text-xs">
-                      {f.label}
-                    </Label>
-                    <Input
-                      id={f.key}
-                      type="number"
-                      min={0}
-                      value={limits[f.key]}
-                      onChange={(e) =>
-                        setLimits((l) => ({ ...l, [f.key]: Number(e.target.value) }))
-                      }
-                    />
-                  </div>
+                  <LimitField
+                    key={f.key}
+                    field={f}
+                    value={limits[f.key] ?? 0}
+                    onChange={(v) => setLimits((l) => ({ ...l, [f.key]: v }))}
+                  />
                 ))}
               </div>
               {error && <p className="text-sm text-destructive">{error}</p>}
@@ -197,5 +248,13 @@ export default function PackagesPage() {
         </Card>
       )}
     </div>
+  );
+}
+
+export default function PackagesPage() {
+  return (
+    <Suspense fallback={null}>
+      <PackagesPageInner />
+    </Suspense>
   );
 }

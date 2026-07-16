@@ -95,10 +95,10 @@ export default function TerminalPage() {
   return (
     <div>
       <Link
-        href="/accounts"
+        href={`/accounts/${id}`}
         className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
       >
-        <ArrowLeft className="h-4 w-4" /> Accounts
+        <ArrowLeft className="h-4 w-4" /> Back
       </Link>
       <PageHeader title="Terminal" description={`Shell as the account user · ${status}`} />
       <div
