@@ -17,6 +17,7 @@
 | Static site builds | ✅ | ✅ | **V1** | `builders/static.ts` |
 | Drag-and-drop file deploy | ❌ | ✅ | **Later** | `builders/drop.ts` — niche but loved |
 | Build on dedicated node | ⚠️ (build server) | ❌ (manager node) | **V1** | Core architectural fix; builder role |
+| Multi-arch image builds (build on amd64, run on arm64) | ⚠️ | ❌ | **V1.x** | BuildKit cross-platform; recurring Coolify pain point — and the cheapest servers (Hetzner ARM, Graviton, RPi) are arm64 |
 | Watch paths (monorepo triggers) | ⚠️ | ✅ | **V1.x** | `dokploy/.../utils/watch-paths` |
 
 ## Deploy lifecycle
@@ -42,6 +43,7 @@
 | Compose Stack resources | ✅ ("Services") | ✅ ("Compose") | **V1** | Terminology per [glossary.md](../glossary.md) |
 | One-click template catalog | ✅ (361 templates) | ✅ (remote registry) | **V1** (subset) → full in Phase 4 | `coolify/templates/compose/`; ADR-007 pending |
 | Volumes / mounts | ✅ | ✅ | **V1** | `dokploy/.../schema/mount.ts` |
+| Per-resource CPU/memory limits | ✅ | ✅ | **V1** | Noisy-neighbor control on shared servers |
 | DB backups → S3, scheduled | ✅ | ✅ | **V1** | `coolify/app/Jobs/DatabaseBackupJob.php`; `dokploy/.../utils/backups` |
 | Volume backups | ⚠️ | ✅ | **V1.x** | `dokploy/.../utils/volume-backups` — differentiator worth keeping |
 | Backup restore (in-panel) | ⚠️ | ✅ | **V1** | `dokploy/.../utils/restore` — backups without tested restore fail P2 (Alex) |
@@ -59,6 +61,9 @@
 | Custom/user certificates | ✅ | ✅ | **V1.x** | `dokploy/.../schema/certificate.ts` |
 | Redirects & middleware | ⚠️ | ✅ | **V1.x** | `schema/redirects.ts`, `schema/forward-auth.ts` |
 | TCP/UDP port exposure | ✅ | ✅ | **V1** | `schema/port.ts` |
+| Cloudflare DNS automation (auto-create records on domain add) | ❌ | ❌ | **V1.x** | Same API token unlocks DNS-01 wildcard certs — one credential, two features |
+| Cloudflare CDN/proxy mode (trusted headers, origin lockdown) | ❌ | ❌ | **V1.x** | Agent applies Traefik hardening automatically (ADR-004); HTTP/S only — raw TCP ports stay direct |
+| Cloudflare Tunnel (public traffic, zero inbound ports) | ⚠️ (manual guides) | ❌ | **Later** | Rhymes with the dial-home agent (ADR-002); transformative for P4 behind CGNAT |
 
 ## Platform & operations
 
@@ -80,6 +85,9 @@
 | Notifications: Email/Discord/Slack/Telegram | ✅ (+Pushover) | ✅ (+Gotify) | **V1** (these 4) | `coolify/app/Jobs/SendMessageTo*Job.php`; `dokploy/.../utils/notifications` |
 | Auto-update of the platform | ✅ | ✅ | **V1.x** | Agent self-update channel is the hard part |
 | Panel-level backup/restore | ⚠️ | ✅ | **V1.x** | Control plane = 1 binary + pg_dump makes this easy |
+| ARM64 servers | ⚠️ | ⚠️ | **V1** | Agent ships linux/arm64 from day one (tech-stack.md) |
+| Server OS update checks / patching | ✅ | ❌ | **Later** | `coolify/app/Jobs/ServerPatchCheckJob.php` |
+| Migration importer from Coolify / Dokploy | ❌ | ❌ | **V1.x** | Read their Postgres schemas (already mapped in `research/`) and recreate as desired state — the single biggest adoption lever |
 
 ## Collaboration & API
 
@@ -89,12 +97,15 @@
 | Roles / permissions | ✅ (Member/Admin/Owner) | ✅ (granular) | **V1** (simple roles) | Granular RBAC **V1.x** |
 | REST API + OpenAPI spec | ✅ | ✅ | **V1** | Both ship `openapi.json`; ours is spec-first |
 | API tokens with scoped abilities | ✅ (read/write/deploy) | ✅ | **V1** | Coolify's ability model is worth copying |
+| Two-factor authentication (TOTP + recovery codes) | ✅ | ✅ | **V1** | Panel compromise = fleet control; account security is not optional here |
+| Login rate limiting & session management | ✅ | ⚠️ | **V1** | Brute-force protection, session revocation; threat-model deliverable (roadmap Phase 1) |
 | Audit log | ⚠️ | ✅ | **V1.x** | `dokploy/.../schema/audit-log.ts` |
 | SSO / OIDC | ⚠️ | ✅ (+SCIM, proprietary) | **Later** | License caution — see [research/dokploy.md](../../research/dokploy.md) |
 | CLI | ⚠️ | ❌ | **V1.x** | Generated from OpenAPI |
 | Terraform provider | ❌ | ❌ | **Later** | Enabled by API-first |
 | AI features | ⚠️ | ✅ | **Out** (v1) | `dokploy/.../schema/ai.ts`; not our fight |
+| Localization (i18n) | ❌ | ✅ | **Later** | Dokploy ships multiple languages; English-only is a quiet adoption ceiling — deliberate deferral, not oversight |
 
 ## Summary of deliberate gaps at v1
 
-No Swarm decision yet (ADR-006), no buildpacks, no GPU, no SSO, no AI, no replica scaling / cloud provisioning / autoscaling (recorded as post-v1 in [roadmap.md](../roadmap.md)), simple roles only, template subset only. Every **V1** row above is otherwise a launch blocker — this table *is* the v1 scope contract referenced by [roadmap.md](../roadmap.md).
+No Swarm decision yet (ADR-006), no buildpacks, no GPU, no SSO, no AI, no replica scaling / cloud provisioning / autoscaling (recorded as post-v1 in [roadmap.md](../roadmap.md)), simple roles only, template subset only, English-only at launch, no OS patching. Every **V1** row above is otherwise a launch blocker — this table *is* the v1 scope contract referenced by [roadmap.md](../roadmap.md).

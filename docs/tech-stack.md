@@ -29,7 +29,7 @@
 | JS package manager | **pnpm**; UI lives in `web/` only |
 | TS API client | Generated from the OpenAPI spec (orval or openapi-typescript) — hand-written fetch calls are forbidden |
 | E2E tests | Playwright (introduced in roadmap Phase 4) |
-| CI | GitHub Actions: lint → unit → integration (dockerized Postgres) → buf breaking → build matrix |
+| CI | GitHub Actions: lint → unit → integration (dockerized Postgres) → buf breaking → build matrix — full phased workflow inventory in [dev/ci.md](dev/ci.md) |
 
 ## Version and dependency policy
 

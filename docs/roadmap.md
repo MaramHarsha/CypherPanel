@@ -12,6 +12,8 @@ Proves the hardest architectural claims (ADR-002, ADR-003) before any product fe
 
 Scope: `cypherd` boots (config, migrations, embedded NATS, REST skeleton, auth with a single admin user); `cypher-agent` enrolls via single-use join token, receives mTLS cert, maintains heartbeat; servers visible with live status via API and a minimal UI page.
 
+Deliverables alongside code: `docs/security/threat-model.md` written **before** the first line of agent code (panel compromise, agent compromise blast radius, join-token leak, malicious templates, fork-PR preview secrets); the multi-node CI integration harness ([dev/ci.md](dev/ci.md)); the `reconciler-development` skill in `.claude/skills/` once the driver interface exists.
+
 **Acceptance:** fresh Ubuntu VM joins via `curl | sh` in under 60 seconds. Kill `cypherd` for 5 minutes → agent reconnects, replays missed work, status converges with no manual step. Footprint budgets from [vision.md](vision.md) hold.
 
 ## Phase 2 — Deploy vertical slice
@@ -51,3 +53,5 @@ Deliberate **Later** items from the [feature matrix](product/feature-matrix.md),
 | ADR-006 | Swarm driver at v1 launch or fast-follow? Determines how hard the `driver` interface gets exercised in Phase 1–2 | Before Phase 2 starts |
 | ADR-007 | Template format: extend Coolify's compose-YAML + magic envs, Dokploy's remote registry, or a merged schema | Before Phase 4 starts |
 | ADR-008 | Built-in lightweight image registry vs. requiring an external one | Before Phase 2 starts |
+| ADR-009 | License (Apache/MIT vs AGPL vs open-core) — shapes community and monetization from day one; must be cleaner than Dokploy's mixed model | Before the repo goes public |
+| ADR-010 | Agent auto-update mechanism (channel, rollout, rollback) — a fleet of outdated agents is a support nightmare | Before first public release (end of Phase 2) |

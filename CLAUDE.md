@@ -29,4 +29,4 @@ Self-hosted PaaS unifying the best of Coolify and Dokploy on a desired-state, ag
 
 ## Open decisions — do not preempt
 
-ADR-006 (Swarm at launch?), ADR-007 (template format), ADR-008 (built-in registry?) — tracked in `docs/roadmap.md`. Work that would force one of these must surface the decision instead of assuming it.
+ADR-006 (Swarm at launch?), ADR-007 (template format), ADR-008 (built-in registry?), ADR-009 (license), ADR-010 (agent auto-update mechanism) — tracked in `docs/roadmap.md`. Work that would force one of these must surface the decision instead of assuming it.

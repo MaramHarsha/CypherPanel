@@ -69,9 +69,15 @@ docs/
 ├── adrs/                  # ADR-NNN-slug.md — immutable; supersede, don't edit
 ├── product/               # personas, feature-matrix, ui-principles
 │                          #   (+ design-system.md in Phase 4, from real components)
+├── dev/                   # ci.md — CI/CD workflow inventory
+├── security/              # threat-model.md (written at Phase 1 start, before agent code)
 └── features/              # one spec per feature, written JUST BEFORE implementing it
                            #   (3–8 pages: lifecycle, states, API, permissions, non-goals)
 research/                  # extraction maps into ../coolify and ../dokploy sources
+.claude/skills/            # project skills, created just-in-time (pattern proven in both
+                           #   reference repos): reconciler-development (Phase 1–2),
+                           #   adding-a-database-engine (Phase 3),
+                           #   frontend-design + adding-a-template (Phase 4)
 ```
 
 ## Placement rules
