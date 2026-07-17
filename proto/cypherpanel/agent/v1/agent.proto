@@ -1,0 +1,73 @@
+syntax = "proto3";
+
+package cypherpanel.agent.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1;agentv1";
+
+// EnrollmentService is the agent's first contact with the control plane.
+//
+// It is served over server-authenticated TLS (the agent has no client
+// certificate yet — this is the bootstrap) and authenticated by a
+// single-use, short-lived join token (ADR-002; threat-model.md §5.3).
+//
+// The agent generates its own private key locally and transmits only a
+// certificate signing request. The control plane never sees, stores, or
+// transmits the agent's private key — this is what makes a control-plane
+// compromise unable to yield agent identities (threat-model.md §5.1).
+service EnrollmentService {
+  // Enroll exchanges a valid join token + CSR for a signed client
+  // certificate. The token is consumed on success (single-use).
+  rpc Enroll(EnrollRequest) returns (EnrollResponse);
+}
+
+message EnrollRequest {
+  // Single-use join token issued by the control plane operator.
+  string join_token = 1;
+  // PEM-encoded PKCS#10 certificate signing request. The agent holds the
+  // corresponding private key; it never leaves the agent host.
+  bytes csr_pem = 2;
+  // Agent build version, for the fleet-version visibility ADR-010 will need.
+  string agent_version = 3;
+  // Reported hostname, advisory only (used for display; identity is the cert).
+  string hostname = 4;
+}
+
+message EnrollResponse {
+  // Stable server identifier the agent uses in its subjects (state.*.<id>).
+  string server_id = 1;
+  // PEM-encoded client certificate signed by the control-plane CA.
+  bytes certificate_pem = 2;
+  // PEM-encoded CA certificate the agent pins to verify the control plane.
+  bytes ca_pem = 3;
+  // URL the agent dials for the NATS data-plane connection (mTLS).
+  string nats_url = 4;
+}
+
+// AgentStatus is the agent's self-reported liveness, carried on heartbeats.
+// It is distinct from the resource/server status vocabulary in ui-principles
+// §5 — the control plane derives `running`/`unknown` from heartbeat recency,
+// never trusting the agent to assert its own reachability.
+enum AgentStatus {
+  AGENT_STATUS_UNSPECIFIED = 0;
+  AGENT_STATUS_READY = 1;
+  AGENT_STATUS_DEGRADED = 2;
+}
+
+// Heartbeat is published by the agent to the NATS subject
+// `state.heartbeat.<server_id>` (ADR-003, subject family state.*).
+//
+// It is transient coordination traffic: Postgres remains the single state of
+// record (ENGINEERING rule 15). The plane updates a server's observed status
+// and last-seen time from these; absence of heartbeats is what drives the
+// `unknown` status, never a stale cached value (ui-principles §10).
+message Heartbeat {
+  string server_id = 1;
+  google.protobuf.Timestamp emitted_at = 2;
+  string agent_version = 3;
+  // Active orchestrator driver on this agent (e.g. "docker"). Phase 1 agents
+  // report their configured driver without yet reconciling workloads.
+  string driver = 4;
+  AgentStatus status = 5;
+}

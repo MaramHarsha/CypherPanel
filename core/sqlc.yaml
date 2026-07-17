@@ -1,0 +1,12 @@
+version: "2"
+sql:
+  - engine: postgresql
+    schema: store/migrations
+    queries: store/queries
+    gen:
+      go:
+        package: db
+        out: store/db
+        sql_package: pgx/v5
+        emit_empty_slices: true
+        emit_json_tags: false

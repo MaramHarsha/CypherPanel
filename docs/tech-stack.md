@@ -22,7 +22,7 @@
 
 | Concern | Tool |
 |---|---|
-| Go version | 1.24+ (`go.work` workspace: `core`, `agent`, `pkg`) |
+| Go version | 1.25+ (`go.work` workspace: `core`, `agent`, `pkg`) — floor set by grpc-go's minimum |
 | SQL | **sqlc** — hand-written SQL, generated type-safe Go; migrations via **goose** (reversible, see ENGINEERING.md) |
 | Protobuf | **buf** — lint + breaking-change detection in CI |
 | Go lint/format | gofmt + **golangci-lint** (config committed at repo root) |

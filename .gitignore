@@ -1,0 +1,26 @@
+# Build output
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+
+# Go workspace sum (kept per-module go.sum instead)
+go.work.sum
+
+# Local dev state — agent identity material, plane CA, secrets
+/.dev/
+*.pem
+*.key
+*.crt
+*.csr
+
+# Web build artifacts (Phase 1: React app not yet scaffolded)
+/web/node_modules/
+/web/dist/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json

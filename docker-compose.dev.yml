@@ -1,0 +1,32 @@
+# Local development dependencies for CypherPanel.
+#
+# This brings up ONLY the control plane's external dependency: PostgreSQL
+# (the single state of record — ADR-001/ADR-003, no Redis anywhere). Run the
+# plane itself from source with hot-reload against it:
+#
+#   docker compose -f docker-compose.dev.yml up -d
+#   make run-plane            # cypherd, pointed at localhost:5432
+#
+# NATS JetStream is embedded in cypherd (ADR-003) and needs no container.
+name: cypherpanel-dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cypherpanel
+      POSTGRES_PASSWORD: devpassword
+      POSTGRES_DB: cypherpanel
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cypherpanel -d cypherpanel"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

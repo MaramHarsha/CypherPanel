@@ -1,0 +1,372 @@
+// Package store is the only writer to PostgreSQL, the single state of record
+// (ADR-001/ADR-003). It wraps sqlc-generated queries and confines all pgx and
+// pgtype types to this package; the rest of the control plane speaks in
+// domain types. Migrations are embedded and applied on boot.
+package store
+
+import (
+	"context"
+	"embed"
+	"errors"
+	"fmt"
+	"io/fs"
+	"time"
+
+	"database/sql"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
+	_ "github.com/jackc/pgx/v5/stdlib" // registers "pgx" for database/sql (goose)
+	"github.com/pressly/goose/v3"
+
+	"github.com/MaramHarsha/cypherpanel/core/domain"
+	"github.com/MaramHarsha/cypherpanel/core/store/db"
+)
+
+//go:embed migrations/*.sql
+var migrationsFS embed.FS
+
+// ErrNotFound is returned when a lookup matches no row. Callers match it with
+// errors.Is, never by string (ENGINEERING rule 3).
+var ErrNotFound = errors.New("store: not found")
+
+// Store is the control plane's persistence layer.
+type Store struct {
+	pool *pgxpool.Pool
+	q    *db.Queries
+}
+
+// Open connects to PostgreSQL and verifies the connection.
+func Open(ctx context.Context, databaseURL string) (*Store, error) {
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("store: opening pool: %w", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("store: pinging database: %w", err)
+	}
+	return &Store{pool: pool, q: db.New(pool)}, nil
+}
+
+// Close releases the connection pool.
+func (s *Store) Close() { s.pool.Close() }
+
+// Ping verifies the database is reachable, for readiness checks.
+func (s *Store) Ping(ctx context.Context) error {
+	if err := s.pool.Ping(ctx); err != nil {
+		return fmt.Errorf("store: ping: %w", err)
+	}
+	return nil
+}
+
+// Migrate applies all embedded migrations to the database at databaseURL. It
+// opens its own database/sql handle because goose operates on that interface;
+// the handle is closed before returning.
+func Migrate(ctx context.Context, databaseURL string) error {
+	sqldb, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		return fmt.Errorf("store: opening sql handle for migrations: %w", err)
+	}
+	defer func() { _ = sqldb.Close() }()
+
+	sub, err := fs.Sub(migrationsFS, "migrations")
+	if err != nil {
+		return fmt.Errorf("store: locating migrations: %w", err)
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, sqldb, sub)
+	if err != nil {
+		return fmt.Errorf("store: building migration provider: %w", err)
+	}
+	if _, err := provider.Up(ctx); err != nil {
+		return fmt.Errorf("store: applying migrations: %w", err)
+	}
+	return nil
+}
+
+// ─── Users ──────────────────────────────────────────────────────────────────
+
+func (s *Store) CountUsers(ctx context.Context) (int64, error) {
+	n, err := s.q.CountUsers(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("store: counting users: %w", err)
+	}
+	return n, nil
+}
+
+func (s *Store) CreateUser(ctx context.Context, id, email, passwordHash, role string) (domain.User, error) {
+	row, err := s.q.CreateUser(ctx, db.CreateUserParams{
+		ID:           id,
+		Email:        email,
+		PasswordHash: passwordHash,
+		Role:         role,
+	})
+	if err != nil {
+		return domain.User{}, fmt.Errorf("store: creating user: %w", err)
+	}
+	return userFromRow(row), nil
+}
+
+func (s *Store) GetUserByEmail(ctx context.Context, email string) (domain.User, error) {
+	row, err := s.q.GetUserByEmail(ctx, email)
+	if err != nil {
+		return domain.User{}, wrap("getting user by email", err)
+	}
+	return userFromRow(row), nil
+}
+
+// ─── Control-plane CA ───────────────────────────────────────────────────────
+
+// PlaneCA is the persisted CA material: cert is public, the key is stored
+// encrypted with a nonce (threat-model §5.1).
+type PlaneCA struct {
+	CertPEM      []byte
+	EncryptedKey []byte
+	KeyNonce     []byte
+}
+
+func (s *Store) GetPlaneCA(ctx context.Context) (PlaneCA, error) {
+	row, err := s.q.GetPlaneCA(ctx)
+	if err != nil {
+		return PlaneCA{}, wrap("getting plane CA", err)
+	}
+	return PlaneCA{CertPEM: row.CertPem, EncryptedKey: row.EncryptedKey, KeyNonce: row.KeyNonce}, nil
+}
+
+func (s *Store) InsertPlaneCA(ctx context.Context, ca PlaneCA) error {
+	err := s.q.InsertPlaneCA(ctx, db.InsertPlaneCAParams{
+		CertPem:      ca.CertPEM,
+		EncryptedKey: ca.EncryptedKey,
+		KeyNonce:     ca.KeyNonce,
+	})
+	if err != nil {
+		return fmt.Errorf("store: inserting plane CA: %w", err)
+	}
+	return nil
+}
+
+// ─── Servers ────────────────────────────────────────────────────────────────
+
+func (s *Store) CreateServer(ctx context.Context, id, name string) (domain.Server, error) {
+	row, err := s.q.CreateServer(ctx, db.CreateServerParams{ID: id, Name: name})
+	if err != nil {
+		return domain.Server{}, fmt.Errorf("store: creating server: %w", err)
+	}
+	return serverFromRow(row), nil
+}
+
+// CreateServerWithToken creates a server and its first join token in a single
+// transaction, so an operator never sees a server that has no way to enroll.
+func (s *Store) CreateServerWithToken(ctx context.Context, serverID, name, tokenID string, tokenHash []byte, tokenExpiresAt time.Time) (domain.Server, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return domain.Server{}, fmt.Errorf("store: beginning tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
+
+	qtx := s.q.WithTx(tx)
+	row, err := qtx.CreateServer(ctx, db.CreateServerParams{ID: serverID, Name: name})
+	if err != nil {
+		return domain.Server{}, fmt.Errorf("store: creating server: %w", err)
+	}
+	if _, err := qtx.CreateJoinToken(ctx, db.CreateJoinTokenParams{
+		ID:        tokenID,
+		ServerID:  serverID,
+		TokenHash: tokenHash,
+		ExpiresAt: tsFromTime(tokenExpiresAt),
+	}); err != nil {
+		return domain.Server{}, fmt.Errorf("store: creating join token: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Server{}, fmt.Errorf("store: committing server creation: %w", err)
+	}
+	return serverFromRow(row), nil
+}
+
+func (s *Store) GetServer(ctx context.Context, id string) (domain.Server, error) {
+	row, err := s.q.GetServer(ctx, id)
+	if err != nil {
+		return domain.Server{}, wrap("getting server", err)
+	}
+	return serverFromRow(row), nil
+}
+
+func (s *Store) ListServers(ctx context.Context) ([]domain.Server, error) {
+	rows, err := s.q.ListServers(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing servers: %w", err)
+	}
+	out := make([]domain.Server, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, serverFromRow(r))
+	}
+	return out, nil
+}
+
+func (s *Store) MarkServerEnrolled(ctx context.Context, id, hostname, agentVersion string) (domain.Server, error) {
+	row, err := s.q.MarkServerEnrolled(ctx, db.MarkServerEnrolledParams{
+		ID:           id,
+		Hostname:     hostname,
+		AgentVersion: agentVersion,
+	})
+	if err != nil {
+		return domain.Server{}, wrap("marking server enrolled", err)
+	}
+	return serverFromRow(row), nil
+}
+
+func (s *Store) RecordHeartbeat(ctx context.Context, id string, status domain.ServerStatus, agentVersion, driver string) (domain.Server, error) {
+	row, err := s.q.RecordHeartbeat(ctx, db.RecordHeartbeatParams{
+		ID:           id,
+		Status:       string(status),
+		AgentVersion: agentVersion,
+		Driver:       driver,
+	})
+	if err != nil {
+		return domain.Server{}, wrap("recording heartbeat", err)
+	}
+	return serverFromRow(row), nil
+}
+
+// MarkStaleServersUnknown flips every enrolled server not seen since cutoff to
+// Unknown, returning the IDs it changed. This is how a silently-gone agent
+// stops showing a stale Running status (ui-principles §10).
+func (s *Store) MarkStaleServersUnknown(ctx context.Context, cutoff time.Time) ([]string, error) {
+	ids, err := s.q.MarkStaleServersUnknown(ctx, tsFromTime(cutoff))
+	if err != nil {
+		return nil, fmt.Errorf("store: marking stale servers unknown: %w", err)
+	}
+	return ids, nil
+}
+
+func (s *Store) DeleteServer(ctx context.Context, id string) error {
+	if err := s.q.DeleteServer(ctx, id); err != nil {
+		return fmt.Errorf("store: deleting server: %w", err)
+	}
+	return nil
+}
+
+// ─── Join tokens ────────────────────────────────────────────────────────────
+
+func (s *Store) CreateJoinToken(ctx context.Context, id, serverID string, tokenHash []byte, expiresAt time.Time) (domain.JoinToken, error) {
+	row, err := s.q.CreateJoinToken(ctx, db.CreateJoinTokenParams{
+		ID:        id,
+		ServerID:  serverID,
+		TokenHash: tokenHash,
+		ExpiresAt: tsFromTime(expiresAt),
+	})
+	if err != nil {
+		return domain.JoinToken{}, fmt.Errorf("store: creating join token: %w", err)
+	}
+	return joinTokenFromRow(row), nil
+}
+
+func (s *Store) GetJoinToken(ctx context.Context, id string) (domain.JoinToken, error) {
+	row, err := s.q.GetJoinToken(ctx, id)
+	if err != nil {
+		return domain.JoinToken{}, wrap("getting join token", err)
+	}
+	return joinTokenFromRow(row), nil
+}
+
+// ConsumeJoinToken atomically consumes the token, returning ErrNotFound if it
+// was already consumed or has expired (the single-use guarantee, threat-model
+// §5.3). Callers must verify the secret hash before calling this.
+func (s *Store) ConsumeJoinToken(ctx context.Context, id string) (domain.JoinToken, error) {
+	row, err := s.q.ConsumeJoinToken(ctx, id)
+	if err != nil {
+		return domain.JoinToken{}, wrap("consuming join token", err)
+	}
+	return joinTokenFromRow(row), nil
+}
+
+// ─── Sessions ───────────────────────────────────────────────────────────────
+
+func (s *Store) CreateSession(ctx context.Context, id, userID string, tokenHash []byte, expiresAt time.Time) error {
+	_, err := s.q.CreateSession(ctx, db.CreateSessionParams{
+		ID:        id,
+		UserID:    userID,
+		TokenHash: tokenHash,
+		ExpiresAt: tsFromTime(expiresAt),
+	})
+	if err != nil {
+		return fmt.Errorf("store: creating session: %w", err)
+	}
+	return nil
+}
+
+// UserForSessionToken returns the user owning a live (unexpired) session whose
+// token hashes to tokenHash, or ErrNotFound.
+func (s *Store) UserForSessionToken(ctx context.Context, tokenHash []byte) (domain.User, error) {
+	row, err := s.q.GetSessionByTokenHash(ctx, tokenHash)
+	if err != nil {
+		return domain.User{}, wrap("getting session", err)
+	}
+	return userFromRow(row.User), nil
+}
+
+func (s *Store) DeleteSession(ctx context.Context, tokenHash []byte) error {
+	if err := s.q.DeleteSession(ctx, tokenHash); err != nil {
+		return fmt.Errorf("store: deleting session: %w", err)
+	}
+	return nil
+}
+
+// ─── mapping helpers ────────────────────────────────────────────────────────
+
+func wrap(op string, err error) error {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("store: %s: %w", op, ErrNotFound)
+	}
+	return fmt.Errorf("store: %s: %w", op, err)
+}
+
+func serverFromRow(r db.Server) domain.Server {
+	return domain.Server{
+		ID:           r.ID,
+		Name:         r.Name,
+		Status:       domain.ServerStatus(r.Status),
+		Driver:       r.Driver,
+		AgentVersion: r.AgentVersion,
+		Hostname:     r.Hostname,
+		EnrolledAt:   ptrTime(r.EnrolledAt),
+		LastSeenAt:   ptrTime(r.LastSeenAt),
+		CreatedAt:    r.CreatedAt.Time,
+		UpdatedAt:    r.UpdatedAt.Time,
+	}
+}
+
+func userFromRow(r db.User) domain.User {
+	return domain.User{
+		ID:           r.ID,
+		Email:        r.Email,
+		PasswordHash: r.PasswordHash,
+		Role:         r.Role,
+		CreatedAt:    r.CreatedAt.Time,
+		UpdatedAt:    r.UpdatedAt.Time,
+	}
+}
+
+func joinTokenFromRow(r db.JoinToken) domain.JoinToken {
+	return domain.JoinToken{
+		ID:         r.ID,
+		ServerID:   r.ServerID,
+		TokenHash:  r.TokenHash,
+		ExpiresAt:  r.ExpiresAt.Time,
+		ConsumedAt: ptrTime(r.ConsumedAt),
+		CreatedAt:  r.CreatedAt.Time,
+	}
+}
+
+func ptrTime(ts pgtype.Timestamptz) *time.Time {
+	if !ts.Valid {
+		return nil
+	}
+	t := ts.Time
+	return &t
+}
+
+func tsFromTime(t time.Time) pgtype.Timestamptz {
+	return pgtype.Timestamptz{Time: t, Valid: true}
+}
