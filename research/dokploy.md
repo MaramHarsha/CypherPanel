@@ -41,6 +41,24 @@ A well-factored TypeScript monolith: tRPC routers (`apps/dokploy/server/api/rout
 3. **Swarm assumptions creep** — service-mode Docker calls appear in generic-looking utils. The `driver` interface must be policed in review (project-structure.md rule 2).
 4. **Granular notification events** (per-event-type files) age better than a single "send notification" chokepoint.
 
+## Measured baseline footprint (empirical, 2026-07-17)
+
+Fresh Dokploy install on a fresh Ubuntu VPS (7.76 GiB RAM, 144 GB disk), idle — no user apps deployed:
+
+| Metric | Measured | Reading |
+|---|---|---|
+| CPU (idle) | ~0–1.2% | Fine at idle |
+| **Memory** | **1.39 GiB used** | OS (~0.3 GiB) + Docker daemon + the Dokploy stack (Next.js SSR, Postgres, Redis, Traefik, monitoring) ≈ **~1 GiB for the platform itself** |
+| Disk | 6.64 GB used | Ubuntu ≈ 2.8 GB + Docker layer below |
+| **Docker disk** | **3.84 GB** | Images + volumes for a panel that has deployed nothing yet |
+| **Block I/O since boot** | 792 MiB read / **22.76 GiB written** | Write churn from image extraction + continuous DB writes (monitoring, heartbeats). Matters on cheap VPSes with limited IOPS and on SSD wear |
+
+Implications for CypherPanel:
+
+- **A 1 GiB VPS cannot run Dokploy at all** — baseline exceeds total RAM before the first app. This is the P1 persona ("panel + two apps on a $5 VPS", vision.md) left unserved, measured rather than asserted.
+- Our budgets (control plane < 300 MB RSS, agent < 50 MB, no Redis/Node/SSR) target roughly **3–4× less memory and ~10× less platform disk**. When Phase 1 lands, benchmark the **same way** (whole-box on a fresh VPS, same metrics) so the comparison is honest.
+- The 22.76 GiB written on an idle fresh install is a design warning for us: continuous metrics/heartbeat persistence must batch and bound its writes (JetStream retention limits, sampled metrics), or we inherit the same churn.
+
 ## License
 
 Mixed — open core with proprietary components (`LICENSE.MD`, `LICENSE_PROPRIETARY.md`). **Check per-file/per-directory before extracting.**
