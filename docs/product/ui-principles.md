@@ -29,6 +29,9 @@ A PR adding a page without all four is incomplete by definition (see ENGINEERING
 
 ## 4. Navigation & density
 
+- **Landing page is Projects.** V1 has no separate "home dashboard" — decided 2026-07-17 after checking both references: Coolify's dashboard is literally two lists (projects, servers), Dokploy lands straight on the projects grid, and that directness is what users describe as "easy to manage." A richer overview page is post-v1, and only if real usage demands it.
+- **The sidebar is exactly four items: Projects · Servers · Templates · Settings.** (Coolify has ~12, Dokploy 8.) Everything else lives *inside* its context — backups as tabs on databases plus a Settings section, logs/domains/deploys as tabs on resources. A new top-level nav item requires a recorded decision; it competes with every existing one.
+- No jargon in the nav — "Sources", "Destinations" as top-level concepts (Coolify) are what the [glossary](../glossary.md) exists to prevent.
 - Hierarchy is Team → Project → Environment → Resource, always visible as breadcrumbs.
 - Prefer drawers/panels over modals; modal depth is 1, maximum.
 - Maximum 3 levels of visual nesting inside any page.

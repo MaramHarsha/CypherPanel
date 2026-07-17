@@ -37,6 +37,7 @@ The control plane does everything itself, over SSH: deployment, proxy config, he
 2. **The monolithic deploy job is untestable** — stage-by-stage work items with recorded transitions are the fix, and also what makes our UI's live progress honest.
 3. **Global helper functions** (`bootstrap/helpers/`) made logic reachable from everywhere and ownable by no one — our ENGINEERING.md package rules exist because of this.
 4. **Template magic-envs are the best idea in the codebase** — a template author writes `SERVICE_PASSWORD_MYAPP` and the platform generates and wires the secret. Keep this UX exactly.
+5. **Name every network explicitly.** A long-standing field bug (Reddit-reported): the proxy loses track of which Docker network to attach under load → CORS errors recurring for hours, fixed only by explicitly naming the network. Our agent creates all networks with deterministic names and references them by name everywhere — never Docker auto-naming. See [community-pain-points.md](community-pain-points.md).
 
 ## License
 

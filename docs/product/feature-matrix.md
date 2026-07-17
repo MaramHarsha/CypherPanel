@@ -18,13 +18,15 @@
 | Drag-and-drop file deploy | ❌ | ✅ | **Later** | `builders/drop.ts` — niche but loved |
 | Build on dedicated node | ⚠️ (build server) | ❌ (manager node) | **V1** | Core architectural fix; builder role |
 | Multi-arch image builds (build on amd64, run on arm64) | ⚠️ | ❌ | **V1.x** | BuildKit cross-platform; recurring Coolify pain point — and the cheapest servers (Hetzner ARM, Graviton, RPi) are arm64 |
+| Verbose build logs streamed by default | ⚠️ (needs `BUILDKIT_PROGRESS=plain`) | ⚠️ | **V1** | Silent build failures are a top Reddit complaint; no hidden verbosity toggles |
+| Framework build presets (`.dockerignore`, Next.js standalone, memory caps) | ❌ | ❌ | **V1.x** | Heavy Next.js/Nuxt builds crash modest hosts today; presets + build resource caps prevent it before it happens |
 | Watch paths (monorepo triggers) | ⚠️ | ✅ | **V1.x** | `dokploy/.../utils/watch-paths` |
 
 ## Deploy lifecycle
 
 | Feature | Coolify | Dokploy | CypherPanel | Evidence / notes |
 |---|---|---|---|---|
-| Zero-downtime rolling deploy | ⚠️ | ✅ | **V1** | Default, per vision non-negotiable |
+| Zero-downtime rolling deploy | ⚠️ | ⚠️ (stale-container reports) | **V1** | Default, per vision non-negotiable. "Success" is only reported when *observed* state confirms the new revision serving and the old drained — Dokploy's months-unresolved stale-container bug is definitionally impossible under ADR-005 |
 | Rollback to previous image | ⚠️ | ✅ | **V1** | `dokploy/.../db/schema/rollbacks.ts` |
 | Preview environments (PR) | ✅ | ✅ | **V1** | `coolify/app/Jobs/ApplicationPullRequestUpdateJob.php`; `schema/preview-deployments.ts` |
 | Health checks gate rollout | ⚠️ | ✅ | **V1** | Agent-local checks (ADR-005) |
@@ -81,13 +83,18 @@
 | Metric threshold alerts | ⚠️ (disk/server checks) | ✅ | **V1.x** | `dokploy/.../utils/notifications/server-threshold.ts`; ours routes through `core/notify` channels |
 | Interactive terminal | ✅ | ✅ | **V1.x** | Both use xterm + websockets; ours via gRPC stream |
 | Server metrics / monitoring | ✅ (Sentinel) | ✅ (Go monitoring app) | **V1.x** | `dokploy/apps/monitoring` — already Go, port concepts |
-| Disk cleanup automation | ✅ | ✅ | **V1.x** | `coolify/app/Jobs/DockerCleanupJob.php` |
+| Proactive disk management (threshold alerts, auto-pruning policies, desired-state GC) | ⚠️ (cleanup exists; outages still common) | ⚠️ (same) | **V1** | **Reddit's #1 production killer for both tools** — silent disk fill until the panel itself crashes. Desired state makes GC principled: prune anything not referenced. Control plane reserves headroom for its own DB. `coolify/app/Jobs/DockerCleanupJob.php` shows the insufficient version |
 | Notifications: Email/Discord/Slack/Telegram | ✅ (+Pushover) | ✅ (+Gotify) | **V1** (these 4) | `coolify/app/Jobs/SendMessageTo*Job.php`; `dokploy/.../utils/notifications` |
-| Auto-update of the platform | ✅ | ✅ | **V1.x** | Agent self-update channel is the hard part |
+| Auto-update of the platform (safe-by-design) | ⚠️ (breaks: #3687, #7193, #7599) | ✅ | **V1.x** | The community's #1 trust wound in Coolify — bricked panels, lost encryption keys. ADR-010 scope: pre-update snapshot, atomic apply + health-verified rollback, update lock; see [research/community-pain-points.md](../../research/community-pain-points.md) |
 | Panel-level backup/restore | ⚠️ | ✅ | **V1.x** | Control plane = 1 binary + pg_dump makes this easy |
 | ARM64 servers | ⚠️ | ⚠️ | **V1** | Agent ships linux/arm64 from day one (tech-stack.md) |
 | Server OS update checks / patching | ✅ | ❌ | **Later** | `coolify/app/Jobs/ServerPatchCheckJob.php` |
-| Migration importer from Coolify / Dokploy | ❌ | ❌ | **V1.x** | Read their Postgres schemas (already mapped in `research/`) and recreate as desired state — the single biggest adoption lever |
+| Migration importer from Coolify / Dokploy | ❌ | ❌ | **V1.x** | Read their Postgres schemas (already mapped in `research/`) and recreate as desired state — the single biggest adoption lever. Community explicitly wants **in-place adoption of running containers without downtime** (dokploy#3098) — the harder, more valuable form |
+| Move a resource between servers | ❌ | ❌ (top-voted request) | **V1.x** | Nearly free under desired state: reassign server → reconcile → migrate volumes |
+| IPv6 servers & dual-stack routing | ❌ (top-voted bug #2484) | ⚠️ | **V1.x** | IPv6-only VPSes are the cheapest machines — P1 territory |
+| Advanced Docker passthrough (labels, host network, extra options) | ⚠️ (top-voted pain: #2549, #1092) | ⚠️ | **V1.x** | Escape hatches that survive panel management instead of fighting it |
+| External secret managers (Vault, Infisical, Doppler) | ❌ | ❌ (requested) | **Later** | Same bring-your-token pattern as cloud providers |
+| Guided onboarding wizard (finish line = first deployed app) | ✅ (7-step "Boarding") | ⚠️ (register → empty dashboard) | **V1** | Ours is 4 steps: welcome → add server (join command or "use this machine") → deploy app/template → live URL. ADR-002 deletes Coolify's SSH-key steps |
 
 ## Collaboration & API
 
