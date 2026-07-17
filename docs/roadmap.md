@@ -1,0 +1,53 @@
+# CypherPanel — Roadmap
+
+> Phases are gates, not dates: a phase is done when its acceptance criteria pass, and the next phase doesn't start early. The v1 feature cut is the "V1" column of [product/feature-matrix.md](product/feature-matrix.md).
+
+## Phase 0 — Knowledge base ✅ (2026-07-17)
+
+Architecture, ADRs 001–005, vision, glossary, personas, feature matrix, engineering handbook, research extraction maps. This documentation set is the ground truth for everything below.
+
+## Phase 1 — Skeleton (control plane ↔ agent handshake)
+
+Proves the hardest architectural claims (ADR-002, ADR-003) before any product feature exists.
+
+Scope: `cypherd` boots (config, migrations, embedded NATS, REST skeleton, auth with a single admin user); `cypher-agent` enrolls via single-use join token, receives mTLS cert, maintains heartbeat; servers visible with live status via API and a minimal UI page.
+
+**Acceptance:** fresh Ubuntu VM joins via `curl | sh` in under 60 seconds. Kill `cypherd` for 5 minutes → agent reconnects, replays missed work, status converges with no manual step. Footprint budgets from [vision.md](vision.md) hold.
+
+## Phase 2 — Deploy vertical slice
+
+One application, end to end, done properly rather than many features shallowly.
+
+Scope: GitHub repo (public + deploy-key private) → Dockerfile build on a builder-role agent → image pushed to registry → `docker` driver rollout with health check → Traefik route + Let's Encrypt cert → build/runtime logs streamed to the UI. Push-to-deploy webhook. Rollback to previous revision.
+
+**Acceptance:** git push → new version live with zero dropped requests; kill the agent mid-deploy → reconciler converges on restart; rollback restores the previous revision in seconds; deploy fully drivable via REST API alone.
+
+## Phase 3 — State model breadth
+
+Scope: managed databases (PostgreSQL, MySQL, MariaDB, MongoDB, Redis, Valkey); env vars & secrets; scheduled backups to S3-compatible targets with restore; preview environments from PRs (TTL auto-destroy); notifications (Email, Discord, Slack, Telegram); teams + roles; scheduled tasks (cron).
+
+**Acceptance:** each resource type deploys, backs up, restores, and deletes cleanly via API; preview environments create and destroy themselves from PR lifecycle events without manual action.
+
+## Phase 4 — Catalog and polish
+
+Scope: template catalog (port Coolify's 361 compose templates + Dokploy's registry mechanism — see research docs); Compose Stack resources; dashboard; interactive terminal; observability — metrics (port concepts from Dokploy's Go monitoring app), bounded persistent log retention, log drains to external systems, metric threshold alerts; design system documented from the real components (`docs/product/design-system.md` gets written *now*, not before); CLI.
+
+**Acceptance:** a Coolify or Dokploy user can self-migrate a typical workload without losing a capability they used (checked against the feature matrix).
+
+## Post-v1 directions (recorded, not scheduled)
+
+Deliberate **Later** items from the [feature matrix](product/feature-matrix.md), captured so v1 work doesn't preempt or accidentally foreclose them:
+
+- **Scale-out story**, in three steps that each deliver value alone:
+  1. Manual replica scaling — run a stateless Application as N replicas across existing servers with load-balanced routing (needs an ingress strategy: cloud LB, DNS, or designated ingress node).
+  2. Cloud provider integration — customer connects AWS/GCP/Azure/Hetzner credentials; CypherPanel provisions servers via cloud-init carrying the agent join command. [ADR-002](adrs/ADR-002-agent-dial-home-no-ssh.md) makes this nearly free: no SSH key injection, the new server simply dials home. (Coolify has a partial start here: `coolify/app/Services/HetznerService.php`.)
+  3. Metric-triggered autoscaling — a controller that edits desired state ([ADR-005](adrs/ADR-005-desired-state-reconciliation.md)) from agent metrics (`state.*`). Hard requirements from day one: scale-in draining, trigger cooldowns/hysteresis to prevent flapping, and a hard cost cap (max servers) since it spends customer money automatically.
+- **`k8s` driver targeting existing clusters** — sanctioned by [vision.md](vision.md) (we deploy *onto* Kubernetes, never install or operate it).
+
+## Open decisions (candidate ADRs)
+
+| # | Question | Decide by |
+|---|---|---|
+| ADR-006 | Swarm driver at v1 launch or fast-follow? Determines how hard the `driver` interface gets exercised in Phase 1–2 | Before Phase 2 starts |
+| ADR-007 | Template format: extend Coolify's compose-YAML + magic envs, Dokploy's remote registry, or a merged schema | Before Phase 4 starts |
+| ADR-008 | Built-in lightweight image registry vs. requiring an external one | Before Phase 2 starts |
