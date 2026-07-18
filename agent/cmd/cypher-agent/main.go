@@ -12,14 +12,22 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/nats-io/nats.go"
 
+	"github.com/MaramHarsha/cypherpanel/agent/builder"
 	"github.com/MaramHarsha/cypherpanel/agent/conn"
+	"github.com/MaramHarsha/cypherpanel/agent/driver/docker"
+	"github.com/MaramHarsha/cypherpanel/agent/driver/docker/engine"
+	"github.com/MaramHarsha/cypherpanel/agent/driver/docker/prober"
 	"github.com/MaramHarsha/cypherpanel/agent/heartbeat"
 	"github.com/MaramHarsha/cypherpanel/agent/identity"
+	"github.com/MaramHarsha/cypherpanel/agent/proxy"
+	"github.com/MaramHarsha/cypherpanel/agent/stream"
+	"github.com/MaramHarsha/cypherpanel/agent/worker"
 )
 
 // version is stamped at build time via -ldflags; "dev" in local builds.
@@ -120,7 +128,35 @@ func runAgent(args []string, log *slog.Logger) error {
 	nc.SetClosedHandler(func(*nats.Conn) { cancel() })
 	log.Info("agent running", "server_id", id.ServerID, "driver", *driver, "version", version)
 
-	heartbeat.NewPublisher(nc, id.ServerID, version, *driver, *interval, log).Run(ctx)
+	go heartbeat.NewPublisher(nc, id.ServerID, version, *driver, *interval, log).Run(ctx)
+
+	if *driver == "docker" {
+		eng := engine.New("")
+		
+		appsDir := "/etc/cypherpanel/traefik/apps"
+		if d := os.Getenv("CYPHER_TRAEFIK_DIR"); d != "" {
+			appsDir = d
+		}
+		prx := proxy.NewTraefikWriter(appsDir)
+		prb := prober.New()
+		
+		bldDir := filepath.Join(*stateDir, "builds")
+		bld := builder.NewBuilder(eng, bldDir)
+
+		strm := stream.NewStreamer(nc, eng)
+		go strm.Start(ctx, 10*time.Second)
+
+		drv := docker.New(eng, prx, prb, log)
+		w := worker.New(nc, id.ServerID, drv, bld, log)
+		go func() {
+			if err := w.Run(ctx); err != nil {
+				log.Error("worker failed", "error", err)
+				cancel()
+			}
+		}()
+	}
+
+	<-ctx.Done()
 
 	if nc.IsClosed() {
 		if lastErr := nc.LastError(); lastErr != nil {

@@ -255,6 +255,24 @@ func (c *Client) RemoveContainer(ctx context.Context, id string) error {
 	return err
 }
 
+// StreamLogs attaches to the container's log stream and copies it to out.
+func (c *Client) StreamLogs(ctx context.Context, id string, out io.Writer) error {
+	q := url.Values{}
+	q.Set("stdout", "1")
+	q.Set("stderr", "1")
+	q.Set("follow", "1")
+	q.Set("tail", "100")
+
+	resp, err := c.do(ctx, http.MethodGet, "/containers/"+id+"/logs", q, nil, "")
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	_, err = io.Copy(out, resp.Body)
+	return err
+}
+
 // ContainerIP returns the container's address on the given network.
 func (c *Client) ContainerIP(ctx context.Context, id, network string) (string, error) {
 	var info struct {

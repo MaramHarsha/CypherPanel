@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -109,6 +110,49 @@ func (a *API) handleGetDeployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toDeploymentDTO(dep))
+}
+
+func (a *API) handleGetDeploymentLogs(w http.ResponseWriter, r *http.Request) {
+	depID := r.PathValue("id")
+	if _, err := a.deps.Deployments.GetDeployment(r.Context(), depID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "deployment not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not get deployment")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+
+	subject := "logs.build." + depID
+	sub, err := a.deps.NATSConn.SubscribeSync(subject)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not subscribe to logs")
+		return
+	}
+	defer sub.Unsubscribe()
+
+	// Notify client that connection is open.
+	fmt.Fprintf(w, "event: connected\ndata: {}\n\n")
+	flusher.Flush()
+
+	for {
+		msg, err := sub.NextMsgWithContext(r.Context())
+		if err != nil {
+			return
+		}
+		fmt.Fprintf(w, "data: %s\n\n", msg.Data)
+		flusher.Flush()
+	}
 }
 
 // handleRollback starts a deployment that restores the revision this

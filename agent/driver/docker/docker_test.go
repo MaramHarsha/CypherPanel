@@ -145,6 +145,10 @@ func (f *fakeClient) addContainer(appID, revID string, running bool) string {
 	return id
 }
 
+func (f *fakeClient) StreamLogs(ctx context.Context, id string, out io.Writer) error {
+	return nil
+}
+
 type fakeRouter struct {
 	routes    map[string]string // appID → upstream
 	setErr    error

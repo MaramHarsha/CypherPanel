@@ -331,6 +331,9 @@ func (b *Bus) ClientURL() string { return b.ns.ClientURL() }
 // configured port was 0 (tests) and for computing the advertised URL.
 func (b *Bus) Addr() net.Addr { return b.ns.Addr() }
 
+// Conn returns the in-process NATS connection.
+func (b *Bus) Conn() *nats.Conn { return b.nc }
+
 // Close shuts down the plane client and the embedded server.
 func (b *Bus) Close() {
 	if b.nc != nil {

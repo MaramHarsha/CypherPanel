@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/nats-io/nats.go"
+
 	"github.com/MaramHarsha/cypherpanel/core/applications"
 	"github.com/MaramHarsha/cypherpanel/core/auth"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
@@ -58,6 +60,7 @@ type Deps struct {
 	CACertPEM    []byte
 	EnrollAddr   string // advertised gRPC enrollment address (host:port)
 	NATSURL      string // advertised data-plane URL
+	NATSConn     *nats.Conn
 	ConsoleURL   string // advertised HTTP base URL (installer + CA fetch)
 	Log          *slog.Logger
 }
@@ -115,6 +118,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/applications/{id}", a.authed(a.handleGetApplication))
 	mux.HandleFunc("PATCH /api/v1/applications/{id}", a.authed(a.handlePatchApplication))
 	mux.HandleFunc("DELETE /api/v1/applications/{id}", a.authed(a.handleDeleteApplication))
+	mux.HandleFunc("GET /api/v1/applications/{id}/logs", a.authed(a.handleGetApplicationLogs))
 	mux.HandleFunc("GET /api/v1/applications/{id}/env", a.authed(a.handleListEnvVars))
 	mux.HandleFunc("PUT /api/v1/applications/{id}/env/{key}", a.authed(a.handleSetEnvVar))
 	mux.HandleFunc("DELETE /api/v1/applications/{id}/env/{key}", a.authed(a.handleDeleteEnvVar))
@@ -123,6 +127,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/applications/{id}/deploy", a.authed(a.handleDeployApplication))
 	mux.HandleFunc("GET /api/v1/applications/{id}/deployments", a.authed(a.handleListDeployments))
 	mux.HandleFunc("GET /api/v1/deployments/{id}", a.authed(a.handleGetDeployment))
+	mux.HandleFunc("GET /api/v1/deployments/{id}/logs", a.authed(a.handleGetDeploymentLogs))
 	mux.HandleFunc("POST /api/v1/deployments/{id}/rollback", a.authed(a.handleRollback))
 
 	// GitHub webhook: authenticated by per-app HMAC secret, not a session
