@@ -1,0 +1,123 @@
+# Phase 1's acceptance test, automated (docs/dev/ci.md): real Postgres, real
+# cypherd, real containerized cypher-agent. Proves the mTLS handshake and
+# heartbeat, a plane outage reconverging with no manual step, and revocation
+# on delete (threat-model §8 req 6). The outage here is compressed to 45s for
+# CI latency; the 5-minute gate run lives in the verify skill.
+name: Integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.25.7"
+  CYPHERD_DATABASE_URL: postgres://postgres:ci-password@127.0.0.1:5432/cypher?sslmode=disable
+  CYPHERD_ADMIN_EMAIL: ci@example.com
+  CYPHERD_ADMIN_PASSWORD: ci-password-1
+  CYPHERD_HEARTBEAT_STALE: 20s
+  CYPHERD_SWEEP_INTERVAL: 5s
+  API: http://127.0.0.1:8080
+
+jobs:
+  handshake:
+    name: Handshake, outage reconvergence, revocation
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: ci-password
+          POSTGRES_DB: cypher
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: "**/go.sum"
+
+      - name: Build binaries (agent static, for a scratch container)
+        run: |
+          mkdir -p bin
+          (cd core && go build -o ../bin/cypherd ./cmd/cypherd)
+          (cd agent && CGO_ENABLED=0 go build -o ../bin/cypher-agent ./cmd/cypher-agent)
+
+      - name: Boot cypherd
+        run: |
+          export CYPHERD_MASTER_KEY=$(head -c32 /dev/urandom | base64)
+          nohup ./bin/cypherd > cypherd.log 2>&1 &
+          echo $! > cypherd.pid
+          echo "CYPHERD_MASTER_KEY=$CYPHERD_MASTER_KEY" >> "$GITHUB_ENV"
+          for i in $(seq 1 60); do curl -sf "$API/readyz" >/dev/null && exit 0; sleep 1; done
+          echo "cypherd never became ready"; cat cypherd.log; exit 1
+
+      - name: Create server and join token
+        run: |
+          TOKEN=$(curl -sf -X POST "$API/api/v1/auth/login" -H 'Content-Type: application/json' \
+            -d "{\"email\":\"$CYPHERD_ADMIN_EMAIL\",\"password\":\"$CYPHERD_ADMIN_PASSWORD\"}" | jq -r .token)
+          CREATE=$(curl -sf -X POST "$API/api/v1/servers" -H "Authorization: Bearer $TOKEN" \
+            -H 'Content-Type: application/json' -d '{"name":"ci-agent"}')
+          echo "SESSION=$TOKEN" >> "$GITHUB_ENV"
+          echo "SRV=$(echo "$CREATE" | jq -r .server.id)" >> "$GITHUB_ENV"
+          echo "JOIN=$(echo "$CREATE" | jq -r .join.token)" >> "$GITHUB_ENV"
+          curl -sf "$API/api/v1/ca.pem" -o ca.pem
+
+      - name: Enroll and run containerized agent
+        run: |
+          mkdir -p agent-state
+          docker run --rm --network host \
+            -v "$PWD/bin:/opt/cy:ro" -v "$PWD/agent-state:/state" -v "$PWD/ca.pem:/ca.pem:ro" \
+            busybox:stable /opt/cy/cypher-agent enroll \
+            --plane localhost:8443 --token "$JOIN" --ca-file /ca.pem --state-dir /state --hostname ci-host
+          docker run -d --name agent --network host \
+            -v "$PWD/bin:/opt/cy:ro" -v "$PWD/agent-state:/state" \
+            busybox:stable /opt/cy/cypher-agent run --state-dir /state --heartbeat 2s
+
+      - name: "Assert: heartbeat drives status to running"
+        run: |
+          for i in $(seq 1 30); do
+            STATUS=$(curl -sf "$API/api/v1/servers/$SRV" -H "Authorization: Bearer $SESSION" | jq -r .status)
+            [ "$STATUS" = "running" ] && exit 0; sleep 1
+          done
+          echo "status never reached running (last: $STATUS)"; docker logs agent; cat cypherd.log; exit 1
+
+      - name: "Outage: kill cypherd for 45s, restart"
+        run: |
+          kill "$(cat cypherd.pid)"; sleep 45
+          nohup ./bin/cypherd > cypherd2.log 2>&1 &
+          echo $! > cypherd.pid
+          for i in $(seq 1 60); do curl -sf "$API/readyz" >/dev/null && exit 0; sleep 1; done
+          echo "cypherd never came back"; cat cypherd2.log; exit 1
+
+      - name: "Assert: agent reconverges with no manual step"
+        run: |
+          for i in $(seq 1 30); do
+            STATUS=$(curl -sf "$API/api/v1/servers/$SRV" -H "Authorization: Bearer $SESSION" | jq -r .status)
+            [ "$STATUS" = "running" ] && { docker logs agent 2>&1 | grep -q "bus reconnected" && exit 0; }
+            sleep 1
+          done
+          echo "did not reconverge (last: $STATUS)"; docker logs agent; cat cypherd2.log; exit 1
+
+      - name: "Assert: delete revokes the live agent"
+        run: |
+          curl -sf -X DELETE "$API/api/v1/servers/$SRV" -H "Authorization: Bearer $SESSION"
+          for i in $(seq 1 30); do
+            docker logs agent 2>&1 | grep -q "authorization violation" && exit 0; sleep 1
+          done
+          echo "agent was not kicked after delete"; docker logs agent; cat cypherd2.log; exit 1
+
+      - name: Logs on failure
+        if: failure()
+        run: |
+          echo "── cypherd ──"; cat cypherd.log cypherd2.log 2>/dev/null || true
+          echo "── agent ──"; docker logs agent 2>&1 || true

@@ -1,0 +1,100 @@
+# Phase 1 CI (docs/dev/ci.md): format, lint, race tests, arm64 cross-build,
+# proto lint + wire-compat, and generated-code drift. The Web job arrives with
+# web/ in Phase 4; the OpenAPI drift leg arrives with the spec (ENGINEERING
+# rule 19) — a job with nothing real to check is a stub, and stubs are banned.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.25.7"
+
+jobs:
+  lint:
+    name: Format & lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: "**/go.sum"
+      - name: gofmt
+        run: |
+          out=$(gofmt -l pkg core agent)
+          if [ -n "$out" ]; then echo "not gofmt'd:"; echo "$out"; exit 1; fi
+      # Not the golangci-lint action: it runs from one working directory, and
+      # at the workspace root golangci-lint silently type-checks nothing.
+      # make lint iterates the modules.
+      - name: Install golangci-lint
+        run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b "$(go env GOPATH)/bin" v2.5.0
+      - run: make lint
+
+  test:
+    name: Unit tests (-race)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: "**/go.sum"
+      - run: make test-race
+
+  build:
+    name: Build (amd64 + arm64 cross)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: "**/go.sum"
+      - run: make build
+      - run: make build-crosscheck
+
+  proto:
+    name: Proto lint & wire compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+      - name: buf lint
+        run: buf lint proto
+      # ENGINEERING rule 18: never break the agent wire protocol. Compares
+      # against main; on pushes to main this is a self-compare and passes.
+      - name: buf breaking against main
+        if: github.event_name == 'pull_request'
+        run: buf breaking proto --against "https://github.com/${{ github.repository }}.git#branch=main,subdir=proto"
+
+  generated-drift:
+    name: Generated-code drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: "**/go.sum"
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+      # Versions must match the headers of the checked-in generated code, or
+      # this check reports phantom drift.
+      - name: Install generators
+        run: |
+          go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
+      - name: Regenerate
+        run: make generate
+      - name: Diff must be empty
+        run: git diff --exit-code

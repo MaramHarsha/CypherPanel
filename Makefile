@@ -54,8 +54,8 @@ fmt: ## Format all Go code
 	@for m in $(MODULES); do (cd $$m && gofmt -w .); done
 
 .PHONY: lint
-lint: ## Run golangci-lint across the workspace
-	golangci-lint run
+lint: ## Run golangci-lint per module (from the root it silently checks nothing)
+	@for m in $(MODULES); do echo "lint $$m"; (cd $$m && golangci-lint run) || exit 1; done
 
 .PHONY: tidy
 tidy: ## go mod tidy every module
