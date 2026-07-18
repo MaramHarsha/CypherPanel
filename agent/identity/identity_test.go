@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -45,8 +46,14 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 }
 
 // TestPrivateKeyPermissions: the key never leaves this host and must not be
-// world-readable (threat-model §5.1).
+// world-readable (threat-model §5.1). POSIX-only: Windows has no owner/
+// group/other permission bits, so os.WriteFile's mode argument doesn't map to
+// anything this assertion could check there — the agent ships linux-only
+// (tech-stack.md), so that's also the only platform this needs to hold on.
 func TestPrivateKeyPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file permissions are not meaningful on Windows")
+	}
 	dir := t.TempDir()
 	if err := Save(dir, testIdentity()); err != nil {
 		t.Fatalf("Save: %v", err)
