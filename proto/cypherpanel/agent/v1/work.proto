@@ -1,0 +1,137 @@
+syntax = "proto3";
+
+package cypherpanel.agent.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1;agentv1";
+
+// Work-item and desired-state contracts for the Phase 2 deploy slice
+// (docs/features/application-deploy.md). These messages ARE the wire contract
+// between scheduler and agent (work.<server_id>.* subjects, ADR-003) and the
+// schema the driver interface consumes (agent/driver) — one source of truth,
+// no parallel Go structs to drift.
+//
+// Contract rules (ENGINEERING 12, 14, 18): field numbers are never reused or
+// renumbered; changes are additive only; every work item carries an
+// idempotency key and every consumer is safe under redelivery. Threat-model
+// §5.1 / §8 req 4: these messages describe STATE to converge on — no message
+// here may ever carry a shell command or arbitrary exec verb.
+
+// AppSpec is an Application's desired state as one server's reconciler sees
+// it: run this revision's image with this config, route it, keep it healthy.
+message AppSpec {
+  string app_id = 1;
+  string environment_id = 2;
+  // revision_id names the immutable revision this spec belongs to; rollback is
+  // a spec whose revision_id points at an older revision (ADR-005).
+  string revision_id = 3;
+  // Image reference, present in the local daemon by the time rollout work
+  // arrives (ADR-008: local build or completed relay — never a registry pull
+  // the reconciler must perform).
+  string image = 4;
+  // Container port the app serves on.
+  uint32 port = 5;
+  // Decrypted env for injection at container create. Sealed at rest on the
+  // plane; never logged (rule 20). Transported only over mTLS (rule 23).
+  map<string, string> env = 6;
+  // Deterministic network name (cypher-<environment_id>) — the agent creates
+  // it by name and references it by name everywhere, never Docker auto-naming
+  // (research/coolify.md lesson 5).
+  string network = 7;
+  HealthCheck health = 8;
+  RouteSpec route = 9;
+}
+
+// HealthCheck gates rollout: the new container must pass before the route
+// flips and the old container drains (zero-downtime invariant).
+message HealthCheck {
+  // HTTP path probed inside the container ("/" default).
+  string path = 1;
+  uint32 interval_seconds = 2;
+  uint32 timeout_seconds = 3;
+  uint32 retries = 4;
+}
+
+// RouteSpec is what the proxy driver (agent/proxy) turns into a Traefik
+// dynamic-config fragment (ADR-004).
+message RouteSpec {
+  string domain = 1;
+  bool https = 2;
+  string path_prefix = 3;
+}
+
+// RolloutWork commands one server's reconciler to converge an Application
+// onto a spec. Idempotent: converging twice equals converging once (rule 13);
+// redelivery after a crash re-runs the same convergence.
+message RolloutWork {
+  // Idempotency key: the deployment this rollout belongs to.
+  string deployment_id = 1;
+  AppSpec spec = 2;
+}
+
+// RemoveWork commands desired absence: container gone, route fragment gone,
+// unreferenced images GC-eligible (threat-model §5.9 desired-state GC).
+message RemoveWork {
+  string deployment_id = 1;
+  string app_id = 2;
+}
+
+// BuildWork commands a builder-role agent to produce an image from source.
+message BuildWork {
+  string deployment_id = 1;
+  string app_id = 2;
+  // Git clone URL; private repos use the deploy key referenced by
+  // deploy_key_id, resolved agent-side from material delivered over mTLS.
+  string repo_url = 3;
+  // Exact commit SHA — builds are of revisions, not moving branches.
+  string commit_sha = 4;
+  string dockerfile_path = 5;
+  string build_context = 6;
+  // Tag for the built image: cypher/<app_id>:<revision_id>.
+  string image = 7;
+}
+
+// AppStatus is one Application's observed state, reported on
+// state.<server_id>.app.<app_id>. The plane asserts "deploy succeeded" only
+// from these reports — never from work-item completion (ADR-005).
+message AppStatus {
+  string app_id = 1;
+  // revision_id actually serving traffic right now (empty if none).
+  string revision_id = 2;
+  // One of the ui-principles §5 vocabulary values the plane maps onto the
+  // Application: running, deploying, stopped, error, degraded.
+  string state = 3;
+  // Human-readable detail for error/degraded (never contains secrets).
+  string detail = 4;
+  google.protobuf.Timestamp observed_at = 5;
+}
+
+// DeployEvent reports a work item's terminal outcome for a deployment,
+// published on state.<server_id>.deploy. Progress (non-terminal) is visible
+// through logs.* streams; the state transition of record is this event plus
+// the AppStatus that follows it.
+message DeployEvent {
+  string deployment_id = 1;
+  string app_id = 2;
+
+  enum Stage {
+    STAGE_UNSPECIFIED = 0;
+    STAGE_BUILD = 1;
+    STAGE_DISTRIBUTE = 2;
+    STAGE_ROLLOUT = 3;
+    STAGE_REMOVE = 4;
+  }
+  Stage stage = 3;
+
+  enum Outcome {
+    OUTCOME_UNSPECIFIED = 0;
+    OUTCOME_SUCCEEDED = 1;
+    OUTCOME_FAILED = 2;
+  }
+  Outcome outcome = 4;
+
+  // Failure detail (never contains secrets — rule 20).
+  string detail = 5;
+  google.protobuf.Timestamp occurred_at = 6;
+}

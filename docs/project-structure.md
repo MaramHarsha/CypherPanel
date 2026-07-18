@@ -39,10 +39,10 @@ cypherpanel/
 │   ├── conn/                    # dial-home mTLS connection with reconnect
 │   ├── identity/                # join-token enrollment, on-disk key/cert storage
 │   ├── heartbeat/               # periodic status publishing
-│   ├── driver/                  # (planned, Phase 2) orchestrator drivers (the modularity seam)
-│   │   ├── docker/              # standalone Docker reconciler
-│   │   ├── swarm/               # Swarm reconciler (pending ADR-006)
-│   │   └── driver.go            # common Reconciler interface
+│   ├── driver/                  # orchestrator drivers (the modularity seam)
+│   │   ├── docker/              # (in progress, Phase 2) standalone Docker reconciler
+│   │   ├── swarm/               # (planned, V1.x — ADR-006) Swarm reconciler
+│   │   └── driver.go            # common Reconciler interface + management labels
 │   ├── proxy/                   # (planned, Phase 2) Traefik dynamic-config writer
 │   ├── builder/                 # (planned, Phase 2) BuildKit / Railpack / Compose
 │   ├── stream/                  # (planned, Phase 2) log tailing, metrics, events
