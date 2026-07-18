@@ -18,6 +18,7 @@ tags:
   - name: auth
   - name: servers
   - name: projects
+  - name: applications
 
 paths:
   /healthz:
@@ -354,6 +355,176 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /api/v1/environments/{id}/applications:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Environment ID (env_… prefix).
+    get:
+      tags: [applications]
+      summary: List applications in an environment
+      responses:
+        "200":
+          description: The environment's applications.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Application"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such environment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      tags: [applications]
+      summary: Create an application
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateApplicationRequest"
+      responses:
+        "201":
+          description: >-
+            Application created. The webhook secret appears exactly once in this
+            response and is never retrievable again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateApplicationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such environment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/applications/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Application ID (app_… prefix).
+    get:
+      tags: [applications]
+      summary: One application (secrets masked)
+      responses:
+        "200":
+          description: The application.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Application"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such application.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      tags: [applications]
+      summary: Delete an application and its env vars
+      responses:
+        "204":
+          description: Deleted (or already absent).
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/applications/{id}/env:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Application ID.
+    get:
+      tags: [applications]
+      summary: List environment-variable keys (values are write-only)
+      responses:
+        "200":
+          description: The keys only; values are never returned (ui-principles §6).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvVarKeys"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such application.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/applications/{id}/env/{key}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Application ID.
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Environment-variable name.
+    put:
+      tags: [applications]
+      summary: Set (create or replace) an environment variable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetEnvVarRequest"
+      responses:
+        "204":
+          description: Stored (sealed at rest).
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such application.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      tags: [applications]
+      summary: Delete an environment variable
+      responses:
+        "204":
+          description: Deleted (or already absent).
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such application.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
 components:
   securitySchemes:
     bearer:
@@ -577,6 +748,161 @@ components:
           type: string
           minLength: 1
           maxLength: 100
+
+    AppSource:
+      type: object
+      required: [kind, repo, branch]
+      properties:
+        kind:
+          type: string
+          enum: [github, git_url]
+        repo:
+          type: string
+        branch:
+          type: string
+        deploy_key_id:
+          type: [string, "null"]
+
+    AppBuild:
+      type: object
+      required: [kind, dockerfile_path, context]
+      properties:
+        kind:
+          type: string
+          enum: [dockerfile]
+        dockerfile_path:
+          type: string
+        context:
+          type: string
+
+    AppRuntime:
+      type: object
+      required: [server_id, port, replicas]
+      properties:
+        server_id:
+          type: string
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        replicas:
+          type: integer
+          description: Fixed at 1 for v1 (multiple replicas are post-v1).
+
+    AppRoute:
+      type: object
+      required: [domain, https, path_prefix]
+      properties:
+        domain:
+          type: string
+        https:
+          type: boolean
+        path_prefix:
+          type: string
+
+    AppHealth:
+      type: object
+      required: [path, interval_seconds, timeout_seconds, retries]
+      properties:
+        path:
+          type: string
+        interval_seconds:
+          type: integer
+        timeout_seconds:
+          type: integer
+        retries:
+          type: integer
+
+    Application:
+      type: object
+      required:
+        [id, environment_id, name, source, build, runtime, route, health, webhook_id, created_at]
+      properties:
+        id:
+          type: string
+          description: app_… prefixed ID.
+        environment_id:
+          type: string
+        name:
+          type: string
+        source:
+          $ref: "#/components/schemas/AppSource"
+        build:
+          $ref: "#/components/schemas/AppBuild"
+        runtime:
+          $ref: "#/components/schemas/AppRuntime"
+        route:
+          $ref: "#/components/schemas/AppRoute"
+        health:
+          $ref: "#/components/schemas/AppHealth"
+        webhook_id:
+          type: string
+          description: Public webhook identifier used in the webhook URL.
+        desired_revision_id:
+          type: [string, "null"]
+          description: Set on first deploy; rollback re-points it.
+        created_at:
+          type: string
+          format: date-time
+
+    CreateApplicationRequest:
+      type: object
+      required: [name, source, runtime, route]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        source:
+          $ref: "#/components/schemas/AppSource"
+        build:
+          $ref: "#/components/schemas/AppBuild"
+        runtime:
+          $ref: "#/components/schemas/AppRuntime"
+        route:
+          $ref: "#/components/schemas/AppRoute"
+        health:
+          $ref: "#/components/schemas/AppHealth"
+        env_vars:
+          type: object
+          additionalProperties:
+            type: string
+          description: Plaintext values; sealed before storage, never returned.
+
+    WebhookInfo:
+      type: object
+      required: [url, secret]
+      properties:
+        url:
+          type: string
+        secret:
+          type: string
+          description: HMAC secret shown once; store it in your git provider now.
+
+    CreateApplicationResponse:
+      type: object
+      required: [application, webhook]
+      properties:
+        application:
+          $ref: "#/components/schemas/Application"
+        webhook:
+          $ref: "#/components/schemas/WebhookInfo"
+
+    EnvVarKeys:
+      type: object
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          items:
+            type: string
+
+    SetEnvVarRequest:
+      type: object
+      required: [value]
+      properties:
+        value:
+          type: string
 
 security:
   - bearer: []

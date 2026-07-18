@@ -108,7 +108,45 @@ func (s *Store) ListEnvironmentsByProject(ctx context.Context, projectID string)
 // ─── Applications ───────────────────────────────────────────────────────────
 
 func (s *Store) CreateApplication(ctx context.Context, a domain.Application) (domain.Application, error) {
-	row, err := s.q.CreateApplication(ctx, db.CreateApplicationParams{
+	row, err := s.q.CreateApplication(ctx, appParams(a))
+	if err != nil {
+		return domain.Application{}, fmt.Errorf("store: creating application: %w", err)
+	}
+	return applicationFromRow(row), nil
+}
+
+// CreateApplicationWithEnv creates an application and its sealed env vars in one
+// transaction, so an application never exists with a partial env set.
+func (s *Store) CreateApplicationWithEnv(ctx context.Context, a domain.Application, envVars []domain.EnvVar) (domain.Application, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return domain.Application{}, fmt.Errorf("store: beginning tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
+
+	qtx := s.q.WithTx(tx)
+	row, err := qtx.CreateApplication(ctx, appParams(a))
+	if err != nil {
+		return domain.Application{}, fmt.Errorf("store: creating application: %w", err)
+	}
+	for _, v := range envVars {
+		if err := qtx.UpsertEnvVar(ctx, db.UpsertEnvVarParams{
+			ApplicationID: a.ID,
+			Key:           v.Key,
+			ValueCt:       v.ValueCT,
+			ValueNonce:    v.ValueNonce,
+		}); err != nil {
+			return domain.Application{}, fmt.Errorf("store: creating env var: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Application{}, fmt.Errorf("store: committing application: %w", err)
+	}
+	return applicationFromRow(row), nil
+}
+
+func appParams(a domain.Application) db.CreateApplicationParams {
+	return db.CreateApplicationParams{
 		ID:                    a.ID,
 		EnvironmentID:         a.EnvironmentID,
 		Name:                  a.Name,
@@ -132,11 +170,7 @@ func (s *Store) CreateApplication(ctx context.Context, a domain.Application) (do
 		WebhookID:             a.WebhookID,
 		WebhookSecretCt:       a.WebhookSecretCT,
 		WebhookSecretNonce:    a.WebhookSecretNonce,
-	})
-	if err != nil {
-		return domain.Application{}, fmt.Errorf("store: creating application: %w", err)
 	}
-	return applicationFromRow(row), nil
 }
 
 func (s *Store) GetApplication(ctx context.Context, id string) (domain.Application, error) {

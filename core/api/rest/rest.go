@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/MaramHarsha/cypherpanel/core/applications"
 	"github.com/MaramHarsha/cypherpanel/core/auth"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
@@ -25,15 +26,16 @@ type Pinger interface {
 
 // Deps are the dependencies the API needs.
 type Deps struct {
-	Auth       *auth.Authenticator
-	Servers    *servers.Service
-	Projects   *projects.Service
-	Pinger     Pinger
-	CACertPEM  []byte
-	EnrollAddr string // advertised gRPC enrollment address (host:port)
-	NATSURL    string // advertised data-plane URL
-	ConsoleURL string // advertised HTTP base URL (installer + CA fetch)
-	Log        *slog.Logger
+	Auth         *auth.Authenticator
+	Servers      *servers.Service
+	Projects     *projects.Service
+	Applications *applications.Service
+	Pinger       Pinger
+	CACertPEM    []byte
+	EnrollAddr   string // advertised gRPC enrollment address (host:port)
+	NATSURL      string // advertised data-plane URL
+	ConsoleURL   string // advertised HTTP base URL (installer + CA fetch)
+	Log          *slog.Logger
 }
 
 // API holds the HTTP handlers and their dependencies.
@@ -82,6 +84,15 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/projects/{id}", a.authed(a.handleDeleteProject))
 	mux.HandleFunc("GET /api/v1/projects/{id}/environments", a.authed(a.handleListEnvironments))
 	mux.HandleFunc("POST /api/v1/projects/{id}/environments", a.authed(a.handleCreateEnvironment))
+
+	// Applications (created + listed under an environment; addressed by app id).
+	mux.HandleFunc("POST /api/v1/environments/{id}/applications", a.authed(a.handleCreateApplication))
+	mux.HandleFunc("GET /api/v1/environments/{id}/applications", a.authed(a.handleListApplications))
+	mux.HandleFunc("GET /api/v1/applications/{id}", a.authed(a.handleGetApplication))
+	mux.HandleFunc("DELETE /api/v1/applications/{id}", a.authed(a.handleDeleteApplication))
+	mux.HandleFunc("GET /api/v1/applications/{id}/env", a.authed(a.handleListEnvVars))
+	mux.HandleFunc("PUT /api/v1/applications/{id}/env/{key}", a.authed(a.handleSetEnvVar))
+	mux.HandleFunc("DELETE /api/v1/applications/{id}/env/{key}", a.authed(a.handleDeleteEnvVar))
 
 	// Interim console + static assets.
 	mux.Handle("GET /", a.consoleHandler())
