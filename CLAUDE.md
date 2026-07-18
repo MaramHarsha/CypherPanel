@@ -2,7 +2,7 @@
 
 Self-hosted PaaS unifying the best of Coolify and Dokploy on a desired-state, agent-based architecture. Go control plane (`cypherd`) + Go agent (`cypher-agent`) + PostgreSQL; React UI embedded as static assets.
 
-**Current status:** Phase 0 (knowledge base) complete; no application code exists yet. Code begins with roadmap Phase 1.
+**Current status:** Phase 1 (control-plane ↔ agent handshake) in progress. `pkg/`, `core/`, and `agent/` exist as a three-module Go workspace; see `docs/roadmap.md` for the remaining Phase 1 acceptance gates.
 
 ## Hard rules
 

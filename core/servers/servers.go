@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -27,17 +28,26 @@ type Store interface {
 	DeleteServer(ctx context.Context, id string) error
 }
 
+// AgentDisconnector severs a server's live bus connection (consumer-defined;
+// *bus.Bus satisfies it). Deleting a server revokes its agent, and revocation
+// must cut open connections too, not just future ones (threat-model §8 req 6).
+type AgentDisconnector interface {
+	DisconnectAgent(serverID string) error
+}
+
 // Service manages servers from the operator's side.
 type Service struct {
 	store    Store
+	bus      AgentDisconnector
 	tokenTTL time.Duration
+	log      *slog.Logger
 	now      func() time.Time
 }
 
 // NewService wires the service. tokenTTL is how long an issued join token stays
 // valid (short — threat-model §5.3).
-func NewService(s Store, tokenTTL time.Duration) *Service {
-	return &Service{store: s, tokenTTL: tokenTTL, now: time.Now}
+func NewService(s Store, bus AgentDisconnector, tokenTTL time.Duration, log *slog.Logger) *Service {
+	return &Service{store: s, bus: bus, tokenTTL: tokenTTL, log: log, now: time.Now}
 }
 
 // Create registers a new server and returns it with the raw join token to hand
@@ -83,10 +93,17 @@ func (s *Service) Get(ctx context.Context, id string) (domain.Server, error) {
 	return srv, nil
 }
 
-// Delete removes a server and (by cascade) its tokens.
+// Delete removes a server and (by cascade) its tokens, then severs the
+// server's live bus connection so revocation is immediate. The disconnect is
+// best-effort once the row is gone: a failure is logged, not returned, because
+// the bus refuses the identity on its next connect regardless (threat-model
+// §8 req 6).
 func (s *Service) Delete(ctx context.Context, id string) error {
 	if err := s.store.DeleteServer(ctx, id); err != nil {
 		return fmt.Errorf("servers: deleting server: %w", err)
+	}
+	if err := s.bus.DisconnectAgent(id); err != nil {
+		s.log.Error("disconnecting deleted server's agent", "server_id", id, "error", err)
 	}
 	return nil
 }

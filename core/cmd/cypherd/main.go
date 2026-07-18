@@ -26,6 +26,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/bus"
 	"github.com/MaramHarsha/cypherpanel/core/config"
 	"github.com/MaramHarsha/cypherpanel/core/enroll"
+	"github.com/MaramHarsha/cypherpanel/core/guard"
 	"github.com/MaramHarsha/cypherpanel/core/identity"
 	"github.com/MaramHarsha/cypherpanel/core/secret"
 	"github.com/MaramHarsha/cypherpanel/core/servers"
@@ -56,6 +57,16 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	log.Info("starting cypherd", "version", version, "public_host", cfg.PublicHost)
+
+	// Self-protection: refuse to boot into a nearly-full disk rather than run
+	// until Postgres can no longer write (threat-model §8 req 10).
+	if err := guard.CheckDiskHeadroom(".", cfg.MinDiskFree, guard.FreeBytes); err != nil {
+		if errors.Is(err, guard.ErrUnsupported) {
+			log.Warn("disk headroom check unsupported on this platform", "error", err)
+		} else {
+			return err
+		}
+	}
 
 	// Migrate before opening the pool so the schema is present.
 	if err := store.Migrate(ctx, cfg.DatabaseURL); err != nil {
@@ -93,7 +104,12 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("building bus TLS: %w", err)
 	}
-	b, err := bus.Start(ctx, bus.Options{ListenAddr: cfg.NATSAddr, TLSConfig: busTLS})
+	b, err := bus.Start(ctx, bus.Options{
+		ListenAddr: cfg.NATSAddr,
+		TLSConfig:  busTLS,
+		Authorizer: st,
+		Log:        log,
+	})
 	if err != nil {
 		return err
 	}
@@ -123,7 +139,7 @@ func run(log *slog.Logger) error {
 
 	// Services.
 	enrollSvc := enroll.NewService(st, ca, cfg.AgentCertTTL, cfg.AdvertisedNATSURL())
-	serverSvc := servers.NewService(st, cfg.JoinTokenTTL)
+	serverSvc := servers.NewService(st, b, cfg.JoinTokenTTL, log)
 	authr := auth.NewAuthenticator(st, auth.NewLimiter(5, 15*time.Minute), cfg.SessionTTL)
 
 	// gRPC enrollment endpoint (server-auth TLS; join-token gated).

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -47,6 +48,11 @@ type Config struct {
 	HeartbeatStale time.Duration // no heartbeat for this long ⇒ status unknown
 	SweepInterval  time.Duration // how often the stale sweep runs
 	ShutdownGrace  time.Duration // max time to drain on shutdown
+
+	// MinDiskFree is the boot-time disk headroom floor in bytes (threat-model
+	// §8 req 10). cypherd refuses to start with less free space than this;
+	// 0 disables the check. Default 1 GiB.
+	MinDiskFree uint64
 }
 
 // Load reads and validates configuration from the process environment.
@@ -85,6 +91,12 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("config: CYPHERD_ADMIN_EMAIL and CYPHERD_ADMIN_PASSWORD must be set together")
 	}
 
+	minFree, err := envBytes("CYPHERD_MIN_DISK_FREE", 1<<30)
+	if err != nil {
+		return Config{}, fmt.Errorf("config: CYPHERD_MIN_DISK_FREE invalid: %w", err)
+	}
+	c.MinDiskFree = minFree
+
 	return c, nil
 }
 
@@ -114,6 +126,21 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// envBytes parses a byte count from the environment (plain integer, 0 allowed
+// to disable). Unlike the tuning knobs above, a malformed value is an error,
+// not a silent fallback: this knob guards a security property (§5.9).
+func envBytes(key string, def uint64) (uint64, error) {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def, nil
+	}
+	n, err := strconv.ParseUint(v, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parsing %q as bytes: %w", v, err)
+	}
+	return n, nil
 }
 
 func envDuration(key string, def time.Duration) time.Duration {

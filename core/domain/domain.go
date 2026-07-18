@@ -45,12 +45,15 @@ type Server struct {
 func (s Server) Enrolled() bool { return s.EnrolledAt != nil }
 
 // User is an account that can sign in to the control plane. Phase 1 bootstraps
-// exactly one owner.
+// exactly one owner. The account model supports TOTP (threat-model §8 req 7):
+// the sealed seed stays in the store; the domain only surfaces whether it is
+// enrolled.
 type User struct {
 	ID           string
 	Email        string
 	PasswordHash string
 	Role         string
+	TOTPEnabled  bool
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }

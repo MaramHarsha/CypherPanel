@@ -4,6 +4,9 @@
 
 ## Code layout
 
+Directories marked *(planned)* do not exist yet; they arrive with the roadmap
+phase that needs them.
+
 ```
 cypherpanel/
 ├── go.work                      # Go workspace tying the modules together
@@ -11,36 +14,48 @@ cypherpanel/
 ├── docker-compose.dev.yml       # local dev: postgres + hot-reload plane
 │
 ├── core/                        # ── control plane (single binary: cypherd) ──
-│   ├── cmd/cypherd/             # main: serves API, UI assets, scheduler, embedded NATS
+│   ├── cmd/cypherd/             # main: wiring + run loop, serves API + embedded NATS
 │   ├── api/
-│   │   ├── rest/                # HTTP handlers, OpenAPI spec, middleware
+│   │   ├── rest/                # HTTP handlers, middleware; OpenAPI spec (planned)
+│   │   │   └── console/         # interim Phase 1 console (replaced by web/ in Phase 4)
 │   │   └── grpc/                # agent-facing services (proto in /proto)
-│   ├── auth/                    # sessions, API tokens, OIDC, RBAC policy
-│   ├── domain/                  # resource model: project, application, compose stack,
-│   │   │                        #   managed database, environment, server, deployment,
-│   │   │                        #   backup, certificate
-│   │   └── reconcile/           # desired-vs-observed diffing, work planning
-│   ├── scheduler/               # queue producers, cron, retry/backoff policy
-│   ├── store/                   # Postgres access (sqlc), migrations/
-│   ├── bus/                     # JetStream setup, subject contracts (work.*, state.*, logs.*)
-│   └── notify/                  # email, Discord, Telegram, Slack, webhooks
+│   ├── auth/                    # sessions, token hashing; OIDC/RBAC (planned)
+│   ├── config/                  # fail-closed env config for cypherd
+│   ├── domain/                  # resource model (Phase 1: Server, User, JoinToken)
+│   │   └── reconcile/           # (planned, Phase 2) desired-vs-observed diffing
+│   ├── enroll/                  # agent-facing enrollment: join token → signed cert
+│   ├── guard/                   # boot-time safety checks (disk headroom, threat-model §5.9)
+│   ├── identity/                # plane CA lifecycle: create, seal, load
+│   ├── secret/                  # AES-256-GCM sealing with the master key
+│   ├── servers/                 # operator-facing server lifecycle
+│   ├── status/                  # heartbeat consumption, liveness → status transitions
+│   ├── scheduler/               # (planned, Phase 2) queue producers, cron, retry policy
+│   ├── store/                   # Postgres access (sqlc: db/, queries/), migrations/
+│   ├── bus/                     # embedded NATS: mTLS, per-agent authorization, revocation
+│   └── notify/                  # (planned, Phase 3+) email, Discord, Telegram, webhooks
 │
 ├── agent/                       # ── data plane (single binary: cypher-agent) ──
 │   ├── cmd/cypher-agent/
-│   ├── conn/                    # dial-home, mTLS, join-token enrollment
-│   ├── driver/                  # orchestrator drivers (the modularity seam)
+│   ├── conn/                    # dial-home mTLS connection with reconnect
+│   ├── identity/                # join-token enrollment, on-disk key/cert storage
+│   ├── heartbeat/               # periodic status publishing
+│   ├── driver/                  # (planned, Phase 2) orchestrator drivers (the modularity seam)
 │   │   ├── docker/              # standalone Docker reconciler
 │   │   ├── swarm/               # Swarm reconciler (pending ADR-006)
 │   │   └── driver.go            # common Reconciler interface
-│   ├── proxy/                   # Traefik dynamic-config writer (Caddy later)
-│   ├── builder/                 # BuildKit / Railpack / Compose (enabled by --role=builder)
-│   ├── stream/                  # log tailing, metrics, event publishing
-│   └── exec/                    # terminal session bridging
+│   ├── proxy/                   # (planned, Phase 2) Traefik dynamic-config writer
+│   ├── builder/                 # (planned, Phase 2) BuildKit / Railpack / Compose
+│   ├── stream/                  # (planned, Phase 2) log tailing, metrics, events
+│   └── exec/                    # (planned, Phase 3+) terminal session bridging
 │
-├── proto/                       # gRPC contracts shared by core & agent (buf-managed)
-├── pkg/                         # shared Go libs: types, compose-spec parsing, ids
+├── proto/                       # gRPC/protobuf contracts shared by core & agent (buf-managed)
+├── pkg/                         # shared Go libs
+│   ├── ids/                     # prefixed IDs + token secrets
+│   ├── pki/                     # CA, CSR signing, TLS config construction
+│   ├── proto/                   # generated protobuf code (from /proto)
+│   └── subjects/                # NATS subject contracts (work.*, state.*)
 │
-├── web/                         # ── UI (static build, embedded into cypherd) ──
+├── web/                         # (planned, Phase 4) ── UI (static build, embedded) ──
 │   ├── src/
 │   │   ├── api/                 # generated client from OpenAPI — never hand-written
 │   │   ├── features/            # projects/, applications/, databases/, servers/,
@@ -49,8 +64,8 @@ cypherpanel/
 │   │   └── routes/
 │   └── package.json
 │
-├── templates/                   # one-click catalog (declarative YAML — data, not code)
-├── install/                     # curl|sh installers: control plane, agent join
+├── templates/                   # (planned, Phase 4) one-click catalog (declarative YAML)
+├── install/                     # (planned) curl|sh installers: control plane, agent join
 └── docs/                        # see below
 ```
 

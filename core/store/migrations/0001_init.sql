@@ -4,13 +4,19 @@
 -- no transient coordination data lives in Postgres (that is NATS — ADR-003).
 
 -- The admin/user account(s). Phase 1 bootstraps exactly one owner from config.
+-- The account model supports TOTP from day one (threat-model §8 req 7): the
+-- seed is stored AES-256-GCM-sealed with the master key, like the CA key
+-- (asset A4 — never in the clear at rest). NULL columns = TOTP not enrolled;
+-- the enrollment/verification flow ships per the feature matrix.
 CREATE TABLE users (
-    id            TEXT        PRIMARY KEY,
-    email         TEXT        NOT NULL UNIQUE,
-    password_hash TEXT        NOT NULL,
-    role          TEXT        NOT NULL DEFAULT 'owner',
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                TEXT        PRIMARY KEY,
+    email             TEXT        NOT NULL UNIQUE,
+    password_hash     TEXT        NOT NULL,
+    role              TEXT        NOT NULL DEFAULT 'owner',
+    totp_secret_enc   BYTEA,
+    totp_secret_nonce BYTEA,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- The control-plane certificate authority (asset A2, threat-model §2).

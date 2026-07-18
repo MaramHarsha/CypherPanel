@@ -183,25 +183,28 @@
         const region = $("servers-region");
         if (!list.length) {
           region.innerHTML = `<div class="empty"><p class="muted">No servers yet.</p>
-            <button class="primary" onclick="document.getElementById('add-server').click()">Add your first server</button></div>`;
+            <button class="primary" data-action="add">Add your first server</button></div>`;
           return;
         }
+        // No inline event handlers: user-supplied values (the server name) go
+        // only into escaped text/attribute positions, and clicks are resolved
+        // via delegated listeners reading data attributes.
         region.innerHTML = `<table><thead><tr>
             <th>Name</th><th>Status</th><th>Hostname</th><th>Agent</th><th>Last seen</th><th></th>
           </tr></thead><tbody>${list.map((s) => `<tr>
-            <td><strong>${escapeHtml(s.name)}</strong><div class="muted mono" style="font-size:12px">${s.id}</div></td>
+            <td><strong>${escapeHtml(s.name)}</strong><div class="muted mono" style="font-size:12px">${escapeHtml(s.id)}</div></td>
             <td>${statusBadge(s)}</td>
             <td>${escapeHtml(s.hostname || "—")}</td>
             <td>${escapeHtml(s.agent_version || "—")}</td>
-            <td class="muted" title="${s.last_seen_at || ""}">${relative(s.last_seen_at)}</td>
-            <td style="text-align:right"><button class="danger" onclick="askDelete('${s.id}', '${escapeAttr(s.name)}')">Delete</button></td>
+            <td class="muted" title="${escapeHtml(s.last_seen_at || "")}">${relative(s.last_seen_at)}</td>
+            <td style="text-align:right"><button class="danger" data-action="delete" data-id="${escapeHtml(s.id)}" data-name="${escapeHtml(s.name)}">Delete</button></td>
           </tr>`).join("")}</tbody></table>`;
       }
 
       function renderError(msg) {
         $("servers-region").innerHTML = `<div class="error-state">
           <p style="color: var(--error)">Could not load servers: ${escapeHtml(msg)}</p>
-          <button onclick="refresh()">Retry</button></div>`;
+          <button data-action="retry">Retry</button></div>`;
       }
 
       function renderLoading() {
@@ -210,7 +213,6 @@
       }
 
       const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-      const escapeAttr = (s) => String(s).replace(/'/g, "\\'");
 
       let pollTimer = null;
       async function refresh() {
@@ -288,13 +290,21 @@
 
       // Delete server (typed confirmation — ui-principles §2).
       let deleteId = null, deleteName = null;
-      window.askDelete = (id, name) => {
+      function askDelete(id, name) {
         deleteId = id; deleteName = name;
         $("delete-name-label").textContent = name;
         $("delete-confirm").value = "";
         $("delete-submit").disabled = true;
         $("delete-dialog").showModal();
-      };
+      }
+      // Delegated clicks for buttons rendered inside the servers region.
+      $("servers-region").addEventListener("click", (e) => {
+        const btn = e.target.closest("button[data-action]");
+        if (!btn) return;
+        if (btn.dataset.action === "add") $("add-server").click();
+        if (btn.dataset.action === "retry") refresh();
+        if (btn.dataset.action === "delete") askDelete(btn.dataset.id, btn.dataset.name);
+      });
       $("delete-confirm").addEventListener("input", () => {
         $("delete-submit").disabled = $("delete-confirm").value !== deleteName;
       });

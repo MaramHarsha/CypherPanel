@@ -2,7 +2,7 @@
 
 A self-hosted PaaS that unifies the best of **Coolify** (breadth: 361 one-click templates, 8 database engines) and **Dokploy** (polish: rollbacks, volume backups, clean data model) on an architecture neither has: a lightweight Go control plane commanding dial-home agents — **no SSH keys stored, no builds on the panel, desired-state reconciliation throughout.**
 
-> **Status: Phase 0 complete — this repository is currently a knowledge base, not code.** Every architectural decision, scope boundary, and product rule is documented before implementation. Code begins with [roadmap Phase 1](docs/roadmap.md) (control-plane ↔ agent handshake).
+> **Status: Phase 1 in progress — the control-plane ↔ agent handshake.** Phase 0 (knowledge base) is complete: every architectural decision, scope boundary, and product rule was documented before implementation. Current code: `cypherd` (embedded NATS bus with per-agent mTLS authorization, CA + enrollment, servers API, interim console) and `cypher-agent` (enroll, dial home, heartbeat). Remaining Phase 1 gates are tracked in [docs/roadmap.md](docs/roadmap.md).
 
 ## Why another PaaS?
 
@@ -26,7 +26,7 @@ Full analysis: [docs/architecture.md](docs/architecture.md) · measured baseline
 5. [docs/roadmap.md](docs/roadmap.md) — phases with acceptance gates, open decisions
 6. [research/](research/) — extraction maps into the reference sources, measured footprints, community pain points
 
-Working on the code (eventually)? [CLAUDE.md](CLAUDE.md) is the router; [ENGINEERING.md](ENGINEERING.md) is the law.
+Working on the code? [CLAUDE.md](CLAUDE.md) is the router; [ENGINEERING.md](ENGINEERING.md) is the law.
 
 ## License
 

@@ -247,6 +247,17 @@ func (s *Store) DeleteServer(ctx context.Context, id string) error {
 	return nil
 }
 
+// AgentEnrolled reports whether id names a server that exists and has
+// completed enrollment. It satisfies bus.AgentAuthorizer: the bus refuses
+// connections from identities this returns false for (threat-model §8 req 6).
+func (s *Store) AgentEnrolled(ctx context.Context, id string) (bool, error) {
+	ok, err := s.q.ServerIsEnrolled(ctx, id)
+	if err != nil {
+		return false, fmt.Errorf("store: checking enrollment of %s: %w", id, err)
+	}
+	return ok, nil
+}
+
 // ─── Join tokens ────────────────────────────────────────────────────────────
 
 func (s *Store) CreateJoinToken(ctx context.Context, id, serverID string, tokenHash []byte, expiresAt time.Time) (domain.JoinToken, error) {
@@ -343,6 +354,7 @@ func userFromRow(r db.User) domain.User {
 		Email:        r.Email,
 		PasswordHash: r.PasswordHash,
 		Role:         r.Role,
+		TOTPEnabled:  len(r.TotpSecretEnc) > 0,
 		CreatedAt:    r.CreatedAt.Time,
 		UpdatedAt:    r.UpdatedAt.Time,
 	}

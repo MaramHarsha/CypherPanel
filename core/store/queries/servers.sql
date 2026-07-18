@@ -39,3 +39,11 @@ RETURNING id;
 
 -- name: DeleteServer :exec
 DELETE FROM servers WHERE id = $1;
+
+-- ServerIsEnrolled backs the bus's connection-time revocation check
+-- (threat-model §8 req 6): a certificate whose server row is gone or was
+-- never enrolled is refused, however cryptographically valid it still is.
+-- name: ServerIsEnrolled :one
+SELECT EXISTS(
+    SELECT 1 FROM servers WHERE id = $1 AND enrolled_at IS NOT NULL
+) AS enrolled;
