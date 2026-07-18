@@ -2,7 +2,7 @@
 
 Self-hosted PaaS unifying the best of Coolify and Dokploy on a desired-state, agent-based architecture. Go control plane (`cypherd`) + Go agent (`cypher-agent`) + PostgreSQL; React UI embedded as static assets.
 
-**Current status:** Phase 1 (control-plane ↔ agent handshake) in progress. `pkg/`, `core/`, and `agent/` exist as a three-module Go workspace; see `docs/roadmap.md` for the remaining Phase 1 acceptance gates.
+**Current status:** Phase 1 (control-plane ↔ agent handshake) complete — see the evidence note in `docs/roadmap.md`. Phase 2 (deploy vertical slice) is next; it is gated on ADR-006 (Swarm) and ADR-008 (registry), and every Phase 2 feature needs its `docs/features/` spec written first.
 
 ## Hard rules
 
@@ -30,4 +30,4 @@ Self-hosted PaaS unifying the best of Coolify and Dokploy on a desired-state, ag
 
 ## Open decisions — do not preempt
 
-ADR-006 (Swarm at launch?), ADR-007 (template format), ADR-008 (built-in registry?), ADR-009 (license), ADR-010 (agent auto-update mechanism) — tracked in `docs/roadmap.md`. Work that would force one of these must surface the decision instead of assuming it.
+ADR-007 (template format), ADR-009 (license), ADR-010 (agent auto-update mechanism) — tracked in `docs/roadmap.md`. Work that would force one of these must surface the decision instead of assuming it. (ADR-006 and ADR-008 were decided 2026-07-18: docker-only at launch; no registry required.)

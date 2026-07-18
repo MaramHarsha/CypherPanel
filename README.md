@@ -2,7 +2,7 @@
 
 A self-hosted PaaS that unifies the best of **Coolify** (breadth: 361 one-click templates, 8 database engines) and **Dokploy** (polish: rollbacks, volume backups, clean data model) on an architecture neither has: a lightweight Go control plane commanding dial-home agents — **no SSH keys stored, no builds on the panel, desired-state reconciliation throughout.**
 
-> **Status: Phase 1 in progress — the control-plane ↔ agent handshake.** Phase 0 (knowledge base) is complete: every architectural decision, scope boundary, and product rule was documented before implementation. Current code: `cypherd` (embedded NATS bus with per-agent mTLS authorization, CA + enrollment, servers API, interim console) and `cypher-agent` (enroll, dial home, heartbeat). Remaining Phase 1 gates are tracked in [docs/roadmap.md](docs/roadmap.md).
+> **Status: Phase 1 complete — the control-plane ↔ agent handshake works end to end.** `cypherd` (embedded NATS bus with per-agent mTLS authorization, CA + enrollment, servers API, `curl | sh` installer, interim console) and `cypher-agent` (enroll, dial home, heartbeat, exit-on-revocation) are live, with the handshake, outage reconvergence, revocation, and the 60-second join gate asserted by CI on every push. Next: Phase 2, the deploy vertical slice — see [docs/roadmap.md](docs/roadmap.md).
 
 ## Why another PaaS?
 

@@ -49,7 +49,7 @@
 | DB backups → S3, scheduled | ✅ | ✅ | **V1** | `coolify/app/Jobs/DatabaseBackupJob.php`; `dokploy/.../utils/backups` |
 | Volume backups | ⚠️ | ✅ | **V1.x** | `dokploy/.../utils/volume-backups` — differentiator worth keeping |
 | Backup restore (in-panel) | ⚠️ | ✅ | **V1** | `dokploy/.../utils/restore` — backups without tested restore fail P2 (Alex) |
-| Private registries | ✅ | ✅ | **V1** | `schema/registry.ts`; ADR-008 pending for built-in registry |
+| Private registries | ✅ | ✅ | **V1** (optional, never required) | `schema/registry.ts`; [ADR-008](../adrs/ADR-008-no-registry-required.md): no registry required — local image / mTLS relay / external optional |
 | Scheduled tasks (cron in containers) | ✅ | ✅ | **V1** | `coolify/app/Jobs/ScheduledTaskJob.php`; `schema/schedule.ts` |
 | GPU support | ❌ | ⚠️ | **Out** (v1) | `dokploy/.../utils/gpu-setup.ts` |
 
@@ -72,7 +72,7 @@
 | Feature | Coolify | Dokploy | CypherPanel | Evidence / notes |
 |---|---|---|---|---|
 | Multi-server | ✅ (SSH) | ✅ (Swarm) | **V1** (agents) | The core differentiator — ADR-002 |
-| Docker Swarm | ⚠️ | ✅ | **ADR-006 pending** | `dokploy/.../routers/swarm.ts` |
+| Docker Swarm | ⚠️ | ✅ | **V1.x** | [ADR-006](../adrs/ADR-006-docker-only-at-launch.md): `docker` only at launch; Swarm driver fast-follows. `dokploy/.../routers/swarm.ts` |
 | Horizontal replica scaling | ❌ | ⚠️ (Swarm replicas, manual) | **Later** | Stateless apps only; needs ingress strategy — see roadmap post-v1 |
 | Cloud provider server provisioning | ⚠️ (partial) | ❌ | **Later** | `coolify/app/Services/HetznerService.php`; join-token enrollment (ADR-002) makes this cheap |
 | Metric-triggered autoscaling | ❌ | ❌ | **Later** | Desired-state controller (ADR-005) + agent metrics; cooldowns and cost caps required |
@@ -115,4 +115,4 @@
 
 ## Summary of deliberate gaps at v1
 
-No Swarm decision yet (ADR-006), no buildpacks, no GPU, no SSO, no AI, no replica scaling / cloud provisioning / autoscaling (recorded as post-v1 in [roadmap.md](../roadmap.md)), simple roles only, template subset only, English-only at launch, no OS patching. Every **V1** row above is otherwise a launch blocker — this table *is* the v1 scope contract referenced by [roadmap.md](../roadmap.md).
+No Swarm at launch ([ADR-006](../adrs/ADR-006-docker-only-at-launch.md) — V1.x fast-follow), no buildpacks, no GPU, no SSO, no AI, no replica scaling / cloud provisioning / autoscaling (recorded as post-v1 in [roadmap.md](../roadmap.md)), simple roles only, template subset only, English-only at launch, no OS patching. Every **V1** row above is otherwise a launch blocker — this table *is* the v1 scope contract referenced by [roadmap.md](../roadmap.md).

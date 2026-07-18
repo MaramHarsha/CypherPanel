@@ -61,7 +61,7 @@ Three principles fall out of this:
 
 **cypher-agent** — a single static Go binary (~15MB) per server. Outbound-only connection to the control plane (mTLS over gRPC/NATS) — meaning **no inbound ports, no SSH keys stored on the panel**, works behind NAT ([ADR-002](adrs/ADR-002-agent-dial-home-no-ssh.md)). Responsibilities: reconcile containers against desired state via the local Docker socket, write Traefik dynamic config, stream logs/metrics/events upward, run health checks locally. The agent embeds orchestrator *drivers*: `docker` (standalone), `swarm`, and a future `k8s` — same desired-state schema, different reconcilers.
 
-**cypher-builder** — a role flag on the agent, not a separate program (`cypher-agent --role=builder`). Runs BuildKit for Dockerfile builds, Railpack/Nixpacks for auto-detected builds, and Compose parsing. Pushes to a registry (built-in lightweight registry or user's own). Builds never run on the control plane and never on production workers unless the user opts in — this fixes Dokploy's manager-starvation problem.
+**cypher-builder** — a role flag on the agent, not a separate program (`cypher-agent --role=builder`). Runs BuildKit for Dockerfile builds, Railpack/Nixpacks for auto-detected builds, and Compose parsing. Image distribution needs no registry ([ADR-008](adrs/ADR-008-no-registry-required.md)): local when the builder is the target, streamed via mTLS relay through the plane for multi-server, external registries optional. Builds never run on the control plane and never on production workers unless the user opts in — this fixes Dokploy's manager-starvation problem.
 
 **Proxy layer** — Traefik per node, but the agent owns its dynamic configuration through the file provider ([ADR-004](adrs/ADR-004-traefik-file-provider.md)). TLS via Let's Encrypt with DNS-01 support for wildcards. Proxy config generation is a driver too, so Caddy can be offered later (Coolify parity).
 
@@ -86,5 +86,7 @@ Every load-bearing choice above has an ADR. Do not re-litigate these in implemen
 | [ADR-003](adrs/ADR-003-embedded-nats-jetstream.md) | Embedded NATS JetStream as queue + event bus |
 | [ADR-004](adrs/ADR-004-traefik-file-provider.md) | Traefik v3 via file provider, proxy behind driver interface |
 | [ADR-005](adrs/ADR-005-desired-state-reconciliation.md) | Desired-state reconciliation, not imperative scripts |
+| [ADR-006](adrs/ADR-006-docker-only-at-launch.md) | Standalone `docker` driver only at launch; Swarm fast-follows (V1.x) |
+| [ADR-008](adrs/ADR-008-no-registry-required.md) | No registry required: local image / mTLS relay / optional external |
 
 Open questions (candidate ADRs) are tracked in [roadmap.md](roadmap.md).
