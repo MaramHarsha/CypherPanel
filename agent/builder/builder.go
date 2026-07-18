@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,20 +31,31 @@ func NewBuilder(engine EngineClient, workDir string) *Builder {
 	}
 }
 
-func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func(string)) error {
+func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func(string)) (string, error) {
+	if work.DeploymentId == "" || filepath.IsAbs(work.DeploymentId) || strings.Contains(work.DeploymentId, "..") {
+		return "", fmt.Errorf("invalid deployment ID")
+	}
+	if filepath.IsAbs(work.BuildContext) || strings.Contains(work.BuildContext, "..") {
+		return "", fmt.Errorf("invalid build context path")
+	}
+
 	buildDir := filepath.Join(b.workDir, work.DeploymentId)
 	if err := os.MkdirAll(buildDir, 0755); err != nil {
-		return fmt.Errorf("creating build directory: %w", err)
+		return "", fmt.Errorf("creating build directory: %w", err)
 	}
 	defer os.RemoveAll(buildDir)
 
-	onLog(fmt.Sprintf("Cloning repository %s at %s...", work.RepoUrl, work.CommitSha))
+	displayURL := work.RepoUrl
+	if parsed, err := url.Parse(work.RepoUrl); err == nil {
+		displayURL = parsed.Redacted()
+	}
+	onLog(fmt.Sprintf("Cloning repository %s at %s...", displayURL, work.CommitSha))
 
 	cmd := exec.CommandContext(ctx, "git", "clone", work.RepoUrl, buildDir)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		onLog(string(out))
-		return fmt.Errorf("git clone failed: %w", err)
+		return "", fmt.Errorf("git clone failed: %w", err)
 	}
 
 	cmd = exec.CommandContext(ctx, "git", "checkout", work.CommitSha)
@@ -51,8 +63,17 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 	out, err = cmd.CombinedOutput()
 	if err != nil {
 		onLog(string(out))
-		return fmt.Errorf("git checkout failed: %w", err)
+		return "", fmt.Errorf("git checkout failed: %w", err)
 	}
+
+	cmd = exec.CommandContext(ctx, "git", "rev-parse", "HEAD")
+	cmd.Dir = buildDir
+	out, err = cmd.CombinedOutput()
+	if err != nil {
+		onLog(string(out))
+		return "", fmt.Errorf("git rev-parse failed: %w", err)
+	}
+	resolvedCommitSha := strings.TrimSpace(string(out))
 
 	onLog("Repository cloned successfully. Preparing build context...")
 
@@ -64,11 +85,18 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 	tarPipeR, tarPipeW := io.Pipe()
 
 	go func() {
-		defer tarPipeW.Close()
+		var walkErr error
+		defer func() {
+			tarPipeW.CloseWithError(walkErr)
+		}()
 		tw := tar.NewWriter(tarPipeW)
-		defer tw.Close()
+		defer func() {
+			if err := tw.Close(); err != nil && walkErr == nil {
+				walkErr = err
+			}
+		}()
 
-		filepath.Walk(contextDir, func(path string, info os.FileInfo, err error) error {
+		walkErr = filepath.Walk(contextDir, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info == nil {
 				return err
 			}
@@ -82,7 +110,14 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 			if strings.HasPrefix(relPath, ".git/") || relPath == ".git" {
 				return nil
 			}
-			header, err := tar.FileInfoHeader(info, info.Name())
+			link := ""
+			if info.Mode()&os.ModeSymlink != 0 {
+				link, err = os.Readlink(path)
+				if err != nil {
+					return err
+				}
+			}
+			header, err := tar.FileInfoHeader(info, link)
 			if err != nil {
 				return err
 			}
@@ -90,28 +125,36 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 			if err := tw.WriteHeader(header); err != nil {
 				return err
 			}
-			if !info.IsDir() {
+			if !info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
 				f, err := os.Open(path)
 				if err != nil {
 					return err
 				}
 				defer f.Close()
-				_, _ = io.Copy(tw, f)
+				if _, err := io.Copy(tw, f); err != nil {
+					return err
+				}
 			}
 			return nil
 		})
 	}()
 
 	onLog(fmt.Sprintf("Building image %s...", work.Image))
+	parts := strings.Split(work.Image, ":")
+	revID := ""
+	if len(parts) > 1 {
+		revID = parts[1]
+	}
 	labels := map[string]string{
-		"cypherpanel.managed": "docker",
-		"cypherpanel.app.id":  work.AppId,
+		"cypherpanel.managed":     "docker",
+		"cypherpanel.app-id":      work.AppId,
+		"cypherpanel.revision-id": revID,
 	}
 
 	if err := b.engine.BuildImage(ctx, tarPipeR, work.Image, work.DockerfilePath, labels, onLog); err != nil {
-		return fmt.Errorf("build failed: %w", err)
+		return "", fmt.Errorf("build failed: %w", err)
 	}
 
 	onLog("Build completed successfully.")
-	return nil
+	return resolvedCommitSha, nil
 }

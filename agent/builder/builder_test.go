@@ -31,21 +31,31 @@ func TestBuilder(t *testing.T) {
 	if err := cmd.Run(); err != nil {
 		t.Skip("git not installed or failed to init")
 	}
-	os.WriteFile(filepath.Join(repoDir, "Dockerfile"), []byte("FROM scratch\n"), 0644)
+	if err := os.WriteFile(filepath.Join(repoDir, "Dockerfile"), []byte("FROM scratch\n"), 0644); err != nil {
+		t.Fatalf("write Dockerfile: %v", err)
+	}
 
 	cmd = exec.Command("git", "config", "user.email", "test@test.com")
 	cmd.Dir = repoDir
-	cmd.Run()
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git config email: %v", err)
+	}
 	cmd = exec.Command("git", "config", "user.name", "Test")
 	cmd.Dir = repoDir
-	cmd.Run()
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git config name: %v", err)
+	}
 
 	cmd = exec.Command("git", "add", ".")
 	cmd.Dir = repoDir
-	cmd.Run()
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git add: %v", err)
+	}
 	cmd = exec.Command("git", "commit", "-m", "init")
 	cmd.Dir = repoDir
-	cmd.Run()
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git commit: %v", err)
+	}
 
 	cmd = exec.Command("git", "rev-parse", "HEAD")
 	cmd.Dir = repoDir
@@ -74,7 +84,7 @@ func TestBuilder(t *testing.T) {
 		logLines = append(logLines, line)
 	}
 
-	if err := b.Build(context.Background(), work, onLog); err != nil {
+	if _, err := b.Build(context.Background(), work, onLog); err != nil {
 		t.Fatalf("Build failed: %v", err)
 	}
 

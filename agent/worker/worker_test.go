@@ -18,8 +18,9 @@ import (
 )
 
 type fakeDriver struct {
-	mu   sync.Mutex
-	apps []*agentv1.AppSpec
+	mu     sync.Mutex
+	apps   []*agentv1.AppSpec
+	syncCh chan struct{}
 }
 
 func (f *fakeDriver) Name() string { return "fake" }
@@ -27,6 +28,12 @@ func (f *fakeDriver) Name() string { return "fake" }
 func (f *fakeDriver) Reconcile(ctx context.Context, desired []*agentv1.AppSpec) ([]*agentv1.AppStatus, error) {
 	f.mu.Lock()
 	f.apps = desired
+	if f.syncCh != nil {
+		select {
+		case f.syncCh <- struct{}{}:
+		default:
+		}
+	}
 	f.mu.Unlock()
 	var statuses []*agentv1.AppStatus
 	for _, app := range desired {
@@ -101,7 +108,7 @@ func TestWorkerSync(t *testing.T) {
 		t.Fatalf("add consumer: %v", err)
 	}
 
-	drv := &fakeDriver{}
+	drv := &fakeDriver{syncCh: make(chan struct{}, 1)}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	w := worker.New(nc, "srv1", drv, nil, log)
 
@@ -114,7 +121,11 @@ func TestWorkerSync(t *testing.T) {
 	}()
 
 	// Wait for sync to complete and first reconcile to be called
-	time.Sleep(1 * time.Second)
+	select {
+	case <-drv.syncCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for reconcile")
+	}
 
 	apps := drv.getApps()
 	if len(apps) != 1 || apps[0].AppId != "app1" {

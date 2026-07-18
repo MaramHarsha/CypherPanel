@@ -133,16 +133,18 @@ func (a *API) handleGetDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	subject := "logs.build." + depID
+	subject := "logs.*.build." + depID
 	sub, err := a.deps.NATSConn.SubscribeSync(subject)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not subscribe to logs")
 		return
 	}
-	defer sub.Unsubscribe()
+	defer func() { _ = sub.Unsubscribe() }()
 
 	// Notify client that connection is open.
-	fmt.Fprintf(w, "event: connected\ndata: {}\n\n")
+	if _, err := fmt.Fprintf(w, "event: connected\ndata: {}\n\n"); err != nil {
+		return
+	}
 	flusher.Flush()
 
 	for {
@@ -150,7 +152,9 @@ func (a *API) handleGetDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return
 		}
-		fmt.Fprintf(w, "data: %s\n\n", msg.Data)
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", msg.Data); err != nil {
+			return
+		}
 		flusher.Flush()
 	}
 }

@@ -143,20 +143,27 @@ func runAgent(args []string, log *slog.Logger) error {
 		bldDir := filepath.Join(*stateDir, "builds")
 		bld := builder.NewBuilder(eng, bldDir)
 
-		strm := stream.NewStreamer(nc, eng)
+		strm := stream.NewStreamer(nc, eng, id.ServerID)
 		go strm.Start(ctx, 10*time.Second)
 
 		drv := docker.New(eng, prx, prb, log)
 		w := worker.New(nc, id.ServerID, drv, bld, log)
+		errCh := make(chan error, 1)
 		go func() {
 			if err := w.Run(ctx); err != nil {
 				log.Error("worker failed", "error", err)
-				cancel()
+				errCh <- err
 			}
 		}()
-	}
 
-	<-ctx.Done()
+		select {
+		case err := <-errCh:
+			return err
+		case <-ctx.Done():
+		}
+	} else {
+		<-ctx.Done()
+	}
 
 	if nc.IsClosed() {
 		if lastErr := nc.LastError(); lastErr != nil {

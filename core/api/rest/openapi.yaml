@@ -483,6 +483,32 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/v1/applications/{id}/logs:
+    get:
+      tags: [applications]
+      summary: Stream runtime logs (Server-Sent Events)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: SSE stream of application logs.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such application.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /api/v1/applications/{id}/deploy:
     post:
       tags: [deployments]
@@ -560,6 +586,32 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Deployment"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such deployment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/deployments/{id}/logs:
+    get:
+      tags: [deployments]
+      summary: Stream build logs (Server-Sent Events)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: SSE stream of deployment build logs.
+          content:
+            text/event-stream:
+              schema:
+                type: string
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":

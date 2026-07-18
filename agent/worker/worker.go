@@ -104,18 +104,12 @@ func (w *Worker) sync(ctx context.Context) error {
 	// Reconcile once with no trigger to converge on boot.
 	if err := w.reconcile(ctx, "", "", agentv1.DeployEvent_STAGE_UNSPECIFIED, ""); err != nil {
 		w.log.Error("worker: initial reconcile failed", "error", err)
-		// We log the error but don't fail sync; the daemon might be temporarily down.
+		return fmt.Errorf("initial reconcile failed: %w", err)
 	}
 	return nil
 }
 
 func (w *Worker) handleMsg(ctx context.Context, msg *nats.Msg) {
-	defer func() {
-		if err := msg.Ack(); err != nil {
-			w.log.Error("worker: acking message", "error", err)
-		}
-	}()
-
 	subject := msg.Subject
 	w.log.Info("worker: received work item", "subject", subject)
 
@@ -129,6 +123,12 @@ func (w *Worker) handleMsg(ctx context.Context, msg *nats.Msg) {
 		var work agentv1.RolloutWork
 		if err := proto.Unmarshal(msg.Data, &work); err != nil {
 			w.log.Error("worker: unmarshaling rollout work", "error", err)
+			msg.Term()
+			return
+		}
+		if work.Spec == nil {
+			w.log.Error("worker: rollout work missing spec")
+			msg.Term()
 			return
 		}
 		deploymentID = work.DeploymentId
@@ -143,6 +143,7 @@ func (w *Worker) handleMsg(ctx context.Context, msg *nats.Msg) {
 		var work agentv1.RemoveWork
 		if err := proto.Unmarshal(msg.Data, &work); err != nil {
 			w.log.Error("worker: unmarshaling remove work", "error", err)
+			msg.Term()
 			return
 		}
 		deploymentID = work.DeploymentId
@@ -157,6 +158,7 @@ func (w *Worker) handleMsg(ctx context.Context, msg *nats.Msg) {
 		var work agentv1.BuildWork
 		if err := proto.Unmarshal(msg.Data, &work); err != nil {
 			w.log.Error("worker: unmarshaling build work", "error", err)
+			msg.Term()
 			return
 		}
 		deploymentID = work.DeploymentId
@@ -167,27 +169,34 @@ func (w *Worker) handleMsg(ctx context.Context, msg *nats.Msg) {
 		// Stream logs to logs.build.<deployment_id>
 		onLog := func(line string) {
 			if w.nc != nil {
-				subject := fmt.Sprintf("logs.build.%s", deploymentID)
+				subject := fmt.Sprintf("logs.%s.build.%s", w.serverID, deploymentID)
 				_ = w.nc.Publish(subject, []byte(line))
 			}
 		}
 
 		if w.builder != nil {
-			err := w.builder.Build(ctx, &work, onLog)
+			resolvedSha, err := w.builder.Build(ctx, &work, onLog)
 			if err != nil {
 				w.log.Error("worker: build failed", "error", err)
 				w.emitEvent(deploymentID, appID, stage, agentv1.DeployEvent_OUTCOME_FAILED, err.Error(), commitSha)
+				msg.Ack()
 				return
 			}
+			commitSha = resolvedSha
 		} else {
 			w.log.Warn("worker: received build work but builder is nil")
+			w.emitEvent(deploymentID, appID, stage, agentv1.DeployEvent_OUTCOME_FAILED, "builder is nil", commitSha)
+			msg.Ack()
+			return
 		}
 
 		w.emitEvent(deploymentID, appID, stage, agentv1.DeployEvent_OUTCOME_SUCCEEDED, "", commitSha)
+		msg.Ack()
 		return
 
 	default:
 		w.log.Warn("worker: unknown work subject", "subject", subject)
+		msg.Term()
 		return
 	}
 
@@ -196,6 +205,9 @@ func (w *Worker) handleMsg(ctx context.Context, msg *nats.Msg) {
 		if stage != agentv1.DeployEvent_STAGE_UNSPECIFIED {
 			w.emitEvent(deploymentID, appID, stage, agentv1.DeployEvent_OUTCOME_FAILED, err.Error(), commitSha)
 		}
+		msg.Nak()
+	} else {
+		msg.Ack()
 	}
 }
 

@@ -17,18 +17,24 @@ import (
 // Streamer connects to the Docker engine to stream logs of running applications
 // to JetStream, so the control plane can relay them.
 type Streamer struct {
-	nc     *nats.Conn
-	client docker.Client
+	nc       *nats.Conn
+	client   docker.Client
+	serverID string
 
 	mu     sync.Mutex
-	cancel map[string]context.CancelFunc // container_id -> cancel
+	cancel map[string]*streamHandle // container_id -> cancel
 }
 
-func NewStreamer(nc *nats.Conn, client docker.Client) *Streamer {
+type streamHandle struct {
+	cancel context.CancelFunc
+}
+
+func NewStreamer(nc *nats.Conn, client docker.Client, serverID string) *Streamer {
 	return &Streamer{
-		nc:     nc,
-		client: client,
-		cancel: make(map[string]context.CancelFunc),
+		nc:       nc,
+		client:   client,
+		serverID: serverID,
+		cancel:   make(map[string]*streamHandle),
 	}
 }
 
@@ -42,9 +48,10 @@ func (s *Streamer) Ensure(appID, containerID string) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s.cancel[containerID] = cancel
+	handle := &streamHandle{cancel: cancel}
+	s.cancel[containerID] = handle
 
-	go s.stream(ctx, appID, containerID)
+	go s.stream(ctx, appID, containerID, handle)
 }
 
 // Stop stops streaming logs for the container.
@@ -52,8 +59,8 @@ func (s *Streamer) Stop(containerID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if cancel, exists := s.cancel[containerID]; exists {
-		cancel()
+	if handle, exists := s.cancel[containerID]; exists {
+		handle.cancel()
 		delete(s.cancel, containerID)
 	}
 }
@@ -63,13 +70,21 @@ func (s *Streamer) StopAll() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for id, cancel := range s.cancel {
-		cancel()
+	for id, handle := range s.cancel {
+		handle.cancel()
 		delete(s.cancel, id)
 	}
 }
 
-func (s *Streamer) stream(ctx context.Context, appID, containerID string) {
+func (s *Streamer) stream(ctx context.Context, appID, containerID string, handle *streamHandle) {
+	defer func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.cancel[containerID] == handle {
+			delete(s.cancel, containerID)
+		}
+	}()
+
 	pr, pw := io.Pipe()
 
 	go func() {
@@ -77,7 +92,7 @@ func (s *Streamer) stream(ctx context.Context, appID, containerID string) {
 		pw.CloseWithError(err)
 	}()
 
-	subject := fmt.Sprintf("logs.runtime.%s", appID)
+	subject := fmt.Sprintf("logs.%s.runtime.%s", s.serverID, appID)
 
 	// Demux Docker multiplexed stream (8 byte header)
 	header := make([]byte, 8)
@@ -141,9 +156,9 @@ func (s *Streamer) sync(ctx context.Context) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for id, cancel := range s.cancel {
+	for id, handle := range s.cancel {
 		if !active[id] {
-			cancel()
+			handle.cancel()
 			delete(s.cancel, id)
 		}
 	}

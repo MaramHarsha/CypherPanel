@@ -30,6 +30,15 @@ func (t *TraefikWriter) SetRoute(ctx context.Context, appID string, route *agent
 	if route == nil {
 		return fmt.Errorf("route spec is nil")
 	}
+	if strings.Contains(appID, "..") || strings.Contains(appID, "/") || strings.Contains(appID, "\\") {
+		return fmt.Errorf("invalid appID")
+	}
+	if strings.Contains(route.Domain, "`") {
+		return fmt.Errorf("invalid domain")
+	}
+	if strings.Contains(route.PathPrefix, "`") || strings.Contains(route.PathPrefix, "&&") || strings.Contains(route.PathPrefix, "||") {
+		return fmt.Errorf("invalid path prefix")
+	}
 
 	if err := os.MkdirAll(t.appsDir, 0755); err != nil {
 		return fmt.Errorf("creating traefik apps dir: %w", err)
@@ -94,8 +103,12 @@ func (t *TraefikWriter) SetRoute(ctx context.Context, appID string, route *agent
 		return fmt.Errorf("marshaling route: %w", err)
 	}
 
-	finalPath := filepath.Join(t.appsDir, appID+".yml")
-	tmpPath := filepath.Join(t.appsDir, "."+appID+".yml.tmp")
+	cleanAppsDir := filepath.Clean(t.appsDir)
+	finalPath := filepath.Clean(filepath.Join(cleanAppsDir, appID+".yml"))
+	if !strings.HasPrefix(finalPath, cleanAppsDir) {
+		return fmt.Errorf("invalid route path")
+	}
+	tmpPath := filepath.Join(cleanAppsDir, "."+appID+".yml.tmp")
 
 	if err := os.WriteFile(tmpPath, b, 0644); err != nil {
 		return fmt.Errorf("writing route tmp file: %w", err)
@@ -110,7 +123,14 @@ func (t *TraefikWriter) SetRoute(ctx context.Context, appID string, route *agent
 
 // RemoveRoute deletes the Traefik fragment for an app.
 func (t *TraefikWriter) RemoveRoute(ctx context.Context, appID string) error {
-	finalPath := filepath.Join(t.appsDir, appID+".yml")
+	if strings.Contains(appID, "..") || strings.Contains(appID, "/") || strings.Contains(appID, "\\") {
+		return fmt.Errorf("invalid appID")
+	}
+	cleanAppsDir := filepath.Clean(t.appsDir)
+	finalPath := filepath.Clean(filepath.Join(cleanAppsDir, appID+".yml"))
+	if !strings.HasPrefix(finalPath, cleanAppsDir) {
+		return fmt.Errorf("invalid route path")
+	}
 	if err := os.Remove(finalPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("removing route file: %w", err)
 	}
@@ -119,7 +139,14 @@ func (t *TraefikWriter) RemoveRoute(ctx context.Context, appID string) error {
 
 // Route returns the currently configured upstream for an app, if any.
 func (t *TraefikWriter) Route(ctx context.Context, appID string) (upstream string, ok bool, err error) {
-	finalPath := filepath.Join(t.appsDir, appID+".yml")
+	if strings.Contains(appID, "..") || strings.Contains(appID, "/") || strings.Contains(appID, "\\") {
+		return "", false, fmt.Errorf("invalid appID")
+	}
+	cleanAppsDir := filepath.Clean(t.appsDir)
+	finalPath := filepath.Clean(filepath.Join(cleanAppsDir, appID+".yml"))
+	if !strings.HasPrefix(finalPath, cleanAppsDir) {
+		return "", false, fmt.Errorf("invalid route path")
+	}
 	b, err := os.ReadFile(finalPath)
 	if err != nil {
 		if os.IsNotExist(err) {

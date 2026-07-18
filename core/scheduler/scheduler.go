@@ -150,6 +150,9 @@ func (s *Scheduler) Deploy(ctx context.Context, appID, trigger, ref string) (dom
 	if err != nil {
 		return domain.Deployment{}, err
 	}
+	if ref == "" {
+		ref = app.Source.Branch
+	}
 	rev, err := s.store.CreateRevision(ctx, ids.New(ids.PrefixRevision), app.ID, ref, snapshot)
 	if err != nil {
 		return domain.Deployment{}, fmt.Errorf("scheduler: creating revision: %w", err)
