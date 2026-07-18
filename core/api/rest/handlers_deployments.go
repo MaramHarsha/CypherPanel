@@ -114,7 +114,8 @@ func (a *API) handleGetDeployment(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleGetDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 	depID := r.PathValue("id")
-	if _, err := a.deps.Deployments.GetDeployment(r.Context(), depID); err != nil {
+	dep, err := a.deps.Deployments.GetDeployment(r.Context(), depID)
+	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "deployment not found")
 			return
@@ -133,7 +134,13 @@ func (a *API) handleGetDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	subject := "logs.*.build." + depID
+	app, err := a.deps.Applications.Get(r.Context(), dep.ApplicationID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not get application for deployment")
+		return
+	}
+	
+	subject := "logs." + app.Runtime.ServerID + ".build." + depID
 	sub, err := a.deps.NATSConn.SubscribeSync(subject)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not subscribe to logs")

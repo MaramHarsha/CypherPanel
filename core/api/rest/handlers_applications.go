@@ -199,7 +199,8 @@ func (a *API) handleGetApplication(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleGetApplicationLogs(w http.ResponseWriter, r *http.Request) {
 	appID := r.PathValue("id")
-	if _, err := a.deps.Applications.Get(r.Context(), appID); err != nil {
+	app, err := a.deps.Applications.Get(r.Context(), appID)
+	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "application not found")
 			return
@@ -218,7 +219,7 @@ func (a *API) handleGetApplicationLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	subject := "logs.*.runtime." + appID
+	subject := "logs." + app.Runtime.ServerID + ".runtime." + appID
 	sub, err := a.deps.NATSConn.SubscribeSync(subject)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not subscribe to logs")

@@ -84,6 +84,8 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 
 	tarPipeR, tarPipeW := io.Pipe()
 
+	ignoreRules := parseDockerIgnore(contextDir)
+
 	go func() {
 		var walkErr error
 		defer func() {
@@ -107,7 +109,13 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 			if relPath == "." {
 				return nil
 			}
-			if strings.HasPrefix(relPath, ".git/") || relPath == ".git" {
+			if relPath == ".git" || strings.HasPrefix(relPath, ".git"+string(filepath.Separator)) {
+				return nil
+			}
+			if isIgnored(relPath, ignoreRules) {
+				if info.IsDir() {
+					return filepath.SkipDir
+				}
 				return nil
 			}
 			link := ""
@@ -159,4 +167,39 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 
 	onLog("Build completed successfully.")
 	return resolvedCommitSha, nil
+}
+
+func parseDockerIgnore(contextDir string) []string {
+	var rules []string
+	b, err := os.ReadFile(filepath.Join(contextDir, ".dockerignore"))
+	if err != nil {
+		return rules
+	}
+	lines := strings.Split(string(b), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		rules = append(rules, filepath.Clean(line))
+	}
+	return rules
+}
+
+func isIgnored(relPath string, rules []string) bool {
+	ignored := false
+	for _, rule := range rules {
+		invert := strings.HasPrefix(rule, "!")
+		if invert {
+			rule = rule[1:]
+		}
+		match, _ := filepath.Match(rule, relPath)
+		if !match && strings.HasPrefix(relPath, rule+string(filepath.Separator)) {
+			match = true
+		}
+		if match {
+			ignored = !invert
+		}
+	}
+	return ignored
 }
