@@ -1,0 +1,362 @@
+# CypherPanel control-plane REST API — the source of truth for the HTTP
+# surface (ENGINEERING rule 19). Handlers implement this spec; the web UI's
+# client is generated from it (arrives with web/ in Phase 4). Served live at
+# GET /api/v1/openapi.yaml. Vocabulary is docs/glossary.md.
+openapi: 3.1.0
+info:
+  title: CypherPanel API
+  description: >-
+    Operator-facing control-plane API. Phase 1 covers authentication and the
+    server lifecycle (register, list, inspect, delete) for the control-plane ↔
+    agent handshake. Authentication is a bearer session token from
+    /api/v1/auth/login.
+  version: 0.1.0
+servers:
+  - url: /
+tags:
+  - name: health
+  - name: auth
+  - name: servers
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      summary: Liveness probe
+      security: []
+      responses:
+        "200":
+          description: Process is up.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+
+  /readyz:
+    get:
+      tags: [health]
+      summary: Readiness probe (checks the database)
+      security: []
+      responses:
+        "200":
+          description: Ready to serve.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /api/v1/auth/login:
+    post:
+      tags: [auth]
+      summary: Sign in with email and password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: >-
+            Session created. The token is returned exactly once and never
+            retrievable again (only its hash is stored).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Invalid email or password (deliberately indistinguishable).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Too many failed attempts from this client; retry later.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/auth/logout:
+    post:
+      tags: [auth]
+      summary: Invalidate the current session
+      responses:
+        "204":
+          description: Session deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/auth/me:
+    get:
+      tags: [auth]
+      summary: The authenticated account
+      responses:
+        "200":
+          description: The current user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/ca.pem:
+    get:
+      tags: [servers]
+      summary: The control plane's CA certificate (public, for agent pinning)
+      security: []
+      responses:
+        "200":
+          description: PEM-encoded CA certificate.
+          content:
+            application/x-pem-file:
+              schema:
+                type: string
+
+  /api/v1/openapi.yaml:
+    get:
+      tags: [health]
+      summary: This specification
+      security: []
+      responses:
+        "200":
+          description: The OpenAPI document.
+          content:
+            application/yaml:
+              schema:
+                type: string
+
+  /api/v1/servers:
+    get:
+      tags: [servers]
+      summary: List all servers, newest first
+      responses:
+        "200":
+          description: All registered servers.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Server"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [servers]
+      summary: Register a server and issue its single-use join token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateServerRequest"
+      responses:
+        "201":
+          description: >-
+            Server registered. The join token appears exactly once in this
+            response and is never retrievable again (threat-model §5.3).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateServerResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/servers/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Server ID (srv_… prefix).
+    get:
+      tags: [servers]
+      summary: One server
+      responses:
+        "200":
+          description: The server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Server"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      tags: [servers]
+      summary: Delete a server, revoking its agent
+      description: >-
+        Removes the server and its join tokens, severs the agent's live bus
+        connection, and refuses the identity on any reconnect (threat-model §8
+        requirement 6). Idempotent: deleting an absent server also returns 204.
+      responses:
+        "204":
+          description: Deleted (or already absent).
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      description: Session token from /api/v1/auth/login.
+
+  responses:
+    BadRequest:
+      description: Malformed or invalid request body.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Missing, invalid, or expired session token.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unavailable:
+      description: A backing dependency is unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, ready]
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Human-readable message; never contains secrets.
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    User:
+      type: object
+      required: [id, email, role]
+      properties:
+        id:
+          type: string
+          description: usr_… prefixed ID.
+        email:
+          type: string
+        role:
+          type: string
+
+    LoginResponse:
+      type: object
+      required: [token, user]
+      properties:
+        token:
+          type: string
+          description: Bearer session token; shown once, store client-side.
+        user:
+          $ref: "#/components/schemas/User"
+
+    Server:
+      type: object
+      required:
+        [id, name, status, driver, agent_version, hostname, enrolled, created_at]
+      properties:
+        id:
+          type: string
+          description: srv_… prefixed ID; also the CN of the agent's certificate.
+        name:
+          type: string
+        status:
+          type: string
+          description: Single status vocabulary (ui-principles §5).
+          enum: [running, deploying, stopped, error, degraded, unknown]
+        driver:
+          type: string
+          description: Orchestrator driver the agent reports (e.g. docker).
+        agent_version:
+          type: string
+        hostname:
+          type: string
+        enrolled:
+          type: boolean
+          description: Whether an agent has completed enrollment.
+        enrolled_at:
+          type: [string, "null"]
+          format: date-time
+        last_seen_at:
+          type: [string, "null"]
+          format: date-time
+          description: Time of the most recent heartbeat; null if never seen.
+        created_at:
+          type: string
+          format: date-time
+
+    CreateServerRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+
+    JoinInstructions:
+      type: object
+      required: [token, enroll_addr, nats_url, ca_cert_pem, command]
+      properties:
+        token:
+          type: string
+          description: Single-use join token; never shown again.
+        enroll_addr:
+          type: string
+          description: host:port of the gRPC enrollment endpoint.
+        nats_url:
+          type: string
+          description: tls:// URL of the data-plane bus.
+        ca_cert_pem:
+          type: string
+          description: PEM CA certificate to pin during enrollment.
+        command:
+          type: string
+          description: Ready-to-paste cypher-agent enroll command.
+
+    CreateServerResponse:
+      type: object
+      required: [server, join]
+      properties:
+        server:
+          $ref: "#/components/schemas/Server"
+        join:
+          $ref: "#/components/schemas/JoinInstructions"
+
+security:
+  - bearer: []

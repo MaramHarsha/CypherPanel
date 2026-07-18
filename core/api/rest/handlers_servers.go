@@ -2,6 +2,7 @@ package rest
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"net/http"
@@ -139,6 +140,14 @@ func (a *API) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
 func (a *API) handleCAPem(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/x-pem-file")
 	_, _ = w.Write(a.deps.CACertPEM)
+}
+
+//go:embed openapi.yaml
+var openapiSpec []byte
+
+func (a *API) handleOpenAPI(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
+	_, _ = w.Write(openapiSpec)
 }
 
 func (a *API) handleHealthz(w http.ResponseWriter, _ *http.Request) {

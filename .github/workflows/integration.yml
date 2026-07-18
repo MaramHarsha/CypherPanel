@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 env:
-  GO_VERSION: "1.25.7"
+  GO_VERSION: "1.25.12"
   CYPHERD_DATABASE_URL: postgres://postgres:ci-password@127.0.0.1:5432/cypher?sslmode=disable
   CYPHERD_ADMIN_EMAIL: ci@example.com
   CYPHERD_ADMIN_PASSWORD: ci-password-1

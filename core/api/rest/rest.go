@@ -57,6 +57,10 @@ func (a *API) Handler() http.Handler {
 	// Public CA certificate (needed by agents to pin the plane; not secret).
 	mux.HandleFunc("GET /api/v1/ca.pem", a.handleCAPem)
 
+	// The API's own contract (ENGINEERING rule 19: the spec is the source of
+	// truth, so it ships with the binary that implements it).
+	mux.HandleFunc("GET /api/v1/openapi.yaml", a.handleOpenAPI)
+
 	// Servers.
 	mux.HandleFunc("GET /api/v1/servers", a.authed(a.handleListServers))
 	mux.HandleFunc("POST /api/v1/servers", a.authed(a.handleCreateServer))

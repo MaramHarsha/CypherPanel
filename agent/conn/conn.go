@@ -86,6 +86,11 @@ func ConnectBus(id *identity.Identity, log *slog.Logger) (*nats.Conn, error) {
 		nats.ReconnectHandler(func(_ *nats.Conn) {
 			log.Info("bus reconnected")
 		}),
+		// Without this, the client writes async errors (e.g. authorization
+		// violations after revocation) straight to stderr, bypassing slog.
+		nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, err error) {
+			log.Error("bus error", "error", err)
+		}),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("conn: connecting to bus: %w", err)

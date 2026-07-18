@@ -34,8 +34,8 @@ build: ## Build every module for the host platform
 
 .PHONY: build-crosscheck
 build-crosscheck: ## Cross-compile the binaries for linux/arm64 (catch ARM breakage in CI)
-	cd core  && GOOS=linux GOARCH=arm64 go build ./cmd/cypherd
-	cd agent && GOOS=linux GOARCH=arm64 go build ./cmd/cypher-agent
+	cd core  && GOOS=linux GOARCH=arm64 go build -o /dev/null ./cmd/cypherd
+	cd agent && GOOS=linux GOARCH=arm64 go build -o /dev/null ./cmd/cypher-agent
 
 .PHONY: test
 test: ## Run unit tests across all modules

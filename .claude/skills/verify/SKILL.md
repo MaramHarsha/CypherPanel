@@ -55,8 +55,10 @@ exposes CDP on :9222; a scratchpad Go module using
 ## Gotchas
 
 - `go build ./...` at the repo root: "directory prefix . does not contain
-  modules listed in go.work" — always build inside each module.
-- The agent process does not exit when revoked; it lingers retrying. Expect
-  "alive" after DELETE — check its log, not its liveness.
+  modules listed in go.work" — always build inside each module (same for
+  golangci-lint: from the root it silently checks nothing).
+- A revoked agent exits on its own with code 1 ("bus connection closed
+  permanently") within a few seconds of DELETE — assert the exit, not just
+  the log line. Through a plain outage it never exits (infinite reconnect).
 - Boot-time disk guard: `CYPHERD_MIN_DISK_FREE=999999999999999999` is a quick
   refusal probe; `0` disables; malformed values are a config error.

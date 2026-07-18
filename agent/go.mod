@@ -1,6 +1,6 @@
 module github.com/MaramHarsha/cypherpanel/agent
 
-go 1.25.0
+go 1.25.12
 
 require (
 	github.com/MaramHarsha/cypherpanel/pkg v0.0.0

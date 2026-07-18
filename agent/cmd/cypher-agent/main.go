@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nats-io/nats.go"
+
 	"github.com/MaramHarsha/cypherpanel/agent/conn"
 	"github.com/MaramHarsha/cypherpanel/agent/heartbeat"
 	"github.com/MaramHarsha/cypherpanel/agent/identity"
@@ -103,16 +105,29 @@ func runAgent(args []string, log *slog.Logger) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	nc, err := conn.ConnectBus(id, log)
 	if err != nil {
 		return err
 	}
 	defer nc.Close()
+	// The client reconnects forever through outages, so CLOSED is terminal: it
+	// only happens when the plane actively refuses this identity (revocation).
+	// Exit rather than linger publishing into a dead connection; the operator's
+	// init system decides whether to restart.
+	nc.SetClosedHandler(func(*nats.Conn) { cancel() })
 	log.Info("agent running", "server_id", id.ServerID, "driver", *driver, "version", version)
 
 	heartbeat.NewPublisher(nc, id.ServerID, version, *driver, *interval, log).Run(ctx)
 
+	if nc.IsClosed() {
+		if lastErr := nc.LastError(); lastErr != nil {
+			return fmt.Errorf("bus connection closed permanently (identity revoked?): %w", lastErr)
+		}
+		return fmt.Errorf("bus connection closed permanently (identity revoked?)")
+	}
 	if err := nc.Drain(); err != nil {
 		log.Warn("draining bus connection", "error", err)
 	}

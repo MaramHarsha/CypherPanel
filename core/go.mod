@@ -1,6 +1,6 @@
 module github.com/MaramHarsha/cypherpanel/core
 
-go 1.25.7
+go 1.25.12
 
 require (
 	github.com/MaramHarsha/cypherpanel/pkg v0.0.0

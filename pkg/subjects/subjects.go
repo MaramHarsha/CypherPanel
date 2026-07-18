@@ -7,20 +7,25 @@ package subjects
 
 // Subject families (ADR-003):
 //
-//	state.*  — agent status/heartbeat/deploy events (this file, Phase 1)
-//	work.*   — commands to agents (Phase 2)
-//	logs.*   — build/runtime log streams (Phase 2)
+//	state.<server-id>.*  — agent status/heartbeat/deploy events (this file, Phase 1)
+//	work.<server-id>.*   — commands to agents (Phase 2)
+//	logs.<server-id>.*   — build/runtime log streams (Phase 2)
+//
+// Every per-server subject lives under its server's segment, so one wildcard
+// per family covers a server's entire scope — the authorization grants in
+// core/bus are exactly StateForServer/WorkForServer, nothing enumerated.
 const (
 	StatePrefix     = "state."
-	HeartbeatPrefix = "state.heartbeat."
-	HeartbeatAll    = "state.heartbeat.>"
+	heartbeatSuffix = ".heartbeat"
+	HeartbeatAll    = "state.*.heartbeat"
 	WorkPrefix      = "work."
 )
 
-// Heartbeat is the subject an agent publishes its heartbeats on. Per-server so
-// the bus can authorize each agent to publish only its own (threat-model §5.2).
+// Heartbeat is the subject an agent publishes its heartbeats on. It sits
+// inside the server's state.<id>.> scope, so the per-agent publish grant
+// (threat-model §5.2) needs no special case for it.
 func Heartbeat(serverID string) string {
-	return HeartbeatPrefix + serverID
+	return StatePrefix + serverID + heartbeatSuffix
 }
 
 // StateForServer is the wildcard covering all of one server's state subjects,

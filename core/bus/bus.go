@@ -251,12 +251,13 @@ func (a *certAuth) Check(c natsserver.ClientAuthentication) bool {
 		a.log.Warn("bus auth: refused connection from revoked or unknown identity", "server_id", cn)
 		return false
 	}
-	// Scope the agent to its own subjects only.
+	// Scope the agent to its own subjects only. Heartbeats live inside the
+	// server's state scope, so one wildcard per family is the whole grant.
 	c.RegisterUser(&natsserver.User{
 		Username: cn,
 		Permissions: &natsserver.Permissions{
 			Publish: &natsserver.SubjectPermission{
-				Allow: []string{subjects.Heartbeat(cn), subjects.StateForServer(cn)},
+				Allow: []string{subjects.StateForServer(cn)},
 			},
 			Subscribe: &natsserver.SubjectPermission{
 				Allow: []string{subjects.WorkForServer(cn), "_INBOX.>"},
