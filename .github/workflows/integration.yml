@@ -121,3 +121,84 @@ jobs:
         run: |
           echo "── cypherd ──"; cat cypherd.log cypherd2.log 2>/dev/null || true
           echo "── agent ──"; docker logs agent 2>&1 || true
+
+  # The literal Phase 1 acceptance gate (docs/roadmap.md): a fresh Ubuntu
+  # machine joins via curl|sh from the plane in under 60 seconds. The binary
+  # URL is injected because hosted releases arrive with release.yml (Phase 2);
+  # curl preinstall is outside the timed window (real VMs ship with curl).
+  installer:
+    name: curl|sh join under 60s
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: ci-password
+          POSTGRES_DB: cypher
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: "**/go.sum"
+
+      - name: Build binaries
+        run: |
+          mkdir -p bin
+          (cd core && go build -o ../bin/cypherd ./cmd/cypherd)
+          (cd agent && CGO_ENABLED=0 go build -o ../bin/cypher-agent ./cmd/cypher-agent)
+
+      - name: Boot cypherd and serve the agent binary
+        run: |
+          export CYPHERD_MASTER_KEY=$(head -c32 /dev/urandom | base64)
+          nohup ./bin/cypherd > cypherd.log 2>&1 &
+          (cd bin && nohup python3 -m http.server 8000 >/dev/null 2>&1 &)
+          for i in $(seq 1 60); do curl -sf "$API/readyz" >/dev/null && exit 0; sleep 1; done
+          echo "cypherd never became ready"; cat cypherd.log; exit 1
+
+      - name: Prepare fresh Ubuntu container (curl preinstalled, like a real VM)
+        run: |
+          docker run -d --name fresh --network host ubuntu:24.04 sleep 600
+          docker exec fresh sh -c "apt-get update -q && apt-get install -y -q curl" >/dev/null
+
+      - name: "Join via the pasted install_command, assert < 60s"
+        run: |
+          TOKEN=$(curl -sf -X POST "$API/api/v1/auth/login" -H 'Content-Type: application/json' \
+            -d "{\"email\":\"$CYPHERD_ADMIN_EMAIL\",\"password\":\"$CYPHERD_ADMIN_PASSWORD\"}" | jq -r .token)
+          CREATE=$(curl -sf -X POST "$API/api/v1/servers" -H "Authorization: Bearer $TOKEN" \
+            -H 'Content-Type: application/json' -d '{"name":"fresh-vm"}')
+          SRV=$(echo "$CREATE" | jq -r .server.id)
+          CMD=$(echo "$CREATE" | jq -r .join.install_command)
+          echo "running: $CMD"
+          T0=$(date +%s)
+          docker exec fresh sh -c "export CYPHER_AGENT_URL=http://localhost:8000/cypher-agent; $CMD"
+          docker exec -d fresh /usr/local/bin/cypher-agent run --state-dir /var/lib/cypher-agent --heartbeat 2s
+          for i in $(seq 1 60); do
+            STATUS=$(curl -sf "$API/api/v1/servers/$SRV" -H "Authorization: Bearer $TOKEN" | jq -r .status)
+            [ "$STATUS" = "running" ] && break; sleep 1
+          done
+          T1=$(date +%s)
+          [ "$STATUS" = "running" ] || { echo "never reached running"; docker logs fresh; cat cypherd.log; exit 1; }
+          echo "joined in $((T1-T0))s"
+          [ $((T1-T0)) -lt 60 ] || { echo "join took $((T1-T0))s, gate is 60s"; exit 1; }
+
+      - name: "Assert: tampered CA is refused"
+        run: |
+          TOKEN=$(curl -sf -X POST "$API/api/v1/auth/login" -H 'Content-Type: application/json' \
+            -d "{\"email\":\"$CYPHERD_ADMIN_EMAIL\",\"password\":\"$CYPHERD_ADMIN_PASSWORD\"}" | jq -r .token)
+          CREATE=$(curl -sf -X POST "$API/api/v1/servers" -H "Authorization: Bearer $TOKEN" \
+            -H 'Content-Type: application/json' -d '{"name":"mitm-victim"}')
+          JOIN=$(echo "$CREATE" | jq -r .join.token)
+          ENROLL=$(echo "$CREATE" | jq -r .join.enroll_addr)
+          BAD_FP=$(printf 'not-the-plane' | sha256sum | cut -d' ' -f1)
+          if docker exec fresh sh -c "rm -rf /var/lib/cypher-agent && curl -fsSL $API/install/agent.sh | CYPHER_PLANE=$ENROLL CYPHER_TOKEN=$JOIN CYPHER_CA_FINGERPRINT=$BAD_FP CYPHER_AGENT_URL=http://localhost:8000/cypher-agent sh"; then
+            echo "installer accepted a mismatched CA fingerprint"; exit 1
+          fi
+          echo "fingerprint mismatch correctly refused"

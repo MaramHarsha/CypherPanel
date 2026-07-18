@@ -2,7 +2,9 @@ package rest
 
 import (
 	"context"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -55,13 +57,18 @@ type createServerRequest struct {
 
 // joinInstructions is everything an operator needs to enroll the new server.
 // The token appears exactly once — it is single-use and never retrievable
-// again (threat-model §5.3).
+// again (threat-model §5.3). InstallCommand is the curl|sh join line (the
+// Phase 1 acceptance path); Command is the manual alternative when the agent
+// binary is already installed. The CA fingerprint rides in the command so the
+// installer can verify the CA it fetches over plain HTTP (threat-model §5.1).
 type joinInstructions struct {
-	Token      string `json:"token"`
-	EnrollAddr string `json:"enroll_addr"`
-	NATSURL    string `json:"nats_url"`
-	CACertPEM  string `json:"ca_cert_pem"`
-	Command    string `json:"command"`
+	Token          string `json:"token"`
+	EnrollAddr     string `json:"enroll_addr"`
+	NATSURL        string `json:"nats_url"`
+	CACertPEM      string `json:"ca_cert_pem"`
+	CAFingerprint  string `json:"ca_fingerprint"`
+	Command        string `json:"command"`
+	InstallCommand string `json:"install_command"`
 }
 
 type createServerResponse struct {
@@ -99,16 +106,25 @@ func (a *API) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not create server")
 		return
 	}
+	caSum := sha256.Sum256(a.deps.CACertPEM)
+	fingerprint := hex.EncodeToString(caSum[:])
 	writeJSON(w, http.StatusCreated, createServerResponse{
 		Server: toServerDTO(srv),
 		Join: joinInstructions{
-			Token:      token,
-			EnrollAddr: a.deps.EnrollAddr,
-			NATSURL:    a.deps.NATSURL,
-			CACertPEM:  string(a.deps.CACertPEM),
+			Token:         token,
+			EnrollAddr:    a.deps.EnrollAddr,
+			NATSURL:       a.deps.NATSURL,
+			CACertPEM:     string(a.deps.CACertPEM),
+			CAFingerprint: fingerprint,
 			Command: fmt.Sprintf(
 				"cypher-agent enroll --plane %s --token %s --ca-file ca.pem",
 				a.deps.EnrollAddr, token,
+			),
+			// CYPHER_PLANE_HTTP is passed explicitly: the plane knows its own
+			// advertised URL; the installer must not guess a port.
+			InstallCommand: fmt.Sprintf(
+				"curl -fsSL %s/install/agent.sh | CYPHER_PLANE=%s CYPHER_PLANE_HTTP=%s CYPHER_TOKEN=%s CYPHER_CA_FINGERPRINT=%s sh",
+				a.deps.ConsoleURL, a.deps.EnrollAddr, a.deps.ConsoleURL, token, fingerprint,
 			),
 		},
 	})
@@ -148,6 +164,14 @@ var openapiSpec []byte
 func (a *API) handleOpenAPI(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
 	_, _ = w.Write(openapiSpec)
+}
+
+//go:embed install-agent.sh
+var installScript []byte
+
+func (a *API) handleInstallScript(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
+	_, _ = w.Write(installScript)
 }
 
 func (a *API) handleHealthz(w http.ResponseWriter, _ *http.Request) {

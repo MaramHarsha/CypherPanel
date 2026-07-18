@@ -105,6 +105,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 		CACertPEM:  []byte("-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n"),
 		EnrollAddr: "localhost:8443",
 		NATSURL:    "tls://localhost:4222",
+		ConsoleURL: "http://localhost:8080",
 		Log:        log,
 	})
 	ts := httptest.NewServer(api.Handler())
@@ -198,8 +199,10 @@ func TestServerLifecycleOverHTTP(t *testing.T) {
 			ID string `json:"id"`
 		} `json:"server"`
 		Join struct {
-			Token   string `json:"token"`
-			Command string `json:"command"`
+			Token          string `json:"token"`
+			CAFingerprint  string `json:"ca_fingerprint"`
+			Command        string `json:"command"`
+			InstallCommand string `json:"install_command"`
 		} `json:"join"`
 	}
 	if err := json.Unmarshal(body, &created); err != nil {
@@ -207,6 +210,16 @@ func TestServerLifecycleOverHTTP(t *testing.T) {
 	}
 	if created.Join.Token == "" || !strings.Contains(created.Join.Command, created.Join.Token) {
 		t.Errorf("join instructions incomplete: %+v", created.Join)
+	}
+	// The curl|sh line must carry everything the installer needs: script URL,
+	// token, and the CA fingerprint that guards the CA fetch.
+	for _, part := range []string{"/install/agent.sh", created.Join.Token, created.Join.CAFingerprint, "CYPHER_PLANE_HTTP=http://localhost:8080"} {
+		if !strings.Contains(created.Join.InstallCommand, part) {
+			t.Errorf("install_command missing %q: %s", part, created.Join.InstallCommand)
+		}
+	}
+	if len(created.Join.CAFingerprint) != 64 {
+		t.Errorf("ca_fingerprint is not sha256 hex: %q", created.Join.CAFingerprint)
 	}
 
 	// List includes it; get returns it; unknown id is 404.
@@ -262,11 +275,26 @@ func TestOpenAPISpecServedAndCoversRoutes(t *testing.T) {
 	for _, path := range []string{
 		"/healthz", "/readyz", "/api/v1/auth/login", "/api/v1/auth/logout",
 		"/api/v1/auth/me", "/api/v1/ca.pem", "/api/v1/openapi.yaml",
-		"/api/v1/servers", "/api/v1/servers/{id}",
+		"/api/v1/servers", "/api/v1/servers/{id}", "/install/agent.sh",
 	} {
 		if !strings.Contains(spec, path+":") {
 			t.Errorf("spec does not document %s", path)
 		}
+	}
+}
+
+// TestInstallScriptServed: the join installer is public and secret-free.
+func TestInstallScriptServed(t *testing.T) {
+	ts := newTestServer(t)
+	status, headers, body := doJSON(t, "GET", ts.URL+"/install/agent.sh", "", "")
+	if status != http.StatusOK {
+		t.Fatalf("install script: status %d", status)
+	}
+	if ct := headers.Get("Content-Type"); !strings.HasPrefix(ct, "text/x-shellscript") {
+		t.Errorf("content type %q", ct)
+	}
+	if !strings.HasPrefix(string(body), "#!/bin/sh") {
+		t.Errorf("script does not start with a shebang: %.40s", body)
 	}
 }
 

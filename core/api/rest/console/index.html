@@ -121,8 +121,10 @@
       </form>
       <div id="join-result" class="hidden">
         <div class="banner warn">This join token is shown once and cannot be retrieved again. It is single-use and expires soon.</div>
-        <label>Enroll command</label>
+        <label>Run on the server to join</label>
         <pre id="join-command" class="mono"></pre>
+        <label>Manual enroll (agent binary already installed)</label>
+        <pre id="join-manual" class="mono"></pre>
         <label>Data-plane URL</label>
         <pre id="join-nats" class="mono"></pre>
         <div class="row" style="margin-top: 12px; justify-content: flex-end;">
@@ -275,7 +277,8 @@
         e.preventDefault();
         try {
           const res = await api.call("POST", "/api/v1/servers", { name: $("server-name").value });
-          $("join-command").textContent = res.join.command;
+          $("join-command").textContent = res.join.install_command;
+          $("join-manual").textContent = res.join.command;
           $("join-nats").textContent = res.join.nats_url;
           const blob = new Blob([res.join.ca_cert_pem], { type: "application/x-pem-file" });
           $("download-ca").href = URL.createObjectURL(blob);

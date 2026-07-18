@@ -65,7 +65,9 @@ cypherpanel/
 │   └── package.json
 │
 ├── templates/                   # (planned, Phase 4) one-click catalog (declarative YAML)
-├── install/                     # (planned) curl|sh installers: control plane, agent join
+├── install/                     # curl|sh installers — agent.sh (agent join, served by the
+│                                #   plane at /install/agent.sh); control-plane installer
+│                                #   arrives with the first release (GoReleaser, Phase 2)
 └── docs/                        # see below
 ```
 

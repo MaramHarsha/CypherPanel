@@ -111,6 +111,14 @@ func (c Config) AdvertisedEnrollAddr() string {
 	return net.JoinHostPort(c.PublicHost, portOf(c.EnrollAddr, "8443"))
 }
 
+// AdvertisedConsoleURL is the base URL a joining server fetches the installer
+// and CA from. Plain http: TLS for the operator-facing plane (TB1) is the
+// deployment's reverse proxy in Phase 1 — the CA fingerprint in the install
+// command is what protects enrollment against tampering on this channel.
+func (c Config) AdvertisedConsoleURL() string {
+	return "http://" + net.JoinHostPort(c.PublicHost, portOf(c.HTTPAddr, "8080"))
+}
+
 // portOf extracts the port from a bind address like ":4222" or "0.0.0.0:4222",
 // falling back to def.
 func portOf(addr, def string) string {

@@ -15,7 +15,11 @@ help: ## Show this help
 ## ── Generation ─────────────────────────────────────────────────────────────
 
 .PHONY: generate
-generate: proto sqlc ## Regenerate all generated code (proto + sqlc)
+generate: proto sqlc installsh ## Regenerate all generated code (proto + sqlc + embedded installer)
+
+.PHONY: installsh
+installsh: ## Copy the canonical installer into core for go:embed (one home: /install)
+	cp install/agent.sh core/api/rest/install-agent.sh
 
 .PHONY: proto
 proto: ## Generate Go stubs from proto/ (buf)

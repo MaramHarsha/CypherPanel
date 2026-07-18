@@ -156,6 +156,7 @@ func run(log *slog.Logger) error {
 		CACertPEM:  ca.CertPEM(),
 		EnrollAddr: cfg.AdvertisedEnrollAddr(),
 		NATSURL:    cfg.AdvertisedNATSURL(),
+		ConsoleURL: cfg.AdvertisedConsoleURL(),
 		Log:        log,
 	})
 	httpSrv := &http.Server{

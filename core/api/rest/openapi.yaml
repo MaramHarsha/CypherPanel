@@ -132,6 +132,23 @@ paths:
               schema:
                 type: string
 
+  /install/agent.sh:
+    get:
+      tags: [servers]
+      summary: The agent join installer
+      description: >-
+        POSIX shell script a joining server pipes to sh. Public and secret-free:
+        the join token and CA fingerprint arrive via the install command from
+        the operator's session, never in this script.
+      security: []
+      responses:
+        "200":
+          description: The installer script.
+          content:
+            text/x-shellscript:
+              schema:
+                type: string
+
   /api/v1/servers:
     get:
       tags: [servers]
@@ -331,7 +348,8 @@ components:
 
     JoinInstructions:
       type: object
-      required: [token, enroll_addr, nats_url, ca_cert_pem, command]
+      required:
+        [token, enroll_addr, nats_url, ca_cert_pem, ca_fingerprint, command, install_command]
       properties:
         token:
           type: string
@@ -345,9 +363,17 @@ components:
         ca_cert_pem:
           type: string
           description: PEM CA certificate to pin during enrollment.
+        ca_fingerprint:
+          type: string
+          description: >-
+            SHA-256 hex of ca_cert_pem. Travels in the install command so the
+            installer can verify the CA it fetches from the plane.
         command:
           type: string
-          description: Ready-to-paste cypher-agent enroll command.
+          description: Manual cypher-agent enroll command (binary preinstalled).
+        install_command:
+          type: string
+          description: Ready-to-paste curl|sh join line (the acceptance path).
 
     CreateServerResponse:
       type: object

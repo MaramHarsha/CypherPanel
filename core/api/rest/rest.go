@@ -30,6 +30,7 @@ type Deps struct {
 	CACertPEM  []byte
 	EnrollAddr string // advertised gRPC enrollment address (host:port)
 	NATSURL    string // advertised data-plane URL
+	ConsoleURL string // advertised HTTP base URL (installer + CA fetch)
 	Log        *slog.Logger
 }
 
@@ -60,6 +61,11 @@ func (a *API) Handler() http.Handler {
 	// The API's own contract (ENGINEERING rule 19: the spec is the source of
 	// truth, so it ships with the binary that implements it).
 	mux.HandleFunc("GET /api/v1/openapi.yaml", a.handleOpenAPI)
+
+	// The agent join installer (public, no secrets — the token and CA
+	// fingerprint arrive via the operator's install command). The canonical
+	// file is /install/agent.sh; make generate syncs the embedded copy.
+	mux.HandleFunc("GET /install/agent.sh", a.handleInstallScript)
 
 	// Servers.
 	mux.HandleFunc("GET /api/v1/servers", a.authed(a.handleListServers))

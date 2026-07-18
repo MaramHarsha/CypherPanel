@@ -80,6 +80,9 @@ func TestLoadDefaults(t *testing.T) {
 	if got := c.AdvertisedEnrollAddr(); got != "localhost:8443" {
 		t.Errorf("AdvertisedEnrollAddr = %q", got)
 	}
+	if got := c.AdvertisedConsoleURL(); got != "http://localhost:8080" {
+		t.Errorf("AdvertisedConsoleURL = %q", got)
+	}
 }
 
 func TestLoadOverrides(t *testing.T) {
