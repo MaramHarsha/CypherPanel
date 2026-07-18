@@ -163,7 +163,7 @@ func (w *Worker) handleMsg(ctx context.Context, msg *nats.Msg) {
 		appID = work.AppId
 		stage = agentv1.DeployEvent_STAGE_BUILD
 		commitSha = work.CommitSha
-		
+
 		// Stream logs to logs.build.<deployment_id>
 		onLog := func(line string) {
 			if w.nc != nil {

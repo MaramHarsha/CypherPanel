@@ -132,14 +132,14 @@ func runAgent(args []string, log *slog.Logger) error {
 
 	if *driver == "docker" {
 		eng := engine.New("")
-		
+
 		appsDir := "/etc/cypherpanel/traefik/apps"
 		if d := os.Getenv("CYPHER_TRAEFIK_DIR"); d != "" {
 			appsDir = d
 		}
 		prx := proxy.NewTraefikWriter(appsDir)
 		prb := prober.New()
-		
+
 		bldDir := filepath.Join(*stateDir, "builds")
 		bld := builder.NewBuilder(eng, bldDir)
 

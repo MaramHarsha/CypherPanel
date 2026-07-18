@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,13 +18,16 @@ import (
 )
 
 type fakeDriver struct {
+	mu   sync.Mutex
 	apps []*agentv1.AppSpec
 }
 
 func (f *fakeDriver) Name() string { return "fake" }
 
 func (f *fakeDriver) Reconcile(ctx context.Context, desired []*agentv1.AppSpec) ([]*agentv1.AppStatus, error) {
+	f.mu.Lock()
 	f.apps = desired
+	f.mu.Unlock()
 	var statuses []*agentv1.AppStatus
 	for _, app := range desired {
 		statuses = append(statuses, &agentv1.AppStatus{
@@ -33,6 +37,12 @@ func (f *fakeDriver) Reconcile(ctx context.Context, desired []*agentv1.AppSpec) 
 		})
 	}
 	return statuses, nil
+}
+
+func (f *fakeDriver) getApps() []*agentv1.AppSpec {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.apps
 }
 
 func startServer(t *testing.T) *server.Server {
@@ -106,7 +116,8 @@ func TestWorkerSync(t *testing.T) {
 	// Wait for sync to complete and first reconcile to be called
 	time.Sleep(1 * time.Second)
 
-	if len(drv.apps) != 1 || drv.apps[0].AppId != "app1" {
-		t.Fatalf("expected 1 app, got %v", drv.apps)
+	apps := drv.getApps()
+	if len(apps) != 1 || apps[0].AppId != "app1" {
+		t.Fatalf("expected 1 app, got %v", apps)
 	}
 }

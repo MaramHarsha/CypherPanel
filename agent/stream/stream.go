@@ -20,8 +20,8 @@ type Streamer struct {
 	nc     *nats.Conn
 	client docker.Client
 
-	mu      sync.Mutex
-	cancel  map[string]context.CancelFunc // container_id -> cancel
+	mu     sync.Mutex
+	cancel map[string]context.CancelFunc // container_id -> cancel
 }
 
 func NewStreamer(nc *nats.Conn, client docker.Client) *Streamer {
@@ -36,7 +36,7 @@ func NewStreamer(nc *nats.Conn, client docker.Client) *Streamer {
 func (s *Streamer) Ensure(appID, containerID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	if _, exists := s.cancel[containerID]; exists {
 		return
 	}
@@ -71,7 +71,7 @@ func (s *Streamer) StopAll() {
 
 func (s *Streamer) stream(ctx context.Context, appID, containerID string) {
 	pr, pw := io.Pipe()
-	
+
 	go func() {
 		err := s.client.StreamLogs(ctx, containerID, pw)
 		pw.CloseWithError(err)
@@ -85,12 +85,12 @@ func (s *Streamer) stream(ctx context.Context, appID, containerID string) {
 		if ctx.Err() != nil {
 			break
 		}
-		
+
 		_, err := io.ReadFull(pr, header)
 		if err != nil {
 			break
 		}
-		
+
 		size := binary.BigEndian.Uint32(header[4:8])
 		payload := make([]byte, size)
 		_, err = io.ReadFull(pr, payload)
@@ -130,7 +130,7 @@ func (s *Streamer) sync(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	
+
 	active := make(map[string]bool)
 	for _, c := range containers {
 		if c.Running {

@@ -32,7 +32,7 @@ func TestBuilder(t *testing.T) {
 		t.Skip("git not installed or failed to init")
 	}
 	os.WriteFile(filepath.Join(repoDir, "Dockerfile"), []byte("FROM scratch\n"), 0644)
-	
+
 	cmd = exec.Command("git", "config", "user.email", "test@test.com")
 	cmd.Dir = repoDir
 	cmd.Run()
