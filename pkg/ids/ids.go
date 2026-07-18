@@ -13,11 +13,17 @@ import (
 // Resource ID prefixes. These are stable wire/DB values — never renumber or
 // repurpose an existing prefix (it would alias historical identifiers).
 const (
-	PrefixServer    = "srv"
-	PrefixUser      = "usr"
-	PrefixJoinToken = "jt"
-	PrefixAPIToken  = "tok"
-	PrefixSession   = "ses"
+	PrefixServer      = "srv"
+	PrefixUser        = "usr"
+	PrefixJoinToken   = "jt"
+	PrefixAPIToken    = "tok"
+	PrefixSession     = "ses"
+	PrefixProject     = "prj"
+	PrefixEnvironment = "env"
+	PrefixApplication = "app"
+	PrefixRevision    = "rev"
+	PrefixDeployment  = "dep"
+	PrefixWebhook     = "wh"
 )
 
 // New returns a prefixed, URL-safe, collision-resistant identifier such as

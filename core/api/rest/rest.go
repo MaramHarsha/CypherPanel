@@ -14,6 +14,7 @@ import (
 
 	"github.com/MaramHarsha/cypherpanel/core/auth"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
+	"github.com/MaramHarsha/cypherpanel/core/projects"
 	"github.com/MaramHarsha/cypherpanel/core/servers"
 )
 
@@ -26,6 +27,7 @@ type Pinger interface {
 type Deps struct {
 	Auth       *auth.Authenticator
 	Servers    *servers.Service
+	Projects   *projects.Service
 	Pinger     Pinger
 	CACertPEM  []byte
 	EnrollAddr string // advertised gRPC enrollment address (host:port)
@@ -72,6 +74,14 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/servers", a.authed(a.handleCreateServer))
 	mux.HandleFunc("GET /api/v1/servers/{id}", a.authed(a.handleGetServer))
 	mux.HandleFunc("DELETE /api/v1/servers/{id}", a.authed(a.handleDeleteServer))
+
+	// Projects & environments.
+	mux.HandleFunc("GET /api/v1/projects", a.authed(a.handleListProjects))
+	mux.HandleFunc("POST /api/v1/projects", a.authed(a.handleCreateProject))
+	mux.HandleFunc("GET /api/v1/projects/{id}", a.authed(a.handleGetProject))
+	mux.HandleFunc("DELETE /api/v1/projects/{id}", a.authed(a.handleDeleteProject))
+	mux.HandleFunc("GET /api/v1/projects/{id}/environments", a.authed(a.handleListEnvironments))
+	mux.HandleFunc("POST /api/v1/projects/{id}/environments", a.authed(a.handleCreateEnvironment))
 
 	// Interim console + static assets.
 	mux.Handle("GET /", a.consoleHandler())

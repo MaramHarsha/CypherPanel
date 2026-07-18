@@ -13,6 +13,7 @@ import (
 
 	"github.com/MaramHarsha/cypherpanel/core/auth"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
+	"github.com/MaramHarsha/cypherpanel/core/projects"
 	"github.com/MaramHarsha/cypherpanel/core/servers"
 	"github.com/MaramHarsha/cypherpanel/core/store"
 )
@@ -76,6 +77,55 @@ type noopDisconnector struct{}
 
 func (noopDisconnector) DisconnectAgent(string) error { return nil }
 
+type fakeProjectsStore struct {
+	projects map[string]domain.Project
+	envs     map[string][]domain.Environment
+}
+
+func newFakeProjectsStore() *fakeProjectsStore {
+	return &fakeProjectsStore{projects: map[string]domain.Project{}, envs: map[string][]domain.Environment{}}
+}
+
+func (f *fakeProjectsStore) CreateProjectWithEnvironment(_ context.Context, pid, name, eid, ename string) (domain.Project, domain.Environment, error) {
+	p := domain.Project{ID: pid, Name: name, CreatedAt: time.Now()}
+	e := domain.Environment{ID: eid, ProjectID: pid, Name: ename, CreatedAt: time.Now()}
+	f.projects[pid] = p
+	f.envs[pid] = append(f.envs[pid], e)
+	return p, e, nil
+}
+
+func (f *fakeProjectsStore) GetProject(_ context.Context, id string) (domain.Project, error) {
+	p, ok := f.projects[id]
+	if !ok {
+		return domain.Project{}, store.ErrNotFound
+	}
+	return p, nil
+}
+
+func (f *fakeProjectsStore) ListProjects(context.Context) ([]domain.Project, error) {
+	out := make([]domain.Project, 0, len(f.projects))
+	for _, p := range f.projects {
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+func (f *fakeProjectsStore) DeleteProject(_ context.Context, id string) error {
+	delete(f.projects, id)
+	delete(f.envs, id)
+	return nil
+}
+
+func (f *fakeProjectsStore) CreateEnvironment(_ context.Context, id, pid, name string) (domain.Environment, error) {
+	e := domain.Environment{ID: id, ProjectID: pid, Name: name, CreatedAt: time.Now()}
+	f.envs[pid] = append(f.envs[pid], e)
+	return e, nil
+}
+
+func (f *fakeProjectsStore) ListEnvironmentsByProject(_ context.Context, pid string) ([]domain.Environment, error) {
+	return f.envs[pid], nil
+}
+
 type okPinger struct{}
 
 func (okPinger) Ping(context.Context) error { return nil }
@@ -101,6 +151,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 	api := New(Deps{
 		Auth:       auth.NewAuthenticator(authStore, auth.NewLimiter(100, time.Minute), time.Hour),
 		Servers:    servers.NewService(&fakeServersStore{}, noopDisconnector{}, 15*time.Minute, log),
+		Projects:   projects.NewService(newFakeProjectsStore()),
 		Pinger:     okPinger{},
 		CACertPEM:  []byte("-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n"),
 		EnrollAddr: "localhost:8443",
@@ -164,6 +215,12 @@ func TestProtectedRoutesRequireAuth(t *testing.T) {
 		{"DELETE", "/api/v1/servers/srv_x"},
 		{"GET", "/api/v1/auth/me"},
 		{"POST", "/api/v1/auth/logout"},
+		{"GET", "/api/v1/projects"},
+		{"POST", "/api/v1/projects"},
+		{"GET", "/api/v1/projects/prj_x"},
+		{"DELETE", "/api/v1/projects/prj_x"},
+		{"GET", "/api/v1/projects/prj_x/environments"},
+		{"POST", "/api/v1/projects/prj_x/environments"},
 	} {
 		status, _, _ := doJSON(t, route.method, ts.URL+route.path, "", "")
 		if status != http.StatusUnauthorized {
@@ -276,10 +333,69 @@ func TestOpenAPISpecServedAndCoversRoutes(t *testing.T) {
 		"/healthz", "/readyz", "/api/v1/auth/login", "/api/v1/auth/logout",
 		"/api/v1/auth/me", "/api/v1/ca.pem", "/api/v1/openapi.yaml",
 		"/api/v1/servers", "/api/v1/servers/{id}", "/install/agent.sh",
+		"/api/v1/projects", "/api/v1/projects/{id}", "/api/v1/projects/{id}/environments",
 	} {
 		if !strings.Contains(spec, path+":") {
 			t.Errorf("spec does not document %s", path)
 		}
+	}
+}
+
+func TestProjectLifecycleOverHTTP(t *testing.T) {
+	ts := newTestServer(t)
+	token := login(t, ts)
+
+	// Create: a project comes with its default production environment.
+	status, _, body := doJSON(t, "POST", ts.URL+"/api/v1/projects", token, `{"name":"acme"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("create: status %d body %s", status, body)
+	}
+	var created struct {
+		Project struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"project"`
+		DefaultEnvironment struct {
+			Name string `json:"name"`
+		} `json:"default_environment"`
+	}
+	if err := json.Unmarshal(body, &created); err != nil {
+		t.Fatalf("create response: %v", err)
+	}
+	if created.Project.ID == "" || created.DefaultEnvironment.Name != "production" {
+		t.Fatalf("unexpected create response: %s", body)
+	}
+
+	// Get returns the project with its environments.
+	status, _, body = doJSON(t, "GET", ts.URL+"/api/v1/projects/"+created.Project.ID, token, "")
+	if status != http.StatusOK || !strings.Contains(string(body), "production") {
+		t.Fatalf("get: status %d body %s", status, body)
+	}
+
+	// Add a second environment.
+	status, _, _ = doJSON(t, "POST", ts.URL+"/api/v1/projects/"+created.Project.ID+"/environments", token, `{"name":"staging"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("create environment: status %d", status)
+	}
+	status, _, body = doJSON(t, "GET", ts.URL+"/api/v1/projects/"+created.Project.ID+"/environments", token, "")
+	if status != http.StatusOK || !strings.Contains(string(body), "staging") {
+		t.Fatalf("list environments: status %d body %s", status, body)
+	}
+
+	// Invalid name is a 400; unknown project is a 404.
+	status, _, _ = doJSON(t, "POST", ts.URL+"/api/v1/projects", token, `{"name":""}`)
+	if status != http.StatusBadRequest {
+		t.Errorf("empty name: status %d, want 400", status)
+	}
+	status, _, _ = doJSON(t, "GET", ts.URL+"/api/v1/projects/prj_missing", token, "")
+	if status != http.StatusNotFound {
+		t.Errorf("missing project: status %d, want 404", status)
+	}
+
+	// Delete is a 204.
+	status, _, _ = doJSON(t, "DELETE", ts.URL+"/api/v1/projects/"+created.Project.ID, token, "")
+	if status != http.StatusNoContent {
+		t.Errorf("delete: status %d, want 204", status)
 	}
 }
 

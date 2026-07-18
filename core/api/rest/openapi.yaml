@@ -17,6 +17,7 @@ tags:
   - name: health
   - name: auth
   - name: servers
+  - name: projects
 
 paths:
   /healthz:
@@ -226,6 +227,133 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/v1/projects:
+    get:
+      tags: [projects]
+      summary: List all projects, newest first
+      responses:
+        "200":
+          description: All projects.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Project"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [projects]
+      summary: Create a project and its default production environment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProjectRequest"
+      responses:
+        "201":
+          description: Project created, with its default environment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateProjectResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/projects/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Project ID (prj_… prefix).
+    get:
+      tags: [projects]
+      summary: One project with its environments
+      responses:
+        "200":
+          description: The project and its environments.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectDetail"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such project.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      tags: [projects]
+      summary: Delete a project and everything in it
+      description: Cascades to environments and their resources.
+      responses:
+        "204":
+          description: Deleted (or already absent).
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/projects/{id}/environments:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Project ID (prj_… prefix).
+    get:
+      tags: [projects]
+      summary: List a project's environments
+      responses:
+        "200":
+          description: The project's environments.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Environment"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such project.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      tags: [projects]
+      summary: Add an environment to a project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateEnvironmentRequest"
+      responses:
+        "201":
+          description: Environment created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Environment"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such project.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
 components:
   securitySchemes:
     bearer:
@@ -383,6 +511,72 @@ components:
           $ref: "#/components/schemas/Server"
         join:
           $ref: "#/components/schemas/JoinInstructions"
+
+    Project:
+      type: object
+      required: [id, name, created_at]
+      properties:
+        id:
+          type: string
+          description: prj_… prefixed ID.
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    Environment:
+      type: object
+      required: [id, project_id, name, created_at]
+      properties:
+        id:
+          type: string
+          description: env_… prefixed ID.
+        project_id:
+          type: string
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    CreateProjectRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+
+    CreateProjectResponse:
+      type: object
+      required: [project, default_environment]
+      properties:
+        project:
+          $ref: "#/components/schemas/Project"
+        default_environment:
+          $ref: "#/components/schemas/Environment"
+
+    ProjectDetail:
+      type: object
+      required: [project, environments]
+      properties:
+        project:
+          $ref: "#/components/schemas/Project"
+        environments:
+          type: array
+          items:
+            $ref: "#/components/schemas/Environment"
+
+    CreateEnvironmentRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
 
 security:
   - bearer: []

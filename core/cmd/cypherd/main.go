@@ -28,6 +28,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/enroll"
 	"github.com/MaramHarsha/cypherpanel/core/guard"
 	"github.com/MaramHarsha/cypherpanel/core/identity"
+	"github.com/MaramHarsha/cypherpanel/core/projects"
 	"github.com/MaramHarsha/cypherpanel/core/secret"
 	"github.com/MaramHarsha/cypherpanel/core/servers"
 	"github.com/MaramHarsha/cypherpanel/core/status"
@@ -140,6 +141,7 @@ func run(log *slog.Logger) error {
 	// Services.
 	enrollSvc := enroll.NewService(st, ca, cfg.AgentCertTTL, cfg.AdvertisedNATSURL())
 	serverSvc := servers.NewService(st, b, cfg.JoinTokenTTL, log)
+	projectSvc := projects.NewService(st)
 	authr := auth.NewAuthenticator(st, auth.NewLimiter(5, 15*time.Minute), cfg.SessionTTL)
 
 	// gRPC enrollment endpoint (server-auth TLS; join-token gated).
@@ -152,6 +154,7 @@ func run(log *slog.Logger) error {
 	api := rest.New(rest.Deps{
 		Auth:       authr,
 		Servers:    serverSvc,
+		Projects:   projectSvc,
 		Pinger:     st,
 		CACertPEM:  ca.CertPEM(),
 		EnrollAddr: cfg.AdvertisedEnrollAddr(),

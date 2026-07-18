@@ -77,6 +77,14 @@ func (s *Store) CreateProjectWithEnvironment(ctx context.Context, projectID, nam
 
 // ─── Environments ───────────────────────────────────────────────────────────
 
+func (s *Store) CreateEnvironment(ctx context.Context, id, projectID, name string) (domain.Environment, error) {
+	row, err := s.q.CreateEnvironment(ctx, db.CreateEnvironmentParams{ID: id, ProjectID: projectID, Name: name})
+	if err != nil {
+		return domain.Environment{}, fmt.Errorf("store: creating environment: %w", err)
+	}
+	return environmentFromRow(row), nil
+}
+
 func (s *Store) GetEnvironment(ctx context.Context, id string) (domain.Environment, error) {
 	row, err := s.q.GetEnvironment(ctx, id)
 	if err != nil {
