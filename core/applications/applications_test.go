@@ -48,6 +48,23 @@ func (f *fakeStore) GetApplication(_ context.Context, id string) (domain.Applica
 	return a, nil
 }
 
+func (f *fakeStore) GetApplicationByWebhookID(_ context.Context, webhookID string) (domain.Application, error) {
+	for _, a := range f.apps {
+		if a.WebhookID == webhookID {
+			return a, nil
+		}
+	}
+	return domain.Application{}, store.ErrNotFound
+}
+
+func (f *fakeStore) UpdateApplicationConfig(_ context.Context, a domain.Application) (domain.Application, error) {
+	if _, ok := f.apps[a.ID]; !ok {
+		return domain.Application{}, store.ErrNotFound
+	}
+	f.apps[a.ID] = a
+	return a, nil
+}
+
 func (f *fakeStore) ListApplicationsByEnvironment(_ context.Context, envID string) ([]domain.Application, error) {
 	var out []domain.Application
 	for _, a := range f.apps {

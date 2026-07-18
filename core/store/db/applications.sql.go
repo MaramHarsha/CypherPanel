@@ -29,7 +29,7 @@ INSERT INTO applications (
     $17, $18, $19, $20,
     $21, $22, $23
 )
-RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at
+RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at
 `
 
 type CreateApplicationParams struct {
@@ -112,6 +112,10 @@ func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationPa
 		&i.DesiredRevisionID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Status,
+		&i.StatusDetail,
+		&i.ObservedRevisionID,
+		&i.StatusObservedAt,
 	)
 	return i, err
 }
@@ -126,7 +130,7 @@ func (q *Queries) DeleteApplication(ctx context.Context, id string) error {
 }
 
 const getApplication = `-- name: GetApplication :one
-SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at FROM applications WHERE id = $1
+SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at FROM applications WHERE id = $1
 `
 
 func (q *Queries) GetApplication(ctx context.Context, id string) (Application, error) {
@@ -159,12 +163,16 @@ func (q *Queries) GetApplication(ctx context.Context, id string) (Application, e
 		&i.DesiredRevisionID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Status,
+		&i.StatusDetail,
+		&i.ObservedRevisionID,
+		&i.StatusObservedAt,
 	)
 	return i, err
 }
 
 const getApplicationByWebhookID = `-- name: GetApplicationByWebhookID :one
-SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at FROM applications WHERE webhook_id = $1
+SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at FROM applications WHERE webhook_id = $1
 `
 
 func (q *Queries) GetApplicationByWebhookID(ctx context.Context, webhookID string) (Application, error) {
@@ -197,12 +205,16 @@ func (q *Queries) GetApplicationByWebhookID(ctx context.Context, webhookID strin
 		&i.DesiredRevisionID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Status,
+		&i.StatusDetail,
+		&i.ObservedRevisionID,
+		&i.StatusObservedAt,
 	)
 	return i, err
 }
 
 const listApplicationsByEnvironment = `-- name: ListApplicationsByEnvironment :many
-SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at FROM applications WHERE environment_id = $1 ORDER BY created_at DESC
+SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at FROM applications WHERE environment_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environmentID string) ([]Application, error) {
@@ -241,6 +253,10 @@ func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environment
 			&i.DesiredRevisionID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Status,
+			&i.StatusDetail,
+			&i.ObservedRevisionID,
+			&i.StatusObservedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -253,7 +269,7 @@ func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environment
 }
 
 const listApplicationsByServer = `-- name: ListApplicationsByServer :many
-SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at FROM applications WHERE runtime_server_id = $1 ORDER BY created_at DESC
+SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at FROM applications WHERE runtime_server_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListApplicationsByServer(ctx context.Context, runtimeServerID string) ([]Application, error) {
@@ -292,6 +308,10 @@ func (q *Queries) ListApplicationsByServer(ctx context.Context, runtimeServerID 
 			&i.DesiredRevisionID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Status,
+			&i.StatusDetail,
+			&i.ObservedRevisionID,
+			&i.StatusObservedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -307,7 +327,7 @@ const setApplicationDesiredRevision = `-- name: SetApplicationDesiredRevision :o
 UPDATE applications
 SET desired_revision_id = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at
+RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at
 `
 
 type SetApplicationDesiredRevisionParams struct {
@@ -345,6 +365,142 @@ func (q *Queries) SetApplicationDesiredRevision(ctx context.Context, arg SetAppl
 		&i.DesiredRevisionID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Status,
+		&i.StatusDetail,
+		&i.ObservedRevisionID,
+		&i.StatusObservedAt,
+	)
+	return i, err
+}
+
+const setApplicationObservedStatus = `-- name: SetApplicationObservedStatus :exec
+UPDATE applications
+SET status = $2, status_detail = $3, observed_revision_id = $4,
+    status_observed_at = $5, updated_at = now()
+WHERE id = $1
+`
+
+type SetApplicationObservedStatusParams struct {
+	ID                 string
+	Status             string
+	StatusDetail       string
+	ObservedRevisionID string
+	StatusObservedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) SetApplicationObservedStatus(ctx context.Context, arg SetApplicationObservedStatusParams) error {
+	_, err := q.db.Exec(ctx, setApplicationObservedStatus,
+		arg.ID,
+		arg.Status,
+		arg.StatusDetail,
+		arg.ObservedRevisionID,
+		arg.StatusObservedAt,
+	)
+	return err
+}
+
+const setApplicationStatus = `-- name: SetApplicationStatus :exec
+UPDATE applications SET status = $2, status_detail = $3, updated_at = now() WHERE id = $1
+`
+
+type SetApplicationStatusParams struct {
+	ID           string
+	Status       string
+	StatusDetail string
+}
+
+func (q *Queries) SetApplicationStatus(ctx context.Context, arg SetApplicationStatusParams) error {
+	_, err := q.db.Exec(ctx, setApplicationStatus, arg.ID, arg.Status, arg.StatusDetail)
+	return err
+}
+
+const updateApplicationConfig = `-- name: UpdateApplicationConfig :one
+UPDATE applications
+SET name = $2,
+    source_kind = $3, source_repo = $4, source_branch = $5, source_deploy_key_id = $6,
+    build_kind = $7, build_dockerfile_path = $8, build_context = $9,
+    runtime_port = $10, runtime_replicas = $11,
+    route_domain = $12, route_https = $13, route_path_prefix = $14,
+    health_path = $15, health_interval_seconds = $16, health_timeout_seconds = $17, health_retries = $18,
+    updated_at = now()
+WHERE id = $1
+RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at
+`
+
+type UpdateApplicationConfigParams struct {
+	ID                    string
+	Name                  string
+	SourceKind            string
+	SourceRepo            string
+	SourceBranch          string
+	SourceDeployKeyID     pgtype.Text
+	BuildKind             string
+	BuildDockerfilePath   string
+	BuildContext          string
+	RuntimePort           int32
+	RuntimeReplicas       int32
+	RouteDomain           string
+	RouteHttps            bool
+	RoutePathPrefix       string
+	HealthPath            string
+	HealthIntervalSeconds int32
+	HealthTimeoutSeconds  int32
+	HealthRetries         int32
+}
+
+func (q *Queries) UpdateApplicationConfig(ctx context.Context, arg UpdateApplicationConfigParams) (Application, error) {
+	row := q.db.QueryRow(ctx, updateApplicationConfig,
+		arg.ID,
+		arg.Name,
+		arg.SourceKind,
+		arg.SourceRepo,
+		arg.SourceBranch,
+		arg.SourceDeployKeyID,
+		arg.BuildKind,
+		arg.BuildDockerfilePath,
+		arg.BuildContext,
+		arg.RuntimePort,
+		arg.RuntimeReplicas,
+		arg.RouteDomain,
+		arg.RouteHttps,
+		arg.RoutePathPrefix,
+		arg.HealthPath,
+		arg.HealthIntervalSeconds,
+		arg.HealthTimeoutSeconds,
+		arg.HealthRetries,
+	)
+	var i Application
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.Name,
+		&i.SourceKind,
+		&i.SourceRepo,
+		&i.SourceBranch,
+		&i.SourceDeployKeyID,
+		&i.BuildKind,
+		&i.BuildDockerfilePath,
+		&i.BuildContext,
+		&i.RuntimeServerID,
+		&i.RuntimePort,
+		&i.RuntimeReplicas,
+		&i.RouteDomain,
+		&i.RouteHttps,
+		&i.RoutePathPrefix,
+		&i.HealthPath,
+		&i.HealthIntervalSeconds,
+		&i.HealthTimeoutSeconds,
+		&i.HealthRetries,
+		&i.WebhookID,
+		&i.WebhookSecretCt,
+		&i.WebhookSecretNonce,
+		&i.DesiredRevisionID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Status,
+		&i.StatusDetail,
+		&i.ObservedRevisionID,
+		&i.StatusObservedAt,
 	)
 	return i, err
 }

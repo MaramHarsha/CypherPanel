@@ -365,6 +365,16 @@ func wrapCreate(op string, err error) error {
 	return fmt.Errorf("store: %s: %w", op, err)
 }
 
+// wrapUpdate maps a unique violation on update (e.g. renaming onto a taken
+// name) to ErrConflict, and no-rows to ErrNotFound.
+func wrapUpdate(op string, err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
+		return fmt.Errorf("store: %s: %w", op, ErrConflict)
+	}
+	return wrap(op, err)
+}
+
 // wrapDelete maps a foreign-key violation on delete — the row is still
 // referenced through a RESTRICT constraint — to ErrInUse.
 func wrapDelete(op string, err error) error {

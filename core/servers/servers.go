@@ -28,17 +28,22 @@ type Store interface {
 	DeleteServer(ctx context.Context, id string) error
 }
 
-// AgentDisconnector severs a server's live bus connection (consumer-defined;
-// *bus.Bus satisfies it). Deleting a server revokes its agent, and revocation
-// must cut open connections too, not just future ones (threat-model §8 req 6).
-type AgentDisconnector interface {
+// AgentBus is what the service needs from the bus (consumer-defined;
+// *bus.Bus satisfies it): severing a deleted server's live connection —
+// revocation must cut open connections too, not just future ones
+// (threat-model §8 req 6) — and owning the lifecycle of the server's durable
+// work consumer, which exists from the moment the server does so no work
+// item published before the agent's first connect is ever lost.
+type AgentBus interface {
 	DisconnectAgent(serverID string) error
+	EnsureWorkConsumer(ctx context.Context, serverID string) error
+	DeleteWorkConsumer(ctx context.Context, serverID string) error
 }
 
 // Service manages servers from the operator's side.
 type Service struct {
 	store    Store
-	bus      AgentDisconnector
+	bus      AgentBus
 	tokenTTL time.Duration
 	log      *slog.Logger
 	now      func() time.Time
@@ -46,7 +51,7 @@ type Service struct {
 
 // NewService wires the service. tokenTTL is how long an issued join token stays
 // valid (short — threat-model §5.3).
-func NewService(s Store, bus AgentDisconnector, tokenTTL time.Duration, log *slog.Logger) *Service {
+func NewService(s Store, bus AgentBus, tokenTTL time.Duration, log *slog.Logger) *Service {
 	return &Service{store: s, bus: bus, tokenTTL: tokenTTL, log: log, now: time.Now}
 }
 
@@ -71,6 +76,11 @@ func (s *Service) Create(ctx context.Context, name string) (domain.Server, strin
 	)
 	if err != nil {
 		return domain.Server{}, "", fmt.Errorf("servers: creating server: %w", err)
+	}
+	if err := s.bus.EnsureWorkConsumer(ctx, srv.ID); err != nil {
+		// The server exists and can enroll; the consumer is re-asserted on
+		// every plane boot, so this is degraded, not fatal.
+		s.log.Error("ensuring work consumer", "server_id", srv.ID, "error", err)
 	}
 	return srv, enroll.FormatToken(tokenID, tokenSecret), nil
 }
@@ -104,6 +114,9 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	}
 	if err := s.bus.DisconnectAgent(id); err != nil {
 		s.log.Error("disconnecting deleted server's agent", "server_id", id, "error", err)
+	}
+	if err := s.bus.DeleteWorkConsumer(ctx, id); err != nil {
+		s.log.Error("deleting work consumer", "server_id", id, "error", err)
 	}
 	return nil
 }

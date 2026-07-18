@@ -438,6 +438,42 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+    patch:
+      tags: [applications]
+      summary: Update configuration (shapes the next revision; running revision unchanged until deploy)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchApplicationRequest"
+      responses:
+        "200":
+          description: The updated application.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Application"
+        "400":
+          description: The merged configuration is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such application.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: The new name is already taken in this environment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
     delete:
       tags: [applications]
       summary: Delete an application and its env vars
@@ -446,6 +482,164 @@ paths:
           description: Deleted (or already absent).
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/applications/{id}/deploy:
+    post:
+      tags: [deployments]
+      summary: Deploy the application (build → rollout, zero-downtime)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeployRequest"
+      responses:
+        "202":
+          description: Pipeline started; poll the deployment for progress.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deployment"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such application.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/applications/{id}/deployments:
+    get:
+      tags: [deployments]
+      summary: The application's deployments, newest first
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deployment history.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Deployment"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such application.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/deployments/{id}:
+    get:
+      tags: [deployments]
+      summary: One deployment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The deployment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deployment"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such deployment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/deployments/{id}/rollback:
+    post:
+      tags: [deployments]
+      summary: Roll back to the revision this deployment shipped (build skipped)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          description: Rollback pipeline started.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deployment"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such deployment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: The revision was never built; nothing to roll back to.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /webhooks/github/{id}:
+    post:
+      tags: [deployments]
+      summary: GitHub push webhook (HMAC-authenticated, no session)
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The application's webhook id (wh_… prefix).
+        - name: X-Hub-Signature-256
+          in: header
+          required: true
+          schema:
+            type: string
+          description: GitHub's HMAC-SHA256 body signature ("sha256=<hex>").
+      responses:
+        "202":
+          description: Push on the configured branch; deployment started.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deployment"
+        "204":
+          description: Authenticated, but not a deployable push (other branch, deletion, non-push event).
+        "401":
+          description: Signature verification failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Unknown webhook id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /api/v1/applications/{id}/env:
     parameters:
@@ -841,6 +1035,15 @@ components:
         desired_revision_id:
           type: [string, "null"]
           description: Set on first deploy; rollback re-points it.
+        status:
+          type: string
+          enum: [running, deploying, stopped, error, degraded, unknown]
+          description: Observed state — what the agent last reported (ADR-005).
+        status_detail:
+          type: string
+        observed_revision_id:
+          type: string
+          description: The revision actually serving per the last report.
         created_at:
           type: string
           format: date-time
@@ -903,6 +1106,59 @@ components:
       properties:
         value:
           type: string
+
+    PatchApplicationRequest:
+      type: object
+      description: Absent sections stay unchanged; a present section replaces that section wholesale. The runtime server and replicas are not patchable.
+      properties:
+        name:
+          type: string
+        source:
+          $ref: "#/components/schemas/AppSource"
+        build:
+          $ref: "#/components/schemas/AppBuild"
+        runtime:
+          type: object
+          properties:
+            port:
+              type: integer
+        route:
+          $ref: "#/components/schemas/AppRoute"
+        health:
+          $ref: "#/components/schemas/AppHealth"
+
+    DeployRequest:
+      type: object
+      properties:
+        ref:
+          type: string
+          description: Exact commit SHA to build; empty builds the configured branch's head.
+
+    Deployment:
+      type: object
+      required: [id, application_id, revision_id, status, trigger, created_at]
+      properties:
+        id:
+          type: string
+        application_id:
+          type: string
+        revision_id:
+          type: string
+        status:
+          type: string
+          enum: [queued, building, distributing, rolling_out, succeeded, failed]
+        trigger:
+          type: string
+          enum: [manual, webhook, rollback]
+        detail:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
 
 security:
   - bearer: []

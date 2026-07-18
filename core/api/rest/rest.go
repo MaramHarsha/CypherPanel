@@ -24,12 +24,36 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
+// Deployer starts pipelines and publishes desired absence (consumer-defined;
+// *scheduler.Scheduler satisfies it).
+type Deployer interface {
+	Deploy(ctx context.Context, appID, trigger, ref string) (domain.Deployment, error)
+	Rollback(ctx context.Context, deploymentID string) (domain.Deployment, error)
+	RemoveApp(ctx context.Context, serverID, appID string) error
+}
+
+// DeploymentReader reads deployment records (consumer-defined; *store.Store
+// satisfies it).
+type DeploymentReader interface {
+	GetDeployment(ctx context.Context, id string) (domain.Deployment, error)
+	ListDeploymentsByApplication(ctx context.Context, appID string, limit int32) ([]domain.Deployment, error)
+}
+
+// Opener unseals the webhook HMAC secret for verification (consumer-defined;
+// *secret.Box satisfies it).
+type Opener interface {
+	Open(ciphertext, nonce []byte) ([]byte, error)
+}
+
 // Deps are the dependencies the API needs.
 type Deps struct {
 	Auth         *auth.Authenticator
 	Servers      *servers.Service
 	Projects     *projects.Service
 	Applications *applications.Service
+	Scheduler    Deployer
+	Deployments  DeploymentReader
+	Opener       Opener
 	Pinger       Pinger
 	CACertPEM    []byte
 	EnrollAddr   string // advertised gRPC enrollment address (host:port)
@@ -89,10 +113,21 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/environments/{id}/applications", a.authed(a.handleCreateApplication))
 	mux.HandleFunc("GET /api/v1/environments/{id}/applications", a.authed(a.handleListApplications))
 	mux.HandleFunc("GET /api/v1/applications/{id}", a.authed(a.handleGetApplication))
+	mux.HandleFunc("PATCH /api/v1/applications/{id}", a.authed(a.handlePatchApplication))
 	mux.HandleFunc("DELETE /api/v1/applications/{id}", a.authed(a.handleDeleteApplication))
 	mux.HandleFunc("GET /api/v1/applications/{id}/env", a.authed(a.handleListEnvVars))
 	mux.HandleFunc("PUT /api/v1/applications/{id}/env/{key}", a.authed(a.handleSetEnvVar))
 	mux.HandleFunc("DELETE /api/v1/applications/{id}/env/{key}", a.authed(a.handleDeleteEnvVar))
+
+	// Deployments (the pipeline: deploy, inspect, roll back).
+	mux.HandleFunc("POST /api/v1/applications/{id}/deploy", a.authed(a.handleDeployApplication))
+	mux.HandleFunc("GET /api/v1/applications/{id}/deployments", a.authed(a.handleListDeployments))
+	mux.HandleFunc("GET /api/v1/deployments/{id}", a.authed(a.handleGetDeployment))
+	mux.HandleFunc("POST /api/v1/deployments/{id}/rollback", a.authed(a.handleRollback))
+
+	// GitHub webhook: authenticated by per-app HMAC secret, not a session
+	// (spec §4) — the only unauthenticated mutating route.
+	mux.HandleFunc("POST /webhooks/github/{id}", a.handleGitHubWebhook)
 
 	// Interim console + static assets.
 	mux.Handle("GET /", a.consoleHandler())

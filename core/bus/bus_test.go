@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/MaramHarsha/cypherpanel/pkg/pki"
@@ -67,6 +68,7 @@ func startTestBus(t *testing.T, enrolledIDs ...string) (*Bus, *pki.CA, *fakeAuth
 		TLSConfig:  tlsCfg,
 		Authorizer: authorizer,
 		Log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		StoreDir:   t.TempDir(), // file-backed WORK stream stays in the test dir
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -246,5 +248,182 @@ func TestBusDisconnectAgentNoConnectionIsNoop(t *testing.T) {
 	b, _, _ := startTestBus(t)
 	if err := b.DisconnectAgent("srv_absent"); err != nil {
 		t.Fatalf("DisconnectAgent on absent connection: %v", err)
+	}
+}
+
+// agentJetStream returns a JetStream context over an agent connection.
+func agentJetStream(t *testing.T, nc *nats.Conn) jetstream.JetStream {
+	t.Helper()
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("jetstream.New: %v", err)
+	}
+	return js
+}
+
+// TestWorkItemDeliveredAndSurvivesUntilAck: the plane publishes a work item;
+// the agent consumes it via its plane-created durable consumer. Unacked items
+// redeliver; acked items are gone (WorkQueue retention).
+func TestWorkItemDeliveredAndAcked(t *testing.T) {
+	const srv = "srv_alpha"
+	b, ca, _ := startTestBus(t, srv)
+	ctx := context.Background()
+
+	if err := b.EnsureWorkConsumer(ctx, srv); err != nil {
+		t.Fatalf("EnsureWorkConsumer: %v", err)
+	}
+	work := &agentv1.RolloutWork{DeploymentId: "dep_1", Spec: &agentv1.AppSpec{AppId: "app_1", RevisionId: "rev_1"}}
+	data, err := proto.Marshal(work)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := b.PublishWork(ctx, subjects.Rollout(srv), "dep_1.rollout", data); err != nil {
+		t.Fatalf("PublishWork: %v", err)
+	}
+
+	nc := agentConn(t, b, ca, srv)
+	js := agentJetStream(t, nc)
+	cons, err := js.Consumer(ctx, "WORK", subjects.WorkConsumer(srv))
+	if err != nil {
+		t.Fatalf("agent consumer lookup: %v", err)
+	}
+	msgs, err := cons.Fetch(1, jetstream.FetchMaxWait(5*time.Second))
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	var got jetstream.Msg
+	for m := range msgs.Messages() {
+		got = m
+	}
+	if got == nil {
+		t.Fatal("no work item delivered")
+	}
+	if got.Subject() != subjects.Rollout(srv) {
+		t.Fatalf("subject = %q, want %q", got.Subject(), subjects.Rollout(srv))
+	}
+	var rw agentv1.RolloutWork
+	if err := proto.Unmarshal(got.Data(), &rw); err != nil || rw.GetDeploymentId() != "dep_1" {
+		t.Fatalf("payload = %+v, %v", &rw, err)
+	}
+	if err := got.Ack(); err != nil {
+		t.Fatalf("ack: %v", err)
+	}
+
+	// Duplicate publish with the same msg id is deduplicated.
+	if err := b.PublishWork(ctx, subjects.Rollout(srv), "dep_1.rollout", data); err != nil {
+		t.Fatalf("re-PublishWork: %v", err)
+	}
+	msgs, err = cons.Fetch(1, jetstream.FetchMaxWait(time.Second))
+	if err != nil {
+		t.Fatalf("fetch after ack: %v", err)
+	}
+	for m := range msgs.Messages() {
+		t.Fatalf("unexpected redelivery after ack+dedup: %s", m.Subject())
+	}
+}
+
+// TestAgentCannotReadAnotherServersWork: the JS API grants pin an agent to its
+// own consumer; fetching from another server's consumer must fail.
+func TestAgentCannotReadAnotherServersWork(t *testing.T) {
+	b, ca, _ := startTestBus(t, "srv_alpha", "srv_beta")
+	ctx := context.Background()
+	for _, id := range []string{"srv_alpha", "srv_beta"} {
+		if err := b.EnsureWorkConsumer(ctx, id); err != nil {
+			t.Fatalf("EnsureWorkConsumer(%s): %v", id, err)
+		}
+	}
+
+	nc := agentConn(t, b, ca, "srv_alpha")
+	js := agentJetStream(t, nc)
+	// Consumer lookup for the other server must be refused (INFO permission).
+	if _, err := js.Consumer(ctx, "WORK", subjects.WorkConsumer("srv_beta")); err == nil {
+		t.Fatal("srv_alpha read srv_beta's consumer info")
+	}
+}
+
+// TestDesiredStateSync: an agent's sync request is answered with the plane's
+// resolved DesiredState for exactly that server.
+func TestDesiredStateSync(t *testing.T) {
+	const srv = "srv_alpha"
+	b, ca, _ := startTestBus(t, srv)
+
+	err := b.RespondDesiredState(func(serverID string) ([]byte, error) {
+		return proto.Marshal(&agentv1.DesiredState{Specs: []*agentv1.AppSpec{{AppId: "app-for-" + serverID}}})
+	})
+	if err != nil {
+		t.Fatalf("RespondDesiredState: %v", err)
+	}
+
+	nc := agentConn(t, b, ca, srv)
+	resp, err := nc.Request(subjects.Sync(srv), nil, 5*time.Second)
+	if err != nil {
+		t.Fatalf("sync request: %v", err)
+	}
+	var ds agentv1.DesiredState
+	if err := proto.Unmarshal(resp.Data, &ds); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(ds.Specs) != 1 || ds.Specs[0].GetAppId() != "app-for-"+srv {
+		t.Fatalf("desired state = %+v, want the resolver's answer for %s", ds.Specs, srv)
+	}
+}
+
+// TestDeployEventAndAppStatusConsumers: agent publications on the deploy and
+// app-status subjects reach the plane consumers with the server id parsed
+// from the (permission-pinned) subject.
+func TestDeployEventAndAppStatusConsumers(t *testing.T) {
+	const srv = "srv_alpha"
+	b, ca, _ := startTestBus(t, srv)
+	ctx := context.Background()
+
+	events := make(chan string, 1)
+	cc1, err := b.ConsumeDeployEvents(ctx, func(serverID string, data []byte) {
+		var ev agentv1.DeployEvent
+		if proto.Unmarshal(data, &ev) == nil {
+			events <- serverID + "/" + ev.GetDeploymentId()
+		}
+	})
+	if err != nil {
+		t.Fatalf("ConsumeDeployEvents: %v", err)
+	}
+	defer cc1.Stop()
+
+	statuses := make(chan string, 1)
+	cc2, err := b.ConsumeAppStatus(ctx, func(serverID string, data []byte) {
+		var st agentv1.AppStatus
+		if proto.Unmarshal(data, &st) == nil {
+			statuses <- serverID + "/" + st.GetAppId() + "/" + st.GetState()
+		}
+	})
+	if err != nil {
+		t.Fatalf("ConsumeAppStatus: %v", err)
+	}
+	defer cc2.Stop()
+
+	nc := agentConn(t, b, ca, srv)
+	ev, _ := proto.Marshal(&agentv1.DeployEvent{DeploymentId: "dep_9"})
+	if err := nc.Publish(subjects.DeployState(srv), ev); err != nil {
+		t.Fatalf("publish deploy event: %v", err)
+	}
+	st, _ := proto.Marshal(&agentv1.AppStatus{AppId: "app_1", State: "running"})
+	if err := nc.Publish(subjects.AppState(srv, "app_1"), st); err != nil {
+		t.Fatalf("publish app status: %v", err)
+	}
+
+	select {
+	case got := <-events:
+		if got != srv+"/dep_9" {
+			t.Fatalf("deploy event = %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("deploy event never consumed")
+	}
+	select {
+	case got := <-statuses:
+		if got != srv+"/app_1/running" {
+			t.Fatalf("app status = %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("app status never consumed")
 	}
 }

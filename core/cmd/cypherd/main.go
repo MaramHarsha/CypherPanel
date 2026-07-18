@@ -19,6 +19,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/protobuf/proto"
 
 	grpcapi "github.com/MaramHarsha/cypherpanel/core/api/grpc"
 	"github.com/MaramHarsha/cypherpanel/core/api/rest"
@@ -30,6 +31,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/guard"
 	"github.com/MaramHarsha/cypherpanel/core/identity"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
+	"github.com/MaramHarsha/cypherpanel/core/scheduler"
 	"github.com/MaramHarsha/cypherpanel/core/secret"
 	"github.com/MaramHarsha/cypherpanel/core/servers"
 	"github.com/MaramHarsha/cypherpanel/core/status"
@@ -111,6 +113,7 @@ func run(log *slog.Logger) error {
 		TLSConfig:  busTLS,
 		Authorizer: st,
 		Log:        log,
+		StoreDir:   cfg.DataDir,
 	})
 	if err != nil {
 		return err
@@ -146,6 +149,48 @@ func run(log *slog.Logger) error {
 	appSvc := applications.NewService(st, box)
 	authr := auth.NewAuthenticator(st, auth.NewLimiter(5, 15*time.Minute), cfg.SessionTTL)
 
+	// Deploy pipeline: the scheduler publishes work items and advances
+	// deployments from the agents' observed reports (ADR-005).
+	sched := scheduler.New(st, b, box, log)
+	if err := sched.Recover(ctx); err != nil {
+		return err
+	}
+	if err := b.RespondDesiredState(func(serverID string) ([]byte, error) {
+		c, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return sched.DesiredStateFor(c, serverID)
+	}); err != nil {
+		return err
+	}
+	deployConsume, err := b.ConsumeDeployEvents(ctx, func(serverID string, data []byte) {
+		var ev agentv1.DeployEvent
+		if err := proto.Unmarshal(data, &ev); err != nil {
+			log.Error("unmarshaling deploy event", "server_id", serverID, "error", err)
+			return
+		}
+		c, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		sched.HandleDeployEvent(c, serverID, &ev)
+	})
+	if err != nil {
+		return err
+	}
+	defer deployConsume.Stop()
+	statusConsume, err := b.ConsumeAppStatus(ctx, func(serverID string, data []byte) {
+		var st agentv1.AppStatus
+		if err := proto.Unmarshal(data, &st); err != nil {
+			log.Error("unmarshaling app status", "server_id", serverID, "error", err)
+			return
+		}
+		c, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		sched.HandleAppStatus(c, serverID, &st)
+	})
+	if err != nil {
+		return err
+	}
+	defer statusConsume.Stop()
+
 	// gRPC enrollment endpoint (server-auth TLS; join-token gated).
 	grpcSrv, err := startEnrollmentServer(cfg, planeCert, planeKey, enrollSvc, log)
 	if err != nil {
@@ -158,6 +203,9 @@ func run(log *slog.Logger) error {
 		Servers:      serverSvc,
 		Projects:     projectSvc,
 		Applications: appSvc,
+		Scheduler:    sched,
+		Deployments:  st,
+		Opener:       box,
 		Pinger:       st,
 		CACertPEM:    ca.CertPEM(),
 		EnrollAddr:   cfg.AdvertisedEnrollAddr(),

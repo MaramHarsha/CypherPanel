@@ -74,7 +74,7 @@ func (x DeployEvent_Stage) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use DeployEvent_Stage.Descriptor instead.
 func (DeployEvent_Stage) EnumDescriptor() ([]byte, []int) {
-	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{7, 0}
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{8, 0}
 }
 
 type DeployEvent_Outcome int32
@@ -123,7 +123,7 @@ func (x DeployEvent_Outcome) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use DeployEvent_Outcome.Descriptor instead.
 func (DeployEvent_Outcome) EnumDescriptor() ([]byte, []int) {
-	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{7, 1}
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{8, 1}
 }
 
 // AppSpec is an Application's desired state as one server's reconciler sees
@@ -587,6 +587,56 @@ func (x *BuildWork) GetImage() string {
 	return ""
 }
 
+// DesiredState is the full desired set for one server: the reply to the
+// agent's sync request on state.<server_id>.sync. An agent reconciles from
+// this baseline on every (re)connect — work items are per-deployment triggers,
+// but the reconciler contract is always the full set (absence means remove),
+// so a crashed agent converges a host it has never seen without replaying
+// history.
+type DesiredState struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Specs         []*AppSpec             `protobuf:"bytes,1,rep,name=specs,proto3" json:"specs,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DesiredState) Reset() {
+	*x = DesiredState{}
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DesiredState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DesiredState) ProtoMessage() {}
+
+func (x *DesiredState) ProtoReflect() protoreflect.Message {
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DesiredState.ProtoReflect.Descriptor instead.
+func (*DesiredState) Descriptor() ([]byte, []int) {
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *DesiredState) GetSpecs() []*AppSpec {
+	if x != nil {
+		return x.Specs
+	}
+	return nil
+}
+
 // AppStatus is one Application's observed state, reported on
 // state.<server_id>.app.<app_id>. The plane asserts "deploy succeeded" only
 // from these reports — never from work-item completion (ADR-005).
@@ -607,7 +657,7 @@ type AppStatus struct {
 
 func (x *AppStatus) Reset() {
 	*x = AppStatus{}
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[6]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -619,7 +669,7 @@ func (x *AppStatus) String() string {
 func (*AppStatus) ProtoMessage() {}
 
 func (x *AppStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[6]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -632,7 +682,7 @@ func (x *AppStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AppStatus.ProtoReflect.Descriptor instead.
 func (*AppStatus) Descriptor() ([]byte, []int) {
-	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{6}
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *AppStatus) GetAppId() string {
@@ -681,15 +731,19 @@ type DeployEvent struct {
 	Stage        DeployEvent_Stage      `protobuf:"varint,3,opt,name=stage,proto3,enum=cypherpanel.agent.v1.DeployEvent_Stage" json:"stage,omitempty"`
 	Outcome      DeployEvent_Outcome    `protobuf:"varint,4,opt,name=outcome,proto3,enum=cypherpanel.agent.v1.DeployEvent_Outcome" json:"outcome,omitempty"`
 	// Failure detail (never contains secrets — rule 20).
-	Detail        string                 `protobuf:"bytes,5,opt,name=detail,proto3" json:"detail,omitempty"`
-	OccurredAt    *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=occurred_at,json=occurredAt,proto3" json:"occurred_at,omitempty"`
+	Detail     string                 `protobuf:"bytes,5,opt,name=detail,proto3" json:"detail,omitempty"`
+	OccurredAt *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=occurred_at,json=occurredAt,proto3" json:"occurred_at,omitempty"`
+	// For STAGE_BUILD success: the exact commit SHA the builder resolved and
+	// built (BuildWork may name a branch head; the revision of record needs the
+	// SHA). Empty on other stages.
+	CommitSha     string `protobuf:"bytes,7,opt,name=commit_sha,json=commitSha,proto3" json:"commit_sha,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *DeployEvent) Reset() {
 	*x = DeployEvent{}
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[7]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -701,7 +755,7 @@ func (x *DeployEvent) String() string {
 func (*DeployEvent) ProtoMessage() {}
 
 func (x *DeployEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[7]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -714,7 +768,7 @@ func (x *DeployEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeployEvent.ProtoReflect.Descriptor instead.
 func (*DeployEvent) Descriptor() ([]byte, []int) {
-	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{7}
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *DeployEvent) GetDeploymentId() string {
@@ -757,6 +811,13 @@ func (x *DeployEvent) GetOccurredAt() *timestamppb.Timestamp {
 		return x.OccurredAt
 	}
 	return nil
+}
+
+func (x *DeployEvent) GetCommitSha() string {
+	if x != nil {
+		return x.CommitSha
+	}
+	return ""
 }
 
 var File_cypherpanel_agent_v1_work_proto protoreflect.FileDescriptor
@@ -803,7 +864,9 @@ const file_cypherpanel_agent_v1_work_proto_rawDesc = "" +
 	"commit_sha\x18\x04 \x01(\tR\tcommitSha\x12'\n" +
 	"\x0fdockerfile_path\x18\x05 \x01(\tR\x0edockerfilePath\x12#\n" +
 	"\rbuild_context\x18\x06 \x01(\tR\fbuildContext\x12\x14\n" +
-	"\x05image\x18\a \x01(\tR\x05image\"\xae\x01\n" +
+	"\x05image\x18\a \x01(\tR\x05image\"C\n" +
+	"\fDesiredState\x123\n" +
+	"\x05specs\x18\x01 \x03(\v2\x1d.cypherpanel.agent.v1.AppSpecR\x05specs\"\xae\x01\n" +
 	"\tAppStatus\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12\x1f\n" +
 	"\vrevision_id\x18\x02 \x01(\tR\n" +
@@ -811,7 +874,7 @@ const file_cypherpanel_agent_v1_work_proto_rawDesc = "" +
 	"\x05state\x18\x03 \x01(\tR\x05state\x12\x16\n" +
 	"\x06detail\x18\x04 \x01(\tR\x06detail\x12;\n" +
 	"\vobserved_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"observedAt\"\xdd\x03\n" +
+	"observedAt\"\xfc\x03\n" +
 	"\vDeployEvent\x12#\n" +
 	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12\x15\n" +
 	"\x06app_id\x18\x02 \x01(\tR\x05appId\x12=\n" +
@@ -819,7 +882,9 @@ const file_cypherpanel_agent_v1_work_proto_rawDesc = "" +
 	"\aoutcome\x18\x04 \x01(\x0e2).cypherpanel.agent.v1.DeployEvent.OutcomeR\aoutcome\x12\x16\n" +
 	"\x06detail\x18\x05 \x01(\tR\x06detail\x12;\n" +
 	"\voccurred_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"occurredAt\"j\n" +
+	"occurredAt\x12\x1d\n" +
+	"\n" +
+	"commit_sha\x18\a \x01(\tR\tcommitSha\"j\n" +
 	"\x05Stage\x12\x15\n" +
 	"\x11STAGE_UNSPECIFIED\x10\x00\x12\x0f\n" +
 	"\vSTAGE_BUILD\x10\x01\x12\x14\n" +
@@ -844,7 +909,7 @@ func file_cypherpanel_agent_v1_work_proto_rawDescGZIP() []byte {
 }
 
 var file_cypherpanel_agent_v1_work_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_cypherpanel_agent_v1_work_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_cypherpanel_agent_v1_work_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_cypherpanel_agent_v1_work_proto_goTypes = []any{
 	(DeployEvent_Stage)(0),        // 0: cypherpanel.agent.v1.DeployEvent.Stage
 	(DeployEvent_Outcome)(0),      // 1: cypherpanel.agent.v1.DeployEvent.Outcome
@@ -854,25 +919,27 @@ var file_cypherpanel_agent_v1_work_proto_goTypes = []any{
 	(*RolloutWork)(nil),           // 5: cypherpanel.agent.v1.RolloutWork
 	(*RemoveWork)(nil),            // 6: cypherpanel.agent.v1.RemoveWork
 	(*BuildWork)(nil),             // 7: cypherpanel.agent.v1.BuildWork
-	(*AppStatus)(nil),             // 8: cypherpanel.agent.v1.AppStatus
-	(*DeployEvent)(nil),           // 9: cypherpanel.agent.v1.DeployEvent
-	nil,                           // 10: cypherpanel.agent.v1.AppSpec.EnvEntry
-	(*timestamppb.Timestamp)(nil), // 11: google.protobuf.Timestamp
+	(*DesiredState)(nil),          // 8: cypherpanel.agent.v1.DesiredState
+	(*AppStatus)(nil),             // 9: cypherpanel.agent.v1.AppStatus
+	(*DeployEvent)(nil),           // 10: cypherpanel.agent.v1.DeployEvent
+	nil,                           // 11: cypherpanel.agent.v1.AppSpec.EnvEntry
+	(*timestamppb.Timestamp)(nil), // 12: google.protobuf.Timestamp
 }
 var file_cypherpanel_agent_v1_work_proto_depIdxs = []int32{
-	10, // 0: cypherpanel.agent.v1.AppSpec.env:type_name -> cypherpanel.agent.v1.AppSpec.EnvEntry
+	11, // 0: cypherpanel.agent.v1.AppSpec.env:type_name -> cypherpanel.agent.v1.AppSpec.EnvEntry
 	3,  // 1: cypherpanel.agent.v1.AppSpec.health:type_name -> cypherpanel.agent.v1.HealthCheck
 	4,  // 2: cypherpanel.agent.v1.AppSpec.route:type_name -> cypherpanel.agent.v1.RouteSpec
 	2,  // 3: cypherpanel.agent.v1.RolloutWork.spec:type_name -> cypherpanel.agent.v1.AppSpec
-	11, // 4: cypherpanel.agent.v1.AppStatus.observed_at:type_name -> google.protobuf.Timestamp
-	0,  // 5: cypherpanel.agent.v1.DeployEvent.stage:type_name -> cypherpanel.agent.v1.DeployEvent.Stage
-	1,  // 6: cypherpanel.agent.v1.DeployEvent.outcome:type_name -> cypherpanel.agent.v1.DeployEvent.Outcome
-	11, // 7: cypherpanel.agent.v1.DeployEvent.occurred_at:type_name -> google.protobuf.Timestamp
-	8,  // [8:8] is the sub-list for method output_type
-	8,  // [8:8] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	2,  // 4: cypherpanel.agent.v1.DesiredState.specs:type_name -> cypherpanel.agent.v1.AppSpec
+	12, // 5: cypherpanel.agent.v1.AppStatus.observed_at:type_name -> google.protobuf.Timestamp
+	0,  // 6: cypherpanel.agent.v1.DeployEvent.stage:type_name -> cypherpanel.agent.v1.DeployEvent.Stage
+	1,  // 7: cypherpanel.agent.v1.DeployEvent.outcome:type_name -> cypherpanel.agent.v1.DeployEvent.Outcome
+	12, // 8: cypherpanel.agent.v1.DeployEvent.occurred_at:type_name -> google.protobuf.Timestamp
+	9,  // [9:9] is the sub-list for method output_type
+	9,  // [9:9] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_cypherpanel_agent_v1_work_proto_init() }
@@ -886,7 +953,7 @@ func file_cypherpanel_agent_v1_work_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cypherpanel_agent_v1_work_proto_rawDesc), len(file_cypherpanel_agent_v1_work_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   9,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

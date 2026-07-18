@@ -80,9 +80,28 @@ type Application struct {
 	WebhookSecretNonce []byte
 	// DesiredRevisionID is nil until the first deploy; rollback re-points it.
 	DesiredRevisionID *string
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	// Status is the ui-principles §5 vocabulary (running · deploying · stopped
+	// · error · degraded · unknown). It comes from agent observations (ADR-005)
+	// except 'deploying', which the scheduler sets while a pipeline runs, and
+	// 'stopped', the birth state before any deploy.
+	Status       string
+	StatusDetail string
+	// ObservedRevisionID is the revision last reported actually serving.
+	ObservedRevisionID string
+	StatusObservedAt   *time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
+
+// Application status vocabulary (ui-principles §5).
+const (
+	AppRunning   = "running"
+	AppDeploying = "deploying"
+	AppStopped   = "stopped"
+	AppError     = "error"
+	AppDegraded  = "degraded"
+	AppUnknown   = "unknown"
+)
 
 // EnvVar is one sealed environment variable belonging to an Application.
 type EnvVar struct {

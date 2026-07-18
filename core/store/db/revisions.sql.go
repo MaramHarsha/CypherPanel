@@ -112,3 +112,26 @@ func (q *Queries) SetRevisionImage(ctx context.Context, arg SetRevisionImagePara
 	)
 	return i, err
 }
+
+const setRevisionSourceCommit = `-- name: SetRevisionSourceCommit :one
+UPDATE revisions SET source_commit = $2 WHERE id = $1 RETURNING id, application_id, image, source_commit, config_snapshot, created_at
+`
+
+type SetRevisionSourceCommitParams struct {
+	ID           string
+	SourceCommit string
+}
+
+func (q *Queries) SetRevisionSourceCommit(ctx context.Context, arg SetRevisionSourceCommitParams) (Revision, error) {
+	row := q.db.QueryRow(ctx, setRevisionSourceCommit, arg.ID, arg.SourceCommit)
+	var i Revision
+	err := row.Scan(
+		&i.ID,
+		&i.ApplicationID,
+		&i.Image,
+		&i.SourceCommit,
+		&i.ConfigSnapshot,
+		&i.CreatedAt,
+	)
+	return i, err
+}

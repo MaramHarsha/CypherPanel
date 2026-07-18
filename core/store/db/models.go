@@ -42,6 +42,10 @@ type Application struct {
 	DesiredRevisionID     pgtype.Text
 	CreatedAt             pgtype.Timestamptz
 	UpdatedAt             pgtype.Timestamptz
+	Status                string
+	StatusDetail          string
+	ObservedRevisionID    string
+	StatusObservedAt      pgtype.Timestamptz
 }
 
 type Deployment struct {

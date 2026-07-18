@@ -53,6 +53,10 @@ type Config struct {
 	// §8 req 10). cypherd refuses to start with less free space than this;
 	// 0 disables the check. Default 1 GiB.
 	MinDiskFree uint64
+
+	// DataDir holds cypherd's durable local state (the file-backed WORK
+	// stream). Default /var/lib/cypherd.
+	DataDir string
 }
 
 // Load reads and validates configuration from the process environment.
@@ -71,6 +75,7 @@ func Load() (Config, error) {
 		HeartbeatStale: envDuration("CYPHERD_HEARTBEAT_STALE", 90*time.Second),
 		SweepInterval:  envDuration("CYPHERD_SWEEP_INTERVAL", 30*time.Second),
 		ShutdownGrace:  envDuration("CYPHERD_SHUTDOWN_GRACE", 20*time.Second),
+		DataDir:        envOr("CYPHERD_DATA_DIR", "/var/lib/cypherd"),
 	}
 
 	if c.DatabaseURL == "" {

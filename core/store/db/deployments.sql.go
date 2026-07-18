@@ -103,6 +103,42 @@ func (q *Queries) ListActiveDeployments(ctx context.Context) ([]Deployment, erro
 	return items, nil
 }
 
+const listActiveDeploymentsByApplication = `-- name: ListActiveDeploymentsByApplication :many
+SELECT id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at FROM deployments
+WHERE application_id = $1 AND status NOT IN ('succeeded', 'failed')
+ORDER BY created_at
+`
+
+func (q *Queries) ListActiveDeploymentsByApplication(ctx context.Context, applicationID string) ([]Deployment, error) {
+	rows, err := q.db.Query(ctx, listActiveDeploymentsByApplication, applicationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Deployment{}
+	for rows.Next() {
+		var i Deployment
+		if err := rows.Scan(
+			&i.ID,
+			&i.ApplicationID,
+			&i.RevisionID,
+			&i.Status,
+			&i.Trigger,
+			&i.Detail,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDeploymentsByApplication = `-- name: ListDeploymentsByApplication :many
 SELECT id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at FROM deployments WHERE application_id = $1 ORDER BY created_at DESC LIMIT $2
 `

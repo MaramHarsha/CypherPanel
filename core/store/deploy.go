@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -224,6 +225,62 @@ func (s *Store) SetApplicationDesiredRevision(ctx context.Context, appID, revisi
 	return applicationFromRow(row), nil
 }
 
+// SetApplicationObservedStatus records what an agent actually reported for
+// the application (ADR-005: status is observation, never intention).
+func (s *Store) SetApplicationObservedStatus(ctx context.Context, appID, status, detail, observedRevisionID string, observedAt time.Time) error {
+	err := s.q.SetApplicationObservedStatus(ctx, db.SetApplicationObservedStatusParams{
+		ID:                 appID,
+		Status:             status,
+		StatusDetail:       detail,
+		ObservedRevisionID: observedRevisionID,
+		StatusObservedAt:   pgtype.Timestamptz{Time: observedAt, Valid: true},
+	})
+	if err != nil {
+		return fmt.Errorf("store: setting observed status: %w", err)
+	}
+	return nil
+}
+
+// SetApplicationStatus sets the plane-driven status ('deploying' while a
+// pipeline runs); observations overwrite it as reports arrive.
+func (s *Store) SetApplicationStatus(ctx context.Context, appID, status, detail string) error {
+	if err := s.q.SetApplicationStatus(ctx, db.SetApplicationStatusParams{ID: appID, Status: status, StatusDetail: detail}); err != nil {
+		return fmt.Errorf("store: setting status: %w", err)
+	}
+	return nil
+}
+
+// UpdateApplicationConfig replaces the mutable configuration of an
+// application (PATCH semantics are applied by the service; the store writes
+// the merged row). The runtime server is deliberately not updatable — moving
+// an app between servers needs the distribute step (ADR-008).
+func (s *Store) UpdateApplicationConfig(ctx context.Context, a domain.Application) (domain.Application, error) {
+	row, err := s.q.UpdateApplicationConfig(ctx, db.UpdateApplicationConfigParams{
+		ID:                    a.ID,
+		Name:                  a.Name,
+		SourceKind:            a.Source.Kind,
+		SourceRepo:            a.Source.Repo,
+		SourceBranch:          a.Source.Branch,
+		SourceDeployKeyID:     textFromPtr(a.Source.DeployKeyID),
+		BuildKind:             a.Build.Kind,
+		BuildDockerfilePath:   a.Build.DockerfilePath,
+		BuildContext:          a.Build.Context,
+		RuntimePort:           int32(a.Runtime.Port),
+		RuntimeReplicas:       int32(a.Runtime.Replicas),
+		RouteDomain:           a.Route.Domain,
+		RouteHttps:            a.Route.HTTPS,
+		RoutePathPrefix:       a.Route.PathPrefix,
+		HealthPath:            a.Health.Path,
+		HealthIntervalSeconds: int32(a.Health.IntervalSeconds),
+		HealthTimeoutSeconds:  int32(a.Health.TimeoutSeconds),
+		HealthRetries:         int32(a.Health.Retries),
+	})
+	if err != nil {
+		return domain.Application{}, wrapUpdate("updating application", err)
+	}
+	return applicationFromRow(row), nil
+}
+
 func (s *Store) DeleteApplication(ctx context.Context, id string) error {
 	if err := s.q.DeleteApplication(ctx, id); err != nil {
 		return fmt.Errorf("store: deleting application: %w", err)
@@ -296,6 +353,17 @@ func (s *Store) SetRevisionImage(ctx context.Context, id, image string) (domain.
 	return revisionFromRow(row), nil
 }
 
+// SetRevisionSourceCommit records the exact commit the builder resolved and
+// built (a BuildWork may name a branch head; the revision of record needs the
+// SHA the build actually used).
+func (s *Store) SetRevisionSourceCommit(ctx context.Context, id, commitSHA string) (domain.Revision, error) {
+	row, err := s.q.SetRevisionSourceCommit(ctx, db.SetRevisionSourceCommitParams{ID: id, SourceCommit: commitSHA})
+	if err != nil {
+		return domain.Revision{}, wrap("setting revision commit", err)
+	}
+	return revisionFromRow(row), nil
+}
+
 func (s *Store) ListRevisionsByApplication(ctx context.Context, appID string) ([]domain.Revision, error) {
 	rows, err := s.q.ListRevisionsByApplication(ctx, appID)
 	if err != nil {
@@ -348,6 +416,20 @@ func (s *Store) ListDeploymentsByApplication(ctx context.Context, appID string, 
 	rows, err := s.q.ListDeploymentsByApplication(ctx, db.ListDeploymentsByApplicationParams{ApplicationID: appID, Limit: limit})
 	if err != nil {
 		return nil, fmt.Errorf("store: listing deployments: %w", err)
+	}
+	out := make([]domain.Deployment, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, deploymentFromRow(r))
+	}
+	return out, nil
+}
+
+// ListActiveDeploymentsByApplication returns an app's non-terminal
+// deployments oldest-first — the scheduler's per-app serialization queue.
+func (s *Store) ListActiveDeploymentsByApplication(ctx context.Context, appID string) ([]domain.Deployment, error) {
+	rows, err := s.q.ListActiveDeploymentsByApplication(ctx, appID)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing active deployments for app: %w", err)
 	}
 	out := make([]domain.Deployment, 0, len(rows))
 	for _, r := range rows {
@@ -414,6 +496,10 @@ func applicationFromRow(r db.Application) domain.Application {
 		WebhookSecretCT:    r.WebhookSecretCt,
 		WebhookSecretNonce: r.WebhookSecretNonce,
 		DesiredRevisionID:  ptrFromText(r.DesiredRevisionID),
+		Status:             r.Status,
+		StatusDetail:       r.StatusDetail,
+		ObservedRevisionID: r.ObservedRevisionID,
+		StatusObservedAt:   ptrTime(r.StatusObservedAt),
 		CreatedAt:          r.CreatedAt.Time,
 		UpdatedAt:          r.UpdatedAt.Time,
 	}

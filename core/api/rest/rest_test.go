@@ -2,7 +2,10 @@ package rest
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -16,6 +19,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/auth"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
+	"github.com/MaramHarsha/cypherpanel/core/scheduler"
 	"github.com/MaramHarsha/cypherpanel/core/secret"
 	"github.com/MaramHarsha/cypherpanel/core/servers"
 	"github.com/MaramHarsha/cypherpanel/core/store"
@@ -82,9 +86,11 @@ func (f *fakeServersStore) DeleteServer(_ context.Context, id string) error {
 	return nil
 }
 
-type noopDisconnector struct{}
+type noopAgentBus struct{}
 
-func (noopDisconnector) DisconnectAgent(string) error { return nil }
+func (noopAgentBus) DisconnectAgent(string) error                     { return nil }
+func (noopAgentBus) EnsureWorkConsumer(context.Context, string) error { return nil }
+func (noopAgentBus) DeleteWorkConsumer(context.Context, string) error { return nil }
 
 type fakeProjectsStore struct {
 	projects map[string]domain.Project
@@ -175,6 +181,23 @@ func (f *fakeAppsStore) GetApplication(_ context.Context, id string) (domain.App
 	return a, nil
 }
 
+func (f *fakeAppsStore) GetApplicationByWebhookID(_ context.Context, webhookID string) (domain.Application, error) {
+	for _, a := range f.apps {
+		if a.WebhookID == webhookID {
+			return a, nil
+		}
+	}
+	return domain.Application{}, store.ErrNotFound
+}
+
+func (f *fakeAppsStore) UpdateApplicationConfig(_ context.Context, a domain.Application) (domain.Application, error) {
+	if _, ok := f.apps[a.ID]; !ok {
+		return domain.Application{}, store.ErrNotFound
+	}
+	f.apps[a.ID] = a
+	return a, nil
+}
+
 func (f *fakeAppsStore) ListApplicationsByEnvironment(_ context.Context, envID string) ([]domain.Application, error) {
 	var out []domain.Application
 	for _, a := range f.apps {
@@ -224,6 +247,46 @@ func (f *fakeAppsStore) DeleteEnvVar(_ context.Context, appID, key string) error
 	return nil
 }
 
+type fakeDeployer struct {
+	deploys   []string // "appID/trigger/ref"
+	removed   []string // "serverID/appID"
+	rollbacks []string
+}
+
+func (f *fakeDeployer) Deploy(_ context.Context, appID, trigger, ref string) (domain.Deployment, error) {
+	f.deploys = append(f.deploys, appID+"/"+trigger+"/"+ref)
+	return domain.Deployment{ID: "dep_test", ApplicationID: appID, RevisionID: "rev_test", Status: domain.DeployBuilding, Trigger: trigger, CreatedAt: time.Now()}, nil
+}
+
+func (f *fakeDeployer) Rollback(_ context.Context, deploymentID string) (domain.Deployment, error) {
+	if deploymentID == "dep_unbuilt" {
+		return domain.Deployment{}, scheduler.ErrRevisionNotBuilt
+	}
+	if deploymentID != "dep_test" {
+		return domain.Deployment{}, store.ErrNotFound
+	}
+	f.rollbacks = append(f.rollbacks, deploymentID)
+	return domain.Deployment{ID: "dep_rb", ApplicationID: "app_x", RevisionID: "rev_test", Status: domain.DeployRollingOut, Trigger: "rollback", CreatedAt: time.Now()}, nil
+}
+
+func (f *fakeDeployer) RemoveApp(_ context.Context, serverID, appID string) error {
+	f.removed = append(f.removed, serverID+"/"+appID)
+	return nil
+}
+
+type fakeDeploymentReader struct{}
+
+func (fakeDeploymentReader) GetDeployment(_ context.Context, id string) (domain.Deployment, error) {
+	if id != "dep_test" {
+		return domain.Deployment{}, store.ErrNotFound
+	}
+	return domain.Deployment{ID: id, ApplicationID: "app_x", RevisionID: "rev_test", Status: domain.DeploySucceeded, Trigger: "manual", CreatedAt: time.Now()}, nil
+}
+
+func (fakeDeploymentReader) ListDeploymentsByApplication(_ context.Context, appID string, _ int32) ([]domain.Deployment, error) {
+	return []domain.Deployment{{ID: "dep_test", ApplicationID: appID, RevisionID: "rev_test", Status: domain.DeploySucceeded, CreatedAt: time.Now()}}, nil
+}
+
 func testBox(t *testing.T) *secret.Box {
 	t.Helper()
 	key := make([]byte, secret.KeySize)
@@ -265,12 +328,16 @@ func newTestServerWithStores(t *testing.T) (*httptest.Server, *fakeServersStore)
 		sessions: map[string]domain.User{},
 	}
 	srvStore := &fakeServersStore{inUse: map[string]bool{}}
+	box := testBox(t)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	api := New(Deps{
 		Auth:         auth.NewAuthenticator(authStore, auth.NewLimiter(100, time.Minute), time.Hour),
-		Servers:      servers.NewService(srvStore, noopDisconnector{}, 15*time.Minute, log),
+		Servers:      servers.NewService(srvStore, noopAgentBus{}, 15*time.Minute, log),
 		Projects:     projects.NewService(newFakeProjectsStore()),
-		Applications: applications.NewService(newFakeAppsStore(), testBox(t)),
+		Applications: applications.NewService(newFakeAppsStore(), box),
+		Scheduler:    &fakeDeployer{},
+		Deployments:  fakeDeploymentReader{},
+		Opener:       box,
 		Pinger:       okPinger{},
 		CACertPEM:    []byte("-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n"),
 		EnrollAddr:   "localhost:8443",
@@ -462,6 +529,9 @@ func TestOpenAPISpecServedAndCoversRoutes(t *testing.T) {
 		"/api/v1/projects", "/api/v1/projects/{id}", "/api/v1/projects/{id}/environments",
 		"/api/v1/environments/{id}/applications", "/api/v1/applications/{id}",
 		"/api/v1/applications/{id}/env", "/api/v1/applications/{id}/env/{key}",
+		"/api/v1/applications/{id}/deploy", "/api/v1/applications/{id}/deployments",
+		"/api/v1/deployments/{id}", "/api/v1/deployments/{id}/rollback",
+		"/webhooks/github/{id}",
 	} {
 		if !strings.Contains(spec, path+":") {
 			t.Errorf("spec does not document %s", path)
@@ -695,5 +765,156 @@ func TestConflictAndInUseAre409(t *testing.T) {
 	status, _, resp = doJSON(t, "DELETE", ts.URL+"/api/v1/servers/"+created.Server.ID, token, "")
 	if status != http.StatusConflict || !strings.Contains(string(resp), "still runs applications") {
 		t.Errorf("in-use server delete: status %d body %s, want 409 with reason", status, resp)
+	}
+}
+
+func TestDeployAndRollbackEndpoints(t *testing.T) {
+	ts := newTestServer(t)
+	token := login(t, ts)
+
+	// Create an app to deploy.
+	body := `{"name":"web","source":{"kind":"github","repo":"acme/web"},` +
+		`"runtime":{"server_id":"srv_test","port":8080},"route":{"domain":"web.example.com"}}`
+	status, _, resp := doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, body)
+	if status != http.StatusCreated {
+		t.Fatalf("create: %d %s", status, resp)
+	}
+	var created struct {
+		Application struct {
+			ID string `json:"id"`
+		} `json:"application"`
+	}
+	if err := json.Unmarshal(resp, &created); err != nil {
+		t.Fatal(err)
+	}
+
+	// Deploy → 202 with the deployment record.
+	status, _, resp = doJSON(t, "POST", ts.URL+"/api/v1/applications/"+created.Application.ID+"/deploy", token, `{"ref":"abc123"}`)
+	if status != http.StatusAccepted || !strings.Contains(string(resp), "building") {
+		t.Fatalf("deploy: %d %s, want 202 building", status, resp)
+	}
+
+	// Deployments listing + get.
+	if status, _, _ = doJSON(t, "GET", ts.URL+"/api/v1/applications/"+created.Application.ID+"/deployments", token, ""); status != http.StatusOK {
+		t.Errorf("list deployments: %d", status)
+	}
+	if status, _, _ = doJSON(t, "GET", ts.URL+"/api/v1/deployments/dep_test", token, ""); status != http.StatusOK {
+		t.Errorf("get deployment: %d", status)
+	}
+
+	// Rollback of a built revision → 202; unbuilt → 409.
+	if status, _, _ = doJSON(t, "POST", ts.URL+"/api/v1/deployments/dep_test/rollback", token, ""); status != http.StatusAccepted {
+		t.Errorf("rollback: %d, want 202", status)
+	}
+	status, _, resp = doJSON(t, "POST", ts.URL+"/api/v1/deployments/dep_unbuilt/rollback", token, "")
+	if status != http.StatusConflict {
+		t.Errorf("rollback unbuilt: %d %s, want 409", status, resp)
+	}
+}
+
+func TestPatchApplication(t *testing.T) {
+	ts := newTestServer(t)
+	token := login(t, ts)
+	body := `{"name":"web","source":{"kind":"github","repo":"acme/web"},` +
+		`"runtime":{"server_id":"srv_test","port":8080},"route":{"domain":"web.example.com"}}`
+	status, _, resp := doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, body)
+	if status != http.StatusCreated {
+		t.Fatalf("create: %d", status)
+	}
+	var created struct {
+		Application struct {
+			ID string `json:"id"`
+		} `json:"application"`
+	}
+	if err := json.Unmarshal(resp, &created); err != nil {
+		t.Fatal(err)
+	}
+
+	// Patch just the route; everything else must survive.
+	status, _, resp = doJSON(t, "PATCH", ts.URL+"/api/v1/applications/"+created.Application.ID, token,
+		`{"route":{"domain":"new.example.com"}}`)
+	if status != http.StatusOK || !strings.Contains(string(resp), "new.example.com") || !strings.Contains(string(resp), "acme/web") {
+		t.Fatalf("patch: %d %s", status, resp)
+	}
+	// An invalid merge is rejected with the same create-time rules.
+	status, _, _ = doJSON(t, "PATCH", ts.URL+"/api/v1/applications/"+created.Application.ID, token,
+		`{"runtime":{"port":0}}`)
+	if status != http.StatusBadRequest {
+		t.Errorf("patch bad port: %d, want 400", status)
+	}
+}
+
+func TestGitHubWebhook(t *testing.T) {
+	ts := newTestServer(t)
+	token := login(t, ts)
+	body := `{"name":"web","source":{"kind":"github","repo":"acme/web"},` +
+		`"runtime":{"server_id":"srv_test","port":8080},"route":{"domain":"web.example.com"}}`
+	status, _, resp := doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, body)
+	if status != http.StatusCreated {
+		t.Fatalf("create: %d", status)
+	}
+	var created struct {
+		Application struct {
+			ID string `json:"id"`
+		} `json:"application"`
+		Webhook struct {
+			URL    string `json:"url"`
+			Secret string `json:"secret"`
+		} `json:"webhook"`
+	}
+	if err := json.Unmarshal(resp, &created); err != nil {
+		t.Fatal(err)
+	}
+	hookPath := created.Webhook.URL[strings.Index(created.Webhook.URL, "/webhooks/"):]
+
+	sign := func(payload, secret string) string {
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write([]byte(payload))
+		return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	}
+	post := func(payload, sig string) int {
+		req, err := http.NewRequest("POST", ts.URL+hookPath, strings.NewReader(payload))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("X-GitHub-Event", "push")
+		if sig != "" {
+			req.Header.Set("X-Hub-Signature-256", sig)
+		}
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		_, _ = io.Copy(io.Discard, res.Body)
+		return res.StatusCode
+	}
+
+	push := `{"ref":"refs/heads/main","after":"deadbeef","deleted":false}`
+	// Valid signature on the configured branch → deploy accepted.
+	if got := post(push, sign(push, created.Webhook.Secret)); got != http.StatusAccepted {
+		t.Errorf("valid push: %d, want 202", got)
+	}
+	// Wrong secret → 401. No signature → 401.
+	if got := post(push, sign(push, "wrong-secret")); got != http.StatusUnauthorized {
+		t.Errorf("bad signature: %d, want 401", got)
+	}
+	if got := post(push, ""); got != http.StatusUnauthorized {
+		t.Errorf("no signature: %d, want 401", got)
+	}
+	// Other branch (authenticated) → 204, no deploy.
+	other := `{"ref":"refs/heads/feature","after":"cafe","deleted":false}`
+	if got := post(other, sign(other, created.Webhook.Secret)); got != http.StatusNoContent {
+		t.Errorf("other branch: %d, want 204", got)
+	}
+	// Unknown webhook id → 404.
+	req, _ := http.NewRequest("POST", ts.URL+"/webhooks/github/wh_nope", strings.NewReader(push))
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusNotFound {
+		t.Errorf("unknown webhook: %d, want 404", res.StatusCode)
 	}
 }

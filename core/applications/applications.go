@@ -41,7 +41,9 @@ func invalid(msg string) error { return &ValidationError{Msg: msg} }
 type Store interface {
 	CreateApplicationWithEnv(ctx context.Context, a domain.Application, envVars []domain.EnvVar) (domain.Application, error)
 	GetApplication(ctx context.Context, id string) (domain.Application, error)
+	GetApplicationByWebhookID(ctx context.Context, webhookID string) (domain.Application, error)
 	ListApplicationsByEnvironment(ctx context.Context, envID string) ([]domain.Application, error)
+	UpdateApplicationConfig(ctx context.Context, a domain.Application) (domain.Application, error)
 	DeleteApplication(ctx context.Context, id string) error
 	GetEnvironment(ctx context.Context, id string) (domain.Environment, error)
 	GetServer(ctx context.Context, id string) (domain.Server, error)
@@ -140,6 +142,74 @@ func (s *Service) Get(ctx context.Context, id string) (domain.Application, error
 		return domain.Application{}, fmt.Errorf("applications: getting application: %w", err)
 	}
 	return app, nil
+}
+
+// GetByWebhookID resolves an application from its public webhook id.
+func (s *Service) GetByWebhookID(ctx context.Context, webhookID string) (domain.Application, error) {
+	app, err := s.store.GetApplicationByWebhookID(ctx, webhookID)
+	if err != nil {
+		return domain.Application{}, fmt.Errorf("applications: getting by webhook id: %w", err)
+	}
+	return app, nil
+}
+
+// UpdateInput patches an application's configuration. Nil sections are left
+// unchanged; a non-nil section replaces that section wholesale. The runtime
+// server is deliberately not patchable (moving an app needs the distribute
+// step, ADR-008), and neither are replicas (fixed at 1 in the slice).
+type UpdateInput struct {
+	Name   *string
+	Source *domain.AppSource
+	Build  *domain.AppBuild
+	Port   *int
+	Route  *domain.AppRoute
+	Health *domain.AppHealth
+}
+
+// Update applies a config patch. The change shapes the next revision — a
+// running revision keeps its snapshot until the next deploy (spec §4).
+func (s *Service) Update(ctx context.Context, appID string, in UpdateInput) (domain.Application, error) {
+	app, err := s.store.GetApplication(ctx, appID)
+	if err != nil {
+		return domain.Application{}, fmt.Errorf("applications: getting application: %w", err)
+	}
+	if in.Name != nil {
+		app.Name = *in.Name
+	}
+	if in.Source != nil {
+		app.Source = *in.Source
+	}
+	if in.Build != nil {
+		app.Build = *in.Build
+	}
+	if in.Port != nil {
+		app.Runtime.Port = *in.Port
+	}
+	if in.Route != nil {
+		app.Route = *in.Route
+	}
+	if in.Health != nil {
+		app.Health = *in.Health
+	}
+	// The merged result must satisfy exactly the create-time rules.
+	merged, err := validateAndDefault(CreateInput{
+		Name:    app.Name,
+		Source:  app.Source,
+		Build:   app.Build,
+		Runtime: app.Runtime,
+		Route:   app.Route,
+		Health:  app.Health,
+	})
+	if err != nil {
+		return domain.Application{}, err
+	}
+	app.Name, app.Source, app.Build, app.Runtime, app.Route, app.Health =
+		merged.Name, merged.Source, merged.Build, merged.Runtime, merged.Route, merged.Health
+	updated, err := s.store.UpdateApplicationConfig(ctx, app)
+	if err != nil {
+		return domain.Application{}, fmt.Errorf("applications: updating application: %w", err)
+	}
+	return updated, nil
 }
 
 // List returns the applications in an environment (verifying it exists first).

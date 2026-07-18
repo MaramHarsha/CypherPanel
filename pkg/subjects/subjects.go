@@ -7,18 +7,27 @@ package subjects
 
 // Subject families (ADR-003):
 //
-//	state.<server-id>.*  — agent status/heartbeat/deploy events (this file, Phase 1)
-//	work.<server-id>.*   — commands to agents (Phase 2)
-//	logs.<server-id>.*   — build/runtime log streams (Phase 2)
+//	state.<server-id>.*  — agent status/heartbeat/deploy events + sync requests
+//	work.<server-id>.*   — work items to agents (rollout/remove/build)
+//	logs.<server-id>.*   — build/runtime log streams
 //
 // Every per-server subject lives under its server's segment, so one wildcard
 // per family covers a server's entire scope — the authorization grants in
-// core/bus are exactly StateForServer/WorkForServer, nothing enumerated.
+// core/bus are exactly StateForServer/WorkForServer/LogsForServer, nothing
+// enumerated.
 const (
 	StatePrefix     = "state."
 	heartbeatSuffix = ".heartbeat"
 	HeartbeatAll    = "state.*.heartbeat"
 	WorkPrefix      = "work."
+	LogsPrefix      = "logs."
+
+	// DeployStateAll and AppStateAll are the plane-side consumption wildcards
+	// for deploy events and app-status observations.
+	DeployStateAll = "state.*.deploy"
+	AppStateAll    = "state.*.app.>"
+	// SyncAll is where the plane answers desired-state sync requests.
+	SyncAll = "state.*.sync"
 )
 
 // Heartbeat is the subject an agent publishes its heartbeats on. It sits
@@ -34,8 +43,50 @@ func StateForServer(serverID string) string {
 	return StatePrefix + serverID + ".>"
 }
 
-// WorkForServer is the wildcard an agent subscribes to for its own work items
-// (Phase 2); defined here so the authorization scope is set from day one.
+// WorkForServer is the wildcard an agent subscribes to for its own work items;
+// defined here so the authorization scope is set from day one.
 func WorkForServer(serverID string) string {
 	return WorkPrefix + serverID + ".>"
+}
+
+// LogsForServer is the wildcard covering one server's log publications.
+func LogsForServer(serverID string) string {
+	return LogsPrefix + serverID + ".>"
+}
+
+// Rollout, Remove and Build are the work-item subjects for one server. The
+// agent routes on the suffix; the payloads are the work.proto messages.
+func Rollout(serverID string) string { return WorkPrefix + serverID + ".rollout" }
+func Remove(serverID string) string  { return WorkPrefix + serverID + ".remove" }
+func Build(serverID string) string   { return WorkPrefix + serverID + ".build" }
+
+// DeployState is where an agent reports DeployEvent outcomes.
+func DeployState(serverID string) string { return StatePrefix + serverID + ".deploy" }
+
+// AppState is where an agent reports one Application's observed AppStatus.
+func AppState(serverID, appID string) string {
+	return StatePrefix + serverID + ".app." + appID
+}
+
+// Sync is the request/reply subject on which an agent asks the plane for its
+// full desired set (DesiredState) — sent on connect, before consuming work.
+func Sync(serverID string) string { return StatePrefix + serverID + ".sync" }
+
+// WorkConsumer names the durable JetStream consumer holding one server's
+// work-item cursor. The plane creates it (agents only read from it); the name
+// carries no dots so it is a valid consumer name and API subject token.
+func WorkConsumer(serverID string) string { return "wrk-" + serverID }
+
+// Agent-side JetStream API grants: an agent may read and acknowledge exactly
+// its own work consumer, nothing else (threat-model §5.2). These are the
+// subjects the nats.go jetstream client uses for consumer lookup, pull
+// requests, and acks.
+func WorkConsumerInfo(serverID string) string {
+	return "$JS.API.CONSUMER.INFO.WORK." + WorkConsumer(serverID)
+}
+func WorkConsumerNext(serverID string) string {
+	return "$JS.API.CONSUMER.MSG.NEXT.WORK." + WorkConsumer(serverID)
+}
+func WorkConsumerAck(serverID string) string {
+	return "$JS.ACK.WORK." + WorkConsumer(serverID) + ".>"
 }

@@ -43,13 +43,25 @@ func (f *fakeStore) DeleteServer(_ context.Context, id string) error {
 }
 
 type fakeDisconnector struct {
-	disconnected []string
-	err          error
+	disconnected     []string
+	consumers        []string
+	consumersDeleted []string
+	err              error
 }
 
 func (f *fakeDisconnector) DisconnectAgent(serverID string) error {
 	f.disconnected = append(f.disconnected, serverID)
 	return f.err
+}
+
+func (f *fakeDisconnector) EnsureWorkConsumer(_ context.Context, serverID string) error {
+	f.consumers = append(f.consumers, serverID)
+	return nil
+}
+
+func (f *fakeDisconnector) DeleteWorkConsumer(_ context.Context, serverID string) error {
+	f.consumersDeleted = append(f.consumersDeleted, serverID)
+	return nil
 }
 
 func newTestService(st *fakeStore, disc *fakeDisconnector) *Service {

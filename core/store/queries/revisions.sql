@@ -11,3 +11,6 @@ UPDATE revisions SET image = $2 WHERE id = $1 RETURNING *;
 
 -- name: ListRevisionsByApplication :many
 SELECT * FROM revisions WHERE application_id = $1 ORDER BY created_at DESC;
+
+-- name: SetRevisionSourceCommit :one
+UPDATE revisions SET source_commit = $2 WHERE id = $1 RETURNING *;

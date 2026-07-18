@@ -38,3 +38,24 @@ RETURNING *;
 
 -- name: DeleteApplication :exec
 DELETE FROM applications WHERE id = $1;
+
+-- name: SetApplicationObservedStatus :exec
+UPDATE applications
+SET status = $2, status_detail = $3, observed_revision_id = $4,
+    status_observed_at = $5, updated_at = now()
+WHERE id = $1;
+
+-- name: SetApplicationStatus :exec
+UPDATE applications SET status = $2, status_detail = $3, updated_at = now() WHERE id = $1;
+
+-- name: UpdateApplicationConfig :one
+UPDATE applications
+SET name = $2,
+    source_kind = $3, source_repo = $4, source_branch = $5, source_deploy_key_id = $6,
+    build_kind = $7, build_dockerfile_path = $8, build_context = $9,
+    runtime_port = $10, runtime_replicas = $11,
+    route_domain = $12, route_https = $13, route_path_prefix = $14,
+    health_path = $15, health_interval_seconds = $16, health_timeout_seconds = $17, health_retries = $18,
+    updated_at = now()
+WHERE id = $1
+RETURNING *;

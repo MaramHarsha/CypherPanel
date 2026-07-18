@@ -11,20 +11,24 @@
 // revocation for connections that were already open. The control plane's own
 // connection is in-process (no TLS, never on the network).
 //
-// Storage: the Phase 1 STATE stream is memory-backed with a short max age.
-// Heartbeats are transient and re-sent every interval, so nothing durable is
-// needed — and this deliberately avoids the continuous disk write-churn that
-// the Dokploy baseline measured at 22.76 GiB on an idle box (research/dokploy.md,
-// threat-model §5.9). The durable WORK stream arrives with Phase 2.
+// Storage: the STATE stream is memory-backed with a short max age —
+// heartbeats and status reports are transient and re-sent, and this avoids
+// the continuous disk write-churn the Dokploy baseline measured at 22.76 GiB
+// on an idle box (research/dokploy.md, threat-model §5.9). The WORK stream is
+// file-backed with explicit retention bounds (§8 req 9): work items must
+// survive a plane restart, and WorkQueue retention deletes each item when its
+// server's consumer acknowledges it.
 package bus
 
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 
 	natsserver "github.com/nats-io/nats-server/v2/server"
@@ -35,10 +39,13 @@ import (
 )
 
 const (
-	streamState      = "STATE"
-	planeUser        = "cypherd-control-plane"
-	heartbeatDurable = "plane-heartbeats"
-	readyTimeout     = 10 * time.Second
+	streamState        = "STATE"
+	streamWork         = "WORK"
+	planeUser          = "cypherd-control-plane"
+	heartbeatDurable   = "plane-heartbeats"
+	deployEventDurable = "plane-deploy-events"
+	appStatusDurable   = "plane-app-status"
+	readyTimeout       = 10 * time.Second
 )
 
 // AgentAuthorizer answers whether a certificate identity is still an enrolled
@@ -69,6 +76,14 @@ type Options struct {
 	StateMaxAge time.Duration
 	// StateMaxMemory caps the STATE stream's memory; defaults to 32 MiB.
 	StateMaxMemory int64
+	// WorkMaxAge bounds how long an undelivered work item may wait; defaults
+	// to 24 hours (threat-model §8 req 9: explicit retention limits).
+	WorkMaxAge time.Duration
+	// WorkMaxBytes caps the file-backed WORK stream; defaults to 256 MiB.
+	WorkMaxBytes int64
+	// StoreDir is where JetStream keeps the file-backed WORK stream.
+	// Defaults to the NATS default when empty (tests); production sets it.
+	StoreDir string
 }
 
 // Bus owns the embedded NATS server and the control plane's in-process client.
@@ -99,13 +114,18 @@ func Start(ctx context.Context, opts Options) (*Bus, error) {
 		maxMem = 32 << 20
 	}
 
+	workMaxBytes := opts.WorkMaxBytes
+	if workMaxBytes == 0 {
+		workMaxBytes = 256 << 20
+	}
 	nopts := &natsserver.Options{
 		ServerName:                 "cypherd",
 		Host:                       host,
 		Port:                       port,
 		JetStream:                  true,
 		JetStreamMaxMemory:         maxMem,
-		JetStreamMaxStore:          maxMem, // Phase 1 uses memory storage only
+		JetStreamMaxStore:          workMaxBytes, // file storage backs WORK only
+		StoreDir:                   opts.StoreDir,
 		NoLog:                      true,
 		NoSigs:                     true,
 		TLSConfig:                  opts.TLSConfig,
@@ -152,7 +172,127 @@ func Start(ctx context.Context, opts Options) (*Bus, error) {
 		return nil, fmt.Errorf("bus: creating STATE stream: %w", err)
 	}
 
+	// The WORK stream is file-backed — work items must survive a plane
+	// restart (docs/features/application-deploy.md §3) — with explicit
+	// retention bounds (threat-model §8 req 9). WorkQueue retention: each
+	// item is removed once its server's consumer acknowledges it; per-server
+	// consumers have non-overlapping filters, which is what WorkQueuePolicy
+	// requires.
+	workMaxAge := opts.WorkMaxAge
+	if workMaxAge == 0 {
+		workMaxAge = 24 * time.Hour
+	}
+	if _, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
+		Name:      streamWork,
+		Subjects:  []string{subjects.WorkPrefix + ">"},
+		Storage:   jetstream.FileStorage,
+		Retention: jetstream.WorkQueuePolicy,
+		Discard:   jetstream.DiscardOld,
+		MaxAge:    workMaxAge,
+		MaxBytes:  workMaxBytes,
+	}); err != nil {
+		nc.Close()
+		ns.Shutdown()
+		return nil, fmt.Errorf("bus: creating WORK stream: %w", err)
+	}
+
 	return &Bus{ns: ns, nc: nc, js: js}, nil
+}
+
+// EnsureWorkConsumer creates (or keeps) the durable consumer holding one
+// server's work-item cursor. The plane owns consumer lifecycle; the agent is
+// only granted read/ack on it (threat-model §5.2). Called at server creation
+// and re-asserted on boot, so a rebuilt plane heals its consumers.
+func (b *Bus) EnsureWorkConsumer(ctx context.Context, serverID string) error {
+	_, err := b.js.CreateOrUpdateConsumer(ctx, streamWork, jetstream.ConsumerConfig{
+		Durable:       subjects.WorkConsumer(serverID),
+		FilterSubject: subjects.WorkForServer(serverID),
+		AckPolicy:     jetstream.AckExplicitPolicy,
+		AckWait:       2 * time.Minute,
+	})
+	if err != nil {
+		return fmt.Errorf("bus: ensuring work consumer for %s: %w", serverID, err)
+	}
+	return nil
+}
+
+// DeleteWorkConsumer removes a deleted server's work consumer. Missing is
+// fine — deletion must be idempotent.
+func (b *Bus) DeleteWorkConsumer(ctx context.Context, serverID string) error {
+	err := b.js.DeleteConsumer(ctx, streamWork, subjects.WorkConsumer(serverID))
+	if err != nil && !errors.Is(err, jetstream.ErrConsumerNotFound) {
+		return fmt.Errorf("bus: deleting work consumer for %s: %w", serverID, err)
+	}
+	return nil
+}
+
+// PublishWork publishes one work item. msgID is the idempotency key
+// (deployment id + stage): JetStream deduplicates re-publishes inside the
+// dedup window, and consumers are idempotent regardless (ENGINEERING rule 12).
+func (b *Bus) PublishWork(ctx context.Context, subject, msgID string, data []byte) error {
+	if _, err := b.js.Publish(ctx, subject, data, jetstream.WithMsgID(msgID)); err != nil {
+		return fmt.Errorf("bus: publishing work to %s: %w", subject, err)
+	}
+	return nil
+}
+
+// ConsumeDeployEvents delivers each DeployEvent payload (with its server id
+// parsed from the subject) to handle. Same contract as ConsumeHeartbeats.
+func (b *Bus) ConsumeDeployEvents(ctx context.Context, handle func(serverID string, data []byte)) (jetstream.ConsumeContext, error) {
+	return b.consumeState(ctx, deployEventDurable, subjects.DeployStateAll, handle)
+}
+
+// ConsumeAppStatus delivers each AppStatus payload (with its server id parsed
+// from the subject) to handle.
+func (b *Bus) ConsumeAppStatus(ctx context.Context, handle func(serverID string, data []byte)) (jetstream.ConsumeContext, error) {
+	return b.consumeState(ctx, appStatusDurable, subjects.AppStateAll, handle)
+}
+
+func (b *Bus) consumeState(ctx context.Context, durable, filter string, handle func(serverID string, data []byte)) (jetstream.ConsumeContext, error) {
+	cons, err := b.js.CreateOrUpdateConsumer(ctx, streamState, jetstream.ConsumerConfig{
+		Durable:       durable,
+		FilterSubject: filter,
+		AckPolicy:     jetstream.AckExplicitPolicy,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bus: creating %s consumer: %w", durable, err)
+	}
+	cc, err := cons.Consume(func(msg jetstream.Msg) {
+		// Subjects are state.<server_id>.<...>; the server segment is the
+		// trusted identity because the per-agent publish grant pins it.
+		parts := strings.SplitN(msg.Subject(), ".", 3)
+		if len(parts) >= 2 {
+			handle(parts[1], msg.Data())
+		}
+		_ = msg.Ack()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bus: starting %s consume: %w", durable, err)
+	}
+	return cc, nil
+}
+
+// RespondDesiredState answers agents' desired-state sync requests: resolve
+// receives the requesting server's id and returns the marshaled DesiredState.
+// The subscription lives until the bus closes.
+func (b *Bus) RespondDesiredState(resolve func(serverID string) ([]byte, error)) error {
+	_, err := b.nc.Subscribe(subjects.SyncAll, func(msg *nats.Msg) {
+		parts := strings.SplitN(msg.Subject, ".", 3)
+		if len(parts) < 3 || msg.Reply == "" {
+			return
+		}
+		data, err := resolve(parts[1])
+		if err != nil {
+			// No reply → the agent times out and retries; the plane logs via
+			// resolve's own error path.
+			return
+		}
+		_ = msg.Respond(data)
+	})
+	if err != nil {
+		return fmt.Errorf("bus: subscribing to sync requests: %w", err)
+	}
+	return nil
 }
 
 // ConsumeHeartbeats delivers each heartbeat payload to handle. It returns a
@@ -251,13 +391,22 @@ func (a *certAuth) Check(c natsserver.ClientAuthentication) bool {
 		a.log.Warn("bus auth: refused connection from revoked or unknown identity", "server_id", cn)
 		return false
 	}
-	// Scope the agent to its own subjects only. Heartbeats live inside the
-	// server's state scope, so one wildcard per family is the whole grant.
+	// Scope the agent to its own subjects only. Heartbeats, deploy events,
+	// app statuses and sync requests all live inside the server's state
+	// scope; logs inside its logs scope. The JetStream API grants cover
+	// exactly this server's work consumer — reading or acknowledging another
+	// server's work is impossible by construction (threat-model §5.2).
 	c.RegisterUser(&natsserver.User{
 		Username: cn,
 		Permissions: &natsserver.Permissions{
 			Publish: &natsserver.SubjectPermission{
-				Allow: []string{subjects.StateForServer(cn)},
+				Allow: []string{
+					subjects.StateForServer(cn),
+					subjects.LogsForServer(cn),
+					subjects.WorkConsumerInfo(cn),
+					subjects.WorkConsumerNext(cn),
+					subjects.WorkConsumerAck(cn),
+				},
 			},
 			Subscribe: &natsserver.SubjectPermission{
 				Allow: []string{subjects.WorkForServer(cn), "_INBOX.>"},

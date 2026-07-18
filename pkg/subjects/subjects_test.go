@@ -46,3 +46,61 @@ func TestNoCrossServerOverlap(t *testing.T) {
 		}
 	}
 }
+
+// TestWorkAndStateSubjectsInsideServerScopes: every per-server subject the
+// Phase 2 pipeline uses must fall inside the wildcard its side is granted —
+// publications inside StateForServer/LogsForServer, work items inside
+// WorkForServer — so the bus grants need no enumeration.
+func TestWorkAndStateSubjectsInsideServerScopes(t *testing.T) {
+	const id = "srv_alpha"
+	stateScope := strings.TrimSuffix(StateForServer(id), ">")
+	for _, s := range []string{DeployState(id), AppState(id, "app_x"), Sync(id)} {
+		if !strings.HasPrefix(s, stateScope) {
+			t.Errorf("%q is outside the state scope %q", s, stateScope)
+		}
+	}
+	workScope := strings.TrimSuffix(WorkForServer(id), ">")
+	for _, s := range []string{Rollout(id), Remove(id), Build(id)} {
+		if !strings.HasPrefix(s, workScope) {
+			t.Errorf("%q is outside the work scope %q", s, workScope)
+		}
+	}
+}
+
+// TestPlaneWildcardsMatchAgentSubjects: the plane's consumption wildcards must
+// match exactly what agents publish.
+func TestPlaneWildcardsMatchAgentSubjects(t *testing.T) {
+	match := func(subject, filter string) bool {
+		st, ft := strings.Split(subject, "."), strings.Split(filter, ".")
+		for i, f := range ft {
+			if f == ">" {
+				return i < len(st)
+			}
+			if i >= len(st) || (f != "*" && f != st[i]) {
+				return false
+			}
+		}
+		return len(st) == len(ft)
+	}
+	if !match(DeployState("srv_a"), DeployStateAll) {
+		t.Errorf("%q does not match %q", DeployState("srv_a"), DeployStateAll)
+	}
+	if !match(AppState("srv_a", "app_x"), AppStateAll) {
+		t.Errorf("%q does not match %q", AppState("srv_a", "app_x"), AppStateAll)
+	}
+	if !match(Sync("srv_a"), SyncAll) {
+		t.Errorf("%q does not match %q", Sync("srv_a"), SyncAll)
+	}
+	// The deploy-state wildcard must NOT swallow app statuses or syncs.
+	if match(AppState("srv_a", "app_x"), DeployStateAll) || match(Sync("srv_a"), DeployStateAll) {
+		t.Error("DeployStateAll matches subjects it must not")
+	}
+}
+
+// TestWorkConsumerNameHasNoDots: consumer names become JS API subject tokens;
+// a dot would split the token and break the per-agent grants.
+func TestWorkConsumerNameHasNoDots(t *testing.T) {
+	if strings.Contains(WorkConsumer("srv_alpha"), ".") {
+		t.Errorf("WorkConsumer name %q contains a dot", WorkConsumer("srv_alpha"))
+	}
+}

@@ -20,3 +20,8 @@ SELECT * FROM deployments WHERE application_id = $1 ORDER BY created_at DESC LIM
 SELECT * FROM deployments
 WHERE status NOT IN ('succeeded', 'failed')
 ORDER BY created_at;
+
+-- name: ListActiveDeploymentsByApplication :many
+SELECT * FROM deployments
+WHERE application_id = $1 AND status NOT IN ('succeeded', 'failed')
+ORDER BY created_at;

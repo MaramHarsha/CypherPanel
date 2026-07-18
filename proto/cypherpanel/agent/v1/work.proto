@@ -92,6 +92,16 @@ message BuildWork {
   string image = 7;
 }
 
+// DesiredState is the full desired set for one server: the reply to the
+// agent's sync request on state.<server_id>.sync. An agent reconciles from
+// this baseline on every (re)connect — work items are per-deployment triggers,
+// but the reconciler contract is always the full set (absence means remove),
+// so a crashed agent converges a host it has never seen without replaying
+// history.
+message DesiredState {
+  repeated AppSpec specs = 1;
+}
+
 // AppStatus is one Application's observed state, reported on
 // state.<server_id>.app.<app_id>. The plane asserts "deploy succeeded" only
 // from these reports — never from work-item completion (ADR-005).
@@ -134,4 +144,9 @@ message DeployEvent {
   // Failure detail (never contains secrets — rule 20).
   string detail = 5;
   google.protobuf.Timestamp occurred_at = 6;
+
+  // For STAGE_BUILD success: the exact commit SHA the builder resolved and
+  // built (BuildWork may name a branch head; the revision of record needs the
+  // SHA). Empty on other stages.
+  string commit_sha = 7;
 }

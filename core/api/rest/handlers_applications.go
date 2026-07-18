@@ -23,7 +23,12 @@ type applicationDTO struct {
 	Health            appHealthDTO  `json:"health"`
 	WebhookID         string        `json:"webhook_id"`
 	DesiredRevisionID *string       `json:"desired_revision_id"`
-	CreatedAt         string        `json:"created_at"`
+	// Status is observed state (ADR-005): what the agent last reported, with
+	// the revision actually serving.
+	Status             string `json:"status"`
+	StatusDetail       string `json:"status_detail"`
+	ObservedRevisionID string `json:"observed_revision_id"`
+	CreatedAt          string `json:"created_at"`
 }
 
 type appSourceDTO struct {
@@ -60,17 +65,20 @@ type appHealthDTO struct {
 
 func toApplicationDTO(a domain.Application) applicationDTO {
 	return applicationDTO{
-		ID:                a.ID,
-		EnvironmentID:     a.EnvironmentID,
-		Name:              a.Name,
-		Source:            appSourceDTO{Kind: a.Source.Kind, Repo: a.Source.Repo, Branch: a.Source.Branch, DeployKeyID: a.Source.DeployKeyID},
-		Build:             appBuildDTO{Kind: a.Build.Kind, DockerfilePath: a.Build.DockerfilePath, Context: a.Build.Context},
-		Runtime:           appRuntimeDTO{ServerID: a.Runtime.ServerID, Port: a.Runtime.Port, Replicas: a.Runtime.Replicas},
-		Route:             appRouteDTO{Domain: a.Route.Domain, HTTPS: a.Route.HTTPS, PathPrefix: a.Route.PathPrefix},
-		Health:            appHealthDTO{Path: a.Health.Path, IntervalSeconds: a.Health.IntervalSeconds, TimeoutSeconds: a.Health.TimeoutSeconds, Retries: a.Health.Retries},
-		WebhookID:         a.WebhookID,
-		DesiredRevisionID: a.DesiredRevisionID,
-		CreatedAt:         a.CreatedAt.UTC().Format(time.RFC3339),
+		ID:                 a.ID,
+		EnvironmentID:      a.EnvironmentID,
+		Name:               a.Name,
+		Source:             appSourceDTO{Kind: a.Source.Kind, Repo: a.Source.Repo, Branch: a.Source.Branch, DeployKeyID: a.Source.DeployKeyID},
+		Build:              appBuildDTO{Kind: a.Build.Kind, DockerfilePath: a.Build.DockerfilePath, Context: a.Build.Context},
+		Runtime:            appRuntimeDTO{ServerID: a.Runtime.ServerID, Port: a.Runtime.Port, Replicas: a.Runtime.Replicas},
+		Route:              appRouteDTO{Domain: a.Route.Domain, HTTPS: a.Route.HTTPS, PathPrefix: a.Route.PathPrefix},
+		Health:             appHealthDTO{Path: a.Health.Path, IntervalSeconds: a.Health.IntervalSeconds, TimeoutSeconds: a.Health.TimeoutSeconds, Retries: a.Health.Retries},
+		WebhookID:          a.WebhookID,
+		DesiredRevisionID:  a.DesiredRevisionID,
+		Status:             a.Status,
+		StatusDetail:       a.StatusDetail,
+		ObservedRevisionID: a.ObservedRevisionID,
+		CreatedAt:          a.CreatedAt.UTC().Format(time.RFC3339),
 	}
 }
 
@@ -188,11 +196,92 @@ func (a *API) handleGetApplication(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toApplicationDTO(app))
 }
 
+// patchApplicationRequest mirrors createApplicationRequest with every section
+// optional: absent sections stay unchanged, present ones replace wholesale.
+type patchApplicationRequest struct {
+	Name   *string `json:"name"`
+	Source *struct {
+		Kind        string  `json:"kind"`
+		Repo        string  `json:"repo"`
+		Branch      string  `json:"branch"`
+		DeployKeyID *string `json:"deploy_key_id"`
+	} `json:"source"`
+	Build *struct {
+		DockerfilePath string `json:"dockerfile_path"`
+		Context        string `json:"context"`
+	} `json:"build"`
+	Runtime *struct {
+		Port int `json:"port"`
+	} `json:"runtime"`
+	Route *struct {
+		Domain     string `json:"domain"`
+		HTTPS      *bool  `json:"https"`
+		PathPrefix string `json:"path_prefix"`
+	} `json:"route"`
+	Health *struct {
+		Path            string `json:"path"`
+		IntervalSeconds int    `json:"interval_seconds"`
+		TimeoutSeconds  int    `json:"timeout_seconds"`
+		Retries         int    `json:"retries"`
+	} `json:"health"`
+}
+
+func (a *API) handlePatchApplication(w http.ResponseWriter, r *http.Request) {
+	var req patchApplicationRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	in := applications.UpdateInput{Name: req.Name}
+	if req.Source != nil {
+		in.Source = &domain.AppSource{Kind: req.Source.Kind, Repo: req.Source.Repo, Branch: req.Source.Branch, DeployKeyID: req.Source.DeployKeyID}
+	}
+	if req.Build != nil {
+		in.Build = &domain.AppBuild{DockerfilePath: req.Build.DockerfilePath, Context: req.Build.Context}
+	}
+	if req.Runtime != nil {
+		in.Port = &req.Runtime.Port
+	}
+	if req.Route != nil {
+		https := true
+		if req.Route.HTTPS != nil {
+			https = *req.Route.HTTPS
+		}
+		in.Route = &domain.AppRoute{Domain: req.Route.Domain, HTTPS: https, PathPrefix: req.Route.PathPrefix}
+	}
+	if req.Health != nil {
+		in.Health = &domain.AppHealth{Path: req.Health.Path, IntervalSeconds: req.Health.IntervalSeconds, TimeoutSeconds: req.Health.TimeoutSeconds, Retries: req.Health.Retries}
+	}
+	app, err := a.deps.Applications.Update(r.Context(), r.PathValue("id"), in)
+	if err != nil {
+		a.writeAppError(w, err, "could not update application")
+		return
+	}
+	writeJSON(w, http.StatusOK, toApplicationDTO(app))
+}
+
 func (a *API) handleDeleteApplication(w http.ResponseWriter, r *http.Request) {
-	if err := a.deps.Applications.Delete(r.Context(), r.PathValue("id")); err != nil {
+	// Load first: after the row is gone we still need the server to publish
+	// desired absence. A missing app deletes idempotently (204).
+	app, err := a.deps.Applications.Get(r.Context(), r.PathValue("id"))
+	if errors.Is(err, store.ErrNotFound) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err != nil {
 		a.deps.Log.Error("deleting application", "error", err)
 		writeError(w, http.StatusInternalServerError, "could not delete application")
 		return
+	}
+	if err := a.deps.Applications.Delete(r.Context(), app.ID); err != nil {
+		a.deps.Log.Error("deleting application", "error", err)
+		writeError(w, http.StatusInternalServerError, "could not delete application")
+		return
+	}
+	if err := a.deps.Scheduler.RemoveApp(r.Context(), app.Runtime.ServerID, app.ID); err != nil {
+		// The row is gone; the agent's next desired-state sync converges the
+		// removal anyway. Degraded immediacy, not failure.
+		a.deps.Log.Error("publishing app removal", "app_id", app.ID, "error", err)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
