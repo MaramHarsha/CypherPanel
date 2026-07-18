@@ -267,7 +267,7 @@ func (c *Client) StreamLogs(ctx context.Context, id string, out io.Writer) error
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	_, err = io.Copy(out, resp.Body)
 	return err

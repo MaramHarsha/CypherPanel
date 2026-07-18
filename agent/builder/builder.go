@@ -43,7 +43,7 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 	if err := os.MkdirAll(buildDir, 0755); err != nil {
 		return "", fmt.Errorf("creating build directory: %w", err)
 	}
-	defer os.RemoveAll(buildDir)
+	defer func() { _ = os.RemoveAll(buildDir) }()
 
 	displayURL := work.RepoUrl
 	if parsed, err := url.Parse(work.RepoUrl); err == nil {
@@ -130,9 +130,10 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 				if err != nil {
 					return err
 				}
-				defer f.Close()
-				if _, err := io.Copy(tw, f); err != nil {
-					return err
+				_, copyErr := io.Copy(tw, f)
+				_ = f.Close()
+				if copyErr != nil {
+					return copyErr
 				}
 			}
 			return nil
@@ -151,6 +152,7 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 		"cypherpanel.revision-id": revID,
 	}
 
+	defer func() { _ = tarPipeR.Close() }()
 	if err := b.engine.BuildImage(ctx, tarPipeR, work.Image, work.DockerfilePath, labels, onLog); err != nil {
 		return "", fmt.Errorf("build failed: %w", err)
 	}

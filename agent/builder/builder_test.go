@@ -14,7 +14,6 @@ import (
 
 type fakeEngine struct {
 	builtImage string
-	logs       []string
 }
 
 func (f *fakeEngine) BuildImage(ctx context.Context, buildContext io.Reader, tag, dockerfile string, labels map[string]string, onLog func(line string)) error {

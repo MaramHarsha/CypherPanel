@@ -96,11 +96,7 @@ func (s *Streamer) stream(ctx context.Context, appID, containerID string, handle
 
 	// Demux Docker multiplexed stream (8 byte header)
 	header := make([]byte, 8)
-	for {
-		if ctx.Err() != nil {
-			break
-		}
-
+	for ctx.Err() == nil {
 		_, err := io.ReadFull(pr, header)
 		if err != nil {
 			break
@@ -119,7 +115,7 @@ func (s *Streamer) stream(ctx context.Context, appID, containerID string, handle
 		for _, line := range lines {
 			line = strings.TrimSuffix(line, "\r")
 			if line != "" {
-				s.nc.Publish(subject, []byte(line))
+				_ = s.nc.Publish(subject, []byte(line))
 			}
 		}
 	}

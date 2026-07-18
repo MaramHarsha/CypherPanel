@@ -114,7 +114,7 @@ func (t *TraefikWriter) SetRoute(ctx context.Context, appID string, route *agent
 		return fmt.Errorf("writing route tmp file: %w", err)
 	}
 	if err := os.Rename(tmpPath, finalPath); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("renaming route file: %w", err)
 	}
 
