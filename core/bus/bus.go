@@ -158,9 +158,16 @@ func Start(ctx context.Context, opts Options) (*Bus, error) {
 	if maxAge == 0 {
 		maxAge = 10 * time.Minute
 	}
+	// The STATE stream captures only the durable state families — heartbeats,
+	// deploy events, and app-status observations. It deliberately does NOT
+	// cover state.*.sync: sync is core-NATS request/reply, and if JetStream
+	// captured that subject it would answer the agent's request with a stream
+	// PubAck instead of letting the plane's responder reply (the agent would
+	// then fail to unmarshal the PubAck as a DesiredState). Keep this list in
+	// step with the state.* subjects in pkg/subjects.
 	if _, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
 		Name:      streamState,
-		Subjects:  []string{subjects.StatePrefix + ">"},
+		Subjects:  []string{subjects.HeartbeatAll, subjects.DeployStateAll, subjects.AppStateAll},
 		Storage:   jetstream.MemoryStorage,
 		Retention: jetstream.LimitsPolicy,
 		Discard:   jetstream.DiscardOld,

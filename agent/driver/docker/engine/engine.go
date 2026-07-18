@@ -11,7 +11,6 @@ package engine
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -83,7 +82,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		return nil, fmt.Errorf("engine: %s %s: %w", method, path, err)
 	}
 	if resp.StatusCode >= 400 {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		var e apiError
 		msg := resp.Status
 		if json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&e) == nil && e.Message != "" {
@@ -117,7 +116,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, query url.Valu
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if out != nil {
 		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
 			return fmt.Errorf("engine: decoding %s response: %w", path, err)
@@ -147,8 +146,8 @@ func (c *Client) EnsureNetwork(ctx context.Context, name string, labels map[stri
 		"Labels": labels,
 	}, nil)
 	var se *StatusError
-	if err != nil && ((se != nil) || (asStatus(err, &se) && se.Code == http.StatusConflict)) {
-		return nil // already exists
+	if err != nil && asStatus(err, &se) && se.Code == http.StatusConflict {
+		return nil //nolint:nilerr // a name conflict means the network already exists (idempotent)
 	}
 	return err
 }
@@ -347,7 +346,7 @@ func (c *Client) BuildImage(ctx context.Context, buildContext io.Reader, tag, do
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	dec := json.NewDecoder(resp.Body)
 	for {
@@ -365,16 +364,4 @@ func (c *Client) BuildImage(ctx context.Context, buildContext io.Reader, tag, do
 			onLog(strings.TrimRight(line.Stream, "\n"))
 		}
 	}
-}
-
-// registryAuthHeader builds the X-Registry-Auth value for authenticated pulls
-// — unused in the slice (no registry, ADR-008) but the header shape is where
-// external-registry support lands, so the encoding lives here.
-func registryAuthHeader(username, password, serverAddress string) string {
-	blob, _ := json.Marshal(map[string]string{
-		"username":      username,
-		"password":      password,
-		"serveraddress": serverAddress,
-	})
-	return base64.URLEncoding.EncodeToString(blob)
 }

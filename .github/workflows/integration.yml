@@ -20,6 +20,9 @@ env:
   CYPHERD_ADMIN_PASSWORD: ci-password-1
   CYPHERD_HEARTBEAT_STALE: 20s
   CYPHERD_SWEEP_INTERVAL: 5s
+  # The file-backed WORK stream needs a writable data dir; the default
+  # (/var/lib/cypherd) isn't creatable by the non-root runner.
+  CYPHERD_DATA_DIR: /tmp/cypherd-data
   API: http://127.0.0.1:8080
 
 jobs:

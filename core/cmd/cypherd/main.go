@@ -103,6 +103,13 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("issuing plane server cert: %w", err)
 	}
 
+	// The file-backed WORK stream needs a writable data directory. Create it
+	// up front so a missing/unwritable path fails with a clear message here
+	// rather than surfacing later as an opaque "NATS server not ready".
+	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
+		return fmt.Errorf("creating data dir %q (set CYPHERD_DATA_DIR to a writable path): %w", cfg.DataDir, err)
+	}
+
 	// Embedded NATS JetStream bus (mTLS, per-agent authz).
 	busTLS, err := pki.ServerTLSConfig(planeCert, planeKey, ca.CertPEM())
 	if err != nil {
