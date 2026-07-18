@@ -146,6 +146,10 @@ func (a *API) handleGetServer(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
 	if err := a.deps.Servers.Delete(r.Context(), r.PathValue("id")); err != nil {
+		if errors.Is(err, store.ErrInUse) {
+			writeError(w, http.StatusConflict, "server still runs applications — move or delete them first")
+			return
+		}
 		a.deps.Log.Error("deleting server", "error", err)
 		writeError(w, http.StatusInternalServerError, "could not delete server")
 		return

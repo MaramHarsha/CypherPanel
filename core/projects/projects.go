@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/pkg/ids"
@@ -34,12 +33,11 @@ type Store interface {
 // Service manages projects and environments.
 type Service struct {
 	store Store
-	now   func() time.Time
 }
 
 // NewService wires the service.
 func NewService(s Store) *Service {
-	return &Service{store: s, now: time.Now}
+	return &Service{store: s}
 }
 
 // Create registers a project and its default production environment.

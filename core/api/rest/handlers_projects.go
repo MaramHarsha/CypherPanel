@@ -152,6 +152,10 @@ func (a *API) handleCreateEnvironment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "project not found")
 		return
 	}
+	if errors.Is(err, store.ErrConflict) {
+		writeError(w, http.StatusConflict, "an environment with that name already exists in this project")
+		return
+	}
 	if err != nil {
 		a.deps.Log.Error("creating environment", "error", err)
 		writeError(w, http.StatusInternalServerError, "could not create environment")

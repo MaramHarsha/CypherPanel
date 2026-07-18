@@ -22,6 +22,8 @@ type fakeClient struct {
 	nextID     int
 
 	createErrForImage map[string]error
+	stopErrForID      map[string]error
+	removeErrForID    map[string]error
 	listErr           error
 
 	mutations int // count of state-changing calls
@@ -33,6 +35,8 @@ func newFakeClient() *fakeClient {
 		unmanaged:         map[string]*Container{},
 		ipByID:            map[string]string{},
 		createErrForImage: map[string]error{},
+		stopErrForID:      map[string]error{},
+		removeErrForID:    map[string]error{},
 	}
 }
 
@@ -55,6 +59,13 @@ func (f *fakeClient) ListManaged(_ context.Context) ([]Container, error) {
 func (f *fakeClient) CreateContainer(_ context.Context, spec ContainerSpec) (string, error) {
 	if err := f.createErrForImage[spec.Image]; err != nil {
 		return "", err
+	}
+	// The real daemon refuses a create whose name is taken — the fake must
+	// too, or crash-window convergence bugs stay invisible in tests.
+	for _, c := range f.containers {
+		if c.Name == spec.Name {
+			return "", errors.New("name " + spec.Name + " already in use")
+		}
 	}
 	f.mutations++
 	f.nextID++
@@ -79,6 +90,9 @@ func (f *fakeClient) StartContainer(_ context.Context, id string) error {
 }
 
 func (f *fakeClient) StopContainer(_ context.Context, id string, _ time.Duration) error {
+	if err := f.stopErrForID[id]; err != nil {
+		return err
+	}
 	f.mutations++
 	if c := f.containers[id]; c != nil {
 		c.Running = false
@@ -87,6 +101,9 @@ func (f *fakeClient) StopContainer(_ context.Context, id string, _ time.Duration
 }
 
 func (f *fakeClient) RemoveContainer(_ context.Context, id string) error {
+	if err := f.removeErrForID[id]; err != nil {
+		return err
+	}
 	f.mutations++
 	delete(f.containers, id)
 	return nil
@@ -112,6 +129,22 @@ func (f *fakeClient) RemoveImage(_ context.Context, id string) error {
 	return nil
 }
 
+// addContainer seeds a managed container as if a previous driver run created
+// it (deterministic name included) — the raw material of crash-window tests.
+func (f *fakeClient) addContainer(appID, revID string, running bool) string {
+	f.nextID++
+	id := "c" + itoa(f.nextID)
+	f.containers[id] = &Container{
+		ID:         id,
+		Name:       containerName(appID, revID),
+		AppID:      appID,
+		RevisionID: revID,
+		Running:    running,
+	}
+	f.ipByID[id] = "10.1.2." + itoa(f.nextID)
+	return id
+}
+
 type fakeRouter struct {
 	routes    map[string]string // appID → upstream
 	setErr    error
@@ -133,6 +166,11 @@ func (r *fakeRouter) RemoveRoute(_ context.Context, appID string) error {
 	r.mutations++
 	delete(r.routes, appID)
 	return nil
+}
+
+func (r *fakeRouter) Route(_ context.Context, appID string) (string, bool, error) {
+	up, ok := r.routes[appID]
+	return up, ok, nil
 }
 
 type fakeProber struct{ fail bool }
@@ -185,6 +223,17 @@ func statusOf(statuses []*agentv1.AppStatus, appID string) *agentv1.AppStatus {
 		}
 	}
 	return nil
+}
+
+// runningRev returns the ids of running containers for app/revision.
+func runningRev(c *fakeClient, appID, revID string) []string {
+	var out []string
+	for id, ct := range c.containers {
+		if ct.AppID == appID && ct.RevisionID == revID && ct.Running {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // ── tests ───────────────────────────────────────────────────────────────────
@@ -246,6 +295,82 @@ func TestCrashResumeIsNoOp(t *testing.T) {
 	}
 }
 
+// Crash window 1: create succeeded, start never happened. The dead container
+// holds the deterministic name; convergence must clear it and roll out —
+// against the real daemon a blind create would fail with a name conflict.
+func TestCrashAfterCreateBeforeStartConverges(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	oldID := c.addContainer("app1", "rev1", true)
+	r.routes["app1"] = "10.1.2.1:8080"
+	c.addContainer("app1", "rev2", false) // the crash leftover
+
+	got, err := newDriver(c, r, p).Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev2", "img:rev2")})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	st := statusOf(got, "app1")
+	if st.GetState() != stateRunning || st.GetRevisionId() != "rev2" {
+		t.Fatalf("status = %+v, want running rev2", st)
+	}
+	if n := runningRev(c, "app1", "rev2"); len(n) != 1 {
+		t.Fatalf("want exactly one running rev2 container, got %d", len(n))
+	}
+	if _, ok := c.containers[oldID]; ok {
+		t.Fatal("old revision was not drained after successful rollout")
+	}
+}
+
+// Crash window 2: the new revision started but the route never flipped. The
+// old code reported running and left traffic on the old revision forever;
+// convergence must observe the route, flip it, and drain the old container.
+func TestCrashAfterStartBeforeFlipConverges(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	oldID := c.addContainer("app1", "rev1", true)
+	newID := c.addContainer("app1", "rev2", true)
+	r.routes["app1"] = "10.1.2." + oldID[1:] + ":8080" // route still on rev1
+
+	got, err := newDriver(c, r, p).Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev2", "img:rev2")})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	st := statusOf(got, "app1")
+	if st.GetState() != stateRunning || st.GetRevisionId() != "rev2" {
+		t.Fatalf("status = %+v, want running rev2", st)
+	}
+	wantUpstream := c.ipByID[newID] + ":8080"
+	if r.routes["app1"] != wantUpstream {
+		t.Fatalf("route = %q, want flipped to rev2 upstream %q", r.routes["app1"], wantUpstream)
+	}
+	if _, ok := c.containers[oldID]; ok {
+		t.Fatal("old revision was not drained")
+	}
+}
+
+// Crash window 3: route flipped but the old container never drained.
+// Convergence must drain it without touching the route or creating anything.
+func TestCrashAfterFlipBeforeDrainConverges(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	oldID := c.addContainer("app1", "rev1", true)
+	newID := c.addContainer("app1", "rev2", true)
+	r.routes["app1"] = c.ipByID[newID] + ":8080" // route already on rev2
+
+	routeMuts := r.mutations
+	got, err := newDriver(c, r, p).Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev2", "img:rev2")})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	st := statusOf(got, "app1")
+	if st.GetState() != stateRunning || st.GetRevisionId() != "rev2" {
+		t.Fatalf("status = %+v, want running rev2", st)
+	}
+	if _, ok := c.containers[oldID]; ok {
+		t.Fatal("old revision was not drained")
+	}
+	if r.mutations != routeMuts {
+		t.Fatal("route mutated although it already pointed at the desired revision")
+	}
+}
+
 func TestAbsenceRemovesApp(t *testing.T) {
 	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
 	// A non-managed look-alike the driver must never touch.
@@ -256,8 +381,12 @@ func TestAbsenceRemovesApp(t *testing.T) {
 		t.Fatalf("rollout: %v", err)
 	}
 	// Now app1 is no longer desired.
-	if _, err := d.Reconcile(context.Background(), nil); err != nil {
+	got, err := d.Reconcile(context.Background(), nil)
+	if err != nil {
 		t.Fatalf("teardown: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("clean teardown reported statuses: %+v", got)
 	}
 	if len(c.containers) != 0 {
 		t.Fatalf("want app container removed, %d remain", len(c.containers))
@@ -267,6 +396,56 @@ func TestAbsenceRemovesApp(t *testing.T) {
 	}
 	if _, ok := c.unmanaged["x1"]; !ok {
 		t.Fatal("driver removed an unmanaged container")
+	}
+}
+
+// A teardown that fails is an observation the plane needs: the app has not
+// actually converged to absence, so it must appear in the status report.
+func TestFailedTeardownIsReported(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	id := c.addContainer("gone", "rev1", true)
+	c.stopErrForID[id] = errors.New("daemon busy")
+
+	got, err := newDriver(c, r, p).Reconcile(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	st := statusOf(got, "gone")
+	if st == nil || st.GetState() != stateError {
+		t.Fatalf("status = %+v, want error for failed teardown", st)
+	}
+}
+
+// A drain failure after a successful flip is degraded, not error: the desired
+// revision holds the traffic, but convergence isn't complete — and the next
+// reconcile retries the drain and returns to running.
+func TestFailedDrainReportsDegradedThenRecovers(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	oldID := c.addContainer("app1", "rev1", true)
+	newID := c.addContainer("app1", "rev2", true)
+	r.routes["app1"] = c.ipByID[newID] + ":8080"
+	c.stopErrForID[oldID] = errors.New("daemon busy")
+
+	d := newDriver(c, r, p)
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev2", "img:rev2")})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if st := statusOf(got, "app1"); st.GetState() != stateDegraded || st.GetRevisionId() != "rev2" {
+		t.Fatalf("status = %+v, want degraded on rev2", st)
+	}
+
+	// Drain succeeds on the retry: back to running, old container gone.
+	delete(c.stopErrForID, oldID)
+	got, err = d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev2", "img:rev2")})
+	if err != nil {
+		t.Fatalf("retry Reconcile: %v", err)
+	}
+	if st := statusOf(got, "app1"); st.GetState() != stateRunning {
+		t.Fatalf("status = %+v, want running after drain retry", st)
+	}
+	if _, ok := c.containers[oldID]; ok {
+		t.Fatal("old revision still present after drain retry")
 	}
 }
 
@@ -335,6 +514,24 @@ func TestPartialFailureConvergesOthers(t *testing.T) {
 	}
 	if r.routes["good"] == "" {
 		t.Fatal("good app route not set")
+	}
+}
+
+// A failed create must report the revision still serving, not an empty one —
+// the plane needs to know the old revision kept the traffic.
+func TestFailedCreateReportsServingRevision(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	c.addContainer("app1", "rev1", true)
+	r.routes["app1"] = "10.1.2.1:8080"
+	c.createErrForImage["img:rev2"] = errors.New("no such image")
+
+	got, err := newDriver(c, r, p).Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev2", "img:rev2")})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	st := statusOf(got, "app1")
+	if st.GetState() != stateError || st.GetRevisionId() != "rev1" {
+		t.Fatalf("status = %+v, want error with rev1 still serving", st)
 	}
 }
 

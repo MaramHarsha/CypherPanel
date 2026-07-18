@@ -15,6 +15,7 @@ import (
 	"database/sql"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib" // registers "pgx" for database/sql (goose)
@@ -30,6 +31,15 @@ var migrationsFS embed.FS
 // ErrNotFound is returned when a lookup matches no row. Callers match it with
 // errors.Is, never by string (ENGINEERING rule 3).
 var ErrNotFound = errors.New("store: not found")
+
+// ErrConflict is returned when an insert or update violates a uniqueness
+// constraint (a duplicate name within its scope). Handlers map it to 409.
+var ErrConflict = errors.New("store: already exists")
+
+// ErrInUse is returned when a delete is refused because other rows still
+// reference the target through a RESTRICT foreign key (e.g. a server that
+// still runs applications). Handlers map it to 409 with the reason.
+var ErrInUse = errors.New("store: still referenced")
 
 // Store is the control plane's persistence layer.
 type Store struct {
@@ -103,7 +113,7 @@ func (s *Store) CreateUser(ctx context.Context, id, email, passwordHash, role st
 		Role:         role,
 	})
 	if err != nil {
-		return domain.User{}, fmt.Errorf("store: creating user: %w", err)
+		return domain.User{}, wrapCreate("creating user", err)
 	}
 	return userFromRow(row), nil
 }
@@ -242,7 +252,7 @@ func (s *Store) MarkStaleServersUnknown(ctx context.Context, cutoff time.Time) (
 
 func (s *Store) DeleteServer(ctx context.Context, id string) error {
 	if err := s.q.DeleteServer(ctx, id); err != nil {
-		return fmt.Errorf("store: deleting server: %w", err)
+		return wrapDelete("deleting server", err)
 	}
 	return nil
 }
@@ -329,6 +339,38 @@ func (s *Store) DeleteSession(ctx context.Context, tokenHash []byte) error {
 func wrap(op string, err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("store: %s: %w", op, ErrNotFound)
+	}
+	return fmt.Errorf("store: %s: %w", op, err)
+}
+
+// PostgreSQL error codes (Appendix A) matched in wrapCreate/wrapDelete.
+const (
+	pgUniqueViolation     = "23505"
+	pgForeignKeyViolation = "23503"
+)
+
+// wrapCreate maps constraint violations on inserts: a unique violation is a
+// caller-visible conflict; a foreign-key violation means a referenced parent
+// vanished between the service's existence check and the insert — not found.
+func wrapCreate(op string, err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		switch pgErr.Code {
+		case pgUniqueViolation:
+			return fmt.Errorf("store: %s: %w", op, ErrConflict)
+		case pgForeignKeyViolation:
+			return fmt.Errorf("store: %s: %w", op, ErrNotFound)
+		}
+	}
+	return fmt.Errorf("store: %s: %w", op, err)
+}
+
+// wrapDelete maps a foreign-key violation on delete — the row is still
+// referenced through a RESTRICT constraint — to ErrInUse.
+func wrapDelete(op string, err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == pgForeignKeyViolation {
+		return fmt.Errorf("store: %s: %w", op, ErrInUse)
 	}
 	return fmt.Errorf("store: %s: %w", op, err)
 }

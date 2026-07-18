@@ -49,6 +49,16 @@ test: ## Run unit tests across all modules
 test-race: ## Run tests with the race detector (as CI does)
 	@for m in $(MODULES); do echo "test -race $$m"; (cd $$m && go test -race ./...) || exit 1; done
 
+.PHONY: test-store
+test-store: ## Run the real-Postgres store tests against a throwaway container
+	@docker rm -f cypher-store-test-pg >/dev/null 2>&1 || true
+	docker run -d --name cypher-store-test-pg -e POSTGRES_PASSWORD=pw -e POSTGRES_DB=cypher_test \
+		-p 127.0.0.1:15440:5432 postgres:16-alpine >/dev/null
+	@until docker exec cypher-store-test-pg pg_isready -U postgres >/dev/null 2>&1; do sleep 1; done
+	cd core && CYPHERD_TEST_DATABASE_URL="postgres://postgres:pw@127.0.0.1:15440/cypher_test?sslmode=disable" \
+		go test ./store/ -run TestStore -v; status=$$?; \
+		docker rm -f cypher-store-test-pg >/dev/null; exit $$status
+
 .PHONY: vet
 vet: ## go vet across all modules
 	@for m in $(MODULES); do (cd $$m && go vet ./...) || exit 1; done

@@ -7,5 +7,3 @@ SELECT * FROM environments WHERE id = $1;
 -- name: ListEnvironmentsByProject :many
 SELECT * FROM environments WHERE project_id = $1 ORDER BY created_at;
 
--- name: DeleteEnvironment :exec
-DELETE FROM environments WHERE id = $1;

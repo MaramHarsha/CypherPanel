@@ -13,8 +13,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
-	"time"
 
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/store"
@@ -23,6 +23,11 @@ import (
 
 // ErrServerNotFound is returned when the target runtime server does not exist.
 var ErrServerNotFound = errors.New("applications: target server not found")
+
+// ErrEnvironmentNotFound is returned when the addressed environment does not
+// exist — distinct from store.ErrNotFound (which, from this package, means the
+// application itself is missing) so handlers name the right entity.
+var ErrEnvironmentNotFound = errors.New("applications: environment not found")
 
 // ValidationError is a client-caused input error; handlers map it to 400 with
 // its message (which never contains secrets).
@@ -54,12 +59,11 @@ type Sealer interface {
 type Service struct {
 	store  Store
 	sealer Sealer
-	now    func() time.Time
 }
 
 // NewService wires the service.
 func NewService(s Store, sealer Sealer) *Service {
-	return &Service{store: s, sealer: sealer, now: time.Now}
+	return &Service{store: s, sealer: sealer}
 }
 
 // CreateInput is the caller-supplied config for a new application. Missing
@@ -79,6 +83,9 @@ type CreateInput struct {
 // they reach the store.
 func (s *Service) Create(ctx context.Context, envID string, in CreateInput) (app domain.Application, webhookSecret string, err error) {
 	if _, err := s.store.GetEnvironment(ctx, envID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return domain.Application{}, "", ErrEnvironmentNotFound
+		}
 		return domain.Application{}, "", fmt.Errorf("applications: getting environment: %w", err)
 	}
 	in, err = validateAndDefault(in)
@@ -138,6 +145,9 @@ func (s *Service) Get(ctx context.Context, id string) (domain.Application, error
 // List returns the applications in an environment (verifying it exists first).
 func (s *Service) List(ctx context.Context, envID string) ([]domain.Application, error) {
 	if _, err := s.store.GetEnvironment(ctx, envID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, ErrEnvironmentNotFound
+		}
 		return nil, fmt.Errorf("applications: getting environment: %w", err)
 	}
 	list, err := s.store.ListApplicationsByEnvironment(ctx, envID)
@@ -160,8 +170,8 @@ func (s *Service) SetEnvVar(ctx context.Context, appID, key, value string) error
 	if _, err := s.store.GetApplication(ctx, appID); err != nil {
 		return fmt.Errorf("applications: getting application: %w", err)
 	}
-	if strings.TrimSpace(key) == "" {
-		return invalid("env var key is required")
+	if !validEnvKey(key) {
+		return invalid("env var key must match [A-Za-z_][A-Za-z0-9_]*")
 	}
 	ct, nonce, err := s.sealer.Seal([]byte(value))
 	if err != nil {
@@ -249,6 +259,12 @@ func validateAndDefault(in CreateInput) (CreateInput, error) {
 		return in, invalid("route.domain is required")
 	}
 
+	// Negative values must be rejected, not defaulted: the wire contract
+	// (work.proto HealthCheck) carries these as uint32, so a negative slipping
+	// through would wrap into a huge positive on conversion.
+	if in.Health.IntervalSeconds < 0 || in.Health.TimeoutSeconds < 0 || in.Health.Retries < 0 {
+		return in, invalid("health values must not be negative")
+	}
 	if in.Health.Path == "" {
 		in.Health.Path = "/"
 	}
@@ -261,5 +277,30 @@ func validateAndDefault(in CreateInput) (CreateInput, error) {
 	if in.Health.Retries == 0 {
 		in.Health.Retries = 3
 	}
+	for k := range in.EnvVars {
+		if !validEnvKey(k) {
+			return in, invalid("env var key " + strconv.Quote(k) + " must match [A-Za-z_][A-Za-z0-9_]*")
+		}
+	}
 	return in, nil
+}
+
+// validEnvKey enforces the portable environment-variable key charset; anything
+// looser (an "=", a newline) would corrupt the container environment later.
+func validEnvKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	for i, r := range key {
+		switch {
+		case r == '_', r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z':
+		case r >= '0' && r <= '9':
+			if i == 0 {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }

@@ -202,3 +202,30 @@ jobs:
             echo "installer accepted a mismatched CA fingerprint"; exit 1
           fi
           echo "fingerprint mismatch correctly refused"
+
+  store-tests:
+    name: Store layer against real Postgres
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: ci-password
+          POSTGRES_DB: cypher_store_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: "**/go.sum"
+      - name: Run store tests (ENGINEERING rule 29 — no mocked stores in integration scope)
+        env:
+          CYPHERD_TEST_DATABASE_URL: postgres://postgres:ci-password@127.0.0.1:5433/cypher_store_test?sslmode=disable
+        run: cd core && go test ./store/ -run TestStore -v

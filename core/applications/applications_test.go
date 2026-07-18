@@ -156,6 +156,14 @@ func TestCreateValidation(t *testing.T) {
 		"two replicas":    func(in *CreateInput) { in.Runtime.Replicas = 2 },
 		"no server":       func(in *CreateInput) { in.Runtime.ServerID = "" },
 		"no route domain": func(in *CreateInput) { in.Route.Domain = "" },
+		// Negative health values would wrap to huge uint32s on the wire.
+		"negative interval": func(in *CreateInput) { in.Health.IntervalSeconds = -5 },
+		"negative timeout":  func(in *CreateInput) { in.Health.TimeoutSeconds = -1 },
+		"negative retries":  func(in *CreateInput) { in.Health.Retries = -1 },
+		// Loose env keys would corrupt the container environment.
+		"env key with equals":  func(in *CreateInput) { in.EnvVars = map[string]string{"FOO=BAR": "v"} },
+		"env key with newline": func(in *CreateInput) { in.EnvVars = map[string]string{"FOO\nBAR": "v"} },
+		"env key digit-first":  func(in *CreateInput) { in.EnvVars = map[string]string{"1FOO": "v"} },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -172,8 +180,8 @@ func TestCreateValidation(t *testing.T) {
 
 func TestCreateUnknownEnvironment(t *testing.T) {
 	s := NewService(newFakeStore(), fakeSealer{})
-	if _, _, err := s.Create(context.Background(), "env_missing", validInput()); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("err = %v, want store.ErrNotFound", err)
+	if _, _, err := s.Create(context.Background(), "env_missing", validInput()); !errors.Is(err, ErrEnvironmentNotFound) {
+		t.Fatalf("err = %v, want ErrEnvironmentNotFound", err)
 	}
 }
 

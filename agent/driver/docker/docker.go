@@ -27,11 +27,12 @@ const driverName = "docker"
 
 // Status vocabulary (ui-principles §5) as reported in AppStatus.State. Defined
 // locally because the agent must not import core; the plane maps these onto the
-// Application unchanged.
+// Application unchanged. ("stopped" — an app with no desired revision — never
+// reaches the driver; the plane reports it directly.)
 const (
-	stateRunning = "running"
-	stateError   = "error"
-	stateStopped = "stopped"
+	stateRunning  = "running"
+	stateError    = "error"
+	stateDegraded = "degraded"
 )
 
 const defaultDrainTimeout = 10 * time.Second
@@ -83,11 +84,17 @@ type Client interface {
 	RemoveImage(ctx context.Context, id string) error
 }
 
-// Router applies (or removes) an Application's route on the local proxy. The
-// agent/proxy Traefik writer satisfies it structurally (ADR-004).
+// Router applies (or removes) an Application's route on the local proxy, and —
+// because convergence must observe route state, not remember it — reports the
+// route currently applied. The agent/proxy Traefik writer satisfies it
+// structurally (ADR-004): the fragment file on disk is the observable truth.
 type Router interface {
 	SetRoute(ctx context.Context, appID string, route *agentv1.RouteSpec, upstream string) error
 	RemoveRoute(ctx context.Context, appID string) error
+	// Route returns the upstream the app's route currently points at, or
+	// ok=false when no route is applied. Used by the converged fast path to
+	// re-assert a route lost to a crash between start and flip.
+	Route(ctx context.Context, appID string) (upstream string, ok bool, err error)
 }
 
 // HealthProber checks that an upstream is serving before the route flips. The
@@ -122,7 +129,9 @@ func (d *Driver) Name() string { return driverName }
 // Reconcile converges local containers toward desired and reports observed
 // status. A total inability to reconcile (daemon unreachable) is returned as an
 // error; a single app's failure is captured in its AppStatus and does not stop
-// the others (reconciler-development skill).
+// the others (reconciler-development skill). Apps absent from desired are torn
+// down; a teardown that fails is itself reported as an observed error status —
+// the plane must see that removal has not actually converged.
 func (d *Driver) Reconcile(ctx context.Context, desired []*agentv1.AppSpec) ([]*agentv1.AppStatus, error) {
 	managed, err := d.client.ListManaged(ctx)
 	if err != nil {
@@ -141,10 +150,14 @@ func (d *Driver) Reconcile(ctx context.Context, desired []*agentv1.AppSpec) ([]*
 		statuses = append(statuses, d.convergeApp(ctx, spec, byApp[spec.GetAppId()]))
 	}
 
-	// Absence means removal: any managed app not in desired is torn down.
+	// Absence means removal: any managed app not in desired is torn down. A
+	// failed teardown is an observation the plane needs (the app still exists
+	// here), so it joins the status report.
 	for appID, containers := range byApp {
 		if _, wanted := desiredApps[appID]; !wanted {
-			d.removeApp(ctx, appID, containers)
+			if err := d.removeApp(ctx, appID, containers); err != nil {
+				statuses = append(statuses, status(appID, currentRevision(containers), stateError, "teardown: "+err.Error()))
+			}
 		}
 	}
 
@@ -158,18 +171,43 @@ func (d *Driver) Reconcile(ctx context.Context, desired []*agentv1.AppSpec) ([]*
 
 // convergeApp rolls one Application onto its desired revision with the
 // zero-downtime sequence, or reports why it could not.
+//
+// The converged check is an observation of *all* the app's state, not just
+// "is the new revision running": a crash can leave the desired revision
+// running with the route still on the old revision, or leave old containers
+// undrained, or leave a created-but-never-started container squatting on the
+// deterministic name. Each of those must converge with no manual step.
 func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existing []Container) *agentv1.AppStatus {
-	// Already converged? The desired revision is running → no mutation at all
-	// (this is what makes converging twice equal converging once, rule 13).
-	for _, c := range existing {
-		if c.RevisionID == spec.GetRevisionId() && c.Running {
-			return status(spec.GetAppId(), spec.GetRevisionId(), stateRunning, "")
+	var current *Container    // desired revision, running
+	var leftovers []Container // everything else: old revisions, dead duplicates
+	for i := range existing {
+		c := existing[i]
+		if c.RevisionID == spec.GetRevisionId() && c.Running && current == nil {
+			current = &existing[i]
+			continue
 		}
+		leftovers = append(leftovers, c)
 	}
 
-	if err := d.client.EnsureNetwork(ctx, spec.GetNetwork(), managedLabels(spec)); err != nil {
-		return status(spec.GetAppId(), "", stateError, "network: "+err.Error())
+	if current != nil {
+		return d.convergedApp(ctx, spec, current, leftovers)
 	}
+
+	if err := d.client.EnsureNetwork(ctx, spec.GetNetwork(), networkLabels()); err != nil {
+		return status(spec.GetAppId(), currentRevision(existing), stateError, "network: "+err.Error())
+	}
+
+	// A dead container of the desired revision (crash between create and
+	// start) holds the deterministic name; clear it so create cannot collide.
+	remaining := leftovers[:0]
+	for _, c := range leftovers {
+		if c.RevisionID == spec.GetRevisionId() {
+			d.discard(ctx, c.ID)
+			continue
+		}
+		remaining = append(remaining, c)
+	}
+	leftovers = remaining
 
 	// Start the new revision alongside the old one.
 	newID, err := d.client.CreateContainer(ctx, ContainerSpec{
@@ -181,20 +219,19 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 		Labels:  managedLabels(spec),
 	})
 	if err != nil {
-		return status(spec.GetAppId(), "", stateError, "create: "+err.Error())
+		return status(spec.GetAppId(), currentRevision(existing), stateError, "create: "+err.Error())
 	}
 	if err := d.client.StartContainer(ctx, newID); err != nil {
 		d.discard(ctx, newID)
-		return status(spec.GetAppId(), "", stateError, "start: "+err.Error())
+		return status(spec.GetAppId(), currentRevision(existing), stateError, "start: "+err.Error())
 	}
 
 	// Health-gate before the old revision stops serving.
-	ip, err := d.client.ContainerIP(ctx, newID, spec.GetNetwork())
+	upstream, err := d.upstreamOf(ctx, newID, spec)
 	if err != nil {
 		d.discard(ctx, newID)
-		return status(spec.GetAppId(), "", stateError, "address: "+err.Error())
+		return status(spec.GetAppId(), currentRevision(existing), stateError, "address: "+err.Error())
 	}
-	upstream := net.JoinHostPort(ip, strconv.Itoa(int(spec.GetPort())))
 	if err := d.prober.Probe(ctx, upstream, spec.GetHealth()); err != nil {
 		// New revision never became healthy: discard it; the old container is
 		// untouched and still serving. This is the anti-stale-container property.
@@ -207,21 +244,65 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 		d.discard(ctx, newID)
 		return status(spec.GetAppId(), currentRevision(existing), stateError, "route: "+err.Error())
 	}
-	for _, c := range existing {
-		d.drain(ctx, c.ID)
+	return d.finishConverge(ctx, spec, leftovers)
+}
+
+// convergedApp handles the app whose desired revision is already running:
+// verify the route actually points at it (a crash between start and flip
+// leaves it on the old revision) and drain any leftover containers (a crash
+// between flip and drain leaves the old revision running unrouted). When
+// reality fully matches desired, this makes zero mutating calls.
+func (d *Driver) convergedApp(ctx context.Context, spec *agentv1.AppSpec, current *Container, leftovers []Container) *agentv1.AppStatus {
+	upstream, err := d.upstreamOf(ctx, current.ID, spec)
+	if err != nil {
+		return status(spec.GetAppId(), spec.GetRevisionId(), stateError, "address: "+err.Error())
+	}
+	applied, ok, err := d.router.Route(ctx, spec.GetAppId())
+	if err != nil {
+		return status(spec.GetAppId(), spec.GetRevisionId(), stateError, "route: "+err.Error())
+	}
+	if !ok || applied != upstream {
+		// The running revision passed its health gate when it was started; a
+		// re-observed flip still gates on health so a container that has since
+		// died can never capture the route.
+		if err := d.prober.Probe(ctx, upstream, spec.GetHealth()); err != nil {
+			return status(spec.GetAppId(), spec.GetRevisionId(), stateError, "health check failed: "+err.Error())
+		}
+		if err := d.router.SetRoute(ctx, spec.GetAppId(), spec.GetRoute(), upstream); err != nil {
+			return status(spec.GetAppId(), spec.GetRevisionId(), stateError, "route: "+err.Error())
+		}
+	}
+	return d.finishConverge(ctx, spec, leftovers)
+}
+
+// finishConverge drains the leftover containers of an app whose desired
+// revision is serving and routed. A drain failure is not a rollout failure —
+// the desired revision holds the traffic — but it is not convergence either:
+// the app is reported degraded and the next reconcile retries the drain.
+func (d *Driver) finishConverge(ctx context.Context, spec *agentv1.AppSpec, leftovers []Container) *agentv1.AppStatus {
+	for _, c := range leftovers {
+		if err := d.drain(ctx, c.ID); err != nil {
+			return status(spec.GetAppId(), spec.GetRevisionId(), stateDegraded, "draining old revision: "+err.Error())
+		}
 	}
 	return status(spec.GetAppId(), spec.GetRevisionId(), stateRunning, "")
 }
 
-// removeApp tears down every container for an app that is no longer desired and
-// removes its route.
-func (d *Driver) removeApp(ctx context.Context, appID string, containers []Container) {
+// removeApp tears down every container for an app that is no longer desired
+// and removes its route. It returns an error when any part of the teardown
+// failed, so the caller can report the app as still (erroneously) present.
+func (d *Driver) removeApp(ctx context.Context, appID string, containers []Container) error {
+	var failed error
 	if err := d.router.RemoveRoute(ctx, appID); err != nil {
 		d.log.Warn("removing route for absent app", "app_id", appID, "error", err)
+		failed = fmt.Errorf("removing route: %w", err)
 	}
 	for _, c := range containers {
-		d.drain(ctx, c.ID)
+		if err := d.drain(ctx, c.ID); err != nil && failed == nil {
+			failed = err
+		}
 	}
+	return failed
 }
 
 // gcRemovedAppImages removes images belonging to apps absent from desired.
@@ -242,13 +323,16 @@ func (d *Driver) gcRemovedAppImages(ctx context.Context, desiredApps map[string]
 }
 
 // drain stops (with the drain timeout) and removes a container.
-func (d *Driver) drain(ctx context.Context, id string) {
+func (d *Driver) drain(ctx context.Context, id string) error {
 	if err := d.client.StopContainer(ctx, id, d.drainTimeout); err != nil {
 		d.log.Warn("stopping container", "container", id, "error", err)
+		return fmt.Errorf("stopping container %s: %w", id, err)
 	}
 	if err := d.client.RemoveContainer(ctx, id); err != nil {
 		d.log.Warn("removing container", "container", id, "error", err)
+		return fmt.Errorf("removing container %s: %w", id, err)
 	}
+	return nil
 }
 
 // discard removes a container that failed to come up (best-effort cleanup).
@@ -259,12 +343,27 @@ func (d *Driver) discard(ctx context.Context, id string) {
 	}
 }
 
+func (d *Driver) upstreamOf(ctx context.Context, containerID string, spec *agentv1.AppSpec) (string, error) {
+	ip, err := d.client.ContainerIP(ctx, containerID, spec.GetNetwork())
+	if err != nil {
+		return "", err
+	}
+	return net.JoinHostPort(ip, strconv.Itoa(int(spec.GetPort()))), nil
+}
+
 func managedLabels(spec *agentv1.AppSpec) map[string]string {
 	return map[string]string{
 		driver.LabelManaged:    driverName,
 		driver.LabelAppID:      spec.GetAppId(),
 		driver.LabelRevisionID: spec.GetRevisionId(),
 	}
+}
+
+// networkLabels marks the network as managed without app or revision labels:
+// networks are environment-scoped (cypher-<environment_id>) and shared by
+// every app in the environment, so per-app labels would be wrong on them.
+func networkLabels() map[string]string {
+	return map[string]string{driver.LabelManaged: driverName}
 }
 
 func containerName(appID, revisionID string) string {

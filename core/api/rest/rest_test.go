@@ -54,7 +54,8 @@ func (f *fakeAuthStore) DeleteSession(_ context.Context, tokenHash []byte) error
 }
 
 type fakeServersStore struct {
-	list []domain.Server
+	list  []domain.Server
+	inUse map[string]bool // servers that still run applications (RESTRICT)
 }
 
 func (f *fakeServersStore) CreateServerWithToken(_ context.Context, serverID, name, _ string, _ []byte, _ time.Time) (domain.Server, error) {
@@ -74,7 +75,12 @@ func (f *fakeServersStore) GetServer(_ context.Context, id string) (domain.Serve
 	return domain.Server{}, store.ErrNotFound
 }
 
-func (f *fakeServersStore) DeleteServer(context.Context, string) error { return nil }
+func (f *fakeServersStore) DeleteServer(_ context.Context, id string) error {
+	if f.inUse[id] {
+		return store.ErrInUse
+	}
+	return nil
+}
 
 type noopDisconnector struct{}
 
@@ -120,6 +126,11 @@ func (f *fakeProjectsStore) DeleteProject(_ context.Context, id string) error {
 }
 
 func (f *fakeProjectsStore) CreateEnvironment(_ context.Context, id, pid, name string) (domain.Environment, error) {
+	for _, e := range f.envs[pid] {
+		if e.Name == name {
+			return domain.Environment{}, store.ErrConflict
+		}
+	}
 	e := domain.Environment{ID: id, ProjectID: pid, Name: name, CreatedAt: time.Now()}
 	f.envs[pid] = append(f.envs[pid], e)
 	return e, nil
@@ -146,6 +157,11 @@ func newFakeAppsStore() *fakeAppsStore {
 }
 
 func (f *fakeAppsStore) CreateApplicationWithEnv(_ context.Context, a domain.Application, vars []domain.EnvVar) (domain.Application, error) {
+	for _, other := range f.apps {
+		if other.EnvironmentID == a.EnvironmentID && other.Name == a.Name {
+			return domain.Application{}, store.ErrConflict
+		}
+	}
 	f.apps[a.ID] = a
 	f.env[a.ID] = vars
 	return a, nil
@@ -234,6 +250,12 @@ const (
 
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
+	ts, _ := newTestServerWithStores(t)
+	return ts
+}
+
+func newTestServerWithStores(t *testing.T) (*httptest.Server, *fakeServersStore) {
+	t.Helper()
 	hash, err := auth.HashPassword(testPassword)
 	if err != nil {
 		t.Fatalf("HashPassword: %v", err)
@@ -242,10 +264,11 @@ func newTestServer(t *testing.T) *httptest.Server {
 		user:     domain.User{ID: "usr_test", Email: testEmail, PasswordHash: hash, Role: "owner"},
 		sessions: map[string]domain.User{},
 	}
+	srvStore := &fakeServersStore{inUse: map[string]bool{}}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	api := New(Deps{
 		Auth:         auth.NewAuthenticator(authStore, auth.NewLimiter(100, time.Minute), time.Hour),
-		Servers:      servers.NewService(&fakeServersStore{}, noopDisconnector{}, 15*time.Minute, log),
+		Servers:      servers.NewService(srvStore, noopDisconnector{}, 15*time.Minute, log),
 		Projects:     projects.NewService(newFakeProjectsStore()),
 		Applications: applications.NewService(newFakeAppsStore(), testBox(t)),
 		Pinger:       okPinger{},
@@ -257,7 +280,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 	})
 	ts := httptest.NewServer(api.Handler())
 	t.Cleanup(ts.Close)
-	return ts
+	return ts, srvStore
 }
 
 func doJSON(t *testing.T, method, url, token, body string) (int, http.Header, []byte) {
@@ -617,5 +640,60 @@ func TestSecurityHeaders(t *testing.T) {
 		if got := headers.Get(header); got != want {
 			t.Errorf("%s = %q, want %q", header, got, want)
 		}
+	}
+}
+
+// Duplicate names and referenced servers are client-state conflicts, not
+// server faults: the API must answer 409 with a reason, never a generic 500.
+func TestConflictAndInUseAre409(t *testing.T) {
+	ts, srvStore := newTestServerWithStores(t)
+	token := login(t, ts)
+
+	// Duplicate environment name inside one project.
+	status, _, resp := doJSON(t, "POST", ts.URL+"/api/v1/projects", token, `{"name":"shop"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("create project: status %d", status)
+	}
+	var proj struct {
+		Project struct {
+			ID string `json:"id"`
+		} `json:"project"`
+	}
+	if err := json.Unmarshal(resp, &proj); err != nil {
+		t.Fatalf("project response: %v", err)
+	}
+	status, _, resp = doJSON(t, "POST", ts.URL+"/api/v1/projects/"+proj.Project.ID+"/environments", token, `{"name":"production"}`)
+	if status != http.StatusConflict {
+		t.Errorf("duplicate environment: status %d body %s, want 409", status, resp)
+	}
+
+	// Duplicate application name inside one environment.
+	body := `{"name":"web","source":{"kind":"github","repo":"acme/web"},` +
+		`"runtime":{"server_id":"srv_test","port":8080},"route":{"domain":"web.example.com"}}`
+	if status, _, _ = doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, body); status != http.StatusCreated {
+		t.Fatalf("create application: status %d", status)
+	}
+	status, _, resp = doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, body)
+	if status != http.StatusConflict {
+		t.Errorf("duplicate application: status %d body %s, want 409", status, resp)
+	}
+
+	// Deleting a server that still runs applications is refused with a reason.
+	status, _, resp = doJSON(t, "POST", ts.URL+"/api/v1/servers", token, `{"name":"busy"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("create server: status %d", status)
+	}
+	var created struct {
+		Server struct {
+			ID string `json:"id"`
+		} `json:"server"`
+	}
+	if err := json.Unmarshal(resp, &created); err != nil {
+		t.Fatalf("server response: %v", err)
+	}
+	srvStore.inUse[created.Server.ID] = true
+	status, _, resp = doJSON(t, "DELETE", ts.URL+"/api/v1/servers/"+created.Server.ID, token, "")
+	if status != http.StatusConflict || !strings.Contains(string(resp), "still runs applications") {
+		t.Errorf("in-use server delete: status %d body %s, want 409 with reason", status, resp)
 	}
 }

@@ -18,7 +18,7 @@ import (
 func (s *Store) CreateProject(ctx context.Context, id, name string) (domain.Project, error) {
 	row, err := s.q.CreateProject(ctx, db.CreateProjectParams{ID: id, Name: name})
 	if err != nil {
-		return domain.Project{}, fmt.Errorf("store: creating project: %w", err)
+		return domain.Project{}, wrapCreate("creating project", err)
 	}
 	return projectFromRow(row), nil
 }
@@ -63,11 +63,11 @@ func (s *Store) CreateProjectWithEnvironment(ctx context.Context, projectID, nam
 	qtx := s.q.WithTx(tx)
 	prow, err := qtx.CreateProject(ctx, db.CreateProjectParams{ID: projectID, Name: name})
 	if err != nil {
-		return domain.Project{}, domain.Environment{}, fmt.Errorf("store: creating project: %w", err)
+		return domain.Project{}, domain.Environment{}, wrapCreate("creating project", err)
 	}
 	erow, err := qtx.CreateEnvironment(ctx, db.CreateEnvironmentParams{ID: envID, ProjectID: projectID, Name: envName})
 	if err != nil {
-		return domain.Project{}, domain.Environment{}, fmt.Errorf("store: creating environment: %w", err)
+		return domain.Project{}, domain.Environment{}, wrapCreate("creating environment", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.Project{}, domain.Environment{}, fmt.Errorf("store: committing project: %w", err)
@@ -80,7 +80,7 @@ func (s *Store) CreateProjectWithEnvironment(ctx context.Context, projectID, nam
 func (s *Store) CreateEnvironment(ctx context.Context, id, projectID, name string) (domain.Environment, error) {
 	row, err := s.q.CreateEnvironment(ctx, db.CreateEnvironmentParams{ID: id, ProjectID: projectID, Name: name})
 	if err != nil {
-		return domain.Environment{}, fmt.Errorf("store: creating environment: %w", err)
+		return domain.Environment{}, wrapCreate("creating environment", err)
 	}
 	return environmentFromRow(row), nil
 }
@@ -110,7 +110,7 @@ func (s *Store) ListEnvironmentsByProject(ctx context.Context, projectID string)
 func (s *Store) CreateApplication(ctx context.Context, a domain.Application) (domain.Application, error) {
 	row, err := s.q.CreateApplication(ctx, appParams(a))
 	if err != nil {
-		return domain.Application{}, fmt.Errorf("store: creating application: %w", err)
+		return domain.Application{}, wrapCreate("creating application", err)
 	}
 	return applicationFromRow(row), nil
 }
@@ -127,7 +127,7 @@ func (s *Store) CreateApplicationWithEnv(ctx context.Context, a domain.Applicati
 	qtx := s.q.WithTx(tx)
 	row, err := qtx.CreateApplication(ctx, appParams(a))
 	if err != nil {
-		return domain.Application{}, fmt.Errorf("store: creating application: %w", err)
+		return domain.Application{}, wrapCreate("creating application", err)
 	}
 	for _, v := range envVars {
 		if err := qtx.UpsertEnvVar(ctx, db.UpsertEnvVarParams{
@@ -136,7 +136,7 @@ func (s *Store) CreateApplicationWithEnv(ctx context.Context, a domain.Applicati
 			ValueCt:       v.ValueCT,
 			ValueNonce:    v.ValueNonce,
 		}); err != nil {
-			return domain.Application{}, fmt.Errorf("store: creating env var: %w", err)
+			return domain.Application{}, wrapCreate("creating env var", err)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -241,7 +241,7 @@ func (s *Store) UpsertEnvVar(ctx context.Context, appID string, v domain.EnvVar)
 		ValueNonce:    v.ValueNonce,
 	})
 	if err != nil {
-		return fmt.Errorf("store: upserting env var: %w", err)
+		return wrapCreate("upserting env var", err)
 	}
 	return nil
 }
@@ -275,7 +275,7 @@ func (s *Store) CreateRevision(ctx context.Context, id, appID, sourceCommit stri
 		ConfigSnapshot: configSnapshot,
 	})
 	if err != nil {
-		return domain.Revision{}, fmt.Errorf("store: creating revision: %w", err)
+		return domain.Revision{}, wrapCreate("creating revision", err)
 	}
 	return revisionFromRow(row), nil
 }
@@ -319,7 +319,7 @@ func (s *Store) CreateDeployment(ctx context.Context, id, appID, revisionID, tri
 		Trigger:       trigger,
 	})
 	if err != nil {
-		return domain.Deployment{}, fmt.Errorf("store: creating deployment: %w", err)
+		return domain.Deployment{}, wrapCreate("creating deployment", err)
 	}
 	return deploymentFromRow(row), nil
 }

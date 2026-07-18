@@ -158,7 +158,7 @@ func (a *API) handleCreateApplication(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleListApplications(w http.ResponseWriter, r *http.Request) {
 	list, err := a.deps.Applications.List(r.Context(), r.PathValue("id"))
-	if errors.Is(err, store.ErrNotFound) {
+	if errors.Is(err, applications.ErrEnvironmentNotFound) {
 		writeError(w, http.StatusNotFound, "environment not found")
 		return
 	}
@@ -244,7 +244,8 @@ func (a *API) handleDeleteEnvVar(w http.ResponseWriter, r *http.Request) {
 }
 
 // writeAppError maps applications-service errors to HTTP status codes: client
-// validation to 400, missing environment to 404, missing target server to 400,
+// validation to 400, a missing environment or application to 404 (each named
+// correctly), a missing target server to 400, a duplicate name to 409, and
 // anything else to 500.
 func (a *API) writeAppError(w http.ResponseWriter, err error, genericMsg string) {
 	var ve *applications.ValidationError
@@ -253,8 +254,12 @@ func (a *API) writeAppError(w http.ResponseWriter, err error, genericMsg string)
 		writeError(w, http.StatusBadRequest, ve.Msg)
 	case errors.Is(err, applications.ErrServerNotFound):
 		writeError(w, http.StatusBadRequest, "target server not found")
-	case errors.Is(err, store.ErrNotFound):
+	case errors.Is(err, applications.ErrEnvironmentNotFound):
 		writeError(w, http.StatusNotFound, "environment not found")
+	case errors.Is(err, store.ErrNotFound):
+		writeError(w, http.StatusNotFound, "application not found")
+	case errors.Is(err, store.ErrConflict):
+		writeError(w, http.StatusConflict, "an application with that name already exists in this environment")
 	default:
 		a.deps.Log.Error("application request failed", "error", err)
 		writeError(w, http.StatusInternalServerError, genericMsg)
