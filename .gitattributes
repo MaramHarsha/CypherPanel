@@ -1,0 +1,8 @@
+# Enforce LF in the repository and at checkout, regardless of core.autocrlf.
+# .editorconfig asks editors nicely; this is the layer git itself enforces —
+# CRLF reaching the tree breaks the CI generated-code drift check and gofmt.
+* text=auto eol=lf
+
+# Defensive: never normalize binaries (none in-tree today).
+*.png binary
+*.ico binary
