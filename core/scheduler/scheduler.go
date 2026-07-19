@@ -247,33 +247,14 @@ func (s *Scheduler) start(ctx context.Context, dep domain.Deployment) error {
 		return err
 	}
 
-	// The private key is unsealed only here, at spec-build time, and travels
-	// only inside the mTLS-carried BuildWork (deploy-key-private-repos.md §4;
-	// ENGINEERING rule 23). It is never logged (rule 20).
-	var deployKeyPem string
-	if app.Source.DeployKeyID != nil {
-		dk, err := s.store.GetDeployKey(ctx, *app.Source.DeployKeyID)
-		if err != nil {
-			return fmt.Errorf("scheduler: getting deploy key: %w", err)
-		}
-		priv, err := s.opener.Open(dk.PrivateKeyCT, dk.PrivateKeyNonce)
-		if err != nil {
-			return fmt.Errorf("scheduler: unsealing deploy key: %w", err)
-		}
-		deployKeyPem = string(priv)
-	}
-
-	// The slice builds on the app's own server (ADR-008: builder = target, no
-	// distribution); a builder role split re-routes this subject later.
-	work := &agentv1.BuildWork{
-		DeploymentId:   dep.ID,
-		AppId:          app.ID,
-		RepoUrl:        app.Source.Repo,
-		CommitSha:      rev.SourceCommit,
-		DockerfilePath: app.Build.DockerfilePath,
-		BuildContext:   app.Build.Context,
-		Image:          imageTag(app.ID, rev.ID),
-		DeployKeyPem:   deployKeyPem,
+	work, err := s.buildWork(ctx, dep, app, rev)
+	if err != nil {
+		// A dangling or unopenable deploy key is a configuration error, not
+		// a transient fault: fail the deployment (promoting any queued
+		// successor) so it doesn't sit in building forever waiting for a
+		// build event that can never arrive.
+		s.fail(ctx, dep, err.Error())
+		return err
 	}
 	data, err := proto.Marshal(work)
 	if err != nil {
@@ -283,6 +264,37 @@ func (s *Scheduler) start(ctx context.Context, dep domain.Deployment) error {
 		return fmt.Errorf("scheduler: publishing build: %w", err)
 	}
 	return nil
+}
+
+// buildWork assembles one deployment's build work item. The referenced deploy
+// key is unsealed only here, at work-build time, and travels only inside the
+// mTLS-carried BuildWork (deploy-key-private-repos.md §4; ENGINEERING rule
+// 23). It is never logged (rule 20). The slice builds on the app's own server
+// (ADR-008: builder = target, no distribution); a builder role split
+// re-routes the publish subject later.
+func (s *Scheduler) buildWork(ctx context.Context, dep domain.Deployment, app domain.Application, rev domain.Revision) (*agentv1.BuildWork, error) {
+	var deployKeyPem string
+	if app.Source.DeployKeyID != nil {
+		dk, err := s.store.GetDeployKey(ctx, *app.Source.DeployKeyID)
+		if err != nil {
+			return nil, fmt.Errorf("scheduler: getting deploy key: %w", err)
+		}
+		priv, err := s.opener.Open(dk.PrivateKeyCT, dk.PrivateKeyNonce)
+		if err != nil {
+			return nil, fmt.Errorf("scheduler: unsealing deploy key: %w", err)
+		}
+		deployKeyPem = string(priv)
+	}
+	return &agentv1.BuildWork{
+		DeploymentId:   dep.ID,
+		AppId:          app.ID,
+		RepoUrl:        app.Source.Repo,
+		CommitSha:      rev.SourceCommit,
+		DockerfilePath: app.Build.DockerfilePath,
+		BuildContext:   app.Build.Context,
+		Image:          imageTag(app.ID, rev.ID),
+		DeployKeyPem:   deployKeyPem,
+	}, nil
 }
 
 // startRollout re-points desired state at the (built) revision and publishes
@@ -573,14 +585,13 @@ func (s *Scheduler) Recover(ctx context.Context) error {
 				s.log.Error("recover: loading revision", "deployment_id", dep.ID, "error", err)
 				continue
 			}
-			work := &agentv1.BuildWork{
-				DeploymentId:   dep.ID,
-				AppId:          app.ID,
-				RepoUrl:        app.Source.Repo,
-				CommitSha:      rev.SourceCommit,
-				DockerfilePath: app.Build.DockerfilePath,
-				BuildContext:   app.Build.Context,
-				Image:          imageTag(app.ID, rev.ID),
+			// Same assembly as start(): the republished work must carry the
+			// deploy-key PEM again, or a private-repo build resumed after a
+			// plane restart would clone without credentials.
+			work, err := s.buildWork(ctx, dep, app, rev)
+			if err != nil {
+				s.fail(ctx, dep, err.Error())
+				continue
 			}
 			data, merr := proto.Marshal(work)
 			if merr != nil {

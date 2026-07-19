@@ -2,9 +2,11 @@ package bus
 
 import (
 	"context"
+	"crypto/tls"
 	"io"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -45,10 +47,9 @@ func (f *fakeAuthorizer) revoke(serverID string) {
 	delete(f.enrolled, serverID)
 }
 
-// startTestBus brings up an embedded bus on a random localhost port with a
-// fresh CA, returning the bus, the CA (for minting agent certs), and the
-// mutable authorizer.
-func startTestBus(t *testing.T, enrolledIDs ...string) (*Bus, *pki.CA, *fakeAuthorizer) {
+// testTLSConfig mints a fresh CA and a localhost server certificate for an
+// embedded test bus.
+func testTLSConfig(t *testing.T) (*tls.Config, *pki.CA) {
 	t.Helper()
 	ca, err := pki.NewCA(time.Now())
 	if err != nil {
@@ -62,6 +63,15 @@ func startTestBus(t *testing.T, enrolledIDs ...string) (*Bus, *pki.CA, *fakeAuth
 	if err != nil {
 		t.Fatalf("ServerTLSConfig: %v", err)
 	}
+	return tlsCfg, ca
+}
+
+// startTestBus brings up an embedded bus on a random localhost port with a
+// fresh CA, returning the bus, the CA (for minting agent certs), and the
+// mutable authorizer.
+func startTestBus(t *testing.T, enrolledIDs ...string) (*Bus, *pki.CA, *fakeAuthorizer) {
+	t.Helper()
+	tlsCfg, ca := testTLSConfig(t)
 	authorizer := newFakeAuthorizer(enrolledIDs...)
 	b, err := Start(context.Background(), Options{
 		ListenAddr:          "127.0.0.1:0",
@@ -76,6 +86,37 @@ func startTestBus(t *testing.T, enrolledIDs ...string) (*Bus, *pki.CA, *fakeAuth
 	}
 	t.Cleanup(b.Close)
 	return b, ca, authorizer
+}
+
+// Nonsensical retention limits must refuse to boot the bus instead of
+// starting NATS with them.
+func TestStartRejectsInvalidRuntimeLogLimits(t *testing.T) {
+	tlsCfg, _ := testTLSConfig(t)
+	base := Options{
+		ListenAddr: "127.0.0.1:0",
+		TLSConfig:  tlsCfg,
+		Authorizer: newFakeAuthorizer(),
+		Log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		StoreDir:   t.TempDir(),
+	}
+
+	for name, mutate := range map[string]func(*Options){
+		"negative bytes": func(o *Options) { o.RuntimeLogsMaxBytes = -1 },
+		"negative age":   func(o *Options) { o.RuntimeLogsMaxAge = -time.Minute },
+		"store overflow": func(o *Options) { o.WorkMaxBytes = 1 << 62; o.RuntimeLogsMaxBytes = 1 << 62 },
+	} {
+		opts := base
+		mutate(&opts)
+		b, err := Start(context.Background(), opts)
+		if err == nil {
+			b.Close()
+			t.Errorf("%s: Start succeeded, want an error", name)
+			continue
+		}
+		if !strings.Contains(err.Error(), "bus:") {
+			t.Errorf("%s: err = %v, want a bus validation error", name, err)
+		}
+	}
 }
 
 // dialAgent attempts to connect to the bus as an agent holding a valid cert

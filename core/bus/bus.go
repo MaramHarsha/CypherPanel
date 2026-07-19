@@ -26,6 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"strconv"
 	"strings"
@@ -147,6 +148,19 @@ func Start(ctx context.Context, opts Options) (*Bus, error) {
 	if runtimeLogsMaxAge == 0 {
 		runtimeLogsMaxAge = 24 * time.Hour
 	}
+	// Fail fast on nonsensical retention limits (negative caps from a bad
+	// env value, or a summed store cap that overflows int64) instead of
+	// booting NATS with them — the same boot-time self-protection stance as
+	// guard.CheckDiskHeadroom.
+	if runtimeLogsMaxBytes < 0 {
+		return nil, fmt.Errorf("bus: RuntimeLogsMaxBytes must be non-negative, got %d", runtimeLogsMaxBytes)
+	}
+	if runtimeLogsMaxAge < 0 {
+		return nil, fmt.Errorf("bus: RuntimeLogsMaxAge must be non-negative, got %s", runtimeLogsMaxAge)
+	}
+	if workMaxBytes > math.MaxInt64-runtimeLogsMaxBytes {
+		return nil, fmt.Errorf("bus: WorkMaxBytes (%d) + RuntimeLogsMaxBytes (%d) overflows the JetStream store limit", workMaxBytes, runtimeLogsMaxBytes)
+	}
 	nopts := &natsserver.Options{
 		ServerName: "cypherd",
 		Host:       host,
@@ -235,9 +249,11 @@ func Start(ctx context.Context, opts Options) (*Bus, error) {
 		return nil, fmt.Errorf("bus: creating WORK stream: %w", err)
 	}
 
-	// The LOGS stream retains recent build/runtime log lines so an SSE client
+	// The LOGS stream retains recent build log lines only, so an SSE client
 	// connecting mid- (or just after) a build replays what it missed, then
 	// tails live (application-deploy.md §5: bounded retention on the plane).
+	// Runtime logs are retained separately on the file-backed RUNTIME_LOGS
+	// stream below (bounded-log-retention.md §2).
 	logsMaxAge := opts.LogsMaxAge
 	if logsMaxAge == 0 {
 		logsMaxAge = 30 * time.Minute

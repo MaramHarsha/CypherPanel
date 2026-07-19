@@ -288,6 +288,13 @@ func (fakeOpener) Open(ct, _ []byte) ([]byte, error) {
 	return []byte(strings.TrimPrefix(string(ct), "sealed:")), nil
 }
 
+// failingOpener simulates sealed data the master key cannot open.
+type failingOpener struct{}
+
+func (failingOpener) Open(_, _ []byte) ([]byte, error) {
+	return nil, errors.New("cipher: message authentication failed")
+}
+
 func newScheduler(fs *fakeStore, fb *fakeBus) *Scheduler {
 	return New(fs, fb, fakeOpener{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
@@ -350,8 +357,8 @@ func TestDeployWithDeployKeySendsUnsealedPem(t *testing.T) {
 	}
 }
 
-// A dangling deploy-key reference fails the deployment instead of silently
-// building without credentials.
+// A dangling deploy-key reference fails the deployment instead of leaving it
+// stuck in building (no work was published, so no event can ever advance it).
 func TestDeployWithMissingDeployKeyFails(t *testing.T) {
 	fs, fb := newFakeStore(), &fakeBus{}
 	app := fs.addApp("app_1", "srv_1")
@@ -360,11 +367,38 @@ func TestDeployWithMissingDeployKeyFails(t *testing.T) {
 	fs.apps["app_1"] = app
 	s := newScheduler(fs, fb)
 
-	if _, err := s.Deploy(context.Background(), "app_1", "manual", ""); !errors.Is(err, store.ErrNotFound) {
+	dep, err := s.Deploy(context.Background(), "app_1", "manual", "")
+	if !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("Deploy err = %v, want store.ErrNotFound", err)
 	}
 	if fb.count() != 0 {
 		t.Fatal("work published despite missing deploy key")
+	}
+	if got, _ := fs.GetDeployment(context.Background(), dep.ID); got.Status != domain.DeployFailed {
+		t.Fatalf("deployment status = %s, want failed", got.Status)
+	}
+}
+
+// An unsealable deploy key (e.g. sealed under a different master key) fails
+// the deployment the same way.
+func TestDeployWithUnsealableDeployKeyFails(t *testing.T) {
+	fs, fb := newFakeStore(), &fakeBus{}
+	app := fs.addApp("app_1", "srv_1")
+	keyID := "dk_1"
+	fs.deployKeys[keyID] = domain.DeployKey{ID: keyID, PrivateKeyCT: []byte("sealed:PEM"), PrivateKeyNonce: []byte("n")}
+	app.Source.DeployKeyID = &keyID
+	fs.apps["app_1"] = app
+	s := New(fs, fb, failingOpener{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	dep, err := s.Deploy(context.Background(), "app_1", "manual", "")
+	if err == nil {
+		t.Fatal("Deploy succeeded, want an unseal error")
+	}
+	if fb.count() != 0 {
+		t.Fatal("work published despite unsealable deploy key")
+	}
+	if got, _ := fs.GetDeployment(context.Background(), dep.ID); got.Status != domain.DeployFailed {
+		t.Fatalf("deployment status = %s, want failed", got.Status)
 	}
 }
 
