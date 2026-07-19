@@ -133,11 +133,21 @@ func runAgent(args []string, log *slog.Logger) error {
 	if *driver == "docker" {
 		eng := engine.New("")
 
-		appsDir := "/etc/cypherpanel/traefik/apps"
+		// The Proxy owns this host directory (routing-and-tls.md §5): fragments
+		// in <Dir>/apps, static config + acme.json alongside. It is bind-mounted
+		// into the managed Traefik container, so it must be an absolute path.
+		proxyDir := "/etc/cypherpanel/traefik"
 		if d := os.Getenv("CYPHER_TRAEFIK_DIR"); d != "" {
-			appsDir = d
+			proxyDir = d
 		}
-		prx := proxy.NewTraefikWriter(appsDir)
+		prx := proxy.New(proxy.Config{
+			Dir:          proxyDir,
+			Image:        envOr("CYPHER_PROXY_IMAGE", "traefik:v3.3"),
+			ACMEEmail:    os.Getenv("CYPHER_ACME_EMAIL"),    // empty ⇒ HTTP-only, no cert resolver
+			ACMECAServer: os.Getenv("CYPHER_ACME_CASERVER"), // empty ⇒ Let's Encrypt production
+			Engine:       eng,
+			Log:          log,
+		})
 		prb := prober.New()
 
 		bldDir := filepath.Join(*stateDir, "builds")
@@ -187,6 +197,13 @@ func defaultStateDir() string {
 		return d
 	}
 	return "/var/lib/cypher-agent"
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 func defaultHostname() string {

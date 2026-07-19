@@ -88,9 +88,15 @@ type Client interface {
 
 // Router applies (or removes) an Application's route on the local proxy, and —
 // because convergence must observe route state, not remember it — reports the
-// route currently applied. The agent/proxy Traefik writer satisfies it
+// route currently applied. The agent/proxy Traefik driver satisfies it
 // structurally (ADR-004): the fragment file on disk is the observable truth.
 type Router interface {
+	// EnsureProxy makes the node's Proxy exist and run (routing-and-tls.md).
+	// Idempotent; a converged Proxy is a no-op.
+	EnsureProxy(ctx context.Context) error
+	// AttachNetwork connects the Proxy to an environment network so it can
+	// reach that environment's upstreams. Idempotent.
+	AttachNetwork(ctx context.Context, network string) error
 	SetRoute(ctx context.Context, appID string, route *agentv1.RouteSpec, upstream string) error
 	RemoveRoute(ctx context.Context, appID string) error
 	// Route returns the upstream the app's route currently points at, or
@@ -140,6 +146,14 @@ func (d *Driver) Reconcile(ctx context.Context, desired []*agentv1.AppSpec) ([]*
 		return nil, fmt.Errorf("docker: listing managed containers: %w", err)
 	}
 
+	// Ensure the node's Proxy is up before converging apps. Routing
+	// convergence is best-effort: a Proxy hiccup must not stop container
+	// convergence (fragments persist and Traefik picks them up once it
+	// recovers), so failures are logged, not returned.
+	if err := d.router.EnsureProxy(ctx); err != nil {
+		d.log.Warn("ensuring proxy", "error", err)
+	}
+
 	byApp := make(map[string][]Container)
 	for _, c := range managed {
 		byApp[c.AppID] = append(byApp[c.AppID], c)
@@ -150,6 +164,22 @@ func (d *Driver) Reconcile(ctx context.Context, desired []*agentv1.AppSpec) ([]*
 	for _, spec := range desired {
 		desiredApps[spec.GetAppId()] = struct{}{}
 		statuses = append(statuses, d.convergeApp(ctx, spec, byApp[spec.GetAppId()]))
+	}
+
+	// Attach the Proxy to every desired environment network — after
+	// convergeApp, which creates each network via EnsureNetwork, so a
+	// brand-new app's network exists by now and the Proxy can reach its
+	// upstream. Idempotent and best-effort.
+	seenNet := make(map[string]struct{})
+	for _, spec := range desired {
+		net := spec.GetNetwork()
+		if _, ok := seenNet[net]; ok || net == "" {
+			continue
+		}
+		seenNet[net] = struct{}{}
+		if err := d.router.AttachNetwork(ctx, net); err != nil {
+			d.log.Warn("attaching proxy to network", "network", net, "error", err)
+		}
 	}
 
 	// Absence means removal: any managed app not in desired is torn down. A

@@ -12,21 +12,29 @@ import (
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
 )
 
-// TraefikWriter implements the docker.Router interface by writing Traefik file
-// provider YAML configurations.
-type TraefikWriter struct {
-	appsDir string
+// Traefik is the Proxy driver (ADR-004, docs/features/routing-and-tls.md): it
+// owns the per-node Traefik instance's configuration via the file provider —
+// static config + per-Application dynamic fragments — and ensures Traefik is
+// running (ensure.go). It implements the docker.Router seam and the proxy
+// lifecycle behind one type; nothing Traefik-shaped leaks out of this package
+// (project-structure rule 2).
+type Traefik struct {
+	cfg     Config
+	appsDir string // <Dir>/apps — where dynamic fragments live
 }
 
-// NewTraefikWriter creates a router that manages Traefik fragments in appsDir.
-func NewTraefikWriter(appsDir string) *TraefikWriter {
-	return &TraefikWriter{
-		appsDir: appsDir,
-	}
+// New constructs the Traefik proxy driver. A nil Config.Engine selects
+// fragment-only mode: fragment management still works while the Proxy
+// lifecycle (EnsureProxy / AttachNetwork) is disabled.
+func New(cfg Config) *Traefik {
+	return &Traefik{cfg: cfg, appsDir: fragmentsDir(cfg.Dir)}
 }
+
+// Name identifies the proxy driver ("traefik"; "caddy" is a later driver).
+func (t *Traefik) Name() string { return "traefik" }
 
 // SetRoute writes the Traefik fragment for an app atomically.
-func (t *TraefikWriter) SetRoute(ctx context.Context, appID string, route *agentv1.RouteSpec, upstream string) error {
+func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.RouteSpec, upstream string) error {
 	if route == nil {
 		return fmt.Errorf("route spec is nil")
 	}
@@ -122,7 +130,7 @@ func (t *TraefikWriter) SetRoute(ctx context.Context, appID string, route *agent
 }
 
 // RemoveRoute deletes the Traefik fragment for an app.
-func (t *TraefikWriter) RemoveRoute(ctx context.Context, appID string) error {
+func (t *Traefik) RemoveRoute(ctx context.Context, appID string) error {
 	if strings.Contains(appID, "..") || strings.Contains(appID, "/") || strings.Contains(appID, "\\") {
 		return fmt.Errorf("invalid appID")
 	}
@@ -138,7 +146,7 @@ func (t *TraefikWriter) RemoveRoute(ctx context.Context, appID string) error {
 }
 
 // Route returns the currently configured upstream for an app, if any.
-func (t *TraefikWriter) Route(ctx context.Context, appID string) (upstream string, ok bool, err error) {
+func (t *Traefik) Route(ctx context.Context, appID string) (upstream string, ok bool, err error) {
 	if strings.Contains(appID, "..") || strings.Contains(appID, "/") || strings.Contains(appID, "\\") {
 		return "", false, fmt.Errorf("invalid appID")
 	}
