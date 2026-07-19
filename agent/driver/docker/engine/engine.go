@@ -315,9 +315,11 @@ func (c *Client) ListManagedImages(ctx context.Context) ([]docker.Image, error) 
 }
 
 // RemoveImage deletes an image (missing removes idempotently; in-use is the
-// caller's error to log — desired-state GC retries next reconcile).
+// caller's error to log — desired-state GC retries next reconcile). The id may
+// be an image ID or a name:tag reference; the Docker API expects it literal in
+// the path (a namespaced name keeps its slashes), so it is not URL-escaped.
 func (c *Client) RemoveImage(ctx context.Context, id string) error {
-	err := c.doJSON(ctx, http.MethodDelete, "/images/"+url.PathEscape(id), nil, nil, nil)
+	err := c.doJSON(ctx, http.MethodDelete, "/images/"+id, nil, nil, nil)
 	var se *StatusError
 	if asStatus(err, &se) && se.Code == http.StatusNotFound {
 		return nil
@@ -328,9 +330,12 @@ func (c *Client) RemoveImage(ctx context.Context, id string) error {
 // ─── builder support ────────────────────────────────────────────────────────
 
 // HasImage reports whether the exact image reference exists locally — the
-// builder's idempotency check under work redelivery.
+// builder's idempotency check under work redelivery. The reference is placed
+// literally in the path: the Docker API treats the slashes of a namespaced
+// name (cypher/<app>:<rev>) as part of the name, so URL-escaping them would
+// query for an image that can never exist and always report false.
 func (c *Client) HasImage(ctx context.Context, ref string) (bool, error) {
-	err := c.doJSON(ctx, http.MethodGet, "/images/"+url.PathEscape(ref)+"/json", nil, nil, nil)
+	err := c.doJSON(ctx, http.MethodGet, "/images/"+ref+"/json", nil, nil, nil)
 	if err == nil {
 		return true, nil
 	}
