@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -113,6 +112,9 @@ func (a *API) handleGetDeployment(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toDeploymentDTO(dep))
 }
 
+// handleGetDeploymentLogs streams a deployment's build logs as SSE: retained
+// history first (a client connecting mid- or post-build replays what the
+// bounded LOGS stream still holds), then the live tail.
 func (a *API) handleGetDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 	depID := r.PathValue("id")
 	dep, err := a.deps.Deployments.GetDeployment(r.Context(), depID)
@@ -124,47 +126,12 @@ func (a *API) handleGetDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not get deployment")
 		return
 	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeError(w, http.StatusInternalServerError, "streaming unsupported")
-		return
-	}
-
 	app, err := a.deps.Applications.Get(r.Context(), dep.ApplicationID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not get application for deployment")
 		return
 	}
-
-	subject := subjects.BuildLog(app.Runtime.ServerID, depID)
-	sub, err := a.deps.NATSConn.SubscribeSync(subject)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not subscribe to logs")
-		return
-	}
-	defer func() { _ = sub.Unsubscribe() }()
-
-	// Notify client that connection is open.
-	if _, err := fmt.Fprintf(w, "event: connected\ndata: {}\n\n"); err != nil {
-		return
-	}
-	flusher.Flush()
-
-	for {
-		msg, err := sub.NextMsgWithContext(r.Context())
-		if err != nil {
-			return
-		}
-		if _, err := fmt.Fprintf(w, "data: %s\n\n", msg.Data); err != nil {
-			return
-		}
-		flusher.Flush()
-	}
+	a.streamLogSSE(w, r, subjects.BuildLog(app.Runtime.ServerID, depID))
 }
 
 // handleRollback starts a deployment that restores the revision this

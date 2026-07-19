@@ -12,8 +12,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/nats-io/nats.go"
-
 	"github.com/MaramHarsha/cypherpanel/core/applications"
 	"github.com/MaramHarsha/cypherpanel/core/auth"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
@@ -47,6 +45,13 @@ type Opener interface {
 	Open(ciphertext, nonce []byte) ([]byte, error)
 }
 
+// LogSubscriber delivers the retained history and then the live tail of one
+// log subject (consumer-defined; *bus.Bus satisfies it). handle is invoked
+// from the subscriber's goroutine until stop is called.
+type LogSubscriber interface {
+	SubscribeLogs(ctx context.Context, subject string, handle func(data []byte)) (stop func(), err error)
+}
+
 // Deps are the dependencies the API needs.
 type Deps struct {
 	Auth         *auth.Authenticator
@@ -60,7 +65,7 @@ type Deps struct {
 	CACertPEM    []byte
 	EnrollAddr   string // advertised gRPC enrollment address (host:port)
 	NATSURL      string // advertised data-plane URL
-	NATSConn     *nats.Conn
+	Logs         LogSubscriber
 	ConsoleURL   string // advertised HTTP base URL (installer + CA fetch)
 	Log          *slog.Logger
 }
