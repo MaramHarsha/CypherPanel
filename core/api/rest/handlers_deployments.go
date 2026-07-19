@@ -15,6 +15,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/scheduler"
 	"github.com/MaramHarsha/cypherpanel/core/store"
+	"github.com/MaramHarsha/cypherpanel/pkg/subjects"
 )
 
 type deploymentDTO struct {
@@ -139,8 +140,8 @@ func (a *API) handleGetDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not get application for deployment")
 		return
 	}
-	
-	subject := "logs." + app.Runtime.ServerID + ".build." + depID
+
+	subject := subjects.BuildLog(app.Runtime.ServerID, depID)
 	sub, err := a.deps.NATSConn.SubscribeSync(subject)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not subscribe to logs")

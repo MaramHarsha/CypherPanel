@@ -3,7 +3,6 @@ package stream
 import (
 	"context"
 	"encoding/binary"
-	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -12,6 +11,7 @@ import (
 	"github.com/nats-io/nats.go"
 
 	"github.com/MaramHarsha/cypherpanel/agent/driver/docker"
+	"github.com/MaramHarsha/cypherpanel/pkg/subjects"
 )
 
 // Streamer connects to the Docker engine to stream logs of running applications
@@ -92,7 +92,7 @@ func (s *Streamer) stream(ctx context.Context, appID, containerID string, handle
 		pw.CloseWithError(err)
 	}()
 
-	subject := fmt.Sprintf("logs.%s.runtime.%s", s.serverID, appID)
+	subject := subjects.RuntimeLog(s.serverID, appID)
 
 	// Demux Docker multiplexed stream (8 byte header)
 	header := make([]byte, 8)

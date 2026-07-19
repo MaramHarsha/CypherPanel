@@ -1,134 +1,313 @@
-package worker_test
+package worker
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/nats-io/nats-server/v2/server"
-	"github.com/nats-io/nats.go"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/MaramHarsha/cypherpanel/agent/worker"
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
 	"github.com/MaramHarsha/cypherpanel/pkg/subjects"
 )
 
-type fakeDriver struct {
-	mu     sync.Mutex
-	apps   []*agentv1.AppSpec
-	syncCh chan struct{}
+// The worker is exercised entirely through the Bus seam — no embedded NATS
+// server — so the agent module never depends on the NATS server. The real
+// JetStream binding (natsBus) is thin plumbing covered by the multi-node
+// integration harness.
+
+// ── fakes ─────────────────────────────────────────────────────────────────
+
+type fakeMessage struct {
+	subject  string
+	data     []byte
+	delivery uint64
+	acked    bool
+	termed   bool
+	naked    bool
+	progress int
 }
 
-func (f *fakeDriver) Name() string { return "fake" }
+func (m *fakeMessage) Subject() string                  { return m.subject }
+func (m *fakeMessage) Data() []byte                     { return m.data }
+func (m *fakeMessage) Ack() error                       { m.acked = true; return nil }
+func (m *fakeMessage) Term() error                      { m.termed = true; return nil }
+func (m *fakeMessage) NakWithDelay(time.Duration) error { m.naked = true; return nil }
+func (m *fakeMessage) InProgress() error                { m.progress++; return nil }
+func (m *fakeMessage) NumDelivered() uint64 {
+	if m.delivery == 0 {
+		return 1
+	}
+	return m.delivery
+}
 
-func (f *fakeDriver) Reconcile(ctx context.Context, desired []*agentv1.AppSpec) ([]*agentv1.AppStatus, error) {
-	f.mu.Lock()
-	f.apps = desired
-	if f.syncCh != nil {
-		select {
-		case f.syncCh <- struct{}{}:
-		default:
+type fakeBus struct {
+	mu        sync.Mutex
+	syncReply []byte
+	work      chan Message
+	published map[string][][]byte
+}
+
+func newFakeBus(reply []byte) *fakeBus {
+	return &fakeBus{
+		syncReply: reply,
+		work:      make(chan Message, 16),
+		published: map[string][][]byte{},
+	}
+}
+
+func (b *fakeBus) Request(_ context.Context, _ string, _ []byte) ([]byte, error) {
+	return b.syncReply, nil
+}
+
+func (b *fakeBus) Publish(subject string, data []byte) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	cp := make([]byte, len(data))
+	copy(cp, data)
+	b.published[subject] = append(b.published[subject], cp)
+	return nil
+}
+
+func (b *fakeBus) FetchWork(ctx context.Context) (Message, error) {
+	select {
+	case <-ctx.Done():
+		return nil, context.Canceled
+	case m := <-b.work:
+		return m, nil
+	case <-time.After(20 * time.Millisecond):
+		return nil, ErrNoWork
+	}
+}
+
+func (b *fakeBus) publishedOn(subject string) [][]byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.published[subject]
+}
+
+// recordingDriver captures the desired sets it is asked to converge and
+// returns configurable statuses.
+type recordingDriver struct {
+	mu        sync.Mutex
+	lastSet   []*agentv1.AppSpec
+	calls     int
+	stateByID map[string]string // app_id -> reported state (default "running")
+	err       error
+}
+
+func (d *recordingDriver) Name() string { return "fake" }
+
+func (d *recordingDriver) Reconcile(_ context.Context, desired []*agentv1.AppSpec) ([]*agentv1.AppStatus, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.calls++
+	d.lastSet = desired
+	if d.err != nil {
+		return nil, d.err
+	}
+	var out []*agentv1.AppStatus
+	for _, s := range desired {
+		state := "running"
+		if d.stateByID != nil {
+			if v, ok := d.stateByID[s.AppId]; ok {
+				state = v
+			}
 		}
+		out = append(out, &agentv1.AppStatus{AppId: s.AppId, RevisionId: s.RevisionId, State: state})
 	}
-	f.mu.Unlock()
-	var statuses []*agentv1.AppStatus
-	for _, app := range desired {
-		statuses = append(statuses, &agentv1.AppStatus{
-			AppId:      app.AppId,
-			RevisionId: app.RevisionId,
-			State:      "running",
-		})
-	}
-	return statuses, nil
+	return out, nil
 }
 
-func (f *fakeDriver) getApps() []*agentv1.AppSpec {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.apps
+func (d *recordingDriver) desired() []*agentv1.AppSpec {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.lastSet
 }
 
-func startServer(t *testing.T) *server.Server {
-	opts := &server.Options{
-		Host:      "127.0.0.1",
-		Port:      -1,
-		JetStream: true,
-		StoreDir:  t.TempDir(),
-	}
-	srv, err := server.NewServer(opts)
+func quietLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+func desiredStateBytes(t *testing.T, specs ...*agentv1.AppSpec) []byte {
+	t.Helper()
+	data, err := proto.Marshal(&agentv1.DesiredState{Specs: specs})
 	if err != nil {
-		t.Fatalf("NewServer: %v", err)
+		t.Fatalf("marshal desired state: %v", err)
 	}
-	go srv.Start()
-	if !srv.ReadyForConnections(5 * time.Second) {
-		t.Fatal("server not ready")
-	}
-	t.Cleanup(srv.Shutdown)
-	return srv
+	return data
 }
 
-func TestWorkerSync(t *testing.T) {
-	srv := startServer(t)
-	nc, err := nats.Connect(srv.ClientURL())
+func rolloutMsg(t *testing.T, serverID, depID string, spec *agentv1.AppSpec) *fakeMessage {
+	t.Helper()
+	data, err := proto.Marshal(&agentv1.RolloutWork{DeploymentId: depID, Spec: spec})
 	if err != nil {
-		t.Fatalf("connect: %v", err)
+		t.Fatalf("marshal rollout: %v", err)
 	}
-	defer nc.Close()
+	return &fakeMessage{subject: subjects.Rollout(serverID), data: data}
+}
 
-	// Mock the control plane sync response
-	syncSub, _ := nc.Subscribe(subjects.Sync("srv1"), func(msg *nats.Msg) {
-		ds := &agentv1.DesiredState{
-			Specs: []*agentv1.AppSpec{
-				{AppId: "app1", RevisionId: "rev1"},
-			},
-		}
-		data, _ := proto.Marshal(ds)
-		msg.Respond(data)
-	})
-	defer syncSub.Unsubscribe()
+// ── tests ─────────────────────────────────────────────────────────────────
 
-	// Create Work consumer on the server
-	js, _ := nc.JetStream()
-	_, err = js.AddStream(&nats.StreamConfig{
-		Name:     "WORK",
-		Subjects: []string{"work.*.>"},
-	})
-	if err != nil {
-		t.Fatalf("add stream: %v", err)
-	}
-	_, err = js.AddConsumer("WORK", &nats.ConsumerConfig{
-		Durable:       subjects.WorkConsumer("srv1"),
-		FilterSubject: subjects.WorkForServer("srv1"),
-	})
-	if err != nil {
-		t.Fatalf("add consumer: %v", err)
-	}
-
-	drv := &fakeDriver{syncCh: make(chan struct{}, 1)}
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	w := worker.New(nc, "srv1", drv, nil, log)
+// Sync fetches the desired set and converges it once on boot.
+func TestSyncConvergesDesiredSet(t *testing.T) {
+	bus := newFakeBus(desiredStateBytes(t, &agentv1.AppSpec{AppId: "app1", RevisionId: "rev1"}))
+	drv := &recordingDriver{}
+	w := New(bus, "srv1", drv, nil, quietLog())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	if err := w.sync(ctx); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if got := drv.desired(); len(got) != 1 || got[0].AppId != "app1" {
+		t.Fatalf("desired set = %+v, want [app1]", got)
+	}
+	if len(bus.publishedOn(subjects.AppState("srv1", "app1"))) != 1 {
+		t.Fatal("app status not published after boot convergence")
+	}
+}
 
-	// Start worker
-	go func() {
-		_ = w.Run(ctx)
-	}()
+// A rollout work item updates desired state, converges, and publishes both the
+// AppStatus and a ROLLOUT deploy event.
+func TestRolloutReconcilesAndReports(t *testing.T) {
+	bus := newFakeBus(desiredStateBytes(t))
+	drv := &recordingDriver{}
+	w := New(bus, "srv1", drv, nil, quietLog())
 
-	// Wait for sync to complete and first reconcile to be called
+	msg := rolloutMsg(t, "srv1", "dep1", &agentv1.AppSpec{AppId: "app1", RevisionId: "rev2"})
+	w.handleMsg(context.Background(), msg)
+
+	if !msg.acked {
+		t.Fatal("rollout message not acked on success")
+	}
+	if got := drv.desired(); len(got) != 1 || got[0].RevisionId != "rev2" {
+		t.Fatalf("desired = %+v, want rev2", got)
+	}
+	pub := bus.publishedOn(subjects.DeployState("srv1"))
+	if len(pub) != 1 {
+		t.Fatal("no deploy event published for rollout")
+	}
+	ev := decodeEvent(t, pub[0])
+	if ev.GetStage() != agentv1.DeployEvent_STAGE_ROLLOUT || ev.GetOutcome() != agentv1.DeployEvent_OUTCOME_SUCCEEDED {
+		t.Fatalf("event = %+v, want rollout succeeded", ev)
+	}
+}
+
+// A rollout whose app reports 'error' yields a FAILED deploy event (the plane
+// keeps the previous revision serving).
+func TestRolloutErrorReportsFailure(t *testing.T) {
+	bus := newFakeBus(desiredStateBytes(t))
+	drv := &recordingDriver{stateByID: map[string]string{"app1": "error"}}
+	w := New(bus, "srv1", drv, nil, quietLog())
+
+	msg := rolloutMsg(t, "srv1", "dep1", &agentv1.AppSpec{AppId: "app1", RevisionId: "rev2"})
+	w.handleMsg(context.Background(), msg)
+
+	ev := decodeEvent(t, bus.publishedOn(subjects.DeployState("srv1"))[0])
+	if ev.GetOutcome() != agentv1.DeployEvent_OUTCOME_FAILED {
+		t.Fatalf("outcome = %v, want failed", ev.GetOutcome())
+	}
+	if !msg.acked {
+		t.Fatal("message should be acked — a per-app failure is a handled outcome, not a redelivery")
+	}
+}
+
+// A total orchestrator failure Naks for retry until the delivery cap, then
+// Terms the poison message.
+func TestReconcileFailureNaksThenTerms(t *testing.T) {
+	bus := newFakeBus(desiredStateBytes(t))
+	drv := &recordingDriver{err: errors.New("daemon unreachable")}
+	w := New(bus, "srv1", drv, nil, quietLog())
+
+	first := rolloutMsg(t, "srv1", "dep1", &agentv1.AppSpec{AppId: "app1", RevisionId: "rev1"})
+	first.delivery = 1
+	w.handleMsg(context.Background(), first)
+	if !first.naked || first.termed {
+		t.Fatalf("first failure should Nak, not Term: %+v", first)
+	}
+
+	poison := rolloutMsg(t, "srv1", "dep1", &agentv1.AppSpec{AppId: "app1", RevisionId: "rev1"})
+	poison.delivery = maxDeliveries
+	w.handleMsg(context.Background(), poison)
+	if !poison.termed {
+		t.Fatalf("delivery %d should Term the poison message", maxDeliveries)
+	}
+}
+
+// A malformed payload is Term'd (never redelivered) and does not converge.
+func TestMalformedWorkIsTermed(t *testing.T) {
+	bus := newFakeBus(desiredStateBytes(t))
+	drv := &recordingDriver{}
+	w := New(bus, "srv1", drv, nil, quietLog())
+
+	msg := &fakeMessage{subject: subjects.Rollout("srv1"), data: []byte("not a protobuf")}
+	w.handleMsg(context.Background(), msg)
+	if !msg.termed {
+		t.Fatal("malformed work should be Term'd")
+	}
+	if drv.calls != 0 {
+		t.Fatal("malformed work must not trigger a reconcile")
+	}
+}
+
+// A remove work item drops the app from desired state and reconciles.
+func TestRemoveDropsFromDesired(t *testing.T) {
+	bus := newFakeBus(desiredStateBytes(t, &agentv1.AppSpec{AppId: "app1", RevisionId: "rev1"}))
+	drv := &recordingDriver{}
+	w := New(bus, "srv1", drv, nil, quietLog())
+	if err := w.sync(context.Background()); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	data, _ := proto.Marshal(&agentv1.RemoveWork{DeploymentId: "remove-app1", AppId: "app1"})
+	msg := &fakeMessage{subject: subjects.Remove("srv1"), data: data}
+	w.handleMsg(context.Background(), msg)
+
+	if got := drv.desired(); len(got) != 0 {
+		t.Fatalf("desired = %+v, want empty after remove", got)
+	}
+	if !msg.acked {
+		t.Fatal("remove message not acked")
+	}
+}
+
+// Run performs the boot sync then consumes a queued work item, ending on
+// context cancellation.
+func TestRunConsumesQueuedWork(t *testing.T) {
+	bus := newFakeBus(desiredStateBytes(t))
+	drv := &recordingDriver{}
+	w := New(bus, "srv1", drv, nil, quietLog())
+
+	bus.work <- rolloutMsg(t, "srv1", "dep1", &agentv1.AppSpec{AppId: "app1", RevisionId: "rev1"})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = w.Run(ctx); close(done) }()
+
+	deadline := time.After(3 * time.Second)
+	for len(drv.desired()) != 1 {
+		select {
+		case <-deadline:
+			t.Fatal("worker did not converge the queued work item")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	cancel()
 	select {
-	case <-drv.syncCh:
-	case <-time.After(5 * time.Second):
-		t.Fatal("timeout waiting for reconcile")
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after cancel")
 	}
+}
 
-	apps := drv.getApps()
-	if len(apps) != 1 || apps[0].AppId != "app1" {
-		t.Fatalf("expected 1 app, got %v", apps)
+func decodeEvent(t *testing.T, data []byte) *agentv1.DeployEvent {
+	t.Helper()
+	var ev agentv1.DeployEvent
+	if err := proto.Unmarshal(data, &ev); err != nil {
+		t.Fatalf("decode event: %v", err)
 	}
+	return &ev
 }

@@ -11,7 +11,20 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/MaramHarsha/cypherpanel/agent/driver"
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
+)
+
+// gitEnv hardens git invocations: never prompt for credentials (a private
+// repo without a key fails fast instead of hanging), and allow only the
+// transports a clone legitimately needs. The critical exclusion is the `ext`
+// transport, whose URL form (`ext::sh -c …`) runs an arbitrary command — the
+// remote-code-execution path a crafted RepoUrl would otherwise open
+// (threat-model: malicious source config). `file` stays allowed: it reads a
+// local path but cannot execute commands.
+var gitEnv = append(os.Environ(),
+	"GIT_TERMINAL_PROMPT=0",
+	"GIT_ALLOW_PROTOCOL=https:http:git:ssh:file",
 )
 
 // EngineClient is the interface needed from the docker engine client to build images.
@@ -52,22 +65,30 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 	onLog(fmt.Sprintf("Cloning repository %s at %s...", displayURL, work.CommitSha))
 
 	cmd := exec.CommandContext(ctx, "git", "clone", work.RepoUrl, buildDir)
+	cmd.Env = gitEnv
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		onLog(string(out))
 		return "", fmt.Errorf("git clone failed: %w", err)
 	}
 
-	cmd = exec.CommandContext(ctx, "git", "checkout", work.CommitSha)
-	cmd.Dir = buildDir
-	out, err = cmd.CombinedOutput()
-	if err != nil {
-		onLog(string(out))
-		return "", fmt.Errorf("git checkout failed: %w", err)
+	// Check out the requested ref (a commit SHA, or a branch name when the
+	// deploy named no explicit commit). Empty means "whatever the clone left
+	// on HEAD" — the default branch — so there is nothing to check out.
+	if ref := strings.TrimSpace(work.CommitSha); ref != "" {
+		cmd = exec.CommandContext(ctx, "git", "checkout", "--detach", ref)
+		cmd.Dir = buildDir
+		cmd.Env = gitEnv
+		out, err = cmd.CombinedOutput()
+		if err != nil {
+			onLog(string(out))
+			return "", fmt.Errorf("git checkout failed: %w", err)
+		}
 	}
 
 	cmd = exec.CommandContext(ctx, "git", "rev-parse", "HEAD")
 	cmd.Dir = buildDir
+	cmd.Env = gitEnv
 	out, err = cmd.CombinedOutput()
 	if err != nil {
 		onLog(string(out))
@@ -149,15 +170,19 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 	}()
 
 	onLog(fmt.Sprintf("Building image %s...", work.Image))
-	parts := strings.Split(work.Image, ":")
+	// The revision id is the image tag's ":<rev>" suffix (cypher/<app>:<rev>).
+	// LastIndex, not Split, so a registry host:port in the ref can't confuse it.
 	revID := ""
-	if len(parts) > 1 {
-		revID = parts[1]
+	if i := strings.LastIndex(work.Image, ":"); i >= 0 {
+		revID = work.Image[i+1:]
 	}
+	// Stamp the same management labels the driver discovers its set by, from
+	// the shared constants — a build whose labels drift would leave images the
+	// driver's GC can never reclaim (reconciler-development skill).
 	labels := map[string]string{
-		"cypherpanel.managed":     "docker",
-		"cypherpanel.app-id":      work.AppId,
-		"cypherpanel.revision-id": revID,
+		driver.LabelManaged:    "docker",
+		driver.LabelAppID:      work.AppId,
+		driver.LabelRevisionID: revID,
 	}
 
 	defer func() { _ = tarPipeR.Close() }()

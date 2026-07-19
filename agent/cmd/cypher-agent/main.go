@@ -147,7 +147,11 @@ func runAgent(args []string, log *slog.Logger) error {
 		go strm.Start(ctx, 10*time.Second)
 
 		drv := docker.New(eng, prx, prb, log)
-		w := worker.New(nc, id.ServerID, drv, bld, log)
+		wbus, err := worker.NewNATSBus(nc, id.ServerID)
+		if err != nil {
+			return err
+		}
+		w := worker.New(wbus, id.ServerID, drv, bld, log)
 		errCh := make(chan error, 1)
 		go func() {
 			if err := w.Run(ctx); err != nil {

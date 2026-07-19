@@ -1,14 +1,23 @@
+// Package worker consumes work items from the control plane, maintains the
+// local desired-application set, and drives the orchestrator reconciler to
+// converge reality — reporting only what it observes (ADR-005).
+//
+// The worker talks to the data plane through the small consumer-defined Bus
+// seam (ENGINEERING rule 6), never a concrete NATS type: the production
+// implementation (natsBus) wraps the agent's *nats.Conn and its JetStream
+// pull subscription, and tests drive the full dispatch/ack logic against a
+// fake — so the agent module never depends on the NATS *server*.
 package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/nats-io/nats.go"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/MaramHarsha/cypherpanel/agent/builder"
@@ -17,10 +26,46 @@ import (
 	"github.com/MaramHarsha/cypherpanel/pkg/subjects"
 )
 
-// Worker consumes work items from JetStream, manages the local desired state,
-// and invokes the orchestrator driver to converge reality.
+// ErrNoWork is what a Bus returns from FetchWork when the fetch deadline
+// elapsed with nothing delivered — a normal idle, not a failure.
+var ErrNoWork = errors.New("worker: no work available")
+
+// Message is one delivered work item. The worker decides its fate: Ack on
+// success, NakWithDelay to retry after a backoff, Term to drop it for good
+// (poison message). InProgress resets the redelivery timer during long work.
+type Message interface {
+	Subject() string
+	Data() []byte
+	Ack() error
+	Term() error
+	NakWithDelay(delay time.Duration) error
+	InProgress() error
+	// NumDelivered is how many times this item has been delivered (1 on the
+	// first try); it drives the poison-message cutoff.
+	NumDelivered() uint64
+}
+
+// Bus is everything the worker needs from the data-plane connection
+// (consumer-defined). natsBus is the production implementation.
+type Bus interface {
+	// Request performs a request/reply — the desired-state sync on connect.
+	Request(ctx context.Context, subject string, data []byte) ([]byte, error)
+	// Publish sends a fire-and-forget message (app statuses, deploy events,
+	// build/runtime logs).
+	Publish(subject string, data []byte) error
+	// FetchWork blocks up to an internal deadline for the next work item,
+	// returning ErrNoWork on an idle timeout so the caller can loop.
+	FetchWork(ctx context.Context) (Message, error)
+}
+
+// maxDeliveries is the poison-message cutoff: a work item that fails to
+// reconcile this many times is Term'd rather than redelivered forever.
+const maxDeliveries = 3
+
+// Worker consumes work items, manages the local desired state, and invokes the
+// orchestrator driver to converge reality.
 type Worker struct {
-	nc       *nats.Conn
+	bus      Bus
 	serverID string
 	driver   driver.Reconciler
 	builder  *builder.Builder
@@ -31,9 +76,9 @@ type Worker struct {
 }
 
 // New creates a new Worker.
-func New(nc *nats.Conn, serverID string, drv driver.Reconciler, bld *builder.Builder, log *slog.Logger) *Worker {
+func New(bus Bus, serverID string, drv driver.Reconciler, bld *builder.Builder, log *slog.Logger) *Worker {
 	return &Worker{
-		nc:       nc,
+		bus:      bus,
 		serverID: serverID,
 		driver:   drv,
 		builder:  bld,
@@ -42,26 +87,14 @@ func New(nc *nats.Conn, serverID string, drv driver.Reconciler, bld *builder.Bui
 	}
 }
 
-// Run starts the worker: it performs an initial sync to fetch the desired state,
-// reconciles it once, and then processes incoming work items in a loop.
+// Run performs an initial desired-state sync, converges once on boot, then
+// processes work items until the context is canceled.
 func (w *Worker) Run(ctx context.Context) error {
 	if err := w.sync(ctx); err != nil {
 		return fmt.Errorf("worker: initial sync failed: %w", err)
 	}
 
-	js, err := w.nc.JetStream()
-	if err != nil {
-		return fmt.Errorf("worker: getting jetstream context: %w", err)
-	}
-
-	consumerName := subjects.WorkConsumer(w.serverID)
-	// We bind to the consumer the control plane created for us.
-	sub, err := js.PullSubscribe(subjects.WorkForServer(w.serverID), consumerName, nats.Bind("WORK", consumerName))
-	if err != nil {
-		return fmt.Errorf("worker: binding to work consumer %s: %w", consumerName, err)
-	}
-
-	w.log.Info("worker consuming work items", "consumer", consumerName)
+	w.log.Info("worker consuming work items", "consumer", subjects.WorkConsumer(w.serverID))
 
 	for {
 		select {
@@ -70,27 +103,30 @@ func (w *Worker) Run(ctx context.Context) error {
 		default:
 		}
 
-		msgs, err := sub.Fetch(1, nats.MaxWait(2*time.Second))
+		msg, err := w.bus.FetchWork(ctx)
 		if err != nil {
-			if err == nats.ErrTimeout {
+			if errors.Is(err, ErrNoWork) || errors.Is(err, context.Canceled) {
 				continue
 			}
 			w.log.Error("worker: fetching work", "error", err)
-			time.Sleep(1 * time.Second) // backoff
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(time.Second): // backoff
+			}
 			continue
 		}
-
-		w.handleMsg(ctx, msgs[0])
+		w.handleMsg(ctx, msg)
 	}
 }
 
 func (w *Worker) sync(ctx context.Context) error {
-	msg, err := w.nc.Request(subjects.Sync(w.serverID), nil, 10*time.Second)
+	data, err := w.bus.Request(ctx, subjects.Sync(w.serverID), nil)
 	if err != nil {
 		return err
 	}
 	var ds agentv1.DesiredState
-	if err := proto.Unmarshal(msg.Data, &ds); err != nil {
+	if err := proto.Unmarshal(data, &ds); err != nil {
 		return fmt.Errorf("unmarshaling desired state: %w", err)
 	}
 
@@ -101,13 +137,12 @@ func (w *Worker) sync(ctx context.Context) error {
 	w.mu.Unlock()
 
 	w.log.Info("worker: initial sync complete", "apps", len(ds.Specs))
-	// Reconcile once with no trigger to converge on boot.
+	// Converge once with no trigger to reach desired state on boot.
 	for {
-		err := w.reconcile(ctx, "", "", agentv1.DeployEvent_STAGE_UNSPECIFIED, "")
-		if err == nil {
+		if err := w.reconcile(ctx, "", "", agentv1.DeployEvent_STAGE_UNSPECIFIED, ""); err == nil {
 			break
 		}
-		w.log.Error("worker: initial reconcile failed, retrying in 2s", "error", err)
+		w.log.Error("worker: initial reconcile failed, retrying in 2s")
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -117,8 +152,8 @@ func (w *Worker) sync(ctx context.Context) error {
 	return nil
 }
 
-func (w *Worker) handleMsg(ctx context.Context, msg *nats.Msg) {
-	subject := msg.Subject
+func (w *Worker) handleMsg(ctx context.Context, msg Message) {
+	subject := msg.Subject()
 	w.log.Info("worker: received work item", "subject", subject)
 
 	var deploymentID string
@@ -129,7 +164,7 @@ func (w *Worker) handleMsg(ctx context.Context, msg *nats.Msg) {
 	switch {
 	case strings.HasSuffix(subject, ".rollout"):
 		var work agentv1.RolloutWork
-		if err := proto.Unmarshal(msg.Data, &work); err != nil {
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
 			w.log.Error("worker: unmarshaling rollout work", "error", err)
 			_ = msg.Term()
 			return
@@ -149,7 +184,7 @@ func (w *Worker) handleMsg(ctx context.Context, msg *nats.Msg) {
 
 	case strings.HasSuffix(subject, ".remove"):
 		var work agentv1.RemoveWork
-		if err := proto.Unmarshal(msg.Data, &work); err != nil {
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
 			w.log.Error("worker: unmarshaling remove work", "error", err)
 			_ = msg.Term()
 			return
@@ -164,7 +199,7 @@ func (w *Worker) handleMsg(ctx context.Context, msg *nats.Msg) {
 
 	case strings.HasSuffix(subject, ".build"):
 		var work agentv1.BuildWork
-		if err := proto.Unmarshal(msg.Data, &work); err != nil {
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
 			w.log.Error("worker: unmarshaling build work", "error", err)
 			_ = msg.Term()
 			return
@@ -174,31 +209,29 @@ func (w *Worker) handleMsg(ctx context.Context, msg *nats.Msg) {
 		stage = agentv1.DeployEvent_STAGE_BUILD
 		commitSha = work.CommitSha
 
-		// Stream logs to logs.build.<deployment_id>
+		// Stream build logs to the plane; keep the message alive across a long
+		// build (msg.InProgress) so the WORK consumer's AckWait can't redeliver
+		// it and trigger a concurrent rebuild.
+		logSubject := subjects.BuildLog(w.serverID, deploymentID)
 		onLog := func(line string) {
-			if w.nc != nil {
-				subject := fmt.Sprintf("logs.%s.build.%s", w.serverID, deploymentID)
-				_ = w.nc.Publish(subject, []byte(line))
-			}
+			_ = w.bus.Publish(logSubject, []byte(line))
+			_ = msg.InProgress()
 		}
 
-		if w.builder != nil {
-			resolvedSha, err := w.builder.Build(ctx, &work, onLog)
-			if err != nil {
-				w.log.Error("worker: build failed", "error", err)
-				w.emitEvent(deploymentID, appID, stage, agentv1.DeployEvent_OUTCOME_FAILED, err.Error(), commitSha)
-				_ = msg.Ack()
-				return
-			}
-			commitSha = resolvedSha
-		} else {
+		if w.builder == nil {
 			w.log.Warn("worker: received build work but builder is nil")
 			w.emitEvent(deploymentID, appID, stage, agentv1.DeployEvent_OUTCOME_FAILED, "builder is nil", commitSha)
 			_ = msg.Ack()
 			return
 		}
-
-		w.emitEvent(deploymentID, appID, stage, agentv1.DeployEvent_OUTCOME_SUCCEEDED, "", commitSha)
+		resolvedSha, err := w.builder.Build(ctx, &work, onLog)
+		if err != nil {
+			w.log.Error("worker: build failed", "error", err)
+			w.emitEvent(deploymentID, appID, stage, agentv1.DeployEvent_OUTCOME_FAILED, err.Error(), commitSha)
+			_ = msg.Ack()
+			return
+		}
+		w.emitEvent(deploymentID, appID, stage, agentv1.DeployEvent_OUTCOME_SUCCEEDED, "", resolvedSha)
 		_ = msg.Ack()
 		return
 
@@ -213,16 +246,15 @@ func (w *Worker) handleMsg(ctx context.Context, msg *nats.Msg) {
 		if stage != agentv1.DeployEvent_STAGE_UNSPECIFIED {
 			w.emitEvent(deploymentID, appID, stage, agentv1.DeployEvent_OUTCOME_FAILED, err.Error(), commitSha)
 		}
-		meta, err := msg.Metadata()
-		if err == nil && meta.NumDelivered >= 3 {
-			w.log.Error("worker: reconcile failed persistently, terminating message", "deliveries", meta.NumDelivered)
+		if msg.NumDelivered() >= maxDeliveries {
+			w.log.Error("worker: reconcile failed persistently, terminating message", "deliveries", msg.NumDelivered())
 			_ = msg.Term()
 		} else {
 			_ = msg.NakWithDelay(5 * time.Second)
 		}
-	} else {
-		_ = msg.Ack()
+		return
 	}
+	_ = msg.Ack()
 }
 
 func (w *Worker) reconcile(ctx context.Context, triggerDeploymentID, triggerAppID string, stage agentv1.DeployEvent_Stage, commitSha string) error {
@@ -235,28 +267,28 @@ func (w *Worker) reconcile(ctx context.Context, triggerDeploymentID, triggerAppI
 
 	statuses, err := w.driver.Reconcile(ctx, desired)
 	if err != nil {
-		return err // Total orchestrator failure
+		return err // total orchestrator failure
 	}
 
-	// Publish observed statuses
+	// Publish observed statuses (ADR-005: the plane asserts outcomes only from
+	// these observations).
 	for _, status := range statuses {
 		data, err := proto.Marshal(status)
 		if err != nil {
 			w.log.Error("worker: marshaling app status", "error", err)
 			continue
 		}
-		if err := w.nc.Publish(subjects.AppState(w.serverID, status.AppId), data); err != nil {
+		if err := w.bus.Publish(subjects.AppState(w.serverID, status.AppId), data); err != nil {
 			w.log.Error("worker: publishing app status", "app_id", status.AppId, "error", err)
 		}
 	}
 
-	// Publish outcome event for the triggered deployment, if any
+	// Publish the terminal outcome for the triggering work item, if any. A
+	// failed rollout or teardown surfaces as the triggered app's 'error'
+	// AppStatus; anything else is success.
 	if stage != agentv1.DeployEvent_STAGE_UNSPECIFIED {
 		outcome := agentv1.DeployEvent_OUTCOME_SUCCEEDED
 		var detail string
-
-		// If a rollout failed, the AppStatus for it will be 'error'.
-		// A failed teardown (remove) also reports 'error'.
 		for _, st := range statuses {
 			if st.AppId == triggerAppID {
 				if st.State == "error" {
@@ -266,7 +298,6 @@ func (w *Worker) reconcile(ctx context.Context, triggerDeploymentID, triggerAppI
 				break
 			}
 		}
-
 		w.emitEvent(triggerDeploymentID, triggerAppID, stage, outcome, detail, commitSha)
 	}
 
@@ -287,7 +318,7 @@ func (w *Worker) emitEvent(deploymentID, appID string, stage agentv1.DeployEvent
 		w.log.Error("worker: marshaling deploy event", "error", err)
 		return
 	}
-	if err := w.nc.Publish(subjects.DeployState(w.serverID), data); err != nil {
+	if err := w.bus.Publish(subjects.DeployState(w.serverID), data); err != nil {
 		w.log.Error("worker: publishing deploy event", "deployment_id", deploymentID, "error", err)
 	}
 }

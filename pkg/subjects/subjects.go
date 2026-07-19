@@ -54,6 +54,19 @@ func LogsForServer(serverID string) string {
 	return LogsPrefix + serverID + ".>"
 }
 
+// BuildLog is where a builder-role agent streams one deployment's build logs,
+// and where the plane's build-log SSE endpoint subscribes. Both sides MUST
+// construct it here (rule 14) so they can never drift apart.
+func BuildLog(serverID, deploymentID string) string {
+	return LogsPrefix + serverID + ".build." + deploymentID
+}
+
+// RuntimeLog is where an agent streams one application's runtime logs, and
+// where the plane's runtime-log SSE endpoint subscribes.
+func RuntimeLog(serverID, appID string) string {
+	return LogsPrefix + serverID + ".runtime." + appID
+}
+
 // Rollout, Remove and Build are the work-item subjects for one server. The
 // agent routes on the suffix; the payloads are the work.proto messages.
 func Rollout(serverID string) string { return WorkPrefix + serverID + ".rollout" }

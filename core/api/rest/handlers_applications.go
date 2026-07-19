@@ -9,6 +9,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/applications"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/store"
+	"github.com/MaramHarsha/cypherpanel/pkg/subjects"
 )
 
 // ─── DTOs (secrets always masked — ENGINEERING rule 20) ─────────────────────
@@ -219,7 +220,7 @@ func (a *API) handleGetApplicationLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	subject := "logs." + app.Runtime.ServerID + ".runtime." + appID
+	subject := subjects.RuntimeLog(app.Runtime.ServerID, appID)
 	sub, err := a.deps.NATSConn.SubscribeSync(subject)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not subscribe to logs")

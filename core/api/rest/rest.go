@@ -211,6 +211,16 @@ func (w *statusWriter) WriteHeader(code int) {
 	w.ResponseWriter.WriteHeader(code)
 }
 
+// Flush forwards to the underlying writer so the SSE log endpoints can stream:
+// embedding http.ResponseWriter does not promote Flush (it is not part of that
+// interface), so without this the http.Flusher assertion in a streaming
+// handler would fail and event streaming would be silently unavailable.
+func (w *statusWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // ─── helpers ────────────────────────────────────────────────────────────────
 
 func userFromContext(ctx context.Context) (domain.User, bool) {

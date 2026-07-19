@@ -16,22 +16,26 @@ cypherpanel/
 ├── core/                        # ── control plane (single binary: cypherd) ──
 │   ├── cmd/cypherd/             # main: wiring + run loop, serves API + embedded NATS
 │   ├── api/
-│   │   ├── rest/                # HTTP handlers, middleware; OpenAPI spec (planned)
+│   │   ├── rest/                # HTTP handlers, middleware, OpenAPI spec, SSE log streams
 │   │   │   └── console/         # interim Phase 1 console (replaced by web/ in Phase 4)
 │   │   └── grpc/                # agent-facing services (proto in /proto)
 │   ├── auth/                    # sessions, token hashing; OIDC/RBAC (planned)
 │   ├── config/                  # fail-closed env config for cypherd
-│   ├── domain/                  # resource model (Phase 1: Server, User, JoinToken)
-│   │   └── reconcile/           # (planned, Phase 2) desired-vs-observed diffing
+│   ├── domain/                  # resource model (Server, User, JoinToken; Phase 2:
+│   │                            #   Project, Environment, Application, Revision, Deployment)
 │   ├── enroll/                  # agent-facing enrollment: join token → signed cert
 │   ├── guard/                   # boot-time safety checks (disk headroom, threat-model §5.9)
 │   ├── identity/                # plane CA lifecycle: create, seal, load
 │   ├── secret/                  # AES-256-GCM sealing with the master key
 │   ├── servers/                 # operator-facing server lifecycle
+│   ├── projects/               # operator-facing project/environment lifecycle (Phase 2)
+│   ├── applications/           # application lifecycle: config, sealed env, webhook secret (Phase 2)
 │   ├── status/                  # heartbeat consumption, liveness → status transitions
-│   ├── scheduler/               # (planned, Phase 2) queue producers, cron, retry policy
+│   ├── scheduler/               # deploy pipeline: work-item producers, deployment state
+│   │                            #   machine, observed-outcome assertion (Phase 2)
 │   ├── store/                   # Postgres access (sqlc: db/, queries/), migrations/
-│   ├── bus/                     # embedded NATS: mTLS, per-agent authorization, revocation
+│   ├── bus/                     # embedded NATS: mTLS, per-agent authz, revocation;
+│   │                            #   memory STATE + file-backed WORK streams (Phase 2)
 │   └── notify/                  # (planned, Phase 3+) email, Discord, Telegram, webhooks
 │
 ├── agent/                       # ── data plane (single binary: cypher-agent) ──
@@ -39,13 +43,18 @@ cypherpanel/
 │   ├── conn/                    # dial-home mTLS connection with reconnect
 │   ├── identity/                # join-token enrollment, on-disk key/cert storage
 │   ├── heartbeat/               # periodic status publishing
+│   ├── worker/                  # work-item consumer + reconcile loop; the Bus seam
+│   │                            #   over nats.go, desired-state sync on connect (Phase 2)
 │   ├── driver/                  # orchestrator drivers (the modularity seam)
-│   │   ├── docker/              # (in progress, Phase 2) standalone Docker reconciler
+│   │   ├── docker/              # standalone Docker reconciler (Phase 2)
+│   │   │   ├── engine/          # Docker Engine API client (unix socket, no SDK)
+│   │   │   └── prober/          # HTTP health prober gating rollout
 │   │   ├── swarm/               # (planned, V1.x — ADR-006) Swarm reconciler
 │   │   └── driver.go            # common Reconciler interface + management labels
-│   ├── proxy/                   # (planned, Phase 2) Traefik dynamic-config writer
-│   ├── builder/                 # (planned, Phase 2) BuildKit / Railpack / Compose
-│   ├── stream/                  # (planned, Phase 2) log tailing, metrics, events
+│   ├── proxy/                   # Traefik file-provider fragment writer (Phase 2, ADR-004)
+│   ├── builder/                 # git clone + Dockerfile image build (Phase 2; Railpack/
+│   │                            #   Nixpacks/Compose are later matrix rows)
+│   ├── stream/                  # container log tailing → logs.* (Phase 2)
 │   └── exec/                    # (planned, Phase 3+) terminal session bridging
 │
 ├── proto/                       # gRPC/protobuf contracts shared by core & agent (buf-managed)

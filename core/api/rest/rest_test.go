@@ -918,3 +918,25 @@ func TestGitHubWebhook(t *testing.T) {
 		t.Errorf("unknown webhook: %d, want 404", res.StatusCode)
 	}
 }
+
+// The middleware wraps the ResponseWriter; that wrapper must still expose
+// http.Flusher, or the SSE log endpoints silently fall back to "streaming
+// unsupported". This guards the fix at the middleware layer directly.
+func TestResponseWriterSupportsFlush(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	api := New(Deps{Log: log})
+
+	sawFlusher := make(chan bool, 1)
+	handler := api.logRequests(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, ok := w.(http.Flusher)
+		sawFlusher <- ok
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	if !<-sawFlusher {
+		t.Fatal("wrapped ResponseWriter does not expose http.Flusher; SSE streaming would be unavailable")
+	}
+}
