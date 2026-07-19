@@ -2,12 +2,14 @@ package rest
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/MaramHarsha/cypherpanel/core/applications"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/store"
+	"github.com/MaramHarsha/cypherpanel/pkg/subjects"
 )
 
 // ─── DTOs (secrets always masked — ENGINEERING rule 20) ─────────────────────
@@ -194,6 +196,54 @@ func (a *API) handleGetApplication(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toApplicationDTO(app))
+}
+
+func (a *API) handleGetApplicationLogs(w http.ResponseWriter, r *http.Request) {
+	appID := r.PathValue("id")
+	app, err := a.deps.Applications.Get(r.Context(), appID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "application not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not get application")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+
+	subject := subjects.RuntimeLog(app.Runtime.ServerID, appID)
+	sub, err := a.deps.NATSConn.SubscribeSync(subject)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not subscribe to logs")
+		return
+	}
+	defer func() { _ = sub.Unsubscribe() }()
+
+	// Notify client that connection is open.
+	if _, err := fmt.Fprintf(w, "event: connected\ndata: {}\n\n"); err != nil {
+		return
+	}
+	flusher.Flush()
+
+	for {
+		msg, err := sub.NextMsgWithContext(r.Context())
+		if err != nil {
+			return
+		}
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", msg.Data); err != nil {
+			return
+		}
+		flusher.Flush()
+	}
 }
 
 // patchApplicationRequest mirrors createApplicationRequest with every section

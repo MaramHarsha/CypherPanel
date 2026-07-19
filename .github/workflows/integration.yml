@@ -232,3 +232,148 @@ jobs:
         env:
           CYPHERD_TEST_DATABASE_URL: postgres://postgres:ci-password@127.0.0.1:5433/cypher_store_test?sslmode=disable
         run: cd core && go test ./store/ -run TestStore -v
+
+  # Phase 2 acceptance (docs/roadmap.md, docs/features/application-deploy.md):
+  # a real agent clones a repo, builds an image, health-gates a rollout, and
+  # the container actually serves — then a rollback re-ships the revision with
+  # the build skipped. The agent runs on the host (not a scratch container) so
+  # it has the Docker daemon and git a build needs, and can reach the app
+  # container's bridge IP to health-probe it. Real Traefik + Let's Encrypt
+  # routing is out of CI scope; success is asserted from observed state.
+  deploy:
+    name: Deploy slice (build → rollout → serving → rollback)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: ci-password
+          POSTGRES_DB: cypher
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: "**/go.sum"
+
+      - name: Build binaries
+        run: |
+          mkdir -p bin
+          (cd core && go build -o ../bin/cypherd ./cmd/cypherd)
+          (cd agent && CGO_ENABLED=0 go build -o ../bin/cypher-agent ./cmd/cypher-agent)
+
+      - name: Boot cypherd
+        run: |
+          export CYPHERD_MASTER_KEY=$(head -c32 /dev/urandom | base64)
+          nohup ./bin/cypherd > cypherd.log 2>&1 &
+          echo $! > cypherd.pid
+          echo "CYPHERD_MASTER_KEY=$CYPHERD_MASTER_KEY" >> "$GITHUB_ENV"
+          for i in $(seq 1 60); do curl -sf "$API/readyz" >/dev/null && exit 0; sleep 1; done
+          echo "cypherd never became ready"; cat cypherd.log; exit 1
+
+      - name: Create server and join token
+        run: |
+          TOKEN=$(curl -sf -X POST "$API/api/v1/auth/login" -H 'Content-Type: application/json' \
+            -d "{\"email\":\"$CYPHERD_ADMIN_EMAIL\",\"password\":\"$CYPHERD_ADMIN_PASSWORD\"}" | jq -r .token)
+          CREATE=$(curl -sf -X POST "$API/api/v1/servers" -H "Authorization: Bearer $TOKEN" \
+            -H 'Content-Type: application/json' -d '{"name":"ci-deployer"}')
+          echo "SESSION=$TOKEN" >> "$GITHUB_ENV"
+          echo "SRV=$(echo "$CREATE" | jq -r .server.id)" >> "$GITHUB_ENV"
+          echo "JOIN=$(echo "$CREATE" | jq -r .join.token)" >> "$GITHUB_ENV"
+          curl -sf "$API/api/v1/ca.pem" -o ca.pem
+
+      - name: Prepare a source repo (Dockerfile → tiny HTTP server on :8080)
+        run: |
+          SRC="$RUNNER_TEMP/app-src"
+          mkdir -p "$SRC"
+          cat > "$SRC/Dockerfile" <<'DOCKER'
+          FROM busybox:stable
+          RUN mkdir -p /www && printf 'cypherpanel-e2e-ok' > /www/index.html
+          EXPOSE 8080
+          CMD ["httpd","-f","-p","8080","-h","/www"]
+          DOCKER
+          git -C "$SRC" init -q -b main
+          git -C "$SRC" config user.email ci@example.com
+          git -C "$SRC" config user.name CI
+          git -C "$SRC" add -A
+          git -C "$SRC" commit -qm initial
+          echo "SRC=$SRC" >> "$GITHUB_ENV"
+
+      - name: Enroll and run the agent on the host (real Docker + git)
+        run: |
+          mkdir -p agent-state traefik
+          ./bin/cypher-agent enroll --plane localhost:8443 --token "$JOIN" \
+            --ca-file ca.pem --state-dir agent-state --hostname ci-host
+          CYPHER_TRAEFIK_DIR="$PWD/traefik" \
+            nohup ./bin/cypher-agent run --state-dir agent-state --heartbeat 2s > agent.log 2>&1 &
+          echo $! > agent.pid
+          for i in $(seq 1 30); do
+            S=$(curl -sf "$API/api/v1/servers/$SRV" -H "Authorization: Bearer $SESSION" | jq -r .status)
+            [ "$S" = "running" ] && exit 0; sleep 1
+          done
+          echo "agent never reached running (last: $S)"; cat agent.log cypherd.log; exit 1
+
+      - name: Create project, environment, application
+        run: |
+          EID=$(curl -sf -X POST "$API/api/v1/projects" -H "Authorization: Bearer $SESSION" \
+            -H 'Content-Type: application/json' -d '{"name":"e2e"}' | jq -r .default_environment.id)
+          BODY=$(jq -nc --arg srv "$SRV" --arg repo "$SRC" \
+            '{name:"web",source:{kind:"git_url",repo:$repo},runtime:{server_id:$srv,port:8080},route:{domain:"e2e.example.com"},health:{interval_seconds:2,timeout_seconds:2,retries:10}}')
+          APP=$(curl -sf -X POST "$API/api/v1/environments/$EID/applications" \
+            -H "Authorization: Bearer $SESSION" -H 'Content-Type: application/json' -d "$BODY" | jq -r .application.id)
+          echo "APP=$APP" >> "$GITHUB_ENV"
+
+      - name: "Deploy: build → rollout; assert the deployment succeeds"
+        run: |
+          DEP=$(curl -sf -X POST "$API/api/v1/applications/$APP/deploy" \
+            -H "Authorization: Bearer $SESSION" -d '{}' | jq -r .id)
+          echo "DEP=$DEP" >> "$GITHUB_ENV"
+          for i in $(seq 1 90); do
+            ST=$(curl -sf "$API/api/v1/deployments/$DEP" -H "Authorization: Bearer $SESSION" | jq -r .status)
+            case "$ST" in
+              succeeded) echo "deployed in ~$((i*2))s"; exit 0 ;;
+              failed) echo "deployment reported failed"; break ;;
+            esac
+            sleep 2
+          done
+          echo "deployment did not succeed (last: $ST)"
+          curl -sf "$API/api/v1/deployments/$DEP" -H "Authorization: Bearer $SESSION" || true
+          cat agent.log cypherd.log; docker ps -a; exit 1
+
+      - name: "Assert: app observed running and the container actually serves"
+        run: |
+          ST=$(curl -sf "$API/api/v1/applications/$APP" -H "Authorization: Bearer $SESSION" | jq -r .status)
+          [ "$ST" = "running" ] || { echo "app status = $ST, want running"; cat agent.log; exit 1; }
+          CID=$(docker ps -q --filter "label=cypherpanel.app-id=$APP")
+          [ -n "$CID" ] || { echo "no managed container for $APP"; docker ps -a; exit 1; }
+          IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$CID")
+          BODY=$(curl -sf "http://$IP:8080/")
+          [ "$BODY" = "cypherpanel-e2e-ok" ] || { echo "served body = '$BODY', want cypherpanel-e2e-ok"; exit 1; }
+          echo "container $CID serving cypherpanel-e2e-ok at $IP:8080"
+
+      - name: "Rollback: re-ship the same revision with the build skipped"
+        run: |
+          RB=$(curl -sf -X POST "$API/api/v1/deployments/$DEP/rollback" \
+            -H "Authorization: Bearer $SESSION" | jq -r .id)
+          [ "$RB" != "null" ] && [ -n "$RB" ] || { echo "rollback did not start"; exit 1; }
+          for i in $(seq 1 45); do
+            ST=$(curl -sf "$API/api/v1/deployments/$RB" -H "Authorization: Bearer $SESSION" | jq -r .status)
+            [ "$ST" = "succeeded" ] && { echo "rollback succeeded without a rebuild"; exit 0; }
+            [ "$ST" = "failed" ] && break
+            sleep 2
+          done
+          echo "rollback did not succeed (last: $ST)"; cat agent.log; exit 1
+
+      - name: Logs on failure
+        if: failure()
+        run: |
+          echo "── cypherd ──"; cat cypherd.log 2>/dev/null || true
+          echo "── agent ──";   cat agent.log 2>/dev/null || true
+          echo "── docker ──";  docker ps -a || true

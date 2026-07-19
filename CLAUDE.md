@@ -2,7 +2,7 @@
 
 Self-hosted PaaS unifying the best of Coolify and Dokploy on a desired-state, agent-based architecture. Go control plane (`cypherd`) + Go agent (`cypher-agent`) + PostgreSQL; React UI embedded as static assets.
 
-**Current status:** Phase 1 (control-plane ↔ agent handshake) complete — see the evidence note in `docs/roadmap.md`. Phase 2 (deploy vertical slice) is next; it is gated on ADR-006 (Swarm) and ADR-008 (registry), and every Phase 2 feature needs its `docs/features/` spec written first.
+**Current status:** Phase 1 (control-plane ↔ agent handshake) complete — see the evidence note in `docs/roadmap.md`. Phase 2 (deploy vertical slice) is in progress against `docs/features/application-deploy.md`: the plane pipeline (scheduler, file-backed WORK stream, deploy/rollback/webhook + SSE-log API) and the agent runtime (docker driver + Engine API client, health prober, Traefik writer, builder, log streaming) are built; ADR-006 (docker-only launch) and ADR-008 (no registry) are decided. Remaining before the phase closes: end-to-end runtime proof against a real Docker daemon and the Phase 2 integration-CI job. Every Phase 2 feature still needs its `docs/features/` spec written first.
 
 ## Hard rules
 

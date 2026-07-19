@@ -13,6 +13,7 @@ package docker
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"strconv"
@@ -79,6 +80,7 @@ type Client interface {
 	RemoveContainer(ctx context.Context, id string) error
 	// ContainerIP returns the container's address on the given network.
 	ContainerIP(ctx context.Context, id, network string) (string, error)
+	StreamLogs(ctx context.Context, id string, out io.Writer) error
 	// ListManagedImages returns every image carrying this driver's managed label.
 	ListManagedImages(ctx context.Context) ([]Image, error)
 	RemoveImage(ctx context.Context, id string) error

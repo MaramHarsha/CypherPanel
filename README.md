@@ -2,7 +2,7 @@
 
 A self-hosted PaaS that unifies the best of **Coolify** (breadth: 361 one-click templates, 8 database engines) and **Dokploy** (polish: rollbacks, volume backups, clean data model) on an architecture neither has: a lightweight Go control plane commanding dial-home agents — **no SSH keys stored, no builds on the panel, desired-state reconciliation throughout.**
 
-> **Status: Phase 1 complete — the control-plane ↔ agent handshake works end to end.** `cypherd` (embedded NATS bus with per-agent mTLS authorization, CA + enrollment, servers API, `curl | sh` installer, interim console) and `cypher-agent` (enroll, dial home, heartbeat, exit-on-revocation) are live, with the handshake, outage reconvergence, revocation, and the 60-second join gate asserted by CI on every push. Next: Phase 2, the deploy vertical slice — see [docs/roadmap.md](docs/roadmap.md).
+> **Status: Phase 2 (deploy vertical slice) in progress.** Phase 1 — the control-plane ↔ agent handshake — is complete: `cypherd` (embedded NATS bus with per-agent mTLS authorization, CA + enrollment, servers API, `curl | sh` installer, interim console) and `cypher-agent` (enroll, dial home, heartbeat, exit-on-revocation) are live, with the handshake, outage reconvergence, revocation, and the 60-second join gate asserted by CI on every push. Phase 2 builds on it: projects/environments/applications with sealed secrets, a desired-state deploy pipeline (scheduler → durable work items → docker driver rollout → Traefik route), git-to-image builds, rollback, GitHub webhooks, and live log streaming — see [docs/features/application-deploy.md](docs/features/application-deploy.md) and [docs/roadmap.md](docs/roadmap.md).
 
 ## Why another PaaS?
 
