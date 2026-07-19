@@ -84,7 +84,7 @@ Status changes stream over the existing SSE channel; deployments are listable wi
 ## 5. Agent-side contracts
 
 - `agent/driver/driver.go` — the Reconciler interface (THE seam, ADR-006): `Reconcile(ctx, desired []AppSpec) (observed []AppStatus, err)`. Server-level draining (evacuating a host) is a scale-out concern, not part of the slice. Written against the desired-state schema; nothing Docker-shaped leaks out of `driver/docker/`.
-- `agent/proxy/` — Traefik fragment writer behind its own driver interface (Caddy later).
+- `agent/proxy/` — the Traefik Proxy behind its own driver interface (Caddy later). Fragment writing exists; the Proxy lifecycle, upstream networking, and Let's Encrypt are specified in [routing-and-tls.md](routing-and-tls.md).
 - `agent/builder/` — enabled by `--role=builder`; BuildKit via the Docker daemon for the slice (Railpack/Nixpacks are separate matrix rows, not the slice).
 - `agent/stream/` — log tailing (`docker logs --follow`) → `logs.runtime.<app_id>`; build logs from the builder → `logs.build.<deployment_id>`. Bounded retention on the plane (JetStream limits), drains later (matrix V1.x).
 - The `reconciler-development` skill (`.claude/skills/`) is written alongside the driver interface — the carried-over Phase 1 deliverable.
