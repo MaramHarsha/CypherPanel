@@ -26,6 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"strconv"
 	"strings"
@@ -42,6 +43,7 @@ const (
 	streamState        = "STATE"
 	streamWork         = "WORK"
 	streamLogs         = "LOGS"
+	streamRuntimeLogs  = "RUNTIME_LOGS"
 	planeUser          = "cypherd-control-plane"
 	heartbeatDurable   = "plane-heartbeats"
 	deployEventDurable = "plane-deploy-events"
@@ -82,15 +84,23 @@ type Options struct {
 	WorkMaxAge time.Duration
 	// WorkMaxBytes caps the file-backed WORK stream; defaults to 256 MiB.
 	WorkMaxBytes int64
-	// LogsMaxAge bounds how long build/runtime log lines are retained for
-	// SSE replay; defaults to 30 minutes. Memory-backed like STATE — bounded
-	// retention without disk churn (threat-model §5.9, §8 req 9); persistent
-	// log retention is a Phase 4 concern (roadmap).
+	// LogsMaxAge bounds how long build log lines are retained for SSE
+	// replay; defaults to 30 minutes. Memory-backed like STATE — bounded
+	// retention without disk churn (threat-model §5.9, §8 req 9). Runtime
+	// logs live on the file-backed RUNTIME_LOGS stream instead
+	// (bounded-log-retention.md §2).
 	LogsMaxAge time.Duration
 	// LogsMaxBytes caps the LOGS stream's memory; defaults to 64 MiB.
 	LogsMaxBytes int64
-	// StoreDir is where JetStream keeps the file-backed WORK stream.
-	// Defaults to the NATS default when empty (tests); production sets it.
+	// RuntimeLogsMaxAge bounds how long runtime log lines are retained on
+	// disk (bounded-log-retention.md §2); defaults to 24 hours.
+	RuntimeLogsMaxAge time.Duration
+	// RuntimeLogsMaxBytes caps the file-backed RUNTIME_LOGS stream;
+	// defaults to 512 MiB.
+	RuntimeLogsMaxBytes int64
+	// StoreDir is where JetStream keeps the file-backed WORK and
+	// RUNTIME_LOGS streams. Defaults to the NATS default when empty
+	// (tests); production sets it.
 	StoreDir string
 }
 
@@ -130,6 +140,27 @@ func Start(ctx context.Context, opts Options) (*Bus, error) {
 	if logsMaxBytes == 0 {
 		logsMaxBytes = 64 << 20
 	}
+	runtimeLogsMaxBytes := opts.RuntimeLogsMaxBytes
+	if runtimeLogsMaxBytes == 0 {
+		runtimeLogsMaxBytes = 512 << 20
+	}
+	runtimeLogsMaxAge := opts.RuntimeLogsMaxAge
+	if runtimeLogsMaxAge == 0 {
+		runtimeLogsMaxAge = 24 * time.Hour
+	}
+	// Fail fast on nonsensical retention limits (negative caps from a bad
+	// env value, or a summed store cap that overflows int64) instead of
+	// booting NATS with them — the same boot-time self-protection stance as
+	// guard.CheckDiskHeadroom.
+	if runtimeLogsMaxBytes < 0 {
+		return nil, fmt.Errorf("bus: RuntimeLogsMaxBytes must be non-negative, got %d", runtimeLogsMaxBytes)
+	}
+	if runtimeLogsMaxAge < 0 {
+		return nil, fmt.Errorf("bus: RuntimeLogsMaxAge must be non-negative, got %s", runtimeLogsMaxAge)
+	}
+	if workMaxBytes > math.MaxInt64-runtimeLogsMaxBytes {
+		return nil, fmt.Errorf("bus: WorkMaxBytes (%d) + RuntimeLogsMaxBytes (%d) overflows the JetStream store limit", workMaxBytes, runtimeLogsMaxBytes)
+	}
 	nopts := &natsserver.Options{
 		ServerName: "cypherd",
 		Host:       host,
@@ -139,7 +170,7 @@ func Start(ctx context.Context, opts Options) (*Bus, error) {
 		// STATE (maxMem) plus LOGS (logsMaxBytes) — a cap below their summed
 		// MaxBytes makes stream creation fail with "insufficient memory".
 		JetStreamMaxMemory:         maxMem + logsMaxBytes,
-		JetStreamMaxStore:          workMaxBytes, // file storage backs WORK only
+		JetStreamMaxStore:          workMaxBytes + runtimeLogsMaxBytes, // file storage backs WORK and RUNTIME_LOGS
 		StoreDir:                   opts.StoreDir,
 		NoLog:                      true,
 		NoSigs:                     true,
@@ -218,16 +249,18 @@ func Start(ctx context.Context, opts Options) (*Bus, error) {
 		return nil, fmt.Errorf("bus: creating WORK stream: %w", err)
 	}
 
-	// The LOGS stream retains recent build/runtime log lines so an SSE client
+	// The LOGS stream retains recent build log lines only, so an SSE client
 	// connecting mid- (or just after) a build replays what it missed, then
 	// tails live (application-deploy.md §5: bounded retention on the plane).
+	// Runtime logs are retained separately on the file-backed RUNTIME_LOGS
+	// stream below (bounded-log-retention.md §2).
 	logsMaxAge := opts.LogsMaxAge
 	if logsMaxAge == 0 {
 		logsMaxAge = 30 * time.Minute
 	}
 	if _, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
 		Name:      streamLogs,
-		Subjects:  []string{subjects.LogsPrefix + ">"},
+		Subjects:  []string{subjects.BuildLogAll},
 		Storage:   jetstream.MemoryStorage,
 		Retention: jetstream.LimitsPolicy,
 		Discard:   jetstream.DiscardOld,
@@ -239,15 +272,40 @@ func Start(ctx context.Context, opts Options) (*Bus, error) {
 		return nil, fmt.Errorf("bus: creating LOGS stream: %w", err)
 	}
 
+	if _, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
+		Name:      streamRuntimeLogs,
+		Subjects:  []string{subjects.RuntimeLogAll},
+		Storage:   jetstream.FileStorage,
+		Retention: jetstream.LimitsPolicy,
+		Discard:   jetstream.DiscardOld,
+		MaxAge:    runtimeLogsMaxAge,
+		MaxBytes:  runtimeLogsMaxBytes,
+	}); err != nil {
+		nc.Close()
+		ns.Shutdown()
+		return nil, fmt.Errorf("bus: creating RUNTIME_LOGS stream: %w", err)
+	}
+
 	return &Bus{ns: ns, nc: nc, js: js}, nil
 }
 
-// SubscribeLogs delivers the retained history of one log subject and then its
-// live tail to handle, until stop is called. Backed by an ephemeral ordered
-// consumer on the LOGS stream, so each SSE client gets its own cursor and
-// nothing is retained on its behalf after stop.
+// SubscribeLogs delivers the retained history of one build-log subject and
+// then its live tail to handle, until stop is called. Backed by an ephemeral
+// ordered consumer on the LOGS stream, so each SSE client gets its own cursor
+// and nothing is retained on its behalf after stop.
 func (b *Bus) SubscribeLogs(ctx context.Context, subject string, handle func(data []byte)) (stop func(), err error) {
-	cons, err := b.js.OrderedConsumer(ctx, streamLogs, jetstream.OrderedConsumerConfig{
+	return b.subscribeStream(ctx, streamLogs, subject, handle)
+}
+
+// SubscribeRuntimeLogs is SubscribeLogs for runtime logs, backed by the
+// file-backed RUNTIME_LOGS stream (bounded-log-retention.md §4) so history
+// within the retention window survives a plane restart.
+func (b *Bus) SubscribeRuntimeLogs(ctx context.Context, subject string, handle func(data []byte)) (stop func(), err error) {
+	return b.subscribeStream(ctx, streamRuntimeLogs, subject, handle)
+}
+
+func (b *Bus) subscribeStream(ctx context.Context, stream, subject string, handle func(data []byte)) (stop func(), err error) {
+	cons, err := b.js.OrderedConsumer(ctx, stream, jetstream.OrderedConsumerConfig{
 		FilterSubjects: []string{subject},
 		DeliverPolicy:  jetstream.DeliverAllPolicy,
 	})

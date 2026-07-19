@@ -210,7 +210,7 @@ func (a *API) handleGetApplicationLogs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not get application")
 		return
 	}
-	a.streamLogSSE(w, r, subjects.RuntimeLog(app.Runtime.ServerID, appID))
+	a.streamRuntimeLogSSE(w, r, subjects.RuntimeLog(app.Runtime.ServerID, appID))
 }
 
 // patchApplicationRequest mirrors createApplicationRequest with every section

@@ -503,7 +503,11 @@ type BuildWork struct {
 	DockerfilePath string `protobuf:"bytes,5,opt,name=dockerfile_path,json=dockerfilePath,proto3" json:"dockerfile_path,omitempty"`
 	BuildContext   string `protobuf:"bytes,6,opt,name=build_context,json=buildContext,proto3" json:"build_context,omitempty"`
 	// Tag for the built image: cypher/<app_id>:<revision_id>.
-	Image         string `protobuf:"bytes,7,opt,name=image,proto3" json:"image,omitempty"`
+	Image string `protobuf:"bytes,7,opt,name=image,proto3" json:"image,omitempty"`
+	// Decrypted deploy-key PEM for SSH-based git clone of private repos.
+	// Sealed at rest on the plane; transported only over mTLS (rule 23).
+	// Empty when the repo is public. Never logged (rule 20).
+	DeployKeyPem  string `protobuf:"bytes,8,opt,name=deploy_key_pem,json=deployKeyPem,proto3" json:"deploy_key_pem,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -583,6 +587,13 @@ func (x *BuildWork) GetBuildContext() string {
 func (x *BuildWork) GetImage() string {
 	if x != nil {
 		return x.Image
+	}
+	return ""
+}
+
+func (x *BuildWork) GetDeployKeyPem() string {
+	if x != nil {
+		return x.DeployKeyPem
 	}
 	return ""
 }
@@ -855,7 +866,7 @@ const file_cypherpanel_agent_v1_work_proto_rawDesc = "" +
 	"\n" +
 	"RemoveWork\x12#\n" +
 	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12\x15\n" +
-	"\x06app_id\x18\x02 \x01(\tR\x05appId\"\xe5\x01\n" +
+	"\x06app_id\x18\x02 \x01(\tR\x05appId\"\x8b\x02\n" +
 	"\tBuildWork\x12#\n" +
 	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12\x15\n" +
 	"\x06app_id\x18\x02 \x01(\tR\x05appId\x12\x19\n" +
@@ -864,7 +875,8 @@ const file_cypherpanel_agent_v1_work_proto_rawDesc = "" +
 	"commit_sha\x18\x04 \x01(\tR\tcommitSha\x12'\n" +
 	"\x0fdockerfile_path\x18\x05 \x01(\tR\x0edockerfilePath\x12#\n" +
 	"\rbuild_context\x18\x06 \x01(\tR\fbuildContext\x12\x14\n" +
-	"\x05image\x18\a \x01(\tR\x05image\"C\n" +
+	"\x05image\x18\a \x01(\tR\x05image\x12$\n" +
+	"\x0edeploy_key_pem\x18\b \x01(\tR\fdeployKeyPem\"C\n" +
 	"\fDesiredState\x123\n" +
 	"\x05specs\x18\x01 \x03(\v2\x1d.cypherpanel.agent.v1.AppSpecR\x05specs\"\xae\x01\n" +
 	"\tAppStatus\x12\x15\n" +

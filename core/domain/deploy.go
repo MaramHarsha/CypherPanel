@@ -152,3 +152,17 @@ type Deployment struct {
 	UpdatedAt     time.Time
 	FinishedAt    *time.Time
 }
+
+// DeployKey is an SSH key for private repository access. The private key PEM
+// is sealed at rest (same secret.Box as env vars; threat-model §5.1) and never
+// returned in API responses. The public key and fingerprint are stored in the
+// clear for display and deduplication.
+type DeployKey struct {
+	ID              string
+	Name            string
+	PublicKey       string
+	Fingerprint     string
+	PrivateKeyCT    []byte
+	PrivateKeyNonce []byte
+	CreatedAt       time.Time
+}

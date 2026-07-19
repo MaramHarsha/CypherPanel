@@ -1,15 +1,30 @@
 package rest
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 )
 
-// streamLogSSE serves one log subject as a Server-Sent-Events stream: the
-// LOGS stream's retained history first (a client connecting mid-build sees
+// streamLogSSE serves one build-log subject as a Server-Sent-Events stream:
+// the LOGS stream's retained history first (a client connecting mid-build sees
 // what it missed — application-deploy.md §5 bounded retention), then the live
 // tail until the client disconnects.
 func (a *API) streamLogSSE(w http.ResponseWriter, r *http.Request, subject string) {
+	a.streamSSE(w, r, subject, a.deps.Logs.SubscribeLogs)
+}
+
+// streamRuntimeLogSSE is streamLogSSE for runtime logs, backed by the
+// file-backed RUNTIME_LOGS stream (bounded-log-retention.md §4): retained
+// history within the retention window replays first, then the live tail.
+func (a *API) streamRuntimeLogSSE(w http.ResponseWriter, r *http.Request, subject string) {
+	a.streamSSE(w, r, subject, a.deps.Logs.SubscribeRuntimeLogs)
+}
+
+// streamSSE pumps one log subject to the client as SSE data frames using
+// subscribe, which selects the backing stream (build vs runtime logs).
+func (a *API) streamSSE(w http.ResponseWriter, r *http.Request, subject string,
+	subscribe func(ctx context.Context, subject string, handle func(data []byte)) (stop func(), err error)) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -22,7 +37,7 @@ func (a *API) streamLogSSE(w http.ResponseWriter, r *http.Request, subject strin
 
 	ctx := r.Context()
 	lines := make(chan []byte, 256)
-	stop, err := a.deps.Logs.SubscribeLogs(ctx, subject, func(data []byte) {
+	stop, err := subscribe(ctx, subject, func(data []byte) {
 		cp := make([]byte, len(data))
 		copy(cp, data)
 		select {

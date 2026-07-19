@@ -90,6 +90,10 @@ message BuildWork {
   string build_context = 6;
   // Tag for the built image: cypher/<app_id>:<revision_id>.
   string image = 7;
+  // Decrypted deploy-key PEM for SSH-based git clone of private repos.
+  // Sealed at rest on the plane; transported only over mTLS (rule 23).
+  // Empty when the repo is public. Never logged (rule 20).
+  string deploy_key_pem = 8;
 }
 
 // DesiredState is the full desired set for one server: the reply to the

@@ -24,6 +24,7 @@ const (
 	PrefixRevision    = "rev"
 	PrefixDeployment  = "dep"
 	PrefixWebhook     = "wh"
+	PrefixDeployKey   = "dk"
 )
 
 // New returns a prefixed, URL-safe, collision-resistant identifier such as

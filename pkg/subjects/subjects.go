@@ -28,6 +28,15 @@ const (
 	AppStateAll    = "state.*.app.>"
 	// SyncAll is where the plane answers desired-state sync requests.
 	SyncAll = "state.*.sync"
+
+	// BuildLogAll and RuntimeLogAll are the stream-capture wildcards that
+	// split build from runtime logs (bounded-log-retention.md §3): LOGS
+	// captures build logs (memory-backed, short retention), RUNTIME_LOGS
+	// captures runtime logs (file-backed, bounded retention). The subjects
+	// agents publish on are unchanged — only the capture split is new
+	// (ENGINEERING rule 14, additive).
+	BuildLogAll   = "logs.*.build.>"
+	RuntimeLogAll = "logs.*.runtime.>"
 )
 
 // Heartbeat is the subject an agent publishes its heartbeats on. It sits

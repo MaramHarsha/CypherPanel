@@ -18,6 +18,7 @@ import (
 
 	"github.com/MaramHarsha/cypherpanel/core/applications"
 	"github.com/MaramHarsha/cypherpanel/core/auth"
+	"github.com/MaramHarsha/cypherpanel/core/deploykeys"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
 	"github.com/MaramHarsha/cypherpanel/core/scheduler"
@@ -299,6 +300,14 @@ type fakeLogs struct {
 func newFakeLogs() *fakeLogs { return &fakeLogs{lines: map[string][]string{}} }
 
 func (f *fakeLogs) SubscribeLogs(_ context.Context, subject string, handle func(data []byte)) (func(), error) {
+	return f.subscribe(subject, handle)
+}
+
+func (f *fakeLogs) SubscribeRuntimeLogs(_ context.Context, subject string, handle func(data []byte)) (func(), error) {
+	return f.subscribe(subject, handle)
+}
+
+func (f *fakeLogs) subscribe(subject string, handle func(data []byte)) (func(), error) {
 	f.mu.Lock()
 	replay := append([]string(nil), f.lines[subject]...)
 	f.mu.Unlock()
@@ -331,6 +340,61 @@ type okPinger struct{}
 
 func (okPinger) Ping(context.Context) error { return nil }
 
+// fakeDeployKeysStore is an in-memory deploykeys.Store; marking an id in
+// inUse simulates the applications FK RESTRICT on delete.
+type fakeDeployKeysStore struct {
+	mu    sync.Mutex
+	keys  map[string]domain.DeployKey
+	inUse map[string]bool
+}
+
+func newFakeDeployKeysStore() *fakeDeployKeysStore {
+	return &fakeDeployKeysStore{keys: map[string]domain.DeployKey{}, inUse: map[string]bool{}}
+}
+
+func (f *fakeDeployKeysStore) CreateDeployKey(_ context.Context, dk domain.DeployKey) (domain.DeployKey, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.keys[dk.ID] = dk
+	return dk, nil
+}
+
+func (f *fakeDeployKeysStore) GetDeployKey(_ context.Context, id string) (domain.DeployKey, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	dk, ok := f.keys[id]
+	if !ok {
+		return domain.DeployKey{}, store.ErrNotFound
+	}
+	return dk, nil
+}
+
+func (f *fakeDeployKeysStore) ListDeployKeys(context.Context) ([]domain.DeployKey, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]domain.DeployKey, 0, len(f.keys))
+	for _, dk := range f.keys {
+		out = append(out, dk)
+	}
+	return out, nil
+}
+
+func (f *fakeDeployKeysStore) DeleteDeployKey(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.inUse[id] {
+		return store.ErrInUse
+	}
+	delete(f.keys, id)
+	return nil
+}
+
+func (f *fakeDeployKeysStore) markInUse(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.inUse[id] = true
+}
+
 // ─── harness ────────────────────────────────────────────────────────────────
 
 const (
@@ -345,11 +409,11 @@ func newTestServer(t *testing.T) *httptest.Server {
 }
 
 func newTestServerWithStores(t *testing.T) (*httptest.Server, *fakeServersStore) {
-	ts, srv, _ := newTestServerFull(t)
+	ts, srv, _, _ := newTestServerFull(t)
 	return ts, srv
 }
 
-func newTestServerFull(t *testing.T) (*httptest.Server, *fakeServersStore, *fakeLogs) {
+func newTestServerFull(t *testing.T) (*httptest.Server, *fakeServersStore, *fakeLogs, *fakeDeployKeysStore) {
 	t.Helper()
 	hash, err := auth.HashPassword(testPassword)
 	if err != nil {
@@ -361,6 +425,7 @@ func newTestServerFull(t *testing.T) (*httptest.Server, *fakeServersStore, *fake
 	}
 	srvStore := &fakeServersStore{inUse: map[string]bool{}}
 	logs := newFakeLogs()
+	dkStore := newFakeDeployKeysStore()
 	box := testBox(t)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	api := New(Deps{
@@ -368,6 +433,7 @@ func newTestServerFull(t *testing.T) (*httptest.Server, *fakeServersStore, *fake
 		Servers:      servers.NewService(srvStore, noopAgentBus{}, 15*time.Minute, log),
 		Projects:     projects.NewService(newFakeProjectsStore()),
 		Applications: applications.NewService(newFakeAppsStore(), box),
+		DeployKeys:   deploykeys.NewService(dkStore, box),
 		Scheduler:    &fakeDeployer{},
 		Deployments:  fakeDeploymentReader{},
 		Opener:       box,
@@ -381,7 +447,7 @@ func newTestServerFull(t *testing.T) (*httptest.Server, *fakeServersStore, *fake
 	})
 	ts := httptest.NewServer(api.Handler())
 	t.Cleanup(ts.Close)
-	return ts, srvStore, logs
+	return ts, srvStore, logs, dkStore
 }
 
 func doJSON(t *testing.T, method, url, token, body string) (int, http.Header, []byte) {
@@ -978,7 +1044,7 @@ func TestResponseWriterSupportsFlush(t *testing.T) {
 // The SSE log endpoint must replay retained history as data frames after the
 // connected event — a client attaching after the build still sees the log.
 func TestApplicationLogsSSEReplaysHistory(t *testing.T) {
-	ts, _, logs := newTestServerFull(t)
+	ts, _, logs, _ := newTestServerFull(t)
 	token := login(t, ts)
 
 	body := `{"name":"web","source":{"kind":"github","repo":"acme/web"},` +

@@ -2,9 +2,11 @@ package bus
 
 import (
 	"context"
+	"crypto/tls"
 	"io"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -45,10 +47,9 @@ func (f *fakeAuthorizer) revoke(serverID string) {
 	delete(f.enrolled, serverID)
 }
 
-// startTestBus brings up an embedded bus on a random localhost port with a
-// fresh CA, returning the bus, the CA (for minting agent certs), and the
-// mutable authorizer.
-func startTestBus(t *testing.T, enrolledIDs ...string) (*Bus, *pki.CA, *fakeAuthorizer) {
+// testTLSConfig mints a fresh CA and a localhost server certificate for an
+// embedded test bus.
+func testTLSConfig(t *testing.T) (*tls.Config, *pki.CA) {
 	t.Helper()
 	ca, err := pki.NewCA(time.Now())
 	if err != nil {
@@ -62,19 +63,63 @@ func startTestBus(t *testing.T, enrolledIDs ...string) (*Bus, *pki.CA, *fakeAuth
 	if err != nil {
 		t.Fatalf("ServerTLSConfig: %v", err)
 	}
+	return tlsCfg, ca
+}
+
+// startTestBus brings up an embedded bus on a random localhost port with a
+// fresh CA, returning the bus, the CA (for minting agent certs), and the
+// mutable authorizer.
+func startTestBus(t *testing.T, enrolledIDs ...string) (*Bus, *pki.CA, *fakeAuthorizer) {
+	t.Helper()
+	tlsCfg, ca := testTLSConfig(t)
 	authorizer := newFakeAuthorizer(enrolledIDs...)
 	b, err := Start(context.Background(), Options{
-		ListenAddr: "127.0.0.1:0",
-		TLSConfig:  tlsCfg,
-		Authorizer: authorizer,
-		Log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
-		StoreDir:   t.TempDir(), // file-backed WORK stream stays in the test dir
+		ListenAddr:          "127.0.0.1:0",
+		TLSConfig:           tlsCfg,
+		Authorizer:          authorizer,
+		Log:                 slog.New(slog.NewTextHandler(io.Discard, nil)),
+		StoreDir:            t.TempDir(),
+		RuntimeLogsMaxBytes: 1024 * 1024,
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	t.Cleanup(b.Close)
 	return b, ca, authorizer
+}
+
+// Nonsensical retention limits must refuse to boot the bus instead of
+// starting NATS with them.
+func TestStartRejectsInvalidRuntimeLogLimits(t *testing.T) {
+	tlsCfg, _ := testTLSConfig(t)
+	base := Options{
+		ListenAddr: "127.0.0.1:0",
+		TLSConfig:  tlsCfg,
+		Authorizer: newFakeAuthorizer(),
+		Log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		StoreDir:   t.TempDir(),
+	}
+
+	for name, tc := range map[string]struct {
+		mutate  func(*Options)
+		wantErr string
+	}{
+		"negative bytes": {func(o *Options) { o.RuntimeLogsMaxBytes = -1 }, "RuntimeLogsMaxBytes must be non-negative"},
+		"negative age":   {func(o *Options) { o.RuntimeLogsMaxAge = -time.Minute }, "RuntimeLogsMaxAge must be non-negative"},
+		"store overflow": {func(o *Options) { o.WorkMaxBytes = 1 << 62; o.RuntimeLogsMaxBytes = 1 << 62 }, "overflows the JetStream store limit"},
+	} {
+		opts := base
+		tc.mutate(&opts)
+		b, err := Start(context.Background(), opts)
+		if err == nil {
+			b.Close()
+			t.Errorf("%s: Start succeeded, want an error", name)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.wantErr) {
+			t.Errorf("%s: err = %v, want it to contain %q", name, err, tc.wantErr)
+		}
+	}
 }
 
 // dialAgent attempts to connect to the bus as an agent holding a valid cert
