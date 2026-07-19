@@ -634,3 +634,66 @@ func TestRecoverRepublishesInFlightWork(t *testing.T) {
 		t.Fatalf("republished = %+v, want the same build work (same idempotency key)", p)
 	}
 }
+
+// A private-repo build republished by Recover must carry the deploy-key PEM
+// again — a plane restart must not downgrade the clone to credential-less.
+func TestRecoverRepublishesBuildWithDeployKey(t *testing.T) {
+	fs, fb := newFakeStore(), &fakeBus{}
+	app := fs.addApp("app_1", "srv_1")
+	keyID := "dk_1"
+	fs.deployKeys[keyID] = domain.DeployKey{ID: keyID, PrivateKeyCT: []byte("sealed:PEM-BYTES"), PrivateKeyNonce: []byte("n")}
+	app.Source.DeployKeyID = &keyID
+	fs.apps["app_1"] = app
+	s := newScheduler(fs, fb)
+
+	if _, err := s.Deploy(context.Background(), "app_1", "manual", ""); err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+
+	// A fresh scheduler (new plane process) recovers over the same store.
+	s2 := newScheduler(fs, fb)
+	if err := s2.Recover(context.Background()); err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	p, ok := fb.last()
+	if !ok {
+		t.Fatal("recover published nothing")
+	}
+	var bw agentv1.BuildWork
+	if err := proto.Unmarshal(p.data, &bw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if bw.GetDeployKeyPem() != "PEM-BYTES" {
+		t.Fatalf("recovered deploy_key_pem = %q, want the unsealed PEM", bw.GetDeployKeyPem())
+	}
+}
+
+// A deploy key that cannot be unsealed at recovery time fails the deployment
+// instead of leaving it active-but-stuck, and republishes nothing for it.
+func TestRecoverWithUnsealableDeployKeyFailsDeployment(t *testing.T) {
+	fs, fb := newFakeStore(), &fakeBus{}
+	app := fs.addApp("app_1", "srv_1")
+	keyID := "dk_1"
+	fs.deployKeys[keyID] = domain.DeployKey{ID: keyID, PrivateKeyCT: []byte("sealed:PEM"), PrivateKeyNonce: []byte("n")}
+	app.Source.DeployKeyID = &keyID
+	fs.apps["app_1"] = app
+	s := newScheduler(fs, fb) // healthy opener: the deploy itself starts fine
+
+	dep, err := s.Deploy(context.Background(), "app_1", "manual", "")
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	countBefore := fb.count()
+
+	// The recovering plane cannot open the sealed key (e.g. wrong master key).
+	s2 := New(fs, fb, failingOpener{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err := s2.Recover(context.Background()); err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	if got, _ := fs.GetDeployment(context.Background(), dep.ID); got.Status != domain.DeployFailed {
+		t.Fatalf("deployment status = %s, want failed", got.Status)
+	}
+	if fb.count() != countBefore {
+		t.Fatal("recover republished build work despite an unsealable deploy key")
+	}
+}

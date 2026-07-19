@@ -100,21 +100,24 @@ func TestStartRejectsInvalidRuntimeLogLimits(t *testing.T) {
 		StoreDir:   t.TempDir(),
 	}
 
-	for name, mutate := range map[string]func(*Options){
-		"negative bytes": func(o *Options) { o.RuntimeLogsMaxBytes = -1 },
-		"negative age":   func(o *Options) { o.RuntimeLogsMaxAge = -time.Minute },
-		"store overflow": func(o *Options) { o.WorkMaxBytes = 1 << 62; o.RuntimeLogsMaxBytes = 1 << 62 },
+	for name, tc := range map[string]struct {
+		mutate  func(*Options)
+		wantErr string
+	}{
+		"negative bytes": {func(o *Options) { o.RuntimeLogsMaxBytes = -1 }, "RuntimeLogsMaxBytes must be non-negative"},
+		"negative age":   {func(o *Options) { o.RuntimeLogsMaxAge = -time.Minute }, "RuntimeLogsMaxAge must be non-negative"},
+		"store overflow": {func(o *Options) { o.WorkMaxBytes = 1 << 62; o.RuntimeLogsMaxBytes = 1 << 62 }, "overflows the JetStream store limit"},
 	} {
 		opts := base
-		mutate(&opts)
+		tc.mutate(&opts)
 		b, err := Start(context.Background(), opts)
 		if err == nil {
 			b.Close()
 			t.Errorf("%s: Start succeeded, want an error", name)
 			continue
 		}
-		if !strings.Contains(err.Error(), "bus:") {
-			t.Errorf("%s: err = %v, want a bus validation error", name, err)
+		if !strings.Contains(err.Error(), tc.wantErr) {
+			t.Errorf("%s: err = %v, want it to contain %q", name, err, tc.wantErr)
 		}
 	}
 }
