@@ -58,14 +58,41 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 	}
 	defer func() { _ = os.RemoveAll(buildDir) }()
 
-	displayURL := work.RepoUrl
-	if parsed, err := url.Parse(work.RepoUrl); err == nil {
+	repoURL := work.RepoUrl
+	displayURL := repoURL
+	if parsed, err := url.Parse(repoURL); err == nil {
 		displayURL = parsed.Redacted()
 	}
-	onLog(fmt.Sprintf("Cloning repository %s at %s...", displayURL, work.CommitSha))
 
-	cmd := exec.CommandContext(ctx, "git", "clone", work.RepoUrl, buildDir)
-	cmd.Env = gitEnv
+	cloneEnv := append([]string(nil), gitEnv...) // copy base env
+
+	if work.DeployKeyPem != "" {
+		// Write the deploy key to a temporary file.
+		keyFile := filepath.Join(b.workDir, ".deploy-key-"+work.DeploymentId)
+		if err := os.WriteFile(keyFile, []byte(work.DeployKeyPem), 0600); err != nil {
+			return "", fmt.Errorf("writing deploy key: %w", err)
+		}
+		defer func() { _ = os.Remove(keyFile) }()
+
+		// Force SSH transport instead of asking for credentials if it's an HTTPS github URL.
+		if strings.HasPrefix(repoURL, "https://github.com/") {
+			repoURL = strings.Replace(repoURL, "https://github.com/", "git@github.com:", 1)
+			if !strings.HasSuffix(repoURL, ".git") {
+				repoURL += ".git"
+			}
+		}
+
+		// Inject SSH command to use the key and ignore unknown hosts (we don't
+		// maintain a known_hosts file for the agent).
+		sshCmd := fmt.Sprintf("ssh -i %s -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null", keyFile)
+		cloneEnv = append(cloneEnv, "GIT_SSH_COMMAND="+sshCmd)
+		onLog(fmt.Sprintf("Cloning private repository using deploy key..."))
+	} else {
+		onLog(fmt.Sprintf("Cloning repository %s...", displayURL))
+	}
+
+	cmd := exec.CommandContext(ctx, "git", "clone", repoURL, buildDir)
+	cmd.Env = cloneEnv
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		onLog(string(out))

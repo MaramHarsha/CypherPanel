@@ -57,6 +57,9 @@ type Config struct {
 	// DataDir holds cypherd's durable local state (the file-backed WORK
 	// stream). Default /var/lib/cypherd.
 	DataDir string
+
+	RuntimeLogsMaxAge   time.Duration
+	RuntimeLogsMaxBytes uint64
 }
 
 // Load reads and validates configuration from the process environment.
@@ -75,8 +78,15 @@ func Load() (Config, error) {
 		HeartbeatStale: envDuration("CYPHERD_HEARTBEAT_STALE", 90*time.Second),
 		SweepInterval:  envDuration("CYPHERD_SWEEP_INTERVAL", 30*time.Second),
 		ShutdownGrace:  envDuration("CYPHERD_SHUTDOWN_GRACE", 20*time.Second),
-		DataDir:        envOr("CYPHERD_DATA_DIR", "/var/lib/cypherd"),
+		DataDir:             envOr("CYPHERD_DATA_DIR", "/var/lib/cypherd"),
+		RuntimeLogsMaxAge:   envDuration("CYPHERD_RUNTIME_LOGS_MAX_AGE", 24*time.Hour),
 	}
+
+	runtimeBytes, err := envBytes("CYPHERD_RUNTIME_LOGS_MAX_BYTES", 536870912) // 512 MiB
+	if err != nil {
+		return Config{}, fmt.Errorf("config: %w", err)
+	}
+	c.RuntimeLogsMaxBytes = runtimeBytes
 
 	if c.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("config: CYPHERD_DATABASE_URL is required")

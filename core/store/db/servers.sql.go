@@ -14,7 +14,7 @@ import (
 const createServer = `-- name: CreateServer :one
 INSERT INTO servers (id, name)
 VALUES ($1, $2)
-RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at
+RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role
 `
 
 type CreateServerParams struct {
@@ -36,6 +36,7 @@ func (q *Queries) CreateServer(ctx context.Context, arg CreateServerParams) (Ser
 		&i.LastSeenAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Role,
 	)
 	return i, err
 }
@@ -50,7 +51,7 @@ func (q *Queries) DeleteServer(ctx context.Context, id string) error {
 }
 
 const getServer = `-- name: GetServer :one
-SELECT id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at FROM servers WHERE id = $1
+SELECT id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role FROM servers WHERE id = $1
 `
 
 func (q *Queries) GetServer(ctx context.Context, id string) (Server, error) {
@@ -67,12 +68,13 @@ func (q *Queries) GetServer(ctx context.Context, id string) (Server, error) {
 		&i.LastSeenAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Role,
 	)
 	return i, err
 }
 
 const listServers = `-- name: ListServers :many
-SELECT id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at FROM servers ORDER BY created_at DESC
+SELECT id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role FROM servers ORDER BY created_at DESC
 `
 
 func (q *Queries) ListServers(ctx context.Context) ([]Server, error) {
@@ -95,6 +97,7 @@ func (q *Queries) ListServers(ctx context.Context) ([]Server, error) {
 			&i.LastSeenAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Role,
 		); err != nil {
 			return nil, err
 		}
@@ -113,7 +116,7 @@ SET enrolled_at = now(),
     agent_version = $3,
     updated_at = now()
 WHERE id = $1
-RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at
+RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role
 `
 
 type MarkServerEnrolledParams struct {
@@ -136,6 +139,7 @@ func (q *Queries) MarkServerEnrolled(ctx context.Context, arg MarkServerEnrolled
 		&i.LastSeenAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Role,
 	)
 	return i, err
 }
@@ -178,7 +182,7 @@ SET status = $2,
     last_seen_at = now(),
     updated_at = now()
 WHERE id = $1
-RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at
+RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role
 `
 
 type RecordHeartbeatParams struct {
@@ -207,6 +211,7 @@ func (q *Queries) RecordHeartbeat(ctx context.Context, arg RecordHeartbeatParams
 		&i.LastSeenAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Role,
 	)
 	return i, err
 }

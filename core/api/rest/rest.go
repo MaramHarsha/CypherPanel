@@ -14,6 +14,7 @@ import (
 
 	"github.com/MaramHarsha/cypherpanel/core/applications"
 	"github.com/MaramHarsha/cypherpanel/core/auth"
+	"github.com/MaramHarsha/cypherpanel/core/deploykeys"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
 	"github.com/MaramHarsha/cypherpanel/core/servers"
@@ -50,6 +51,7 @@ type Opener interface {
 // from the subscriber's goroutine until stop is called.
 type LogSubscriber interface {
 	SubscribeLogs(ctx context.Context, subject string, handle func(data []byte)) (stop func(), err error)
+	SubscribeRuntimeLogs(ctx context.Context, subject string, handle func(data []byte)) (stop func(), err error)
 }
 
 // Deps are the dependencies the API needs.
@@ -58,6 +60,7 @@ type Deps struct {
 	Servers      *servers.Service
 	Projects     *projects.Service
 	Applications *applications.Service
+	DeployKeys   *deploykeys.Service
 	Scheduler    Deployer
 	Deployments  DeploymentReader
 	Opener       Opener
@@ -108,6 +111,12 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/servers", a.authed(a.handleCreateServer))
 	mux.HandleFunc("GET /api/v1/servers/{id}", a.authed(a.handleGetServer))
 	mux.HandleFunc("DELETE /api/v1/servers/{id}", a.authed(a.handleDeleteServer))
+
+	// Deploy keys.
+	mux.HandleFunc("GET /api/v1/deploy-keys", a.authed(a.handleListDeployKeys))
+	mux.HandleFunc("POST /api/v1/deploy-keys", a.authed(a.handleCreateDeployKey))
+	mux.HandleFunc("GET /api/v1/deploy-keys/{id}", a.authed(a.handleGetDeployKey))
+	mux.HandleFunc("DELETE /api/v1/deploy-keys/{id}", a.authed(a.handleDeleteDeployKey))
 
 	// Projects & environments.
 	mux.HandleFunc("GET /api/v1/projects", a.authed(a.handleListProjects))

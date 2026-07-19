@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -71,6 +72,70 @@ func (b *natsBus) FetchWork(ctx context.Context) (Message, error) {
 		return nil, ErrNoWork
 	}
 	return natsMessage{msgs[0]}, nil
+}
+
+func (b *natsBus) RelayPush(ctx context.Context, deploymentID string, r io.Reader) error {
+	subj := subjects.Relay(deploymentID)
+	buf := make([]byte, 1024*1024) // 1MB chunks
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			if err := b.nc.Publish(subj, buf[:n]); err != nil {
+				return err
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+	}
+	// EOF marker
+	return b.nc.Publish(subj, nil)
+}
+
+func (b *natsBus) RelayPull(ctx context.Context, deploymentID string) (io.ReadCloser, error) {
+	subj := subjects.Relay(deploymentID)
+	// We need an ordered consumer to guarantee chunk order.
+	// We can use a core NATS subscription since the chunks are published sequentially.
+	// But since builder pushes and target pulls, the target must subscribe before push?
+	// The RELAY stream retains the chunks.
+	js, err := b.nc.JetStream()
+	if err != nil {
+		return nil, err
+	}
+	
+	// DeliverAll starts from the beginning of the retained stream.
+	sub, err := js.SubscribeSync(subj, nats.DeliverAll())
+	if err != nil {
+		return nil, err
+	}
+
+	pr, pw := io.Pipe()
+
+	go func() {
+		defer sub.Unsubscribe()
+		for {
+			msg, err := sub.NextMsgWithContext(ctx)
+			if err != nil {
+				pw.CloseWithError(err)
+				return
+			}
+			msg.Ack()
+			
+			if len(msg.Data) == 0 { // EOF marker
+				pw.Close()
+				return
+			}
+			if _, err := pw.Write(msg.Data); err != nil {
+				pw.CloseWithError(err)
+				return
+			}
+		}
+	}()
+
+	return pr, nil
 }
 
 // natsMessage adapts a JetStream *nats.Msg to the worker's Message.

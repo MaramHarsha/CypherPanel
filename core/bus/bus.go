@@ -42,6 +42,8 @@ const (
 	streamState        = "STATE"
 	streamWork         = "WORK"
 	streamLogs         = "LOGS"
+	streamRuntimeLogs  = "RUNTIME_LOGS"
+	streamRelay        = "RELAY"
 	planeUser          = "cypherd-control-plane"
 	heartbeatDurable   = "plane-heartbeats"
 	deployEventDurable = "plane-deploy-events"
@@ -82,13 +84,13 @@ type Options struct {
 	WorkMaxAge time.Duration
 	// WorkMaxBytes caps the file-backed WORK stream; defaults to 256 MiB.
 	WorkMaxBytes int64
-	// LogsMaxAge bounds how long build/runtime log lines are retained for
-	// SSE replay; defaults to 30 minutes. Memory-backed like STATE — bounded
-	// retention without disk churn (threat-model §5.9, §8 req 9); persistent
-	// log retention is a Phase 4 concern (roadmap).
+	// LogsMaxAge bounds how long build log lines are retained for SSE replay.
 	LogsMaxAge time.Duration
-	// LogsMaxBytes caps the LOGS stream's memory; defaults to 64 MiB.
 	LogsMaxBytes int64
+	// RuntimeLogsMaxAge bounds how long runtime log lines are retained on disk.
+	RuntimeLogsMaxAge time.Duration
+	// RuntimeLogsMaxBytes caps the RUNTIME_LOGS file-backed stream.
+	RuntimeLogsMaxBytes int64
 	// StoreDir is where JetStream keeps the file-backed WORK stream.
 	// Defaults to the NATS default when empty (tests); production sets it.
 	StoreDir string
@@ -136,10 +138,9 @@ func Start(ctx context.Context, opts Options) (*Bus, error) {
 		Port:       port,
 		JetStream:  true,
 		// The server-level memory cap must cover every memory-backed stream:
-		// STATE (maxMem) plus LOGS (logsMaxBytes) — a cap below their summed
-		// MaxBytes makes stream creation fail with "insufficient memory".
-		JetStreamMaxMemory:         maxMem + logsMaxBytes,
-		JetStreamMaxStore:          workMaxBytes, // file storage backs WORK only
+		// STATE (maxMem), LOGS (logsMaxBytes), and RELAY (logsMaxBytes).
+		JetStreamMaxMemory:         maxMem + logsMaxBytes*2,
+		JetStreamMaxStore:          workMaxBytes + opts.RuntimeLogsMaxBytes, // file storage backs WORK and RUNTIME_LOGS
 		StoreDir:                   opts.StoreDir,
 		NoLog:                      true,
 		NoSigs:                     true,
@@ -227,7 +228,7 @@ func Start(ctx context.Context, opts Options) (*Bus, error) {
 	}
 	if _, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
 		Name:      streamLogs,
-		Subjects:  []string{subjects.LogsPrefix + ">"},
+		Subjects:  []string{"logs.*.build.>"},
 		Storage:   jetstream.MemoryStorage,
 		Retention: jetstream.LimitsPolicy,
 		Discard:   jetstream.DiscardOld,
@@ -237,6 +238,37 @@ func Start(ctx context.Context, opts Options) (*Bus, error) {
 		nc.Close()
 		ns.Shutdown()
 		return nil, fmt.Errorf("bus: creating LOGS stream: %w", err)
+	}
+
+	if _, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
+		Name:      streamRuntimeLogs,
+		Subjects:  []string{"logs.*.runtime.>"},
+		Storage:   jetstream.FileStorage,
+		Retention: jetstream.LimitsPolicy,
+		Discard:   jetstream.DiscardOld,
+		MaxAge:    opts.RuntimeLogsMaxAge,
+		MaxBytes:  int64(opts.RuntimeLogsMaxBytes),
+	}); err != nil {
+		nc.Close()
+		ns.Shutdown()
+		return nil, fmt.Errorf("bus: creating RUNTIME_LOGS stream: %w", err)
+	}
+
+	// The RELAY stream holds in-flight images during multi-server distribution
+	// (ADR-008). It is memory-backed and expires quickly; chunks are pulled by
+	// the target and then dropped.
+	if _, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
+		Name:      streamRelay,
+		Subjects:  []string{subjects.RelayPrefix + ">"},
+		Storage:   jetstream.MemoryStorage,
+		Retention: jetstream.WorkQueuePolicy,
+		Discard:   jetstream.DiscardOld,
+		MaxAge:    15 * time.Minute,
+		MaxBytes:  logsMaxBytes,
+	}); err != nil {
+		nc.Close()
+		ns.Shutdown()
+		return nil, fmt.Errorf("bus: creating RELAY stream: %w", err)
 	}
 
 	return &Bus{ns: ns, nc: nc, js: js}, nil
@@ -252,15 +284,44 @@ func (b *Bus) SubscribeLogs(ctx context.Context, subject string, handle func(dat
 		DeliverPolicy:  jetstream.DeliverAllPolicy,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("bus: creating log consumer for %s: %w", subject, err)
+		return nil, fmt.Errorf("bus: creating ordered consumer: %w", err)
 	}
+	ctx, cancel := context.WithCancel(ctx)
 	cc, err := cons.Consume(func(msg jetstream.Msg) {
 		handle(msg.Data())
 	})
 	if err != nil {
+		cancel()
 		return nil, fmt.Errorf("bus: starting log consume for %s: %w", subject, err)
 	}
-	return cc.Stop, nil
+	return func() {
+		cancel()
+		cc.Stop()
+	}, nil
+}
+
+// SubscribeRuntimeLogs delivers the retained history of one runtime log subject
+// and then its live tail. Backed by the file-backed RUNTIME_LOGS stream.
+func (b *Bus) SubscribeRuntimeLogs(ctx context.Context, subject string, handle func(data []byte)) (stop func(), err error) {
+	cons, err := b.js.OrderedConsumer(ctx, streamRuntimeLogs, jetstream.OrderedConsumerConfig{
+		FilterSubjects: []string{subject},
+		DeliverPolicy:  jetstream.DeliverAllPolicy,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bus: creating runtime logs consumer: %w", err)
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	cc, err := cons.Consume(func(msg jetstream.Msg) {
+		handle(msg.Data())
+	})
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("bus: starting runtime log consume for %s: %w", subject, err)
+	}
+	return func() {
+		cancel()
+		cc.Stop()
+	}, nil
 }
 
 // EnsureWorkConsumer creates (or keeps) the durable consumer holding one

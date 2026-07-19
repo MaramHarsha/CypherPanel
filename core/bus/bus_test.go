@@ -64,11 +64,12 @@ func startTestBus(t *testing.T, enrolledIDs ...string) (*Bus, *pki.CA, *fakeAuth
 	}
 	authorizer := newFakeAuthorizer(enrolledIDs...)
 	b, err := Start(context.Background(), Options{
-		ListenAddr: "127.0.0.1:0",
-		TLSConfig:  tlsCfg,
-		Authorizer: authorizer,
-		Log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
-		StoreDir:   t.TempDir(), // file-backed WORK stream stays in the test dir
+		ListenAddr:          "127.0.0.1:0",
+		TLSConfig:           tlsCfg,
+		Authorizer:          authorizer,
+		Log:                 slog.New(slog.NewTextHandler(io.Discard, nil)),
+		StoreDir:            t.TempDir(),
+		RuntimeLogsMaxBytes: 1024 * 1024,
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)

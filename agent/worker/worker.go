@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 	"sync"
@@ -56,6 +57,16 @@ type Bus interface {
 	// FetchWork blocks up to an internal deadline for the next work item,
 	// returning ErrNoWork on an idle timeout so the caller can loop.
 	FetchWork(ctx context.Context) (Message, error)
+	// RelayPush streams an image tarball to the relay.
+	RelayPush(ctx context.Context, deploymentID string, r io.Reader) error
+	// RelayPull returns an io.ReadCloser that consumes the relay stream.
+	RelayPull(ctx context.Context, deploymentID string) (io.ReadCloser, error)
+}
+
+// ImageStore allows the worker to export and import images (consumer-defined).
+type ImageStore interface {
+	SaveImage(ctx context.Context, tag string) (io.ReadCloser, error)
+	LoadImage(ctx context.Context, stream io.Reader, quiet bool) error
 }
 
 // maxDeliveries is the poison-message cutoff: a work item that fails to
@@ -75,6 +86,7 @@ type Worker struct {
 	serverID      string
 	driver        driver.Reconciler
 	builder       *builder.Builder
+	images        ImageStore
 	log           *slog.Logger
 	driftInterval time.Duration
 
@@ -83,12 +95,13 @@ type Worker struct {
 }
 
 // New creates a new Worker.
-func New(bus Bus, serverID string, drv driver.Reconciler, bld *builder.Builder, log *slog.Logger) *Worker {
+func New(bus Bus, serverID string, drv driver.Reconciler, bld *builder.Builder, images ImageStore, log *slog.Logger) *Worker {
 	return &Worker{
 		bus:           bus,
 		serverID:      serverID,
 		driver:        drv,
 		builder:       bld,
+		images:        images,
 		log:           log,
 		driftInterval: defaultDriftInterval,
 		state:         make(map[string]*agentv1.AppSpec),
@@ -254,7 +267,63 @@ func (w *Worker) handleMsg(ctx context.Context, msg Message) {
 			_ = msg.Ack()
 			return
 		}
+
 		w.emitEvent(deploymentID, appID, stage, agentv1.DeployEvent_OUTCOME_SUCCEEDED, "", resolvedSha)
+
+		// Phase 2 builder split: upload to relay if required.
+		if work.UploadRelay {
+			onLog("Uploading image to relay...")
+			rc, err := w.images.SaveImage(ctx, work.Image)
+			if err != nil {
+				w.log.Error("worker: save image failed", "error", err)
+				w.emitEvent(deploymentID, appID, agentv1.DeployEvent_STAGE_RELAY_UPLOAD, agentv1.DeployEvent_OUTCOME_FAILED, err.Error(), resolvedSha)
+				_ = msg.Ack()
+				return
+			}
+			if err := w.bus.RelayPush(ctx, deploymentID, rc); err != nil {
+				w.log.Error("worker: relay push failed", "error", err)
+				w.emitEvent(deploymentID, appID, agentv1.DeployEvent_STAGE_RELAY_UPLOAD, agentv1.DeployEvent_OUTCOME_FAILED, err.Error(), resolvedSha)
+				_ = msg.Ack()
+				return
+			}
+			rc.Close()
+			w.emitEvent(deploymentID, appID, agentv1.DeployEvent_STAGE_RELAY_UPLOAD, agentv1.DeployEvent_OUTCOME_SUCCEEDED, "", resolvedSha)
+		}
+
+		_ = msg.Ack()
+		return
+
+	case strings.HasSuffix(subject, ".distribute"):
+		var work agentv1.DistributeWork
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
+			w.log.Error("worker: unmarshaling distribute work", "error", err)
+			_ = msg.Term()
+			return
+		}
+		deploymentID = work.DeploymentId
+		appID = work.AppId
+		stage = agentv1.DeployEvent_STAGE_DISTRIBUTE
+
+		_ = msg.InProgress()
+
+		w.log.Info("worker: pulling image from relay", "app_id", appID, "deployment_id", deploymentID)
+		rc, err := w.bus.RelayPull(ctx, deploymentID)
+		if err != nil {
+			w.log.Error("worker: relay pull failed", "error", err)
+			w.emitEvent(deploymentID, appID, stage, agentv1.DeployEvent_OUTCOME_FAILED, err.Error(), "")
+			_ = msg.Ack()
+			return
+		}
+		if err := w.images.LoadImage(ctx, rc, true); err != nil {
+			rc.Close()
+			w.log.Error("worker: load image failed", "error", err)
+			w.emitEvent(deploymentID, appID, stage, agentv1.DeployEvent_OUTCOME_FAILED, err.Error(), "")
+			_ = msg.Ack()
+			return
+		}
+		rc.Close()
+
+		w.emitEvent(deploymentID, appID, stage, agentv1.DeployEvent_OUTCOME_SUCCEEDED, "", "")
 		_ = msg.Ack()
 		return
 

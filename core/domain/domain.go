@@ -30,6 +30,10 @@ type Server struct {
 	Name         string
 	Status       ServerStatus
 	Driver       string
+	// Role is the agent's declared capability: "both" (default, builds + runs),
+	// "builder" (builds only), or "docker" (runs only). Determines work routing
+	// (docs/features/builder-role-and-relay.md §1).
+	Role         string
 	AgentVersion string
 	Hostname     string
 	// EnrolledAt is nil until the agent completes enrollment; it distinguishes

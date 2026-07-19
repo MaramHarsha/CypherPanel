@@ -48,6 +48,16 @@ type Application struct {
 	StatusObservedAt      pgtype.Timestamptz
 }
 
+type DeployKey struct {
+	ID              string
+	Name            string
+	PublicKey       string
+	Fingerprint     string
+	PrivateKeyCt    []byte
+	PrivateKeyNonce []byte
+	CreatedAt       pgtype.Timestamptz
+}
+
 type Deployment struct {
 	ID            string
 	ApplicationID string
@@ -112,6 +122,7 @@ type Server struct {
 	LastSeenAt   pgtype.Timestamptz
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+	Role         string
 }
 
 type Session struct {

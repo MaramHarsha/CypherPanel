@@ -693,6 +693,87 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /api/v1/deploy-keys:
+    get:
+      tags: [deploy-keys]
+      summary: List all deploy keys (public key only)
+      responses:
+        "200":
+          description: A list of deploy keys.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeployKeysList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [deploy-keys]
+      summary: Create a new deploy key for private repository access
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDeployKeyRequest"
+      responses:
+        "201":
+          description: Deploy key created. Public key is returned once.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateDeployKeyResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/deploy-keys/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Deploy key ID (dk_... prefix).
+    get:
+      tags: [deploy-keys]
+      summary: Get a deploy key by ID
+      responses:
+        "200":
+          description: A single deploy key (public key only).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeployKey"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such deploy key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      tags: [deploy-keys]
+      summary: Delete a deploy key (RESTRICT-gated by application references)
+      responses:
+        "204":
+          description: Deleted successfully.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such deploy key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Deploy key is still in use by one or more applications.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /api/v1/applications/{id}/env:
     parameters:
       - name: id
@@ -1211,6 +1292,43 @@ components:
           type: string
           format: date-time
           nullable: true
+
+    DeployKey:
+      type: object
+      required: [id, name, public_key, fingerprint, created_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        public_key:
+          type: string
+        fingerprint:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    CreateDeployKeyRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+
+    CreateDeployKeyResponse:
+      type: object
+      required: [deploy_key]
+      properties:
+        deploy_key:
+          $ref: "#/components/schemas/DeployKey"
+
+    DeployKeysList:
+      type: array
+      items:
+        $ref: "#/components/schemas/DeployKey"
 
 security:
   - bearer: []

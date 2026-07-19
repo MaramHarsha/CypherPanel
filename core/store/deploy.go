@@ -450,7 +450,63 @@ func (s *Store) ListActiveDeployments(ctx context.Context) ([]domain.Deployment,
 	return out, nil
 }
 
-// ─── mapping helpers ────────────────────────────────────────────────────────
+// ─── Deploy Keys ────────────────────────────────────────────────────────────
+
+func (s *Store) CreateDeployKey(ctx context.Context, dk domain.DeployKey) (domain.DeployKey, error) {
+	row, err := s.q.CreateDeployKey(ctx, db.CreateDeployKeyParams{
+		ID:              dk.ID,
+		Name:            dk.Name,
+		PublicKey:       dk.PublicKey,
+		Fingerprint:     dk.Fingerprint,
+		PrivateKeyCt:    dk.PrivateKeyCT,
+		PrivateKeyNonce: dk.PrivateKeyNonce,
+	})
+	if err != nil {
+		return domain.DeployKey{}, wrapCreate("creating deploy key", err)
+	}
+	return deployKeyFromRow(row), nil
+}
+
+func (s *Store) GetDeployKey(ctx context.Context, id string) (domain.DeployKey, error) {
+	row, err := s.q.GetDeployKey(ctx, id)
+	if err != nil {
+		return domain.DeployKey{}, wrap("getting deploy key", err)
+	}
+	return deployKeyFromRow(row), nil
+}
+
+func (s *Store) ListDeployKeys(ctx context.Context) ([]domain.DeployKey, error) {
+	rows, err := s.q.ListDeployKeys(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing deploy keys: %w", err)
+	}
+	out := make([]domain.DeployKey, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, deployKeyFromRow(r))
+	}
+	return out, nil
+}
+
+func (s *Store) DeleteDeployKey(ctx context.Context, id string) error {
+	if err := s.q.DeleteDeployKey(ctx, id); err != nil {
+		return wrapDelete("deleting deploy key", err)
+	}
+	return nil
+}
+
+// ─── Row Mappers ────────────────────────────────────────────────────────────
+
+func deployKeyFromRow(r db.DeployKey) domain.DeployKey {
+	return domain.DeployKey{
+		ID:              r.ID,
+		Name:            r.Name,
+		PublicKey:       r.PublicKey,
+		Fingerprint:     r.Fingerprint,
+		PrivateKeyCT:    r.PrivateKeyCt,
+		PrivateKeyNonce: r.PrivateKeyNonce,
+		CreatedAt:       r.CreatedAt.Time,
+	}
+}
 
 func projectFromRow(r db.Project) domain.Project {
 	return domain.Project{ID: r.ID, Name: r.Name, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time}

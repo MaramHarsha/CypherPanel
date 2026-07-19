@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -90,6 +91,14 @@ func (b *fakeBus) publishedOn(subject string) [][]byte {
 	return b.published[subject]
 }
 
+func (f *fakeBus) RelayPush(ctx context.Context, id string, r io.Reader) error {
+	return nil
+}
+
+func (f *fakeBus) RelayPull(ctx context.Context, id string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
+}
+
 // recordingDriver captures the desired sets it is asked to converge and
 // returns configurable statuses.
 type recordingDriver struct {
@@ -155,7 +164,7 @@ func rolloutMsg(t *testing.T, serverID, depID string, spec *agentv1.AppSpec) *fa
 func TestSyncConvergesDesiredSet(t *testing.T) {
 	bus := newFakeBus(desiredStateBytes(t, &agentv1.AppSpec{AppId: "app1", RevisionId: "rev1"}))
 	drv := &recordingDriver{}
-	w := New(bus, "srv1", drv, nil, quietLog())
+	w := New(bus, "srv1", drv, nil, nil, quietLog())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -175,7 +184,7 @@ func TestSyncConvergesDesiredSet(t *testing.T) {
 func TestRolloutReconcilesAndReports(t *testing.T) {
 	bus := newFakeBus(desiredStateBytes(t))
 	drv := &recordingDriver{}
-	w := New(bus, "srv1", drv, nil, quietLog())
+	w := New(bus, "srv1", drv, nil, nil, quietLog())
 
 	msg := rolloutMsg(t, "srv1", "dep1", &agentv1.AppSpec{AppId: "app1", RevisionId: "rev2"})
 	w.handleMsg(context.Background(), msg)
@@ -201,7 +210,7 @@ func TestRolloutReconcilesAndReports(t *testing.T) {
 func TestRolloutErrorReportsFailure(t *testing.T) {
 	bus := newFakeBus(desiredStateBytes(t))
 	drv := &recordingDriver{stateByID: map[string]string{"app1": "error"}}
-	w := New(bus, "srv1", drv, nil, quietLog())
+	w := New(bus, "srv1", drv, nil, nil, quietLog())
 
 	msg := rolloutMsg(t, "srv1", "dep1", &agentv1.AppSpec{AppId: "app1", RevisionId: "rev2"})
 	w.handleMsg(context.Background(), msg)
@@ -220,7 +229,7 @@ func TestRolloutErrorReportsFailure(t *testing.T) {
 func TestReconcileFailureNaksThenTerms(t *testing.T) {
 	bus := newFakeBus(desiredStateBytes(t))
 	drv := &recordingDriver{err: errors.New("daemon unreachable")}
-	w := New(bus, "srv1", drv, nil, quietLog())
+	w := New(bus, "srv1", drv, nil, nil, quietLog())
 
 	first := rolloutMsg(t, "srv1", "dep1", &agentv1.AppSpec{AppId: "app1", RevisionId: "rev1"})
 	first.delivery = 1
@@ -241,7 +250,7 @@ func TestReconcileFailureNaksThenTerms(t *testing.T) {
 func TestMalformedWorkIsTermed(t *testing.T) {
 	bus := newFakeBus(desiredStateBytes(t))
 	drv := &recordingDriver{}
-	w := New(bus, "srv1", drv, nil, quietLog())
+	w := New(bus, "srv1", drv, nil, nil, quietLog())
 
 	msg := &fakeMessage{subject: subjects.Rollout("srv1"), data: []byte("not a protobuf")}
 	w.handleMsg(context.Background(), msg)
@@ -257,7 +266,7 @@ func TestMalformedWorkIsTermed(t *testing.T) {
 func TestRemoveDropsFromDesired(t *testing.T) {
 	bus := newFakeBus(desiredStateBytes(t, &agentv1.AppSpec{AppId: "app1", RevisionId: "rev1"}))
 	drv := &recordingDriver{}
-	w := New(bus, "srv1", drv, nil, quietLog())
+	w := New(bus, "srv1", drv, nil, nil, quietLog())
 	if err := w.sync(context.Background()); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
@@ -279,7 +288,7 @@ func TestRemoveDropsFromDesired(t *testing.T) {
 func TestRunConsumesQueuedWork(t *testing.T) {
 	bus := newFakeBus(desiredStateBytes(t))
 	drv := &recordingDriver{}
-	w := New(bus, "srv1", drv, nil, quietLog())
+	w := New(bus, "srv1", drv, nil, nil, quietLog())
 
 	bus.work <- rolloutMsg(t, "srv1", "dep1", &agentv1.AppSpec{AppId: "app1", RevisionId: "rev1"})
 
@@ -318,7 +327,7 @@ func decodeEvent(t *testing.T, data []byte) *agentv1.DeployEvent {
 func TestIdleWorkerDriftReconciles(t *testing.T) {
 	bus := newFakeBus(desiredStateBytes(t, &agentv1.AppSpec{AppId: "app1", RevisionId: "rev1"}))
 	drv := &recordingDriver{}
-	w := New(bus, "srv1", drv, nil, quietLog())
+	w := New(bus, "srv1", drv, nil, nil, quietLog())
 	w.driftInterval = 50 * time.Millisecond
 
 	ctx, cancel := context.WithCancel(context.Background())

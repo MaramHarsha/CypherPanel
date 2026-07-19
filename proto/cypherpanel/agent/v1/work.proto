@@ -90,6 +90,25 @@ message BuildWork {
   string build_context = 6;
   // Tag for the built image: cypher/<app_id>:<revision_id>.
   string image = 7;
+  // Decrypted deploy-key PEM for SSH-based git clone of private repos.
+  // Sealed at rest on the plane; transported only over mTLS (rule 23).
+  // Empty when the repo is public. Never logged (rule 20).
+  string deploy_key_pem = 8;
+  // If true, the builder must upload the produced image to the NATS relay
+  // (subjects.Relay) for distribution.
+  bool upload_relay = 9;
+}
+
+// DistributeWork commands a target server to receive an image via the NATS
+// relay (ADR-008 path 2: builder ≠ target, no registry). The target subscribes
+// to the relay download subject and pipes chunks into docker load.
+message DistributeWork {
+  string deployment_id = 1;
+  string app_id = 2;
+  // Image tag to expect from docker load (cypher/<app_id>:<revision_id>).
+  string image = 3;
+  // Server id of the builder that has the image and will upload it.
+  string source_server_id = 4;
 }
 
 // DesiredState is the full desired set for one server: the reply to the
@@ -131,6 +150,8 @@ message DeployEvent {
     STAGE_DISTRIBUTE = 2;
     STAGE_ROLLOUT = 3;
     STAGE_REMOVE = 4;
+    STAGE_RELAY_UPLOAD = 5;
+    STAGE_RELAY_DOWNLOAD = 6;
   }
   Stage stage = 3;
 

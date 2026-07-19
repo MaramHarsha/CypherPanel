@@ -37,6 +37,7 @@ func newFakeStore() *fakeStore {
 		revisions:   map[string]domain.Revision{},
 		deployments: map[string]domain.Deployment{},
 		envVars:     map[string][]domain.EnvVar{},
+		servers:     []domain.Server{{ID: "srv_1", Role: "both", Status: domain.StatusRunning}},
 	}
 }
 
@@ -226,6 +227,21 @@ func (f *fakeStore) ListServers(context.Context) ([]domain.Server, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.servers, nil
+}
+
+func (f *fakeStore) GetDeployKey(_ context.Context, id string) (domain.DeployKey, error) {
+	return domain.DeployKey{}, store.ErrNotFound
+}
+
+func (f *fakeStore) GetServer(_ context.Context, id string) (domain.Server, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, s := range f.servers {
+		if s.ID == id {
+			return s, nil
+		}
+	}
+	return domain.Server{}, store.ErrNotFound
 }
 
 type published struct {

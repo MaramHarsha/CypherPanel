@@ -299,6 +299,14 @@ type fakeLogs struct {
 func newFakeLogs() *fakeLogs { return &fakeLogs{lines: map[string][]string{}} }
 
 func (f *fakeLogs) SubscribeLogs(_ context.Context, subject string, handle func(data []byte)) (func(), error) {
+	return f.subscribe(subject, handle)
+}
+
+func (f *fakeLogs) SubscribeRuntimeLogs(_ context.Context, subject string, handle func(data []byte)) (func(), error) {
+	return f.subscribe(subject, handle)
+}
+
+func (f *fakeLogs) subscribe(subject string, handle func(data []byte)) (func(), error) {
 	f.mu.Lock()
 	replay := append([]string(nil), f.lines[subject]...)
 	f.mu.Unlock()

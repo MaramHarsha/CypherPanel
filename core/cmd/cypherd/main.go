@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -27,6 +28,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/auth"
 	"github.com/MaramHarsha/cypherpanel/core/bus"
 	"github.com/MaramHarsha/cypherpanel/core/config"
+	"github.com/MaramHarsha/cypherpanel/core/deploykeys"
 	"github.com/MaramHarsha/cypherpanel/core/enroll"
 	"github.com/MaramHarsha/cypherpanel/core/guard"
 	"github.com/MaramHarsha/cypherpanel/core/identity"
@@ -116,11 +118,13 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("building bus TLS: %w", err)
 	}
 	b, err := bus.Start(ctx, bus.Options{
-		ListenAddr: cfg.NATSAddr,
-		TLSConfig:  busTLS,
-		Authorizer: st,
-		Log:        log,
-		StoreDir:   cfg.DataDir,
+		ListenAddr:          cfg.NATSAddr,
+		TLSConfig:           busTLS,
+		Authorizer:          st,
+		Log:                 log.With("component", "bus"),
+		StoreDir:            filepath.Join(cfg.DataDir, "jetstream"),
+		RuntimeLogsMaxAge:   cfg.RuntimeLogsMaxAge,
+		RuntimeLogsMaxBytes: int64(cfg.RuntimeLogsMaxBytes),
 	})
 	if err != nil {
 		return err
@@ -154,6 +158,7 @@ func run(log *slog.Logger) error {
 	serverSvc := servers.NewService(st, b, cfg.JoinTokenTTL, log)
 	projectSvc := projects.NewService(st)
 	appSvc := applications.NewService(st, box)
+	deployKeySvc := deploykeys.NewService(st, box)
 	authr := auth.NewAuthenticator(st, auth.NewLimiter(5, 15*time.Minute), cfg.SessionTTL)
 
 	// Deploy pipeline: the scheduler publishes work items and advances
@@ -210,6 +215,7 @@ func run(log *slog.Logger) error {
 		Servers:      serverSvc,
 		Projects:     projectSvc,
 		Applications: appSvc,
+		DeployKeys:   deployKeySvc,
 		Scheduler:    sched,
 		Deployments:  st,
 		Opener:       box,
