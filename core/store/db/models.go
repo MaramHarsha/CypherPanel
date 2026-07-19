@@ -122,7 +122,6 @@ type Server struct {
 	LastSeenAt   pgtype.Timestamptz
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
-	Role         string
 }
 
 type Session struct {

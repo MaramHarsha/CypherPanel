@@ -27,6 +27,7 @@ type fakeStore struct {
 	revisions   map[string]domain.Revision
 	deployments map[string]domain.Deployment
 	envVars     map[string][]domain.EnvVar
+	deployKeys  map[string]domain.DeployKey
 	servers     []domain.Server
 	seq         int
 }
@@ -37,7 +38,7 @@ func newFakeStore() *fakeStore {
 		revisions:   map[string]domain.Revision{},
 		deployments: map[string]domain.Deployment{},
 		envVars:     map[string][]domain.EnvVar{},
-		servers:     []domain.Server{{ID: "srv_1", Role: domain.RoleBoth, Status: domain.StatusRunning}},
+		deployKeys:  map[string]domain.DeployKey{},
 	}
 }
 
@@ -230,18 +231,13 @@ func (f *fakeStore) ListServers(context.Context) ([]domain.Server, error) {
 }
 
 func (f *fakeStore) GetDeployKey(_ context.Context, id string) (domain.DeployKey, error) {
-	return domain.DeployKey{}, store.ErrNotFound
-}
-
-func (f *fakeStore) GetServer(_ context.Context, id string) (domain.Server, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for _, s := range f.servers {
-		if s.ID == id {
-			return s, nil
-		}
+	dk, ok := f.deployKeys[id]
+	if !ok {
+		return domain.DeployKey{}, store.ErrNotFound
 	}
-	return domain.Server{}, store.ErrNotFound
+	return dk, nil
 }
 
 type published struct {
@@ -323,6 +319,52 @@ func TestDeployStartsBuild(t *testing.T) {
 	}
 	if bw.GetImage() != "cypher/app_1:"+dep.RevisionID || bw.GetRepoUrl() != "acme/app_1" {
 		t.Fatalf("build work = %+v", &bw)
+	}
+}
+
+// An application referencing a deploy key gets the unsealed PEM in its
+// BuildWork — decrypted only at spec-build time, carried only on the mTLS
+// bus (deploy-key-private-repos.md §4).
+func TestDeployWithDeployKeySendsUnsealedPem(t *testing.T) {
+	fs, fb := newFakeStore(), &fakeBus{}
+	app := fs.addApp("app_1", "srv_1")
+	keyID := "dk_1"
+	fs.deployKeys[keyID] = domain.DeployKey{ID: keyID, PrivateKeyCT: []byte("sealed:PEM-BYTES"), PrivateKeyNonce: []byte("n")}
+	app.Source.DeployKeyID = &keyID
+	fs.apps["app_1"] = app
+	s := newScheduler(fs, fb)
+
+	if _, err := s.Deploy(context.Background(), "app_1", "manual", ""); err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	p, ok := fb.last()
+	if !ok {
+		t.Fatal("no work published")
+	}
+	var bw agentv1.BuildWork
+	if err := proto.Unmarshal(p.data, &bw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if bw.GetDeployKeyPem() != "PEM-BYTES" {
+		t.Fatalf("deploy_key_pem = %q, want the unsealed PEM", bw.GetDeployKeyPem())
+	}
+}
+
+// A dangling deploy-key reference fails the deployment instead of silently
+// building without credentials.
+func TestDeployWithMissingDeployKeyFails(t *testing.T) {
+	fs, fb := newFakeStore(), &fakeBus{}
+	app := fs.addApp("app_1", "srv_1")
+	keyID := "dk_gone"
+	app.Source.DeployKeyID = &keyID
+	fs.apps["app_1"] = app
+	s := newScheduler(fs, fb)
+
+	if _, err := s.Deploy(context.Background(), "app_1", "manual", ""); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("Deploy err = %v, want store.ErrNotFound", err)
+	}
+	if fb.count() != 0 {
+		t.Fatal("work published despite missing deploy key")
 	}
 }
 
@@ -466,9 +508,6 @@ func TestRollbackOfUnbuiltRevisionRefused(t *testing.T) {
 func TestEventsFromWrongServerIgnored(t *testing.T) {
 	fs, fb := newFakeStore(), &fakeBus{}
 	fs.addApp("app_1", "srv_1")
-	// srv_evil is fully enrolled and builder-capable: being able to build is
-	// NOT permission to advance another server's pipeline (threat-model §5.2).
-	fs.servers = append(fs.servers, domain.Server{ID: "srv_evil", Role: domain.RoleBoth, Status: domain.StatusRunning})
 	s := newScheduler(fs, fb)
 
 	dep, _ := s.Deploy(context.Background(), "app_1", "manual", "")

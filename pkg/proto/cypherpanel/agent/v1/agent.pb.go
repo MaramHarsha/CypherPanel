@@ -234,11 +234,8 @@ type Heartbeat struct {
 	AgentVersion string                 `protobuf:"bytes,3,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
 	// Active orchestrator driver on this agent (e.g. "docker"). Phase 1 agents
 	// report their configured driver without yet reconciling workloads.
-	Driver string      `protobuf:"bytes,4,opt,name=driver,proto3" json:"driver,omitempty"`
-	Status AgentStatus `protobuf:"varint,5,opt,name=status,proto3,enum=cypherpanel.agent.v1.AgentStatus" json:"status,omitempty"`
-	// Agent role: "both" (default), "builder", or "docker". Determines which
-	// work items this server processes (builder-role-and-relay.md §1).
-	Role          string `protobuf:"bytes,6,opt,name=role,proto3" json:"role,omitempty"`
+	Driver        string      `protobuf:"bytes,4,opt,name=driver,proto3" json:"driver,omitempty"`
+	Status        AgentStatus `protobuf:"varint,5,opt,name=status,proto3,enum=cypherpanel.agent.v1.AgentStatus" json:"status,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -308,13 +305,6 @@ func (x *Heartbeat) GetStatus() AgentStatus {
 	return AgentStatus_AGENT_STATUS_UNSPECIFIED
 }
 
-func (x *Heartbeat) GetRole() string {
-	if x != nil {
-		return x.Role
-	}
-	return ""
-}
-
 var File_cypherpanel_agent_v1_agent_proto protoreflect.FileDescriptor
 
 const file_cypherpanel_agent_v1_agent_proto_rawDesc = "" +
@@ -330,15 +320,14 @@ const file_cypherpanel_agent_v1_agent_proto_rawDesc = "" +
 	"\tserver_id\x18\x01 \x01(\tR\bserverId\x12'\n" +
 	"\x0fcertificate_pem\x18\x02 \x01(\fR\x0ecertificatePem\x12\x15\n" +
 	"\x06ca_pem\x18\x03 \x01(\fR\x05caPem\x12\x19\n" +
-	"\bnats_url\x18\x04 \x01(\tR\anatsUrl\"\xef\x01\n" +
+	"\bnats_url\x18\x04 \x01(\tR\anatsUrl\"\xdb\x01\n" +
 	"\tHeartbeat\x12\x1b\n" +
 	"\tserver_id\x18\x01 \x01(\tR\bserverId\x129\n" +
 	"\n" +
 	"emitted_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\temittedAt\x12#\n" +
 	"\ragent_version\x18\x03 \x01(\tR\fagentVersion\x12\x16\n" +
 	"\x06driver\x18\x04 \x01(\tR\x06driver\x129\n" +
-	"\x06status\x18\x05 \x01(\x0e2!.cypherpanel.agent.v1.AgentStatusR\x06status\x12\x12\n" +
-	"\x04role\x18\x06 \x01(\tR\x04role*^\n" +
+	"\x06status\x18\x05 \x01(\x0e2!.cypherpanel.agent.v1.AgentStatusR\x06status*^\n" +
 	"\vAgentStatus\x12\x1c\n" +
 	"\x18AGENT_STATUS_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12AGENT_STATUS_READY\x10\x01\x12\x19\n" +

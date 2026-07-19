@@ -43,7 +43,6 @@ const (
 	streamWork         = "WORK"
 	streamLogs         = "LOGS"
 	streamRuntimeLogs  = "RUNTIME_LOGS"
-	streamRelay        = "RELAY"
 	planeUser          = "cypherd-control-plane"
 	heartbeatDurable   = "plane-heartbeats"
 	deployEventDurable = "plane-deploy-events"
@@ -154,8 +153,9 @@ func Start(ctx context.Context, opts Options) (*Bus, error) {
 		Port:       port,
 		JetStream:  true,
 		// The server-level memory cap must cover every memory-backed stream:
-		// STATE (maxMem), LOGS (logsMaxBytes), and RELAY (logsMaxBytes).
-		JetStreamMaxMemory:         maxMem + logsMaxBytes*2,
+		// STATE (maxMem) plus LOGS (logsMaxBytes) — a cap below their summed
+		// MaxBytes makes stream creation fail with "insufficient memory".
+		JetStreamMaxMemory:         maxMem + logsMaxBytes,
 		JetStreamMaxStore:          workMaxBytes + runtimeLogsMaxBytes, // file storage backs WORK and RUNTIME_LOGS
 		StoreDir:                   opts.StoreDir,
 		NoLog:                      true,
@@ -268,23 +268,6 @@ func Start(ctx context.Context, opts Options) (*Bus, error) {
 		nc.Close()
 		ns.Shutdown()
 		return nil, fmt.Errorf("bus: creating RUNTIME_LOGS stream: %w", err)
-	}
-
-	// The RELAY stream holds in-flight images during multi-server distribution
-	// (ADR-008). It is memory-backed and expires quickly; chunks are pulled by
-	// the target and then dropped.
-	if _, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
-		Name:      streamRelay,
-		Subjects:  []string{subjects.RelayPrefix + ">"},
-		Storage:   jetstream.MemoryStorage,
-		Retention: jetstream.WorkQueuePolicy,
-		Discard:   jetstream.DiscardOld,
-		MaxAge:    15 * time.Minute,
-		MaxBytes:  logsMaxBytes,
-	}); err != nil {
-		nc.Close()
-		ns.Shutdown()
-		return nil, fmt.Errorf("bus: creating RELAY stream: %w", err)
 	}
 
 	return &Bus{ns: ns, nc: nc, js: js}, nil

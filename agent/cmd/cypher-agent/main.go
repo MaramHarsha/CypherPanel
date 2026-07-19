@@ -161,7 +161,7 @@ func runAgent(args []string, log *slog.Logger) error {
 		if err != nil {
 			return err
 		}
-		w := worker.New(wbus, id.ServerID, drv, bld, eng, log)
+		w := worker.New(wbus, id.ServerID, drv, bld, log)
 		errCh := make(chan error, 1)
 		go func() {
 			if err := w.Run(ctx); err != nil {

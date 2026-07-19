@@ -391,7 +391,6 @@ func serverFromRow(r db.Server) domain.Server {
 		Name:         r.Name,
 		Status:       domain.ServerStatus(r.Status),
 		Driver:       r.Driver,
-		Role:         r.Role,
 		AgentVersion: r.AgentVersion,
 		Hostname:     r.Hostname,
 		EnrolledAt:   ptrTime(r.EnrolledAt),

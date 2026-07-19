@@ -3,7 +3,6 @@ package worker
 import (
 	"context"
 	"fmt"
-	"io"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -72,76 +71,6 @@ func (b *natsBus) FetchWork(ctx context.Context) (Message, error) {
 		return nil, ErrNoWork
 	}
 	return natsMessage{msgs[0]}, nil
-}
-
-// RelayPush streams r to the deployment's relay subject in 1 MiB chunks,
-// terminated by an empty sentinel message (builder-role-and-relay.md §3).
-func (b *natsBus) RelayPush(ctx context.Context, deploymentID string, r io.Reader) error {
-	subj := subjects.Relay(deploymentID)
-	buf := make([]byte, 1<<20)
-	for {
-		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("worker: relay push canceled: %w", err)
-		}
-		n, err := r.Read(buf)
-		if n > 0 {
-			if perr := b.nc.Publish(subj, buf[:n]); perr != nil {
-				return fmt.Errorf("worker: publishing relay chunk for %s: %w", deploymentID, perr)
-			}
-		}
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("worker: reading image stream for %s: %w", deploymentID, err)
-		}
-	}
-	if err := b.nc.Publish(subj, nil); err != nil { // end-of-stream sentinel
-		return fmt.Errorf("worker: publishing relay sentinel for %s: %w", deploymentID, err)
-	}
-	// Publish is asynchronous; flush so transport errors surface before the
-	// upload is reported successful.
-	if err := b.nc.FlushWithContext(ctx); err != nil {
-		return fmt.Errorf("worker: flushing relay upload for %s: %w", deploymentID, err)
-	}
-	return nil
-}
-
-// RelayPull consumes the deployment's relay stream from the beginning and
-// exposes it as a reader; the returned ReadCloser yields chunks until the
-// empty end-of-stream sentinel.
-func (b *natsBus) RelayPull(ctx context.Context, deploymentID string) (io.ReadCloser, error) {
-	subj := subjects.Relay(deploymentID)
-	js, err := b.nc.JetStream()
-	if err != nil {
-		return nil, fmt.Errorf("worker: getting jetstream context: %w", err)
-	}
-	sub, err := js.SubscribeSync(subj, nats.DeliverAll())
-	if err != nil {
-		return nil, fmt.Errorf("worker: subscribing to relay for %s: %w", deploymentID, err)
-	}
-
-	pr, pw := io.Pipe()
-	go func() {
-		defer func() { _ = sub.Unsubscribe() }()
-		for {
-			msg, err := sub.NextMsgWithContext(ctx)
-			if err != nil {
-				pw.CloseWithError(err)
-				return
-			}
-			_ = msg.Ack()
-			if len(msg.Data) == 0 { // end-of-stream sentinel
-				pw.Close()
-				return
-			}
-			if _, err := pw.Write(msg.Data); err != nil {
-				pw.CloseWithError(err)
-				return
-			}
-		}
-	}()
-	return pr, nil
 }
 
 // natsMessage adapts a JetStream *nats.Msg to the worker's Message.

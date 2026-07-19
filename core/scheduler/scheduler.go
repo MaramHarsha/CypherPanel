@@ -58,7 +58,6 @@ type Store interface {
 	ListActiveDeploymentsByApplication(ctx context.Context, appID string) ([]domain.Deployment, error)
 
 	ListServers(ctx context.Context) ([]domain.Server, error)
-	GetServer(ctx context.Context, id string) (domain.Server, error)
 
 	GetDeployKey(ctx context.Context, id string) (domain.DeployKey, error)
 }
@@ -248,34 +247,9 @@ func (s *Scheduler) start(ctx context.Context, dep domain.Deployment) error {
 		return err
 	}
 
-	targetServer, err := s.store.GetServer(ctx, app.Runtime.ServerID)
-	if err != nil {
-		return fmt.Errorf("scheduler: getting target server: %w", err)
-	}
-
-	// Builder selection (builder-role-and-relay.md §2): a target that can
-	// build builds locally; a docker-only target gets its build routed to a
-	// builder-capable running server. First match for now — fewest-active
-	// load spread arrives with the rest of the builder split.
-	var builderID string
-	if targetServer.Role == domain.RoleBoth || targetServer.Role == "" {
-		builderID = targetServer.ID
-	} else {
-		servers, err := s.store.ListServers(ctx)
-		if err != nil {
-			return fmt.Errorf("scheduler: listing servers for builder selection: %w", err)
-		}
-		for _, srv := range servers {
-			if (srv.Role == domain.RoleBuilder || srv.Role == domain.RoleBoth) && srv.Status == domain.StatusRunning {
-				builderID = srv.ID
-				break
-			}
-		}
-		if builderID == "" {
-			return fmt.Errorf("scheduler: no builder server available for docker-only target %s", targetServer.ID)
-		}
-	}
-
+	// The private key is unsealed only here, at spec-build time, and travels
+	// only inside the mTLS-carried BuildWork (deploy-key-private-repos.md §4;
+	// ENGINEERING rule 23). It is never logged (rule 20).
 	var deployKeyPem string
 	if app.Source.DeployKeyID != nil {
 		dk, err := s.store.GetDeployKey(ctx, *app.Source.DeployKeyID)
@@ -289,6 +263,8 @@ func (s *Scheduler) start(ctx context.Context, dep domain.Deployment) error {
 		deployKeyPem = string(priv)
 	}
 
+	// The slice builds on the app's own server (ADR-008: builder = target, no
+	// distribution); a builder role split re-routes this subject later.
 	work := &agentv1.BuildWork{
 		DeploymentId:   dep.ID,
 		AppId:          app.ID,
@@ -298,39 +274,13 @@ func (s *Scheduler) start(ctx context.Context, dep domain.Deployment) error {
 		BuildContext:   app.Build.Context,
 		Image:          imageTag(app.ID, rev.ID),
 		DeployKeyPem:   deployKeyPem,
-		UploadRelay:    builderID != app.Runtime.ServerID,
 	}
 	data, err := proto.Marshal(work)
 	if err != nil {
 		return fmt.Errorf("scheduler: marshaling build work: %w", err)
 	}
-	if err := s.bus.PublishWork(ctx, subjects.Build(builderID), dep.ID+".build", data); err != nil {
+	if err := s.bus.PublishWork(ctx, subjects.Build(app.Runtime.ServerID), dep.ID+".build", data); err != nil {
 		return fmt.Errorf("scheduler: publishing build: %w", err)
-	}
-	return nil
-}
-
-// startDistribute transitions a deployment to distributing and publishes the
-// distribute work item to the target server. It also starts the relay.
-func (s *Scheduler) startDistribute(ctx context.Context, dep domain.Deployment, app domain.Application, rev domain.Revision, builderID string) error {
-	if _, err := s.store.UpdateDeploymentStatus(ctx, dep.ID, domain.DeployDistributing, ""); err != nil {
-		return err
-	}
-
-	// Relay stream is created by bus, target will pull from it.
-	work := &agentv1.DistributeWork{
-		DeploymentId:   dep.ID,
-		AppId:          app.ID,
-		Image:          imageTag(app.ID, rev.ID),
-		SourceServerId: builderID,
-	}
-	data, err := proto.Marshal(work)
-	if err != nil {
-		return fmt.Errorf("scheduler: marshaling distribute work: %w", err)
-	}
-
-	if err := s.bus.PublishWork(ctx, subjects.Distribute(app.Runtime.ServerID), dep.ID+".distribute", data); err != nil {
-		return fmt.Errorf("scheduler: publishing distribute: %w", err)
 	}
 	return nil
 }
@@ -428,13 +378,8 @@ func (s *Scheduler) HandleDeployEvent(ctx context.Context, serverID string, ev *
 		return
 	}
 	// The subject pins which server published the event; only the server the
-	// app runs on may advance its pipeline — a compromised agent's blast
-	// radius stays its own workloads (threat-model §5.2). Remote-builder
-	// events (build/relay-upload from a builder ≠ runtime server) stay
-	// rejected until the assigned builder is persisted on the deployment
-	// (builder-role-and-relay.md §2): authorizing "any builder-capable
-	// server" instead would let one compromised agent drive every
-	// deployment's pipeline.
+	// app runs on may advance its pipeline. A compromised agent's blast
+	// radius stays its own workloads (threat-model §5.2).
 	if app.Runtime.ServerID != serverID {
 		s.log.Warn("deploy event from a server the app does not run on",
 			"deployment_id", dep.ID, "app_id", app.ID, "reported_by", serverID, "runs_on", app.Runtime.ServerID)
@@ -461,47 +406,9 @@ func (s *Scheduler) HandleDeployEvent(ctx context.Context, serverID string, ev *
 				return
 			}
 		}
-		// Builder = target in the authorized path (see the origin check
-		// above), so the build advances straight to rollout. A remote build
-		// instead waits here for STAGE_RELAY_UPLOAD once builder assignment
-		// is persisted and authorized.
+		// Distribute is a no-op in the slice (ADR-008: builder = target).
 		if err := s.startRollout(ctx, dep, app, rev); err != nil {
 			s.log.Error("deploy event: starting rollout", "deployment_id", dep.ID, "error", err)
-		}
-
-	case agentv1.DeployEvent_STAGE_RELAY_UPLOAD:
-		if dep.Status != domain.DeployBuilding {
-			return
-		}
-		if ev.GetOutcome() == agentv1.DeployEvent_OUTCOME_FAILED {
-			s.fail(ctx, dep, "relay upload failed: "+ev.GetDetail())
-			return
-		}
-		rev, err := s.store.GetRevision(ctx, dep.RevisionID)
-		if err != nil {
-			s.log.Error("deploy event: getting revision for distribute", "deployment_id", dep.ID, "error", err)
-			return
-		}
-		// Upload finished; start distribution to the target server.
-		if err := s.startDistribute(ctx, dep, app, rev, serverID); err != nil {
-			s.log.Error("deploy event: advancing to distribute", "deployment_id", dep.ID, "error", err)
-		}
-
-	case agentv1.DeployEvent_STAGE_DISTRIBUTE, agentv1.DeployEvent_STAGE_RELAY_DOWNLOAD:
-		if dep.Status != domain.DeployDistributing {
-			return
-		}
-		if ev.GetOutcome() == agentv1.DeployEvent_OUTCOME_FAILED {
-			s.fail(ctx, dep, "distribution failed: "+ev.GetDetail())
-			return
-		}
-		rev, err := s.store.GetRevision(ctx, dep.RevisionID)
-		if err != nil {
-			s.log.Error("deploy event: getting revision for rollout", "deployment_id", dep.ID, "error", err)
-			return
-		}
-		if err := s.startRollout(ctx, dep, app, rev); err != nil {
-			s.log.Error("deploy event: advancing to rollout", "deployment_id", dep.ID, "error", err)
 		}
 
 	case agentv1.DeployEvent_STAGE_ROLLOUT:
@@ -514,8 +421,8 @@ func (s *Scheduler) HandleDeployEvent(ctx context.Context, serverID string, ev *
 		// Success is asserted only from the AppStatus observation that
 		// follows (ADR-005) — HandleAppStatus completes the deployment.
 
-	case agentv1.DeployEvent_STAGE_REMOVE:
-		// Removals have no deployment.
+	case agentv1.DeployEvent_STAGE_DISTRIBUTE, agentv1.DeployEvent_STAGE_REMOVE:
+		// Distribute doesn't exist in the slice; removals have no deployment.
 
 	case agentv1.DeployEvent_STAGE_UNSPECIFIED:
 	}

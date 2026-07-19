@@ -23,24 +23,13 @@ const (
 	StatusUnknown   ServerStatus = "unknown"
 )
 
-// Agent roles (docs/features/builder-role-and-relay.md §1): a server's role
-// determines which work items the scheduler routes to it.
-const (
-	RoleBoth    = "both"    // builds and runs apps (default)
-	RoleBuilder = "builder" // builds only
-	RoleDocker  = "docker"  // runs apps only
-)
-
 // Server is a host running cypher-agent, identified by its agent certificate
 // (CN = ID), never by a stored credential (ADR-002).
 type Server struct {
-	ID     string
-	Name   string
-	Status ServerStatus
-	Driver string
-	// Role is the agent's declared capability — RoleBoth, RoleBuilder, or
-	// RoleDocker (builder-role-and-relay.md §1).
-	Role         string
+	ID           string
+	Name         string
+	Status       ServerStatus
+	Driver       string
 	AgentVersion string
 	Hostname     string
 	// EnrolledAt is nil until the agent completes enrollment; it distinguishes

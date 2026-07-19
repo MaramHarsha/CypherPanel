@@ -70,7 +70,4 @@ message Heartbeat {
   // report their configured driver without yet reconciling workloads.
   string driver = 4;
   AgentStatus status = 5;
-  // Agent role: "both" (default), "builder", or "docker". Determines which
-  // work items this server processes (builder-role-and-relay.md §1).
-  string role = 6;
 }

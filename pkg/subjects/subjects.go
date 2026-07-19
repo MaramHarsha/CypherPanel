@@ -21,7 +21,6 @@ const (
 	HeartbeatAll    = "state.*.heartbeat"
 	WorkPrefix      = "work."
 	LogsPrefix      = "logs."
-	RelayPrefix     = "relay."
 
 	// DeployStateAll and AppStateAll are the plane-side consumption wildcards
 	// for deploy events and app-status observations.
@@ -79,14 +78,9 @@ func RuntimeLog(serverID, appID string) string {
 
 // Rollout, Remove and Build are the work-item subjects for one server. The
 // agent routes on the suffix; the payloads are the work.proto messages.
-func Rollout(serverID string) string    { return WorkPrefix + serverID + ".rollout" }
-func Remove(serverID string) string     { return WorkPrefix + serverID + ".remove" }
-func Build(serverID string) string      { return WorkPrefix + serverID + ".build" }
-func Distribute(serverID string) string { return WorkPrefix + serverID + ".distribute" }
-
-// Relay maps a deployment ID to its transient image distribution stream.
-// Builder agents publish to it; target agents subscribe to it.
-func Relay(deploymentID string) string { return RelayPrefix + deploymentID }
+func Rollout(serverID string) string { return WorkPrefix + serverID + ".rollout" }
+func Remove(serverID string) string  { return WorkPrefix + serverID + ".remove" }
+func Build(serverID string) string   { return WorkPrefix + serverID + ".build" }
 
 // DeployState is where an agent reports DeployEvent outcomes.
 func DeployState(serverID string) string { return StatePrefix + serverID + ".deploy" }
