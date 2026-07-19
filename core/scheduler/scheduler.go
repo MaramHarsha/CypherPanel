@@ -164,8 +164,14 @@ func (s *Scheduler) Deploy(ctx context.Context, appID, trigger, ref string) (dom
 	if err != nil {
 		return domain.Deployment{}, fmt.Errorf("scheduler: creating deployment: %w", err)
 	}
-	if err := s.tryStart(ctx, dep); err != nil {
-		return dep, err
+	if serr := s.tryStart(ctx, dep); serr != nil {
+		// Return the current record alongside the error: a fail-fast start
+		// (no builder, bad deploy key) already wrote status=failed with the
+		// reason, and callers surface that record.
+		if fresh, err := s.store.GetDeployment(ctx, dep.ID); err == nil {
+			return fresh, serr
+		}
+		return dep, serr
 	}
 	return s.store.GetDeployment(ctx, dep.ID)
 }
@@ -192,8 +198,11 @@ func (s *Scheduler) Rollback(ctx context.Context, deploymentID string) (domain.D
 	if err != nil {
 		return domain.Deployment{}, fmt.Errorf("scheduler: creating rollback deployment: %w", err)
 	}
-	if err := s.tryStart(ctx, dep); err != nil {
-		return dep, err
+	if serr := s.tryStart(ctx, dep); serr != nil {
+		if fresh, err := s.store.GetDeployment(ctx, dep.ID); err == nil {
+			return fresh, serr
+		}
+		return dep, serr
 	}
 	return s.store.GetDeployment(ctx, dep.ID)
 }
