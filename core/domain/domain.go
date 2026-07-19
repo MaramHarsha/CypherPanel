@@ -26,10 +26,14 @@ const (
 // Server is a host running cypher-agent, identified by its agent certificate
 // (CN = ID), never by a stored credential (ADR-002).
 type Server struct {
-	ID           string
-	Name         string
-	Status       ServerStatus
-	Driver       string
+	ID     string
+	Name   string
+	Status ServerStatus
+	Driver string
+	// Role is what the agent asserted in its last heartbeat: "all" (default),
+	// "builder" (builds only), or "worker" (runs apps, never builds) —
+	// builder-role-and-relay.md §1. Routing input, not an authorization.
+	Role         string
 	AgentVersion string
 	Hostname     string
 	// EnrolledAt is nil until the agent completes enrollment; it distinguishes
@@ -43,6 +47,17 @@ type Server struct {
 
 // Enrolled reports whether an agent has completed enrollment for this server.
 func (s Server) Enrolled() bool { return s.EnrolledAt != nil }
+
+// Server role vocabulary (builder-role-and-relay.md §1).
+const (
+	RoleAll     = "all"     // builds and runs (single-server default)
+	RoleBuilder = "builder" // builds only; never runs Applications or the Proxy
+	RoleWorker  = "worker"  // runs Applications; build work is never routed here
+)
+
+// Builds reports whether this server's role accepts build work. An unset role
+// (rows or fakes predating the role column) means "all".
+func (s Server) Builds() bool { return s.Role != RoleWorker }
 
 // User is an account that can sign in to the control plane. Phase 1 bootstraps
 // exactly one owner. The account model supports TOTP (threat-model §8 req 7):

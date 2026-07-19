@@ -24,7 +24,7 @@ type fakeStore struct {
 	staleIn []string
 }
 
-func (f *fakeStore) RecordHeartbeat(_ context.Context, id string, st domain.ServerStatus, _, driver string) (domain.Server, error) {
+func (f *fakeStore) RecordHeartbeat(_ context.Context, id string, st domain.ServerStatus, _, driver, _ string) (domain.Server, error) {
 	f.records = append(f.records, recordCall{id: id, status: st, driver: driver})
 	return domain.Server{ID: id}, nil
 }

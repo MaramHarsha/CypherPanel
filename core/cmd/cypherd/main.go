@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -32,6 +33,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/guard"
 	"github.com/MaramHarsha/cypherpanel/core/identity"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
+	"github.com/MaramHarsha/cypherpanel/core/relay"
 	"github.com/MaramHarsha/cypherpanel/core/scheduler"
 	"github.com/MaramHarsha/cypherpanel/core/secret"
 	"github.com/MaramHarsha/cypherpanel/core/servers"
@@ -202,8 +204,11 @@ func run(log *slog.Logger) error {
 	}
 	defer statusConsume.Stop()
 
-	// gRPC enrollment endpoint (server-auth TLS; join-token gated).
-	grpcSrv, err := startEnrollmentServer(cfg, planeCert, planeKey, enrollSvc, log)
+	// gRPC enrollment + image-relay endpoint. Enroll needs no client cert
+	// (first contact, join-token gated); the relay RPCs require a verified
+	// agent certificate on the same listener (builder-role-and-relay.md §3).
+	relaySrv := grpcapi.NewRelayServer(relay.New(0), st, log)
+	grpcSrv, err := startEnrollmentServer(cfg, planeCert, planeKey, ca.CertPEM(), enrollSvc, relaySrv, log)
 	if err != nil {
 		return err
 	}
@@ -261,17 +266,27 @@ func run(log *slog.Logger) error {
 	return nil
 }
 
-func startEnrollmentServer(cfg config.Config, certPEM, keyPEM []byte, svc *enroll.Service, log *slog.Logger) (*grpc.Server, error) {
+func startEnrollmentServer(cfg config.Config, certPEM, keyPEM, caPEM []byte, svc *enroll.Service, relaySrv *grpcapi.RelayServer, log *slog.Logger) (*grpc.Server, error) {
 	tlsCfg, err := pki.ServerBootstrapTLSConfig(certPEM, keyPEM)
 	if err != nil {
 		return nil, fmt.Errorf("building enrollment TLS: %w", err)
 	}
+	// Client certificates are optional at the TLS layer (Enroll is the first
+	// contact that issues them) but verified against the agent CA when
+	// presented; the relay handlers then require a verified identity.
+	pool, err := pki.CertPool(caPEM)
+	if err != nil {
+		return nil, fmt.Errorf("building agent CA pool: %w", err)
+	}
+	tlsCfg.ClientCAs = pool
+	tlsCfg.ClientAuth = tls.VerifyClientCertIfGiven
 	lis, err := net.Listen("tcp", cfg.EnrollAddr)
 	if err != nil {
 		return nil, fmt.Errorf("listening on enroll addr: %w", err)
 	}
 	srv := grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsCfg)))
 	agentv1.RegisterEnrollmentServiceServer(srv, grpcapi.NewEnrollmentServer(svc, log))
+	agentv1.RegisterImageRelayServiceServer(srv, relaySrv)
 	go func() {
 		log.Info("enrollment endpoint listening", "addr", cfg.EnrollAddr, "advertised", cfg.AdvertisedEnrollAddr())
 		if err := srv.Serve(lis); err != nil && !errors.Is(err, grpc.ErrServerStopped) {

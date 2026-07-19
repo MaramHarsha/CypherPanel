@@ -20,16 +20,21 @@ const (
 
 // Identity is an enrolled agent's persisted credentials and coordinates.
 type Identity struct {
-	ServerID  string
-	NATSURL   string
+	ServerID string
+	NATSURL  string
+	// PlaneAddr is the host:port the agent enrolled against — also the image
+	// relay endpoint (builder-role-and-relay.md §3). Empty on identities
+	// saved before it existed; CYPHER_PLANE_ADDR overrides at run.
+	PlaneAddr string
 	CertPEM   []byte
 	KeyPEM    []byte
 	CACertPEM []byte
 }
 
 type meta struct {
-	ServerID string `json:"server_id"`
-	NATSURL  string `json:"nats_url"`
+	ServerID  string `json:"server_id"`
+	NATSURL   string `json:"nats_url"`
+	PlaneAddr string `json:"plane_addr,omitempty"`
 }
 
 // Save writes the identity to dir, keeping the private key readable only by the
@@ -47,7 +52,7 @@ func Save(dir string, id *Identity) error {
 	if err := os.WriteFile(filepath.Join(dir, caFile), id.CACertPEM, 0o644); err != nil {
 		return fmt.Errorf("identity: writing ca: %w", err)
 	}
-	m, err := json.Marshal(meta{ServerID: id.ServerID, NATSURL: id.NATSURL})
+	m, err := json.Marshal(meta{ServerID: id.ServerID, NATSURL: id.NATSURL, PlaneAddr: id.PlaneAddr})
 	if err != nil {
 		return fmt.Errorf("identity: marshaling meta: %w", err)
 	}
@@ -82,6 +87,7 @@ func Load(dir string) (*Identity, error) {
 	return &Identity{
 		ServerID:  mm.ServerID,
 		NATSURL:   mm.NATSURL,
+		PlaneAddr: mm.PlaneAddr,
 		CertPEM:   cert,
 		KeyPEM:    key,
 		CACertPEM: ca,

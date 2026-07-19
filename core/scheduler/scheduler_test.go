@@ -175,6 +175,18 @@ func (f *fakeStore) CreateDeployment(_ context.Context, id, appID, revisionID, t
 	return dep, nil
 }
 
+func (f *fakeStore) SetDeploymentBuilder(_ context.Context, id, builderServerID string) (domain.Deployment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d, ok := f.deployments[id]
+	if !ok {
+		return domain.Deployment{}, store.ErrNotFound
+	}
+	d.BuilderServerID = &builderServerID
+	f.deployments[id] = d
+	return d, nil
+}
+
 func (f *fakeStore) GetDeployment(_ context.Context, id string) (domain.Deployment, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -20,12 +20,14 @@ import (
 
 	"github.com/MaramHarsha/cypherpanel/agent/builder"
 	"github.com/MaramHarsha/cypherpanel/agent/conn"
+	"github.com/MaramHarsha/cypherpanel/agent/driver"
 	"github.com/MaramHarsha/cypherpanel/agent/driver/docker"
 	"github.com/MaramHarsha/cypherpanel/agent/driver/docker/engine"
 	"github.com/MaramHarsha/cypherpanel/agent/driver/docker/prober"
 	"github.com/MaramHarsha/cypherpanel/agent/heartbeat"
 	"github.com/MaramHarsha/cypherpanel/agent/identity"
 	"github.com/MaramHarsha/cypherpanel/agent/proxy"
+	"github.com/MaramHarsha/cypherpanel/agent/relay"
 	"github.com/MaramHarsha/cypherpanel/agent/stream"
 	"github.com/MaramHarsha/cypherpanel/agent/worker"
 )
@@ -63,7 +65,7 @@ func usage() {
 
 Usage:
   cypher-agent enroll --plane HOST:PORT --token TOKEN --ca-file PATH [--state-dir DIR] [--hostname NAME]
-  cypher-agent run    [--state-dir DIR] [--driver docker] [--heartbeat 30s]
+  cypher-agent run    [--state-dir DIR] [--driver docker] [--role all|builder|worker] [--heartbeat 30s]
   cypher-agent version`)
 }
 
@@ -101,10 +103,16 @@ func runEnroll(args []string, log *slog.Logger) error {
 func runAgent(args []string, log *slog.Logger) error {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	stateDir := fs.String("state-dir", defaultStateDir(), "directory for the agent identity")
-	driver := fs.String("driver", "docker", "orchestrator driver to report")
+	drvName := fs.String("driver", "docker", "orchestrator driver to report")
+	role := fs.String("role", "all", "agent role: all (build + run), builder (build only), worker (run only)")
 	interval := fs.Duration("heartbeat", 30*time.Second, "heartbeat interval")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	switch *role {
+	case "all", "builder", "worker":
+	default:
+		return fmt.Errorf("--role must be all, builder or worker (got %q)", *role)
 	}
 	id, err := identity.Load(*stateDir)
 	if err != nil {
@@ -126,42 +134,65 @@ func runAgent(args []string, log *slog.Logger) error {
 	// Exit rather than linger publishing into a dead connection; the operator's
 	// init system decides whether to restart.
 	nc.SetClosedHandler(func(*nats.Conn) { cancel() })
-	log.Info("agent running", "server_id", id.ServerID, "driver", *driver, "version", version)
+	log.Info("agent running", "server_id", id.ServerID, "driver", *drvName, "role", *role, "version", version)
 
-	go heartbeat.NewPublisher(nc, id.ServerID, version, *driver, *interval, log).Run(ctx)
+	go heartbeat.NewPublisher(nc, id.ServerID, version, *drvName, *role, *interval, log).Run(ctx)
 
-	if *driver == "docker" {
+	if *drvName == "docker" {
 		eng := engine.New("")
 
-		// The Proxy owns this host directory (routing-and-tls.md §5): fragments
-		// in <Dir>/apps, static config + acme.json alongside. It is bind-mounted
-		// into the managed Traefik container, so it must be an absolute path.
-		proxyDir := "/etc/cypherpanel/traefik"
-		if d := os.Getenv("CYPHER_TRAEFIK_DIR"); d != "" {
-			proxyDir = d
+		// The image relay dials the plane address the agent enrolled against
+		// (builder-role-and-relay.md §3). Identities saved before plane_addr
+		// existed have none — CYPHER_PLANE_ADDR overrides; without either,
+		// relay work items fail with the remedy in the detail.
+		var imgRelay worker.ImageRelay
+		if planeAddr := envOr("CYPHER_PLANE_ADDR", id.PlaneAddr); planeAddr != "" {
+			rc, err := relay.New(planeAddr, id, eng, log)
+			if err != nil {
+				return err
+			}
+			imgRelay = rc
 		}
-		prx := proxy.New(proxy.Config{
-			Dir:          proxyDir,
-			Image:        envOr("CYPHER_PROXY_IMAGE", "traefik:v3.3"),
-			ACMEEmail:    os.Getenv("CYPHER_ACME_EMAIL"),    // empty ⇒ HTTP-only, no cert resolver
-			ACMECAServer: os.Getenv("CYPHER_ACME_CASERVER"), // empty ⇒ Let's Encrypt production
-			Engine:       eng,
-			Log:          log,
-		})
-		prb := prober.New()
 
-		bldDir := filepath.Join(*stateDir, "builds")
-		bld := builder.NewBuilder(eng, bldDir)
+		// Runtime stack (docker reconciler + Proxy + runtime-log streamer):
+		// everything except builder-role agents, which run nothing and must
+		// not bind :80/:443 (builder-role-and-relay.md §1).
+		var drv driver.Reconciler
+		if *role != "builder" {
+			// The Proxy owns this host directory (routing-and-tls.md §5):
+			// fragments in <Dir>/apps, static config + acme.json alongside.
+			// It is bind-mounted into the managed Traefik container, so it
+			// must be an absolute path.
+			proxyDir := "/etc/cypherpanel/traefik"
+			if d := os.Getenv("CYPHER_TRAEFIK_DIR"); d != "" {
+				proxyDir = d
+			}
+			prx := proxy.New(proxy.Config{
+				Dir:          proxyDir,
+				Image:        envOr("CYPHER_PROXY_IMAGE", "traefik:v3.3"),
+				ACMEEmail:    os.Getenv("CYPHER_ACME_EMAIL"),    // empty ⇒ HTTP-only, no cert resolver
+				ACMECAServer: os.Getenv("CYPHER_ACME_CASERVER"), // empty ⇒ Let's Encrypt production
+				Engine:       eng,
+				Log:          log,
+			})
+			prb := prober.New()
+			strm := stream.NewStreamer(nc, eng, id.ServerID)
+			go strm.Start(ctx, 10*time.Second)
+			drv = docker.New(eng, prx, prb, log)
+		}
 
-		strm := stream.NewStreamer(nc, eng, id.ServerID)
-		go strm.Start(ctx, 10*time.Second)
+		// Builds: everything except worker-role agents, which never receive
+		// build work (routing) and keep no build toolchain warm.
+		var bld *builder.Builder
+		if *role != "worker" {
+			bld = builder.NewBuilder(eng, filepath.Join(*stateDir, "builds"))
+		}
 
-		drv := docker.New(eng, prx, prb, log)
 		wbus, err := worker.NewNATSBus(nc, id.ServerID)
 		if err != nil {
 			return err
 		}
-		w := worker.New(wbus, id.ServerID, drv, bld, log)
+		w := worker.New(wbus, id.ServerID, drv, bld, imgRelay, log)
 		errCh := make(chan error, 1)
 		go func() {
 			if err := w.Run(ctx); err != nil {

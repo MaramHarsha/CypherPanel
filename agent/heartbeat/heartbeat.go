@@ -22,13 +22,15 @@ type Publisher struct {
 	serverID string
 	version  string
 	driver   string
+	role     string
 	interval time.Duration
 	log      *slog.Logger
 }
 
-// NewPublisher wires the publisher.
-func NewPublisher(nc *nats.Conn, serverID, version, driver string, interval time.Duration, log *slog.Logger) *Publisher {
-	return &Publisher{nc: nc, serverID: serverID, version: version, driver: driver, interval: interval, log: log}
+// NewPublisher wires the publisher. role is the agent's --role value
+// (builder-role-and-relay.md §1), reported so the plane can route builds.
+func NewPublisher(nc *nats.Conn, serverID, version, driver, role string, interval time.Duration, log *slog.Logger) *Publisher {
+	return &Publisher{nc: nc, serverID: serverID, version: version, driver: driver, role: role, interval: interval, log: log}
 }
 
 // Run publishes one heartbeat immediately, then every interval until ctx is
@@ -54,6 +56,7 @@ func (p *Publisher) publish() {
 		AgentVersion: p.version,
 		Driver:       p.driver,
 		Status:       agentv1.AgentStatus_AGENT_STATUS_READY,
+		Role:         p.role,
 	})
 	if err != nil {
 		p.log.Error("marshaling heartbeat", "error", err)

@@ -45,6 +45,16 @@ type Message interface {
 	NumDelivered() uint64
 }
 
+// ImageRelay moves images through the plane's transient relay for
+// multi-server deployments (consumer-defined; *relay.Client satisfies it —
+// builder-role-and-relay.md §3). Both operations are idempotent under
+// redelivery. A worker without one (no plane address persisted) fails relay
+// work items with a clear error instead of guessing.
+type ImageRelay interface {
+	PushImage(ctx context.Context, deploymentID, image string) error
+	PullImage(ctx context.Context, deploymentID, image string) error
+}
+
 // Bus is everything the worker needs from the data-plane connection
 // (consumer-defined). natsBus is the production implementation.
 type Bus interface {
@@ -62,6 +72,15 @@ type Bus interface {
 // reconcile this many times is Term'd rather than redelivered forever.
 const maxDeliveries = 3
 
+// errNoRelay marks a host that cannot reach the plane's relay (no persisted
+// plane address). Redelivery cannot fix a missing address, so the item fails
+// immediately with the remedy in the detail.
+var errNoRelay = errors.New("no relay configured: set CYPHER_PLANE_ADDR or re-enroll the agent")
+
+// relayTransferTimeout caps one relay attempt end to end; an expired attempt
+// redelivers and retries with a fresh session (builder-role-and-relay.md §6).
+const relayTransferTimeout = 15 * time.Minute
+
 // defaultDriftInterval bounds how stale the node may drift between work items:
 // with no work arriving, the worker still re-converges (retrying failed GC and
 // drains) and re-publishes observed statuses this often, so the plane's view
@@ -75,6 +94,7 @@ type Worker struct {
 	serverID      string
 	driver        driver.Reconciler
 	builder       *builder.Builder
+	relay         ImageRelay
 	log           *slog.Logger
 	driftInterval time.Duration
 
@@ -82,13 +102,16 @@ type Worker struct {
 	state map[string]*agentv1.AppSpec // map[app_id]spec
 }
 
-// New creates a new Worker.
-func New(bus Bus, serverID string, drv driver.Reconciler, bld *builder.Builder, log *slog.Logger) *Worker {
+// New creates a new Worker. drv is nil on builder-role agents (nothing runs
+// there — builder-role-and-relay.md §1); bld is nil on worker-role agents;
+// rly is nil when the agent has no plane relay address.
+func New(bus Bus, serverID string, drv driver.Reconciler, bld *builder.Builder, rly ImageRelay, log *slog.Logger) *Worker {
 	return &Worker{
 		bus:           bus,
 		serverID:      serverID,
 		driver:        drv,
 		builder:       bld,
+		relay:         rly,
 		log:           log,
 		driftInterval: defaultDriftInterval,
 		state:         make(map[string]*agentv1.AppSpec),
@@ -220,6 +243,36 @@ func (w *Worker) handleMsg(ctx context.Context, msg Message) {
 		delete(w.state, appID)
 		w.mu.Unlock()
 
+	case strings.HasSuffix(subject, ".push"):
+		var work agentv1.PushImageWork
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
+			w.log.Error("worker: unmarshaling push work", "error", err)
+			_ = msg.Term()
+			return
+		}
+		w.handleRelay(ctx, msg, work.DeploymentId, work.AppId, "push", func(ctx context.Context) error {
+			if w.relay == nil {
+				return errNoRelay
+			}
+			return w.relay.PushImage(ctx, work.DeploymentId, work.Image)
+		})
+		return
+
+	case strings.HasSuffix(subject, ".distribute"):
+		var work agentv1.DistributeWork
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
+			w.log.Error("worker: unmarshaling distribute work", "error", err)
+			_ = msg.Term()
+			return
+		}
+		w.handleRelay(ctx, msg, work.DeploymentId, work.AppId, "distribute", func(ctx context.Context) error {
+			if w.relay == nil {
+				return errNoRelay
+			}
+			return w.relay.PullImage(ctx, work.DeploymentId, work.Image)
+		})
+		return
+
 	case strings.HasSuffix(subject, ".build"):
 		var work agentv1.BuildWork
 		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
@@ -264,6 +317,14 @@ func (w *Worker) handleMsg(ctx context.Context, msg Message) {
 		return
 	}
 
+	if w.driver == nil {
+		// Runtime work routed to a builder-role agent is a plane-side routing
+		// bug, not a transient fault: report it and drop the item.
+		w.log.Error("worker: runtime work on an agent with no driver (role builder)", "subject", subject)
+		w.emitEvent(deploymentID, appID, stage, agentv1.DeployEvent_OUTCOME_FAILED, "agent has role builder: it runs no applications", commitSha)
+		_ = msg.Term()
+		return
+	}
 	if err := w.reconcile(ctx, deploymentID, appID, stage, commitSha); err != nil {
 		w.log.Error("worker: reconcile failed completely", "error", err)
 		if stage != agentv1.DeployEvent_STAGE_UNSPECIFIED {
@@ -281,6 +342,11 @@ func (w *Worker) handleMsg(ctx context.Context, msg Message) {
 }
 
 func (w *Worker) reconcile(ctx context.Context, triggerDeploymentID, triggerAppID string, stage agentv1.DeployEvent_Stage, commitSha string) error {
+	if w.driver == nil {
+		// Builder-role agents run nothing: no desired set, nothing to
+		// converge or observe (builder-role-and-relay.md §1).
+		return nil
+	}
 	w.mu.Lock()
 	desired := make([]*agentv1.AppSpec, 0, len(w.state))
 	for _, spec := range w.state {
@@ -325,6 +391,57 @@ func (w *Worker) reconcile(ctx context.Context, triggerDeploymentID, triggerAppI
 	}
 
 	return nil
+}
+
+// handleRelay runs one relay work item (push on builders, distribute on
+// targets) with the worker's standard delivery discipline: InProgress
+// heartbeats across the transfer, NAK-with-backoff on transient failure, a
+// terminal STAGE_DISTRIBUTE failure at the poison cutoff. Only a target's
+// success emits an event — it alone proves the image is where it must run
+// (builder-role-and-relay.md §2).
+func (w *Worker) handleRelay(ctx context.Context, msg Message, deploymentID, appID, kind string, run func(context.Context) error) {
+	w.log.Info("worker: relay work", "kind", kind, "deployment_id", deploymentID)
+	tctx, cancel := context.WithTimeout(ctx, relayTransferTimeout)
+	defer cancel()
+
+	// Keep the item alive across a long transfer so AckWait can't redeliver
+	// it mid-stream and race the active session.
+	stop := make(chan struct{})
+	go func() {
+		t := time.NewTicker(10 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				_ = msg.InProgress()
+			}
+		}
+	}()
+	err := run(tctx)
+	close(stop)
+
+	if err != nil {
+		if errors.Is(err, errNoRelay) {
+			w.log.Error("worker: relay unavailable", "kind", kind, "error", err)
+			w.emitEvent(deploymentID, appID, agentv1.DeployEvent_STAGE_DISTRIBUTE, agentv1.DeployEvent_OUTCOME_FAILED, err.Error(), "")
+			_ = msg.Term()
+			return
+		}
+		w.log.Error("worker: relay transfer failed", "kind", kind, "deployment_id", deploymentID, "error", err)
+		if msg.NumDelivered() >= maxDeliveries {
+			w.emitEvent(deploymentID, appID, agentv1.DeployEvent_STAGE_DISTRIBUTE, agentv1.DeployEvent_OUTCOME_FAILED, err.Error(), "")
+			_ = msg.Term()
+			return
+		}
+		_ = msg.NakWithDelay(5 * time.Second)
+		return
+	}
+	if kind == "distribute" {
+		w.emitEvent(deploymentID, appID, agentv1.DeployEvent_STAGE_DISTRIBUTE, agentv1.DeployEvent_OUTCOME_SUCCEEDED, "", "")
+	}
+	_ = msg.Ack()
 }
 
 func (w *Worker) emitEvent(deploymentID, appID string, stage agentv1.DeployEvent_Stage, outcome agentv1.DeployEvent_Outcome, detail, commitSha string) {

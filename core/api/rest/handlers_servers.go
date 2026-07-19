@@ -20,6 +20,7 @@ type serverDTO struct {
 	Name         string  `json:"name"`
 	Status       string  `json:"status"`
 	Driver       string  `json:"driver"`
+	Role         string  `json:"role"`
 	AgentVersion string  `json:"agent_version"`
 	Hostname     string  `json:"hostname"`
 	Enrolled     bool    `json:"enrolled"`
@@ -34,6 +35,7 @@ func toServerDTO(s domain.Server) serverDTO {
 		Name:         s.Name,
 		Status:       string(s.Status),
 		Driver:       s.Driver,
+		Role:         s.Role,
 		AgentVersion: s.AgentVersion,
 		Hostname:     s.Hostname,
 		Enrolled:     s.Enrolled(),

@@ -16,7 +16,7 @@ import (
 
 // Store is the persistence status needs (consumer-defined).
 type Store interface {
-	RecordHeartbeat(ctx context.Context, id string, status domain.ServerStatus, agentVersion, driver string) (domain.Server, error)
+	RecordHeartbeat(ctx context.Context, id string, status domain.ServerStatus, agentVersion, driver, role string) (domain.Server, error)
 	MarkStaleServersUnknown(ctx context.Context, cutoff time.Time) ([]string, error)
 }
 
@@ -46,7 +46,13 @@ func (r *Recorder) Record(ctx context.Context, data []byte) {
 		return
 	}
 	st := mapStatus(hb.GetStatus())
-	if _, err := r.store.RecordHeartbeat(ctx, hb.GetServerId(), st, hb.GetAgentVersion(), hb.GetDriver()); err != nil {
+	// Older agents (pre-role) send no role; they behave as "all" and are
+	// recorded as such (builder-role-and-relay.md §1 default).
+	role := hb.GetRole()
+	if role == "" {
+		role = domain.RoleAll
+	}
+	if _, err := r.store.RecordHeartbeat(ctx, hb.GetServerId(), st, hb.GetAgentVersion(), hb.GetDriver(), role); err != nil {
 		r.log.Error("recording heartbeat", "server_id", hb.GetServerId(), "error", err)
 	}
 }

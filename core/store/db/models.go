@@ -59,15 +59,16 @@ type DeployKey struct {
 }
 
 type Deployment struct {
-	ID            string
-	ApplicationID string
-	RevisionID    string
-	Status        string
-	Trigger       string
-	Detail        string
-	CreatedAt     pgtype.Timestamptz
-	UpdatedAt     pgtype.Timestamptz
-	FinishedAt    pgtype.Timestamptz
+	ID              string
+	ApplicationID   string
+	RevisionID      string
+	Status          string
+	Trigger         string
+	Detail          string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	FinishedAt      pgtype.Timestamptz
+	BuilderServerID pgtype.Text
 }
 
 type Environment struct {
@@ -122,6 +123,7 @@ type Server struct {
 	LastSeenAt   pgtype.Timestamptz
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+	Role         string
 }
 
 type Session struct {

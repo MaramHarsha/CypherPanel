@@ -392,6 +392,19 @@ func (s *Store) CreateDeployment(ctx context.Context, id, appID, revisionID, tri
 	return deploymentFromRow(row), nil
 }
 
+// SetDeploymentBuilder pins which server a deployment's build was routed to
+// (builder-role-and-relay.md §4); it stays NULL when builder = target.
+func (s *Store) SetDeploymentBuilder(ctx context.Context, id, builderServerID string) (domain.Deployment, error) {
+	row, err := s.q.SetDeploymentBuilder(ctx, db.SetDeploymentBuilderParams{
+		ID:              id,
+		BuilderServerID: pgtype.Text{String: builderServerID, Valid: true},
+	})
+	if err != nil {
+		return domain.Deployment{}, wrap("setting deployment builder", err)
+	}
+	return deploymentFromRow(row), nil
+}
+
 func (s *Store) GetDeployment(ctx context.Context, id string) (domain.Deployment, error) {
 	row, err := s.q.GetDeployment(ctx, id)
 	if err != nil {
@@ -573,7 +586,7 @@ func revisionFromRow(r db.Revision) domain.Revision {
 }
 
 func deploymentFromRow(r db.Deployment) domain.Deployment {
-	return domain.Deployment{
+	d := domain.Deployment{
 		ID:            r.ID,
 		ApplicationID: r.ApplicationID,
 		RevisionID:    r.RevisionID,
@@ -584,6 +597,10 @@ func deploymentFromRow(r db.Deployment) domain.Deployment {
 		UpdatedAt:     r.UpdatedAt.Time,
 		FinishedAt:    ptrTime(r.FinishedAt),
 	}
+	if r.BuilderServerID.Valid {
+		d.BuilderServerID = &r.BuilderServerID.String
+	}
+	return d
 }
 
 func textFromPtr(s *string) pgtype.Text {
