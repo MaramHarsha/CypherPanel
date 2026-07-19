@@ -10,6 +10,19 @@ import (
 // The deploy-key endpoints expose only the public half of the key: the sealed
 // private key must never cross the API boundary (ENGINEERING rule 20;
 // deploy-key-private-repos.md §1).
+// assertPublicDeployKeyFields fails if m carries any field beyond the public
+// DeployKey schema (openapi.yaml) — sealed private-key material must never
+// appear in a response (ENGINEERING rule 20).
+func assertPublicDeployKeyFields(t *testing.T, response string, m map[string]any) {
+	t.Helper()
+	allowed := map[string]bool{"id": true, "name": true, "public_key": true, "fingerprint": true, "created_at": true}
+	for k := range m {
+		if !allowed[k] {
+			t.Errorf("%s response exposes unexpected field %q (private key material must stay sealed)", response, k)
+		}
+	}
+}
+
 func TestDeployKeyLifecycle(t *testing.T) {
 	ts, _, _, _ := newTestServerFull(t)
 	token := login(t, ts)
@@ -24,12 +37,7 @@ func TestDeployKeyLifecycle(t *testing.T) {
 	if err := json.Unmarshal(body, &created); err != nil {
 		t.Fatalf("unmarshal create response: %v", err)
 	}
-	allowed := map[string]bool{"id": true, "name": true, "public_key": true, "fingerprint": true, "created_at": true}
-	for k := range created.DeployKey {
-		if !allowed[k] {
-			t.Errorf("create response exposes unexpected field %q (private key material must stay sealed)", k)
-		}
-	}
+	assertPublicDeployKeyFields(t, "create", created.DeployKey)
 	id, _ := created.DeployKey["id"].(string)
 	if !strings.HasPrefix(id, "dk_") {
 		t.Fatalf("id = %q, want dk_ prefix", id)
@@ -45,6 +53,11 @@ func TestDeployKeyLifecycle(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("get = %d, body %s", status, body)
 	}
+	var got map[string]any
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("unmarshal get response: %v", err)
+	}
+	assertPublicDeployKeyFields(t, "get", got)
 
 	status, _, body = doJSON(t, "GET", ts.URL+"/api/v1/deploy-keys", token, "")
 	if status != http.StatusOK {
@@ -57,6 +70,7 @@ func TestDeployKeyLifecycle(t *testing.T) {
 	if len(list) != 1 {
 		t.Fatalf("list len = %d, want 1", len(list))
 	}
+	assertPublicDeployKeyFields(t, "list", list[0])
 
 	if status, _, _ = doJSON(t, "DELETE", ts.URL+"/api/v1/deploy-keys/"+id, token, ""); status != http.StatusNoContent {
 		t.Fatalf("delete = %d, want 204", status)
