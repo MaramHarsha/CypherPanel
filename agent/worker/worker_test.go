@@ -325,24 +325,25 @@ func TestIdleWorkerDriftReconciles(t *testing.T) {
 	done := make(chan struct{})
 	go func() { _ = w.Run(ctx); close(done) }()
 
-	// Boot sync = 1 call; with no work arriving, drift must add more.
+	// Boot sync = 1 call; with no work arriving, drift must add more. Wait for
+	// BOTH the reconcile count and the status publications: the driver counts
+	// a call when Reconcile starts, before the worker publishes the resulting
+	// statuses, so checking publications only after calls reach 3 races the
+	// in-flight publish (this exact flake failed in CI).
 	deadline := time.After(3 * time.Second)
 	for {
 		drv.mu.Lock()
 		calls := drv.calls
 		drv.mu.Unlock()
-		if calls >= 3 {
+		published := len(bus.publishedOn(subjects.AppState("srv1", "app1")))
+		if calls >= 3 && published >= 3 {
 			break
 		}
 		select {
 		case <-deadline:
-			t.Fatalf("idle worker reconciled only %d times; drift reconcile not firing", calls)
+			t.Fatalf("idle worker: %d reconciles, %d status publications; want >=3 of each (drift reconcile not firing or statuses not refreshed)", calls, published)
 		case <-time.After(10 * time.Millisecond):
 		}
-	}
-	// Statuses were re-published on the drift passes, not just at boot.
-	if got := len(bus.publishedOn(subjects.AppState("srv1", "app1"))); got < 3 {
-		t.Fatalf("app status published %d times, want >=3 (refreshed on drift)", got)
 	}
 	cancel()
 	select {
