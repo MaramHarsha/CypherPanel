@@ -717,7 +717,7 @@ paths:
               $ref: "#/components/schemas/CreateDeployKeyRequest"
       responses:
         "201":
-          description: Deploy key created. Public key is returned once.
+          description: Deploy key created. The response carries the public key for the operator to register with their Git host; the private key is sealed server-side and never returned.
           content:
             application/json:
               schema:

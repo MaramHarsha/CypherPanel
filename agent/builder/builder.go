@@ -44,6 +44,23 @@ func NewBuilder(engine EngineClient, workDir string) *Builder {
 	}
 }
 
+// sshCloneURL rewrites an https://github.com/ repository URL to its SSH form
+// so the deploy key — an SSH credential — can authenticate the clone
+// (deploy-key-private-repos.md §4). Every other URL passes through unchanged:
+// an SSH URL already works, and other hosts' HTTPS forms are the operator's
+// to configure as SSH remotes.
+func sshCloneURL(repoURL string) string {
+	const httpsGitHub = "https://github.com/"
+	if !strings.HasPrefix(repoURL, httpsGitHub) {
+		return repoURL
+	}
+	out := "git@github.com:" + strings.TrimPrefix(repoURL, httpsGitHub)
+	if !strings.HasSuffix(out, ".git") {
+		out += ".git"
+	}
+	return out
+}
+
 func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func(string)) (string, error) {
 	if work.DeploymentId == "" || filepath.IsAbs(work.DeploymentId) || strings.Contains(work.DeploymentId, "..") {
 		return "", fmt.Errorf("invalid deployment ID")
@@ -64,31 +81,28 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 		displayURL = parsed.Redacted()
 	}
 
-	cloneEnv := append([]string(nil), gitEnv...) // copy base env
-
+	cloneEnv := gitEnv
 	if work.DeployKeyPem != "" {
-		// Write the deploy key to a temporary file.
+		// The key lives beside (not inside) the clone target — git needs an
+		// empty destination — under 0600, and is removed on every exit path
+		// (deploy-key-private-repos.md §4). The PEM itself is never logged
+		// (ENGINEERING rule 20).
 		keyFile := filepath.Join(b.workDir, ".deploy-key-"+work.DeploymentId)
-		if err := os.WriteFile(keyFile, []byte(work.DeployKeyPem), 0600); err != nil {
+		if err := os.WriteFile(keyFile, []byte(work.DeployKeyPem), 0o600); err != nil {
 			return "", fmt.Errorf("writing deploy key: %w", err)
 		}
 		defer func() { _ = os.Remove(keyFile) }()
 
-		// Force SSH transport instead of asking for credentials if it's an HTTPS github URL.
-		if strings.HasPrefix(repoURL, "https://github.com/") {
-			repoURL = strings.Replace(repoURL, "https://github.com/", "git@github.com:", 1)
-			if !strings.HasSuffix(repoURL, ".git") {
-				repoURL += ".git"
-			}
-		}
+		repoURL = sshCloneURL(repoURL)
 
-		// Inject SSH command to use the key and ignore unknown hosts (we don't
-		// maintain a known_hosts file for the agent).
-		sshCmd := fmt.Sprintf("ssh -i %s -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null", keyFile)
-		cloneEnv = append(cloneEnv, "GIT_SSH_COMMAND="+sshCmd)
-		onLog(fmt.Sprintf("Cloning private repository using deploy key..."))
+		// accept-new with no persistent known_hosts: the agent keeps no
+		// host-key state, so pinning is trust-on-first-use per clone
+		// (deploy-key-private-repos.md §4).
+		cloneEnv = append(append([]string(nil), gitEnv...),
+			`GIT_SSH_COMMAND=ssh -i "`+keyFile+`" -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null`)
+		onLog(fmt.Sprintf("Cloning private repository %s at %s using deploy key...", displayURL, work.CommitSha))
 	} else {
-		onLog(fmt.Sprintf("Cloning repository %s...", displayURL))
+		onLog(fmt.Sprintf("Cloning repository %s at %s...", displayURL, work.CommitSha))
 	}
 
 	cmd := exec.CommandContext(ctx, "git", "clone", repoURL, buildDir)

@@ -37,7 +37,7 @@ func newFakeStore() *fakeStore {
 		revisions:   map[string]domain.Revision{},
 		deployments: map[string]domain.Deployment{},
 		envVars:     map[string][]domain.EnvVar{},
-		servers:     []domain.Server{{ID: "srv_1", Role: "both", Status: domain.StatusRunning}},
+		servers:     []domain.Server{{ID: "srv_1", Role: domain.RoleBoth, Status: domain.StatusRunning}},
 	}
 }
 
@@ -466,6 +466,9 @@ func TestRollbackOfUnbuiltRevisionRefused(t *testing.T) {
 func TestEventsFromWrongServerIgnored(t *testing.T) {
 	fs, fb := newFakeStore(), &fakeBus{}
 	fs.addApp("app_1", "srv_1")
+	// srv_evil is fully enrolled and builder-capable: being able to build is
+	// NOT permission to advance another server's pipeline (threat-model §5.2).
+	fs.servers = append(fs.servers, domain.Server{ID: "srv_evil", Role: domain.RoleBoth, Status: domain.StatusRunning})
 	s := newScheduler(fs, fb)
 
 	dep, _ := s.Deploy(context.Background(), "app_1", "manual", "")

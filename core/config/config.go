@@ -65,21 +65,21 @@ type Config struct {
 // Load reads and validates configuration from the process environment.
 func Load() (Config, error) {
 	c := Config{
-		DatabaseURL:    os.Getenv("CYPHERD_DATABASE_URL"),
-		PublicHost:     envOr("CYPHERD_PUBLIC_HOST", "localhost"),
-		HTTPAddr:       envOr("CYPHERD_HTTP_ADDR", ":8080"),
-		EnrollAddr:     envOr("CYPHERD_ENROLL_ADDR", ":8443"),
-		NATSAddr:       envOr("CYPHERD_NATS_ADDR", ":4222"),
-		AdminEmail:     os.Getenv("CYPHERD_ADMIN_EMAIL"),
-		AdminPassword:  os.Getenv("CYPHERD_ADMIN_PASSWORD"),
-		JoinTokenTTL:   envDuration("CYPHERD_JOIN_TOKEN_TTL", 15*time.Minute),
-		AgentCertTTL:   envDuration("CYPHERD_AGENT_CERT_TTL", 90*24*time.Hour),
-		SessionTTL:     envDuration("CYPHERD_SESSION_TTL", 24*time.Hour),
-		HeartbeatStale: envDuration("CYPHERD_HEARTBEAT_STALE", 90*time.Second),
-		SweepInterval:  envDuration("CYPHERD_SWEEP_INTERVAL", 30*time.Second),
-		ShutdownGrace:  envDuration("CYPHERD_SHUTDOWN_GRACE", 20*time.Second),
-		DataDir:             envOr("CYPHERD_DATA_DIR", "/var/lib/cypherd"),
-		RuntimeLogsMaxAge:   envDuration("CYPHERD_RUNTIME_LOGS_MAX_AGE", 24*time.Hour),
+		DatabaseURL:       os.Getenv("CYPHERD_DATABASE_URL"),
+		PublicHost:        envOr("CYPHERD_PUBLIC_HOST", "localhost"),
+		HTTPAddr:          envOr("CYPHERD_HTTP_ADDR", ":8080"),
+		EnrollAddr:        envOr("CYPHERD_ENROLL_ADDR", ":8443"),
+		NATSAddr:          envOr("CYPHERD_NATS_ADDR", ":4222"),
+		AdminEmail:        os.Getenv("CYPHERD_ADMIN_EMAIL"),
+		AdminPassword:     os.Getenv("CYPHERD_ADMIN_PASSWORD"),
+		JoinTokenTTL:      envDuration("CYPHERD_JOIN_TOKEN_TTL", 15*time.Minute),
+		AgentCertTTL:      envDuration("CYPHERD_AGENT_CERT_TTL", 90*24*time.Hour),
+		SessionTTL:        envDuration("CYPHERD_SESSION_TTL", 24*time.Hour),
+		HeartbeatStale:    envDuration("CYPHERD_HEARTBEAT_STALE", 90*time.Second),
+		SweepInterval:     envDuration("CYPHERD_SWEEP_INTERVAL", 30*time.Second),
+		ShutdownGrace:     envDuration("CYPHERD_SHUTDOWN_GRACE", 20*time.Second),
+		DataDir:           envOr("CYPHERD_DATA_DIR", "/var/lib/cypherd"),
+		RuntimeLogsMaxAge: envDuration("CYPHERD_RUNTIME_LOGS_MAX_AGE", 24*time.Hour),
 	}
 
 	runtimeBytes, err := envBytes("CYPHERD_RUNTIME_LOGS_MAX_BYTES", 536870912) // 512 MiB

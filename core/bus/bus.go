@@ -84,15 +84,23 @@ type Options struct {
 	WorkMaxAge time.Duration
 	// WorkMaxBytes caps the file-backed WORK stream; defaults to 256 MiB.
 	WorkMaxBytes int64
-	// LogsMaxAge bounds how long build log lines are retained for SSE replay.
+	// LogsMaxAge bounds how long build log lines are retained for SSE
+	// replay; defaults to 30 minutes. Memory-backed like STATE — bounded
+	// retention without disk churn (threat-model §5.9, §8 req 9). Runtime
+	// logs live on the file-backed RUNTIME_LOGS stream instead
+	// (bounded-log-retention.md §2).
 	LogsMaxAge time.Duration
+	// LogsMaxBytes caps the LOGS stream's memory; defaults to 64 MiB.
 	LogsMaxBytes int64
-	// RuntimeLogsMaxAge bounds how long runtime log lines are retained on disk.
+	// RuntimeLogsMaxAge bounds how long runtime log lines are retained on
+	// disk (bounded-log-retention.md §2); defaults to 24 hours.
 	RuntimeLogsMaxAge time.Duration
-	// RuntimeLogsMaxBytes caps the RUNTIME_LOGS file-backed stream.
+	// RuntimeLogsMaxBytes caps the file-backed RUNTIME_LOGS stream;
+	// defaults to 512 MiB.
 	RuntimeLogsMaxBytes int64
-	// StoreDir is where JetStream keeps the file-backed WORK stream.
-	// Defaults to the NATS default when empty (tests); production sets it.
+	// StoreDir is where JetStream keeps the file-backed WORK and
+	// RUNTIME_LOGS streams. Defaults to the NATS default when empty
+	// (tests); production sets it.
 	StoreDir string
 }
 
@@ -132,6 +140,14 @@ func Start(ctx context.Context, opts Options) (*Bus, error) {
 	if logsMaxBytes == 0 {
 		logsMaxBytes = 64 << 20
 	}
+	runtimeLogsMaxBytes := opts.RuntimeLogsMaxBytes
+	if runtimeLogsMaxBytes == 0 {
+		runtimeLogsMaxBytes = 512 << 20
+	}
+	runtimeLogsMaxAge := opts.RuntimeLogsMaxAge
+	if runtimeLogsMaxAge == 0 {
+		runtimeLogsMaxAge = 24 * time.Hour
+	}
 	nopts := &natsserver.Options{
 		ServerName: "cypherd",
 		Host:       host,
@@ -140,7 +156,7 @@ func Start(ctx context.Context, opts Options) (*Bus, error) {
 		// The server-level memory cap must cover every memory-backed stream:
 		// STATE (maxMem), LOGS (logsMaxBytes), and RELAY (logsMaxBytes).
 		JetStreamMaxMemory:         maxMem + logsMaxBytes*2,
-		JetStreamMaxStore:          workMaxBytes + opts.RuntimeLogsMaxBytes, // file storage backs WORK and RUNTIME_LOGS
+		JetStreamMaxStore:          workMaxBytes + runtimeLogsMaxBytes, // file storage backs WORK and RUNTIME_LOGS
 		StoreDir:                   opts.StoreDir,
 		NoLog:                      true,
 		NoSigs:                     true,
@@ -228,7 +244,7 @@ func Start(ctx context.Context, opts Options) (*Bus, error) {
 	}
 	if _, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
 		Name:      streamLogs,
-		Subjects:  []string{"logs.*.build.>"},
+		Subjects:  []string{subjects.BuildLogAll},
 		Storage:   jetstream.MemoryStorage,
 		Retention: jetstream.LimitsPolicy,
 		Discard:   jetstream.DiscardOld,
@@ -242,12 +258,12 @@ func Start(ctx context.Context, opts Options) (*Bus, error) {
 
 	if _, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
 		Name:      streamRuntimeLogs,
-		Subjects:  []string{"logs.*.runtime.>"},
+		Subjects:  []string{subjects.RuntimeLogAll},
 		Storage:   jetstream.FileStorage,
 		Retention: jetstream.LimitsPolicy,
 		Discard:   jetstream.DiscardOld,
-		MaxAge:    opts.RuntimeLogsMaxAge,
-		MaxBytes:  int64(opts.RuntimeLogsMaxBytes),
+		MaxAge:    runtimeLogsMaxAge,
+		MaxBytes:  runtimeLogsMaxBytes,
 	}); err != nil {
 		nc.Close()
 		ns.Shutdown()
@@ -274,54 +290,36 @@ func Start(ctx context.Context, opts Options) (*Bus, error) {
 	return &Bus{ns: ns, nc: nc, js: js}, nil
 }
 
-// SubscribeLogs delivers the retained history of one log subject and then its
-// live tail to handle, until stop is called. Backed by an ephemeral ordered
-// consumer on the LOGS stream, so each SSE client gets its own cursor and
-// nothing is retained on its behalf after stop.
+// SubscribeLogs delivers the retained history of one build-log subject and
+// then its live tail to handle, until stop is called. Backed by an ephemeral
+// ordered consumer on the LOGS stream, so each SSE client gets its own cursor
+// and nothing is retained on its behalf after stop.
 func (b *Bus) SubscribeLogs(ctx context.Context, subject string, handle func(data []byte)) (stop func(), err error) {
-	cons, err := b.js.OrderedConsumer(ctx, streamLogs, jetstream.OrderedConsumerConfig{
-		FilterSubjects: []string{subject},
-		DeliverPolicy:  jetstream.DeliverAllPolicy,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("bus: creating ordered consumer: %w", err)
-	}
-	ctx, cancel := context.WithCancel(ctx)
-	cc, err := cons.Consume(func(msg jetstream.Msg) {
-		handle(msg.Data())
-	})
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("bus: starting log consume for %s: %w", subject, err)
-	}
-	return func() {
-		cancel()
-		cc.Stop()
-	}, nil
+	return b.subscribeStream(ctx, streamLogs, subject, handle)
 }
 
-// SubscribeRuntimeLogs delivers the retained history of one runtime log subject
-// and then its live tail. Backed by the file-backed RUNTIME_LOGS stream.
+// SubscribeRuntimeLogs is SubscribeLogs for runtime logs, backed by the
+// file-backed RUNTIME_LOGS stream (bounded-log-retention.md §4) so history
+// within the retention window survives a plane restart.
 func (b *Bus) SubscribeRuntimeLogs(ctx context.Context, subject string, handle func(data []byte)) (stop func(), err error) {
-	cons, err := b.js.OrderedConsumer(ctx, streamRuntimeLogs, jetstream.OrderedConsumerConfig{
+	return b.subscribeStream(ctx, streamRuntimeLogs, subject, handle)
+}
+
+func (b *Bus) subscribeStream(ctx context.Context, stream, subject string, handle func(data []byte)) (stop func(), err error) {
+	cons, err := b.js.OrderedConsumer(ctx, stream, jetstream.OrderedConsumerConfig{
 		FilterSubjects: []string{subject},
 		DeliverPolicy:  jetstream.DeliverAllPolicy,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("bus: creating runtime logs consumer: %w", err)
+		return nil, fmt.Errorf("bus: creating log consumer for %s: %w", subject, err)
 	}
-	ctx, cancel := context.WithCancel(ctx)
 	cc, err := cons.Consume(func(msg jetstream.Msg) {
 		handle(msg.Data())
 	})
 	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("bus: starting runtime log consume for %s: %w", subject, err)
+		return nil, fmt.Errorf("bus: starting log consume for %s: %w", subject, err)
 	}
-	return func() {
-		cancel()
-		cc.Stop()
-	}, nil
+	return cc.Stop, nil
 }
 
 // EnsureWorkConsumer creates (or keeps) the durable consumer holding one

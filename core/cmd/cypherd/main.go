@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -122,7 +121,7 @@ func run(log *slog.Logger) error {
 		TLSConfig:           busTLS,
 		Authorizer:          st,
 		Log:                 log.With("component", "bus"),
-		StoreDir:            filepath.Join(cfg.DataDir, "jetstream"),
+		StoreDir:            cfg.DataDir,
 		RuntimeLogsMaxAge:   cfg.RuntimeLogsMaxAge,
 		RuntimeLogsMaxBytes: int64(cfg.RuntimeLogsMaxBytes),
 	})

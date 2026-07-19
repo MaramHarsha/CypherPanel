@@ -91,11 +91,11 @@ func (b *fakeBus) publishedOn(subject string) [][]byte {
 	return b.published[subject]
 }
 
-func (f *fakeBus) RelayPush(ctx context.Context, id string, r io.Reader) error {
+func (b *fakeBus) RelayPush(context.Context, string, io.Reader) error {
 	return nil
 }
 
-func (f *fakeBus) RelayPull(ctx context.Context, id string) (io.ReadCloser, error) {
+func (b *fakeBus) RelayPull(context.Context, string) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("")), nil
 }
 

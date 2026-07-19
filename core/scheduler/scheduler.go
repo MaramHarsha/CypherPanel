@@ -253,8 +253,12 @@ func (s *Scheduler) start(ctx context.Context, dep domain.Deployment) error {
 		return fmt.Errorf("scheduler: getting target server: %w", err)
 	}
 
+	// Builder selection (builder-role-and-relay.md §2): a target that can
+	// build builds locally; a docker-only target gets its build routed to a
+	// builder-capable running server. First match for now — fewest-active
+	// load spread arrives with the rest of the builder split.
 	var builderID string
-	if targetServer.Role == "both" {
+	if targetServer.Role == domain.RoleBoth || targetServer.Role == "" {
 		builderID = targetServer.ID
 	} else {
 		servers, err := s.store.ListServers(ctx)
@@ -262,14 +266,13 @@ func (s *Scheduler) start(ctx context.Context, dep domain.Deployment) error {
 			return fmt.Errorf("scheduler: listing servers for builder selection: %w", err)
 		}
 		for _, srv := range servers {
-			if (srv.Role == "builder" || srv.Role == "both") && srv.Status == domain.StatusRunning {
-				// Simple first-match selection for Phase 2.
+			if (srv.Role == domain.RoleBuilder || srv.Role == domain.RoleBoth) && srv.Status == domain.StatusRunning {
 				builderID = srv.ID
 				break
 			}
 		}
 		if builderID == "" {
-			return fmt.Errorf("scheduler: no builder server available (target is docker-only)")
+			return fmt.Errorf("scheduler: no builder server available for docker-only target %s", targetServer.ID)
 		}
 	}
 
@@ -313,7 +316,7 @@ func (s *Scheduler) startDistribute(ctx context.Context, dep domain.Deployment, 
 	if _, err := s.store.UpdateDeploymentStatus(ctx, dep.ID, domain.DeployDistributing, ""); err != nil {
 		return err
 	}
-	
+
 	// Relay stream is created by bus, target will pull from it.
 	work := &agentv1.DistributeWork{
 		DeploymentId:   dep.ID,
@@ -325,7 +328,7 @@ func (s *Scheduler) startDistribute(ctx context.Context, dep domain.Deployment, 
 	if err != nil {
 		return fmt.Errorf("scheduler: marshaling distribute work: %w", err)
 	}
-	
+
 	if err := s.bus.PublishWork(ctx, subjects.Distribute(app.Runtime.ServerID), dep.ID+".distribute", data); err != nil {
 		return fmt.Errorf("scheduler: publishing distribute: %w", err)
 	}
@@ -424,28 +427,18 @@ func (s *Scheduler) HandleDeployEvent(ctx context.Context, serverID string, ev *
 		s.log.Error("deploy event: loading application", "deployment_id", dep.ID, "error", err)
 		return
 	}
-	eventServer, err := s.store.GetServer(ctx, serverID)
-	if err != nil {
-		s.log.Error("deploy event: loading server", "server_id", serverID, "error", err)
+	// The subject pins which server published the event; only the server the
+	// app runs on may advance its pipeline — a compromised agent's blast
+	// radius stays its own workloads (threat-model §5.2). Remote-builder
+	// events (build/relay-upload from a builder ≠ runtime server) stay
+	// rejected until the assigned builder is persisted on the deployment
+	// (builder-role-and-relay.md §2): authorizing "any builder-capable
+	// server" instead would let one compromised agent drive every
+	// deployment's pipeline.
+	if app.Runtime.ServerID != serverID {
+		s.log.Warn("deploy event from a server the app does not run on",
+			"deployment_id", dep.ID, "app_id", app.ID, "reported_by", serverID, "runs_on", app.Runtime.ServerID)
 		return
-	}
-	
-	// A compromised agent's blast radius stays its own workloads (threat-model §5.2).
-	// Build and relay upload events can come from any authorized builder.
-	// Distribute and rollout events must come from the application's runtime server.
-	switch ev.GetStage() {
-	case agentv1.DeployEvent_STAGE_BUILD, agentv1.DeployEvent_STAGE_RELAY_UPLOAD:
-		if eventServer.Role != "both" && eventServer.Role != "builder" && app.Runtime.ServerID != serverID {
-			s.log.Warn("build/upload event from unauthorized server",
-				"deployment_id", dep.ID, "app_id", app.ID, "reported_by", serverID)
-			return
-		}
-	default:
-		if app.Runtime.ServerID != serverID {
-			s.log.Warn("deploy event from a server the app does not run on",
-				"deployment_id", dep.ID, "app_id", app.ID, "reported_by", serverID, "runs_on", app.Runtime.ServerID)
-			return
-		}
 	}
 
 	switch ev.GetStage() {
@@ -468,14 +461,12 @@ func (s *Scheduler) HandleDeployEvent(ctx context.Context, serverID string, ev *
 				return
 			}
 		}
-		if app.Runtime.ServerID == serverID {
-			// Local build, no relay needed.
-			if err := s.startRollout(ctx, dep, app, rev); err != nil {
-				s.log.Error("deploy event: advancing to rollout", "deployment_id", dep.ID, "error", err)
-			}
-		} else {
-			// Built on a dedicated builder. Wait for the relay upload to finish.
-			// The builder will publish STAGE_RELAY_UPLOAD next.
+		// Builder = target in the authorized path (see the origin check
+		// above), so the build advances straight to rollout. A remote build
+		// instead waits here for STAGE_RELAY_UPLOAD once builder assignment
+		// is persisted and authorized.
+		if err := s.startRollout(ctx, dep, app, rev); err != nil {
+			s.log.Error("deploy event: starting rollout", "deployment_id", dep.ID, "error", err)
 		}
 
 	case agentv1.DeployEvent_STAGE_RELAY_UPLOAD:

@@ -270,23 +270,25 @@ func (w *Worker) handleMsg(ctx context.Context, msg Message) {
 
 		w.emitEvent(deploymentID, appID, stage, agentv1.DeployEvent_OUTCOME_SUCCEEDED, "", resolvedSha)
 
-		// Phase 2 builder split: upload to relay if required.
+		// Builder split (builder-role-and-relay.md §3): when the scheduler
+		// routed this build to a server other than the target, stream the
+		// image to the relay for distribution.
 		if work.UploadRelay {
 			onLog("Uploading image to relay...")
 			rc, err := w.images.SaveImage(ctx, work.Image)
 			if err != nil {
-				w.log.Error("worker: save image failed", "error", err)
+				w.log.Error("worker: saving image for relay", "deployment_id", deploymentID, "app_id", appID, "error", err)
 				w.emitEvent(deploymentID, appID, agentv1.DeployEvent_STAGE_RELAY_UPLOAD, agentv1.DeployEvent_OUTCOME_FAILED, err.Error(), resolvedSha)
 				_ = msg.Ack()
 				return
 			}
+			defer rc.Close()
 			if err := w.bus.RelayPush(ctx, deploymentID, rc); err != nil {
-				w.log.Error("worker: relay push failed", "error", err)
+				w.log.Error("worker: relay push failed", "deployment_id", deploymentID, "app_id", appID, "error", err)
 				w.emitEvent(deploymentID, appID, agentv1.DeployEvent_STAGE_RELAY_UPLOAD, agentv1.DeployEvent_OUTCOME_FAILED, err.Error(), resolvedSha)
 				_ = msg.Ack()
 				return
 			}
-			rc.Close()
 			w.emitEvent(deploymentID, appID, agentv1.DeployEvent_STAGE_RELAY_UPLOAD, agentv1.DeployEvent_OUTCOME_SUCCEEDED, "", resolvedSha)
 		}
 
@@ -309,20 +311,18 @@ func (w *Worker) handleMsg(ctx context.Context, msg Message) {
 		w.log.Info("worker: pulling image from relay", "app_id", appID, "deployment_id", deploymentID)
 		rc, err := w.bus.RelayPull(ctx, deploymentID)
 		if err != nil {
-			w.log.Error("worker: relay pull failed", "error", err)
+			w.log.Error("worker: relay pull failed", "deployment_id", deploymentID, "app_id", appID, "error", err)
 			w.emitEvent(deploymentID, appID, stage, agentv1.DeployEvent_OUTCOME_FAILED, err.Error(), "")
 			_ = msg.Ack()
 			return
 		}
+		defer rc.Close()
 		if err := w.images.LoadImage(ctx, rc, true); err != nil {
-			rc.Close()
-			w.log.Error("worker: load image failed", "error", err)
+			w.log.Error("worker: loading image from relay", "deployment_id", deploymentID, "app_id", appID, "error", err)
 			w.emitEvent(deploymentID, appID, stage, agentv1.DeployEvent_OUTCOME_FAILED, err.Error(), "")
 			_ = msg.Ack()
 			return
 		}
-		rc.Close()
-
 		w.emitEvent(deploymentID, appID, stage, agentv1.DeployEvent_OUTCOME_SUCCEEDED, "", "")
 		_ = msg.Ack()
 		return
