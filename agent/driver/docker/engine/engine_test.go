@@ -361,3 +361,159 @@ func TestDaemonErrorBecomesStatusError(t *testing.T) {
 		t.Fatalf("err = %v, want StatusError{500, ...}", err)
 	}
 }
+
+// ── EnsureContainer / ConnectNetwork ────────────────────────────────────────
+
+func TestEnsureContainerCreatesWhenAbsent(t *testing.T) {
+	m := newMockDaemon(t, map[string]http.HandlerFunc{
+		"/containers/cypher-proxy/json": func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(t, w, http.StatusNotFound, map[string]string{"message": "no such container"})
+		},
+		"/containers/create": func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(t, w, http.StatusCreated, map[string]string{"Id": "pid"})
+		},
+		"/containers/pid/start":   func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) },
+		"/images/traefik:v3/json": func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }, // present ⇒ no pull
+	})
+	cfg := RunConfig{
+		Name:   "cypher-proxy",
+		Image:  "traefik:v3",
+		Cmd:    []string{"--providers.file.directory=/etc/traefik/apps"},
+		Labels: map[string]string{driver.LabelManaged: "proxy"},
+		Ports:  []PortMap{{Host: 80, Container: 80}, {Host: 443, Container: 443}},
+		Mounts: []Mount{{Source: "/host/apps", Target: "/etc/traefik/apps", ReadOnly: true}},
+	}
+	if err := m.client().EnsureContainer(context.Background(), cfg); err != nil {
+		t.Fatalf("EnsureContainer: %v", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(m.lastTo(t, "/containers/create").body, &body); err != nil {
+		t.Fatalf("create body: %v", err)
+	}
+	if m.lastTo(t, "/containers/create").query.Get("name") != "cypher-proxy" {
+		t.Fatal("create name query missing")
+	}
+	labels, _ := body["Labels"].(map[string]any)
+	if labels[configHashLabel] != cfg.hash() {
+		t.Fatalf("config-hash label = %v, want %s", labels[configHashLabel], cfg.hash())
+	}
+	if labels[driver.LabelManaged] != "proxy" {
+		t.Fatalf("managed label = %v", labels[driver.LabelManaged])
+	}
+	hc, _ := body["HostConfig"].(map[string]any)
+	pb, _ := hc["PortBindings"].(map[string]any)
+	if _, ok := pb["80/tcp"]; !ok {
+		t.Fatalf("no 80/tcp port binding: %v", pb)
+	}
+	binds, _ := hc["Binds"].([]any)
+	if len(binds) != 1 || binds[0] != "/host/apps:/etc/traefik/apps:ro" {
+		t.Fatalf("binds = %v", binds)
+	}
+	if _, ok := body["Cmd"]; !ok {
+		t.Fatal("cmd not sent")
+	}
+}
+
+func TestEnsureContainerNoOpWhenMatching(t *testing.T) {
+	cfg := RunConfig{Name: "cypher-proxy", Image: "traefik:v3", Labels: map[string]string{driver.LabelManaged: "proxy"}}
+	m := newMockDaemon(t, map[string]http.HandlerFunc{
+		"/containers/cypher-proxy/json": func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(t, w, http.StatusOK, map[string]any{
+				"State":  map[string]any{"Running": true},
+				"Config": map[string]any{"Labels": map[string]string{configHashLabel: cfg.hash()}},
+			})
+		},
+		"/containers/create": func(w http.ResponseWriter, _ *http.Request) { t.Fatal("must not create a matching, running container") },
+	})
+	if err := m.client().EnsureContainer(context.Background(), cfg); err != nil {
+		t.Fatalf("EnsureContainer: %v", err)
+	}
+}
+
+func TestEnsureContainerRecreatesOnDrift(t *testing.T) {
+	cfg := RunConfig{Name: "cypher-proxy", Image: "traefik:v3.1"}
+	removed := false
+	m := newMockDaemon(t, map[string]http.HandlerFunc{
+		"/containers/cypher-proxy/json": func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(t, w, http.StatusOK, map[string]any{
+				"State":  map[string]any{"Running": true},
+				"Config": map[string]any{"Labels": map[string]string{configHashLabel: "stale-hash"}},
+			})
+		},
+		"/containers/cypher-proxy": func(w http.ResponseWriter, _ *http.Request) { removed = true; w.WriteHeader(http.StatusNoContent) },
+		"/containers/create": func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(t, w, http.StatusCreated, map[string]string{"Id": "pid"})
+		},
+		"/containers/pid/start":     func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) },
+		"/images/traefik:v3.1/json": func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) },
+	})
+	if err := m.client().EnsureContainer(context.Background(), cfg); err != nil {
+		t.Fatalf("EnsureContainer: %v", err)
+	}
+	if !removed {
+		t.Fatal("drifted container was not removed before recreate")
+	}
+	m.lastTo(t, "/containers/create") // fails the test if create never happened
+}
+
+func TestConnectNetworkIdempotent(t *testing.T) {
+	code := http.StatusOK
+	m := newMockDaemon(t, map[string]http.HandlerFunc{
+		"/networks/cypher-env1/connect": func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(code) },
+	})
+	c := m.client()
+	if err := c.ConnectNetwork(context.Background(), "cypher-proxy", "cypher-env1"); err != nil {
+		t.Fatalf("ConnectNetwork: %v", err)
+	}
+	var body map[string]any
+	_ = json.Unmarshal(m.lastTo(t, "/networks/cypher-env1/connect").body, &body)
+	if body["Container"] != "cypher-proxy" {
+		t.Fatalf("connect body = %v", body)
+	}
+	// Already connected → 403 is success.
+	code = http.StatusForbidden
+	if err := c.ConnectNetwork(context.Background(), "cypher-proxy", "cypher-env1"); err != nil {
+		t.Fatalf("already-connected should be nil, got %v", err)
+	}
+}
+
+func TestEnsureContainerPullsMissingImage(t *testing.T) {
+	pulled := false
+	m := newMockDaemon(t, map[string]http.HandlerFunc{
+		"/containers/cypher-proxy/json": func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(t, w, http.StatusNotFound, map[string]string{"message": "absent"})
+		},
+		"/images/traefik:v3/json": func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(t, w, http.StatusNotFound, map[string]string{"message": "no such image"}) // absent ⇒ pull
+		},
+		"/images/create": func(w http.ResponseWriter, r *http.Request) {
+			pulled = true
+			if r.URL.Query().Get("fromImage") != "traefik" || r.URL.Query().Get("tag") != "v3" {
+				t.Errorf("pull query = %v", r.URL.Query())
+			}
+			_, _ = io.WriteString(w, `{"status":"Pulling"}`+"\n"+`{"status":"Downloaded"}`+"\n")
+		},
+		"/containers/create": func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(t, w, http.StatusCreated, map[string]string{"Id": "pid"})
+		},
+		"/containers/pid/start": func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) },
+	})
+	if err := m.client().EnsureContainer(context.Background(), RunConfig{Name: "cypher-proxy", Image: "traefik:v3"}); err != nil {
+		t.Fatalf("EnsureContainer: %v", err)
+	}
+	if !pulled {
+		t.Fatal("missing image was not pulled before create")
+	}
+}
+
+func TestPullImageSurfacesStreamError(t *testing.T) {
+	m := newMockDaemon(t, map[string]http.HandlerFunc{
+		"/images/create": func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"status":"Pulling"}`+"\n"+`{"error":"manifest unknown"}`+"\n")
+		},
+	})
+	err := m.client().PullImage(context.Background(), "traefik:nope")
+	if err == nil || !strings.Contains(err.Error(), "manifest unknown") {
+		t.Fatalf("err = %v, want the pull stream error surfaced", err)
+	}
+}

@@ -153,9 +153,22 @@ type fakeRouter struct {
 	routes    map[string]string // appID → upstream
 	setErr    error
 	mutations int
+	// EnsureProxy/AttachNetwork are idempotent daemon no-ops (real ones only
+	// mutate on Proxy recreate / first attach), so they are tracked here but
+	// deliberately kept out of `mutations` — the converge-twice invariant is
+	// about container/route changes, which these are not.
+	proxyEnsured  int
+	networksBound []string
 }
 
 func newFakeRouter() *fakeRouter { return &fakeRouter{routes: map[string]string{}} }
+
+func (r *fakeRouter) EnsureProxy(context.Context) error { r.proxyEnsured++; return nil }
+
+func (r *fakeRouter) AttachNetwork(_ context.Context, network string) error {
+	r.networksBound = append(r.networksBound, network)
+	return nil
+}
 
 func (r *fakeRouter) SetRoute(_ context.Context, appID string, _ *agentv1.RouteSpec, upstream string) error {
 	if r.setErr != nil {

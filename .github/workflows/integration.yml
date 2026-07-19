@@ -325,7 +325,7 @@ jobs:
           EID=$(curl -sf -X POST "$API/api/v1/projects" -H "Authorization: Bearer $SESSION" \
             -H 'Content-Type: application/json' -d '{"name":"e2e"}' | jq -r .default_environment.id)
           BODY=$(jq -nc --arg srv "$SRV" --arg repo "$SRC" \
-            '{name:"web",source:{kind:"git_url",repo:$repo},runtime:{server_id:$srv,port:8080},route:{domain:"e2e.example.com"},health:{interval_seconds:2,timeout_seconds:2,retries:10}}')
+            '{name:"web",source:{kind:"git_url",repo:$repo},runtime:{server_id:$srv,port:8080},route:{domain:"e2e.example.com",https:false},health:{interval_seconds:2,timeout_seconds:2,retries:10}}')
           APP=$(curl -sf -X POST "$API/api/v1/environments/$EID/applications" \
             -H "Authorization: Bearer $SESSION" -H 'Content-Type: application/json' -d "$BODY" | jq -r .application.id)
           echo "APP=$APP" >> "$GITHUB_ENV"
@@ -357,6 +357,28 @@ jobs:
           BODY=$(curl -sf "http://$IP:8080/")
           [ "$BODY" = "cypherpanel-e2e-ok" ] || { echo "served body = '$BODY', want cypherpanel-e2e-ok"; exit 1; }
           echo "container $CID serving cypherpanel-e2e-ok at $IP:8080"
+
+      - name: "Assert: reachable at its domain through the Traefik Proxy (routing-and-tls §1)"
+        run: |
+          # The agent ensures a cypher-proxy Traefik container (pulls the image,
+          # publishes :80/:443, attaches to the app's env network) and writes
+          # the route fragment. Traffic to the app's Host rule must reach it
+          # through the Proxy, not just the container directly.
+          for i in $(seq 1 45); do
+            [ "$(docker ps -q --filter 'label=cypherpanel.managed=proxy' | wc -l)" = "1" ] && break
+            sleep 2
+          done
+          docker ps --filter "label=cypherpanel.managed=proxy" --format '{{.Names}} {{.Image}} {{.Ports}}'
+          for i in $(seq 1 20); do
+            VIA=$(curl -s -H "Host: e2e.example.com" http://127.0.0.1:80/ || true)
+            [ "$VIA" = "cypherpanel-e2e-ok" ] && { echo "routed through Traefik in ~$((i*2))s"; break; }
+            sleep 2
+          done
+          [ "$VIA" = "cypherpanel-e2e-ok" ] || { echo "not routed through Traefik (got '$VIA')"; docker logs cypher-proxy 2>&1 | tail -20; exit 1; }
+          # An unknown host has no route and must 404 at the Proxy.
+          code=$(curl -s -o /dev/null -w "%{http_code}" -H "Host: nope.example.com" http://127.0.0.1:80/)
+          [ "$code" = "404" ] || { echo "unknown host returned $code, want 404"; exit 1; }
+          echo "Proxy routes the app's domain and 404s unknown hosts"
 
       - name: "Rollback: re-ship the same revision with the build skipped"
         run: |
