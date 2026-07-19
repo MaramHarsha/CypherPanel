@@ -146,25 +146,12 @@ func (d *Driver) Reconcile(ctx context.Context, desired []*agentv1.AppSpec) ([]*
 		return nil, fmt.Errorf("docker: listing managed containers: %w", err)
 	}
 
-	// Ensure the node's Proxy is up and attached to every desired environment
-	// network before converging apps, so a rolled-out revision is reachable the
-	// moment its fragment is written. Routing convergence is best-effort: a
-	// Proxy hiccup must not stop container convergence (fragments persist and
-	// Traefik picks them up once it recovers), so failures are logged, not
-	// returned.
+	// Ensure the node's Proxy is up before converging apps. Routing
+	// convergence is best-effort: a Proxy hiccup must not stop container
+	// convergence (fragments persist and Traefik picks them up once it
+	// recovers), so failures are logged, not returned.
 	if err := d.router.EnsureProxy(ctx); err != nil {
 		d.log.Warn("ensuring proxy", "error", err)
-	}
-	seenNet := make(map[string]struct{})
-	for _, spec := range desired {
-		net := spec.GetNetwork()
-		if _, ok := seenNet[net]; ok || net == "" {
-			continue
-		}
-		seenNet[net] = struct{}{}
-		if err := d.router.AttachNetwork(ctx, net); err != nil {
-			d.log.Warn("attaching proxy to network", "network", net, "error", err)
-		}
 	}
 
 	byApp := make(map[string][]Container)
@@ -177,6 +164,22 @@ func (d *Driver) Reconcile(ctx context.Context, desired []*agentv1.AppSpec) ([]*
 	for _, spec := range desired {
 		desiredApps[spec.GetAppId()] = struct{}{}
 		statuses = append(statuses, d.convergeApp(ctx, spec, byApp[spec.GetAppId()]))
+	}
+
+	// Attach the Proxy to every desired environment network — after
+	// convergeApp, which creates each network via EnsureNetwork, so a
+	// brand-new app's network exists by now and the Proxy can reach its
+	// upstream. Idempotent and best-effort.
+	seenNet := make(map[string]struct{})
+	for _, spec := range desired {
+		net := spec.GetNetwork()
+		if _, ok := seenNet[net]; ok || net == "" {
+			continue
+		}
+		seenNet[net] = struct{}{}
+		if err := d.router.AttachNetwork(ctx, net); err != nil {
+			d.log.Warn("attaching proxy to network", "network", net, "error", err)
+		}
 	}
 
 	// Absence means removal: any managed app not in desired is torn down. A

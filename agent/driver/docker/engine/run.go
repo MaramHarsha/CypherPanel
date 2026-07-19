@@ -81,9 +81,10 @@ func (c RunConfig) hash() string {
 
 // EnsureContainer converges one named container toward cfg: a running
 // container whose recorded config hash matches is left untouched; anything
-// else (absent, stopped, or drifted) is removed and recreated from cfg, then
-// started, then connected to cfg.Network. Idempotent by construction — the
-// config-hash label makes converging twice a no-op.
+// else (absent, stopped, or drifted) is removed and recreated from cfg — its
+// initial network set through the host config's NetworkMode at creation — then
+// started. Idempotent by construction: the config-hash label makes converging
+// twice a no-op.
 func (c *Client) EnsureContainer(ctx context.Context, cfg RunConfig) error {
 	want := cfg.hash()
 	existing, err := c.inspectContainer(ctx, cfg.Name)
@@ -94,6 +95,14 @@ func (c *Client) EnsureContainer(ctx context.Context, cfg RunConfig) error {
 		if existing.running && existing.labels[configHashLabel] == want {
 			return nil // already converged
 		}
+		// Only ever replace a container this method created: our config-hash
+		// label is stamped on every container we create and on nothing else,
+		// so its absence means the name belongs to someone else — refuse
+		// rather than clobber an unmanaged container (reconciler-development:
+		// managed set is discovered from labels).
+		if _, ours := existing.labels[configHashLabel]; !ours {
+			return fmt.Errorf("engine: container %s exists but is not agent-managed; refusing to replace it", cfg.Name)
+		}
 		if err := c.RemoveContainer(ctx, cfg.Name); err != nil {
 			return fmt.Errorf("engine: replacing container %s: %w", cfg.Name, err)
 		}
@@ -102,7 +111,11 @@ func (c *Client) EnsureContainer(ctx context.Context, cfg RunConfig) error {
 	// The image must be present before create. A locally-built app image
 	// already is (HasImage true ⇒ no-op); a registry image like the Proxy's
 	// Traefik is pulled here on first use.
-	if present, herr := c.HasImage(ctx, cfg.Image); herr == nil && !present {
+	present, herr := c.HasImage(ctx, cfg.Image)
+	if herr != nil {
+		return fmt.Errorf("engine: checking image %s: %w", cfg.Image, herr)
+	}
+	if !present {
 		if err := c.PullImage(ctx, cfg.Image); err != nil {
 			return fmt.Errorf("engine: pulling %s: %w", cfg.Image, err)
 		}

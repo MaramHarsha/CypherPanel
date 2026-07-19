@@ -51,8 +51,10 @@ type Config struct {
 	// ACMECAServer overrides the ACME directory URL (e.g. the LE staging
 	// endpoint). Empty ⇒ Let's Encrypt production.
 	ACMECAServer string
-	// Engine runs and networks the Traefik container. Nil ⇒ fragment-only mode
-	// (EnsureProxy / AttachNetwork are disabled) for tests of the writer.
+	// Engine runs and networks the Traefik container. A nil Engine selects
+	// fragment-only mode: SetRoute/RemoveRoute/Route still manage fragments,
+	// while EnsureProxy and AttachNetwork are no-ops (this driver does not
+	// manage the node's Proxy container).
 	Engine Engine
 	Log    *slog.Logger
 }

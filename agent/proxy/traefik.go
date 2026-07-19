@@ -23,8 +23,9 @@ type Traefik struct {
 	appsDir string // <Dir>/apps — where dynamic fragments live
 }
 
-// New constructs the Traefik proxy driver. A zero Engine leaves EnsureProxy /
-// AttachNetwork disabled (fragment-only mode, used by tests of the writer).
+// New constructs the Traefik proxy driver. A nil Config.Engine selects
+// fragment-only mode: fragment management still works while the Proxy
+// lifecycle (EnsureProxy / AttachNetwork) is disabled.
 func New(cfg Config) *Traefik {
 	return &Traefik{cfg: cfg, appsDir: fragmentsDir(cfg.Dir)}
 }

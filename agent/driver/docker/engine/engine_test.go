@@ -517,3 +517,22 @@ func TestPullImageSurfacesStreamError(t *testing.T) {
 		t.Fatalf("err = %v, want the pull stream error surfaced", err)
 	}
 }
+
+func TestEnsureContainerRefusesUnmanagedNameCollision(t *testing.T) {
+	m := newMockDaemon(t, map[string]http.HandlerFunc{
+		// A container with our name but WITHOUT the config-hash label — not ours.
+		"/containers/cypher-proxy/json": func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(t, w, http.StatusOK, map[string]any{
+				"State":  map[string]any{"Running": true},
+				"Config": map[string]any{"Labels": map[string]string{"some.other": "owner"}},
+			})
+		},
+		"/containers/cypher-proxy": func(w http.ResponseWriter, _ *http.Request) {
+			t.Fatal("must not remove a container it does not own")
+		},
+	})
+	err := m.client().EnsureContainer(context.Background(), RunConfig{Name: "cypher-proxy", Image: "traefik:v3"})
+	if err == nil || !strings.Contains(err.Error(), "not agent-managed") {
+		t.Fatalf("err = %v, want a refusal to replace an unmanaged container", err)
+	}
+}
