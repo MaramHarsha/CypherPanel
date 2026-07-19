@@ -390,21 +390,27 @@ jobs:
           printf 'cypherpanel-e2e-B' > "$SRC/index.html"
           git -C "$SRC" commit -qam rev-B
           : > loop.out
-          ( for i in $(seq 1 600); do
+          rm -f loop.stop
+          # The sampler runs until told to stop — a fixed iteration count could
+          # end before a slow CI rollout flips, silently missing the window.
+          # The trap stops and reaps it on EVERY exit path of this step.
+          ( while [ ! -f loop.stop ]; do
               printf '%s %s\n' "$(curl -s -o body.tmp -w '%{http_code}' -H 'Host: e2e.example.com' --max-time 2 http://127.0.0.1:80/)" "$(cat body.tmp)" >> loop.out
               sleep 0.05
             done ) &
           LOOP=$!
+          trap 'touch loop.stop; wait $LOOP 2>/dev/null || true' EXIT
           DEP2=$(curl -sf -X POST "$API/api/v1/applications/$APP/deploy" -H "Authorization: Bearer $SESSION" -d '{}' | jq -r .id)
           for i in $(seq 1 90); do
             ST=$(curl -sf "$API/api/v1/deployments/$DEP2" -H "Authorization: Bearer $SESSION" | jq -r .status)
             [ "$ST" = "succeeded" ] && break
-            [ "$ST" = "failed" ] && { kill $LOOP 2>/dev/null; echo "rev-B deploy failed"; cat agent.log; exit 1; }
+            [ "$ST" = "failed" ] && { echo "rev-B deploy failed"; cat agent.log; exit 1; }
             sleep 2
           done
-          [ "$ST" = "succeeded" ] || { kill $LOOP 2>/dev/null; echo "rev-B did not succeed (last: $ST)"; exit 1; }
-          # Let the loop sample the post-flip steady state, then stop it.
-          sleep 3; kill $LOOP 2>/dev/null; wait $LOOP 2>/dev/null || true
+          [ "$ST" = "succeeded" ] || { echo "rev-B did not succeed (last: $ST)"; exit 1; }
+          # Let the sampler cover the post-flip steady state, then stop it
+          # before counting (the trap would stop it anyway on exit).
+          sleep 3; touch loop.stop; wait $LOOP 2>/dev/null || true
           TOTAL=$(wc -l < loop.out)
           NON200=$(awk '$1 != 200' loop.out | wc -l)
           SAW_B=$(grep -c 'cypherpanel-e2e-B' loop.out || true)

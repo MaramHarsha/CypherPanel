@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/secret"
 	"github.com/MaramHarsha/cypherpanel/core/servers"
 	"github.com/MaramHarsha/cypherpanel/core/store"
+	"github.com/MaramHarsha/cypherpanel/pkg/subjects"
 )
 
 // ─── fakes ──────────────────────────────────────────────────────────────────
@@ -287,6 +289,31 @@ func (fakeDeploymentReader) ListDeploymentsByApplication(_ context.Context, appI
 	return []domain.Deployment{{ID: "dep_test", ApplicationID: appID, RevisionID: "rev_test", Status: domain.DeploySucceeded, CreatedAt: time.Now()}}, nil
 }
 
+// fakeLogs replays canned lines per subject and records stop calls.
+type fakeLogs struct {
+	mu      sync.Mutex
+	lines   map[string][]string
+	stopped int
+}
+
+func newFakeLogs() *fakeLogs { return &fakeLogs{lines: map[string][]string{}} }
+
+func (f *fakeLogs) SubscribeLogs(_ context.Context, subject string, handle func(data []byte)) (func(), error) {
+	f.mu.Lock()
+	replay := append([]string(nil), f.lines[subject]...)
+	f.mu.Unlock()
+	go func() {
+		for _, l := range replay {
+			handle([]byte(l))
+		}
+	}()
+	return func() {
+		f.mu.Lock()
+		f.stopped++
+		f.mu.Unlock()
+	}, nil
+}
+
 func testBox(t *testing.T) *secret.Box {
 	t.Helper()
 	key := make([]byte, secret.KeySize)
@@ -318,6 +345,11 @@ func newTestServer(t *testing.T) *httptest.Server {
 }
 
 func newTestServerWithStores(t *testing.T) (*httptest.Server, *fakeServersStore) {
+	ts, srv, _ := newTestServerFull(t)
+	return ts, srv
+}
+
+func newTestServerFull(t *testing.T) (*httptest.Server, *fakeServersStore, *fakeLogs) {
 	t.Helper()
 	hash, err := auth.HashPassword(testPassword)
 	if err != nil {
@@ -328,6 +360,7 @@ func newTestServerWithStores(t *testing.T) (*httptest.Server, *fakeServersStore)
 		sessions: map[string]domain.User{},
 	}
 	srvStore := &fakeServersStore{inUse: map[string]bool{}}
+	logs := newFakeLogs()
 	box := testBox(t)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	api := New(Deps{
@@ -338,6 +371,7 @@ func newTestServerWithStores(t *testing.T) (*httptest.Server, *fakeServersStore)
 		Scheduler:    &fakeDeployer{},
 		Deployments:  fakeDeploymentReader{},
 		Opener:       box,
+		Logs:         logs,
 		Pinger:       okPinger{},
 		CACertPEM:    []byte("-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n"),
 		EnrollAddr:   "localhost:8443",
@@ -347,7 +381,7 @@ func newTestServerWithStores(t *testing.T) (*httptest.Server, *fakeServersStore)
 	})
 	ts := httptest.NewServer(api.Handler())
 	t.Cleanup(ts.Close)
-	return ts, srvStore
+	return ts, srvStore, logs
 }
 
 func doJSON(t *testing.T, method, url, token, body string) (int, http.Header, []byte) {
@@ -939,4 +973,69 @@ func TestResponseWriterSupportsFlush(t *testing.T) {
 	if !<-sawFlusher {
 		t.Fatal("wrapped ResponseWriter does not expose http.Flusher; SSE streaming would be unavailable")
 	}
+}
+
+// The SSE log endpoint must replay retained history as data frames after the
+// connected event — a client attaching after the build still sees the log.
+func TestApplicationLogsSSEReplaysHistory(t *testing.T) {
+	ts, _, logs := newTestServerFull(t)
+	token := login(t, ts)
+
+	body := `{"name":"web","source":{"kind":"github","repo":"acme/web"},` +
+		`"runtime":{"server_id":"srv_test","port":8080},"route":{"domain":"web.example.com"}}`
+	status, _, resp := doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, body)
+	if status != http.StatusCreated {
+		t.Fatalf("create: %d", status)
+	}
+	var created struct {
+		Application struct {
+			ID      string `json:"id"`
+			Runtime struct {
+				ServerID string `json:"server_id"`
+			} `json:"runtime"`
+		} `json:"application"`
+	}
+	if err := json.Unmarshal(resp, &created); err != nil {
+		t.Fatal(err)
+	}
+	appID := created.Application.ID
+	subject := subjects.RuntimeLog(created.Application.Runtime.ServerID, appID)
+	logs.mu.Lock()
+	logs.lines[subject] = []string{"line-1", "line-2"}
+	logs.mu.Unlock()
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/applications/"+appID+"/logs", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	res, err := http.DefaultClient.Do(req.WithContext(ctx))
+	if err != nil {
+		t.Fatalf("GET logs: %v", err)
+	}
+	defer res.Body.Close()
+	if ct := res.Header.Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
+		t.Fatalf("content-type = %q", ct)
+	}
+
+	// Read until both replayed lines arrive (the stream then stays open until
+	// the context deadline tears it down).
+	buf := make([]byte, 0, 512)
+	tmp := make([]byte, 256)
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		n, rerr := res.Body.Read(tmp)
+		buf = append(buf, tmp[:n]...)
+		got := string(buf)
+		if strings.Contains(got, "event: connected") &&
+			strings.Contains(got, "data: line-1") && strings.Contains(got, "data: line-2") {
+			return // success
+		}
+		if rerr != nil {
+			break
+		}
+	}
+	t.Fatalf("SSE stream missing expected frames; got:\n%s", buf)
 }

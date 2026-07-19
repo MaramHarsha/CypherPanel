@@ -427,3 +427,64 @@ func TestDeployEventAndAppStatusConsumers(t *testing.T) {
 		t.Fatal("app status never consumed")
 	}
 }
+
+// TestSubscribeLogsReplaysThenTails: log lines published before a subscriber
+// exists are replayed from the bounded LOGS stream, then live lines keep
+// flowing — the "connect mid-build and still see the whole log" property
+// (application-deploy §5).
+func TestSubscribeLogsReplaysThenTails(t *testing.T) {
+	const srv = "srv_alpha"
+	b, ca, _ := startTestBus(t, srv)
+	subject := subjects.BuildLog(srv, "dep_1")
+
+	// An agent publishes two lines before anyone is watching.
+	nc := agentConn(t, b, ca, srv)
+	for _, line := range []string{"step 1", "step 2"} {
+		if err := nc.Publish(subject, []byte(line)); err != nil {
+			t.Fatalf("publish: %v", err)
+		}
+	}
+	if err := nc.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+
+	got := make(chan string, 16)
+	stop, err := b.SubscribeLogs(context.Background(), subject, func(data []byte) {
+		got <- string(data)
+	})
+	if err != nil {
+		t.Fatalf("SubscribeLogs: %v", err)
+	}
+	defer stop()
+
+	expect := func(want string) {
+		t.Helper()
+		select {
+		case line := <-got:
+			if line != want {
+				t.Fatalf("line = %q, want %q", line, want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for %q", want)
+		}
+	}
+	expect("step 1") // replayed history
+	expect("step 2")
+
+	// A line published after subscribing arrives live.
+	if err := nc.Publish(subject, []byte("step 3")); err != nil {
+		t.Fatalf("publish live: %v", err)
+	}
+	expect("step 3")
+
+	// Isolation: another deployment's lines never leak into this subject.
+	if err := nc.Publish(subjects.BuildLog(srv, "dep_2"), []byte("other")); err != nil {
+		t.Fatalf("publish other: %v", err)
+	}
+	_ = nc.Flush()
+	select {
+	case line := <-got:
+		t.Fatalf("received %q from another deployment's subject", line)
+	case <-time.After(500 * time.Millisecond):
+	}
+}

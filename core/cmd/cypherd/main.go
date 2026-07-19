@@ -217,7 +217,7 @@ func run(log *slog.Logger) error {
 		CACertPEM:    ca.CertPEM(),
 		EnrollAddr:   cfg.AdvertisedEnrollAddr(),
 		NATSURL:      cfg.AdvertisedNATSURL(),
-		NATSConn:     b.Conn(),
+		Logs:         b,
 		ConsoleURL:   cfg.AdvertisedConsoleURL(),
 		Log:          log,
 	})

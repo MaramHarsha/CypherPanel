@@ -116,7 +116,12 @@ func (w *Worker) Run(ctx context.Context) error {
 
 		msg, err := w.bus.FetchWork(ctx)
 		if err != nil {
-			if errors.Is(err, ErrNoWork) || errors.Is(err, context.Canceled) {
+			// Shutdown is not idleness: a drift reconcile against a canceled
+			// context would only fail and log noise, so leave immediately.
+			if errors.Is(err, context.Canceled) {
+				return nil
+			}
+			if errors.Is(err, ErrNoWork) {
 				if time.Since(lastConverge) >= w.driftInterval {
 					if rerr := w.reconcile(ctx, "", "", agentv1.DeployEvent_STAGE_UNSPECIFIED, ""); rerr != nil {
 						w.log.Error("worker: drift reconcile", "error", rerr)
