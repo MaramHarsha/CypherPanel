@@ -11,7 +11,14 @@
 - **Generated-code drift:** regenerate sqlc, buf, and the OpenAPI client, then `git diff --exit-code`. Enforces "the spec is the source of truth" (ENGINEERING.md rule 19) — hand-edited generated files and forgotten regeneration both fail loudly.
 
 ### `.github/workflows/integration.yml`
-Dockerized Postgres via `services:`, boots a real `cypherd`, enrolls a real `cypher-agent` in a container, verifies the mTLS handshake, heartbeat, and offline-replay. This **is** Phase 1's acceptance test, automated. Grows a multi-node deploy scenario in Phase 2 (build → rollout → zero-downtime check → rollback).
+Dockerized Postgres via `services:`, boots a real `cypherd` and real `cypher-agent`. Jobs:
+- **handshake** — enrolls a containerized agent; verifies the mTLS handshake, heartbeat-driven status, a plane-outage reconvergence, and revocation-on-delete. This **is** Phase 1's acceptance test, automated.
+- **installer** — the `curl | sh` join under 60 s on a fresh Ubuntu container, plus tampered-CA-fingerprint refusal.
+- **store-tests** — the store layer against a real Postgres (ENGINEERING rule 29).
+- **deploy** — Phase 2 acceptance: a host-run agent (real Docker + git) clones a repo, builds a Dockerfile image, health-gates the rollout, the container actually serves, then a rollback re-ships the revision with the build skipped.
+- **deploy-resilience** — Phase 2 acceptance gate 2: a deploy triggered while the agent is down waits in the file-backed WORK stream; on restart the agent drains it and converges to the new revision with no manual step.
+
+Still to grow: real Traefik + Let's Encrypt routing with a zero-dropped-requests check across a live flip (acceptance gate 1), and the two-agent build-relay scenario (ADR-008).
 
 ### `.github/dependabot.yml`
 Weekly grouped updates: Go modules, pnpm, and Actions versions. Every new runtime dependency still requires PR justification per [tech-stack.md](../tech-stack.md).

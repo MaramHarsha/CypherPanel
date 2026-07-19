@@ -377,3 +377,155 @@ jobs:
           echo "── cypherd ──"; cat cypherd.log 2>/dev/null || true
           echo "── agent ──";   cat agent.log 2>/dev/null || true
           echo "── docker ──";  docker ps -a || true
+
+  # Phase 2 acceptance gate 2 (docs/roadmap.md): kill the agent mid-deploy →
+  # the reconciler converges on restart with no manual step. Made
+  # deterministic for CI: a deploy is triggered while the agent is DOWN, so
+  # the build work waits in the file-backed WORK stream (threat-model §8 req 9);
+  # on restart the agent drains the pending work, builds, and rolls the new
+  # revision out — proving durable work survives an agent outage and the
+  # reconciler heals itself (ADR-003, ADR-005). Agent runs on the host for the
+  # Docker daemon and git a build needs.
+  deploy-resilience:
+    name: Deploy resilience (agent outage → converge on restart)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: ci-password
+          POSTGRES_DB: cypher
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: "**/go.sum"
+
+      - name: Build binaries
+        run: |
+          mkdir -p bin
+          (cd core && go build -o ../bin/cypherd ./cmd/cypherd)
+          (cd agent && CGO_ENABLED=0 go build -o ../bin/cypher-agent ./cmd/cypher-agent)
+
+      - name: Boot cypherd
+        run: |
+          export CYPHERD_MASTER_KEY=$(head -c32 /dev/urandom | base64)
+          nohup ./bin/cypherd > cypherd.log 2>&1 &
+          echo $! > cypherd.pid
+          echo "CYPHERD_MASTER_KEY=$CYPHERD_MASTER_KEY" >> "$GITHUB_ENV"
+          for i in $(seq 1 60); do curl -sf "$API/readyz" >/dev/null && exit 0; sleep 1; done
+          echo "cypherd never became ready"; cat cypherd.log; exit 1
+
+      - name: Create server and join token
+        run: |
+          TOKEN=$(curl -sf -X POST "$API/api/v1/auth/login" -H 'Content-Type: application/json' \
+            -d "{\"email\":\"$CYPHERD_ADMIN_EMAIL\",\"password\":\"$CYPHERD_ADMIN_PASSWORD\"}" | jq -r .token)
+          CREATE=$(curl -sf -X POST "$API/api/v1/servers" -H "Authorization: Bearer $TOKEN" \
+            -H 'Content-Type: application/json' -d '{"name":"ci-res"}')
+          echo "SESSION=$TOKEN" >> "$GITHUB_ENV"
+          echo "SRV=$(echo "$CREATE" | jq -r .server.id)" >> "$GITHUB_ENV"
+          echo "JOIN=$(echo "$CREATE" | jq -r .join.token)" >> "$GITHUB_ENV"
+          curl -sf "$API/api/v1/ca.pem" -o ca.pem
+
+      - name: Prepare a source repo (index.html COPY'd, so revisions differ)
+        run: |
+          SRC="$RUNNER_TEMP/res-src"
+          mkdir -p "$SRC"
+          cat > "$SRC/Dockerfile" <<'DOCKER'
+          FROM busybox:stable
+          COPY index.html /www/index.html
+          EXPOSE 8080
+          CMD ["httpd","-f","-p","8080","-h","/www"]
+          DOCKER
+          printf 'revision-A' > "$SRC/index.html"
+          git -C "$SRC" init -q -b main
+          git -C "$SRC" config user.email ci@example.com
+          git -C "$SRC" config user.name CI
+          git -C "$SRC" add -A
+          git -C "$SRC" commit -qm A
+          echo "SRC=$SRC" >> "$GITHUB_ENV"
+
+      - name: Enroll and run the agent on the host
+        run: |
+          mkdir -p agent-state traefik
+          ./bin/cypher-agent enroll --plane localhost:8443 --token "$JOIN" \
+            --ca-file ca.pem --state-dir agent-state --hostname ci-host
+          CYPHER_TRAEFIK_DIR="$PWD/traefik" \
+            nohup ./bin/cypher-agent run --state-dir agent-state --heartbeat 2s > agent.log 2>&1 &
+          echo $! > agent.pid
+          for i in $(seq 1 30); do
+            S=$(curl -sf "$API/api/v1/servers/$SRV" -H "Authorization: Bearer $SESSION" | jq -r .status)
+            [ "$S" = "running" ] && exit 0; sleep 1
+          done
+          echo "agent never reached running (last: $S)"; cat agent.log cypherd.log; exit 1
+
+      - name: Deploy revision A and confirm it serves
+        run: |
+          EID=$(curl -sf -X POST "$API/api/v1/projects" -H "Authorization: Bearer $SESSION" \
+            -H 'Content-Type: application/json' -d '{"name":"res"}' | jq -r .default_environment.id)
+          BODY=$(jq -nc --arg srv "$SRV" --arg repo "$SRC" \
+            '{name:"web",source:{kind:"git_url",repo:$repo},runtime:{server_id:$srv,port:8080},route:{domain:"res.example.com"},health:{interval_seconds:2,timeout_seconds:2,retries:10}}')
+          APP=$(curl -sf -X POST "$API/api/v1/environments/$EID/applications" \
+            -H "Authorization: Bearer $SESSION" -H 'Content-Type: application/json' -d "$BODY" | jq -r .application.id)
+          echo "APP=$APP" >> "$GITHUB_ENV"
+          DEPA=$(curl -sf -X POST "$API/api/v1/applications/$APP/deploy" -H "Authorization: Bearer $SESSION" -d '{}' | jq -r .id)
+          for i in $(seq 1 90); do
+            ST=$(curl -sf "$API/api/v1/deployments/$DEPA" -H "Authorization: Bearer $SESSION" | jq -r .status)
+            [ "$ST" = "succeeded" ] && break
+            [ "$ST" = "failed" ] && { echo "deploy A failed"; cat agent.log; exit 1; }
+            sleep 2
+          done
+          [ "$ST" = "succeeded" ] || { echo "deploy A did not succeed (last: $ST)"; cat agent.log; exit 1; }
+          CID=$(docker ps -q --filter "label=cypherpanel.app-id=$APP")
+          IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$CID")
+          [ "$(curl -sf "http://$IP:8080/")" = "revision-A" ] || { echo "A not serving"; exit 1; }
+          echo "revision A live"
+
+      - name: "Outage: kill the agent, then deploy revision B while it is down"
+        run: |
+          kill "$(cat agent.pid)"; sleep 2
+          printf 'revision-B' > "$SRC/index.html"
+          git -C "$SRC" commit -qam B
+          DEPB=$(curl -sf -X POST "$API/api/v1/applications/$APP/deploy" -H "Authorization: Bearer $SESSION" -d '{}' | jq -r .id)
+          echo "DEPB=$DEPB" >> "$GITHUB_ENV"
+          sleep 5
+          ST=$(curl -sf "$API/api/v1/deployments/$DEPB" -H "Authorization: Bearer $SESSION" | jq -r .status)
+          [ "$ST" != "succeeded" ] || { echo "deploy B succeeded with no agent — work was not gated on the agent"; exit 1; }
+          echo "deploy B is pending in the WORK stream (status: $ST)"
+
+      - name: "Restart the agent; assert it converges to revision B unaided"
+        run: |
+          CYPHER_TRAEFIK_DIR="$PWD/traefik" \
+            nohup ./bin/cypher-agent run --state-dir agent-state --heartbeat 2s > agent2.log 2>&1 &
+          echo $! > agent.pid
+          for i in $(seq 1 90); do
+            ST=$(curl -sf "$API/api/v1/deployments/$DEPB" -H "Authorization: Bearer $SESSION" | jq -r .status)
+            [ "$ST" = "succeeded" ] && break
+            [ "$ST" = "failed" ] && { echo "deploy B failed on restart"; cat agent2.log; exit 1; }
+            sleep 2
+          done
+          [ "$ST" = "succeeded" ] || { echo "did not converge on restart (last: $ST)"; cat agent2.log; exit 1; }
+          APPSTATE=$(curl -sf "$API/api/v1/applications/$APP" -H "Authorization: Bearer $SESSION" | jq -r .status)
+          [ "$APPSTATE" = "running" ] || { echo "app status = $APPSTATE, want running"; exit 1; }
+          CID=$(docker ps -q --filter "label=cypherpanel.app-id=$APP")
+          IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$CID")
+          [ "$(curl -sf "http://$IP:8080/")" = "revision-B" ] || { echo "B not serving after restart"; exit 1; }
+          N=$(docker ps -q --filter "label=cypherpanel.app-id=$APP" | wc -l)
+          [ "$N" = "1" ] || { echo "want exactly 1 container after convergence, got $N"; docker ps; exit 1; }
+          echo "converged to revision B on restart with no manual step; revision A drained"
+
+      - name: Logs on failure
+        if: failure()
+        run: |
+          echo "── cypherd ──"; cat cypherd.log 2>/dev/null || true
+          echo "── agent (1) ──"; cat agent.log 2>/dev/null || true
+          echo "── agent (2) ──"; cat agent2.log 2>/dev/null || true
+          echo "── docker ──"; docker ps -a || true
