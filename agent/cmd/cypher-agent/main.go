@@ -114,6 +114,11 @@ func runAgent(args []string, log *slog.Logger) error {
 	default:
 		return fmt.Errorf("--role must be all, builder or worker (got %q)", *role)
 	}
+	if *interval <= 0 {
+		// The publisher hands this straight to time.NewTicker, which panics
+		// on non-positive intervals.
+		return fmt.Errorf("--heartbeat must be a positive duration (got %s)", *interval)
+	}
 	id, err := identity.Load(*stateDir)
 	if err != nil {
 		return err

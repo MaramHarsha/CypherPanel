@@ -405,9 +405,13 @@ func (w *Worker) handleRelay(ctx context.Context, msg Message, deploymentID, app
 	defer cancel()
 
 	// Keep the item alive across a long transfer so AckWait can't redeliver
-	// it mid-stream and race the active session.
+	// it mid-stream and race the active session. The goroutine must be fully
+	// stopped before the item is acked/termed/naked below — an InProgress
+	// racing a terminal disposition would reset a cursor we just settled.
 	stop := make(chan struct{})
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		t := time.NewTicker(10 * time.Second)
 		defer t.Stop()
 		for {
@@ -421,6 +425,7 @@ func (w *Worker) handleRelay(ctx context.Context, msg Message, deploymentID, app
 	}()
 	err := run(tctx)
 	close(stop)
+	<-done
 
 	if err != nil {
 		if errors.Is(err, errNoRelay) {

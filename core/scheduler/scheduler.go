@@ -298,8 +298,11 @@ func (s *Scheduler) selectBuilder(ctx context.Context, app domain.Application) (
 	if err != nil {
 		return "", fmt.Errorf("scheduler: listing servers: %w", err)
 	}
-	var fallback string
+	// The target's own capability decides first, independent of list order:
+	// a remote builder must never steal a build the target can run locally
+	// (ADR-008 path 1).
 	targetSeen := false
+	var dedicated, fallback string
 	for _, srv := range servers {
 		if srv.ID == app.Runtime.ServerID {
 			targetSeen = true
@@ -312,9 +315,10 @@ func (s *Scheduler) selectBuilder(ctx context.Context, app domain.Application) (
 			continue
 		}
 		if srv.Role == domain.RoleBuilder {
-			return srv.ID, nil
-		}
-		if fallback == "" {
+			if dedicated == "" {
+				dedicated = srv.ID
+			}
+		} else if fallback == "" {
 			fallback = srv.ID
 		}
 	}
@@ -322,6 +326,9 @@ func (s *Scheduler) selectBuilder(ctx context.Context, app domain.Application) (
 		// No row for the target (it may have raced a delete): keep the local
 		// path — the same default as an unset role.
 		return app.Runtime.ServerID, nil
+	}
+	if dedicated != "" {
+		return dedicated, nil
 	}
 	if fallback != "" {
 		return fallback, nil

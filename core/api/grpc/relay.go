@@ -13,6 +13,7 @@ import (
 
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/relay"
+	"github.com/MaramHarsha/cypherpanel/core/store"
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
 )
 
@@ -58,15 +59,24 @@ func callerServerID(ctx context.Context) (string, error) {
 	return tlsInfo.State.VerifiedChains[0][0].Subject.CommonName, nil
 }
 
-// deploymentParties resolves who may push and pull for a deployment.
+// deploymentParties resolves who may push and pull for a deployment. Only a
+// genuinely unknown row is NotFound; a store outage maps to Unavailable so
+// the agent's work item NAKs and retries instead of treating a database blip
+// as a missing deployment.
 func (s *RelayServer) deploymentParties(ctx context.Context, deploymentID string) (dep domain.Deployment, builderID, targetID string, err error) {
 	dep, err = s.store.GetDeployment(ctx, deploymentID)
 	if err != nil {
-		return dep, "", "", status.Error(codes.NotFound, "unknown deployment")
+		if errors.Is(err, store.ErrNotFound) {
+			return dep, "", "", status.Error(codes.NotFound, "unknown deployment")
+		}
+		return dep, "", "", status.Error(codes.Unavailable, "loading deployment failed")
 	}
 	app, err := s.store.GetApplication(ctx, dep.ApplicationID)
 	if err != nil {
-		return dep, "", "", status.Error(codes.NotFound, "unknown application")
+		if errors.Is(err, store.ErrNotFound) {
+			return dep, "", "", status.Error(codes.NotFound, "unknown application")
+		}
+		return dep, "", "", status.Error(codes.Unavailable, "loading application failed")
 	}
 	targetID = app.Runtime.ServerID
 	builderID = targetID
@@ -84,8 +94,12 @@ func (s *RelayServer) PushImage(stream agentv1.ImageRelayService_PushImageServer
 		return err
 	}
 	first, err := stream.Recv()
-	if err != nil {
+	if errors.Is(err, io.EOF) {
 		return status.Error(codes.InvalidArgument, "empty push stream")
+	}
+	if err != nil {
+		// Transport/context failure, not a client mistake — retryable.
+		return relayErr(err)
 	}
 	depID := first.GetDeploymentId()
 	dep, builderID, _, err := s.deploymentParties(ctx, depID)

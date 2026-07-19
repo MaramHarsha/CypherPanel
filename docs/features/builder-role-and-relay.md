@@ -33,16 +33,24 @@ which work its agent performs:
   docker reconciler, no Proxy (nothing binds :80/:443 on a builder host), no
   runtime-log streamer. Its desired set is always empty (no Application
   targets it), so there is nothing to reconcile.
-- **`worker`**: the agent constructs everything except nothing — it keeps the
-  full runtime stack but the scheduler never routes build work to it. (The
-  existing "builder is nil" guard stays as defense in depth but is not the
-  contract; routing is.)
+- **`worker`**: the agent keeps the full runtime stack (docker reconciler,
+  Proxy, log streamer) but performs no build work — the scheduler never
+  routes builds to it. (The existing "builder is nil" guard stays as defense
+  in depth but is not the contract; routing is.)
 
 The role is the agent's assertion, not an enrollment property: moving a host
-between roles is a flag change and restart, no re-enrollment. A compromised
-agent lying about its role gains nothing — role only *attracts* build work;
-every relay operation is authorized per-deployment against the recorded
-builder/target (§5).
+between roles is a flag change and restart, no re-enrollment. **Accepted
+blast radius:** because the role is self-asserted, any enrolled agent may
+volunteer as a builder, and once the scheduler selects it for a deployment it
+legitimately passes the §5 build/push checks for *that deployment* — a
+compromised agent chosen as builder can therefore poison the images of apps
+routed to it. This is the same trust already extended to every build-capable
+agent (an `all` host builds what it runs); the split widens it from "what it
+runs" to "what it is chosen to build", bounded per-deployment by the
+persisted `builder_server_id` (§5) — it can never push for deployments it was
+not selected for. An operator-approved builder allowlist (role becomes a
+plane-side grant, not an agent claim) is the hardening follow-up if fleets
+need it; for now, operators opt in by which agents they run at all.
 
 ## 2. Scheduler routing
 

@@ -56,8 +56,12 @@ const (
 )
 
 // Builds reports whether this server's role accepts build work. An unset role
-// (rows or fakes predating the role column) means "all".
-func (s Server) Builds() bool { return s.Role != RoleWorker }
+// (rows or fakes predating the role column) means "all"; anything outside the
+// vocabulary never attracts builds — routing must not trust a value the
+// heartbeat path wouldn't persist.
+func (s Server) Builds() bool {
+	return s.Role == RoleAll || s.Role == RoleBuilder || s.Role == ""
+}
 
 // User is an account that can sign in to the control plane. Phase 1 bootstraps
 // exactly one owner. The account model supports TOTP (threat-model §8 req 7):

@@ -65,22 +65,35 @@ func TestDeployRoutesBuildToBuilderRole(t *testing.T) {
 }
 
 func TestDeployPrefersLocalBuildOnAllRole(t *testing.T) {
-	fs, fb := newFakeStore(), &fakeBus{}
-	fs.addApp("app_1", "srv_1")
-	fs.servers = []domain.Server{
-		{ID: "srv_1", Role: domain.RoleAll, Status: domain.StatusRunning},
-		{ID: "srv_b", Role: domain.RoleBuilder, Status: domain.StatusRunning},
-	}
-	s := newScheduler(fs, fb)
-	dep, err := s.Deploy(context.Background(), "app_1", "manual", "")
-	if err != nil {
-		t.Fatalf("Deploy: %v", err)
-	}
-	if p, _ := fb.last(); p.subject != subjects.Build("srv_1") {
-		t.Fatalf("build on %s, want the target itself (ADR-008 local path)", p.subject)
-	}
-	if got, _ := fs.GetDeployment(context.Background(), dep.ID); got.BuilderServerID != nil {
-		t.Fatalf("builder_server_id = %v, want nil for local build", got.BuilderServerID)
+	// Both list orders: a dedicated builder listed before the build-capable
+	// target must never steal the local build (selectBuilder is
+	// order-independent).
+	for name, servers := range map[string][]domain.Server{
+		"target-first": {
+			{ID: "srv_1", Role: domain.RoleAll, Status: domain.StatusRunning},
+			{ID: "srv_b", Role: domain.RoleBuilder, Status: domain.StatusRunning},
+		},
+		"builder-first": {
+			{ID: "srv_b", Role: domain.RoleBuilder, Status: domain.StatusRunning},
+			{ID: "srv_1", Role: domain.RoleAll, Status: domain.StatusRunning},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fs, fb := newFakeStore(), &fakeBus{}
+			fs.addApp("app_1", "srv_1")
+			fs.servers = servers
+			s := newScheduler(fs, fb)
+			dep, err := s.Deploy(context.Background(), "app_1", "manual", "")
+			if err != nil {
+				t.Fatalf("Deploy: %v", err)
+			}
+			if p, _ := fb.last(); p.subject != subjects.Build("srv_1") {
+				t.Fatalf("build on %s, want the target itself (ADR-008 local path)", p.subject)
+			}
+			if got, _ := fs.GetDeployment(context.Background(), dep.ID); got.BuilderServerID != nil {
+				t.Fatalf("builder_server_id = %v, want nil for local build", got.BuilderServerID)
+			}
+		})
 	}
 }
 

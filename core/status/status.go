@@ -47,10 +47,17 @@ func (r *Recorder) Record(ctx context.Context, data []byte) {
 	}
 	st := mapStatus(hb.GetStatus())
 	// Older agents (pre-role) send no role; they behave as "all" and are
-	// recorded as such (builder-role-and-relay.md §1 default).
+	// recorded as such (builder-role-and-relay.md §1 default). Anything
+	// outside the vocabulary is dropped un-persisted, like any other
+	// malformed heartbeat — the role column only ever holds known values.
 	role := hb.GetRole()
-	if role == "" {
+	switch role {
+	case "":
 		role = domain.RoleAll
+	case domain.RoleAll, domain.RoleBuilder, domain.RoleWorker:
+	default:
+		r.log.Warn("dropping heartbeat with unknown role", "server_id", hb.GetServerId(), "role", role)
+		return
 	}
 	if _, err := r.store.RecordHeartbeat(ctx, hb.GetServerId(), st, hb.GetAgentVersion(), hb.GetDriver(), role); err != nil {
 		r.log.Error("recording heartbeat", "server_id", hb.GetServerId(), "error", err)

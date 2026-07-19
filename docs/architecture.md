@@ -43,12 +43,14 @@ Three principles fall out of this:
 └─────────────────────────┼──────────────────┼──────────────────┼────────────┘
                    mTLS   │                  │                  │
              ┌────────────┴───┐    ┌─────────┴──────┐   ┌───────┴────────┐
-             │  cypher-agent  │    │  cypher-agent  │   │ cypher-builder │
-             │  (worker node) │    │  (worker node) │   │ (BuildKit node)│
-             │  Docker API    │    │  Swarm/K8s API │   │ image registry │
-             │  Traefik cfg   │    │  Traefik cfg   │   │ push           │
-             │  logs/metrics  │    │  logs/metrics  │   └────────────────┘
-             └────────────────┘    └────────────────┘
+             │  cypher-agent  │    │  cypher-agent  │   │  cypher-agent  │
+             │  (worker role) │    │  (worker role) │   │ (builder role) │
+             │  Docker API    │    │  Swarm/K8s API │   │ builds images, │
+             │  Traefik cfg   │    │  Traefik cfg   │   │ relayed to     │
+             │  logs/metrics  │    │  logs/metrics  │   │ workers via    │
+             └────────────────┘    └────────────────┘   │ plane (mTLS) — │
+                                                        │ no registry    │
+                                                        └────────────────┘
 ```
 
 ### Components
