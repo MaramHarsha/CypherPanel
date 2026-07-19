@@ -51,7 +51,16 @@ func (b *natsBus) Publish(subject string, data []byte) error {
 }
 
 func (b *natsBus) FetchWork(ctx context.Context) (Message, error) {
-	msgs, err := b.sub.Fetch(1, nats.Context(ctx), nats.MaxWait(fetchWait))
+	// A pull Fetch takes a deadline OR a context, never both (nats.go rejects
+	// setting both). MaxWait bounds the call so the Run loop can re-check
+	// cancellation between fetches; ctx cancellation is honored there, within
+	// one fetchWait window.
+	select {
+	case <-ctx.Done():
+		return nil, context.Canceled
+	default:
+	}
+	msgs, err := b.sub.Fetch(1, nats.MaxWait(fetchWait))
 	if err != nil {
 		if err == nats.ErrTimeout {
 			return nil, ErrNoWork
