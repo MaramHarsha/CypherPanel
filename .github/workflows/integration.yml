@@ -295,10 +295,11 @@ jobs:
           mkdir -p "$SRC"
           cat > "$SRC/Dockerfile" <<'DOCKER'
           FROM busybox:stable
-          RUN mkdir -p /www && printf 'cypherpanel-e2e-ok' > /www/index.html
+          COPY index.html /www/index.html
           EXPOSE 8080
           CMD ["httpd","-f","-p","8080","-h","/www"]
           DOCKER
+          printf 'cypherpanel-e2e-ok' > "$SRC/index.html"
           git -C "$SRC" init -q -b main
           git -C "$SRC" config user.email ci@example.com
           git -C "$SRC" config user.name CI
@@ -379,6 +380,39 @@ jobs:
           code=$(curl -s -o /dev/null -w "%{http_code}" -H "Host: nope.example.com" http://127.0.0.1:80/)
           [ "$code" = "404" ] || { echo "unknown host returned $code, want 404"; exit 1; }
           echo "Proxy routes the app's domain and 404s unknown hosts"
+
+      - name: "Zero dropped requests across a rolling update (roadmap acceptance gate 1)"
+        run: |
+          # Commit a new revision, hammer the route through the Proxy during
+          # the whole build+rollout, and require every request to be a 200 and
+          # the body to change A→B — the vision.md zero-downtime invariant,
+          # asserted through the real flip (routing-and-tls acceptance §2).
+          printf 'cypherpanel-e2e-B' > "$SRC/index.html"
+          git -C "$SRC" commit -qam rev-B
+          : > loop.out
+          ( for i in $(seq 1 600); do
+              printf '%s %s\n' "$(curl -s -o body.tmp -w '%{http_code}' -H 'Host: e2e.example.com' --max-time 2 http://127.0.0.1:80/)" "$(cat body.tmp)" >> loop.out
+              sleep 0.05
+            done ) &
+          LOOP=$!
+          DEP2=$(curl -sf -X POST "$API/api/v1/applications/$APP/deploy" -H "Authorization: Bearer $SESSION" -d '{}' | jq -r .id)
+          for i in $(seq 1 90); do
+            ST=$(curl -sf "$API/api/v1/deployments/$DEP2" -H "Authorization: Bearer $SESSION" | jq -r .status)
+            [ "$ST" = "succeeded" ] && break
+            [ "$ST" = "failed" ] && { kill $LOOP 2>/dev/null; echo "rev-B deploy failed"; cat agent.log; exit 1; }
+            sleep 2
+          done
+          [ "$ST" = "succeeded" ] || { kill $LOOP 2>/dev/null; echo "rev-B did not succeed (last: $ST)"; exit 1; }
+          # Let the loop sample the post-flip steady state, then stop it.
+          sleep 3; kill $LOOP 2>/dev/null; wait $LOOP 2>/dev/null || true
+          TOTAL=$(wc -l < loop.out)
+          NON200=$(awk '$1 != 200' loop.out | wc -l)
+          SAW_B=$(grep -c 'cypherpanel-e2e-B' loop.out || true)
+          echo "requests: $TOTAL, non-200: $NON200, saw new revision: $SAW_B"
+          [ "$TOTAL" -gt 50 ] || { echo "loop sampled too few requests"; exit 1; }
+          [ "$NON200" = "0" ] || { echo "dropped/failed requests across the flip:"; awk '$1 != 200' loop.out | sort | uniq -c; exit 1; }
+          [ "$SAW_B" -gt 0 ] || { echo "never observed the new revision through the Proxy"; exit 1; }
+          echo "zero dropped requests across the A→B flip"
 
       - name: "Rollback: re-ship the same revision with the build skipped"
         run: |

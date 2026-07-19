@@ -311,3 +311,43 @@ func decodeEvent(t *testing.T, data []byte) *agentv1.DeployEvent {
 	}
 	return &ev
 }
+
+// An idle worker (no work items) still re-converges on the drift interval —
+// retrying failed GC/drains and refreshing observed statuses so the plane's
+// view never fossilizes at deploy time.
+func TestIdleWorkerDriftReconciles(t *testing.T) {
+	bus := newFakeBus(desiredStateBytes(t, &agentv1.AppSpec{AppId: "app1", RevisionId: "rev1"}))
+	drv := &recordingDriver{}
+	w := New(bus, "srv1", drv, nil, quietLog())
+	w.driftInterval = 50 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = w.Run(ctx); close(done) }()
+
+	// Boot sync = 1 call; with no work arriving, drift must add more.
+	deadline := time.After(3 * time.Second)
+	for {
+		drv.mu.Lock()
+		calls := drv.calls
+		drv.mu.Unlock()
+		if calls >= 3 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("idle worker reconciled only %d times; drift reconcile not firing", calls)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	// Statuses were re-published on the drift passes, not just at boot.
+	if got := len(bus.publishedOn(subjects.AppState("srv1", "app1"))); got < 3 {
+		t.Fatalf("app status published %d times, want >=3 (refreshed on drift)", got)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}

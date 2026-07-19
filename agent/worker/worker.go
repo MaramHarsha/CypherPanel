@@ -62,14 +62,21 @@ type Bus interface {
 // reconcile this many times is Term'd rather than redelivered forever.
 const maxDeliveries = 3
 
+// defaultDriftInterval bounds how stale the node may drift between work items:
+// with no work arriving, the worker still re-converges (retrying failed GC and
+// drains) and re-publishes observed statuses this often, so the plane's view
+// of an app never fossilizes at deploy time (ADR-005: status is observation).
+const defaultDriftInterval = 60 * time.Second
+
 // Worker consumes work items, manages the local desired state, and invokes the
 // orchestrator driver to converge reality.
 type Worker struct {
-	bus      Bus
-	serverID string
-	driver   driver.Reconciler
-	builder  *builder.Builder
-	log      *slog.Logger
+	bus           Bus
+	serverID      string
+	driver        driver.Reconciler
+	builder       *builder.Builder
+	log           *slog.Logger
+	driftInterval time.Duration
 
 	mu    sync.Mutex
 	state map[string]*agentv1.AppSpec // map[app_id]spec
@@ -78,21 +85,25 @@ type Worker struct {
 // New creates a new Worker.
 func New(bus Bus, serverID string, drv driver.Reconciler, bld *builder.Builder, log *slog.Logger) *Worker {
 	return &Worker{
-		bus:      bus,
-		serverID: serverID,
-		driver:   drv,
-		builder:  bld,
-		log:      log,
-		state:    make(map[string]*agentv1.AppSpec),
+		bus:           bus,
+		serverID:      serverID,
+		driver:        drv,
+		builder:       bld,
+		log:           log,
+		driftInterval: defaultDriftInterval,
+		state:         make(map[string]*agentv1.AppSpec),
 	}
 }
 
 // Run performs an initial desired-state sync, converges once on boot, then
-// processes work items until the context is canceled.
+// processes work items until the context is canceled. Between work items it
+// runs a periodic drift reconcile on the same goroutine (the driver is not
+// built for concurrent convergence), so idle nodes still self-heal.
 func (w *Worker) Run(ctx context.Context) error {
 	if err := w.sync(ctx); err != nil {
 		return fmt.Errorf("worker: initial sync failed: %w", err)
 	}
+	lastConverge := time.Now()
 
 	w.log.Info("worker consuming work items", "consumer", subjects.WorkConsumer(w.serverID))
 
@@ -106,6 +117,12 @@ func (w *Worker) Run(ctx context.Context) error {
 		msg, err := w.bus.FetchWork(ctx)
 		if err != nil {
 			if errors.Is(err, ErrNoWork) || errors.Is(err, context.Canceled) {
+				if time.Since(lastConverge) >= w.driftInterval {
+					if rerr := w.reconcile(ctx, "", "", agentv1.DeployEvent_STAGE_UNSPECIFIED, ""); rerr != nil {
+						w.log.Error("worker: drift reconcile", "error", rerr)
+					}
+					lastConverge = time.Now()
+				}
 				continue
 			}
 			w.log.Error("worker: fetching work", "error", err)
@@ -117,6 +134,7 @@ func (w *Worker) Run(ctx context.Context) error {
 			continue
 		}
 		w.handleMsg(ctx, msg)
+		lastConverge = time.Now()
 	}
 }
 

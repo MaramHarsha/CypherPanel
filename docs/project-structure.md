@@ -51,7 +51,8 @@ cypherpanel/
 │   │   │   └── prober/          # HTTP health prober gating rollout
 │   │   ├── swarm/               # (planned, V1.x — ADR-006) Swarm reconciler
 │   │   └── driver.go            # common Reconciler interface + management labels
-│   ├── proxy/                   # Traefik file-provider fragment writer (Phase 2, ADR-004)
+│   ├── proxy/                   # Traefik Proxy driver: lifecycle (EnsureProxy), env-network
+│   │                            #   attachment, file-provider fragments, LE config (ADR-004)
 │   ├── builder/                 # git clone + Dockerfile image build (Phase 2; Railpack/
 │   │                            #   Nixpacks/Compose are later matrix rows)
 │   ├── stream/                  # container log tailing → logs.* (Phase 2)
