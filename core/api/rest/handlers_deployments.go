@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/MaramHarsha/cypherpanel/core/domain"
+	"github.com/MaramHarsha/cypherpanel/core/previews"
 	"github.com/MaramHarsha/cypherpanel/core/scheduler"
 	"github.com/MaramHarsha/cypherpanel/core/store"
 	"github.com/MaramHarsha/cypherpanel/pkg/subjects"
@@ -168,6 +169,22 @@ type githubPushEvent struct {
 	Deleted bool   `json:"deleted"`
 }
 
+// githubPullRequestEvent is the subset of GitHub's pull_request payload the
+// preview manager needs (preview-environments.md §4).
+type githubPullRequestEvent struct {
+	Action      string `json:"action"` // opened | reopened | synchronize | closed | ...
+	Number      int    `json:"number"`
+	PullRequest struct {
+		Head struct {
+			Ref string `json:"ref"` // PR branch
+			SHA string `json:"sha"`
+		} `json:"head"`
+		Base struct {
+			Ref string `json:"ref"` // target branch
+		} `json:"base"`
+	} `json:"pull_request"`
+}
+
 // webhookMaxBody bounds the accepted payload (GitHub's own cap is 25 MB; push
 // events are far smaller).
 const webhookMaxBody = 1 << 20
@@ -193,7 +210,13 @@ func (a *API) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ev := r.Header.Get("X-GitHub-Event"); ev != "" && ev != "push" {
+	switch ev := r.Header.Get("X-GitHub-Event"); ev {
+	case "pull_request":
+		a.handlePullRequestWebhook(w, r, app, body)
+		return
+	case "", "push":
+		// fall through to the push-deploy path below
+	default:
 		w.WriteHeader(http.StatusNoContent) // pings and other events are fine, just not deploys
 		return
 	}
@@ -213,6 +236,34 @@ func (a *API) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, toDeploymentDTO(dep))
+}
+
+// handlePullRequestWebhook drives preview environments from an already-
+// authenticated pull_request delivery (preview-environments.md §4). It acts
+// only when the app opted into previews and the PR targets its base branch.
+func (a *API) handlePullRequestWebhook(w http.ResponseWriter, r *http.Request, app domain.Application, body []byte) {
+	if !app.PreviewEnabled || a.deps.Previews == nil {
+		w.WriteHeader(http.StatusNoContent) // previews not enabled for this app
+		return
+	}
+	var pr githubPullRequestEvent
+	if err := json.Unmarshal(body, &pr); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid pull_request payload")
+		return
+	}
+	// Only preview PRs into the app's configured base branch (§4). Closed
+	// events always run the destroy path regardless of base, so a preview is
+	// never leaked by a base-branch mismatch at close time.
+	if pr.Action != previews.ActionClosed && pr.PullRequest.Base.Ref != app.Source.Branch {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err := a.deps.Previews.OnPullRequest(r.Context(), app, pr.Action, pr.Number, pr.PullRequest.Head.Ref, pr.PullRequest.Head.SHA); err != nil {
+		a.deps.Log.Error("preview webhook", "app_id", app.ID, "pr", pr.Number, "action", pr.Action, "error", err)
+		writeError(w, http.StatusInternalServerError, "could not process pull request")
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
 }
 
 // verifyWebhookSignature checks GitHub's X-Hub-Signature-256 ("sha256=<hex>")

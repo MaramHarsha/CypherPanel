@@ -71,13 +71,16 @@ func NewService(s Store, sealer Sealer) *Service {
 // CreateInput is the caller-supplied config for a new application. Missing
 // optional fields are defaulted; invalid fields are rejected.
 type CreateInput struct {
-	Name    string
-	Source  domain.AppSource
-	Build   domain.AppBuild
-	Runtime domain.AppRuntime
-	Route   domain.AppRoute
-	Health  domain.AppHealth
-	EnvVars map[string]string // plaintext; sealed before storage
+	Name              string
+	Source            domain.AppSource
+	Build             domain.AppBuild
+	Runtime           domain.AppRuntime
+	Route             domain.AppRoute
+	Health            domain.AppHealth
+	EnvVars           map[string]string // plaintext; sealed before storage
+	PreviewEnabled    bool
+	PreviewBaseDomain string
+	PreviewTTLHours   int
 }
 
 // Create validates and creates an application under envID, returning it along
@@ -128,6 +131,9 @@ func (s *Service) Create(ctx context.Context, envID string, in CreateInput) (app
 		WebhookID:          ids.New(ids.PrefixWebhook),
 		WebhookSecretCT:    wct,
 		WebhookSecretNonce: wnonce,
+		PreviewEnabled:     in.PreviewEnabled,
+		PreviewBaseDomain:  in.PreviewBaseDomain,
+		PreviewTTLHours:    in.PreviewTTLHours,
 	}, sealedVars)
 	if err != nil {
 		return domain.Application{}, "", fmt.Errorf("applications: creating application: %w", err)
@@ -158,12 +164,15 @@ func (s *Service) GetByWebhookID(ctx context.Context, webhookID string) (domain.
 // server is deliberately not patchable (moving an app needs the distribute
 // step, ADR-008), and neither are replicas (fixed at 1 in the slice).
 type UpdateInput struct {
-	Name   *string
-	Source *domain.AppSource
-	Build  *domain.AppBuild
-	Port   *int
-	Route  *domain.AppRoute
-	Health *domain.AppHealth
+	Name              *string
+	Source            *domain.AppSource
+	Build             *domain.AppBuild
+	Port              *int
+	Route             *domain.AppRoute
+	Health            *domain.AppHealth
+	PreviewEnabled    *bool
+	PreviewBaseDomain *string
+	PreviewTTLHours   *int
 }
 
 // Update applies a config patch. The change shapes the next revision — a
@@ -190,6 +199,15 @@ func (s *Service) Update(ctx context.Context, appID string, in UpdateInput) (dom
 	}
 	if in.Health != nil {
 		app.Health = *in.Health
+	}
+	if in.PreviewEnabled != nil {
+		app.PreviewEnabled = *in.PreviewEnabled
+	}
+	if in.PreviewBaseDomain != nil {
+		app.PreviewBaseDomain = *in.PreviewBaseDomain
+	}
+	if in.PreviewTTLHours != nil {
+		app.PreviewTTLHours = *in.PreviewTTLHours
 	}
 	// The merged result must satisfy exactly the create-time rules.
 	merged, err := validateAndDefault(CreateInput{

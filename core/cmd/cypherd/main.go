@@ -33,6 +33,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/enroll"
 	"github.com/MaramHarsha/cypherpanel/core/guard"
 	"github.com/MaramHarsha/cypherpanel/core/identity"
+	"github.com/MaramHarsha/cypherpanel/core/previews"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
 	"github.com/MaramHarsha/cypherpanel/core/relay"
 	"github.com/MaramHarsha/cypherpanel/core/scheduler"
@@ -171,6 +172,16 @@ func run(log *slog.Logger) error {
 	backupTargetSvc := databases.NewBackupTargetService(st, box)
 	backupScheduleSvc := databases.NewBackupScheduleService(st)
 
+	// Preview environments: PR events (via the app webhook) spawn/destroy
+	// templated child environments; a sweeper reclaims any past their TTL
+	// (preview-environments.md).
+	previewMgr := previews.New(st, appSvc, sched, log)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		previewMgr.RunSweeper(ctx, cfg.SweepInterval)
+	}()
+
 	if err := sched.Recover(ctx); err != nil {
 		return err
 	}
@@ -275,6 +286,7 @@ func run(log *slog.Logger) error {
 		BackupTargets:   backupTargetSvc,
 		BackupSchedules: backupScheduleSvc,
 		Backups:         sched,
+		Previews:        previewMgr,
 		Scheduler:       sched,
 		Deployments:     st,
 		Opener:          box,

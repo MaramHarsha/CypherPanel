@@ -29,6 +29,9 @@ type applicationDTO struct {
 	Status             string `json:"status"`
 	StatusDetail       string `json:"status_detail"`
 	ObservedRevisionID string `json:"observed_revision_id"`
+	PreviewEnabled     bool   `json:"preview_enabled"`
+	PreviewBaseDomain  string `json:"preview_base_domain"`
+	PreviewTTLHours    int    `json:"preview_ttl_hours"`
 	CreatedAt          string `json:"created_at"`
 }
 
@@ -79,6 +82,9 @@ func toApplicationDTO(a domain.Application) applicationDTO {
 		Status:             a.Status,
 		StatusDetail:       a.StatusDetail,
 		ObservedRevisionID: a.ObservedRevisionID,
+		PreviewEnabled:     a.PreviewEnabled,
+		PreviewBaseDomain:  a.PreviewBaseDomain,
+		PreviewTTLHours:    a.PreviewTTLHours,
 		CreatedAt:          a.CreatedAt.UTC().Format(time.RFC3339),
 	}
 }
@@ -113,7 +119,10 @@ type createApplicationRequest struct {
 		TimeoutSeconds  int    `json:"timeout_seconds"`
 		Retries         int    `json:"retries"`
 	} `json:"health"`
-	EnvVars map[string]string `json:"env_vars"`
+	EnvVars           map[string]string `json:"env_vars"`
+	PreviewEnabled    bool              `json:"preview_enabled"`
+	PreviewBaseDomain string            `json:"preview_base_domain"`
+	PreviewTTLHours   int               `json:"preview_ttl_hours"`
 }
 
 type webhookInfo struct {
@@ -140,6 +149,10 @@ func (r createApplicationRequest) toInput() applications.CreateInput {
 		Route:   domain.AppRoute{Domain: r.Route.Domain, HTTPS: https, PathPrefix: r.Route.PathPrefix},
 		Health:  domain.AppHealth{Path: r.Health.Path, IntervalSeconds: r.Health.IntervalSeconds, TimeoutSeconds: r.Health.TimeoutSeconds, Retries: r.Health.Retries},
 		EnvVars: r.EnvVars,
+
+		PreviewEnabled:    r.PreviewEnabled,
+		PreviewBaseDomain: r.PreviewBaseDomain,
+		PreviewTTLHours:   r.PreviewTTLHours,
 	}
 }
 
@@ -241,6 +254,9 @@ type patchApplicationRequest struct {
 		TimeoutSeconds  int    `json:"timeout_seconds"`
 		Retries         int    `json:"retries"`
 	} `json:"health"`
+	PreviewEnabled    *bool   `json:"preview_enabled"`
+	PreviewBaseDomain *string `json:"preview_base_domain"`
+	PreviewTTLHours   *int    `json:"preview_ttl_hours"`
 }
 
 func (a *API) handlePatchApplication(w http.ResponseWriter, r *http.Request) {
@@ -269,6 +285,7 @@ func (a *API) handlePatchApplication(w http.ResponseWriter, r *http.Request) {
 	if req.Health != nil {
 		in.Health = &domain.AppHealth{Path: req.Health.Path, IntervalSeconds: req.Health.IntervalSeconds, TimeoutSeconds: req.Health.TimeoutSeconds, Retries: req.Health.Retries}
 	}
+	in.PreviewEnabled, in.PreviewBaseDomain, in.PreviewTTLHours = req.PreviewEnabled, req.PreviewBaseDomain, req.PreviewTTLHours
 	app, err := a.deps.Applications.Update(r.Context(), r.PathValue("id"), in)
 	if err != nil {
 		a.writeAppError(w, err, "could not update application")

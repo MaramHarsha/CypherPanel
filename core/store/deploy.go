@@ -94,6 +94,15 @@ func (s *Store) GetEnvironment(ctx context.Context, id string) (domain.Environme
 	return environmentFromRow(row), nil
 }
 
+// DeleteEnvironment removes an environment; its applications and previews
+// cascade (preview-environments.md §4 teardown).
+func (s *Store) DeleteEnvironment(ctx context.Context, id string) error {
+	if err := s.q.DeleteEnvironment(ctx, id); err != nil {
+		return wrapDelete("deleting environment", err)
+	}
+	return nil
+}
+
 func (s *Store) ListEnvironmentsByProject(ctx context.Context, projectID string) ([]domain.Environment, error) {
 	rows, err := s.q.ListEnvironmentsByProject(ctx, projectID)
 	if err != nil {
@@ -171,6 +180,9 @@ func appParams(a domain.Application) db.CreateApplicationParams {
 		WebhookID:             a.WebhookID,
 		WebhookSecretCt:       a.WebhookSecretCT,
 		WebhookSecretNonce:    a.WebhookSecretNonce,
+		PreviewEnabled:        a.PreviewEnabled,
+		PreviewBaseDomain:     a.PreviewBaseDomain,
+		PreviewTtlHours:       int32(a.PreviewTTLHours),
 	}
 }
 
@@ -274,6 +286,9 @@ func (s *Store) UpdateApplicationConfig(ctx context.Context, a domain.Applicatio
 		HealthIntervalSeconds: int32(a.Health.IntervalSeconds),
 		HealthTimeoutSeconds:  int32(a.Health.TimeoutSeconds),
 		HealthRetries:         int32(a.Health.Retries),
+		PreviewEnabled:        a.PreviewEnabled,
+		PreviewBaseDomain:     a.PreviewBaseDomain,
+		PreviewTtlHours:       int32(a.PreviewTTLHours),
 	})
 	if err != nil {
 		return domain.Application{}, wrapUpdate("updating application", err)
@@ -564,6 +579,9 @@ func applicationFromRow(r db.Application) domain.Application {
 		WebhookID:          r.WebhookID,
 		WebhookSecretCT:    r.WebhookSecretCt,
 		WebhookSecretNonce: r.WebhookSecretNonce,
+		PreviewEnabled:     r.PreviewEnabled,
+		PreviewBaseDomain:  r.PreviewBaseDomain,
+		PreviewTTLHours:    int(r.PreviewTtlHours),
 		DesiredRevisionID:  ptrFromText(r.DesiredRevisionID),
 		Status:             r.Status,
 		StatusDetail:       r.StatusDetail,

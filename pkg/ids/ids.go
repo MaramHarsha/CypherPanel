@@ -21,6 +21,7 @@ const (
 	PrefixProject     = "prj"
 	PrefixEnvironment = "env"
 	PrefixApplication = "app"
+	PrefixPreview     = "prv"
 	PrefixRevision    = "rev"
 	PrefixDeployment  = "dep"
 	PrefixWebhook     = "wh"

@@ -32,6 +32,15 @@ func (q *Queries) CreateEnvironment(ctx context.Context, arg CreateEnvironmentPa
 	return i, err
 }
 
+const deleteEnvironment = `-- name: DeleteEnvironment :exec
+DELETE FROM environments WHERE id = $1
+`
+
+func (q *Queries) DeleteEnvironment(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, deleteEnvironment, id)
+	return err
+}
+
 const getEnvironment = `-- name: GetEnvironment :one
 SELECT id, project_id, name, created_at, updated_at FROM environments WHERE id = $1
 `
