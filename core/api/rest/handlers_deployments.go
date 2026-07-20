@@ -242,13 +242,20 @@ func (a *API) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 // authenticated pull_request delivery (preview-environments.md §4). It acts
 // only when the app opted into previews and the PR targets its base branch.
 func (a *API) handlePullRequestWebhook(w http.ResponseWriter, r *http.Request, app domain.Application, body []byte) {
-	if !app.PreviewEnabled || a.deps.Previews == nil {
-		w.WriteHeader(http.StatusNoContent) // previews not enabled for this app
+	if a.deps.Previews == nil {
+		w.WriteHeader(http.StatusNoContent) // preview manager not wired
 		return
 	}
 	var pr githubPullRequestEvent
 	if err := json.Unmarshal(body, &pr); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid pull_request payload")
+		return
+	}
+	// A disabled app still gets its live previews cleaned up on close — an
+	// operator may disable previews while some are running; only non-close
+	// actions are a no-op for a disabled app.
+	if !app.PreviewEnabled && pr.Action != previews.ActionClosed {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	// Only preview PRs into the app's configured base branch (§4). Closed

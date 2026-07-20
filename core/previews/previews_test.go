@@ -6,6 +6,7 @@ package previews
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"testing"
@@ -17,11 +18,12 @@ import (
 )
 
 type fakeStore struct {
-	apps     map[string]domain.Application
-	envs     map[string]domain.Environment
-	previews map[string]domain.Preview
-	deleted  []string // deleted environment ids
-	seq      int
+	apps             map[string]domain.Application
+	envs             map[string]domain.Environment
+	previews         map[string]domain.Preview
+	deleted          []string // deleted environment ids
+	createPreviewErr error    // injected failure
+	seq              int
 }
 
 func newFakeStore() *fakeStore {
@@ -63,6 +65,9 @@ func (f *fakeStore) DeleteEnvironment(_ context.Context, id string) error {
 	return nil
 }
 func (f *fakeStore) CreatePreview(_ context.Context, p domain.Preview) (domain.Preview, error) {
+	if f.createPreviewErr != nil {
+		return domain.Preview{}, f.createPreviewErr
+	}
 	f.previews[p.ID] = p
 	return p, nil
 }
@@ -112,12 +117,16 @@ func (f *fakeStore) DeletePreview(_ context.Context, id string) error {
 }
 
 type fakeApps struct {
-	created []applications.CreateInput
-	envIDs  []string
-	store   *fakeStore
+	created   []applications.CreateInput
+	envIDs    []string
+	createErr error // injected failure
+	store     *fakeStore
 }
 
 func (f *fakeApps) Create(_ context.Context, envID string, in applications.CreateInput) (domain.Application, string, error) {
+	if f.createErr != nil {
+		return domain.Application{}, "", f.createErr
+	}
 	f.created = append(f.created, in)
 	f.envIDs = append(f.envIDs, envID)
 	f.store.seq++
@@ -130,12 +139,16 @@ func (f *fakeApps) Create(_ context.Context, envID string, in applications.Creat
 }
 
 type fakeSched struct {
-	deploys []string // app ids deployed
-	refs    []string
-	removed []string // app ids removed
+	deploys   []string // app ids deployed
+	refs      []string
+	removed   []string // app ids removed
+	deployErr error    // injected failure
 }
 
 func (f *fakeSched) Deploy(_ context.Context, appID, _, ref string) (domain.Deployment, error) {
+	if f.deployErr != nil {
+		return domain.Deployment{}, f.deployErr
+	}
 	f.deploys = append(f.deploys, appID)
 	f.refs = append(f.refs, ref)
 	return domain.Deployment{ID: "dep_1", ApplicationID: appID}, nil
@@ -252,6 +265,46 @@ func TestClosedUnknownPRIsNoOp(t *testing.T) {
 	}
 	if len(fsch.removed) != 0 {
 		t.Fatal("close of unknown PR removed something")
+	}
+}
+
+// A failed CreatePreview must roll back the child environment (and, via its
+// cascade, the cloned app) — no orphans.
+func TestCreatePreviewFailureRollsBackChildEnv(t *testing.T) {
+	m, fs, _, _ := newManager()
+	src := sourceApp()
+	fs.apps[src.ID] = src
+	fs.envs["env_prod"] = domain.Environment{ID: "env_prod", ProjectID: "prj_1"}
+	fs.createPreviewErr = errors.New("db down")
+
+	err := m.OnPullRequest(context.Background(), src, ActionOpened, 42, "feature/x", "sha1")
+	if err == nil {
+		t.Fatal("expected CreatePreview failure to surface")
+	}
+	// Only the source's production env should remain — the child env was rolled back.
+	if _, ok := fs.envs["env_prod"]; !ok || len(fs.envs) != 1 {
+		t.Fatalf("child environment not rolled back: envs=%v", fs.envs)
+	}
+	if len(fs.deleted) != 1 {
+		t.Fatalf("expected one DeleteEnvironment rollback, got %d", len(fs.deleted))
+	}
+}
+
+// A failed redeploy on synchronize marks the existing preview as error.
+func TestRedeployFailureMarksPreviewError(t *testing.T) {
+	m, fs, _, fsch := newManager()
+	src := sourceApp()
+	fs.apps[src.ID] = src
+	fs.envs["env_prod"] = domain.Environment{ID: "env_prod", ProjectID: "prj_1"}
+	_ = m.OnPullRequest(context.Background(), src, ActionOpened, 42, "feature/x", "sha1")
+	pid := firstPreviewID(fs)
+
+	fsch.deployErr = errors.New("scheduler unavailable")
+	if err := m.OnPullRequest(context.Background(), src, ActionSynchronize, 42, "feature/x", "sha2"); err == nil {
+		t.Fatal("expected redeploy failure to surface")
+	}
+	if got := fs.previews[pid].Status; got != domain.PreviewError {
+		t.Fatalf("preview status after failed redeploy = %q, want error", got)
 	}
 }
 

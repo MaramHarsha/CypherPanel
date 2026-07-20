@@ -99,7 +99,8 @@ second event type: `pull_request`. Same endpoint, same auth, no new secret.
 Destroy, idempotently: mark `status=destroying` → `RemoveApp` (agent tears
 down the container + route fragment, desired-state GC reclaims the image) →
 delete the cloned Application row → delete the child Environment row → delete
-the Preview row. A close event for an unknown PR is a no-op 204.
+the Preview row. Teardown is asynchronous, so a close is accepted with 202;
+a close for an unknown PR is a harmless no-op (also 202).
 
 ### TTL backstop
 

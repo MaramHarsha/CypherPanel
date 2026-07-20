@@ -209,20 +209,27 @@ func (s *Service) Update(ctx context.Context, appID string, in UpdateInput) (dom
 	if in.PreviewTTLHours != nil {
 		app.PreviewTTLHours = *in.PreviewTTLHours
 	}
-	// The merged result must satisfy exactly the create-time rules.
+	// The merged result must satisfy exactly the create-time rules — including
+	// the preview contract (enabling previews via PATCH still needs a base
+	// domain).
 	merged, err := validateAndDefault(CreateInput{
-		Name:    app.Name,
-		Source:  app.Source,
-		Build:   app.Build,
-		Runtime: app.Runtime,
-		Route:   app.Route,
-		Health:  app.Health,
+		Name:              app.Name,
+		Source:            app.Source,
+		Build:             app.Build,
+		Runtime:           app.Runtime,
+		Route:             app.Route,
+		Health:            app.Health,
+		PreviewEnabled:    app.PreviewEnabled,
+		PreviewBaseDomain: app.PreviewBaseDomain,
+		PreviewTTLHours:   app.PreviewTTLHours,
 	})
 	if err != nil {
 		return domain.Application{}, err
 	}
 	app.Name, app.Source, app.Build, app.Runtime, app.Route, app.Health =
 		merged.Name, merged.Source, merged.Build, merged.Runtime, merged.Route, merged.Health
+	app.PreviewEnabled, app.PreviewBaseDomain, app.PreviewTTLHours =
+		merged.PreviewEnabled, merged.PreviewBaseDomain, merged.PreviewTTLHours
 	updated, err := s.store.UpdateApplicationConfig(ctx, app)
 	if err != nil {
 		return domain.Application{}, fmt.Errorf("applications: updating application: %w", err)
@@ -369,6 +376,19 @@ func validateAndDefault(in CreateInput) (CreateInput, error) {
 		if !validEnvKey(k) {
 			return in, invalid("env var key " + strconv.Quote(k) + " must match [A-Za-z_][A-Za-z0-9_]*")
 		}
+	}
+
+	// Previews (preview-environments.md §2): a base domain is required to build
+	// pr-<n>.<base>, and the TTL backstop defaults to 72h when unset.
+	in.PreviewBaseDomain = strings.TrimSpace(in.PreviewBaseDomain)
+	if in.PreviewEnabled && in.PreviewBaseDomain == "" {
+		return in, invalid("preview_base_domain is required when preview_enabled is true")
+	}
+	if in.PreviewTTLHours < 0 {
+		return in, invalid("preview_ttl_hours must not be negative")
+	}
+	if in.PreviewTTLHours == 0 {
+		in.PreviewTTLHours = 72
 	}
 	return in, nil
 }

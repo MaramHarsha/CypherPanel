@@ -94,6 +94,7 @@ func (m *Manager) ensureAndDeploy(ctx context.Context, source domain.Application
 			return fmt.Errorf("previews: preview %s has no app to redeploy", existing.ID)
 		}
 		if _, err := m.sched.Deploy(ctx, *existing.PreviewAppID, "preview", prSHA); err != nil {
+			_ = m.store.SetPreviewStatus(ctx, existing.ID, domain.PreviewError)
 			return fmt.Errorf("previews: redeploying preview: %w", err)
 		}
 		m.log.Info("preview redeployed", "preview_id", existing.ID, "pr", prNumber, "sha", prSHA)
@@ -150,6 +151,10 @@ func (m *Manager) ensureAndDeploy(ctx context.Context, source domain.Application
 		ExpiresAt:     &expires,
 	})
 	if err != nil {
+		// Roll back both the cloned app and the child env, matching the
+		// clone-failure path — a failed record must leave no orphans. Deleting
+		// the child env cascades the cloned app row.
+		_ = m.store.DeleteEnvironment(ctx, childEnv.ID)
 		return fmt.Errorf("previews: recording preview: %w", err)
 	}
 
