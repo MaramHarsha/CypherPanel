@@ -346,6 +346,49 @@ func (c *Client) HasImage(ctx context.Context, ref string) (bool, error) {
 	return false, err
 }
 
+// SaveImage exports one image (manifest + layers) as a docker-save tar
+// stream — the relay's source on a builder (builder-role-and-relay.md §3).
+// The image reference goes into the path literally: registry namespaces
+// contain "/" the daemon expects unescaped. The caller must Close the stream.
+func (c *Client) SaveImage(ctx context.Context, ref string) (io.ReadCloser, error) {
+	resp, err := c.do(ctx, http.MethodGet, "/images/"+ref+"/get", nil, nil, "")
+	if err != nil {
+		return nil, err
+	}
+	return resp.Body, nil
+}
+
+// LoadImage imports a docker-save tar into the local daemon — the relay's
+// sink on a target. A truncated or corrupt tar fails here and yields no tag,
+// so HasImage stays false and a retry is honest (spec §6).
+func (c *Client) LoadImage(ctx context.Context, tar io.Reader) error {
+	q := url.Values{}
+	q.Set("quiet", "1")
+	resp, err := c.do(ctx, http.MethodPost, "/images/load", q, tar, "application/x-tar")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// The daemon streams JSON-lines progress; an error mid-stream (bad tar)
+	// arrives as an error record after a 200 header, same as pulls.
+	dec := json.NewDecoder(resp.Body)
+	for {
+		var line struct {
+			Error string `json:"error"`
+		}
+		if err := dec.Decode(&line); err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return fmt.Errorf("engine: reading load stream: %w", err)
+		}
+		if line.Error != "" {
+			return fmt.Errorf("engine: loading image: %s", line.Error)
+		}
+	}
+}
+
 // buildLine is one JSON-lines record of the daemon's build progress stream.
 type buildLine struct {
 	Stream string `json:"stream"`

@@ -52,6 +52,7 @@ type Store interface {
 	SetRevisionSourceCommit(ctx context.Context, id, commitSHA string) (domain.Revision, error)
 
 	CreateDeployment(ctx context.Context, id, appID, revisionID, trigger string) (domain.Deployment, error)
+	SetDeploymentBuilder(ctx context.Context, id, builderServerID string) (domain.Deployment, error)
 	GetDeployment(ctx context.Context, id string) (domain.Deployment, error)
 	UpdateDeploymentStatus(ctx context.Context, id string, status domain.DeploymentStatus, detail string) (domain.Deployment, error)
 	ListActiveDeployments(ctx context.Context) ([]domain.Deployment, error)
@@ -163,8 +164,14 @@ func (s *Scheduler) Deploy(ctx context.Context, appID, trigger, ref string) (dom
 	if err != nil {
 		return domain.Deployment{}, fmt.Errorf("scheduler: creating deployment: %w", err)
 	}
-	if err := s.tryStart(ctx, dep); err != nil {
-		return dep, err
+	if serr := s.tryStart(ctx, dep); serr != nil {
+		// Return the current record alongside the error: a fail-fast start
+		// (no builder, bad deploy key) already wrote status=failed with the
+		// reason, and callers surface that record.
+		if fresh, err := s.store.GetDeployment(ctx, dep.ID); err == nil {
+			return fresh, serr
+		}
+		return dep, serr
 	}
 	return s.store.GetDeployment(ctx, dep.ID)
 }
@@ -191,8 +198,11 @@ func (s *Scheduler) Rollback(ctx context.Context, deploymentID string) (domain.D
 	if err != nil {
 		return domain.Deployment{}, fmt.Errorf("scheduler: creating rollback deployment: %w", err)
 	}
-	if err := s.tryStart(ctx, dep); err != nil {
-		return dep, err
+	if serr := s.tryStart(ctx, dep); serr != nil {
+		if fresh, err := s.store.GetDeployment(ctx, dep.ID); err == nil {
+			return fresh, serr
+		}
+		return dep, serr
 	}
 	return s.store.GetDeployment(ctx, dep.ID)
 }
@@ -247,6 +257,19 @@ func (s *Scheduler) start(ctx context.Context, dep domain.Deployment) error {
 		return err
 	}
 
+	builderID, err := s.selectBuilder(ctx, app)
+	if err != nil {
+		// No eligible builder is a fleet-configuration error, not a transient
+		// fault: fail fast rather than queue forever (spec §2).
+		s.fail(ctx, dep, err.Error())
+		return err
+	}
+	if builderID != app.Runtime.ServerID {
+		if dep, err = s.store.SetDeploymentBuilder(ctx, dep.ID, builderID); err != nil {
+			return fmt.Errorf("scheduler: recording builder: %w", err)
+		}
+	}
+
 	work, err := s.buildWork(ctx, dep, app, rev)
 	if err != nil {
 		// A dangling or unopenable deploy key is a configuration error, not
@@ -260,10 +283,65 @@ func (s *Scheduler) start(ctx context.Context, dep domain.Deployment) error {
 	if err != nil {
 		return fmt.Errorf("scheduler: marshaling build work: %w", err)
 	}
-	if err := s.bus.PublishWork(ctx, subjects.Build(app.Runtime.ServerID), dep.ID+".build", data); err != nil {
+	if err := s.bus.PublishWork(ctx, subjects.Build(builderID), dep.ID+".build", data); err != nil {
 		return fmt.Errorf("scheduler: publishing build: %w", err)
 	}
 	return nil
+}
+
+// selectBuilder picks where a deployment builds (builder-role-and-relay.md
+// §2): the app's own server when its role builds (the ADR-008 local path),
+// else the first running builder-role server, else any other running server
+// that builds. Selection is deterministic (store list order).
+func (s *Scheduler) selectBuilder(ctx context.Context, app domain.Application) (string, error) {
+	servers, err := s.store.ListServers(ctx)
+	if err != nil {
+		return "", fmt.Errorf("scheduler: listing servers: %w", err)
+	}
+	// The target's own capability decides first, independent of list order:
+	// a remote builder must never steal a build the target can run locally
+	// (ADR-008 path 1).
+	targetSeen := false
+	var dedicated, fallback string
+	for _, srv := range servers {
+		if srv.ID == app.Runtime.ServerID {
+			targetSeen = true
+			if srv.Builds() {
+				return srv.ID, nil
+			}
+			continue
+		}
+		if !srv.Builds() || srv.Status != domain.StatusRunning {
+			continue
+		}
+		if srv.Role == domain.RoleBuilder {
+			if dedicated == "" {
+				dedicated = srv.ID
+			}
+		} else if fallback == "" {
+			fallback = srv.ID
+		}
+	}
+	if !targetSeen {
+		// No row for the target (it may have raced a delete): keep the local
+		// path — the same default as an unset role.
+		return app.Runtime.ServerID, nil
+	}
+	if dedicated != "" {
+		return dedicated, nil
+	}
+	if fallback != "" {
+		return fallback, nil
+	}
+	return "", errors.New("no builder available: target server has role worker and no builder-role server is running")
+}
+
+// builderFor is the server a deployment's build was (or will be) routed to.
+func builderFor(dep domain.Deployment, app domain.Application) string {
+	if dep.BuilderServerID != nil {
+		return *dep.BuilderServerID
+	}
+	return app.Runtime.ServerID
 }
 
 // buildWork assembles one deployment's build work item. The referenced deploy
@@ -389,12 +467,24 @@ func (s *Scheduler) HandleDeployEvent(ctx context.Context, serverID string, ev *
 		s.log.Error("deploy event: loading application", "deployment_id", dep.ID, "error", err)
 		return
 	}
-	// The subject pins which server published the event; only the server the
-	// app runs on may advance its pipeline. A compromised agent's blast
-	// radius stays its own workloads (threat-model §5.2).
-	if app.Runtime.ServerID != serverID {
-		s.log.Warn("deploy event from a server the app does not run on",
-			"deployment_id", dep.ID, "app_id", app.ID, "reported_by", serverID, "runs_on", app.Runtime.ServerID)
+	// The subject pins which server published the event; only servers with a
+	// persisted part in this deployment may advance it — the target always,
+	// plus the recorded builder for the build/distribute stages
+	// (builder-role-and-relay.md §5). A compromised agent's blast radius
+	// stays its own workloads and builds (threat-model §5.2).
+	builderID := builderFor(dep, app)
+	allowed := serverID == app.Runtime.ServerID
+	switch ev.GetStage() {
+	case agentv1.DeployEvent_STAGE_BUILD:
+		allowed = serverID == builderID
+	case agentv1.DeployEvent_STAGE_DISTRIBUTE:
+		allowed = allowed || serverID == builderID
+	case agentv1.DeployEvent_STAGE_ROLLOUT, agentv1.DeployEvent_STAGE_REMOVE, agentv1.DeployEvent_STAGE_UNSPECIFIED:
+	}
+	if !allowed {
+		s.log.Warn("deploy event from a server with no part in the deployment",
+			"deployment_id", dep.ID, "app_id", app.ID, "stage", ev.GetStage().String(),
+			"reported_by", serverID, "runs_on", app.Runtime.ServerID, "builds_on", builderID)
 		return
 	}
 
@@ -418,7 +508,36 @@ func (s *Scheduler) HandleDeployEvent(ctx context.Context, serverID string, ev *
 				return
 			}
 		}
-		// Distribute is a no-op in the slice (ADR-008: builder = target).
+		if builderID != app.Runtime.ServerID {
+			// The image is on the builder's daemon, not the target's: relay
+			// it before rolling out (builder-role-and-relay.md §2).
+			if err := s.startDistribute(ctx, dep, app, rev); err != nil {
+				s.log.Error("deploy event: starting distribute", "deployment_id", dep.ID, "error", err)
+			}
+			return
+		}
+		if err := s.startRollout(ctx, dep, app, rev); err != nil {
+			s.log.Error("deploy event: starting rollout", "deployment_id", dep.ID, "error", err)
+		}
+
+	case agentv1.DeployEvent_STAGE_DISTRIBUTE:
+		if dep.Status != domain.DeployDistributing {
+			return
+		}
+		if ev.GetOutcome() == agentv1.DeployEvent_OUTCOME_FAILED {
+			s.fail(ctx, dep, "distribute failed: "+ev.GetDetail())
+			return
+		}
+		// Only the target's success proves the image is where it must run;
+		// a builder-side success is informational (spec §2).
+		if serverID != app.Runtime.ServerID {
+			return
+		}
+		rev, err := s.store.GetRevision(ctx, dep.RevisionID)
+		if err != nil {
+			s.log.Error("deploy event: loading revision", "deployment_id", dep.ID, "error", err)
+			return
+		}
 		if err := s.startRollout(ctx, dep, app, rev); err != nil {
 			s.log.Error("deploy event: starting rollout", "deployment_id", dep.ID, "error", err)
 		}
@@ -433,11 +552,43 @@ func (s *Scheduler) HandleDeployEvent(ctx context.Context, serverID string, ev *
 		// Success is asserted only from the AppStatus observation that
 		// follows (ADR-005) — HandleAppStatus completes the deployment.
 
-	case agentv1.DeployEvent_STAGE_DISTRIBUTE, agentv1.DeployEvent_STAGE_REMOVE:
-		// Distribute doesn't exist in the slice; removals have no deployment.
+	case agentv1.DeployEvent_STAGE_REMOVE:
+		// Removals have no deployment to advance.
 
 	case agentv1.DeployEvent_STAGE_UNSPECIFIED:
 	}
+}
+
+// startDistribute advances a multi-server deployment into the relay stage:
+// the builder pushes the image to the plane, the target pulls and loads it
+// (builder-role-and-relay.md §2–3). Both items are idempotent under
+// redelivery; the target's STAGE_DISTRIBUTE success advances to rollout.
+// Callers hold s.mu.
+func (s *Scheduler) startDistribute(ctx context.Context, dep domain.Deployment, app domain.Application, rev domain.Revision) error {
+	if _, err := s.store.UpdateDeploymentStatus(ctx, dep.ID, domain.DeployDistributing, ""); err != nil {
+		return err
+	}
+	image := rev.Image
+	if image == "" {
+		image = imageTag(app.ID, rev.ID)
+	}
+	builderID := builderFor(dep, app)
+
+	push, err := proto.Marshal(&agentv1.PushImageWork{DeploymentId: dep.ID, AppId: app.ID, Image: image})
+	if err != nil {
+		return fmt.Errorf("scheduler: marshaling push work: %w", err)
+	}
+	if err := s.bus.PublishWork(ctx, subjects.PushImage(builderID), dep.ID+".push", push); err != nil {
+		return fmt.Errorf("scheduler: publishing push: %w", err)
+	}
+	dist, err := proto.Marshal(&agentv1.DistributeWork{DeploymentId: dep.ID, AppId: app.ID, Image: image})
+	if err != nil {
+		return fmt.Errorf("scheduler: marshaling distribute work: %w", err)
+	}
+	if err := s.bus.PublishWork(ctx, subjects.Distribute(app.Runtime.ServerID), dep.ID+".distribute", dist); err != nil {
+		return fmt.Errorf("scheduler: publishing distribute: %w", err)
+	}
+	return nil
 }
 
 // HandleAppStatus records an observation and completes any rolling-out
@@ -597,10 +748,29 @@ func (s *Scheduler) Recover(ctx context.Context) error {
 			if merr != nil {
 				continue
 			}
-			if err := s.bus.PublishWork(ctx, subjects.Build(app.Runtime.ServerID), dep.ID+".build", data); err != nil {
+			// The recorded builder, not a fresh selection: the original
+			// routing may already be building (idempotent redelivery).
+			if err := s.bus.PublishWork(ctx, subjects.Build(builderFor(dep, app)), dep.ID+".build", data); err != nil {
 				s.log.Error("recover: republishing build", "deployment_id", dep.ID, "error", err)
 			}
-		case domain.DeployRollingOut, domain.DeployDistributing:
+		case domain.DeployDistributing:
+			app, err := s.store.GetApplication(ctx, dep.ApplicationID)
+			if err != nil {
+				s.log.Error("recover: loading application", "deployment_id", dep.ID, "error", err)
+				continue
+			}
+			rev, err := s.store.GetRevision(ctx, dep.RevisionID)
+			if err != nil {
+				s.log.Error("recover: loading revision", "deployment_id", dep.ID, "error", err)
+				continue
+			}
+			// Republish both relay items (same msg IDs: deduped inside the
+			// window, idempotent beyond it — a target that already loaded the
+			// image reports success from HasImage alone, spec §6).
+			if err := s.startDistribute(ctx, dep, app, rev); err != nil {
+				s.log.Error("recover: republishing distribute", "deployment_id", dep.ID, "error", err)
+			}
+		case domain.DeployRollingOut:
 			app, err := s.store.GetApplication(ctx, dep.ApplicationID)
 			if err != nil {
 				s.log.Error("recover: loading application", "deployment_id", dep.ID, "error", err)

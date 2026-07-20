@@ -12,6 +12,7 @@ func testIdentity() *Identity {
 	return &Identity{
 		ServerID:  "srv_test",
 		NATSURL:   "tls://plane.example.com:4222",
+		PlaneAddr: "plane.example.com:8443",
 		CertPEM:   []byte("cert-pem"),
 		KeyPEM:    []byte("key-pem"),
 		CACertPEM: []byte("ca-pem"),
@@ -28,7 +29,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got.ServerID != want.ServerID || got.NATSURL != want.NATSURL {
+	if got.ServerID != want.ServerID || got.NATSURL != want.NATSURL || got.PlaneAddr != want.PlaneAddr {
 		t.Errorf("meta round-trip: got %+v", got)
 	}
 	for _, c := range []struct {

@@ -7,12 +7,14 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createDeployment = `-- name: CreateDeployment :one
 INSERT INTO deployments (id, application_id, revision_id, status, trigger)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at
+RETURNING id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at, builder_server_id
 `
 
 type CreateDeploymentParams struct {
@@ -42,12 +44,13 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.FinishedAt,
+		&i.BuilderServerID,
 	)
 	return i, err
 }
 
 const getDeployment = `-- name: GetDeployment :one
-SELECT id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at FROM deployments WHERE id = $1
+SELECT id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at, builder_server_id FROM deployments WHERE id = $1
 `
 
 func (q *Queries) GetDeployment(ctx context.Context, id string) (Deployment, error) {
@@ -63,12 +66,13 @@ func (q *Queries) GetDeployment(ctx context.Context, id string) (Deployment, err
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.FinishedAt,
+		&i.BuilderServerID,
 	)
 	return i, err
 }
 
 const listActiveDeployments = `-- name: ListActiveDeployments :many
-SELECT id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at FROM deployments
+SELECT id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at, builder_server_id FROM deployments
 WHERE status NOT IN ('succeeded', 'failed')
 ORDER BY created_at
 `
@@ -92,6 +96,7 @@ func (q *Queries) ListActiveDeployments(ctx context.Context) ([]Deployment, erro
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.FinishedAt,
+			&i.BuilderServerID,
 		); err != nil {
 			return nil, err
 		}
@@ -104,7 +109,7 @@ func (q *Queries) ListActiveDeployments(ctx context.Context) ([]Deployment, erro
 }
 
 const listActiveDeploymentsByApplication = `-- name: ListActiveDeploymentsByApplication :many
-SELECT id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at FROM deployments
+SELECT id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at, builder_server_id FROM deployments
 WHERE application_id = $1 AND status NOT IN ('succeeded', 'failed')
 ORDER BY created_at
 `
@@ -128,6 +133,7 @@ func (q *Queries) ListActiveDeploymentsByApplication(ctx context.Context, applic
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.FinishedAt,
+			&i.BuilderServerID,
 		); err != nil {
 			return nil, err
 		}
@@ -140,7 +146,7 @@ func (q *Queries) ListActiveDeploymentsByApplication(ctx context.Context, applic
 }
 
 const listDeploymentsByApplication = `-- name: ListDeploymentsByApplication :many
-SELECT id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at FROM deployments WHERE application_id = $1 ORDER BY created_at DESC LIMIT $2
+SELECT id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at, builder_server_id FROM deployments WHERE application_id = $1 ORDER BY created_at DESC LIMIT $2
 `
 
 type ListDeploymentsByApplicationParams struct {
@@ -167,6 +173,7 @@ func (q *Queries) ListDeploymentsByApplication(ctx context.Context, arg ListDepl
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.FinishedAt,
+			&i.BuilderServerID,
 		); err != nil {
 			return nil, err
 		}
@@ -178,12 +185,41 @@ func (q *Queries) ListDeploymentsByApplication(ctx context.Context, arg ListDepl
 	return items, nil
 }
 
+const setDeploymentBuilder = `-- name: SetDeploymentBuilder :one
+UPDATE deployments SET builder_server_id = $2, updated_at = now()
+WHERE id = $1
+RETURNING id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at, builder_server_id
+`
+
+type SetDeploymentBuilderParams struct {
+	ID              string
+	BuilderServerID pgtype.Text
+}
+
+func (q *Queries) SetDeploymentBuilder(ctx context.Context, arg SetDeploymentBuilderParams) (Deployment, error) {
+	row := q.db.QueryRow(ctx, setDeploymentBuilder, arg.ID, arg.BuilderServerID)
+	var i Deployment
+	err := row.Scan(
+		&i.ID,
+		&i.ApplicationID,
+		&i.RevisionID,
+		&i.Status,
+		&i.Trigger,
+		&i.Detail,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.BuilderServerID,
+	)
+	return i, err
+}
+
 const updateDeploymentStatus = `-- name: UpdateDeploymentStatus :one
 UPDATE deployments
 SET status = $2, detail = $3, updated_at = now(),
     finished_at = CASE WHEN $2 IN ('succeeded', 'failed') THEN now() ELSE finished_at END
 WHERE id = $1
-RETURNING id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at
+RETURNING id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at, builder_server_id
 `
 
 type UpdateDeploymentStatusParams struct {
@@ -205,6 +241,7 @@ func (q *Queries) UpdateDeploymentStatus(ctx context.Context, arg UpdateDeployme
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.FinishedAt,
+		&i.BuilderServerID,
 	)
 	return i, err
 }

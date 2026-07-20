@@ -226,12 +226,13 @@ func (s *Store) MarkServerEnrolled(ctx context.Context, id, hostname, agentVersi
 	return serverFromRow(row), nil
 }
 
-func (s *Store) RecordHeartbeat(ctx context.Context, id string, status domain.ServerStatus, agentVersion, driver string) (domain.Server, error) {
+func (s *Store) RecordHeartbeat(ctx context.Context, id string, status domain.ServerStatus, agentVersion, driver, role string) (domain.Server, error) {
 	row, err := s.q.RecordHeartbeat(ctx, db.RecordHeartbeatParams{
 		ID:           id,
 		Status:       string(status),
 		AgentVersion: agentVersion,
 		Driver:       driver,
+		Role:         role,
 	})
 	if err != nil {
 		return domain.Server{}, wrap("recording heartbeat", err)
@@ -391,6 +392,7 @@ func serverFromRow(r db.Server) domain.Server {
 		Name:         r.Name,
 		Status:       domain.ServerStatus(r.Status),
 		Driver:       r.Driver,
+		Role:         r.Role,
 		AgentVersion: r.AgentVersion,
 		Hostname:     r.Hostname,
 		EnrolledAt:   ptrTime(r.EnrolledAt),

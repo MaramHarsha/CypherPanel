@@ -96,6 +96,25 @@ message BuildWork {
   string deploy_key_pem = 8;
 }
 
+// PushImageWork commands a builder-role agent to stream a built image to the
+// plane's relay for a multi-server deployment (builder-role-and-relay.md §2).
+// Published on work.<builder_id>.push alongside the target's DistributeWork.
+message PushImageWork {
+  string deployment_id = 1;
+  string app_id = 2;
+  // Image reference present in the builder's local daemon (the build's tag).
+  string image = 3;
+}
+
+// DistributeWork commands a target agent to obtain a deployment's image from
+// the plane's relay. Idempotent: an agent that already has the image reports
+// success without pulling (the redelivery/crash-recovery anchor, spec §6).
+message DistributeWork {
+  string deployment_id = 1;
+  string app_id = 2;
+  string image = 3;
+}
+
 // DesiredState is the full desired set for one server: the reply to the
 // agent's sync request on state.<server_id>.sync. An agent reconciles from
 // this baseline on every (re)connect — work items are per-deployment triggers,

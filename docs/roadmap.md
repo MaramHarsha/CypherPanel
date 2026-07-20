@@ -26,6 +26,8 @@ Scope: GitHub repo (public + deploy-key private) → Dockerfile build on a build
 
 **Acceptance:** git push → new version live with zero dropped requests; kill the agent mid-deploy → reconciler converges on restart; rollback restores the previous revision in seconds; deploy fully drivable via REST API alone.
 
+**Evidence at closeout:** zero-drop rollout, mid-deploy agent kill → reconverge, rollback, and REST-only driving asserted by `integration.yml` (`deploy`, `deploy-resilience`) on every push. Multi-server builder split + relay proven live across two real Docker daemons (target in dind): image built on the builder, relayed through the plane (bounded memory, nothing on plane disk), health-gated and routed on the target; target killed mid-distribute reconverged seconds after restart. Production Let's Encrypt validated 2026-07-20 on a real domain (`cypherpanel.in` → HTTP-01 → `SSL certificate verify ok`, HTTP→HTTPS 301, cert in node-local `acme.json` 0600), private-repo deploy-key clone in the same pipeline run.
+
 ## Phase 3 — State model breadth
 
 Scope: managed databases (PostgreSQL, MySQL, MariaDB, MongoDB, Redis, Valkey); env vars & secrets; scheduled backups to S3-compatible targets with restore; preview environments from PRs (TTL auto-destroy); notifications (Email, Discord, Slack, Telegram); teams + roles; scheduled tasks (cron).
@@ -53,7 +55,13 @@ Deliberate **Later** items from the [feature matrix](product/feature-matrix.md),
 | # | Question | Decide by |
 |---|---|---|
 | ADR-007 | Template format: extend Coolify's compose-YAML + magic envs, Dokploy's remote registry, or a merged schema | Before Phase 4 starts |
-| ADR-009 | License (Apache/MIT vs AGPL vs open-core) — shapes community and monetization from day one; must be cleaner than Dokploy's mixed model | Before the repo goes public |
-| ADR-010 | Agent auto-update mechanism (channel, rollout, rollback) — a fleet of outdated agents is a support nightmare | Before first public release (end of Phase 2) |
 
 Decided 2026-07-18, unblocking Phase 2: [ADR-006](adrs/ADR-006-docker-only-at-launch.md) (standalone `docker` driver only at launch; Swarm fast-follows in V1.x) and [ADR-008](adrs/ADR-008-no-registry-required.md) (no registry required: local image on single-server, mTLS relay for multi-server, external registries optional).
+
+Decided 2026-07-20, closing Phase 2's decision gates:
+[ADR-009](adrs/ADR-009-apache-2-license.md) (Apache-2.0 for the whole
+repository — no open-core split; trademark is the brand lever) and
+[ADR-010](adrs/ADR-010-agent-auto-update.md) (agent auto-update as desired
+state: plane declares version+channel, agent pulls the signed artifact,
+two-slot swap with self-rollback; implementation lands with the release
+pipeline).

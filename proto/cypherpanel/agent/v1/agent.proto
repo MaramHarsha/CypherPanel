@@ -70,4 +70,8 @@ message Heartbeat {
   // report their configured driver without yet reconciling workloads.
   string driver = 4;
   AgentStatus status = 5;
+  // Role the agent runs with: "all" (default), "builder", or "worker"
+  // (builder-role-and-relay.md §1). Routing input only — relay operations are
+  // authorized per-deployment, never from this claim.
+  string role = 6;
 }

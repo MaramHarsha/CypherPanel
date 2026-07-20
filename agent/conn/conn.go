@@ -55,6 +55,7 @@ func Enroll(ctx context.Context, planeAddr, token string, caPEM []byte, hostname
 	return &identity.Identity{
 		ServerID:  resp.GetServerId(),
 		NATSURL:   resp.GetNatsUrl(),
+		PlaneAddr: planeAddr,
 		CertPEM:   resp.GetCertificatePem(),
 		KeyPEM:    keyPEM,
 		CACertPEM: resp.GetCaPem(),

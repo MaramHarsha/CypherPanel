@@ -148,9 +148,14 @@ type Deployment struct {
 	Status        DeploymentStatus
 	Trigger       string // "manual" | "webhook" | "rollback"
 	Detail        string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-	FinishedAt    *time.Time
+	// BuilderServerID is the server the build was routed to when it is not
+	// the app's own server; nil means builder = target (the local path,
+	// ADR-008). It authorizes that server's build/distribute events and
+	// relay pushes (builder-role-and-relay.md §5).
+	BuilderServerID *string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	FinishedAt      *time.Time
 }
 
 // DeployKey is an SSH key for private repository access. The private key PEM

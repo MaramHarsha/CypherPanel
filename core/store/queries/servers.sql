@@ -23,6 +23,7 @@ UPDATE servers
 SET status = $2,
     agent_version = $3,
     driver = $4,
+    role = $5,
     last_seen_at = now(),
     updated_at = now()
 WHERE id = $1

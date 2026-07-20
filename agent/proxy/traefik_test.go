@@ -36,6 +36,25 @@ func TestFragmentWriteObserveRemove(t *testing.T) {
 	if !strings.Contains(content, "example.com") || !strings.Contains(content, "10.0.0.1:8080") || !strings.Contains(content, "certResolver") {
 		t.Fatalf("fragment missing expected content:\n%s", content)
 	}
+	// An HTTPS route pins its TLS router to websecure and answers the same
+	// rule on web with a permanent scheme redirect (routing-and-tls.md §5).
+	for _, want := range []string{"websecure", "app1-http", "app1-redirect", "redirectScheme", "permanent: true"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("https fragment missing %q:\n%s", want, content)
+		}
+	}
+
+	// An HTTP-only route gets neither TLS nor redirect plumbing.
+	if err := w.SetRoute(ctx, "app2", &agentv1.RouteSpec{Domain: "plain.example.com"}, "10.0.0.2:8080"); err != nil {
+		t.Fatalf("SetRoute http-only: %v", err)
+	}
+	b2, err := os.ReadFile(filepath.Join(dir, "apps", "app2.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if s := string(b2); strings.Contains(s, "redirectScheme") || strings.Contains(s, "certResolver") {
+		t.Fatalf("http-only fragment has TLS/redirect plumbing:\n%s", s)
+	}
 
 	up, ok, err := w.Route(ctx, "app1")
 	if err != nil || !ok || up != "10.0.0.1:8080" {

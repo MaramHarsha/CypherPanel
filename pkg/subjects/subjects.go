@@ -82,6 +82,13 @@ func Rollout(serverID string) string { return WorkPrefix + serverID + ".rollout"
 func Remove(serverID string) string  { return WorkPrefix + serverID + ".remove" }
 func Build(serverID string) string   { return WorkPrefix + serverID + ".build" }
 
+// PushImage and Distribute are the multi-server relay work subjects
+// (builder-role-and-relay.md §2): the builder pushes a built image to the
+// plane's relay, the target obtains it from there. Both sit under their
+// server's work.<id>.> scope, so agent authorization is unchanged.
+func PushImage(serverID string) string  { return WorkPrefix + serverID + ".push" }
+func Distribute(serverID string) string { return WorkPrefix + serverID + ".distribute" }
+
 // DeployState is where an agent reports DeployEvent outcomes.
 func DeployState(serverID string) string { return StatePrefix + serverID + ".deploy" }
 

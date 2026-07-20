@@ -945,6 +945,13 @@ components:
         driver:
           type: string
           description: Orchestrator driver the agent reports (e.g. docker).
+        role:
+          type: string
+          description: >-
+            Agent-asserted role (builder-role-and-relay.md §1). "all" builds
+            and runs; "builder" only builds; "worker" only runs. Read-only —
+            set via the agent's --role flag, recorded from heartbeats.
+          enum: [all, builder, worker]
         agent_version:
           type: string
         hostname:

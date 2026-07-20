@@ -17,6 +17,7 @@ type recordCall struct {
 	id     string
 	status domain.ServerStatus
 	driver string
+	role   string
 }
 
 type fakeStore struct {
@@ -24,8 +25,8 @@ type fakeStore struct {
 	staleIn []string
 }
 
-func (f *fakeStore) RecordHeartbeat(_ context.Context, id string, st domain.ServerStatus, _, driver string) (domain.Server, error) {
-	f.records = append(f.records, recordCall{id: id, status: st, driver: driver})
+func (f *fakeStore) RecordHeartbeat(_ context.Context, id string, st domain.ServerStatus, _, driver, role string) (domain.Server, error) {
+	f.records = append(f.records, recordCall{id: id, status: st, driver: driver, role: role})
 	return domain.Server{ID: id}, nil
 }
 
@@ -56,6 +57,30 @@ func TestRecordAppliesHeartbeat(t *testing.T) {
 	got := fs.records[0]
 	if got.id != "srv_1" || got.status != domain.StatusRunning || got.driver != "docker" {
 		t.Fatalf("unexpected record: %+v", got)
+	}
+	// A pre-role heartbeat (no role field) persists as "all" — the
+	// backward-compatible default (builder-role-and-relay.md §1).
+	if got.role != domain.RoleAll {
+		t.Fatalf("role = %q, want %q for a role-less heartbeat", got.role, domain.RoleAll)
+	}
+}
+
+// A role outside the vocabulary is dropped un-persisted, like any other
+// malformed heartbeat: the role column must only ever hold known values.
+func TestRecordDropsUnknownRole(t *testing.T) {
+	fs := &fakeStore{}
+	r := NewRecorder(fs, quietLog())
+	data, err := proto.Marshal(&agentv1.Heartbeat{
+		ServerId: "srv_1",
+		Status:   agentv1.AgentStatus_AGENT_STATUS_READY,
+		Role:     "root-of-all-builds",
+	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	r.Record(context.Background(), data)
+	if len(fs.records) != 0 {
+		t.Fatalf("unknown role should be dropped, got %d records", len(fs.records))
 	}
 }
 

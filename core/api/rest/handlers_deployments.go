@@ -67,6 +67,13 @@ func (a *API) handleDeployApplication(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		if dep.ID != "" {
+			// The pipeline started and failed fast (no builder available, a
+			// dangling deploy key): the deployment record carries the reason
+			// in its detail — return it rather than an opaque 500.
+			writeJSON(w, http.StatusAccepted, toDeploymentDTO(dep))
+			return
+		}
 		a.deps.Log.Error("starting deployment", "error", err)
 		writeError(w, http.StatusInternalServerError, "could not start deployment")
 		return

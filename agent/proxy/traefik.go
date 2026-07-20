@@ -60,17 +60,26 @@ func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.Rou
 		} `yaml:"loadBalancer"`
 	}
 	type Router struct {
-		Rule    string `yaml:"rule"`
-		Service string `yaml:"service"`
-		TLS     *struct {
+		Rule        string   `yaml:"rule"`
+		EntryPoints []string `yaml:"entryPoints,omitempty"`
+		Middlewares []string `yaml:"middlewares,omitempty"`
+		Service     string   `yaml:"service"`
+		TLS         *struct {
 			CertResolver string `yaml:"certResolver,omitempty"`
 		} `yaml:"tls,omitempty"`
+	}
+	type Middleware struct {
+		RedirectScheme struct {
+			Scheme    string `yaml:"scheme"`
+			Permanent bool   `yaml:"permanent"`
+		} `yaml:"redirectScheme"`
 	}
 
 	doc := struct {
 		HTTP struct {
-			Routers  map[string]Router  `yaml:"routers"`
-			Services map[string]Service `yaml:"services"`
+			Routers     map[string]Router     `yaml:"routers"`
+			Middlewares map[string]Middleware `yaml:"middlewares,omitempty"`
+			Services    map[string]Service    `yaml:"services"`
 		} `yaml:"http"`
 	}{}
 
@@ -93,10 +102,34 @@ func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.Rou
 		}
 	}
 
-	doc.HTTP.Routers[appID] = Router{
-		Rule:    rule,
-		Service: appID,
-		TLS:     tlsConf,
+	if route.Https {
+		// The TLS router serves websecure only; a sibling router answers the
+		// same rule on web with a permanent redirect (routing-and-tls.md §5 —
+		// per-app, so HTTP-only apps on this node keep serving plain HTTP).
+		// Traefik answers ACME HTTP-01 challenges ahead of routing, so the
+		// redirect never blocks issuance.
+		doc.HTTP.Routers[appID] = Router{
+			Rule:        rule,
+			EntryPoints: []string{"websecure"},
+			Service:     appID,
+			TLS:         tlsConf,
+		}
+		doc.HTTP.Routers[appID+"-http"] = Router{
+			Rule:        rule,
+			EntryPoints: []string{"web"},
+			Middlewares: []string{appID + "-redirect"},
+			Service:     appID,
+		}
+		mw := Middleware{}
+		mw.RedirectScheme.Scheme = "https"
+		mw.RedirectScheme.Permanent = true
+		doc.HTTP.Middlewares = map[string]Middleware{appID + "-redirect": mw}
+	} else {
+		doc.HTTP.Routers[appID] = Router{
+			Rule:    rule,
+			Service: appID,
+			TLS:     tlsConf,
+		}
 	}
 
 	srv := Service{}
