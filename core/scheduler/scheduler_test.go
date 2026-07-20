@@ -639,6 +639,59 @@ func TestObservedRunningCompletesDeployment(t *testing.T) {
 	}
 }
 
+// recordingNotifier captures the terminal-outcome calls the scheduler makes.
+type recordingNotifier struct {
+	deploys []domain.Deployment
+}
+
+func (r *recordingNotifier) NotifyDeploy(_ context.Context, _ domain.Application, dep domain.Deployment) {
+	r.deploys = append(r.deploys, dep)
+}
+func (r *recordingNotifier) NotifyBackup(_ context.Context, _ domain.Database, _ domain.BackupRecord) {
+}
+
+// The notifier fires once, with the succeeded deployment, at the observed-
+// running completion — never before (notifications.md §5).
+func TestNotifierFiresOnDeploySuccess(t *testing.T) {
+	fs, fb := newFakeStore(), &fakeBus{}
+	fs.addApp("app_1", "srv_1")
+	s := newScheduler(fs, fb)
+	rec := &recordingNotifier{}
+	s.SetNotifier(rec)
+
+	dep, _ := s.Deploy(context.Background(), "app_1", "manual", "")
+	s.HandleDeployEvent(context.Background(), "srv_1", &agentv1.DeployEvent{
+		DeploymentId: dep.ID, Stage: agentv1.DeployEvent_STAGE_BUILD, Outcome: agentv1.DeployEvent_OUTCOME_SUCCEEDED,
+	})
+	if len(rec.deploys) != 0 {
+		t.Fatalf("notifier fired before completion: %+v", rec.deploys)
+	}
+	s.HandleAppStatus(context.Background(), "srv_1", &agentv1.AppStatus{
+		AppId: "app_1", RevisionId: dep.RevisionID, State: domain.AppRunning,
+	})
+	if len(rec.deploys) != 1 || rec.deploys[0].Status != domain.DeploySucceeded {
+		t.Fatalf("notifier calls = %+v, want one succeeded", rec.deploys)
+	}
+}
+
+// A build failure notifies with the failed deployment (both outcomes route
+// through one NotifyDeploy call, notifications.md §5).
+func TestNotifierFiresOnDeployFailure(t *testing.T) {
+	fs, fb := newFakeStore(), &fakeBus{}
+	fs.addApp("app_1", "srv_1")
+	s := newScheduler(fs, fb)
+	rec := &recordingNotifier{}
+	s.SetNotifier(rec)
+
+	dep, _ := s.Deploy(context.Background(), "app_1", "manual", "")
+	s.HandleDeployEvent(context.Background(), "srv_1", &agentv1.DeployEvent{
+		DeploymentId: dep.ID, Stage: agentv1.DeployEvent_STAGE_BUILD, Outcome: agentv1.DeployEvent_OUTCOME_FAILED, Detail: "boom",
+	})
+	if len(rec.deploys) != 1 || rec.deploys[0].Status != domain.DeployFailed {
+		t.Fatalf("notifier calls = %+v, want one failed", rec.deploys)
+	}
+}
+
 func TestBuildFailureFailsDeploymentAndPromotesNext(t *testing.T) {
 	fs, fb := newFakeStore(), &fakeBus{}
 	fs.addApp("app_1", "srv_1")

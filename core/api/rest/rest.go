@@ -17,6 +17,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/databases"
 	"github.com/MaramHarsha/cypherpanel/core/deploykeys"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
+	"github.com/MaramHarsha/cypherpanel/core/notify"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
 	"github.com/MaramHarsha/cypherpanel/core/servers"
 )
@@ -64,6 +65,22 @@ type PreviewManager interface {
 	DestroyByID(ctx context.Context, previewID string) error
 }
 
+// NotifierService is the notifier CRUD surface (consumer-defined;
+// *notify.Service satisfies it — notifications.md §7).
+type NotifierService interface {
+	Create(ctx context.Context, projectID string, in notify.CreateInput) (domain.Notifier, error)
+	Update(ctx context.Context, id string, in notify.UpdateInput) (domain.Notifier, error)
+	Get(ctx context.Context, id string) (domain.Notifier, error)
+	List(ctx context.Context, projectID string) ([]domain.Notifier, error)
+	Delete(ctx context.Context, id string) error
+}
+
+// NotifierDelivery sends a synthetic event through one notifier — the test
+// endpoint (consumer-defined; *notify.Manager satisfies it).
+type NotifierDelivery interface {
+	Deliver(ctx context.Context, n domain.Notifier, ev domain.NotifyEvent) error
+}
+
 // LogSubscriber delivers the retained history and then the live tail of one
 // log subject (consumer-defined; *bus.Bus satisfies it). handle is invoked
 // from the subscriber's goroutine until stop is called.
@@ -84,6 +101,8 @@ type Deps struct {
 	BackupSchedules *databases.BackupScheduleService
 	Backups         BackupOps
 	Previews        PreviewManager
+	Notifiers       NotifierService
+	NotifyDelivery  NotifierDelivery
 	Scheduler       Deployer
 	Deployments     DeploymentReader
 	Opener          Opener
@@ -199,6 +218,14 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/applications/{id}/previews", a.authed(a.handleListPreviews))
 	mux.HandleFunc("GET /api/v1/previews/{id}", a.authed(a.handleGetPreview))
 	mux.HandleFunc("DELETE /api/v1/previews/{id}", a.authed(a.handleDeletePreview))
+
+	// Phase 3: notifications (notifications.md §7).
+	mux.HandleFunc("POST /api/v1/projects/{id}/notifiers", a.authed(a.handleCreateNotifier))
+	mux.HandleFunc("GET /api/v1/projects/{id}/notifiers", a.authed(a.handleListNotifiers))
+	mux.HandleFunc("GET /api/v1/notifiers/{id}", a.authed(a.handleGetNotifier))
+	mux.HandleFunc("PATCH /api/v1/notifiers/{id}", a.authed(a.handlePatchNotifier))
+	mux.HandleFunc("DELETE /api/v1/notifiers/{id}", a.authed(a.handleDeleteNotifier))
+	mux.HandleFunc("POST /api/v1/notifiers/{id}/test", a.authed(a.handleTestNotifier))
 
 	// Interim console + static assets.
 	mux.Handle("GET /", a.consoleHandler())

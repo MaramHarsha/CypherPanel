@@ -283,6 +283,64 @@ func TestStoreProjectCascadeDeletesEverything(t *testing.T) {
 	}
 }
 
+// TestStoreNotifierRoundtrip exercises the TEXT[] events column and the
+// ANY(events) event-filter query against real Postgres — array handling the
+// unit fakes cannot validate (notifications.md §2–4).
+func TestStoreNotifierRoundtrip(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	_, proj, _, _ := seedApp(t, s)
+
+	n, err := s.CreateNotifier(ctx, domain.Notifier{
+		ID:          ids.New(ids.PrefixNotifier),
+		ProjectID:   proj.ID,
+		Name:        "ops-slack",
+		Channel:     domain.NotifyChannelSlack,
+		ConfigCT:    []byte("sealed-config"),
+		ConfigNonce: []byte("nonce"),
+		Events:      []string{domain.EventDeployFailed, domain.EventBackupFailed},
+		Enabled:     true,
+	})
+	if err != nil {
+		t.Fatalf("CreateNotifier: %v", err)
+	}
+	if len(n.Events) != 2 || n.Events[0] != domain.EventDeployFailed {
+		t.Fatalf("events not round-tripped: %+v", n.Events)
+	}
+
+	// The event filter matches a subscribed event and excludes an unsubscribed
+	// one; a disabled notifier is never returned.
+	got, err := s.ListEnabledNotifiersForEvent(ctx, proj.ID, domain.EventDeployFailed)
+	if err != nil {
+		t.Fatalf("ListEnabledNotifiersForEvent: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != n.ID {
+		t.Fatalf("event filter = %+v, want the one subscribed notifier", got)
+	}
+	if none, err := s.ListEnabledNotifiersForEvent(ctx, proj.ID, domain.EventDeploySucceeded); err != nil || len(none) != 0 {
+		t.Fatalf("unsubscribed event = %+v, %v, want empty", none, err)
+	}
+
+	// Disabling removes it from the event query but keeps the row.
+	if _, err := s.UpdateNotifier(ctx, domain.Notifier{
+		ID: n.ID, Name: n.Name, ConfigCT: n.ConfigCT, ConfigNonce: n.ConfigNonce,
+		Events: n.Events, Enabled: false,
+	}); err != nil {
+		t.Fatalf("UpdateNotifier: %v", err)
+	}
+	if disabled, err := s.ListEnabledNotifiersForEvent(ctx, proj.ID, domain.EventDeployFailed); err != nil || len(disabled) != 0 {
+		t.Fatalf("disabled notifier still matched: %+v, %v", disabled, err)
+	}
+
+	// Deleting the project cascades the notifier away.
+	if err := s.DeleteProject(ctx, proj.ID); err != nil {
+		t.Fatalf("DeleteProject: %v", err)
+	}
+	if _, err := s.GetNotifier(ctx, n.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("notifier survived project cascade: %v", err)
+	}
+}
+
 func TestStoreDatabaseLifecycle(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()

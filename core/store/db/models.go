@@ -167,6 +167,19 @@ type JoinToken struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+type Notifier struct {
+	ID          string
+	ProjectID   string
+	Name        string
+	Channel     string
+	ConfigCt    []byte
+	ConfigNonce []byte
+	Events      []string
+	Enabled     bool
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
 type PlaneCa struct {
 	ID           int32
 	CertPem      []byte

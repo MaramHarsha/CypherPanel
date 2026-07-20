@@ -197,6 +197,17 @@ func (s *Scheduler) HandleDbBackupEvent(ctx context.Context, serverID string, ev
 	}
 	s.log.Info("database backup finished", "record_id", rec.ID, "status", status, "size_bytes", ev.GetSizeBytes())
 
+	if s.notify != nil {
+		// Resolve the database for the message; a lookup miss just drops the
+		// notice (the outcome is already recorded and logged).
+		rec.Status, rec.Detail, rec.ObjectKey, rec.FinishedAt = status, ev.GetDetail(), ev.GetObjectKey(), &finished
+		if sched, err := s.store.GetDatabaseBackup(ctx, rec.DatabaseBackupID); err == nil {
+			if db, err := s.store.GetDatabase(ctx, sched.DatabaseID); err == nil {
+				s.notify.NotifyBackup(ctx, db, rec)
+			}
+		}
+	}
+
 	if status == domain.BackupSucceeded {
 		sched, err := s.store.GetDatabaseBackup(ctx, rec.DatabaseBackupID)
 		if err == nil && sched.RetentionCount > 0 {

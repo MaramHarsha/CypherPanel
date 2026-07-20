@@ -94,6 +94,15 @@ type Opener interface {
 	Open(ciphertext, nonce []byte) ([]byte, error)
 }
 
+// Notifier delivers terminal-outcome notifications (consumer-defined;
+// *notify.Manager satisfies it — notifications.md §4). Optional: a nil notifier
+// means the transitions still happen, just without messages. Implementations
+// must not block — delivery is fire-and-forget (spec §1).
+type Notifier interface {
+	NotifyDeploy(ctx context.Context, app domain.Application, dep domain.Deployment)
+	NotifyBackup(ctx context.Context, db domain.Database, rec domain.BackupRecord)
+}
+
 // Scheduler owns pipeline state transitions. Construct with New.
 type Scheduler struct {
 	store  Store
@@ -101,6 +110,9 @@ type Scheduler struct {
 	opener Opener
 	log    *slog.Logger
 	now    func() time.Time
+
+	// notify is optional; guarded at every call site (may be nil).
+	notify Notifier
 
 	// mu serializes pipeline transitions: deploy requests and event handlers
 	// race on the per-app queue, and the transitions are read-modify-write.
@@ -111,6 +123,10 @@ type Scheduler struct {
 func New(st Store, b Bus, opener Opener, log *slog.Logger) *Scheduler {
 	return &Scheduler{store: st, bus: b, opener: opener, log: log, now: time.Now}
 }
+
+// SetNotifier attaches an optional notifier for terminal-outcome messages. Kept
+// separate from New so notifications stay an opt-in add-on (nil = disabled).
+func (s *Scheduler) SetNotifier(n Notifier) { s.notify = n }
 
 // configSnapshot is the immutable per-revision config (stored as the
 // revision's config_snapshot JSON): what rollback restores. Env vars are
@@ -645,11 +661,15 @@ func (s *Scheduler) HandleAppStatus(ctx context.Context, serverID string, st *ag
 	}
 	for _, dep := range active {
 		if dep.Status == domain.DeployRollingOut && dep.RevisionID == st.GetRevisionId() {
-			if _, err := s.store.UpdateDeploymentStatus(ctx, dep.ID, domain.DeploySucceeded, ""); err != nil {
+			done, err := s.store.UpdateDeploymentStatus(ctx, dep.ID, domain.DeploySucceeded, "")
+			if err != nil {
 				s.log.Error("app status: completing deployment", "deployment_id", dep.ID, "error", err)
 				return
 			}
 			s.log.Info("deployment succeeded", "deployment_id", dep.ID, "app_id", dep.ApplicationID, "revision_id", dep.RevisionID, "server_id", serverID)
+			if s.notify != nil {
+				s.notify.NotifyDeploy(ctx, app, done)
+			}
 			s.promoteNext(ctx, dep.ApplicationID)
 			return
 		}
@@ -660,11 +680,19 @@ func (s *Scheduler) HandleAppStatus(ctx context.Context, serverID string, st *ag
 // application's own status stays observation-driven: the previous revision
 // keeps serving and the agent's reports say so. Callers hold s.mu.
 func (s *Scheduler) fail(ctx context.Context, dep domain.Deployment, detail string) {
-	if _, err := s.store.UpdateDeploymentStatus(ctx, dep.ID, domain.DeployFailed, detail); err != nil {
+	failed, err := s.store.UpdateDeploymentStatus(ctx, dep.ID, domain.DeployFailed, detail)
+	if err != nil {
 		s.log.Error("failing deployment", "deployment_id", dep.ID, "error", err)
 		return
 	}
 	s.log.Warn("deployment failed", "deployment_id", dep.ID, "app_id", dep.ApplicationID, "detail", detail)
+	if s.notify != nil {
+		// Load the app for the message; a lookup miss just drops the notice
+		// (the failure is already recorded and logged).
+		if app, err := s.store.GetApplication(ctx, dep.ApplicationID); err == nil {
+			s.notify.NotifyDeploy(ctx, app, failed)
+		}
+	}
 	s.promoteNext(ctx, dep.ApplicationID)
 }
 
