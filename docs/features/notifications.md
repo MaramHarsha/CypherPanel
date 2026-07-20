@@ -132,7 +132,7 @@ The scheduler calls the manager through a **consumer-defined interface** (rule
 // in core/scheduler
 type Notifier interface {
     NotifyDeploy(ctx context.Context, app domain.Application, dep domain.Deployment)
-    NotifyBackup(ctx context.Context, rec domain.BackupRecord, dbName string)
+    NotifyBackup(ctx context.Context, db domain.Database, rec domain.BackupRecord)
 }
 ```
 
@@ -149,7 +149,7 @@ ignorant of channels and rendering.
   `s.notify.NotifyDeploy(ctx, app, dep)` (the dep now carries `DeployFailed` +
   detail, so one method covers both outcomes).
 - `backups.go` — after `UpdateBackupRecord(…)`:
-  `s.notify.NotifyBackup(ctx, rec, dbName)` (rec carries succeeded/failed).
+  `s.notify.NotifyBackup(ctx, db, rec)` (rec carries succeeded/failed).
 
 Each is a single line at a point that is already the authoritative moment of
 the transition, already under `s.mu`. The manager's own work happens in

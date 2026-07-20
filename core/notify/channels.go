@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/smtp"
+	"net/url"
 	"strings"
 
 	"github.com/MaramHarsha/cypherpanel/core/domain"
@@ -71,12 +73,12 @@ func (m *Manager) postJSON(ctx context.Context, url string, body any) error {
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(buf))
 	if err != nil {
-		return fmt.Errorf("building request: %w", err)
+		return fmt.Errorf("building request: %w", redactURL(err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := m.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("posting: %w", err)
+		return fmt.Errorf("posting: %w", redactURL(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	// Drain a little of the body so the connection can be reused; ignore it —
@@ -86,6 +88,20 @@ func (m *Manager) postJSON(ctx context.Context, url string, body any) error {
 		return fmt.Errorf("endpoint returned %s", resp.Status)
 	}
 	return nil
+}
+
+// redactURL strips the request URL out of a transport error before it is
+// returned (and later logged by fanOut / the test handler). The URL can be the
+// secret itself — a Discord/Slack webhook is a bearer capability and the
+// Telegram bot token sits in the path (notifications.md §6, ENGINEERING rule
+// 20). A *url.Error's message embeds that URL, so unwrap it to its cause, which
+// carries the failure reason (dial/timeout) without the URL.
+func redactURL(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return ue.Err
+	}
+	return err
 }
 
 // sendEmail delivers via SMTP (stdlib net/smtp). smtp.SendMail issues STARTTLS
@@ -111,6 +127,12 @@ func (m *Manager) sendEmail(cfg []byte, ev domain.NotifyEvent) error {
 	return nil
 }
 
+// sanitizeHeader neutralises CR and LF in a header value so it cannot inject
+// additional headers or split the message (email header injection).
+func sanitizeHeader(v string) string {
+	return strings.NewReplacer("\r", " ", "\n", " ").Replace(v)
+}
+
 // splitRecipients parses a comma-separated recipient list, trimming blanks.
 func splitRecipients(list string) []string {
 	var out []string
@@ -127,7 +149,10 @@ func buildMessage(from string, to []string, subject, body string) []byte {
 	var b strings.Builder
 	fmt.Fprintf(&b, "From: %s\r\n", from)
 	fmt.Fprintf(&b, "To: %s\r\n", strings.Join(to, ", "))
-	fmt.Fprintf(&b, "Subject: %s\r\n", subject)
+	// Neutralise CR/LF in the subject so an app/database name propagated into
+	// ev.Title (NotifyDeploy/NotifyBackup) cannot inject extra SMTP headers or
+	// split the message.
+	fmt.Fprintf(&b, "Subject: %s\r\n", sanitizeHeader(subject))
 	b.WriteString("MIME-Version: 1.0\r\n")
 	b.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
 	b.WriteString("\r\n")
