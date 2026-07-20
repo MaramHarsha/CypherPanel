@@ -33,6 +33,9 @@ const (
 	PrefixBackupTarget     = "bt"
 	PrefixDatabaseBackup   = "bak"
 	PrefixBackupRecord     = "br"
+
+	// Phase 3: Notifications (docs/features/notifications.md).
+	PrefixNotifier = "ntf"
 )
 
 // New returns a prefixed, URL-safe, collision-resistant identifier such as

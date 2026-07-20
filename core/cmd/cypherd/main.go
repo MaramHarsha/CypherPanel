@@ -33,6 +33,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/enroll"
 	"github.com/MaramHarsha/cypherpanel/core/guard"
 	"github.com/MaramHarsha/cypherpanel/core/identity"
+	"github.com/MaramHarsha/cypherpanel/core/notify"
 	"github.com/MaramHarsha/cypherpanel/core/previews"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
 	"github.com/MaramHarsha/cypherpanel/core/relay"
@@ -168,6 +169,13 @@ func run(log *slog.Logger) error {
 	// deployments from the agents' observed reports (ADR-005).
 	sched := scheduler.New(st, b, box, log)
 
+	// Notifications: terminal deploy/backup outcomes fan out to a project's
+	// configured channels (notifications.md). Delivery is best-effort and
+	// detached, so it never blocks the pipeline.
+	notifySvc := notify.NewService(st, box)
+	notifyMgr := notify.New(st, box, log)
+	sched.SetNotifier(notifyMgr)
+
 	dbSvc := databases.NewService(st, box, sched)
 	backupTargetSvc := databases.NewBackupTargetService(st, box)
 	backupScheduleSvc := databases.NewBackupScheduleService(st)
@@ -287,6 +295,8 @@ func run(log *slog.Logger) error {
 		BackupSchedules: backupScheduleSvc,
 		Backups:         sched,
 		Previews:        previewMgr,
+		Notifiers:       notifySvc,
+		NotifyDelivery:  notifyMgr,
 		Scheduler:       sched,
 		Deployments:     st,
 		Opener:          box,
