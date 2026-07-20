@@ -214,7 +214,7 @@ func Start(ctx context.Context, opts Options) (*Bus, error) {
 	// step with the state.* subjects in pkg/subjects.
 	if _, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
 		Name:      streamState,
-		Subjects:  []string{subjects.HeartbeatAll, subjects.DeployStateAll, subjects.AppStateAll, subjects.DbStateAll, subjects.DbBackupStateAll, subjects.DbRestoreStateAll},
+		Subjects:  []string{subjects.HeartbeatAll, subjects.DeployStateAll, subjects.AppStateAll, subjects.DbStateAll, subjects.DbBackupStateAll, subjects.DbRestoreStateAll, subjects.TaskStateAll},
 		Storage:   jetstream.MemoryStorage,
 		Retention: jetstream.LimitsPolicy,
 		Discard:   jetstream.DiscardOld,
