@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -384,8 +385,10 @@ func validateAndDefault(in CreateInput) (CreateInput, error) {
 	if in.PreviewEnabled && in.PreviewBaseDomain == "" {
 		return in, invalid("preview_base_domain is required when preview_enabled is true")
 	}
-	if in.PreviewTTLHours < 0 {
-		return in, invalid("preview_ttl_hours must not be negative")
+	// Stored as int32 (store: PreviewTtlHours); reject anything that would wrap
+	// on the cast, not just negatives.
+	if in.PreviewTTLHours < 0 || in.PreviewTTLHours > math.MaxInt32 {
+		return in, invalid("preview_ttl_hours must be between 0 and 2147483647")
 	}
 	if in.PreviewTTLHours == 0 {
 		in.PreviewTTLHours = 72

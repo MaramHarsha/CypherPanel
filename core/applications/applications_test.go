@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"math"
 	"testing"
 
 	"github.com/MaramHarsha/cypherpanel/core/domain"
@@ -181,6 +182,11 @@ func TestCreateValidation(t *testing.T) {
 		"env key with equals":  func(in *CreateInput) { in.EnvVars = map[string]string{"FOO=BAR": "v"} },
 		"env key with newline": func(in *CreateInput) { in.EnvVars = map[string]string{"FOO\nBAR": "v"} },
 		"env key digit-first":  func(in *CreateInput) { in.EnvVars = map[string]string{"1FOO": "v"} },
+		// Preview config (preview-environments.md §2).
+		"preview enabled no base": func(in *CreateInput) { in.PreviewEnabled = true; in.PreviewBaseDomain = "" },
+		"negative preview ttl":    func(in *CreateInput) { in.PreviewTTLHours = -1 },
+		// TTL is persisted as int32; a value above the max would wrap on the cast.
+		"overflowing preview ttl": func(in *CreateInput) { in.PreviewTTLHours = math.MaxInt32 + 1 },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -192,6 +198,21 @@ func TestCreateValidation(t *testing.T) {
 				t.Fatalf("err = %v, want ValidationError", err)
 			}
 		})
+	}
+}
+
+// The largest int32 TTL is accepted (persists without wrapping); one more is
+// the first rejected value.
+func TestCreatePreviewTTLBoundary(t *testing.T) {
+	s := NewService(newFakeStore(), fakeSealer{})
+	in := validInput()
+	in.PreviewTTLHours = math.MaxInt32
+	app, _, err := s.Create(context.Background(), "env_1", in)
+	if err != nil {
+		t.Fatalf("max int32 ttl rejected: %v", err)
+	}
+	if app.PreviewTTLHours != math.MaxInt32 {
+		t.Fatalf("ttl = %d, want %d preserved", app.PreviewTTLHours, math.MaxInt32)
 	}
 }
 
