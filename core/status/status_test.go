@@ -70,11 +70,14 @@ func TestRecordAppliesHeartbeat(t *testing.T) {
 func TestRecordDropsUnknownRole(t *testing.T) {
 	fs := &fakeStore{}
 	r := NewRecorder(fs, quietLog())
-	data, _ := proto.Marshal(&agentv1.Heartbeat{
+	data, err := proto.Marshal(&agentv1.Heartbeat{
 		ServerId: "srv_1",
 		Status:   agentv1.AgentStatus_AGENT_STATUS_READY,
 		Role:     "root-of-all-builds",
 	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
 	r.Record(context.Background(), data)
 	if len(fs.records) != 0 {
 		t.Fatalf("unknown role should be dropped, got %d records", len(fs.records))
