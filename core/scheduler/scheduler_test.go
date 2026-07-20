@@ -28,6 +28,8 @@ type fakeStore struct {
 	deployments map[string]domain.Deployment
 	envVars     map[string][]domain.EnvVar
 	deployKeys  map[string]domain.DeployKey
+	dbs         map[string]domain.Database
+	dbRevs      map[string]domain.DatabaseRevision
 	servers     []domain.Server
 	seq         int
 }
@@ -39,6 +41,8 @@ func newFakeStore() *fakeStore {
 		deployments: map[string]domain.Deployment{},
 		envVars:     map[string][]domain.EnvVar{},
 		deployKeys:  map[string]domain.DeployKey{},
+		dbs:         map[string]domain.Database{},
+		dbRevs:      map[string]domain.DatabaseRevision{},
 	}
 }
 
@@ -250,6 +254,70 @@ func (f *fakeStore) GetDeployKey(_ context.Context, id string) (domain.DeployKey
 		return domain.DeployKey{}, store.ErrNotFound
 	}
 	return dk, nil
+}
+
+func (f *fakeStore) GetDatabase(_ context.Context, id string) (domain.Database, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d, ok := f.dbs[id]
+	if !ok {
+		return domain.Database{}, store.ErrNotFound
+	}
+	return d, nil
+}
+
+func (f *fakeStore) ListDatabasesByServer(_ context.Context, serverID string) ([]domain.Database, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []domain.Database
+	for _, d := range f.dbs {
+		if d.ServerID == serverID {
+			out = append(out, d)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) GetDatabaseRevision(_ context.Context, id string) (domain.DatabaseRevision, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r, ok := f.dbRevs[id]
+	if !ok {
+		return domain.DatabaseRevision{}, store.ErrNotFound
+	}
+	return r, nil
+}
+
+func (f *fakeStore) SetDatabaseObservedStatus(_ context.Context, id, status, detail, observedRevisionID string, observedAt time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if d, ok := f.dbs[id]; ok {
+		d.Status = status
+		d.StatusDetail = detail
+		d.ObservedRevisionID = observedRevisionID
+		d.StatusObservedAt = &observedAt
+		f.dbs[id] = d
+	}
+	return nil
+}
+
+func (f *fakeStore) ListPendingDeleteDatabases(_ context.Context) ([]domain.Database, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []domain.Database
+	for _, d := range f.dbs {
+		if d.PendingDelete {
+			out = append(out, d)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) DeleteDatabase(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.dbs, id)
+	return nil
 }
 
 type published struct {

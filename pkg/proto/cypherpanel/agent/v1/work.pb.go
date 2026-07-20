@@ -732,8 +732,12 @@ func (x *DistributeWork) GetImage() string {
 // so a crashed agent converges a host it has never seen without replaying
 // history.
 type DesiredState struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Specs         []*AppSpec             `protobuf:"bytes,1,rep,name=specs,proto3" json:"specs,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Specs []*AppSpec             `protobuf:"bytes,1,rep,name=specs,proto3" json:"specs,omitempty"`
+	// Phase 3: Managed Database desired state (managed-databases.md §5).
+	// Databases whose db_id is absent from db_specs are removed (same
+	// absence-means-remove contract as apps).
+	DbSpecs       []*DbSpec `protobuf:"bytes,2,rep,name=db_specs,json=dbSpecs,proto3" json:"db_specs,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -771,6 +775,13 @@ func (*DesiredState) Descriptor() ([]byte, []int) {
 func (x *DesiredState) GetSpecs() []*AppSpec {
 	if x != nil {
 		return x.Specs
+	}
+	return nil
+}
+
+func (x *DesiredState) GetDbSpecs() []*DbSpec {
+	if x != nil {
+		return x.DbSpecs
 	}
 	return nil
 }
@@ -958,6 +969,351 @@ func (x *DeployEvent) GetCommitSha() string {
 	return ""
 }
 
+// DbSpec is a Database's desired state as one server's reconciler sees it.
+// The agent's database reconciler converges the local Docker daemon toward
+// this spec — creating/replacing the container, volume, and network as needed.
+type DbSpec struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DbId          string                 `protobuf:"bytes,1,opt,name=db_id,json=dbId,proto3" json:"db_id,omitempty"`
+	EnvironmentId string                 `protobuf:"bytes,2,opt,name=environment_id,json=environmentId,proto3" json:"environment_id,omitempty"`
+	RevisionId    string                 `protobuf:"bytes,3,opt,name=revision_id,json=revisionId,proto3" json:"revision_id,omitempty"`
+	Engine        string                 `protobuf:"bytes,4,opt,name=engine,proto3" json:"engine,omitempty"`                           // 'postgresql', 'mysql', 'mariadb', 'mongodb', 'redis', 'valkey'
+	Image         string                 `protobuf:"bytes,5,opt,name=image,proto3" json:"image,omitempty"`                             // 'postgres:16', 'mysql:8.4', etc.
+	VolumeName    string                 `protobuf:"bytes,6,opt,name=volume_name,json=volumeName,proto3" json:"volume_name,omitempty"` // 'cypher-db-<id>'
+	DataPath      string                 `protobuf:"bytes,7,opt,name=data_path,json=dataPath,proto3" json:"data_path,omitempty"`       // engine-specific mount target inside the container
+	Network       string                 `protobuf:"bytes,8,opt,name=network,proto3" json:"network,omitempty"`                         // 'cypher-<environment_id>'
+	// Decrypted env for injection at container create. Sealed at rest on the
+	// plane; never logged (rule 20). Transported only over mTLS (rule 23).
+	Env           map[string]string `protobuf:"bytes,9,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	HealthCmd     string            `protobuf:"bytes,10,opt,name=health_cmd,json=healthCmd,proto3" json:"health_cmd,omitempty"`                // shell command for Docker HEALTHCHECK
+	ExposePort    uint32            `protobuf:"varint,11,opt,name=expose_port,json=exposePort,proto3" json:"expose_port,omitempty"`            // 0 = private only
+	CpuLimit      float64           `protobuf:"fixed64,12,opt,name=cpu_limit,json=cpuLimit,proto3" json:"cpu_limit,omitempty"`                 // fractional cores; 0 = no limit
+	MemoryLimitMb uint32            `protobuf:"varint,13,opt,name=memory_limit_mb,json=memoryLimitMb,proto3" json:"memory_limit_mb,omitempty"` // 0 = no limit
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DbSpec) Reset() {
+	*x = DbSpec{}
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DbSpec) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DbSpec) ProtoMessage() {}
+
+func (x *DbSpec) ProtoReflect() protoreflect.Message {
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DbSpec.ProtoReflect.Descriptor instead.
+func (*DbSpec) Descriptor() ([]byte, []int) {
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *DbSpec) GetDbId() string {
+	if x != nil {
+		return x.DbId
+	}
+	return ""
+}
+
+func (x *DbSpec) GetEnvironmentId() string {
+	if x != nil {
+		return x.EnvironmentId
+	}
+	return ""
+}
+
+func (x *DbSpec) GetRevisionId() string {
+	if x != nil {
+		return x.RevisionId
+	}
+	return ""
+}
+
+func (x *DbSpec) GetEngine() string {
+	if x != nil {
+		return x.Engine
+	}
+	return ""
+}
+
+func (x *DbSpec) GetImage() string {
+	if x != nil {
+		return x.Image
+	}
+	return ""
+}
+
+func (x *DbSpec) GetVolumeName() string {
+	if x != nil {
+		return x.VolumeName
+	}
+	return ""
+}
+
+func (x *DbSpec) GetDataPath() string {
+	if x != nil {
+		return x.DataPath
+	}
+	return ""
+}
+
+func (x *DbSpec) GetNetwork() string {
+	if x != nil {
+		return x.Network
+	}
+	return ""
+}
+
+func (x *DbSpec) GetEnv() map[string]string {
+	if x != nil {
+		return x.Env
+	}
+	return nil
+}
+
+func (x *DbSpec) GetHealthCmd() string {
+	if x != nil {
+		return x.HealthCmd
+	}
+	return ""
+}
+
+func (x *DbSpec) GetExposePort() uint32 {
+	if x != nil {
+		return x.ExposePort
+	}
+	return 0
+}
+
+func (x *DbSpec) GetCpuLimit() float64 {
+	if x != nil {
+		return x.CpuLimit
+	}
+	return 0
+}
+
+func (x *DbSpec) GetMemoryLimitMb() uint32 {
+	if x != nil {
+		return x.MemoryLimitMb
+	}
+	return 0
+}
+
+// DbProvisionWork commands an agent to converge a database container
+// toward the desired spec. Idempotent: if the container already matches
+// the spec, no recreation occurs.
+type DbProvisionWork struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	IdempotencyKey string                 `protobuf:"bytes,1,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"` // database_id + revision_id
+	Spec           *DbSpec                `protobuf:"bytes,2,opt,name=spec,proto3" json:"spec,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *DbProvisionWork) Reset() {
+	*x = DbProvisionWork{}
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DbProvisionWork) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DbProvisionWork) ProtoMessage() {}
+
+func (x *DbProvisionWork) ProtoReflect() protoreflect.Message {
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DbProvisionWork.ProtoReflect.Descriptor instead.
+func (*DbProvisionWork) Descriptor() ([]byte, []int) {
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *DbProvisionWork) GetIdempotencyKey() string {
+	if x != nil {
+		return x.IdempotencyKey
+	}
+	return ""
+}
+
+func (x *DbProvisionWork) GetSpec() *DbSpec {
+	if x != nil {
+		return x.Spec
+	}
+	return nil
+}
+
+// DbRemoveWork commands absence of a database container.
+type DbRemoveWork struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	IdempotencyKey string                 `protobuf:"bytes,1,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
+	DbId           string                 `protobuf:"bytes,2,opt,name=db_id,json=dbId,proto3" json:"db_id,omitempty"`
+	// Explicit opt-in for data destruction. When false, the named volume is
+	// preserved (the conservative default — accidental data loss is worse
+	// than orphaned volumes).
+	DeleteVolume  bool `protobuf:"varint,3,opt,name=delete_volume,json=deleteVolume,proto3" json:"delete_volume,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DbRemoveWork) Reset() {
+	*x = DbRemoveWork{}
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DbRemoveWork) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DbRemoveWork) ProtoMessage() {}
+
+func (x *DbRemoveWork) ProtoReflect() protoreflect.Message {
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DbRemoveWork.ProtoReflect.Descriptor instead.
+func (*DbRemoveWork) Descriptor() ([]byte, []int) {
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *DbRemoveWork) GetIdempotencyKey() string {
+	if x != nil {
+		return x.IdempotencyKey
+	}
+	return ""
+}
+
+func (x *DbRemoveWork) GetDbId() string {
+	if x != nil {
+		return x.DbId
+	}
+	return ""
+}
+
+func (x *DbRemoveWork) GetDeleteVolume() bool {
+	if x != nil {
+		return x.DeleteVolume
+	}
+	return false
+}
+
+// DbStatus is one Database's observed state, reported on
+// state.<server_id>.db.<db_id>. The plane asserts provisioning success only
+// from these reports — never from work-item completion (ADR-005).
+type DbStatus struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	DbId       string                 `protobuf:"bytes,1,opt,name=db_id,json=dbId,proto3" json:"db_id,omitempty"`
+	RevisionId string                 `protobuf:"bytes,2,opt,name=revision_id,json=revisionId,proto3" json:"revision_id,omitempty"`
+	// One of: running, provisioning, stopped, error.
+	State string `protobuf:"bytes,3,opt,name=state,proto3" json:"state,omitempty"`
+	// Human-readable detail for error state (never contains secrets).
+	Detail        string                 `protobuf:"bytes,4,opt,name=detail,proto3" json:"detail,omitempty"`
+	ObservedAt    *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DbStatus) Reset() {
+	*x = DbStatus{}
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DbStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DbStatus) ProtoMessage() {}
+
+func (x *DbStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DbStatus.ProtoReflect.Descriptor instead.
+func (*DbStatus) Descriptor() ([]byte, []int) {
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *DbStatus) GetDbId() string {
+	if x != nil {
+		return x.DbId
+	}
+	return ""
+}
+
+func (x *DbStatus) GetRevisionId() string {
+	if x != nil {
+		return x.RevisionId
+	}
+	return ""
+}
+
+func (x *DbStatus) GetState() string {
+	if x != nil {
+		return x.State
+	}
+	return ""
+}
+
+func (x *DbStatus) GetDetail() string {
+	if x != nil {
+		return x.Detail
+	}
+	return ""
+}
+
+func (x *DbStatus) GetObservedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ObservedAt
+	}
+	return nil
+}
+
 var File_cypherpanel_agent_v1_work_proto protoreflect.FileDescriptor
 
 const file_cypherpanel_agent_v1_work_proto_rawDesc = "" +
@@ -1011,9 +1367,10 @@ const file_cypherpanel_agent_v1_work_proto_rawDesc = "" +
 	"\x0eDistributeWork\x12#\n" +
 	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12\x15\n" +
 	"\x06app_id\x18\x02 \x01(\tR\x05appId\x12\x14\n" +
-	"\x05image\x18\x03 \x01(\tR\x05image\"C\n" +
+	"\x05image\x18\x03 \x01(\tR\x05image\"|\n" +
 	"\fDesiredState\x123\n" +
-	"\x05specs\x18\x01 \x03(\v2\x1d.cypherpanel.agent.v1.AppSpecR\x05specs\"\xae\x01\n" +
+	"\x05specs\x18\x01 \x03(\v2\x1d.cypherpanel.agent.v1.AppSpecR\x05specs\x127\n" +
+	"\bdb_specs\x18\x02 \x03(\v2\x1c.cypherpanel.agent.v1.DbSpecR\adbSpecs\"\xae\x01\n" +
 	"\tAppStatus\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12\x1f\n" +
 	"\vrevision_id\x18\x02 \x01(\tR\n" +
@@ -1041,7 +1398,44 @@ const file_cypherpanel_agent_v1_work_proto_rawDesc = "" +
 	"\aOutcome\x12\x17\n" +
 	"\x13OUTCOME_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11OUTCOME_SUCCEEDED\x10\x01\x12\x12\n" +
-	"\x0eOUTCOME_FAILED\x10\x02BKZIgithub.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1;agentv1b\x06proto3"
+	"\x0eOUTCOME_FAILED\x10\x02\"\xe1\x03\n" +
+	"\x06DbSpec\x12\x13\n" +
+	"\x05db_id\x18\x01 \x01(\tR\x04dbId\x12%\n" +
+	"\x0eenvironment_id\x18\x02 \x01(\tR\renvironmentId\x12\x1f\n" +
+	"\vrevision_id\x18\x03 \x01(\tR\n" +
+	"revisionId\x12\x16\n" +
+	"\x06engine\x18\x04 \x01(\tR\x06engine\x12\x14\n" +
+	"\x05image\x18\x05 \x01(\tR\x05image\x12\x1f\n" +
+	"\vvolume_name\x18\x06 \x01(\tR\n" +
+	"volumeName\x12\x1b\n" +
+	"\tdata_path\x18\a \x01(\tR\bdataPath\x12\x18\n" +
+	"\anetwork\x18\b \x01(\tR\anetwork\x127\n" +
+	"\x03env\x18\t \x03(\v2%.cypherpanel.agent.v1.DbSpec.EnvEntryR\x03env\x12\x1d\n" +
+	"\n" +
+	"health_cmd\x18\n" +
+	" \x01(\tR\thealthCmd\x12\x1f\n" +
+	"\vexpose_port\x18\v \x01(\rR\n" +
+	"exposePort\x12\x1b\n" +
+	"\tcpu_limit\x18\f \x01(\x01R\bcpuLimit\x12&\n" +
+	"\x0fmemory_limit_mb\x18\r \x01(\rR\rmemoryLimitMb\x1a6\n" +
+	"\bEnvEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"l\n" +
+	"\x0fDbProvisionWork\x12'\n" +
+	"\x0fidempotency_key\x18\x01 \x01(\tR\x0eidempotencyKey\x120\n" +
+	"\x04spec\x18\x02 \x01(\v2\x1c.cypherpanel.agent.v1.DbSpecR\x04spec\"q\n" +
+	"\fDbRemoveWork\x12'\n" +
+	"\x0fidempotency_key\x18\x01 \x01(\tR\x0eidempotencyKey\x12\x13\n" +
+	"\x05db_id\x18\x02 \x01(\tR\x04dbId\x12#\n" +
+	"\rdelete_volume\x18\x03 \x01(\bR\fdeleteVolume\"\xab\x01\n" +
+	"\bDbStatus\x12\x13\n" +
+	"\x05db_id\x18\x01 \x01(\tR\x04dbId\x12\x1f\n" +
+	"\vrevision_id\x18\x02 \x01(\tR\n" +
+	"revisionId\x12\x14\n" +
+	"\x05state\x18\x03 \x01(\tR\x05state\x12\x16\n" +
+	"\x06detail\x18\x04 \x01(\tR\x06detail\x12;\n" +
+	"\vobserved_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"observedAtBKZIgithub.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1;agentv1b\x06proto3"
 
 var (
 	file_cypherpanel_agent_v1_work_proto_rawDescOnce sync.Once
@@ -1056,7 +1450,7 @@ func file_cypherpanel_agent_v1_work_proto_rawDescGZIP() []byte {
 }
 
 var file_cypherpanel_agent_v1_work_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_cypherpanel_agent_v1_work_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_cypherpanel_agent_v1_work_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_cypherpanel_agent_v1_work_proto_goTypes = []any{
 	(DeployEvent_Stage)(0),        // 0: cypherpanel.agent.v1.DeployEvent.Stage
 	(DeployEvent_Outcome)(0),      // 1: cypherpanel.agent.v1.DeployEvent.Outcome
@@ -1071,24 +1465,33 @@ var file_cypherpanel_agent_v1_work_proto_goTypes = []any{
 	(*DesiredState)(nil),          // 10: cypherpanel.agent.v1.DesiredState
 	(*AppStatus)(nil),             // 11: cypherpanel.agent.v1.AppStatus
 	(*DeployEvent)(nil),           // 12: cypherpanel.agent.v1.DeployEvent
-	nil,                           // 13: cypherpanel.agent.v1.AppSpec.EnvEntry
-	(*timestamppb.Timestamp)(nil), // 14: google.protobuf.Timestamp
+	(*DbSpec)(nil),                // 13: cypherpanel.agent.v1.DbSpec
+	(*DbProvisionWork)(nil),       // 14: cypherpanel.agent.v1.DbProvisionWork
+	(*DbRemoveWork)(nil),          // 15: cypherpanel.agent.v1.DbRemoveWork
+	(*DbStatus)(nil),              // 16: cypherpanel.agent.v1.DbStatus
+	nil,                           // 17: cypherpanel.agent.v1.AppSpec.EnvEntry
+	nil,                           // 18: cypherpanel.agent.v1.DbSpec.EnvEntry
+	(*timestamppb.Timestamp)(nil), // 19: google.protobuf.Timestamp
 }
 var file_cypherpanel_agent_v1_work_proto_depIdxs = []int32{
-	13, // 0: cypherpanel.agent.v1.AppSpec.env:type_name -> cypherpanel.agent.v1.AppSpec.EnvEntry
+	17, // 0: cypherpanel.agent.v1.AppSpec.env:type_name -> cypherpanel.agent.v1.AppSpec.EnvEntry
 	3,  // 1: cypherpanel.agent.v1.AppSpec.health:type_name -> cypherpanel.agent.v1.HealthCheck
 	4,  // 2: cypherpanel.agent.v1.AppSpec.route:type_name -> cypherpanel.agent.v1.RouteSpec
 	2,  // 3: cypherpanel.agent.v1.RolloutWork.spec:type_name -> cypherpanel.agent.v1.AppSpec
 	2,  // 4: cypherpanel.agent.v1.DesiredState.specs:type_name -> cypherpanel.agent.v1.AppSpec
-	14, // 5: cypherpanel.agent.v1.AppStatus.observed_at:type_name -> google.protobuf.Timestamp
-	0,  // 6: cypherpanel.agent.v1.DeployEvent.stage:type_name -> cypherpanel.agent.v1.DeployEvent.Stage
-	1,  // 7: cypherpanel.agent.v1.DeployEvent.outcome:type_name -> cypherpanel.agent.v1.DeployEvent.Outcome
-	14, // 8: cypherpanel.agent.v1.DeployEvent.occurred_at:type_name -> google.protobuf.Timestamp
-	9,  // [9:9] is the sub-list for method output_type
-	9,  // [9:9] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	13, // 5: cypherpanel.agent.v1.DesiredState.db_specs:type_name -> cypherpanel.agent.v1.DbSpec
+	19, // 6: cypherpanel.agent.v1.AppStatus.observed_at:type_name -> google.protobuf.Timestamp
+	0,  // 7: cypherpanel.agent.v1.DeployEvent.stage:type_name -> cypherpanel.agent.v1.DeployEvent.Stage
+	1,  // 8: cypherpanel.agent.v1.DeployEvent.outcome:type_name -> cypherpanel.agent.v1.DeployEvent.Outcome
+	19, // 9: cypherpanel.agent.v1.DeployEvent.occurred_at:type_name -> google.protobuf.Timestamp
+	18, // 10: cypherpanel.agent.v1.DbSpec.env:type_name -> cypherpanel.agent.v1.DbSpec.EnvEntry
+	13, // 11: cypherpanel.agent.v1.DbProvisionWork.spec:type_name -> cypherpanel.agent.v1.DbSpec
+	19, // 12: cypherpanel.agent.v1.DbStatus.observed_at:type_name -> google.protobuf.Timestamp
+	13, // [13:13] is the sub-list for method output_type
+	13, // [13:13] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_cypherpanel_agent_v1_work_proto_init() }
@@ -1102,7 +1505,7 @@ func file_cypherpanel_agent_v1_work_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cypherpanel_agent_v1_work_proto_rawDesc), len(file_cypherpanel_agent_v1_work_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   12,
+			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

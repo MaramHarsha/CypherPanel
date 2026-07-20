@@ -28,6 +28,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/auth"
 	"github.com/MaramHarsha/cypherpanel/core/bus"
 	"github.com/MaramHarsha/cypherpanel/core/config"
+	"github.com/MaramHarsha/cypherpanel/core/databases"
 	"github.com/MaramHarsha/cypherpanel/core/deploykeys"
 	"github.com/MaramHarsha/cypherpanel/core/enroll"
 	"github.com/MaramHarsha/cypherpanel/core/guard"
@@ -165,6 +166,9 @@ func run(log *slog.Logger) error {
 	// Deploy pipeline: the scheduler publishes work items and advances
 	// deployments from the agents' observed reports (ADR-005).
 	sched := scheduler.New(st, b, box, log)
+
+	dbSvc := databases.NewService(st, box, sched)
+
 	if err := sched.Recover(ctx); err != nil {
 		return err
 	}
@@ -204,6 +208,21 @@ func run(log *slog.Logger) error {
 	}
 	defer statusConsume.Stop()
 
+	dbStatusConsume, err := b.ConsumeDbStatus(ctx, func(serverID string, data []byte) {
+		var st agentv1.DbStatus
+		if err := proto.Unmarshal(data, &st); err != nil {
+			log.Error("unmarshaling db status", "server_id", serverID, "error", err)
+			return
+		}
+		c, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		sched.HandleDbStatus(c, serverID, &st)
+	})
+	if err != nil {
+		return err
+	}
+	defer dbStatusConsume.Stop()
+
 	// gRPC enrollment + image-relay endpoint. Enroll needs no client cert
 	// (first contact, join-token gated); the relay RPCs require a verified
 	// agent certificate on the same listener (builder-role-and-relay.md §3).
@@ -220,6 +239,7 @@ func run(log *slog.Logger) error {
 		Projects:     projectSvc,
 		Applications: appSvc,
 		DeployKeys:   deployKeySvc,
+		Databases:    dbSvc,
 		Scheduler:    sched,
 		Deployments:  st,
 		Opener:       box,

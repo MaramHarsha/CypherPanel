@@ -14,6 +14,7 @@ import (
 
 	"github.com/MaramHarsha/cypherpanel/core/applications"
 	"github.com/MaramHarsha/cypherpanel/core/auth"
+	"github.com/MaramHarsha/cypherpanel/core/databases"
 	"github.com/MaramHarsha/cypherpanel/core/deploykeys"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
@@ -61,6 +62,7 @@ type Deps struct {
 	Projects     *projects.Service
 	Applications *applications.Service
 	DeployKeys   *deploykeys.Service
+	Databases    *databases.Service
 	Scheduler    Deployer
 	Deployments  DeploymentReader
 	Opener       Opener
@@ -147,6 +149,17 @@ func (a *API) Handler() http.Handler {
 	// GitHub webhook: authenticated by per-app HMAC secret, not a session
 	// (spec §4) — the only unauthenticated mutating route.
 	mux.HandleFunc("POST /webhooks/github/{id}", a.handleGitHubWebhook)
+
+	// Phase 3: Managed Databases (managed-databases.md §4).
+	mux.HandleFunc("POST /api/v1/environments/{id}/databases", a.authed(a.handleCreateDatabase))
+	mux.HandleFunc("GET /api/v1/environments/{id}/databases", a.authed(a.handleListDatabases))
+	mux.HandleFunc("GET /api/v1/databases/{id}", a.authed(a.handleGetDatabase))
+	mux.HandleFunc("PATCH /api/v1/databases/{id}", a.authed(a.handlePatchDatabase))
+	mux.HandleFunc("DELETE /api/v1/databases/{id}", a.authed(a.handleDeleteDatabase))
+	mux.HandleFunc("POST /api/v1/databases/{id}/stop", a.authed(a.handleStopDatabase))
+	mux.HandleFunc("POST /api/v1/databases/{id}/start", a.authed(a.handleStartDatabase))
+	mux.HandleFunc("POST /api/v1/databases/{id}/reset-password", a.authed(a.handleResetDatabasePassword))
+	mux.HandleFunc("GET /api/v1/databases/{id}/connection-info", a.authed(a.handleDatabaseConnectionInfo))
 
 	// Interim console + static assets.
 	mux.Handle("GET /", a.consoleHandler())

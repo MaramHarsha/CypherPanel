@@ -48,6 +48,42 @@ type Application struct {
 	StatusObservedAt      pgtype.Timestamptz
 }
 
+type Database struct {
+	ID                 string
+	EnvironmentID      string
+	Name               string
+	Engine             string
+	Version            string
+	ServerID           string
+	CpuLimit           pgtype.Float4
+	MemoryLimitMb      pgtype.Int4
+	VolumeName         string
+	DataPath           string
+	ExposePort         pgtype.Int4
+	Network            string
+	RootUser           string
+	RootPasswordCt     []byte
+	RootPasswordNonce  []byte
+	RequirePassword    bool
+	DesiredRevisionID  pgtype.Text
+	DesiredState       string
+	Status             string
+	StatusDetail       string
+	ObservedRevisionID string
+	StatusObservedAt   pgtype.Timestamptz
+	PendingDelete      bool
+	DeleteVolume       bool
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
+type DatabaseRevision struct {
+	ID             string
+	DatabaseID     string
+	ConfigSnapshot []byte
+	CreatedAt      pgtype.Timestamptz
+}
+
 type DeployKey struct {
 	ID              string
 	Name            string

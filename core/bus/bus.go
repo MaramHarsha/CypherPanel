@@ -48,6 +48,7 @@ const (
 	heartbeatDurable   = "plane-heartbeats"
 	deployEventDurable = "plane-deploy-events"
 	appStatusDurable   = "plane-app-status"
+	dbStatusDurable    = "plane-db-status"
 	readyTimeout       = 10 * time.Second
 )
 
@@ -213,7 +214,7 @@ func Start(ctx context.Context, opts Options) (*Bus, error) {
 	// step with the state.* subjects in pkg/subjects.
 	if _, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
 		Name:      streamState,
-		Subjects:  []string{subjects.HeartbeatAll, subjects.DeployStateAll, subjects.AppStateAll},
+		Subjects:  []string{subjects.HeartbeatAll, subjects.DeployStateAll, subjects.AppStateAll, subjects.DbStateAll},
 		Storage:   jetstream.MemoryStorage,
 		Retention: jetstream.LimitsPolicy,
 		Discard:   jetstream.DiscardOld,
@@ -368,6 +369,12 @@ func (b *Bus) ConsumeDeployEvents(ctx context.Context, handle func(serverID stri
 // from the subject) to handle.
 func (b *Bus) ConsumeAppStatus(ctx context.Context, handle func(serverID string, data []byte)) (jetstream.ConsumeContext, error) {
 	return b.consumeState(ctx, appStatusDurable, subjects.AppStateAll, handle)
+}
+
+// ConsumeDbStatus delivers each DbStatus payload (with its server id parsed
+// from the subject) to handle.
+func (b *Bus) ConsumeDbStatus(ctx context.Context, handle func(serverID string, data []byte)) (jetstream.ConsumeContext, error) {
+	return b.consumeState(ctx, dbStatusDurable, subjects.DbStateAll, handle)
 }
 
 func (b *Bus) consumeState(ctx context.Context, durable, filter string, handle func(serverID string, data []byte)) (jetstream.ConsumeContext, error) {

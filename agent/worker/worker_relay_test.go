@@ -79,7 +79,7 @@ func lastEvent(t *testing.T, bus *fakeBus, serverID string) *agentv1.DeployEvent
 func TestPushSuccessAcksWithoutEvent(t *testing.T) {
 	bus := newFakeBus(desiredStateBytes(t))
 	rly := &fakeRelay{}
-	w := New(bus, "srv1", &recordingDriver{}, nil, rly, quietLog())
+	w := New(bus, "srv1", &recordingDriver{}, nil, nil, rly, quietLog())
 
 	msg := pushMsg(t, "srv1", "dep1")
 	w.handleMsg(context.Background(), msg)
@@ -100,7 +100,7 @@ func TestPushSuccessAcksWithoutEvent(t *testing.T) {
 func TestDistributeSuccessEmitsEvent(t *testing.T) {
 	bus := newFakeBus(desiredStateBytes(t))
 	rly := &fakeRelay{}
-	w := New(bus, "srv1", &recordingDriver{}, nil, rly, quietLog())
+	w := New(bus, "srv1", &recordingDriver{}, nil, nil, rly, quietLog())
 
 	msg := distributeMsg(t, "srv1", "dep1")
 	w.handleMsg(context.Background(), msg)
@@ -120,7 +120,7 @@ func TestDistributeSuccessEmitsEvent(t *testing.T) {
 func TestRelayFailureNaksThenTerms(t *testing.T) {
 	bus := newFakeBus(desiredStateBytes(t))
 	rly := &fakeRelay{pushErr: errors.New("peer did not arrive in time")}
-	w := New(bus, "srv1", &recordingDriver{}, nil, rly, quietLog())
+	w := New(bus, "srv1", &recordingDriver{}, nil, nil, rly, quietLog())
 
 	msg := pushMsg(t, "srv1", "dep1")
 	w.handleMsg(context.Background(), msg)
@@ -147,7 +147,7 @@ func TestRelayFailureNaksThenTerms(t *testing.T) {
 // the item terminates immediately with the remedy in the detail.
 func TestRelayWorkWithoutRelayFailsImmediately(t *testing.T) {
 	bus := newFakeBus(desiredStateBytes(t))
-	w := New(bus, "srv1", &recordingDriver{}, nil, nil, quietLog())
+	w := New(bus, "srv1", &recordingDriver{}, nil, nil, nil, quietLog())
 
 	msg := distributeMsg(t, "srv1", "dep1")
 	w.handleMsg(context.Background(), msg)
@@ -165,7 +165,7 @@ func TestRelayWorkWithoutRelayFailsImmediately(t *testing.T) {
 // report failure and drop the item rather than pretending to converge.
 func TestBuilderRoleRejectsRolloutWork(t *testing.T) {
 	bus := newFakeBus(desiredStateBytes(t))
-	w := New(bus, "srv1", nil, nil, &fakeRelay{}, quietLog())
+	w := New(bus, "srv1", nil, nil, nil, &fakeRelay{}, quietLog())
 
 	msg := rolloutMsg(t, "srv1", "dep1", &agentv1.AppSpec{AppId: "app1", RevisionId: "rev1"})
 	w.handleMsg(context.Background(), msg)
@@ -183,7 +183,7 @@ func TestBuilderRoleRejectsRolloutWork(t *testing.T) {
 // must not crash or publish phantom observations.
 func TestBuilderRoleReconcileIsNoOp(t *testing.T) {
 	bus := newFakeBus(desiredStateBytes(t))
-	w := New(bus, "srv1", nil, nil, &fakeRelay{}, quietLog())
+	w := New(bus, "srv1", nil, nil, nil, &fakeRelay{}, quietLog())
 
 	if err := w.reconcile(context.Background(), "", "", agentv1.DeployEvent_STAGE_UNSPECIFIED, ""); err != nil {
 		t.Fatalf("reconcile: %v", err)

@@ -25,6 +25,10 @@ const (
 	PrefixDeployment  = "dep"
 	PrefixWebhook     = "wh"
 	PrefixDeployKey   = "dk"
+
+	// Phase 3: Managed Databases (docs/features/managed-databases.md).
+	PrefixDatabase         = "db"
+	PrefixDatabaseRevision = "dbr"
 )
 
 // New returns a prefixed, URL-safe, collision-resistant identifier such as

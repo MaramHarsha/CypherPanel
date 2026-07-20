@@ -18,6 +18,7 @@ import (
 
 	"github.com/MaramHarsha/cypherpanel/core/applications"
 	"github.com/MaramHarsha/cypherpanel/core/auth"
+	"github.com/MaramHarsha/cypherpanel/core/databases"
 	"github.com/MaramHarsha/cypherpanel/core/deploykeys"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
@@ -428,12 +429,18 @@ func newTestServerFull(t *testing.T) (*httptest.Server, *fakeServersStore, *fake
 	dkStore := newFakeDeployKeysStore()
 	box := testBox(t)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	dbStore := newFakeDatabasesStore()
+	dbReconciler := &fakeDbReconciler{}
+	dbSvc := databases.NewService(dbStore, box, dbReconciler)
+
 	api := New(Deps{
 		Auth:         auth.NewAuthenticator(authStore, auth.NewLimiter(100, time.Minute), time.Hour),
 		Servers:      servers.NewService(srvStore, noopAgentBus{}, 15*time.Minute, log),
 		Projects:     projects.NewService(newFakeProjectsStore()),
 		Applications: applications.NewService(newFakeAppsStore(), box),
 		DeployKeys:   deploykeys.NewService(dkStore, box),
+		Databases:    dbSvc,
 		Scheduler:    &fakeDeployer{},
 		Deployments:  fakeDeploymentReader{},
 		Opener:       box,
@@ -1104,4 +1111,139 @@ func TestApplicationLogsSSEReplaysHistory(t *testing.T) {
 		}
 	}
 	t.Fatalf("SSE stream missing expected frames; got:\n%s", buf)
+}
+
+type fakeDbReconciler struct{}
+
+func (f *fakeDbReconciler) ReconcileDatabase(_ context.Context, _ string) error {
+	return nil
+}
+
+type fakeDatabasesStore struct {
+	mu     sync.Mutex
+	dbs    map[string]domain.Database
+	dbRevs map[string]domain.DatabaseRevision
+}
+
+func newFakeDatabasesStore() *fakeDatabasesStore {
+	return &fakeDatabasesStore{
+		dbs:    map[string]domain.Database{},
+		dbRevs: map[string]domain.DatabaseRevision{},
+	}
+}
+
+func (f *fakeDatabasesStore) CreateDatabaseWithRevision(_ context.Context, d domain.Database, rev domain.DatabaseRevision) (domain.Database, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.dbs[d.ID] = d
+	f.dbRevs[rev.ID] = rev
+	return d, nil
+}
+
+func (f *fakeDatabasesStore) GetDatabase(_ context.Context, id string) (domain.Database, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d, ok := f.dbs[id]
+	if !ok {
+		return domain.Database{}, store.ErrNotFound
+	}
+	return d, nil
+}
+
+func (f *fakeDatabasesStore) ListDatabasesByEnvironment(_ context.Context, envID string) ([]domain.Database, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []domain.Database
+	for _, d := range f.dbs {
+		if d.EnvironmentID == envID {
+			out = append(out, d)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeDatabasesStore) UpdateDatabaseConfig(_ context.Context, d domain.Database) (domain.Database, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.dbs[d.ID] = d
+	return d, nil
+}
+
+func (f *fakeDatabasesStore) UpdateDatabasePassword(_ context.Context, id string, ct, nonce []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if d, ok := f.dbs[id]; ok {
+		d.RootPasswordCT = ct
+		d.RootPasswordNonce = nonce
+		f.dbs[id] = d
+	}
+	return nil
+}
+
+func (f *fakeDatabasesStore) SetDatabaseDesiredRevision(_ context.Context, id string, revID string) (domain.Database, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d, ok := f.dbs[id]
+	if !ok {
+		return domain.Database{}, store.ErrNotFound
+	}
+	d.DesiredRevisionID = &revID
+	f.dbs[id] = d
+	return d, nil
+}
+
+func (f *fakeDatabasesStore) SetDatabaseDesiredState(_ context.Context, id, desiredState string) (domain.Database, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d, ok := f.dbs[id]
+	if !ok {
+		return domain.Database{}, store.ErrNotFound
+	}
+	d.DesiredState = desiredState
+	f.dbs[id] = d
+	return d, nil
+}
+
+func (f *fakeDatabasesStore) SetDatabaseStatus(_ context.Context, id, status, detail string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if d, ok := f.dbs[id]; ok {
+		d.Status = status
+		d.StatusDetail = detail
+		f.dbs[id] = d
+	}
+	return nil
+}
+
+func (f *fakeDatabasesStore) SetDatabasePendingDelete(_ context.Context, id string, deleteVolume bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if d, ok := f.dbs[id]; ok {
+		d.PendingDelete = true
+		d.DeleteVolume = deleteVolume
+		f.dbs[id] = d
+	}
+	return nil
+}
+
+func (f *fakeDatabasesStore) DeleteDatabase(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.dbs, id)
+	return nil
+}
+
+func (f *fakeDatabasesStore) CreateDatabaseRevision(_ context.Context, rev domain.DatabaseRevision) (domain.DatabaseRevision, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.dbRevs[rev.ID] = rev
+	return rev, nil
+}
+
+func (f *fakeDatabasesStore) GetEnvironment(_ context.Context, id string) (domain.Environment, error) {
+	return domain.Environment{ID: id, Name: "prod"}, nil
+}
+
+func (f *fakeDatabasesStore) GetServer(_ context.Context, id string) (domain.Server, error) {
+	return domain.Server{ID: id, Name: "srv"}, nil
 }

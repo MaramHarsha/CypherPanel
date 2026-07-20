@@ -63,3 +63,11 @@ type Reconciler interface {
 	// inability to reconcile (e.g. orchestrator unreachable).
 	Reconcile(ctx context.Context, desired []*agentv1.AppSpec) ([]*agentv1.AppStatus, error)
 }
+
+// DbReconciler manages database resource reconciliation on this server
+// (managed-databases.md §6). Backup/restore execution is a separate follow-up
+// (stripped first-cut recoverable at commit 1d83f0a) and will extend this seam then.
+type DbReconciler interface {
+	ReconcileDatabases(ctx context.Context, desired []*agentv1.DbSpec) ([]*agentv1.DbStatus, error)
+	RemoveDatabase(ctx context.Context, dbID string, deleteVolume bool) error
+}

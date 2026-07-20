@@ -186,6 +186,14 @@ func runAgent(args []string, log *slog.Logger) error {
 			drv = docker.New(eng, prx, prb, log)
 		}
 
+		// Managed databases run on the same nodes as apps (worker/all roles),
+		// converged by their own reconciler over the same engine client
+		// (managed-databases.md §6). Builder-role agents run nothing.
+		var dbRec driver.DbReconciler
+		if *role != "builder" {
+			dbRec = docker.NewDatabaseReconciler(eng, log)
+		}
+
 		// Builds: everything except worker-role agents, which never receive
 		// build work (routing) and keep no build toolchain warm.
 		var bld *builder.Builder
@@ -197,7 +205,7 @@ func runAgent(args []string, log *slog.Logger) error {
 		if err != nil {
 			return err
 		}
-		w := worker.New(wbus, id.ServerID, drv, bld, imgRelay, log)
+		w := worker.New(wbus, id.ServerID, drv, dbRec, bld, imgRelay, log)
 		errCh := make(chan error, 1)
 		go func() {
 			if err := w.Run(ctx); err != nil {
