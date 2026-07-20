@@ -46,6 +46,9 @@ type Application struct {
 	StatusDetail          string
 	ObservedRevisionID    string
 	StatusObservedAt      pgtype.Timestamptz
+	PreviewEnabled        bool
+	PreviewBaseDomain     string
+	PreviewTtlHours       int32
 }
 
 type BackupRecord struct {
@@ -170,6 +173,20 @@ type PlaneCa struct {
 	EncryptedKey []byte
 	KeyNonce     []byte
 	CreatedAt    pgtype.Timestamptz
+}
+
+type Preview struct {
+	ID            string
+	SourceAppID   string
+	EnvironmentID string
+	PreviewAppID  pgtype.Text
+	PrNumber      int32
+	PrBranch      string
+	Domain        string
+	Status        string
+	ExpiresAt     pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
 }
 
 type Project struct {

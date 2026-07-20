@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -71,13 +72,16 @@ func NewService(s Store, sealer Sealer) *Service {
 // CreateInput is the caller-supplied config for a new application. Missing
 // optional fields are defaulted; invalid fields are rejected.
 type CreateInput struct {
-	Name    string
-	Source  domain.AppSource
-	Build   domain.AppBuild
-	Runtime domain.AppRuntime
-	Route   domain.AppRoute
-	Health  domain.AppHealth
-	EnvVars map[string]string // plaintext; sealed before storage
+	Name              string
+	Source            domain.AppSource
+	Build             domain.AppBuild
+	Runtime           domain.AppRuntime
+	Route             domain.AppRoute
+	Health            domain.AppHealth
+	EnvVars           map[string]string // plaintext; sealed before storage
+	PreviewEnabled    bool
+	PreviewBaseDomain string
+	PreviewTTLHours   int
 }
 
 // Create validates and creates an application under envID, returning it along
@@ -128,6 +132,9 @@ func (s *Service) Create(ctx context.Context, envID string, in CreateInput) (app
 		WebhookID:          ids.New(ids.PrefixWebhook),
 		WebhookSecretCT:    wct,
 		WebhookSecretNonce: wnonce,
+		PreviewEnabled:     in.PreviewEnabled,
+		PreviewBaseDomain:  in.PreviewBaseDomain,
+		PreviewTTLHours:    in.PreviewTTLHours,
 	}, sealedVars)
 	if err != nil {
 		return domain.Application{}, "", fmt.Errorf("applications: creating application: %w", err)
@@ -158,12 +165,15 @@ func (s *Service) GetByWebhookID(ctx context.Context, webhookID string) (domain.
 // server is deliberately not patchable (moving an app needs the distribute
 // step, ADR-008), and neither are replicas (fixed at 1 in the slice).
 type UpdateInput struct {
-	Name   *string
-	Source *domain.AppSource
-	Build  *domain.AppBuild
-	Port   *int
-	Route  *domain.AppRoute
-	Health *domain.AppHealth
+	Name              *string
+	Source            *domain.AppSource
+	Build             *domain.AppBuild
+	Port              *int
+	Route             *domain.AppRoute
+	Health            *domain.AppHealth
+	PreviewEnabled    *bool
+	PreviewBaseDomain *string
+	PreviewTTLHours   *int
 }
 
 // Update applies a config patch. The change shapes the next revision — a
@@ -191,20 +201,36 @@ func (s *Service) Update(ctx context.Context, appID string, in UpdateInput) (dom
 	if in.Health != nil {
 		app.Health = *in.Health
 	}
-	// The merged result must satisfy exactly the create-time rules.
+	if in.PreviewEnabled != nil {
+		app.PreviewEnabled = *in.PreviewEnabled
+	}
+	if in.PreviewBaseDomain != nil {
+		app.PreviewBaseDomain = *in.PreviewBaseDomain
+	}
+	if in.PreviewTTLHours != nil {
+		app.PreviewTTLHours = *in.PreviewTTLHours
+	}
+	// The merged result must satisfy exactly the create-time rules — including
+	// the preview contract (enabling previews via PATCH still needs a base
+	// domain).
 	merged, err := validateAndDefault(CreateInput{
-		Name:    app.Name,
-		Source:  app.Source,
-		Build:   app.Build,
-		Runtime: app.Runtime,
-		Route:   app.Route,
-		Health:  app.Health,
+		Name:              app.Name,
+		Source:            app.Source,
+		Build:             app.Build,
+		Runtime:           app.Runtime,
+		Route:             app.Route,
+		Health:            app.Health,
+		PreviewEnabled:    app.PreviewEnabled,
+		PreviewBaseDomain: app.PreviewBaseDomain,
+		PreviewTTLHours:   app.PreviewTTLHours,
 	})
 	if err != nil {
 		return domain.Application{}, err
 	}
 	app.Name, app.Source, app.Build, app.Runtime, app.Route, app.Health =
 		merged.Name, merged.Source, merged.Build, merged.Runtime, merged.Route, merged.Health
+	app.PreviewEnabled, app.PreviewBaseDomain, app.PreviewTTLHours =
+		merged.PreviewEnabled, merged.PreviewBaseDomain, merged.PreviewTTLHours
 	updated, err := s.store.UpdateApplicationConfig(ctx, app)
 	if err != nil {
 		return domain.Application{}, fmt.Errorf("applications: updating application: %w", err)
@@ -351,6 +377,21 @@ func validateAndDefault(in CreateInput) (CreateInput, error) {
 		if !validEnvKey(k) {
 			return in, invalid("env var key " + strconv.Quote(k) + " must match [A-Za-z_][A-Za-z0-9_]*")
 		}
+	}
+
+	// Previews (preview-environments.md §2): a base domain is required to build
+	// pr-<n>.<base>, and the TTL backstop defaults to 72h when unset.
+	in.PreviewBaseDomain = strings.TrimSpace(in.PreviewBaseDomain)
+	if in.PreviewEnabled && in.PreviewBaseDomain == "" {
+		return in, invalid("preview_base_domain is required when preview_enabled is true")
+	}
+	// Stored as int32 (store: PreviewTtlHours); reject anything that would wrap
+	// on the cast, not just negatives.
+	if in.PreviewTTLHours < 0 || in.PreviewTTLHours > math.MaxInt32 {
+		return in, invalid("preview_ttl_hours must be between 0 and 2147483647")
+	}
+	if in.PreviewTTLHours == 0 {
+		in.PreviewTTLHours = 72
 	}
 	return in, nil
 }

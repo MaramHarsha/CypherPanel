@@ -6,7 +6,8 @@ INSERT INTO applications (
     runtime_server_id, runtime_port, runtime_replicas,
     route_domain, route_https, route_path_prefix,
     health_path, health_interval_seconds, health_timeout_seconds, health_retries,
-    webhook_id, webhook_secret_ct, webhook_secret_nonce
+    webhook_id, webhook_secret_ct, webhook_secret_nonce,
+    preview_enabled, preview_base_domain, preview_ttl_hours
 ) VALUES (
     $1, $2, $3,
     $4, $5, $6, $7,
@@ -14,7 +15,8 @@ INSERT INTO applications (
     $11, $12, $13,
     $14, $15, $16,
     $17, $18, $19, $20,
-    $21, $22, $23
+    $21, $22, $23,
+    $24, $25, $26
 )
 RETURNING *;
 
@@ -56,6 +58,7 @@ SET name = $2,
     runtime_port = $10, runtime_replicas = $11,
     route_domain = $12, route_https = $13, route_path_prefix = $14,
     health_path = $15, health_interval_seconds = $16, health_timeout_seconds = $17, health_retries = $18,
+    preview_enabled = $19, preview_base_domain = $20, preview_ttl_hours = $21,
     updated_at = now()
 WHERE id = $1
 RETURNING *;

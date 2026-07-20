@@ -54,6 +54,16 @@ type BackupOps interface {
 	RunRestore(ctx context.Context, dbID, backupRecordID string, confirm bool) error
 }
 
+// PreviewManager drives preview environments from PR events and exposes the
+// read/teardown surface (consumer-defined; *previews.Manager satisfies it —
+// preview-environments.md).
+type PreviewManager interface {
+	OnPullRequest(ctx context.Context, source domain.Application, action string, prNumber int, prBranch, prSHA string) error
+	List(ctx context.Context, sourceAppID string) ([]domain.Preview, error)
+	Get(ctx context.Context, id string) (domain.Preview, error)
+	DestroyByID(ctx context.Context, previewID string) error
+}
+
 // LogSubscriber delivers the retained history and then the live tail of one
 // log subject (consumer-defined; *bus.Bus satisfies it). handle is invoked
 // from the subscriber's goroutine until stop is called.
@@ -73,6 +83,7 @@ type Deps struct {
 	BackupTargets   *databases.BackupTargetService
 	BackupSchedules *databases.BackupScheduleService
 	Backups         BackupOps
+	Previews        PreviewManager
 	Scheduler       Deployer
 	Deployments     DeploymentReader
 	Opener          Opener
@@ -183,6 +194,11 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/databases/{id}/backups/{bak_id}/history", a.authed(a.handleListBackupRecords))
 	mux.HandleFunc("POST /api/v1/databases/{id}/backups/{bak_id}/run", a.authed(a.handleRunBackup))
 	mux.HandleFunc("POST /api/v1/databases/{id}/restore", a.authed(a.handleRestoreDatabase))
+
+	// Phase 3: preview environments (preview-environments.md §7).
+	mux.HandleFunc("GET /api/v1/applications/{id}/previews", a.authed(a.handleListPreviews))
+	mux.HandleFunc("GET /api/v1/previews/{id}", a.authed(a.handleGetPreview))
+	mux.HandleFunc("DELETE /api/v1/previews/{id}", a.authed(a.handleDeletePreview))
 
 	// Interim console + static assets.
 	mux.Handle("GET /", a.consoleHandler())

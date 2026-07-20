@@ -89,8 +89,39 @@ type Application struct {
 	// ObservedRevisionID is the revision last reported actually serving.
 	ObservedRevisionID string
 	StatusObservedAt   *time.Time
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	// Preview opt-in (preview-environments.md §2). PreviewEnabled makes PRs on
+	// this app spawn preview environments at pr-<n>.<PreviewBaseDomain>, auto
+	// destroyed after PreviewTTLHours.
+	PreviewEnabled    bool
+	PreviewBaseDomain string
+	PreviewTTLHours   int
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+// Preview status vocabulary (preview-environments.md §3). Orchestration state,
+// distinct from the cloned app's own observation-driven status.
+const (
+	PreviewCreating   = "creating"
+	PreviewRunning    = "running"
+	PreviewError      = "error"
+	PreviewDestroying = "destroying"
+)
+
+// Preview tracks one live PR preview and links to the first-class rows it
+// created (a child Environment and a cloned Application).
+type Preview struct {
+	ID            string
+	SourceAppID   string
+	EnvironmentID string
+	PreviewAppID  *string // nil once the cloned app is torn down (ON DELETE SET NULL)
+	PRNumber      int
+	PRBranch      string
+	Domain        string
+	Status        string
+	ExpiresAt     *time.Time
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 // Application status vocabulary (ui-principles §5).
