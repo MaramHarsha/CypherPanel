@@ -168,6 +168,8 @@ func run(log *slog.Logger) error {
 	sched := scheduler.New(st, b, box, log)
 
 	dbSvc := databases.NewService(st, box, sched)
+	backupTargetSvc := databases.NewBackupTargetService(st, box)
+	backupScheduleSvc := databases.NewBackupScheduleService(st)
 
 	if err := sched.Recover(ctx); err != nil {
 		return err
@@ -223,6 +225,36 @@ func run(log *slog.Logger) error {
 	}
 	defer dbStatusConsume.Stop()
 
+	dbBackupConsume, err := b.ConsumeDbBackupEvents(ctx, func(serverID string, data []byte) {
+		var ev agentv1.DbBackupEvent
+		if err := proto.Unmarshal(data, &ev); err != nil {
+			log.Error("unmarshaling db backup event", "server_id", serverID, "error", err)
+			return
+		}
+		c, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		sched.HandleDbBackupEvent(c, serverID, &ev)
+	})
+	if err != nil {
+		return err
+	}
+	defer dbBackupConsume.Stop()
+
+	dbRestoreConsume, err := b.ConsumeDbRestoreEvents(ctx, func(serverID string, data []byte) {
+		var ev agentv1.DbRestoreEvent
+		if err := proto.Unmarshal(data, &ev); err != nil {
+			log.Error("unmarshaling db restore event", "server_id", serverID, "error", err)
+			return
+		}
+		c, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		sched.HandleDbRestoreEvent(c, serverID, &ev)
+	})
+	if err != nil {
+		return err
+	}
+	defer dbRestoreConsume.Stop()
+
 	// gRPC enrollment + image-relay endpoint. Enroll needs no client cert
 	// (first contact, join-token gated); the relay RPCs require a verified
 	// agent certificate on the same listener (builder-role-and-relay.md §3).
@@ -234,22 +266,25 @@ func run(log *slog.Logger) error {
 
 	// REST API + console.
 	api := rest.New(rest.Deps{
-		Auth:         authr,
-		Servers:      serverSvc,
-		Projects:     projectSvc,
-		Applications: appSvc,
-		DeployKeys:   deployKeySvc,
-		Databases:    dbSvc,
-		Scheduler:    sched,
-		Deployments:  st,
-		Opener:       box,
-		Pinger:       st,
-		CACertPEM:    ca.CertPEM(),
-		EnrollAddr:   cfg.AdvertisedEnrollAddr(),
-		NATSURL:      cfg.AdvertisedNATSURL(),
-		Logs:         b,
-		ConsoleURL:   cfg.AdvertisedConsoleURL(),
-		Log:          log,
+		Auth:            authr,
+		Servers:         serverSvc,
+		Projects:        projectSvc,
+		Applications:    appSvc,
+		DeployKeys:      deployKeySvc,
+		Databases:       dbSvc,
+		BackupTargets:   backupTargetSvc,
+		BackupSchedules: backupScheduleSvc,
+		Backups:         sched,
+		Scheduler:       sched,
+		Deployments:     st,
+		Opener:          box,
+		Pinger:          st,
+		CACertPEM:       ca.CertPEM(),
+		EnrollAddr:      cfg.AdvertisedEnrollAddr(),
+		NATSURL:         cfg.AdvertisedNATSURL(),
+		Logs:            b,
+		ConsoleURL:      cfg.AdvertisedConsoleURL(),
+		Log:             log,
 	})
 	httpSrv := &http.Server{
 		Addr:              cfg.HTTPAddr,

@@ -56,6 +56,14 @@ type ImageRelay interface {
 	PullImage(ctx context.Context, deploymentID, image string) error
 }
 
+// BackupRunner executes one database backup or restore and returns the terminal
+// event to report (consumer-defined; *docker.BackupExecutor satisfies it —
+// managed-databases.md §7). Nil on nodes that run no databases.
+type BackupRunner interface {
+	ExecuteBackup(ctx context.Context, work *agentv1.DbBackupWork) *agentv1.DbBackupEvent
+	ExecuteRestore(ctx context.Context, work *agentv1.DbRestoreWork) *agentv1.DbRestoreEvent
+}
+
 // Bus is everything the worker needs from the data-plane connection
 // (consumer-defined). natsBus is the production implementation.
 type Bus interface {
@@ -95,6 +103,7 @@ type Worker struct {
 	serverID      string
 	driver        driver.Reconciler
 	dbReconciler  driver.DbReconciler
+	backup        BackupRunner
 	builder       *builder.Builder
 	relay         ImageRelay
 	log           *slog.Logger
@@ -106,15 +115,16 @@ type Worker struct {
 }
 
 // New creates a new Worker. drv is nil on builder-role agents (nothing runs
-// there — builder-role-and-relay.md §1); dbRec is nil when the agent runs no
-// databases; bld is nil on worker-role agents; rly is nil when the agent has
+// there — builder-role-and-relay.md §1); dbRec/bkp are nil when the agent runs
+// no databases; bld is nil on worker-role agents; rly is nil when the agent has
 // no plane relay address.
-func New(bus Bus, serverID string, drv driver.Reconciler, dbRec driver.DbReconciler, bld *builder.Builder, rly ImageRelay, log *slog.Logger) *Worker {
+func New(bus Bus, serverID string, drv driver.Reconciler, dbRec driver.DbReconciler, bkp BackupRunner, bld *builder.Builder, rly ImageRelay, log *slog.Logger) *Worker {
 	return &Worker{
 		bus:           bus,
 		serverID:      serverID,
 		driver:        drv,
 		dbReconciler:  dbRec,
+		backup:        bkp,
 		builder:       bld,
 		relay:         rly,
 		log:           log,
@@ -394,6 +404,51 @@ func (w *Worker) handleMsg(ctx context.Context, msg Message) {
 		_ = msg.Ack()
 		return
 
+	case strings.HasSuffix(subject, ".db.backup"):
+		var work agentv1.DbBackupWork
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
+			w.log.Error("worker: unmarshaling db backup work", "error", err)
+			_ = msg.Term()
+			return
+		}
+		if w.backup == nil {
+			w.log.Error("worker: received db backup work but no backup runner")
+			_ = msg.Term()
+			return
+		}
+		// Keep the item in-flight across a long dump/upload, then report the
+		// terminal outcome the plane records; the run itself is idempotent
+		// (overwrites the same S3 key and in-container temp file).
+		event := w.runWithHeartbeat(ctx, msg, func(ctx context.Context) proto.Message {
+			return w.backup.ExecuteBackup(ctx, &work)
+		})
+		if data, err := proto.Marshal(event); err == nil {
+			_ = w.bus.Publish(subjects.DbBackupState(w.serverID), data)
+		}
+		_ = msg.Ack()
+		return
+
+	case strings.HasSuffix(subject, ".db.restore"):
+		var work agentv1.DbRestoreWork
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
+			w.log.Error("worker: unmarshaling db restore work", "error", err)
+			_ = msg.Term()
+			return
+		}
+		if w.backup == nil {
+			w.log.Error("worker: received db restore work but no backup runner")
+			_ = msg.Term()
+			return
+		}
+		event := w.runWithHeartbeat(ctx, msg, func(ctx context.Context) proto.Message {
+			return w.backup.ExecuteRestore(ctx, &work)
+		})
+		if data, err := proto.Marshal(event); err == nil {
+			_ = w.bus.Publish(subjects.DbRestoreState(w.serverID), data)
+		}
+		_ = msg.Ack()
+		return
+
 	default:
 		w.log.Warn("worker: unknown work subject", "subject", subject)
 		_ = msg.Term()
@@ -514,6 +569,31 @@ func (w *Worker) reconcileDatabases(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// runWithHeartbeat runs a backup/restore to completion while keeping the work
+// item in-flight (periodic InProgress), so a long dump/upload can't be
+// redelivered mid-run. The goroutine is fully stopped before the caller acks.
+func (w *Worker) runWithHeartbeat(ctx context.Context, msg Message, run func(context.Context) proto.Message) proto.Message {
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		t := time.NewTicker(10 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				_ = msg.InProgress()
+			}
+		}
+	}()
+	event := run(ctx)
+	close(stop)
+	<-done
+	return event
 }
 
 // handleRelay runs one relay work item (push on builders, distribute on

@@ -127,9 +127,22 @@ func WorkConsumerAck(serverID string) string {
 // Database work subjects — plane → agent.
 func DbProvision(serverID string) string { return WorkPrefix + serverID + ".db.provision" }
 func DbRemove(serverID string) string    { return WorkPrefix + serverID + ".db.remove" }
+func DbBackup(serverID string) string    { return WorkPrefix + serverID + ".db.backup" }
+func DbRestore(serverID string) string   { return WorkPrefix + serverID + ".db.restore" }
 
 // Database state subjects — agent → plane.
 func DbState(serverID, dbID string) string { return StatePrefix + serverID + ".db." + dbID }
 
-// Plane-side consumption wildcard for database status observations.
-const DbStateAll = "state.*.db.>"
+// Backup/restore event subjects sit under a distinct segment (dbbackup /
+// dbrestore), NOT under state.<server>.db.*, so the DbStateAll status wildcard
+// (state.*.db.>) never captures them. Both stay inside the per-server
+// state.<server>.> publish grant.
+func DbBackupState(serverID string) string  { return StatePrefix + serverID + ".dbbackup" }
+func DbRestoreState(serverID string) string { return StatePrefix + serverID + ".dbrestore" }
+
+// Plane-side consumption wildcards.
+const (
+	DbStateAll        = "state.*.db.>"
+	DbBackupStateAll  = "state.*.dbbackup"
+	DbRestoreStateAll = "state.*.dbrestore"
+)

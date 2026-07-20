@@ -68,7 +68,7 @@ func TestDbRemoveRoutesToDatabaseReconciler(t *testing.T) {
 	bus := newFakeBus(desiredStateBytes(t))
 	drv := &recordingDriver{}
 	dbRec := &fakeDbReconciler{}
-	w := New(bus, "srv1", drv, dbRec, nil, nil, quietLog())
+	w := New(bus, "srv1", drv, dbRec, nil, nil, nil, quietLog())
 
 	msg := dbRemoveMsg(t, "srv1", "db_1", true)
 	w.handleMsg(context.Background(), msg)
@@ -99,7 +99,7 @@ func dbProvisionMsg(t *testing.T, serverID string, spec *agentv1.DbSpec) *fakeMe
 func TestDbProvisionWorksWithoutAppDriver(t *testing.T) {
 	bus := newFakeBus(desiredStateBytes(t))
 	dbRec := &fakeDbReconciler{}
-	w := New(bus, "srv1", nil, dbRec, nil, nil, quietLog()) // drv == nil
+	w := New(bus, "srv1", nil, dbRec, nil, nil, nil, quietLog()) // drv == nil
 
 	spec := &agentv1.DbSpec{DbId: "db_1", RevisionId: "dbr_1", Engine: "postgresql", Image: "postgres:16"}
 	msg := dbProvisionMsg(t, "srv1", spec)
@@ -123,7 +123,7 @@ func TestAppRemoveStillRoutesToAppReconciler(t *testing.T) {
 	bus := newFakeBus(desiredStateBytes(t))
 	drv := &recordingDriver{}
 	dbRec := &fakeDbReconciler{}
-	w := New(bus, "srv1", drv, dbRec, nil, nil, quietLog())
+	w := New(bus, "srv1", drv, dbRec, nil, nil, nil, quietLog())
 
 	data, _ := proto.Marshal(&agentv1.RemoveWork{DeploymentId: "dep1", AppId: "app_1"})
 	w.handleMsg(context.Background(), &fakeMessage{subject: subjects.Remove("srv1"), data: data})
