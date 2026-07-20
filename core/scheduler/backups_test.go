@@ -65,12 +65,18 @@ func TestHandleBackupEventCompletesRecord(t *testing.T) {
 	_, schedID := seedBackupFixture(fs)
 	s := newScheduler(fs, fb)
 
-	rec, _ := s.RunBackup(context.Background(), schedID)
+	rec, err := s.RunBackup(context.Background(), schedID)
+	if err != nil {
+		t.Fatalf("RunBackup: %v", err)
+	}
 	s.HandleDbBackupEvent(context.Background(), "srv_1", &agentv1.DbBackupEvent{
 		BackupRecordId: rec.ID, DbId: "db_1",
 		Outcome: agentv1.DbBackupEvent_OUTCOME_SUCCEEDED, ObjectKey: "pfx/db_1/x.gz", SizeBytes: 2048,
 	})
-	got, _ := fs.GetBackupRecord(context.Background(), rec.ID)
+	got, err := fs.GetBackupRecord(context.Background(), rec.ID)
+	if err != nil {
+		t.Fatalf("GetBackupRecord: %v", err)
+	}
 	if got.Status != domain.BackupSucceeded || got.SizeBytes != 2048 {
 		t.Fatalf("record = %+v, want succeeded with size 2048", got)
 	}
