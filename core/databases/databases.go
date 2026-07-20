@@ -44,6 +44,7 @@ type Store interface {
 	UpdateDatabaseConfig(ctx context.Context, d domain.Database) (domain.Database, error)
 	UpdateDatabasePassword(ctx context.Context, id string, ct, nonce []byte) error
 	SetDatabaseDesiredRevision(ctx context.Context, id string, revID string) (domain.Database, error)
+	SetDatabaseDesiredState(ctx context.Context, id, desiredState string) (domain.Database, error)
 	SetDatabaseStatus(ctx context.Context, id, status, detail string) error
 	SetDatabasePendingDelete(ctx context.Context, id string, deleteVolume bool) error
 	DeleteDatabase(ctx context.Context, id string) error
@@ -322,13 +323,14 @@ func (s *Service) ResetPassword(ctx context.Context, id string) (string, error) 
 	return pwd.plaintext, nil
 }
 
-// Stop sets the database's desired status to stopped. The scheduler will
-// emit a stop work item.
+// Stop sets the database's desired intent to stopped. The scheduler emits a
+// stop work item; the container's actual status follows from the agent's
+// observation (ADR-005).
 func (s *Service) Stop(ctx context.Context, id string) error {
 	if _, err := s.store.GetDatabase(ctx, id); err != nil {
 		return fmt.Errorf("databases: getting database: %w", err)
 	}
-	if err := s.store.SetDatabaseStatus(ctx, id, domain.DbStopped, ""); err != nil {
+	if _, err := s.store.SetDatabaseDesiredState(ctx, id, domain.DbDesiredStopped); err != nil {
 		return err
 	}
 	if err := s.reconciler.ReconcileDatabase(ctx, id); err != nil {
@@ -337,17 +339,17 @@ func (s *Service) Stop(ctx context.Context, id string) error {
 	return nil
 }
 
-// Start sets the database's desired status back from stopped, which triggers
-// the scheduler to re-provision.
+// Start sets the database's desired intent back to running, which triggers the
+// scheduler to (re)provision.
 func (s *Service) Start(ctx context.Context, id string) error {
 	d, err := s.store.GetDatabase(ctx, id)
 	if err != nil {
 		return fmt.Errorf("databases: getting database: %w", err)
 	}
-	if d.Status != domain.DbStopped {
+	if d.DesiredState == domain.DbDesiredRunning {
 		return invalid("database is not stopped")
 	}
-	if err := s.store.SetDatabaseStatus(ctx, id, domain.DbProvisioning, ""); err != nil {
+	if _, err := s.store.SetDatabaseDesiredState(ctx, id, domain.DbDesiredRunning); err != nil {
 		return err
 	}
 	if err := s.reconciler.ReconcileDatabase(ctx, id); err != nil {

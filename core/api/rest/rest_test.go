@@ -1202,6 +1202,18 @@ func (f *fakeDatabasesStore) SetDatabaseDesiredRevision(_ context.Context, id st
 	return d, nil
 }
 
+func (f *fakeDatabasesStore) SetDatabaseDesiredState(_ context.Context, id, desiredState string) (domain.Database, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d, ok := f.dbs[id]
+	if !ok {
+		return domain.Database{}, store.ErrNotFound
+	}
+	d.DesiredState = desiredState
+	f.dbs[id] = d
+	return d, nil
+}
+
 func (f *fakeDatabasesStore) SetDatabaseStatus(_ context.Context, id, status, detail string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

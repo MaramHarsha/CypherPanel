@@ -153,6 +153,19 @@ func (s *Store) SetDatabaseDesiredRevision(ctx context.Context, id string, revID
 	return databaseFromRow(row), nil
 }
 
+// SetDatabaseDesiredState records the operator's run/stop intent (authoritative
+// for the scheduler; distinct from the observed status).
+func (s *Store) SetDatabaseDesiredState(ctx context.Context, id, desiredState string) (domain.Database, error) {
+	row, err := s.q.SetDatabaseDesiredState(ctx, db.SetDatabaseDesiredStateParams{
+		ID:           id,
+		DesiredState: desiredState,
+	})
+	if err != nil {
+		return domain.Database{}, wrapUpdate("setting database desired state", err)
+	}
+	return databaseFromRow(row), nil
+}
+
 func (s *Store) SetDatabaseStatus(ctx context.Context, id, status, detail string) error {
 	err := s.q.SetDatabaseStatus(ctx, db.SetDatabaseStatusParams{
 		ID:           id,
@@ -495,6 +508,7 @@ func databaseFromRow(r db.Database) domain.Database {
 		RootPasswordNonce:  r.RootPasswordNonce,
 		RequirePassword:    r.RequirePassword,
 		DesiredRevisionID:  ptrFromText(r.DesiredRevisionID),
+		DesiredState:       r.DesiredState,
 		Status:             r.Status,
 		StatusDetail:       r.StatusDetail,
 		ObservedRevisionID: r.ObservedRevisionID,

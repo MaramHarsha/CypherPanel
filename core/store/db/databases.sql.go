@@ -25,7 +25,7 @@ INSERT INTO databases (
     $13, $14, $15, $16,
     $17, $18
 )
-RETURNING id, environment_id, name, engine, version, server_id, cpu_limit, memory_limit_mb, volume_name, data_path, expose_port, network, root_user, root_password_ct, root_password_nonce, require_password, desired_revision_id, status, status_detail, observed_revision_id, status_observed_at, pending_delete, delete_volume, created_at, updated_at
+RETURNING id, environment_id, name, engine, version, server_id, cpu_limit, memory_limit_mb, volume_name, data_path, expose_port, network, root_user, root_password_ct, root_password_nonce, require_password, desired_revision_id, desired_state, status, status_detail, observed_revision_id, status_observed_at, pending_delete, delete_volume, created_at, updated_at
 `
 
 type CreateDatabaseParams struct {
@@ -89,6 +89,7 @@ func (q *Queries) CreateDatabase(ctx context.Context, arg CreateDatabaseParams) 
 		&i.RootPasswordNonce,
 		&i.RequirePassword,
 		&i.DesiredRevisionID,
+		&i.DesiredState,
 		&i.Status,
 		&i.StatusDetail,
 		&i.ObservedRevisionID,
@@ -111,7 +112,7 @@ func (q *Queries) DeleteDatabase(ctx context.Context, id string) error {
 }
 
 const getDatabase = `-- name: GetDatabase :one
-SELECT id, environment_id, name, engine, version, server_id, cpu_limit, memory_limit_mb, volume_name, data_path, expose_port, network, root_user, root_password_ct, root_password_nonce, require_password, desired_revision_id, status, status_detail, observed_revision_id, status_observed_at, pending_delete, delete_volume, created_at, updated_at FROM databases WHERE id = $1
+SELECT id, environment_id, name, engine, version, server_id, cpu_limit, memory_limit_mb, volume_name, data_path, expose_port, network, root_user, root_password_ct, root_password_nonce, require_password, desired_revision_id, desired_state, status, status_detail, observed_revision_id, status_observed_at, pending_delete, delete_volume, created_at, updated_at FROM databases WHERE id = $1
 `
 
 func (q *Queries) GetDatabase(ctx context.Context, id string) (Database, error) {
@@ -135,6 +136,7 @@ func (q *Queries) GetDatabase(ctx context.Context, id string) (Database, error) 
 		&i.RootPasswordNonce,
 		&i.RequirePassword,
 		&i.DesiredRevisionID,
+		&i.DesiredState,
 		&i.Status,
 		&i.StatusDetail,
 		&i.ObservedRevisionID,
@@ -148,7 +150,7 @@ func (q *Queries) GetDatabase(ctx context.Context, id string) (Database, error) 
 }
 
 const listDatabasesByEnvironment = `-- name: ListDatabasesByEnvironment :many
-SELECT id, environment_id, name, engine, version, server_id, cpu_limit, memory_limit_mb, volume_name, data_path, expose_port, network, root_user, root_password_ct, root_password_nonce, require_password, desired_revision_id, status, status_detail, observed_revision_id, status_observed_at, pending_delete, delete_volume, created_at, updated_at FROM databases WHERE environment_id = $1 ORDER BY created_at DESC
+SELECT id, environment_id, name, engine, version, server_id, cpu_limit, memory_limit_mb, volume_name, data_path, expose_port, network, root_user, root_password_ct, root_password_nonce, require_password, desired_revision_id, desired_state, status, status_detail, observed_revision_id, status_observed_at, pending_delete, delete_volume, created_at, updated_at FROM databases WHERE environment_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListDatabasesByEnvironment(ctx context.Context, environmentID string) ([]Database, error) {
@@ -178,6 +180,7 @@ func (q *Queries) ListDatabasesByEnvironment(ctx context.Context, environmentID 
 			&i.RootPasswordNonce,
 			&i.RequirePassword,
 			&i.DesiredRevisionID,
+			&i.DesiredState,
 			&i.Status,
 			&i.StatusDetail,
 			&i.ObservedRevisionID,
@@ -198,7 +201,7 @@ func (q *Queries) ListDatabasesByEnvironment(ctx context.Context, environmentID 
 }
 
 const listDatabasesByServer = `-- name: ListDatabasesByServer :many
-SELECT id, environment_id, name, engine, version, server_id, cpu_limit, memory_limit_mb, volume_name, data_path, expose_port, network, root_user, root_password_ct, root_password_nonce, require_password, desired_revision_id, status, status_detail, observed_revision_id, status_observed_at, pending_delete, delete_volume, created_at, updated_at FROM databases WHERE server_id = $1 AND pending_delete = false ORDER BY created_at DESC
+SELECT id, environment_id, name, engine, version, server_id, cpu_limit, memory_limit_mb, volume_name, data_path, expose_port, network, root_user, root_password_ct, root_password_nonce, require_password, desired_revision_id, desired_state, status, status_detail, observed_revision_id, status_observed_at, pending_delete, delete_volume, created_at, updated_at FROM databases WHERE server_id = $1 AND pending_delete = false ORDER BY created_at DESC
 `
 
 func (q *Queries) ListDatabasesByServer(ctx context.Context, serverID string) ([]Database, error) {
@@ -228,6 +231,7 @@ func (q *Queries) ListDatabasesByServer(ctx context.Context, serverID string) ([
 			&i.RootPasswordNonce,
 			&i.RequirePassword,
 			&i.DesiredRevisionID,
+			&i.DesiredState,
 			&i.Status,
 			&i.StatusDetail,
 			&i.ObservedRevisionID,
@@ -248,7 +252,7 @@ func (q *Queries) ListDatabasesByServer(ctx context.Context, serverID string) ([
 }
 
 const listPendingDeleteDatabases = `-- name: ListPendingDeleteDatabases :many
-SELECT id, environment_id, name, engine, version, server_id, cpu_limit, memory_limit_mb, volume_name, data_path, expose_port, network, root_user, root_password_ct, root_password_nonce, require_password, desired_revision_id, status, status_detail, observed_revision_id, status_observed_at, pending_delete, delete_volume, created_at, updated_at FROM databases WHERE pending_delete = true
+SELECT id, environment_id, name, engine, version, server_id, cpu_limit, memory_limit_mb, volume_name, data_path, expose_port, network, root_user, root_password_ct, root_password_nonce, require_password, desired_revision_id, desired_state, status, status_detail, observed_revision_id, status_observed_at, pending_delete, delete_volume, created_at, updated_at FROM databases WHERE pending_delete = true
 `
 
 func (q *Queries) ListPendingDeleteDatabases(ctx context.Context) ([]Database, error) {
@@ -278,6 +282,7 @@ func (q *Queries) ListPendingDeleteDatabases(ctx context.Context) ([]Database, e
 			&i.RootPasswordNonce,
 			&i.RequirePassword,
 			&i.DesiredRevisionID,
+			&i.DesiredState,
 			&i.Status,
 			&i.StatusDetail,
 			&i.ObservedRevisionID,
@@ -301,7 +306,7 @@ const setDatabaseDesiredRevision = `-- name: SetDatabaseDesiredRevision :one
 UPDATE databases
 SET desired_revision_id = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, environment_id, name, engine, version, server_id, cpu_limit, memory_limit_mb, volume_name, data_path, expose_port, network, root_user, root_password_ct, root_password_nonce, require_password, desired_revision_id, status, status_detail, observed_revision_id, status_observed_at, pending_delete, delete_volume, created_at, updated_at
+RETURNING id, environment_id, name, engine, version, server_id, cpu_limit, memory_limit_mb, volume_name, data_path, expose_port, network, root_user, root_password_ct, root_password_nonce, require_password, desired_revision_id, desired_state, status, status_detail, observed_revision_id, status_observed_at, pending_delete, delete_volume, created_at, updated_at
 `
 
 type SetDatabaseDesiredRevisionParams struct {
@@ -330,6 +335,50 @@ func (q *Queries) SetDatabaseDesiredRevision(ctx context.Context, arg SetDatabas
 		&i.RootPasswordNonce,
 		&i.RequirePassword,
 		&i.DesiredRevisionID,
+		&i.DesiredState,
+		&i.Status,
+		&i.StatusDetail,
+		&i.ObservedRevisionID,
+		&i.StatusObservedAt,
+		&i.PendingDelete,
+		&i.DeleteVolume,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const setDatabaseDesiredState = `-- name: SetDatabaseDesiredState :one
+UPDATE databases SET desired_state = $2, updated_at = now() WHERE id = $1 RETURNING id, environment_id, name, engine, version, server_id, cpu_limit, memory_limit_mb, volume_name, data_path, expose_port, network, root_user, root_password_ct, root_password_nonce, require_password, desired_revision_id, desired_state, status, status_detail, observed_revision_id, status_observed_at, pending_delete, delete_volume, created_at, updated_at
+`
+
+type SetDatabaseDesiredStateParams struct {
+	ID           string
+	DesiredState string
+}
+
+func (q *Queries) SetDatabaseDesiredState(ctx context.Context, arg SetDatabaseDesiredStateParams) (Database, error) {
+	row := q.db.QueryRow(ctx, setDatabaseDesiredState, arg.ID, arg.DesiredState)
+	var i Database
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.Name,
+		&i.Engine,
+		&i.Version,
+		&i.ServerID,
+		&i.CpuLimit,
+		&i.MemoryLimitMb,
+		&i.VolumeName,
+		&i.DataPath,
+		&i.ExposePort,
+		&i.Network,
+		&i.RootUser,
+		&i.RootPasswordCt,
+		&i.RootPasswordNonce,
+		&i.RequirePassword,
+		&i.DesiredRevisionID,
+		&i.DesiredState,
 		&i.Status,
 		&i.StatusDetail,
 		&i.ObservedRevisionID,
@@ -406,7 +455,7 @@ SET name = $2,
     expose_port = $6,
     updated_at = now()
 WHERE id = $1
-RETURNING id, environment_id, name, engine, version, server_id, cpu_limit, memory_limit_mb, volume_name, data_path, expose_port, network, root_user, root_password_ct, root_password_nonce, require_password, desired_revision_id, status, status_detail, observed_revision_id, status_observed_at, pending_delete, delete_volume, created_at, updated_at
+RETURNING id, environment_id, name, engine, version, server_id, cpu_limit, memory_limit_mb, volume_name, data_path, expose_port, network, root_user, root_password_ct, root_password_nonce, require_password, desired_revision_id, desired_state, status, status_detail, observed_revision_id, status_observed_at, pending_delete, delete_volume, created_at, updated_at
 `
 
 type UpdateDatabaseConfigParams struct {
@@ -446,6 +495,7 @@ func (q *Queries) UpdateDatabaseConfig(ctx context.Context, arg UpdateDatabaseCo
 		&i.RootPasswordNonce,
 		&i.RequirePassword,
 		&i.DesiredRevisionID,
+		&i.DesiredState,
 		&i.Status,
 		&i.StatusDetail,
 		&i.ObservedRevisionID,

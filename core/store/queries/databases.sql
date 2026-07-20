@@ -41,6 +41,9 @@ WHERE id = $1;
 -- name: SetDatabaseStatus :exec
 UPDATE databases SET status = $2, status_detail = $3, updated_at = now() WHERE id = $1;
 
+-- name: SetDatabaseDesiredState :one
+UPDATE databases SET desired_state = $2, updated_at = now() WHERE id = $1 RETURNING *;
+
 -- name: SetDatabasePendingDelete :exec
 UPDATE databases SET pending_delete = true, delete_volume = $2, updated_at = now() WHERE id = $1;
 

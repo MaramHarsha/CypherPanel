@@ -712,6 +712,13 @@ func (s *Scheduler) DesiredStateFor(ctx context.Context, serverID string) ([]byt
 		if db.DesiredRevisionID == nil {
 			continue
 		}
+		// Desired state must reflect intent: a database the operator stopped,
+		// or one being deleted, is NOT desired-present. Advertising it here
+		// would make the agent re-provision it on every sync/drift, fighting
+		// the stop/remove work items (ADR-005 consistency).
+		if db.PendingDelete || db.DesiredState == domain.DbDesiredStopped {
+			continue
+		}
 		rev, err := s.store.GetDatabaseRevision(ctx, *db.DesiredRevisionID)
 		if err != nil {
 			s.log.Error("desired state: loading db revision", "db_id", db.ID, "error", err)

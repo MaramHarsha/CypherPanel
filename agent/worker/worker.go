@@ -107,13 +107,10 @@ type Worker struct {
 }
 
 // New creates a new Worker. drv is nil on builder-role agents (nothing runs
-// there — builder-role-and-relay.md §1); bld is nil on worker-role agents;
-// rly is nil when the agent has no plane relay address.
-func New(bus Bus, serverID string, drv driver.Reconciler, bld *builder.Builder, rly ImageRelay, log *slog.Logger) *Worker {
-	var dbRec driver.DbReconciler
-	if d, ok := drv.(driver.DbReconciler); ok {
-		dbRec = d
-	}
+// there — builder-role-and-relay.md §1); dbRec is nil when the agent runs no
+// databases; bld is nil on worker-role agents; rly is nil when the agent has
+// no plane relay address.
+func New(bus Bus, serverID string, drv driver.Reconciler, dbRec driver.DbReconciler, bld *builder.Builder, rly ImageRelay, log *slog.Logger) *Worker {
 	return &Worker{
 		bus:           bus,
 		serverID:      serverID,
@@ -241,7 +238,10 @@ func (w *Worker) handleMsg(ctx context.Context, msg Message) {
 		w.state[appID] = work.Spec
 		w.mu.Unlock()
 
-	case strings.HasSuffix(subject, ".remove"):
+	case strings.HasSuffix(subject, ".remove") && !strings.HasSuffix(subject, ".db.remove"):
+		// The app-remove suffix ".remove" is also a suffix of the database
+		// work subject ".db.remove" — exclude it so database removes reach
+		// their own case below, not the app reconciler.
 		var work agentv1.RemoveWork
 		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
 			w.log.Error("worker: unmarshaling remove work", "error", err)

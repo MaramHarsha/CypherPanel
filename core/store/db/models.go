@@ -93,6 +93,7 @@ type Database struct {
 	RootPasswordNonce  []byte
 	RequirePassword    bool
 	DesiredRevisionID  pgtype.Text
+	DesiredState       string
 	Status             string
 	StatusDetail       string
 	ObservedRevisionID string

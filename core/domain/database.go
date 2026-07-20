@@ -116,6 +116,13 @@ const (
 	DbUnknown      = "unknown"
 )
 
+// Database desired-state intent (managed-databases.md §3). Authoritative for
+// the scheduler; distinct from the observed Status vocabulary above.
+const (
+	DbDesiredRunning = "running"
+	DbDesiredStopped = "stopped"
+)
+
 // Database is a managed database engine instance: a resource provisioned and
 // operated by the panel (lifecycle, credentials, backups). The credential
 // fields are sealed at rest (threat-model §5.1); services unseal to inject
@@ -150,8 +157,13 @@ type Database struct {
 	// Whether the operator opted into password auth for Redis/Valkey.
 	RequirePassword bool
 
-	// Desired-state tracking (ADR-005).
+	// Desired-state tracking (ADR-005). DesiredState is the operator's intent
+	// (DbDesiredRunning / DbDesiredStopped) and is authoritative for the
+	// scheduler; Status is the agent's observation and is never used as
+	// intent. Keeping them separate is what lets a freshly-created database
+	// (observed 'stopped', desired 'running') provision rather than tear down.
 	DesiredRevisionID  *string
+	DesiredState       string
 	Status             string
 	StatusDetail       string
 	ObservedRevisionID string

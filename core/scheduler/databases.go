@@ -15,10 +15,10 @@ import (
 // stopped, or marked for deletion. It translates the desired state of the
 // Database into NATS DbProvisionWork or DbRemoveWork items.
 //
-// Convergence contract (ENGINEERING 12, 13):
-// Publishing is idempotent: same work payloads carry stable message IDs
-// so JetStream deduplicates them inside the window, and agent reconcilers
-// run no side effect if the container state matches.
+// Convergence contract (ENGINEERING 12, 13): each call emits one work item
+// per intent change; the agent's database reconciler is idempotent, so a
+// redelivered or duplicate item only re-converges (no side effect when the
+// container already matches the spec).
 func (s *Scheduler) ReconcileDatabase(ctx context.Context, dbID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -31,6 +31,15 @@ func (s *Scheduler) reconcileDatabaseLocked(ctx context.Context, dbID string) er
 		return fmt.Errorf("scheduler: loading database: %w", err)
 	}
 
+	// Each intent change (create, start, stop, delete, config) emits fresh
+	// work. The JetStream publish MsgID must be unique per intent event, not
+	// static per-database: a static id would let dedup silently drop a
+	// start-after-stop provision (same id, within the dedup window) and leave
+	// the database stuck stopped. Redelivery of an in-flight item is unaffected
+	// (that reuses the delivered message, not a new publish), and the agent's
+	// database reconcile is idempotent, so a duplicate publish only re-converges.
+	msgSeq := s.now().UnixNano()
+
 	// Deletion path: emit DbRemoveWork.
 	if db.PendingDelete {
 		work := &agentv1.DbRemoveWork{
@@ -42,13 +51,14 @@ func (s *Scheduler) reconcileDatabaseLocked(ctx context.Context, dbID string) er
 		if err != nil {
 			return fmt.Errorf("scheduler: marshaling remove work: %w", err)
 		}
-		// MsgID is db.ID + ".remove" to deduplicate
-		return s.bus.PublishWork(ctx, subjects.DbRemove(db.ServerID), db.ID+".remove", data)
+		return s.bus.PublishWork(ctx, subjects.DbRemove(db.ServerID), fmt.Sprintf("%s.remove.%d", db.ID, msgSeq), data)
 	}
 
-	// Stopped path: emit DbRemoveWork (without delete_volume) to tear down
-	// the container but keep the volume.
-	if db.Status == domain.DbStopped {
+	// Stopped intent: tear down the container but keep the volume. This keys
+	// off the operator's desired_state, never the observed status — a
+	// freshly-created database is observed 'stopped' but desired 'running',
+	// and must provision, not tear down (ADR-005: status is observation).
+	if db.DesiredState == domain.DbDesiredStopped {
 		work := &agentv1.DbRemoveWork{
 			IdempotencyKey: db.ID + "-stop",
 			DbId:           db.ID,
@@ -58,7 +68,7 @@ func (s *Scheduler) reconcileDatabaseLocked(ctx context.Context, dbID string) er
 		if err != nil {
 			return fmt.Errorf("scheduler: marshaling stop work: %w", err)
 		}
-		return s.bus.PublishWork(ctx, subjects.DbRemove(db.ServerID), db.ID+".stop", data)
+		return s.bus.PublishWork(ctx, subjects.DbRemove(db.ServerID), fmt.Sprintf("%s.stop.%d", db.ID, msgSeq), data)
 	}
 
 	// Desired configuration.
@@ -115,7 +125,7 @@ func (s *Scheduler) reconcileDatabaseLocked(ctx context.Context, dbID string) er
 	if err != nil {
 		return fmt.Errorf("scheduler: marshaling provision work: %w", err)
 	}
-	return s.bus.PublishWork(ctx, subjects.DbProvision(db.ServerID), db.ID+".provision", data)
+	return s.bus.PublishWork(ctx, subjects.DbProvision(db.ServerID), fmt.Sprintf("%s.provision.%d", db.ID, msgSeq), data)
 }
 
 // HandleDbStatus processes observed state reports from agents. Success or

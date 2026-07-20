@@ -34,8 +34,13 @@ CREATE TABLE databases (
     root_password_nonce BYTEA,
     require_password    BOOLEAN     NOT NULL DEFAULT false,
 
-    -- Desired-state tracking (ADR-005).
+    -- Desired-state tracking (ADR-005). desired_state is the operator's
+    -- intent (run vs stop) and is authoritative for the scheduler; status is
+    -- the agent's observation and is never used as intent — keeping the two
+    -- separate is what lets a freshly-created database (observed 'stopped',
+    -- desired 'running') provision instead of being torn down.
     desired_revision_id  TEXT,
+    desired_state        TEXT        NOT NULL DEFAULT 'running', -- 'running' | 'stopped'
     status               TEXT        NOT NULL DEFAULT 'stopped',
     status_detail        TEXT        NOT NULL DEFAULT '',
     observed_revision_id TEXT        NOT NULL DEFAULT '',
