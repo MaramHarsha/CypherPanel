@@ -82,6 +82,31 @@ type NotifierDelivery interface {
 	Deliver(ctx context.Context, n domain.Notifier, ev domain.NotifyEvent) error
 }
 
+// TeamService is the tenancy surface (consumer-defined; *teams.Service
+// satisfies it — teams-and-roles.md). RoleForProject/RoleInTeam are the authz
+// queries every project-scoped route runs; the rest back the /teams and /users
+// management routes.
+type TeamService interface {
+	RoleForProject(ctx context.Context, actor domain.User, projectID string) (string, error)
+	RoleInTeam(ctx context.Context, actor domain.User, teamID string) (string, error)
+
+	Create(ctx context.Context, name string, creator domain.User) (domain.Team, error)
+	Get(ctx context.Context, id string) (domain.Team, error)
+	ListFor(ctx context.Context, actor domain.User) ([]domain.TeamWithRole, error)
+	Rename(ctx context.Context, id, name string) (domain.Team, error)
+	Delete(ctx context.Context, id string) error
+
+	Members(ctx context.Context, teamID string) ([]domain.TeamMember, error)
+	AddMember(ctx context.Context, teamID, email, role, actorRole string) (domain.TeamMember, error)
+	ChangeMemberRole(ctx context.Context, teamID, userID, role, actorRole string) (domain.TeamMember, error)
+	RemoveMember(ctx context.Context, teamID, userID, actorRole string) error
+
+	CreateUser(ctx context.Context, email, password, role, actorRole string) (domain.User, error)
+	ListUsers(ctx context.Context) ([]domain.User, error)
+	SetUserRole(ctx context.Context, userID, role string, actor domain.User) (domain.User, error)
+	DeleteUser(ctx context.Context, userID string, actor domain.User) error
+}
+
 // ScheduledTaskService is the scheduled-task CRUD surface (consumer-defined;
 // *scheduledtasks.Service satisfies it — scheduled-tasks.md §7).
 type ScheduledTaskService interface {
@@ -116,6 +141,7 @@ type Deps struct {
 	Notifiers       NotifierService
 	NotifyDelivery  NotifierDelivery
 	ScheduledTasks  ScheduledTaskService
+	Teams           TeamService
 	Scheduler       Deployer
 	Deployments     DeploymentReader
 	Opener          Opener
@@ -247,6 +273,21 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/v1/scheduled-tasks/{id}", a.authed(a.handlePatchScheduledTask))
 	mux.HandleFunc("DELETE /api/v1/scheduled-tasks/{id}", a.authed(a.handleDeleteScheduledTask))
 	mux.HandleFunc("GET /api/v1/scheduled-tasks/{id}/runs", a.authed(a.handleListTaskRuns))
+
+	// Phase 3: teams + roles (teams-and-roles.md §4).
+	mux.HandleFunc("POST /api/v1/teams", a.authed(a.handleCreateTeam))
+	mux.HandleFunc("GET /api/v1/teams", a.authed(a.handleListTeams))
+	mux.HandleFunc("GET /api/v1/teams/{id}", a.authed(a.handleGetTeam))
+	mux.HandleFunc("PATCH /api/v1/teams/{id}", a.authed(a.handleRenameTeam))
+	mux.HandleFunc("DELETE /api/v1/teams/{id}", a.authed(a.handleDeleteTeam))
+	mux.HandleFunc("GET /api/v1/teams/{id}/members", a.authed(a.handleListTeamMembers))
+	mux.HandleFunc("POST /api/v1/teams/{id}/members", a.authed(a.handleAddTeamMember))
+	mux.HandleFunc("PATCH /api/v1/teams/{id}/members/{uid}", a.authed(a.handleChangeTeamMemberRole))
+	mux.HandleFunc("DELETE /api/v1/teams/{id}/members/{uid}", a.authed(a.handleRemoveTeamMember))
+	mux.HandleFunc("POST /api/v1/users", a.authed(a.handleCreateUser))
+	mux.HandleFunc("GET /api/v1/users", a.authed(a.handleListUsers))
+	mux.HandleFunc("PATCH /api/v1/users/{id}", a.authed(a.handleSetUserRole))
+	mux.HandleFunc("DELETE /api/v1/users/{id}", a.authed(a.handleDeleteUser))
 
 	// Interim console + static assets.
 	mux.Handle("GET /", a.consoleHandler())

@@ -93,6 +93,10 @@ func (a *API) handleListServers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleCreateServer(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.requirePanelRole(w, user, domain.RoleAdmin) {
+		return
+	}
 	var req createServerRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -147,6 +151,10 @@ func (a *API) handleGetServer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.requirePanelRole(w, user, domain.RoleAdmin) {
+		return
+	}
 	if err := a.deps.Servers.Delete(r.Context(), r.PathValue("id")); err != nil {
 		if errors.Is(err, store.ErrInUse) {
 			writeError(w, http.StatusConflict, "server still runs applications — move or delete them first")

@@ -16,8 +16,8 @@ import (
 
 // ─── Projects ───────────────────────────────────────────────────────────────
 
-func (s *Store) CreateProject(ctx context.Context, id, name string) (domain.Project, error) {
-	row, err := s.q.CreateProject(ctx, db.CreateProjectParams{ID: id, Name: name})
+func (s *Store) CreateProject(ctx context.Context, id, name, teamID string) (domain.Project, error) {
+	row, err := s.q.CreateProject(ctx, db.CreateProjectParams{ID: id, Name: name, TeamID: teamID})
 	if err != nil {
 		return domain.Project{}, wrapCreate("creating project", err)
 	}
@@ -54,7 +54,7 @@ func (s *Store) DeleteProject(ctx context.Context, id string) error {
 // CreateProjectWithEnvironment creates a project and its default environment in
 // one transaction, so a project never exists without somewhere to put
 // resources (the spec's "default production env").
-func (s *Store) CreateProjectWithEnvironment(ctx context.Context, projectID, name, envID, envName string) (domain.Project, domain.Environment, error) {
+func (s *Store) CreateProjectWithEnvironment(ctx context.Context, projectID, name, teamID, envID, envName string) (domain.Project, domain.Environment, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.Project{}, domain.Environment{}, fmt.Errorf("store: beginning tx: %w", err)
@@ -62,7 +62,7 @@ func (s *Store) CreateProjectWithEnvironment(ctx context.Context, projectID, nam
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
 	qtx := s.q.WithTx(tx)
-	prow, err := qtx.CreateProject(ctx, db.CreateProjectParams{ID: projectID, Name: name})
+	prow, err := qtx.CreateProject(ctx, db.CreateProjectParams{ID: projectID, Name: name, TeamID: teamID})
 	if err != nil {
 		return domain.Project{}, domain.Environment{}, wrapCreate("creating project", err)
 	}
@@ -537,7 +537,7 @@ func deployKeyFromRow(r db.DeployKey) domain.DeployKey {
 }
 
 func projectFromRow(r db.Project) domain.Project {
-	return domain.Project{ID: r.ID, Name: r.Name, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time}
+	return domain.Project{ID: r.ID, Name: r.Name, TeamID: r.TeamID, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time}
 }
 
 func environmentFromRow(r db.Environment) domain.Environment {

@@ -10,22 +10,24 @@ import (
 )
 
 const createProject = `-- name: CreateProject :one
-INSERT INTO projects (id, name) VALUES ($1, $2) RETURNING id, name, created_at, updated_at
+INSERT INTO projects (id, name, team_id) VALUES ($1, $2, $3) RETURNING id, name, created_at, updated_at, team_id
 `
 
 type CreateProjectParams struct {
-	ID   string
-	Name string
+	ID     string
+	Name   string
+	TeamID string
 }
 
 func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error) {
-	row := q.db.QueryRow(ctx, createProject, arg.ID, arg.Name)
+	row := q.db.QueryRow(ctx, createProject, arg.ID, arg.Name, arg.TeamID)
 	var i Project
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TeamID,
 	)
 	return i, err
 }
@@ -40,7 +42,7 @@ func (q *Queries) DeleteProject(ctx context.Context, id string) error {
 }
 
 const getProject = `-- name: GetProject :one
-SELECT id, name, created_at, updated_at FROM projects WHERE id = $1
+SELECT id, name, created_at, updated_at, team_id FROM projects WHERE id = $1
 `
 
 func (q *Queries) GetProject(ctx context.Context, id string) (Project, error) {
@@ -51,12 +53,13 @@ func (q *Queries) GetProject(ctx context.Context, id string) (Project, error) {
 		&i.Name,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TeamID,
 	)
 	return i, err
 }
 
 const listProjects = `-- name: ListProjects :many
-SELECT id, name, created_at, updated_at FROM projects ORDER BY created_at DESC
+SELECT id, name, created_at, updated_at, team_id FROM projects ORDER BY created_at DESC
 `
 
 func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
@@ -73,6 +76,7 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 			&i.Name,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.TeamID,
 		); err != nil {
 			return nil, err
 		}

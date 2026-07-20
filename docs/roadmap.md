@@ -28,11 +28,11 @@ Scope: GitHub repo (public + deploy-key private) → Dockerfile build on a build
 
 **Evidence at closeout:** zero-drop rollout, mid-deploy agent kill → reconverge, rollback, and REST-only driving asserted by `integration.yml` (`deploy`, `deploy-resilience`) on every push. Multi-server builder split + relay proven live across two real Docker daemons (target in dind): image built on the builder, relayed through the plane (bounded memory, nothing on plane disk), health-gated and routed on the target; target killed mid-distribute reconverged seconds after restart. Production Let's Encrypt validated 2026-07-20 on a real domain (`cypherpanel.in` → HTTP-01 → `SSL certificate verify ok`, HTTP→HTTPS 301, cert in node-local `acme.json` 0600), private-repo deploy-key clone in the same pipeline run.
 
-## Phase 3 — State model breadth
+## Phase 3 — State model breadth ✅ complete (2026-07-21)
 
 Scope: managed databases (PostgreSQL, MySQL, MariaDB, MongoDB, Redis, Valkey); env vars & secrets; scheduled backups to S3-compatible targets with restore; preview environments from PRs (TTL auto-destroy); notifications (Email, Discord, Slack, Telegram); teams + roles; scheduled tasks (cron).
 
-**Acceptance:** each resource type deploys, backs up, restores, and deletes cleanly via API; preview environments create and destroy themselves from PR lifecycle events without manual action.
+**Acceptance:** each resource type deploys, backs up, restores, and deletes cleanly via API; preview environments create and destroy themselves from PR lifecycle events without manual action. **Met:** managed databases + S3 backups/restore (`managed-databases.md`), preview environments (`preview-environments.md`), notifications (`notifications.md`), scheduled tasks (`scheduled-tasks.md`, ADR-011 — live-verified firing in-container), and teams + roles (`teams-and-roles.md`) all landed, each with real-Postgres store tests and end-to-end verification. Deferred within scope to V1.x: TOTP 2FA, granular RBAC, backup-cron auto-scheduling + S3-object pruning (all recorded on their feature-matrix rows).
 
 ## Phase 4 — Catalog and polish
 

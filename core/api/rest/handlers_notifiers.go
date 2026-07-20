@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -55,6 +56,10 @@ type createNotifierRequest struct {
 }
 
 func (a *API) handleCreateNotifier(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.requireProjectRole(w, r, user, r.PathValue("id"), domain.RoleMember) {
+		return
+	}
 	if a.deps.Notifiers == nil {
 		writeError(w, http.StatusNotImplemented, "notifications are not enabled")
 		return
@@ -83,6 +88,10 @@ func (a *API) handleCreateNotifier(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleListNotifiers(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.requireProjectRole(w, r, user, r.PathValue("id"), domain.RoleMember) {
+		return
+	}
 	if a.deps.Notifiers == nil {
 		writeJSON(w, http.StatusOK, []notifierDTO{})
 		return
@@ -101,6 +110,12 @@ func (a *API) handleListNotifiers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleGetNotifier(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForNotifier(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	if a.deps.Notifiers == nil {
 		writeError(w, http.StatusNotFound, "notifier not found")
 		return
@@ -126,6 +141,12 @@ type patchNotifierRequest struct {
 }
 
 func (a *API) handlePatchNotifier(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForNotifier(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	if a.deps.Notifiers == nil {
 		writeError(w, http.StatusNotFound, "notifier not found")
 		return
@@ -165,6 +186,12 @@ func (a *API) handlePatchNotifier(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleDeleteNotifier(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForNotifier(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	if a.deps.Notifiers == nil {
 		writeError(w, http.StatusNotFound, "notifier not found")
 		return
@@ -186,6 +213,12 @@ func (a *API) handleDeleteNotifier(w http.ResponseWriter, r *http.Request) {
 // synchronous here (unlike real events) so the 202 means "attempted"; a channel
 // failure is logged, not surfaced, to avoid leaking endpoint details.
 func (a *API) handleTestNotifier(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForNotifier(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	if a.deps.Notifiers == nil || a.deps.NotifyDelivery == nil {
 		writeError(w, http.StatusNotFound, "notifier not found")
 		return

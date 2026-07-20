@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -159,6 +160,12 @@ func (r createApplicationRequest) toInput() applications.CreateInput {
 // ─── handlers ────────────────────────────────────────────────────────────────
 
 func (a *API) handleCreateApplication(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForEnvironment(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	var req createApplicationRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -179,6 +186,12 @@ func (a *API) handleCreateApplication(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleListApplications(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForEnvironment(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	list, err := a.deps.Applications.List(r.Context(), r.PathValue("id"))
 	if errors.Is(err, applications.ErrEnvironmentNotFound) {
 		writeError(w, http.StatusNotFound, "environment not found")
@@ -197,6 +210,12 @@ func (a *API) handleListApplications(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleGetApplication(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForApplication(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	app, err := a.deps.Applications.Get(r.Context(), r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "application not found")
@@ -213,6 +232,12 @@ func (a *API) handleGetApplication(w http.ResponseWriter, r *http.Request) {
 // handleGetApplicationLogs streams an application's runtime logs as SSE:
 // retained history from the bounded LOGS stream, then the live tail.
 func (a *API) handleGetApplicationLogs(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForApplication(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	appID := r.PathValue("id")
 	app, err := a.deps.Applications.Get(r.Context(), appID)
 	if err != nil {
@@ -260,6 +285,12 @@ type patchApplicationRequest struct {
 }
 
 func (a *API) handlePatchApplication(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForApplication(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	var req patchApplicationRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -295,6 +326,12 @@ func (a *API) handlePatchApplication(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleDeleteApplication(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForApplication(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	// Load first: after the row is gone we still need the server to publish
 	// desired absence. A missing app deletes idempotently (204).
 	app, err := a.deps.Applications.Get(r.Context(), r.PathValue("id"))
@@ -321,6 +358,12 @@ func (a *API) handleDeleteApplication(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleListEnvVars(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForApplication(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	keys, err := a.deps.Applications.ListEnvVarKeys(r.Context(), r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "application not found")
@@ -339,6 +382,12 @@ type setEnvVarRequest struct {
 }
 
 func (a *API) handleSetEnvVar(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForApplication(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	var req setEnvVarRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -353,6 +402,12 @@ func (a *API) handleSetEnvVar(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleDeleteEnvVar(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForApplication(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	err := a.deps.Applications.DeleteEnvVar(r.Context(), r.PathValue("id"), r.PathValue("key"))
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "application not found")

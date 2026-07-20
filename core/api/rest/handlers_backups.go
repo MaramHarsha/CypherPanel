@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -51,6 +52,10 @@ type createBackupTargetRequest struct {
 // --- Backup Target Handlers ---
 
 func (a *API) handleCreateBackupTarget(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.requirePanelRole(w, user, domain.RoleAdmin) {
+		return
+	}
 	var req createBackupTargetRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -108,6 +113,10 @@ func (a *API) handleGetBackupTarget(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleDeleteBackupTarget(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.requirePanelRole(w, user, domain.RoleAdmin) {
+		return
+	}
 	if err := a.deps.BackupTargets.DeleteTarget(r.Context(), r.PathValue("id")); err != nil {
 		switch {
 		case errors.Is(err, store.ErrNotFound):
@@ -189,6 +198,12 @@ type createDatabaseBackupRequest struct {
 // --- Database Backup Schedule Handlers ---
 
 func (a *API) handleCreateDatabaseBackup(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForDatabase(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	dbID := r.PathValue("id")
 	var req createDatabaseBackupRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -216,6 +231,12 @@ func (a *API) handleCreateDatabaseBackup(w http.ResponseWriter, r *http.Request)
 }
 
 func (a *API) handleListDatabaseBackups(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForDatabase(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	dbID := r.PathValue("id")
 	backups, err := a.deps.BackupSchedules.ListSchedules(r.Context(), dbID)
 	if err != nil {
@@ -231,6 +252,12 @@ func (a *API) handleListDatabaseBackups(w http.ResponseWriter, r *http.Request) 
 }
 
 func (a *API) handleDeleteDatabaseBackup(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForDatabase(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	bakID := r.PathValue("bak_id")
 	if err := a.deps.BackupSchedules.DeleteSchedule(r.Context(), bakID); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -245,6 +272,12 @@ func (a *API) handleDeleteDatabaseBackup(w http.ResponseWriter, r *http.Request)
 }
 
 func (a *API) handleListBackupRecords(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForDatabase(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	bakID := r.PathValue("bak_id")
 	records, err := a.deps.BackupSchedules.ListRecords(r.Context(), bakID)
 	if err != nil {
@@ -266,6 +299,12 @@ type runBackupResponse struct {
 // handleRunBackup triggers a backup for a schedule now: 202 with the running
 // record; the outcome is reported later via the agent's event.
 func (a *API) handleRunBackup(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForDatabase(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	rec, err := a.deps.Backups.RunBackup(r.Context(), r.PathValue("bak_id"))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -286,6 +325,12 @@ type restoreRequest struct {
 
 // handleRestoreDatabase triggers a destructive restore (requires confirm=true).
 func (a *API) handleRestoreDatabase(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForDatabase(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	var req restoreRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")

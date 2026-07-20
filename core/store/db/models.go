@@ -207,6 +207,7 @@ type Project struct {
 	Name      string
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
+	TeamID    string
 }
 
 type Revision struct {
@@ -259,6 +260,20 @@ type Session struct {
 	UserID    string
 	TokenHash []byte
 	ExpiresAt pgtype.Timestamptz
+	CreatedAt pgtype.Timestamptz
+}
+
+type Team struct {
+	ID        string
+	Name      string
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
+type TeamMember struct {
+	TeamID    string
+	UserID    string
+	Role      string
 	CreatedAt pgtype.Timestamptz
 }
 

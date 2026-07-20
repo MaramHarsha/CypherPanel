@@ -13,11 +13,12 @@ import (
 type projectDTO struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
+	TeamID    string `json:"team_id"`
 	CreatedAt string `json:"created_at"`
 }
 
 func toProjectDTO(p domain.Project) projectDTO {
-	return projectDTO{ID: p.ID, Name: p.Name, CreatedAt: p.CreatedAt.UTC().Format(time.RFC3339)}
+	return projectDTO{ID: p.ID, Name: p.Name, TeamID: p.TeamID, CreatedAt: p.CreatedAt.UTC().Format(time.RFC3339)}
 }
 
 type environmentDTO struct {
@@ -33,6 +34,9 @@ func toEnvironmentDTO(e domain.Environment) environmentDTO {
 
 type createProjectRequest struct {
 	Name string `json:"name"`
+	// TeamID is optional when the caller belongs to exactly one team
+	// (teams-and-roles.md §4).
+	TeamID string `json:"team_id"`
 }
 
 type createProjectResponse struct {
@@ -49,13 +53,42 @@ type createEnvironmentRequest struct {
 	Name string `json:"name"`
 }
 
+// resolveCreateTeam picks the team for a new project: the explicit team_id, or
+// the caller's only team; ambiguity is a 400 (spec §4). Returns "" after
+// writing the response on failure.
+func (a *API) resolveCreateTeam(w http.ResponseWriter, r *http.Request, user domain.User, teamID string) string {
+	if teamID != "" {
+		return teamID
+	}
+	list, err := a.deps.Teams.ListFor(r.Context(), user)
+	if err != nil {
+		a.deps.Log.Error("resolving default team", "error", err)
+		writeError(w, http.StatusInternalServerError, "could not create project")
+		return ""
+	}
+	if len(list) != 1 {
+		writeError(w, http.StatusBadRequest, "team_id is required (you belong to more than one team)")
+		return ""
+	}
+	return list[0].ID
+}
+
 func (a *API) handleCreateProject(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
 	var req createProjectRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	proj, env, err := a.deps.Projects.Create(r.Context(), req.Name)
+	teamID := a.resolveCreateTeam(w, r, user, req.TeamID)
+	if teamID == "" {
+		return
+	}
+	// Creating a project is a team-structure change: team admin+ (spec §1).
+	if !a.requireTeamRole(w, r, user, teamID, domain.RoleAdmin) {
+		return
+	}
+	proj, env, err := a.deps.Projects.Create(r.Context(), req.Name, teamID)
 	if errors.Is(err, projects.ErrInvalidName) {
 		writeError(w, http.StatusBadRequest, "name must be 1–100 characters")
 		return
@@ -72,7 +105,14 @@ func (a *API) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleListProjects(w http.ResponseWriter, r *http.Request) {
-	list, err := a.deps.Projects.List(r.Context())
+	user, _ := userFromContext(r.Context())
+	var list []domain.Project
+	var err error
+	if user.Role == domain.RoleOwner {
+		list, err = a.deps.Projects.List(r.Context()) // panel owner sees all (spec §1)
+	} else {
+		list, err = a.deps.Projects.ListForUser(r.Context(), user.ID)
+	}
 	if err != nil {
 		a.deps.Log.Error("listing projects", "error", err)
 		writeError(w, http.StatusInternalServerError, "could not list projects")
@@ -86,7 +126,11 @@ func (a *API) handleListProjects(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleGetProject(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
 	id := r.PathValue("id")
+	if !a.requireProjectRole(w, r, user, id, domain.RoleMember) {
+		return
+	}
 	proj, err := a.deps.Projects.Get(r.Context(), id)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "project not found")
@@ -111,7 +155,12 @@ func (a *API) handleGetProject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
-	if err := a.deps.Projects.Delete(r.Context(), r.PathValue("id")); err != nil {
+	user, _ := userFromContext(r.Context())
+	id := r.PathValue("id")
+	if !a.requireProjectRole(w, r, user, id, domain.RoleAdmin) {
+		return
+	}
+	if err := a.deps.Projects.Delete(r.Context(), id); err != nil {
 		a.deps.Log.Error("deleting project", "error", err)
 		writeError(w, http.StatusInternalServerError, "could not delete project")
 		return
@@ -120,7 +169,12 @@ func (a *API) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleListEnvironments(w http.ResponseWriter, r *http.Request) {
-	envs, err := a.deps.Projects.ListEnvironments(r.Context(), r.PathValue("id"))
+	user, _ := userFromContext(r.Context())
+	id := r.PathValue("id")
+	if !a.requireProjectRole(w, r, user, id, domain.RoleMember) {
+		return
+	}
+	envs, err := a.deps.Projects.ListEnvironments(r.Context(), id)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "project not found")
 		return
@@ -138,6 +192,10 @@ func (a *API) handleListEnvironments(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleCreateEnvironment(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.requireProjectRole(w, r, user, r.PathValue("id"), domain.RoleMember) {
+		return
+	}
 	var req createEnvironmentRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")

@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -55,6 +56,12 @@ type deployRequest struct {
 // handleDeployApplication starts a deployment pipeline: 202, progress via the
 // deployment record (and log streams).
 func (a *API) handleDeployApplication(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForApplication(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	var req deployRequest
 	if r.ContentLength != 0 {
 		if err := decodeJSON(r, &req); err != nil {
@@ -83,6 +90,12 @@ func (a *API) handleDeployApplication(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleListDeployments(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForApplication(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	appID := r.PathValue("id")
 	if _, err := a.deps.Applications.Get(r.Context(), appID); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -107,6 +120,12 @@ func (a *API) handleListDeployments(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleGetDeployment(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForDeployment(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	dep, err := a.deps.Deployments.GetDeployment(r.Context(), r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "deployment not found")
@@ -124,6 +143,12 @@ func (a *API) handleGetDeployment(w http.ResponseWriter, r *http.Request) {
 // history first (a client connecting mid- or post-build replays what the
 // bounded LOGS stream still holds), then the live tail.
 func (a *API) handleGetDeploymentLogs(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForDeployment(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	depID := r.PathValue("id")
 	dep, err := a.deps.Deployments.GetDeployment(r.Context(), depID)
 	if err != nil {
@@ -145,6 +170,12 @@ func (a *API) handleGetDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 // handleRollback starts a deployment that restores the revision this
 // deployment shipped (build skipped — the image exists).
 func (a *API) handleRollback(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForDeployment(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	dep, err := a.deps.Scheduler.Rollback(r.Context(), r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "deployment not found")

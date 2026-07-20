@@ -22,11 +22,13 @@ var ErrInvalidName = errors.New("projects: name must be 1–100 characters")
 
 // Store is the persistence the service needs (consumer-defined).
 type Store interface {
-	CreateProjectWithEnvironment(ctx context.Context, projectID, name, envID, envName string) (domain.Project, domain.Environment, error)
+	CreateProjectWithEnvironment(ctx context.Context, projectID, name, teamID, envID, envName string) (domain.Project, domain.Environment, error)
 	GetProject(ctx context.Context, id string) (domain.Project, error)
 	ListProjects(ctx context.Context) ([]domain.Project, error)
+	ListProjectsByUser(ctx context.Context, userID string) ([]domain.Project, error)
 	DeleteProject(ctx context.Context, id string) error
 	CreateEnvironment(ctx context.Context, id, projectID, name string) (domain.Environment, error)
+	GetEnvironment(ctx context.Context, id string) (domain.Environment, error)
 	ListEnvironmentsByProject(ctx context.Context, projectID string) ([]domain.Environment, error)
 }
 
@@ -40,15 +42,16 @@ func NewService(s Store) *Service {
 	return &Service{store: s}
 }
 
-// Create registers a project and its default production environment.
-func (s *Service) Create(ctx context.Context, name string) (domain.Project, domain.Environment, error) {
+// Create registers a project under a team, with its default production
+// environment (teams-and-roles.md §2 — every project belongs to a team).
+func (s *Service) Create(ctx context.Context, name, teamID string) (domain.Project, domain.Environment, error) {
 	name = strings.TrimSpace(name)
 	if !validName(name) {
 		return domain.Project{}, domain.Environment{}, ErrInvalidName
 	}
 	proj, env, err := s.store.CreateProjectWithEnvironment(
 		ctx,
-		ids.New(ids.PrefixProject), name,
+		ids.New(ids.PrefixProject), name, teamID,
 		ids.New(ids.PrefixEnvironment), DefaultEnvironment,
 	)
 	if err != nil {
@@ -57,11 +60,21 @@ func (s *Service) Create(ctx context.Context, name string) (domain.Project, doma
 	return proj, env, nil
 }
 
-// List returns all projects, newest first.
+// List returns all projects, newest first (the panel-owner view).
 func (s *Service) List(ctx context.Context) ([]domain.Project, error) {
 	list, err := s.store.ListProjects(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("projects: listing: %w", err)
+	}
+	return list, nil
+}
+
+// ListForUser returns the projects of the user's teams (spec §3: listings
+// filter rather than fail).
+func (s *Service) ListForUser(ctx context.Context, userID string) ([]domain.Project, error) {
+	list, err := s.store.ListProjectsByUser(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("projects: listing for user: %w", err)
 	}
 	return list, nil
 }
@@ -114,4 +127,10 @@ func (s *Service) CreateEnvironment(ctx context.Context, projectID, name string)
 
 func validName(name string) bool {
 	return name != "" && len(name) <= 100
+}
+
+// GetEnvironment returns one environment — the authz layer's resolution step
+// from an environment-scoped route to its project (teams-and-roles.md §3).
+func (s *Service) GetEnvironment(ctx context.Context, id string) (domain.Environment, error) {
+	return s.store.GetEnvironment(ctx, id)
 }

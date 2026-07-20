@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -43,6 +44,12 @@ func toPreviewDTO(p domain.Preview) previewDTO {
 }
 
 func (a *API) handleListPreviews(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForApplication(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	if a.deps.Previews == nil {
 		writeJSON(w, http.StatusOK, []previewDTO{})
 		return
@@ -61,6 +68,12 @@ func (a *API) handleListPreviews(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleGetPreview(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForPreview(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	if a.deps.Previews == nil {
 		writeError(w, http.StatusNotFound, "preview not found")
 		return
@@ -81,6 +94,12 @@ func (a *API) handleGetPreview(w http.ResponseWriter, r *http.Request) {
 // handleDeletePreview tears a preview down manually (same destroy path as the
 // PR-closed event and the TTL sweeper). 202: teardown is asynchronous.
 func (a *API) handleDeletePreview(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForPreview(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	if a.deps.Previews == nil {
 		w.WriteHeader(http.StatusNoContent)
 		return

@@ -40,6 +40,10 @@ type createDeployKeyResponse struct {
 }
 
 func (a *API) handleCreateDeployKey(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.requirePanelRole(w, user, domain.RoleAdmin) {
+		return
+	}
 	var req createDeployKeyRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -89,6 +93,10 @@ func (a *API) handleGetDeployKey(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleDeleteDeployKey(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.requirePanelRole(w, user, domain.RoleAdmin) {
+		return
+	}
 	if err := a.deps.DeployKeys.Delete(r.Context(), r.PathValue("id")); err != nil {
 		switch {
 		case errors.Is(err, store.ErrNotFound):

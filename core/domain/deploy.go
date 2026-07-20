@@ -11,6 +11,7 @@ import "time"
 type Project struct {
 	ID        string
 	Name      string
+	TeamID    string
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

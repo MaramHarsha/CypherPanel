@@ -58,11 +58,30 @@ func (a *API) handleLogout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// meResponse extends the user with their teams and per-team roles
+// (teams-and-roles.md §4).
+type meResponse struct {
+	userDTO
+	Teams []teamDTO `json:"teams"`
+}
+
 func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 	user, ok := userFromContext(r.Context())
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	writeJSON(w, http.StatusOK, userDTO{ID: user.ID, Email: user.Email, Role: user.Role})
+	resp := meResponse{userDTO: userDTO{ID: user.ID, Email: user.Email, Role: user.Role}, Teams: []teamDTO{}}
+	if a.deps.Teams != nil {
+		list, err := a.deps.Teams.ListFor(r.Context(), user)
+		if err != nil {
+			a.deps.Log.Error("listing user teams", "error", err)
+			writeError(w, http.StatusInternalServerError, "could not load account")
+			return
+		}
+		for _, t := range list {
+			resp.Teams = append(resp.Teams, teamDTO{ID: t.ID, Name: t.Name, Role: t.Role, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt})
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }

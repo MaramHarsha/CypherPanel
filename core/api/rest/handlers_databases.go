@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -102,6 +103,12 @@ type connectionInfoResponse struct {
 // --- Handlers ---
 
 func (a *API) handleCreateDatabase(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForEnvironment(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	envID := r.PathValue("id")
 	var req createDatabaseRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -133,6 +140,12 @@ func (a *API) handleCreateDatabase(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleListDatabases(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForEnvironment(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	envID := r.PathValue("id")
 	dbs, err := a.deps.Databases.List(r.Context(), envID)
 	if err != nil {
@@ -148,6 +161,12 @@ func (a *API) handleListDatabases(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleGetDatabase(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForDatabase(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	db, err := a.deps.Databases.Get(r.Context(), r.PathValue("id"))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -162,6 +181,12 @@ func (a *API) handleGetDatabase(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handlePatchDatabase(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForDatabase(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	var req patchDatabaseRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -183,6 +208,12 @@ func (a *API) handlePatchDatabase(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleDeleteDatabase(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForDatabase(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	deleteVolume := r.URL.Query().Get("delete_volume") == "true"
 	if err := a.deps.Databases.Delete(r.Context(), r.PathValue("id"), deleteVolume); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -197,6 +228,12 @@ func (a *API) handleDeleteDatabase(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleStopDatabase(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForDatabase(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	if err := a.deps.Databases.Stop(r.Context(), r.PathValue("id")); err != nil {
 		handleDatabaseError(a, w, err, "stopping database")
 		return
@@ -205,6 +242,12 @@ func (a *API) handleStopDatabase(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleStartDatabase(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForDatabase(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	if err := a.deps.Databases.Start(r.Context(), r.PathValue("id")); err != nil {
 		handleDatabaseError(a, w, err, "starting database")
 		return
@@ -213,6 +256,12 @@ func (a *API) handleStartDatabase(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleResetDatabasePassword(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForDatabase(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	pwd, err := a.deps.Databases.ResetPassword(r.Context(), r.PathValue("id"))
 	if err != nil {
 		handleDatabaseError(a, w, err, "resetting password")
@@ -222,6 +271,12 @@ func (a *API) handleResetDatabasePassword(w http.ResponseWriter, r *http.Request
 }
 
 func (a *API) handleDatabaseConnectionInfo(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForDatabase(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	db, err := a.deps.Databases.Get(r.Context(), r.PathValue("id"))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
