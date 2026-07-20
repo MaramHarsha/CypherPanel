@@ -77,7 +77,9 @@ Everything below is exercised by the [integration CI](.github/workflows/integrat
 - ✅ **Revocation**: deleting a server severs its live agent connection and refuses its still-valid certificate.
 - ✅ **Footprints inside budget**: 34 MB plane / 17 MB agent RSS measured idle (budgets 300/50, [vision.md](docs/vision.md)).
 
-**Not yet built** (tracked in [docs/roadmap.md](docs/roadmap.md)): deploy-key private repos · the `--role=builder` split with multi-server image relay · production Let's Encrypt validation on a real domain (HTTP-01 config is wired; CI runs HTTP-only) · managed databases, backups, previews, notifications (Phase 3) · template catalog, dashboard, metrics, real web UI (Phase 4). The license is undecided ([ADR-009](docs/roadmap.md)).
+Also shipped since: deploy-key private repos, bounded runtime-log retention, the `--role=builder` split with multi-server image relay (proven live across two Docker daemons, [ADR-008](docs/adrs/ADR-008-no-registry-required.md)), and production Let's Encrypt validated on a real domain — Phase 2 is complete.
+
+**Not yet built** (tracked in [docs/roadmap.md](docs/roadmap.md)): managed databases, backups, previews, notifications (Phase 3) · template catalog, dashboard, metrics, real web UI (Phase 4) · agent auto-update implementation ([ADR-010](docs/adrs/ADR-010-agent-auto-update.md), lands with the release pipeline).
 
 ## Quickstart (current dev state)
 
@@ -198,4 +200,4 @@ Working on the code? [CLAUDE.md](CLAUDE.md) is the router; [ENGINEERING.md](ENGI
 
 ## License
 
-Not yet decided ([ADR-009 pending](docs/roadmap.md)) — all rights reserved until it is.
+[Apache-2.0](LICENSE) — the whole repository, no open-core split ([ADR-009](docs/adrs/ADR-009-apache-2-license.md)).
