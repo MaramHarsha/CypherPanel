@@ -23,7 +23,6 @@ import (
 
 	"github.com/MaramHarsha/cypherpanel/agent/builder"
 	"github.com/MaramHarsha/cypherpanel/agent/driver"
-	"github.com/MaramHarsha/cypherpanel/agent/driver/docker"
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
 	"github.com/MaramHarsha/cypherpanel/pkg/subjects"
 )
@@ -377,60 +376,6 @@ func (w *Worker) handleMsg(ctx context.Context, msg Message) {
 		}
 		if data, err := proto.Marshal(status); err == nil {
 			_ = w.bus.Publish(subjects.DbState(w.serverID, work.DbId), data)
-		}
-		_ = msg.Ack()
-		return
-
-	case strings.HasSuffix(subject, ".db.backup"):
-		var work agentv1.DbBackupWork
-		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
-			w.log.Error("worker: unmarshaling db backup work", "error", err)
-			_ = msg.Term()
-			return
-		}
-		if w.dbReconciler == nil {
-			w.log.Error("worker: received db backup work but dbReconciler is nil")
-			_ = msg.Term()
-			return
-		}
-
-		executor := docker.NewBackupExecutor(w.dbReconciler, w.log)
-		uploader := docker.NewS3Client()
-		event := executor.ExecuteBackup(ctx, &work, w.dbReconciler, uploader)
-
-		eventBytes, err := proto.Marshal(event)
-		if err != nil {
-			w.log.Error("worker: marshaling backup event", "error", err)
-			_ = msg.Term()
-			return
-		}
-
-		if err := w.bus.Publish(subjects.DbBackupState(w.serverID), eventBytes); err != nil {
-			w.log.Error("worker: publishing backup event", "error", err)
-		}
-		_ = msg.Ack()
-		return
-
-	case strings.HasSuffix(subject, ".db.restore"):
-		var work agentv1.DbRestoreWork
-		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
-			w.log.Error("worker: unmarshaling db restore work", "error", err)
-			_ = msg.Term()
-			return
-		}
-		if w.dbReconciler == nil {
-			w.log.Error("worker: received db restore work but dbReconciler is nil")
-			_ = msg.Term()
-			return
-		}
-
-		executor := docker.NewBackupExecutor(w.dbReconciler, w.log)
-		uploader := docker.NewS3Client()
-
-		if err := executor.ExecuteRestore(ctx, &work, w.dbReconciler, uploader); err != nil {
-			w.log.Error("worker: db restore failed", "error", err)
-			_ = msg.NakWithDelay(10 * time.Second)
-			return
 		}
 		_ = msg.Ack()
 		return

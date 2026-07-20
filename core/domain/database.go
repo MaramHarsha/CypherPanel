@@ -3,10 +3,10 @@ package domain
 import "time"
 
 // Phase 3 resource model (docs/features/managed-databases.md §1): the Managed
-// Database resource and its supporting types — revisions, backup targets,
-// backup schedules, and backup records. Types stay persistence- and
-// transport-free; the store maps pgx types to these, services seal/unseal
-// secrets, handlers serialize DTOs.
+// Database resource and its supporting types — engine matrix and revisions.
+// (Backup targets/schedules are a follow-up, stripped at commit 1d83f0a.) Types
+// stay persistence- and transport-free; the store maps pgx types to these,
+// services seal/unseal secrets, handlers serialize DTOs.
 
 // DbEngine identifies a database engine. Stored as a TEXT column; the domain
 // validates it and the engine matrix maps it to defaults.
@@ -186,50 +186,4 @@ type DatabaseRevision struct {
 	DatabaseID     string
 	ConfigSnapshot []byte // JSON snapshot of the full spec
 	CreatedAt      time.Time
-}
-
-// BackupTarget is an S3-compatible storage destination for database backups.
-// Credentials are sealed at rest (threat-model §5.1).
-type BackupTarget struct {
-	ID             string
-	Name           string
-	Endpoint       string // S3-compatible endpoint URL
-	Bucket         string
-	Region         string
-	AccessKeyCT    []byte
-	AccessKeyNonce []byte
-	SecretKeyCT    []byte
-	SecretKeyNonce []byte
-	PathPrefix     string // key prefix inside bucket
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-}
-
-// DatabaseBackup is a backup schedule configuration for a Database, pointing at
-// a BackupTarget. A cron expression drives automatic backups; manual runs are
-// always available.
-type DatabaseBackup struct {
-	ID             string
-	DatabaseID     string
-	TargetID       string
-	Schedule       string // cron expression; empty = manual only
-	RetentionCount int    // keep last N backups
-	Enabled        bool
-	LastRunAt      *time.Time
-	LastStatus     string // succeeded | failed | running | ""
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-}
-
-// BackupRecord is a single completed (or failed) backup execution.
-type BackupRecord struct {
-	ID               string
-	DatabaseBackupID string
-	ObjectKey        string // S3 key where the backup was stored
-	SizeBytes        int64
-	Status           string // succeeded | failed
-	Detail           string
-	StartedAt        time.Time
-	FinishedAt       *time.Time
-	CreatedAt        time.Time
 }

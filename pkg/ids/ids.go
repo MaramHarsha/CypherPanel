@@ -29,9 +29,6 @@ const (
 	// Phase 3: Managed Databases (docs/features/managed-databases.md).
 	PrefixDatabase         = "db"
 	PrefixDatabaseRevision = "dbr"
-	PrefixBackupTarget     = "bt"
-	PrefixDatabaseBackup   = "bak"
-	PrefixBackupRecord     = "br"
 )
 
 // New returns a prefixed, URL-safe, collision-resistant identifier such as

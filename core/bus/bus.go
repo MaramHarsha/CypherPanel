@@ -40,17 +40,16 @@ import (
 )
 
 const (
-	streamState          = "STATE"
-	streamWork           = "WORK"
-	streamLogs           = "LOGS"
-	streamRuntimeLogs    = "RUNTIME_LOGS"
-	planeUser            = "cypherd-control-plane"
-	heartbeatDurable     = "plane-heartbeats"
-	deployEventDurable   = "plane-deploy-events"
-	appStatusDurable     = "plane-app-status"
-	dbStatusDurable      = "plane-db-status"
-	dbBackupEventDurable = "plane-db-backup-events"
-	readyTimeout         = 10 * time.Second
+	streamState        = "STATE"
+	streamWork         = "WORK"
+	streamLogs         = "LOGS"
+	streamRuntimeLogs  = "RUNTIME_LOGS"
+	planeUser          = "cypherd-control-plane"
+	heartbeatDurable   = "plane-heartbeats"
+	deployEventDurable = "plane-deploy-events"
+	appStatusDurable   = "plane-app-status"
+	dbStatusDurable    = "plane-db-status"
+	readyTimeout       = 10 * time.Second
 )
 
 // AgentAuthorizer answers whether a certificate identity is still an enrolled
@@ -376,12 +375,6 @@ func (b *Bus) ConsumeAppStatus(ctx context.Context, handle func(serverID string,
 // from the subject) to handle.
 func (b *Bus) ConsumeDbStatus(ctx context.Context, handle func(serverID string, data []byte)) (jetstream.ConsumeContext, error) {
 	return b.consumeState(ctx, dbStatusDurable, subjects.DbStateAll, handle)
-}
-
-// ConsumeDbBackupEvents delivers each DbBackupEvent payload (with its server id
-// parsed from the subject) to handle.
-func (b *Bus) ConsumeDbBackupEvents(ctx context.Context, handle func(serverID string, data []byte)) (jetstream.ConsumeContext, error) {
-	return b.consumeState(ctx, dbBackupEventDurable, subjects.DbBackupStateAll, handle)
 }
 
 func (b *Bus) consumeState(ctx context.Context, durable, filter string, handle func(serverID string, data []byte)) (jetstream.ConsumeContext, error) {

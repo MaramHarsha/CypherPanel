@@ -12,6 +12,15 @@
 > [glossary.md](../glossary.md). Research input from
 > [coolify.md](../../research/coolify.md) (8 engine models) and
 > [dokploy.md](../../research/dokploy.md) (per-engine schema files).
+>
+> **Scope note (this branch):** provisioning and lifecycle (§1–6) ship here,
+> proven live across PostgreSQL, Redis, and MySQL. Backup and restore (§7) are
+> a follow-up: the first cut could not work at runtime (docker-exec stream
+> framing corrupts dumps; the exec seam had no stdin for restore), so per rule
+> 10 it is deferred rather than shipped non-functional, to be rebuilt against a
+> live S3 (MinIO) test. Its schema, API, and proto are deferred with it; the
+> stripped first-cut code is recoverable from this branch's history at commit
+> `1d83f0a`.
 
 ## 1. Resource model
 
@@ -51,7 +60,8 @@ Database:
 
   -- desired state tracking (ADR-005)
   desired_revision_id   TEXT        -- points at the current config snapshot
-  status                TEXT NOT NULL DEFAULT 'stopped'
+  desired_state         TEXT NOT NULL DEFAULT 'running'  -- 'running' | 'stopped': operator intent, authoritative for the scheduler
+  status                TEXT NOT NULL DEFAULT 'stopped'   -- agent observation only, never used as intent
   status_detail         TEXT NOT NULL DEFAULT ''
   observed_revision_id  TEXT NOT NULL DEFAULT ''
   status_observed_at    TIMESTAMPTZ
@@ -129,9 +139,14 @@ create → provision → running
 ### Provisioning flow
 
 1. **API creates** the Database row + a DatabaseRevision with the sealed
-   config snapshot. Status = `stopped`.
-2. **Scheduler detects** the new revision (desired ≠ observed), emits a
-   `DbProvisionWork` item on `work.<server_id>.db.provision`.
+   config snapshot. Observed `status` = `stopped` (nothing runs yet), but
+   `desired_state` = `running` — the two are distinct, and the scheduler keys
+   only on intent. Create then calls the scheduler to reconcile.
+2. **Scheduler** sees `desired_state = running` with a desired revision and
+   emits a `DbProvisionWork` item on `work.<server_id>.db.provision`. (Stop
+   sets `desired_state = stopped` → the scheduler emits `DbRemoveWork` keeping
+   the volume; start sets it back. Work-item MsgIDs are unique per intent
+   event so a start-after-stop is never dropped by publish deduplication.)
 3. **Agent receives** the work item, which contains the full `DbSpec`
    (engine, version, image, env, volume, network, health command,
    resource limits).
@@ -165,8 +180,8 @@ Once the agent reports removal, the plane deletes the Database row.
 ## 4. API surface (under `/api/v1`)
 
 ```
-POST   /databases                              → Database (+ root_password once)
-GET    /databases?environment_id=<id>           → [Database]
+POST   /environments/{id}/databases             → Database (+ root_password once)
+GET    /environments/{id}/databases             → [Database]
 GET    /databases/{id}                          → Database
 PATCH  /databases/{id}                          → Database
 DELETE /databases/{id}[?delete_volume=true]     → 204
@@ -288,7 +303,12 @@ desired spec reports success without recreation. A container whose image
 or config differs is stopped, removed, and recreated with the same
 named volume.
 
-## 7. Backup and restore
+## 7. Backup and restore — DEFERRED to `feat/db-backups-followup`
+
+> The design below stands, but the implementation is **not** in this branch
+> (see the scope note at the top). It is rebuilt as a follow-up (stripped code recoverable at `1d83f0a`) with
+> a docker-exec seam that demultiplexes the dump stream and supports stdin for
+> restore, validated against a live MinIO/S3 target.
 
 ### Backup targets (S3-compatible)
 

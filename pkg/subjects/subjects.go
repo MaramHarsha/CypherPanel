@@ -127,17 +127,9 @@ func WorkConsumerAck(serverID string) string {
 // Database work subjects — plane → agent.
 func DbProvision(serverID string) string { return WorkPrefix + serverID + ".db.provision" }
 func DbRemove(serverID string) string    { return WorkPrefix + serverID + ".db.remove" }
-func DbBackup(serverID string) string    { return WorkPrefix + serverID + ".db.backup" }
-func DbRestore(serverID string) string   { return WorkPrefix + serverID + ".db.restore" }
 
 // Database state subjects — agent → plane.
 func DbState(serverID, dbID string) string { return StatePrefix + serverID + ".db." + dbID }
 
-// Plane-side consumption wildcards for database status observations.
-const (
-	DbStateAll       = "state.*.db.>"
-	DbBackupStateAll = "state.*.db.backup"
-)
-
-// DbBackupState is where an agent reports backup/restore event outcomes.
-func DbBackupState(serverID string) string { return StatePrefix + serverID + ".db.backup" }
+// Plane-side consumption wildcard for database status observations.
+const DbStateAll = "state.*.db.>"

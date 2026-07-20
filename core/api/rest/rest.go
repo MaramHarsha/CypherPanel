@@ -57,24 +57,22 @@ type LogSubscriber interface {
 
 // Deps are the dependencies the API needs.
 type Deps struct {
-	Auth            *auth.Authenticator
-	Servers         *servers.Service
-	Projects        *projects.Service
-	Applications    *applications.Service
-	DeployKeys      *deploykeys.Service
-	Databases       *databases.Service
-	BackupTargets   *databases.BackupTargetService
-	BackupSchedules *databases.BackupScheduleService
-	Scheduler       Deployer
-	Deployments     DeploymentReader
-	Opener          Opener
-	Pinger          Pinger
-	CACertPEM       []byte
-	EnrollAddr      string // advertised gRPC enrollment address (host:port)
-	NATSURL         string // advertised data-plane URL
-	Logs            LogSubscriber
-	ConsoleURL      string // advertised HTTP base URL (installer + CA fetch)
-	Log             *slog.Logger
+	Auth         *auth.Authenticator
+	Servers      *servers.Service
+	Projects     *projects.Service
+	Applications *applications.Service
+	DeployKeys   *deploykeys.Service
+	Databases    *databases.Service
+	Scheduler    Deployer
+	Deployments  DeploymentReader
+	Opener       Opener
+	Pinger       Pinger
+	CACertPEM    []byte
+	EnrollAddr   string // advertised gRPC enrollment address (host:port)
+	NATSURL      string // advertised data-plane URL
+	Logs         LogSubscriber
+	ConsoleURL   string // advertised HTTP base URL (installer + CA fetch)
+	Log          *slog.Logger
 }
 
 // API holds the HTTP handlers and their dependencies.
@@ -162,18 +160,6 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/databases/{id}/start", a.authed(a.handleStartDatabase))
 	mux.HandleFunc("POST /api/v1/databases/{id}/reset-password", a.authed(a.handleResetDatabasePassword))
 	mux.HandleFunc("GET /api/v1/databases/{id}/connection-info", a.authed(a.handleDatabaseConnectionInfo))
-
-	// Database backup schedules.
-	mux.HandleFunc("POST /api/v1/databases/{id}/backups", a.authed(a.handleCreateDatabaseBackup))
-	mux.HandleFunc("GET /api/v1/databases/{id}/backups", a.authed(a.handleListDatabaseBackups))
-	mux.HandleFunc("DELETE /api/v1/databases/{id}/backups/{bak_id}", a.authed(a.handleDeleteDatabaseBackup))
-	mux.HandleFunc("GET /api/v1/databases/{id}/backups/{bak_id}/history", a.authed(a.handleListBackupRecords))
-
-	// Backup targets.
-	mux.HandleFunc("POST /api/v1/backup-targets", a.authed(a.handleCreateBackupTarget))
-	mux.HandleFunc("GET /api/v1/backup-targets", a.authed(a.handleListBackupTargets))
-	mux.HandleFunc("GET /api/v1/backup-targets/{id}", a.authed(a.handleGetBackupTarget))
-	mux.HandleFunc("DELETE /api/v1/backup-targets/{id}", a.authed(a.handleDeleteBackupTarget))
 
 	// Interim console + static assets.
 	mux.Handle("GET /", a.consoleHandler())

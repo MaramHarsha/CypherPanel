@@ -14,7 +14,6 @@ package docker
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"time"
 
@@ -98,29 +97,6 @@ type DatabaseReconciler struct {
 // NewDatabaseReconciler wires the database reconciler.
 func NewDatabaseReconciler(client DbClient, log *slog.Logger) *DatabaseReconciler {
 	return &DatabaseReconciler{client: client, log: log}
-}
-
-// Exec executes a command inside a running container.
-func (r *DatabaseReconciler) Exec(ctx context.Context, containerID string, cmd []string) (io.Reader, error) {
-	if execer, ok := r.client.(DockerExecer); ok {
-		return execer.Exec(ctx, containerID, cmd)
-	}
-	return nil, fmt.Errorf("docker engine client does not support Exec")
-}
-
-// StartContainer starts a created container.
-func (r *DatabaseReconciler) StartContainer(ctx context.Context, id string) error {
-	return r.client.StartContainer(ctx, id)
-}
-
-// StopContainer stops a container.
-func (r *DatabaseReconciler) StopContainer(ctx context.Context, id string, timeout time.Duration) error {
-	return r.client.StopContainer(ctx, id, timeout)
-}
-
-// WaitHealthy blocks until container health check passes.
-func (r *DatabaseReconciler) WaitHealthy(ctx context.Context, containerID string, timeout time.Duration) error {
-	return r.client.WaitHealthy(ctx, containerID, timeout)
 }
 
 // ReconcileDatabases converges the local Docker daemon toward the desired set

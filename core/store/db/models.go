@@ -48,33 +48,6 @@ type Application struct {
 	StatusObservedAt      pgtype.Timestamptz
 }
 
-type BackupRecord struct {
-	ID               string
-	DatabaseBackupID string
-	ObjectKey        string
-	SizeBytes        int64
-	Status           string
-	Detail           string
-	StartedAt        pgtype.Timestamptz
-	FinishedAt       pgtype.Timestamptz
-	CreatedAt        pgtype.Timestamptz
-}
-
-type BackupTarget struct {
-	ID             string
-	Name           string
-	Endpoint       string
-	Bucket         string
-	Region         string
-	AccessKeyCt    []byte
-	AccessKeyNonce []byte
-	SecretKeyCt    []byte
-	SecretKeyNonce []byte
-	PathPrefix     string
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
-}
-
 type Database struct {
 	ID                 string
 	EnvironmentID      string
@@ -102,19 +75,6 @@ type Database struct {
 	DeleteVolume       bool
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
-}
-
-type DatabaseBackup struct {
-	ID             string
-	DatabaseID     string
-	TargetID       string
-	Schedule       string
-	RetentionCount int32
-	Enabled        bool
-	LastRunAt      pgtype.Timestamptz
-	LastStatus     string
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
 }
 
 type DatabaseRevision struct {
