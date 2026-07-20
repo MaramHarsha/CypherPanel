@@ -122,8 +122,11 @@ func (m *Manager) ensureAndDeploy(ctx context.Context, source domain.Application
 		},
 		Build:   source.Build,
 		Runtime: source.Runtime,
-		Route:   domain.AppRoute{Domain: domainName, HTTPS: true, PathPrefix: source.Route.PathPrefix},
-		Health:  source.Health,
+		// Inherit the source's TLS posture: an HTTPS production app (real
+		// domain + ACME) yields HTTPS previews under the wildcard base; an
+		// HTTP app yields HTTP previews (preview-environments.md §2).
+		Route:  domain.AppRoute{Domain: domainName, HTTPS: source.Route.HTTPS, PathPrefix: source.Route.PathPrefix},
+		Health: source.Health,
 		// No env vars in previews at v1 (preview-environments.md §5/§6:
 		// fork-PR secret exfiltration risk).
 	})

@@ -116,7 +116,9 @@ key), `Build` (dockerfile, context), `Runtime` (server, port, replicas), and
 `Health` verbatim, and **overrides**:
 
 - `Source.Branch` = PR head ref (the code under review).
-- `Route.Domain` = `pr-<n>.<base>`, `Route.HTTPS` = (base domain set).
+- `Route.Domain` = `pr-<n>.<base>`; `Route.HTTPS` **inherits the source app's
+  TLS posture** (an HTTPS production app — real domain + ACME — yields HTTPS
+  previews under the wildcard base; an HTTP app yields HTTP previews).
 - `Name` = `<source-name>-pr-<n>` (deterministic, human-readable).
 - A fresh webhook id + sealed secret (created by the normal app-create path;
   unused by the preview — deploys are driven by the *source* app's webhook —
