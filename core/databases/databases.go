@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/MaramHarsha/cypherpanel/core/domain"
@@ -202,6 +203,9 @@ func (s *Service) Update(ctx context.Context, dbID string, in UpdateInput) (doma
 		return domain.Database{}, fmt.Errorf("databases: getting database: %w", err)
 	}
 
+	if err := validateLimits(in.CPULimit, in.MemoryLimitMB, in.ExposePort); err != nil {
+		return domain.Database{}, err
+	}
 	changed := false
 	if in.Name != nil && *in.Name != d.Name {
 		if strings.TrimSpace(*in.Name) == "" {
@@ -404,6 +408,24 @@ func configSnapshot(d domain.Database) ([]byte, error) {
 	return json.Marshal(snap)
 }
 
+// validateLimits bounds the operator-supplied resource numbers. They are
+// persisted as int32 and travel as uint32 (DbSpec), so an unchecked negative or
+// oversized value would wrap on the cast (CWE-190 — same class as the
+// preview_ttl_hours bound in core/applications). 0 stays valid everywhere: it
+// means "no limit" / "private only" / "remove on update".
+func validateLimits(cpu *float64, memMB, port *int) error {
+	if cpu != nil && (math.IsNaN(*cpu) || math.IsInf(*cpu, 0) || *cpu < 0) {
+		return invalid("cpu_limit must be a non-negative number")
+	}
+	if memMB != nil && (*memMB < 0 || *memMB > math.MaxInt32) {
+		return invalid("memory_limit_mb must be between 0 and 2147483647")
+	}
+	if port != nil && (*port < 0 || *port > 65535) {
+		return invalid("expose_port must be between 0 and 65535")
+	}
+	return nil
+}
+
 func validateAndDefault(in CreateInput) (CreateInput, error) {
 	if strings.TrimSpace(in.Name) == "" {
 		return in, invalid("name is required")
@@ -414,6 +436,9 @@ func validateAndDefault(in CreateInput) (CreateInput, error) {
 	}
 	if strings.TrimSpace(in.ServerID) == "" {
 		return in, invalid("server_id is required")
+	}
+	if err := validateLimits(in.CPULimit, in.MemoryLimitMB, in.ExposePort); err != nil {
+		return in, err
 	}
 	// Default version from engine matrix if not specified.
 	if strings.TrimSpace(in.Version) == "" {

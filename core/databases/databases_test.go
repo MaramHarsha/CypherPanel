@@ -1,0 +1,48 @@
+package databases
+
+// Bounds on operator-supplied resource numbers (validateLimits): they are
+// persisted as int32 and travel as uint32 on DbSpec, so unchecked values would
+// wrap on the cast (CWE-190). Exercised directly — Create and Update both call
+// validateLimits before any narrowing.
+
+import (
+	"math"
+	"testing"
+)
+
+func ptrF(f float64) *float64 { return &f }
+func ptrI(i int) *int         { return &i }
+
+func TestValidateLimitsBounds(t *testing.T) {
+	cases := map[string]struct {
+		cpu  *float64
+		mem  *int
+		port *int
+		ok   bool
+	}{
+		"all nil":              {nil, nil, nil, true},
+		"all zero (clear)":     {ptrF(0), ptrI(0), ptrI(0), true},
+		"sane values":          {ptrF(1.5), ptrI(2048), ptrI(5432), true},
+		"port upper bound":     {nil, nil, ptrI(65535), true},
+		"mem upper bound":      {nil, ptrI(math.MaxInt32), nil, true},
+		"negative cpu":         {ptrF(-1), nil, nil, false},
+		"NaN cpu":              {ptrF(math.NaN()), nil, nil, false},
+		"Inf cpu":              {ptrF(math.Inf(1)), nil, nil, false},
+		"negative mem":         {nil, ptrI(-1), nil, false},
+		"overflowing mem":      {nil, ptrI(math.MaxInt32 + 1), nil, false},
+		"negative port":        {nil, nil, ptrI(-1), false},
+		"port above 65535":     {nil, nil, ptrI(65536), false},
+		"port wraps to uint32": {nil, nil, ptrI(-2), false}, // would become ~4.29e9 on the wire
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := validateLimits(c.cpu, c.mem, c.port)
+			if c.ok && err != nil {
+				t.Fatalf("validateLimits = %v, want nil", err)
+			}
+			if !c.ok && err == nil {
+				t.Fatal("validateLimits = nil, want ValidationError")
+			}
+		})
+	}
+}

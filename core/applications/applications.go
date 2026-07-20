@@ -361,6 +361,11 @@ func validateAndDefault(in CreateInput) (CreateInput, error) {
 	if in.Health.IntervalSeconds < 0 || in.Health.TimeoutSeconds < 0 || in.Health.Retries < 0 {
 		return in, invalid("health values must not be negative")
 	}
+	// Persisted as int32 columns; anything above would wrap on the cast (same
+	// bound as preview_ttl_hours).
+	if in.Health.IntervalSeconds > math.MaxInt32 || in.Health.TimeoutSeconds > math.MaxInt32 || in.Health.Retries > math.MaxInt32 {
+		return in, invalid("health values must not exceed 2147483647")
+	}
 	if in.Health.Path == "" {
 		in.Health.Path = "/"
 	}
