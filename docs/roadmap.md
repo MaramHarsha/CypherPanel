@@ -18,7 +18,7 @@ Deliverables alongside code: `docs/security/threat-model.md` written **before** 
 
 **Evidence at closeout:** installer join measured ~1 s wall on fresh `ubuntu:24.04`, tampered CA fingerprint refused (CI job on every push + live run); outage reconvergence + revocation-kick asserted by `integration.yml` on Linux each push (outage compressed to 45 s for CI latency — run the full 5-minute variant on the first real VPS deployment); footprints measured idle at ~31 MB (plane) / ~14 MB (agent) working set against 300/50 MB budgets.
 
-## Phase 2 — Deploy vertical slice
+## Phase 2 — Deploy vertical slice ✅ complete (2026-07-20)
 
 One application, end to end, done properly rather than many features shallowly.
 
