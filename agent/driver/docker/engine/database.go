@@ -38,8 +38,6 @@ func (c *Client) RemoveVolume(ctx context.Context, name string) error {
 	return err
 }
 
-type dbLabelFilter struct{}
-
 func dbFilter() url.Values {
 	f, _ := json.Marshal(map[string][]string{
 		"label": {docker.LabelDbManaged + "=docker"},
@@ -167,8 +165,6 @@ func (c *Client) CreateDbContainer(ctx context.Context, spec docker.DbContainerS
 	}
 	return resp.ID, nil
 }
-
-
 
 // WaitHealthy blocks until the container's HEALTHCHECK reports healthy,
 // or the context expires.

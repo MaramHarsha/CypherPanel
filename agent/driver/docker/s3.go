@@ -59,7 +59,7 @@ func (s *RealS3Client) Download(
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, fmt.Errorf("s3 download status: %s", resp.Status)
 	}
 
@@ -95,7 +95,7 @@ func (s *RealS3Client) request(
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))

@@ -53,7 +53,6 @@ type EngineSpec struct {
 // EngineDefaults returns the default container configuration for an engine and
 // version. It panics on invalid engines — callers must validate first.
 func EngineDefaults(engine DbEngine, version string) EngineSpec {
-	img := string(engine) + ":" + version
 	switch engine {
 	case EnginePostgreSQL:
 		return EngineSpec{
@@ -89,23 +88,21 @@ func EngineDefaults(engine DbEngine, version string) EngineSpec {
 		}
 	case EngineRedis:
 		return EngineSpec{
-			Image:    "redis:" + version,
-			DataPath: "/data",
+			Image:     "redis:" + version,
+			DataPath:  "/data",
 			HealthCmd: "redis-cli ping",
-			RootUser: "",
+			RootUser:  "",
 		}
 	case EngineValkey:
 		return EngineSpec{
-			Image:    "valkey/valkey:" + version,
-			DataPath: "/data",
+			Image:     "valkey/valkey:" + version,
+			DataPath:  "/data",
 			HealthCmd: "valkey-cli ping",
-			RootUser: "",
+			RootUser:  "",
 		}
 	default:
 		panic("domain: EngineDefaults called with invalid engine: " + string(engine))
 	}
-	// Unreachable; the switch above is exhaustive for valid engines.
-	return EngineSpec{Image: img}
 }
 
 // Database status vocabulary (ui-principles §5). Distinct from ServerStatus

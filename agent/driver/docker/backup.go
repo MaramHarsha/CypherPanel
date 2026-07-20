@@ -15,19 +15,17 @@
 package docker
 
 import (
-	"bytes"
 	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"time"
 
-	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
+
+	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
 )
 
 // BackupReconciler defines the methods BackupExecutor needs from the database reconciler.
@@ -96,7 +94,7 @@ func (b *BackupExecutor) ExecuteBackup(
 		}
 	}
 	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath) // cleanup on all exit paths
+	defer func() { _ = os.Remove(tmpPath) }() // cleanup on all exit paths
 
 	gzw := gzip.NewWriter(tmpFile)
 	written, err := io.Copy(gzw, stdout)
@@ -141,7 +139,7 @@ func (b *BackupExecutor) ExecuteBackup(
 			OccurredAt:     now,
 		}
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if err := uploader.Upload(ctx,
 		work.S3Endpoint, work.S3Bucket, work.S3Region, work.S3Key,
@@ -189,14 +187,14 @@ func (b *BackupExecutor) ExecuteRestore(
 	if err != nil {
 		return fmt.Errorf("downloading backup: %w", err)
 	}
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 
 	// Step 2: Decompress.
 	gzr, err := gzip.NewReader(body)
 	if err != nil {
 		return fmt.Errorf("decompressing backup: %w", err)
 	}
-	defer gzr.Close()
+	defer func() { _ = gzr.Close() }()
 
 	// Step 3: Write to temp file for restore.
 	tmpFile, err := os.CreateTemp("", "cypher-restore-*")
@@ -204,13 +202,13 @@ func (b *BackupExecutor) ExecuteRestore(
 		return fmt.Errorf("creating temp restore file: %w", err)
 	}
 	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
+	defer func() { _ = os.Remove(tmpPath) }()
 
 	if _, err := io.Copy(tmpFile, gzr); err != nil {
-		tmpFile.Close()
+		_ = tmpFile.Close()
 		return fmt.Errorf("writing restore file: %w", err)
 	}
-	tmpFile.Close()
+	_ = tmpFile.Close()
 
 	// Step 4: Stop container.
 	if err := b.client.StopContainer(ctx, work.ContainerName, 30*time.Second); err != nil {
@@ -233,7 +231,7 @@ func (b *BackupExecutor) ExecuteRestore(
 	if err != nil {
 		return fmt.Errorf("opening restore data: %w", err)
 	}
-	defer restoreData.Close()
+	defer func() { _ = restoreData.Close() }()
 
 	_, err = execer.Exec(ctx, work.ContainerName, []string{"sh", "-c", work.RestoreCmd})
 	if err != nil {
@@ -243,11 +241,3 @@ func (b *BackupExecutor) ExecuteRestore(
 	b.log.Info("restore completed", "db_id", work.DbId, "s3_key", work.S3Key)
 	return nil
 }
-
-// These are used only to satisfy the compiler — the real implementations
-// are in the Docker Engine API wrapper and the S3 client.
-var (
-	_ = bytes.NewReader
-	_ = exec.Command
-	_ = filepath.Join
-)

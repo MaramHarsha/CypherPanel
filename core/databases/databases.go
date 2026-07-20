@@ -381,13 +381,13 @@ func generateAndSealPassword(sealer Sealer) (sealedPassword, error) {
 // revision record.
 func configSnapshot(d domain.Database) ([]byte, error) {
 	snap := map[string]any{
-		"engine":          string(d.Engine),
-		"version":         d.Version,
-		"server_id":       d.ServerID,
-		"volume_name":     d.VolumeName,
-		"data_path":       d.DataPath,
-		"network":         d.Network,
-		"root_user":       d.RootUser,
+		"engine":           string(d.Engine),
+		"version":          d.Version,
+		"server_id":        d.ServerID,
+		"volume_name":      d.VolumeName,
+		"data_path":        d.DataPath,
+		"network":          d.Network,
+		"root_user":        d.RootUser,
 		"require_password": d.RequirePassword,
 	}
 	if d.CPULimit != nil {

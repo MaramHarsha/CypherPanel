@@ -18,9 +18,10 @@ import (
 	"log/slog"
 	"time"
 
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	"github.com/MaramHarsha/cypherpanel/agent/driver"
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // Database status vocabulary (same values as the plane's domain constants;

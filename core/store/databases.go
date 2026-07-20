@@ -22,7 +22,7 @@ func (s *Store) CreateDatabaseWithRevision(ctx context.Context, d domain.Databas
 
 	qtx := s.q.WithTx(tx)
 
-	row, err := qtx.CreateDatabase(ctx, db.CreateDatabaseParams{
+	_, err = qtx.CreateDatabase(ctx, db.CreateDatabaseParams{
 		ID:                d.ID,
 		EnvironmentID:     d.EnvironmentID,
 		Name:              d.Name,
@@ -56,7 +56,7 @@ func (s *Store) CreateDatabaseWithRevision(ctx context.Context, d domain.Databas
 	}
 
 	// Update the database to point to the desired revision.
-	row, err = qtx.SetDatabaseDesiredRevision(ctx, db.SetDatabaseDesiredRevisionParams{
+	row, err := qtx.SetDatabaseDesiredRevision(ctx, db.SetDatabaseDesiredRevisionParams{
 		ID:                d.ID,
 		DesiredRevisionID: textFromPtr(&rev.ID),
 	})

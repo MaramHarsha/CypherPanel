@@ -14,26 +14,26 @@ import (
 // --- DTOs ---
 
 type databaseDTO struct {
-	ID                 string     `json:"id"`
-	EnvironmentID      string     `json:"environment_id"`
-	Name               string     `json:"name"`
-	Engine             string     `json:"engine"`
-	Version            string     `json:"version"`
-	ServerID           string     `json:"server_id"`
-	CPULimit           *float64   `json:"cpu_limit,omitempty"`
-	MemoryLimitMB      *int       `json:"memory_limit_mb,omitempty"`
-	VolumeName         string     `json:"volume_name"`
-	ExposePort         *int       `json:"expose_port,omitempty"`
-	Network            string     `json:"network"`
-	RootUser           string     `json:"root_user"`
-	RootPassword       string     `json:"root_password,omitempty"` // only on create / reset
-	RequirePassword    bool       `json:"require_password"`
-	Status             string     `json:"status"`
-	StatusDetail       string     `json:"status_detail,omitempty"`
-	DesiredRevisionID  *string    `json:"desired_revision_id,omitempty"`
-	ObservedRevisionID string     `json:"observed_revision_id,omitempty"`
-	CreatedAt          time.Time  `json:"created_at"`
-	UpdatedAt          time.Time  `json:"updated_at"`
+	ID                 string    `json:"id"`
+	EnvironmentID      string    `json:"environment_id"`
+	Name               string    `json:"name"`
+	Engine             string    `json:"engine"`
+	Version            string    `json:"version"`
+	ServerID           string    `json:"server_id"`
+	CPULimit           *float64  `json:"cpu_limit,omitempty"`
+	MemoryLimitMB      *int      `json:"memory_limit_mb,omitempty"`
+	VolumeName         string    `json:"volume_name"`
+	ExposePort         *int      `json:"expose_port,omitempty"`
+	Network            string    `json:"network"`
+	RootUser           string    `json:"root_user"`
+	RootPassword       string    `json:"root_password,omitempty"` // only on create / reset
+	RequirePassword    bool      `json:"require_password"`
+	Status             string    `json:"status"`
+	StatusDetail       string    `json:"status_detail,omitempty"`
+	DesiredRevisionID  *string   `json:"desired_revision_id,omitempty"`
+	ObservedRevisionID string    `json:"observed_revision_id,omitempty"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 func toDatabaseDTO(d domain.Database) databaseDTO {

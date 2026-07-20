@@ -40,13 +40,13 @@ import (
 )
 
 const (
-	streamState        = "STATE"
-	streamWork         = "WORK"
-	streamLogs         = "LOGS"
-	streamRuntimeLogs  = "RUNTIME_LOGS"
-	planeUser          = "cypherd-control-plane"
-	heartbeatDurable   = "plane-heartbeats"
-	deployEventDurable = "plane-deploy-events"
+	streamState          = "STATE"
+	streamWork           = "WORK"
+	streamLogs           = "LOGS"
+	streamRuntimeLogs    = "RUNTIME_LOGS"
+	planeUser            = "cypherd-control-plane"
+	heartbeatDurable     = "plane-heartbeats"
+	deployEventDurable   = "plane-deploy-events"
 	appStatusDurable     = "plane-app-status"
 	dbStatusDurable      = "plane-db-status"
 	dbBackupEventDurable = "plane-db-backup-events"

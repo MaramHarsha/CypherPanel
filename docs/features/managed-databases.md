@@ -391,7 +391,7 @@ confirmation field (`"confirm": true`) to proceed.
 
 ## 8. Migration (SQL)
 
-`0005_managed_databases.sql` — additive (ENGINEERING rule 16):
+`0006_managed_databases.sql` — additive (ENGINEERING rule 16):
 
 - `CREATE TABLE databases` (schema per §1)
 - `CREATE TABLE database_revisions`
