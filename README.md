@@ -4,7 +4,7 @@
 
 CypherPanel deploys your applications from git to a live, TLS-terminated URL on your own servers. It unifies the best of **Coolify** (breadth: one-click templates, every database) and **Dokploy** (polish: rollbacks, backups, a clean data model) on an architecture neither has: a lightweight Go control plane commanding **dial-home agents** — no SSH keys stored anywhere, no builds on the panel, desired-state reconciliation throughout.
 
-> **Status: Phase 2 (the deploy vertical slice) is largely built and proven end-to-end in CI** — git → image build → health-gated zero-downtime rollout → routed at its domain through a managed Traefik proxy, plus webhook deploys, live log streaming, rollback, and crash recovery. See [What works today](#what-works-today) for the honest checklist and [docs/roadmap.md](docs/roadmap.md) for the phase gates.
+> **Status: Phases 1–3 are complete.** The deploy vertical slice is proven end-to-end in CI — git → image build → health-gated zero-downtime rollout → routed at its domain through a managed Traefik proxy, plus webhook deploys, live log streaming, rollback, and crash recovery. Phase 3 adds the state-model breadth on top: managed databases, S3 backups/restore, preview environments from PRs, notifications, cron-in-container scheduled tasks, and teams + roles. See [What works today](#what-works-today) for the honest checklist of what is CI-proven vs. end-to-end-verified, and [docs/roadmap.md](docs/roadmap.md) for the phase gates.
 
 ---
 
@@ -56,11 +56,14 @@ Because everything is desired state, failure is boring: kill the agent mid-deplo
 
 Full vocabulary in [docs/glossary.md](docs/glossary.md):
 
+- **Team → Project → Environment** — the organizational spine and tenancy boundary. A team owns projects; users belong to teams with a ranked role (member < admin < owner). Every project gets a `production` environment; previews and staging are just more environments.
 - **Server** — a host running `cypher-agent`, identified by its mTLS certificate (never by stored credentials).
-- **Project → Environment** — the organizational spine. Every project gets a `production` environment; previews and staging are just more environments.
 - **Application** — a resource built from a git repository and owned end to end: source, build, runtime, route, health checks, sealed env vars.
+- **Managed Database** — a first-class resource (PostgreSQL, MySQL, MariaDB, MongoDB, Redis, Valkey) the agent provisions and reconciles, with scheduled backups to any S3-compatible target and restore.
 - **Revision** — an immutable record (image + config snapshot) that a deployment points at; what rollback restores.
 - **Deployment** — a recorded transition of an application from one desired revision to another, with its full pipeline history.
+- **Preview** — an ordinary child environment holding a cloned application, created and destroyed automatically from PR lifecycle events (with a TTL backstop) — not a special case.
+- **Notifier / Scheduled task** — a project-scoped channel (Email/Discord/Slack/Telegram) that fires on observed outcomes; and a cron entry the agent runs inside an app's own container ([ADR-011](docs/adrs/ADR-011-in-container-scheduled-tasks.md)).
 - **Driver** — an orchestrator backend inside the agent. `docker` is the launch driver ([ADR-006](docs/adrs/ADR-006-docker-only-at-launch.md)); Swarm and k8s are planned behind the same interface. The proxy (Traefik, later Caddy) is a driver too.
 
 ## What works today
@@ -77,9 +80,18 @@ Everything below is exercised by the [integration CI](.github/workflows/integrat
 - ✅ **Revocation**: deleting a server severs its live agent connection and refuses its still-valid certificate.
 - ✅ **Footprints inside budget**: 34 MB plane / 17 MB agent RSS measured idle (budgets 300/50, [vision.md](docs/vision.md)).
 
-Also shipped since: deploy-key private repos, bounded runtime-log retention, the `--role=builder` split with multi-server image relay (proven live across two Docker daemons, [ADR-008](docs/adrs/ADR-008-no-registry-required.md)), and production Let's Encrypt validated on a real domain — Phase 2 is complete.
+Also shipped in Phase 2: deploy-key private repos, bounded runtime-log retention, the `--role=builder` split with multi-server image relay (proven live across two Docker daemons, [ADR-008](docs/adrs/ADR-008-no-registry-required.md)), and production Let's Encrypt validated on a real domain.
 
-**Not yet built** (tracked in [docs/roadmap.md](docs/roadmap.md)): managed databases, backups, previews, notifications (Phase 3) · template catalog, dashboard, metrics, real web UI (Phase 4) · agent auto-update implementation ([ADR-010](docs/adrs/ADR-010-agent-auto-update.md), lands with the release pipeline).
+**Phase 3 — state-model breadth — is complete.** These land as plane services + agent reconcilers with unit coverage and **real-Postgres store tests in integration CI**; each was additionally **verified end-to-end by hand** (a real deploy/boot, driven through the API) rather than yet having its own dedicated end-to-end CI job like the deploy slice:
+
+- ✅ **Managed databases** — PostgreSQL, MySQL, MariaDB, MongoDB, Redis, Valkey: provisioned and reconciled by the agent, sealed root credentials, start/stop/reset, connection info.
+- ✅ **Scheduled backups & restore** to any S3-compatible target (SigV4, MinIO-tested) — engine-derived dump commands moved via the Docker archive API, never a shell string on the wire.
+- ✅ **Preview environments** from PRs — a signed `pull_request` webhook clones the app into a child environment at `pr-<n>.<base>`; close (or a TTL sweeper) tears it all down; fork-PR secret safety by construction.
+- ✅ **Notifications** — Email (SMTP), Discord/Slack/Telegram (webhooks): project-scoped, fired on observed deploy/backup outcomes, best-effort and never blocking the pipeline; sealed config, masked responses.
+- ✅ **Scheduled tasks** (cron-in-container) — declarative desired state, run by the agent inside the app's own unprivileged container ([ADR-011](docs/adrs/ADR-011-in-container-scheduled-tasks.md)); **live-verified firing into a running container**.
+- ✅ **Teams + roles** — teams own projects; ranked roles (member < admin < owner) enforced on every project-scoped route (non-member → 404, low rank → 403), plus panel roles gating shared infrastructure.
+
+**Not yet built** (tracked in [docs/roadmap.md](docs/roadmap.md)): template catalog, Compose stacks, dashboard, metrics, real web UI (Phase 4) · TOTP 2FA, granular RBAC, backup-cron auto-scheduling + S3-object pruning (V1.x) · agent auto-update implementation ([ADR-010](docs/adrs/ADR-010-agent-auto-update.md), lands with the release pipeline).
 
 ## Quickstart (current dev state)
 
@@ -141,11 +153,17 @@ Everything under `/api/v1`, bearer-token authenticated (the GitHub webhook authe
 | Area | Endpoints |
 |---|---|
 | Auth | `POST /auth/login` · `POST /auth/logout` · `GET /auth/me` |
+| Teams & users | `GET·POST /teams` · `GET·PATCH·DELETE /teams/{id}` · `GET·POST·PATCH·DELETE /teams/{id}/members[/{uid}]` · `GET·POST /users` · `PATCH·DELETE /users/{id}` |
 | Servers | `GET·POST /servers` · `GET·DELETE /servers/{id}` |
 | Projects | `GET·POST /projects` · `GET·DELETE /projects/{id}` · `GET·POST /projects/{id}/environments` |
 | Applications | `GET·POST /environments/{id}/applications` · `GET·PATCH·DELETE /applications/{id}` · env vars (write-only values) · `GET /applications/{id}/logs` (SSE) |
 | Deployments | `POST /applications/{id}/deploy` · `GET /applications/{id}/deployments` · `GET /deployments/{id}` · `POST /deployments/{id}/rollback` · `GET /deployments/{id}/logs` (SSE) |
-| Webhooks | `POST /webhooks/github/{webhook_id}` |
+| Databases | `GET·POST /environments/{id}/databases` · `GET·PATCH·DELETE /databases/{id}` · start/stop/reset-password · `GET /databases/{id}/connection-info` |
+| Backups | `GET·POST /backup-targets` · `GET·POST·DELETE /databases/{id}/backups[/{bak}]` · `POST …/run` · `GET …/history` · `POST /databases/{id}/restore` |
+| Previews | `GET /applications/{id}/previews` · `GET·DELETE /previews/{id}` |
+| Notifiers | `GET·POST /projects/{id}/notifiers` · `GET·PATCH·DELETE /notifiers/{id}` · `POST /notifiers/{id}/test` |
+| Scheduled tasks | `GET·POST /applications/{id}/scheduled-tasks` · `GET·PATCH·DELETE /scheduled-tasks/{id}` · `GET …/runs` |
+| Webhooks | `POST /webhooks/github/{webhook_id}` (push → deploy, pull_request → preview) |
 
 ## Security model
 
@@ -154,7 +172,8 @@ The full threat model lives in [docs/security/threat-model.md](docs/security/thr
 - **No SSH, ever.** Agents dial home outbound-only over mTLS against a pinned CA. A compromised control plane yields shell access to nothing ([ADR-002](docs/adrs/ADR-002-agent-dial-home-no-ssh.md)).
 - **Join tokens are single-use and short-lived**; thereafter the agent's identity is its short-lived, revocable certificate. Deleting a server cuts its live connection and refuses reconnection.
 - **Per-agent authorization on the bus**: each agent can publish only its own `state.*`/`logs.*` and read only its own work queue — a compromised agent's blast radius is its own server, verified by tests down to the JetStream API grants.
-- **No exec verbs on the wire.** Work items describe state to converge on; the protocol has no "run this command" message, by review and by design.
+- **No arbitrary-command *verb* on the wire.** Work items describe state to converge on; there is no "run this command on the host" message. A scheduled-task command is the one command-bearing field, and it is deliberately scoped: declarative workload config that the agent runs only inside the app's *own* unprivileged container — no more privilege than deploying an image already grants ([ADR-011](docs/adrs/ADR-011-in-container-scheduled-tasks.md), refining threat-model §8 req 4).
+- **Team-scoped authorization** on every project route: the request resolves to its owning team, the caller's ranked role is checked, and a non-member gets 404 (not 403) so resource existence never leaks across tenants. Grants require strictly sufficient rank — no self-service escalation.
 - **Secrets sealed at rest** (AES-256-GCM under the master key), masked in all responses, never logged; certificate private keys never leave the node that serves them.
 - **Constant-time comparisons** for tokens and webhook HMACs; login rate-limiting; the plane guards its own disk headroom at boot.
 
@@ -166,7 +185,7 @@ core/    control plane (cypherd): REST+console, scheduler, embedded NATS bus,
 agent/   data plane (cypher-agent): docker driver + Engine API client, builder,
          Traefik proxy driver, work consumer, health prober, log streamer
 pkg/     shared: NATS subject contracts, generated proto, PKI, IDs
-proto/   the wire contract (buf-managed; additive-only, no exec verbs)
+proto/   the wire contract (buf-managed; additive-only, no arbitrary-command verbs)
 docs/    vision, architecture, ADRs, feature specs, threat model, roadmap
 research/ extraction maps + measured baselines from the reference codebases
 install/ the curl|sh agent installer (served by the plane)
@@ -192,8 +211,8 @@ Working on the code? [CLAUDE.md](CLAUDE.md) is the router; [ENGINEERING.md](ENGI
 
 1. [docs/vision.md](docs/vision.md) — why this exists, who it serves, the non-negotiables (with numbers)
 2. [docs/architecture.md](docs/architecture.md) — the system design
-3. [docs/adrs/](docs/adrs/) — the decisions everything rests on: Go single binary · dial-home agents · embedded NATS · Traefik file provider · desired-state reconciliation · docker-only at launch · no registry required
-4. [docs/features/](docs/features/) — implemented feature specs: [application-deploy](docs/features/application-deploy.md), [routing-and-tls](docs/features/routing-and-tls.md)
+3. [docs/adrs/](docs/adrs/) — the decisions everything rests on: Go single binary · dial-home agents · embedded NATS · Traefik file provider · desired-state reconciliation · docker-only at launch · no registry required · Apache-2.0 license · agent auto-update · in-container scheduled tasks
+4. [docs/features/](docs/features/) — implemented feature specs: [application-deploy](docs/features/application-deploy.md), [routing-and-tls](docs/features/routing-and-tls.md), [managed-databases](docs/features/managed-databases.md), [preview-environments](docs/features/preview-environments.md), [notifications](docs/features/notifications.md), [scheduled-tasks](docs/features/scheduled-tasks.md), [teams-and-roles](docs/features/teams-and-roles.md)
 5. [docs/product/feature-matrix.md](docs/product/feature-matrix.md) — the v1 scope contract, extracted from both reference codebases
 6. [docs/roadmap.md](docs/roadmap.md) — phases with acceptance gates, open decisions
 7. [research/](research/) — extraction maps into the reference sources, measured footprints, community pain points
