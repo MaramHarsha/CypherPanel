@@ -30,6 +30,9 @@ type fakeStore struct {
 	deployKeys  map[string]domain.DeployKey
 	dbs         map[string]domain.Database
 	dbRevs      map[string]domain.DatabaseRevision
+	targets     map[string]domain.BackupTarget
+	schedules   map[string]domain.DatabaseBackup
+	records     map[string]domain.BackupRecord
 	servers     []domain.Server
 	seq         int
 }
@@ -43,6 +46,9 @@ func newFakeStore() *fakeStore {
 		deployKeys:  map[string]domain.DeployKey{},
 		dbs:         map[string]domain.Database{},
 		dbRevs:      map[string]domain.DatabaseRevision{},
+		targets:     map[string]domain.BackupTarget{},
+		schedules:   map[string]domain.DatabaseBackup{},
+		records:     map[string]domain.BackupRecord{},
 	}
 }
 
@@ -318,6 +324,83 @@ func (f *fakeStore) DeleteDatabase(_ context.Context, id string) error {
 	defer f.mu.Unlock()
 	delete(f.dbs, id)
 	return nil
+}
+
+func (f *fakeStore) GetDatabaseBackup(_ context.Context, id string) (domain.DatabaseBackup, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	b, ok := f.schedules[id]
+	if !ok {
+		return domain.DatabaseBackup{}, store.ErrNotFound
+	}
+	return b, nil
+}
+
+func (f *fakeStore) GetBackupTarget(_ context.Context, id string) (domain.BackupTarget, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	t, ok := f.targets[id]
+	if !ok {
+		return domain.BackupTarget{}, store.ErrNotFound
+	}
+	return t, nil
+}
+
+func (f *fakeStore) CreateBackupRecord(_ context.Context, r domain.BackupRecord) (domain.BackupRecord, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.records[r.ID] = r
+	return r, nil
+}
+
+func (f *fakeStore) GetBackupRecord(_ context.Context, id string) (domain.BackupRecord, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r, ok := f.records[id]
+	if !ok {
+		return domain.BackupRecord{}, store.ErrNotFound
+	}
+	return r, nil
+}
+
+func (f *fakeStore) UpdateBackupRecord(_ context.Context, id, objectKey string, sizeBytes int64, status, detail string, finishedAt *time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r, ok := f.records[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	r.ObjectKey, r.SizeBytes, r.Status, r.Detail, r.FinishedAt = objectKey, sizeBytes, status, detail, finishedAt
+	f.records[id] = r
+	return nil
+}
+
+func (f *fakeStore) SetDatabaseBackupLastRun(_ context.Context, id string, lastRunAt *time.Time, lastStatus string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	b, ok := f.schedules[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	b.LastRunAt, b.LastStatus = lastRunAt, lastStatus
+	f.schedules[id] = b
+	return nil
+}
+
+func (f *fakeStore) ListBackupRecords(_ context.Context, backupID string) ([]domain.BackupRecord, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []domain.BackupRecord
+	for _, r := range f.records {
+		if r.DatabaseBackupID == backupID {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) DeleteOldBackupRecords(_ context.Context, backupID string, keep int32) error {
+	return nil // retention pruning is exercised in dedicated backup tests
 }
 
 type published struct {

@@ -190,8 +190,12 @@ func runAgent(args []string, log *slog.Logger) error {
 		// converged by their own reconciler over the same engine client
 		// (managed-databases.md §6). Builder-role agents run nothing.
 		var dbRec driver.DbReconciler
+		var backupRunner worker.BackupRunner
 		if *role != "builder" {
 			dbRec = docker.NewDatabaseReconciler(eng, log)
+			// Backup/restore executor over the same engine client + a tiny
+			// SigV4 S3 client (managed-databases.md §7).
+			backupRunner = docker.NewBackupExecutor(eng, docker.NewS3Client(), log)
 		}
 
 		// Builds: everything except worker-role agents, which never receive
@@ -205,7 +209,7 @@ func runAgent(args []string, log *slog.Logger) error {
 		if err != nil {
 			return err
 		}
-		w := worker.New(wbus, id.ServerID, drv, dbRec, bld, imgRelay, log)
+		w := worker.New(wbus, id.ServerID, drv, dbRec, backupRunner, bld, imgRelay, log)
 		errCh := make(chan error, 1)
 		go func() {
 			if err := w.Run(ctx); err != nil {

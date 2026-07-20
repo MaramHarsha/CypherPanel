@@ -69,6 +69,16 @@ type Store interface {
 	SetDatabaseObservedStatus(ctx context.Context, id, status, detail, observedRevisionID string, observedAt time.Time) error
 	ListPendingDeleteDatabases(ctx context.Context) ([]domain.Database, error)
 	DeleteDatabase(ctx context.Context, id string) error
+
+	// Phase 3: database backups (managed-databases.md §7)
+	GetDatabaseBackup(ctx context.Context, id string) (domain.DatabaseBackup, error)
+	GetBackupTarget(ctx context.Context, id string) (domain.BackupTarget, error)
+	CreateBackupRecord(ctx context.Context, r domain.BackupRecord) (domain.BackupRecord, error)
+	GetBackupRecord(ctx context.Context, id string) (domain.BackupRecord, error)
+	UpdateBackupRecord(ctx context.Context, id, objectKey string, sizeBytes int64, status, detail string, finishedAt *time.Time) error
+	SetDatabaseBackupLastRun(ctx context.Context, id string, lastRunAt *time.Time, lastStatus string) error
+	ListBackupRecords(ctx context.Context, backupID string) ([]domain.BackupRecord, error)
+	DeleteOldBackupRecords(ctx context.Context, backupID string, keep int32) error
 }
 
 // Bus is the work-publication side of core/bus (consumer-defined).

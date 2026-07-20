@@ -187,3 +187,58 @@ type DatabaseRevision struct {
 	ConfigSnapshot []byte // JSON snapshot of the full spec
 	CreatedAt      time.Time
 }
+
+// BackupTarget is a reusable S3-compatible storage destination
+// (managed-databases.md §7). Access/secret keys are sealed at rest with the
+// master-key Box (threat-model §5.1) and never returned in API responses.
+type BackupTarget struct {
+	ID             string
+	Name           string
+	Endpoint       string
+	Bucket         string
+	Region         string
+	AccessKeyCT    []byte
+	AccessKeyNonce []byte
+	SecretKeyCT    []byte
+	SecretKeyNonce []byte
+	PathPrefix     string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+// Backup schedule status vocabulary (last_status column).
+const (
+	BackupRunning   = "running"
+	BackupSucceeded = "succeeded"
+	BackupFailed    = "failed"
+)
+
+// DatabaseBackup is a backup schedule for a Database against a BackupTarget. A
+// cron Schedule drives automatic runs (empty = manual only); RetentionCount
+// bounds how many succeeded backups are kept.
+type DatabaseBackup struct {
+	ID             string
+	DatabaseID     string
+	TargetID       string
+	Schedule       string
+	RetentionCount int
+	Enabled        bool
+	LastRunAt      *time.Time
+	LastStatus     string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+// BackupRecord is one backup execution's history row: where it landed in S3,
+// its size, and its terminal outcome.
+type BackupRecord struct {
+	ID               string
+	DatabaseBackupID string
+	ObjectKey        string
+	SizeBytes        int64
+	Status           string
+	Detail           string
+	StartedAt        time.Time
+	FinishedAt       *time.Time
+	CreatedAt        time.Time
+}

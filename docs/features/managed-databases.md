@@ -303,12 +303,24 @@ desired spec reports success without recreation. A container whose image
 or config differs is stopped, removed, and recreated with the same
 named volume.
 
-## 7. Backup and restore — DEFERRED to `feat/db-backups-followup`
+## 7. Backup and restore
 
-> The design below stands, but the implementation is **not** in this branch
-> (see the scope note at the top). It is rebuilt as a follow-up (stripped code recoverable at `1d83f0a`) with
-> a docker-exec seam that demultiplexes the dump stream and supports stdin for
-> restore, validated against a live MinIO/S3 target.
+> Rebuilt from the stripped first cut (recoverable at `1d83f0a`) with two
+> corrections that made the original non-functional, plus a security fix:
+>
+> - **Transport (both bugs).** The dump/restore data moves through the Docker
+>   **archive API** (`/containers/{id}/archive`, i.e. `docker cp`), not through
+>   the exec stdout/stdin stream. The dump is written to a file *inside* the
+>   container and copied out as a tar (no multiplexed-stream framing to corrupt
+>   the gzip); a restore copies the dump file *into* the container and the
+>   restore command reads it by shell redirection (no exec stdin needed). The
+>   exec seam only runs a command to completion and reports its exit code.
+> - **Security (threat-model §8 req 4).** Work items carry the **engine**, not
+>   a shell command. The agent derives the dump/restore command from its own
+>   engine matrix — the wire never carries an exec verb. S3 credentials are
+>   unsealed on the plane and travel only over mTLS (rule 23).
+>
+> Validated against a live MinIO/S3 target.
 
 ### Backup targets (S3-compatible)
 
@@ -361,19 +373,22 @@ Per-engine dump commands (adapted from Coolify's
 | redis      | Copy `/data/dump.rdb` after `BGSAVE`                           | RDB           |
 | valkey     | Copy `/data/dump.rdb` after `BGSAVE`                           | RDB           |
 
-The scheduler emits `DbBackupWork` to the agent hosting the database.
-The agent:
+The scheduler emits `DbBackupWork` (engine + S3 coordinates, no shell
+command) to the agent hosting the database. The agent:
 
-1. Runs `docker exec` with the dump command, streaming to a temp file.
-2. Compresses (gzip for SQL dumps; MongoDB already gzipped; RDB
-   already compact).
+1. Runs the engine's dump command inside the container, writing to a file
+   there (`sh -c '<dump> > /tmp/cypher-backup'`; Redis/Valkey `redis-cli save`
+   → `/data/dump.rdb`; Mongo `mongodump --archive=/tmp/cypher-backup --gzip`),
+   and checks the exec **exit code**.
+2. Copies that file out via the archive API and gzips it (SQL dumps; Mongo
+   and RDB are already compact but re-gzipping is uniform and cheap).
 3. Uploads to the backup target with key
-   `<path_prefix>/<db_id>/<timestamp>.gz` using the unsealed S3
-   credentials.
-4. Reports `DbBackupEvent` to the plane with success/failure + the
-   object key + size.
-5. **Retention**: after successful upload, lists objects under the
-   `<db_id>/` prefix, deletes the oldest beyond `retention_count`.
+   `<path_prefix>/<db_id>/<timestamp>.gz` using the unsealed S3 credentials.
+4. Reports `DbBackupEvent` to the plane with success/failure + the object key
+   + size, and removes the in-container temp file.
+5. **Retention**: after a successful upload the plane prunes older
+   `BackupRecord`s beyond `retention_count` and the agent deletes their S3
+   objects (retention is desired state the plane owns, not agent guesswork).
 
 ### Backup API
 
@@ -396,18 +411,20 @@ POST   /databases/{id}/restore                   → 202 {backup_record_id}
 
 ### Restore
 
-`POST /databases/{id}/restore` with `{backup_record_id}` triggers a
-restore work item. The agent:
+`POST /databases/{id}/restore` with `{backup_record_id, confirm: true}`
+triggers a restore work item (engine + S3 coordinates, no shell command).
+The agent:
 
-1. Downloads the backup from S3 to a temp file.
-2. Stops the database container.
-3. Runs the engine-specific restore command (`psql`, `mysql`,
-   `mongorestore --archive --gzip`, copy RDB + restart).
-4. Starts the container, health-checks it.
-5. Reports success/failure.
+1. Downloads the backup from S3 and decompresses it.
+2. Copies the dump file *into* the container via the archive API.
+3. Runs the engine's restore command reading that file
+   (`sh -c '<restore> < /tmp/cypher-restore'`; Mongo
+   `mongorestore --archive=/tmp/cypher-restore --gzip --drop`; Redis/Valkey
+   copy `dump.rdb` into `/data` and restart the container so it reloads).
+4. Health-checks the container and reports success/failure.
 
-Restore is a destructive operation — the API requires an explicit
-confirmation field (`"confirm": true`) to proceed.
+Restore is destructive — the API requires an explicit `"confirm": true`
+field to proceed.
 
 ## 8. Migration (SQL)
 

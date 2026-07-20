@@ -234,3 +234,77 @@ message DbStatus {
   string detail = 4;
   google.protobuf.Timestamp observed_at = 5;
 }
+
+// DbBackupWork commands a database's host agent to dump the database and upload
+// it to an S3-compatible target (managed-databases.md §7). The wire carries the
+// engine (the agent derives the dump command from its own matrix — never a
+// shell command, threat-model §8 req 4); database credentials are read from the
+// container's own environment inside the exec, so no db password crosses the
+// wire. The S3 credentials are unsealed on the plane and travel only over mTLS
+// (rule 23); never logged (rule 20).
+message DbBackupWork {
+  string backup_record_id = 1;  // idempotency key
+  string db_id = 2;
+  string container_name = 3;
+  string engine = 4;            // postgresql|mysql|mariadb|mongodb|redis|valkey
+  string data_path = 5;         // engine data dir (RDB copy for redis/valkey)
+  string s3_endpoint = 6;
+  string s3_bucket = 7;
+  string s3_region = 8;
+  string s3_key = 9;            // object key: <prefix>/<db_id>/<ts>.gz
+  string s3_access_key = 10;
+  string s3_secret_key = 11;
+}
+
+// DbRestoreWork commands the host agent to download a backup and restore it into
+// the database container. Same wire discipline as DbBackupWork (engine, not a
+// command; S3 creds over mTLS only).
+message DbRestoreWork {
+  string restore_id = 1;        // idempotency key
+  string db_id = 2;
+  string container_name = 3;
+  string engine = 4;
+  string data_path = 5;
+  string s3_endpoint = 6;
+  string s3_bucket = 7;
+  string s3_region = 8;
+  string s3_key = 9;            // the backup object to restore
+  string s3_access_key = 10;
+  string s3_secret_key = 11;
+}
+
+// DbBackupEvent reports a backup's terminal outcome, published on
+// state.<server>.db.backup. object_key/size_bytes are set on success.
+message DbBackupEvent {
+  string backup_record_id = 1;
+  string db_id = 2;
+
+  enum Outcome {
+    OUTCOME_UNSPECIFIED = 0;
+    OUTCOME_SUCCEEDED = 1;
+    OUTCOME_FAILED = 2;
+  }
+  Outcome outcome = 3;
+
+  string detail = 4;            // failure reason (never contains secrets)
+  string object_key = 5;
+  int64 size_bytes = 6;
+  google.protobuf.Timestamp occurred_at = 7;
+}
+
+// DbRestoreEvent reports a restore's terminal outcome, published on
+// state.<server>.db.restore.
+message DbRestoreEvent {
+  string restore_id = 1;
+  string db_id = 2;
+
+  enum Outcome {
+    OUTCOME_UNSPECIFIED = 0;
+    OUTCOME_SUCCEEDED = 1;
+    OUTCOME_FAILED = 2;
+  }
+  Outcome outcome = 3;
+
+  string detail = 4;
+  google.protobuf.Timestamp occurred_at = 5;
+}
