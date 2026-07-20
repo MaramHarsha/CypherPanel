@@ -85,6 +85,38 @@ func TestDbRemoveRoutesToDatabaseReconciler(t *testing.T) {
 	}
 }
 
+func dbProvisionMsg(t *testing.T, serverID string, spec *agentv1.DbSpec) *fakeMessage {
+	t.Helper()
+	data, err := proto.Marshal(&agentv1.DbProvisionWork{IdempotencyKey: spec.DbId, Spec: spec})
+	if err != nil {
+		t.Fatalf("marshal db provision: %v", err)
+	}
+	return &fakeMessage{subject: subjects.DbProvision(serverID), data: data}
+}
+
+// Database provisioning must work on a node with no app driver (a
+// database-only role): the driver-nil guard must not swallow db.provision.
+func TestDbProvisionWorksWithoutAppDriver(t *testing.T) {
+	bus := newFakeBus(desiredStateBytes(t))
+	dbRec := &fakeDbReconciler{}
+	w := New(bus, "srv1", nil, dbRec, nil, nil, quietLog()) // drv == nil
+
+	spec := &agentv1.DbSpec{DbId: "db_1", RevisionId: "dbr_1", Engine: "postgresql", Image: "postgres:16"}
+	msg := dbProvisionMsg(t, "srv1", spec)
+	w.handleMsg(context.Background(), msg)
+
+	if len(dbRec.provision) != 1 {
+		t.Fatalf("ReconcileDatabases called %d times, want 1", len(dbRec.provision))
+	}
+	got := dbRec.provision[0]
+	if len(got) != 1 || got[0].DbId != "db_1" || got[0].Image != "postgres:16" {
+		t.Fatalf("ReconcileDatabases desired = %+v, want the db_1/postgres:16 spec", got)
+	}
+	if !msg.acked || msg.termed {
+		t.Fatalf("db.provision on a driverless node: acked=%v termed=%v, want clean ack", msg.acked, msg.termed)
+	}
+}
+
 // An app ".remove" must still reach the app reconciler (the exclusion guard
 // must not over-match).
 func TestAppRemoveStillRoutesToAppReconciler(t *testing.T) {

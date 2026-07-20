@@ -344,6 +344,20 @@ func (w *Worker) handleMsg(ctx context.Context, msg Message) {
 			_ = msg.Term()
 			return
 		}
+		// Database provisioning is independent of the app driver: converge the
+		// database set directly and return, so a database-only node (no app
+		// driver) is not caught by the driver-nil guard below.
+		if err := w.reconcileDatabases(ctx); err != nil {
+			w.log.Error("worker: db provision reconcile failed", "db_id", work.Spec.DbId, "error", err)
+			if msg.NumDelivered() >= maxDeliveries {
+				_ = msg.Term()
+			} else {
+				_ = msg.NakWithDelay(5 * time.Second)
+			}
+			return
+		}
+		_ = msg.Ack()
+		return
 
 	case strings.HasSuffix(subject, ".db.remove"):
 		var work agentv1.DbRemoveWork
@@ -411,63 +425,45 @@ func (w *Worker) handleMsg(ctx context.Context, msg Message) {
 }
 
 func (w *Worker) reconcile(ctx context.Context, triggerDeploymentID, triggerAppID string, stage agentv1.DeployEvent_Stage, commitSha string) error {
-	if w.driver == nil {
-		// Builder-role agents run nothing: no desired set, nothing to
-		// converge or observe (builder-role-and-relay.md §1).
-		return nil
-	}
-	w.mu.Lock()
-	desired := make([]*agentv1.AppSpec, 0, len(w.state))
-	for _, spec := range w.state {
-		desired = append(desired, spec)
-	}
-	w.mu.Unlock()
-
-	statuses, err := w.driver.Reconcile(ctx, desired)
-	if err != nil {
-		return err // total orchestrator failure
-	}
-
-	// Publish observed statuses (ADR-005: the plane asserts outcomes only from
-	// these observations).
-	for _, status := range statuses {
-		data, err := proto.Marshal(status)
-		if err != nil {
-			w.log.Error("worker: marshaling app status", "error", err)
-			continue
-		}
-		if err := w.bus.Publish(subjects.AppState(w.serverID, status.AppId), data); err != nil {
-			w.log.Error("worker: publishing app status", "app_id", status.AppId, "error", err)
-		}
-	}
-
-	// Phase 3: Managed Databases (managed-databases.md §6)
-	if w.dbReconciler != nil {
+	// Applications: only on nodes that run them (builder-role agents have no
+	// app driver — builder-role-and-relay.md §1). Databases converge
+	// separately below, so a database-only node still self-heals.
+	var statuses []*agentv1.AppStatus
+	if w.driver != nil {
 		w.mu.Lock()
-		desiredDbs := make([]*agentv1.DbSpec, 0, len(w.dbState))
-		for _, spec := range w.dbState {
-			desiredDbs = append(desiredDbs, spec)
+		desired := make([]*agentv1.AppSpec, 0, len(w.state))
+		for _, spec := range w.state {
+			desired = append(desired, spec)
 		}
 		w.mu.Unlock()
 
-		dbStatuses, err := w.dbReconciler.ReconcileDatabases(ctx, desiredDbs)
+		var err error
+		statuses, err = w.driver.Reconcile(ctx, desired)
 		if err != nil {
-			w.log.Error("worker: database reconcile failed", "error", err)
-		} else {
-			for _, status := range dbStatuses {
-				data, err := proto.Marshal(status)
-				if err != nil {
-					w.log.Error("worker: marshaling db status", "error", err)
-					continue
-				}
-				if err := w.bus.Publish(subjects.DbState(w.serverID, status.DbId), data); err != nil {
-					w.log.Error("worker: publishing db status", "db_id", status.DbId, "error", err)
-				}
+			return err // total orchestrator failure
+		}
+
+		// Publish observed statuses (ADR-005: the plane asserts outcomes only
+		// from these observations).
+		for _, status := range statuses {
+			data, err := proto.Marshal(status)
+			if err != nil {
+				w.log.Error("worker: marshaling app status", "error", err)
+				continue
+			}
+			if err := w.bus.Publish(subjects.AppState(w.serverID, status.AppId), data); err != nil {
+				w.log.Error("worker: publishing app status", "app_id", status.AppId, "error", err)
 			}
 		}
 	}
 
-	// Publish the terminal outcome for the triggering work item, if any. A
+	// Phase 3: Managed Databases (managed-databases.md §6). Independent of the
+	// app driver; a no-op when this node runs no databases.
+	if err := w.reconcileDatabases(ctx); err != nil {
+		w.log.Error("worker: database reconcile failed", "error", err)
+	}
+
+	// Publish the terminal outcome for the triggering app work item, if any. A
 	// failed rollout or teardown surfaces as the triggered app's 'error'
 	// AppStatus; anything else is success.
 	if stage != agentv1.DeployEvent_STAGE_UNSPECIFIED {
@@ -485,6 +481,38 @@ func (w *Worker) reconcile(ctx context.Context, triggerDeploymentID, triggerAppI
 		w.emitEvent(triggerDeploymentID, triggerAppID, stage, outcome, detail, commitSha)
 	}
 
+	return nil
+}
+
+// reconcileDatabases converges the local database set toward w.dbState and
+// publishes each observed DbStatus. A no-op when this node has no database
+// reconciler. The returned error is reserved for a total daemon failure; the
+// caller decides whether to retry the triggering work item.
+func (w *Worker) reconcileDatabases(ctx context.Context) error {
+	if w.dbReconciler == nil {
+		return nil
+	}
+	w.mu.Lock()
+	desiredDbs := make([]*agentv1.DbSpec, 0, len(w.dbState))
+	for _, spec := range w.dbState {
+		desiredDbs = append(desiredDbs, spec)
+	}
+	w.mu.Unlock()
+
+	dbStatuses, err := w.dbReconciler.ReconcileDatabases(ctx, desiredDbs)
+	if err != nil {
+		return err
+	}
+	for _, status := range dbStatuses {
+		data, err := proto.Marshal(status)
+		if err != nil {
+			w.log.Error("worker: marshaling db status", "error", err)
+			continue
+		}
+		if err := w.bus.Publish(subjects.DbState(w.serverID, status.DbId), data); err != nil {
+			w.log.Error("worker: publishing db status", "db_id", status.DbId, "error", err)
+		}
+	}
 	return nil
 }
 
