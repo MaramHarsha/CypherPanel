@@ -1,6 +1,6 @@
 # ADR-011: In-container scheduled-task commands as declarative desired state
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-07-20
 
 ## Context

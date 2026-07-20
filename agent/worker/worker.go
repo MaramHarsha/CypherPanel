@@ -108,10 +108,19 @@ type Worker struct {
 	relay         ImageRelay
 	log           *slog.Logger
 	driftInterval time.Duration
+	cron          CronRunner
 
 	mu      sync.Mutex
 	state   map[string]*agentv1.AppSpec // map[app_id]spec
 	dbState map[string]*agentv1.DbSpec  // map[db_id]spec
+}
+
+// CronRunner arms scheduled tasks from desired state and fires them on schedule
+// (consumer-defined; *cron.Runner satisfies it — scheduled-tasks.md, ADR-011).
+// Optional: nil on builder-role agents and when the feature is unwired.
+type CronRunner interface {
+	Sync(specs []*agentv1.AppSpec)
+	Run(ctx context.Context)
 }
 
 // New creates a new Worker. drv is nil on builder-role agents (nothing runs
@@ -134,6 +143,10 @@ func New(bus Bus, serverID string, drv driver.Reconciler, dbRec driver.DbReconci
 	}
 }
 
+// SetCron attaches the scheduled-task runner. Kept out of New so cron stays an
+// opt-in add-on wired only on app-role agents (scheduled-tasks.md §5).
+func (w *Worker) SetCron(c CronRunner) { w.cron = c }
+
 // Run performs an initial desired-state sync, converges once on boot, then
 // processes work items until the context is canceled. Between work items it
 // runs a periodic drift reconcile on the same goroutine (the driver is not
@@ -141,6 +154,9 @@ func New(bus Bus, serverID string, drv driver.Reconciler, dbRec driver.DbReconci
 func (w *Worker) Run(ctx context.Context) error {
 	if err := w.sync(ctx); err != nil {
 		return fmt.Errorf("worker: initial sync failed: %w", err)
+	}
+	if w.cron != nil {
+		go w.cron.Run(ctx) // fires scheduled tasks on its own clock (ADR-011)
 	}
 	lastConverge := time.Now()
 
@@ -246,6 +262,28 @@ func (w *Worker) handleMsg(ctx context.Context, msg Message) {
 		w.mu.Lock()
 		w.state[appID] = work.Spec
 		w.mu.Unlock()
+
+	case strings.HasSuffix(subject, ".converge"):
+		// Re-declared desired state without a deployment (ConvergeWork): update
+		// the spec and reconcile silently — no deploy event. Propagates a
+		// scheduled-task change; the container reconcile is a no-op
+		// (scheduled-tasks.md §4).
+		var work agentv1.ConvergeWork
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil || work.Spec == nil {
+			w.log.Error("worker: unmarshaling converge work", "error", err)
+			_ = msg.Term()
+			return
+		}
+		w.mu.Lock()
+		w.state[work.Spec.AppId] = work.Spec
+		w.mu.Unlock()
+		if err := w.reconcile(ctx, "", "", agentv1.DeployEvent_STAGE_UNSPECIFIED, ""); err != nil {
+			w.log.Error("worker: converge reconcile", "error", err)
+			_ = msg.NakWithDelay(5 * time.Second)
+			return
+		}
+		_ = msg.Ack()
+		return
 
 	case strings.HasSuffix(subject, ".remove") && !strings.HasSuffix(subject, ".db.remove"):
 		// The app-remove suffix ".remove" is also a suffix of the database
@@ -491,6 +529,13 @@ func (w *Worker) reconcile(ctx context.Context, triggerDeploymentID, triggerAppI
 			desired = append(desired, spec)
 		}
 		w.mu.Unlock()
+
+		// Re-arm the scheduled-task set from the same desired state, so
+		// create/edit/delete changes (carried on AppSpec) take effect
+		// (scheduled-tasks.md §5). Cheap and lock-free from the driver's view.
+		if w.cron != nil {
+			w.cron.Sync(desired)
+		}
 
 		var err error
 		statuses, err = w.driver.Reconcile(ctx, desired)

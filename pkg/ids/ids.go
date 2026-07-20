@@ -36,6 +36,10 @@ const (
 
 	// Phase 3: Notifications (docs/features/notifications.md).
 	PrefixNotifier = "ntf"
+
+	// Phase 3: Scheduled tasks (docs/features/scheduled-tasks.md).
+	PrefixScheduledTask = "sch"
+	PrefixTaskRun       = "str"
 )
 
 // New returns a prefixed, URL-safe, collision-resistant identifier such as

@@ -387,6 +387,12 @@ func (b *Bus) ConsumeDbRestoreEvents(ctx context.Context, handle func(serverID s
 	return b.consumeState(ctx, "plane-db-restore", subjects.DbRestoreStateAll, handle)
 }
 
+// ConsumeTaskRuns delivers each ScheduledTaskRun payload to handle
+// (scheduled-tasks.md §3).
+func (b *Bus) ConsumeTaskRuns(ctx context.Context, handle func(serverID string, data []byte)) (jetstream.ConsumeContext, error) {
+	return b.consumeState(ctx, "plane-task-run", subjects.TaskStateAll, handle)
+}
+
 func (b *Bus) consumeState(ctx context.Context, durable, filter string, handle func(serverID string, data []byte)) (jetstream.ConsumeContext, error) {
 	cons, err := b.js.CreateOrUpdateConsumer(ctx, streamState, jetstream.ConsumerConfig{
 		Durable:       durable,

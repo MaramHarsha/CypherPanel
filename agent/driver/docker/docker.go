@@ -84,6 +84,10 @@ type Client interface {
 	// ListManagedImages returns every image carrying this driver's managed label.
 	ListManagedImages(ctx context.Context) ([]Image, error)
 	RemoveImage(ctx context.Context, id string) error
+	// ExecAndWait runs argv in a running container to completion, returning its
+	// exit code and captured output (scheduled tasks, backups). A non-zero exit
+	// is not an error — the caller interprets it.
+	ExecAndWait(ctx context.Context, containerID string, cmd []string) (exitCode int, output []byte, err error)
 }
 
 // Router applies (or removes) an Application's route on the local proxy, and —
@@ -420,4 +424,27 @@ func status(appID, revisionID, state, detail string) *agentv1.AppStatus {
 		State:      state,
 		Detail:     detail,
 	}
+}
+
+// RunningContainerForApp resolves the app's currently-running container by its
+// app-id label — the exec target for a scheduled task (ADR-011: the app's own
+// container, nothing else). ok is false when no container is running (the task
+// run is skipped, scheduled-tasks.md §5).
+func (d *Driver) RunningContainerForApp(ctx context.Context, appID string) (containerID string, ok bool, err error) {
+	managed, err := d.client.ListManaged(ctx)
+	if err != nil {
+		return "", false, fmt.Errorf("docker: listing containers: %w", err)
+	}
+	for _, c := range managed {
+		if c.AppID == appID && c.Running {
+			return c.ID, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+// ExecAndWait runs argv in a container to completion (ADR-011: argv straight to
+// exec, never a shell), returning its exit code and captured output.
+func (d *Driver) ExecAndWait(ctx context.Context, containerID string, argv []string) (exitCode int, output []byte, err error) {
+	return d.client.ExecAndWait(ctx, containerID, argv)
 }

@@ -218,6 +218,28 @@ type Revision struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
+type ScheduledTask struct {
+	ID            string
+	ApplicationID string
+	Name          string
+	Schedule      string
+	Command       []string
+	Enabled       bool
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
+type ScheduledTaskRun struct {
+	ID         string
+	TaskID     string
+	StartedAt  pgtype.Timestamptz
+	FinishedAt pgtype.Timestamptz
+	ExitCode   pgtype.Int4
+	Status     string
+	OutputTail string
+	CreatedAt  pgtype.Timestamptz
+}
+
 type Server struct {
 	ID           string
 	Name         string

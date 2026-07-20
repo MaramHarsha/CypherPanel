@@ -341,6 +341,76 @@ func TestStoreNotifierRoundtrip(t *testing.T) {
 	}
 }
 
+// TestStoreScheduledTaskRoundtrip exercises the TEXT[] command column, run
+// history pruning, and the app cascade against real Postgres (scheduled-tasks.md).
+func TestStoreScheduledTaskRoundtrip(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	_, _, _, app := seedApp(t, s)
+
+	task, err := s.CreateScheduledTask(ctx, domain.ScheduledTask{
+		ID:            ids.New(ids.PrefixScheduledTask),
+		ApplicationID: app.ID,
+		Name:          "nightly",
+		Schedule:      "0 3 * * *",
+		Command:       []string{"sh", "-c", "cleanup --verbose"},
+		Enabled:       true,
+	})
+	if err != nil {
+		t.Fatalf("CreateScheduledTask: %v", err)
+	}
+	if len(task.Command) != 3 || task.Command[2] != "cleanup --verbose" {
+		t.Fatalf("command argv not round-tripped: %+v", task.Command)
+	}
+
+	// Enabled filter (the desired-state carrier) includes it; disabling excludes.
+	if got, err := s.ListEnabledScheduledTasksByApp(ctx, app.ID); err != nil || len(got) != 1 {
+		t.Fatalf("enabled list = %+v, %v, want the one task", got, err)
+	}
+	task.Enabled = false
+	if _, err := s.UpdateScheduledTask(ctx, task); err != nil {
+		t.Fatalf("UpdateScheduledTask: %v", err)
+	}
+	if got, _ := s.ListEnabledScheduledTasksByApp(ctx, app.ID); len(got) != 0 {
+		t.Fatalf("disabled task still in enabled list: %+v", got)
+	}
+
+	// Record more runs than the retention window, then prune to it.
+	started := time.Now().Add(-time.Hour)
+	for i := 0; i < 5; i++ {
+		exit := i
+		if _, err := s.CreateTaskRun(ctx, domain.ScheduledTaskRun{
+			ID: ids.New(ids.PrefixTaskRun), TaskID: task.ID,
+			StartedAt: started.Add(time.Duration(i) * time.Minute),
+			Status:    domain.TaskRunSucceeded, ExitCode: &exit,
+		}); err != nil {
+			t.Fatalf("CreateTaskRun: %v", err)
+		}
+	}
+	if err := s.DeleteOldTaskRuns(ctx, task.ID, 2); err != nil {
+		t.Fatalf("DeleteOldTaskRuns: %v", err)
+	}
+	runs, err := s.ListTaskRuns(ctx, task.ID, 50)
+	if err != nil {
+		t.Fatalf("ListTaskRuns: %v", err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("kept %d runs, want 2 after prune", len(runs))
+	}
+	// Newest kept (DESC by started_at): the last two inserts.
+	if runs[0].StartedAt.Before(runs[1].StartedAt) {
+		t.Fatal("runs not ordered newest-first")
+	}
+
+	// Deleting the application cascades the task and its runs.
+	if err := s.DeleteApplication(ctx, app.ID); err != nil {
+		t.Fatalf("DeleteApplication: %v", err)
+	}
+	if _, err := s.GetScheduledTask(ctx, task.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("task survived app cascade: %v", err)
+	}
+}
+
 func TestStoreDatabaseLifecycle(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()

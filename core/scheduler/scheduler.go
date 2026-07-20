@@ -79,6 +79,12 @@ type Store interface {
 	SetDatabaseBackupLastRun(ctx context.Context, id string, lastRunAt *time.Time, lastStatus string) error
 	ListBackupRecords(ctx context.Context, backupID string) ([]domain.BackupRecord, error)
 	DeleteOldBackupRecords(ctx context.Context, backupID string, keep int32) error
+
+	// Phase 3: scheduled tasks (scheduled-tasks.md, ADR-011)
+	ListEnabledScheduledTasksByApp(ctx context.Context, appID string) ([]domain.ScheduledTask, error)
+	GetScheduledTask(ctx context.Context, id string) (domain.ScheduledTask, error)
+	CreateTaskRun(ctx context.Context, r domain.ScheduledTaskRun) (domain.ScheduledTaskRun, error)
+	DeleteOldTaskRuns(ctx context.Context, taskID string, keep int32) error
 }
 
 // Bus is the work-publication side of core/bus (consumer-defined).
@@ -457,6 +463,13 @@ func (s *Scheduler) buildSpec(ctx context.Context, app domain.Application, rev d
 	if image == "" {
 		image = imageTag(app.ID, rev.ID)
 	}
+	// Scheduled tasks are current app state (mutable independently of the
+	// revision), carried as declarative desired state — the agent runs them in
+	// this app's container (scheduled-tasks.md §3, ADR-011).
+	tasks, err := s.scheduledTasksFor(ctx, app.ID)
+	if err != nil {
+		return nil, err
+	}
 	return &agentv1.AppSpec{
 		AppId:         app.ID,
 		EnvironmentId: app.EnvironmentID,
@@ -476,6 +489,7 @@ func (s *Scheduler) buildSpec(ctx context.Context, app domain.Application, rev d
 			Https:      cs.Route.HTTPS,
 			PathPrefix: cs.Route.PathPrefix,
 		},
+		ScheduledTasks: tasks,
 	}, nil
 }
 
@@ -710,6 +724,114 @@ func (s *Scheduler) promoteNext(ctx context.Context, appID string) {
 	if err := s.start(ctx, active[0]); err != nil {
 		s.log.Error("starting promoted deployment", "deployment_id", active[0].ID, "error", err)
 	}
+}
+
+// taskRunRetention bounds run-history rows kept per task (scheduled-tasks.md §6).
+const taskRunRetention = 20
+
+// scheduledTasksFor loads an app's enabled tasks as wire ScheduledTasks. The
+// command is argv, carried verbatim (ADR-011 — never assembled into a shell
+// string on the plane).
+func (s *Scheduler) scheduledTasksFor(ctx context.Context, appID string) ([]*agentv1.ScheduledTask, error) {
+	tasks, err := s.store.ListEnabledScheduledTasksByApp(ctx, appID)
+	if err != nil {
+		return nil, fmt.Errorf("scheduler: listing scheduled tasks: %w", err)
+	}
+	out := make([]*agentv1.ScheduledTask, 0, len(tasks))
+	for _, t := range tasks {
+		out = append(out, &agentv1.ScheduledTask{Id: t.ID, Schedule: t.Schedule, Command: t.Command})
+	}
+	return out, nil
+}
+
+// ConvergeApp re-declares an app's current desired state to its agent without a
+// deployment, so a scheduled-task change takes effect promptly (scheduled-
+// tasks.md §4). A no-op when the app has no built desired revision (no container
+// to run tasks in yet — the tasks apply on first deploy).
+func (s *Scheduler) ConvergeApp(ctx context.Context, appID string) error {
+	app, err := s.store.GetApplication(ctx, appID)
+	if err != nil {
+		return err
+	}
+	if app.DesiredRevisionID == nil {
+		return nil
+	}
+	rev, err := s.store.GetRevision(ctx, *app.DesiredRevisionID)
+	if err != nil {
+		return err
+	}
+	if rev.Image == "" {
+		return nil
+	}
+	spec, err := s.buildSpec(ctx, app, rev)
+	if err != nil {
+		return err
+	}
+	data, err := proto.Marshal(&agentv1.ConvergeWork{Spec: spec})
+	if err != nil {
+		return fmt.Errorf("scheduler: marshaling converge: %w", err)
+	}
+	msgID := fmt.Sprintf("%s.converge.%d", appID, s.now().UnixNano())
+	if err := s.bus.PublishWork(ctx, subjects.Converge(app.Runtime.ServerID), msgID, data); err != nil {
+		return fmt.Errorf("scheduler: publishing converge: %w", err)
+	}
+	return nil
+}
+
+// HandleScheduledTaskRun records a scheduled task's run observation and prunes
+// history (ADR-005: the plane records what the agent reports). Only the server
+// the task's app runs on may report it (threat-model §5.2).
+func (s *Scheduler) HandleScheduledTaskRun(ctx context.Context, serverID string, ev *agentv1.ScheduledTaskRun) {
+	task, err := s.store.GetScheduledTask(ctx, ev.GetTaskId())
+	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			s.log.Error("task run: loading task", "task_id", ev.GetTaskId(), "error", err)
+		}
+		return // task deleted (its runs cascade) — nothing to record
+	}
+	app, err := s.store.GetApplication(ctx, task.ApplicationID)
+	if err != nil {
+		return
+	}
+	if app.Runtime.ServerID != serverID {
+		s.log.Warn("task run from a server the app does not run on",
+			"task_id", task.ID, "reported_by", serverID, "runs_on", app.Runtime.ServerID)
+		return
+	}
+	status := domain.TaskRunSucceeded
+	if ev.GetFailed() {
+		status = domain.TaskRunFailed
+	}
+	var finished *time.Time
+	if ts := ev.GetFinishedAt(); ts != nil {
+		t := ts.AsTime()
+		finished = &t
+	}
+	exit := int(ev.GetExitCode())
+	run := domain.ScheduledTaskRun{
+		ID:         ev.GetRunId(),
+		TaskID:     task.ID,
+		Status:     status,
+		ExitCode:   &exit,
+		FinishedAt: finished,
+		OutputTail: ev.GetOutputTail(),
+	}
+	if ts := ev.GetStartedAt(); ts != nil {
+		run.StartedAt = ts.AsTime()
+	} else {
+		run.StartedAt = s.now()
+	}
+	if _, err := s.store.CreateTaskRun(ctx, run); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			return // redelivered observation, already recorded
+		}
+		s.log.Error("task run: recording", "task_id", task.ID, "run_id", run.ID, "error", err)
+		return
+	}
+	if err := s.store.DeleteOldTaskRuns(ctx, task.ID, taskRunRetention); err != nil {
+		s.log.Error("task run: pruning history", "task_id", task.ID, "error", err)
+	}
+	s.log.Info("scheduled task run recorded", "task_id", task.ID, "status", status, "exit_code", exit)
 }
 
 // DesiredStateFor resolves one server's full desired set — the reply to the
