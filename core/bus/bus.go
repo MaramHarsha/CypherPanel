@@ -214,7 +214,7 @@ func Start(ctx context.Context, opts Options) (*Bus, error) {
 	// step with the state.* subjects in pkg/subjects.
 	if _, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
 		Name:      streamState,
-		Subjects:  []string{subjects.HeartbeatAll, subjects.DeployStateAll, subjects.AppStateAll, subjects.DbStateAll, subjects.DbBackupStateAll, subjects.DbRestoreStateAll},
+		Subjects:  []string{subjects.HeartbeatAll, subjects.DeployStateAll, subjects.AppStateAll, subjects.DbStateAll, subjects.DbBackupStateAll, subjects.DbRestoreStateAll, subjects.TaskStateAll},
 		Storage:   jetstream.MemoryStorage,
 		Retention: jetstream.LimitsPolicy,
 		Discard:   jetstream.DiscardOld,
@@ -385,6 +385,12 @@ func (b *Bus) ConsumeDbBackupEvents(ctx context.Context, handle func(serverID st
 // ConsumeDbRestoreEvents delivers each DbRestoreEvent payload to handle.
 func (b *Bus) ConsumeDbRestoreEvents(ctx context.Context, handle func(serverID string, data []byte)) (jetstream.ConsumeContext, error) {
 	return b.consumeState(ctx, "plane-db-restore", subjects.DbRestoreStateAll, handle)
+}
+
+// ConsumeTaskRuns delivers each ScheduledTaskRun payload to handle
+// (scheduled-tasks.md §3).
+func (b *Bus) ConsumeTaskRuns(ctx context.Context, handle func(serverID string, data []byte)) (jetstream.ConsumeContext, error) {
+	return b.consumeState(ctx, "plane-task-run", subjects.TaskStateAll, handle)
 }
 
 func (b *Bus) consumeState(ctx context.Context, durable, filter string, handle func(serverID string, data []byte)) (jetstream.ConsumeContext, error) {
@@ -566,9 +572,14 @@ func parseListenAddr(addr string) (host string, port int, err error) {
 	if h == "" {
 		h = "0.0.0.0"
 	}
-	pn, err := strconv.Atoi(p)
+	// A TCP port is a 16-bit value: parse it as one so an out-of-range port
+	// (e.g. ":99999") is rejected here with a clear error rather than at bind
+	// time, and the width is explicit (ParseUint bit size, not a bare Atoi that
+	// could later be narrowed — go/incorrect-integer-conversion). 0 stays valid
+	// (means "pick a free port", used in tests).
+	pn, err := strconv.ParseUint(p, 10, 16)
 	if err != nil {
 		return "", 0, fmt.Errorf("bus: parsing listen port %q: %w", p, err)
 	}
-	return h, pn, nil
+	return h, int(pn), nil
 }

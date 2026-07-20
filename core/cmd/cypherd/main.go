@@ -37,6 +37,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/previews"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
 	"github.com/MaramHarsha/cypherpanel/core/relay"
+	"github.com/MaramHarsha/cypherpanel/core/scheduledtasks"
 	"github.com/MaramHarsha/cypherpanel/core/scheduler"
 	"github.com/MaramHarsha/cypherpanel/core/secret"
 	"github.com/MaramHarsha/cypherpanel/core/servers"
@@ -176,6 +177,11 @@ func run(log *slog.Logger) error {
 	notifyMgr := notify.New(st, box, log)
 	sched.SetNotifier(notifyMgr)
 
+	// Scheduled tasks: cron declared on an app, run by the agent in the app's
+	// own container (scheduled-tasks.md, ADR-011). CRUD converges via the
+	// scheduler; run observations flow back on state.<server>.task.
+	scheduledTaskSvc := scheduledtasks.NewService(st, sched, log)
+
 	dbSvc := databases.NewService(st, box, sched)
 	backupTargetSvc := databases.NewBackupTargetService(st, box)
 	backupScheduleSvc := databases.NewBackupScheduleService(st)
@@ -274,6 +280,21 @@ func run(log *slog.Logger) error {
 	}
 	defer dbRestoreConsume.Stop()
 
+	taskRunConsume, err := b.ConsumeTaskRuns(ctx, func(serverID string, data []byte) {
+		var ev agentv1.ScheduledTaskRun
+		if err := proto.Unmarshal(data, &ev); err != nil {
+			log.Error("unmarshaling scheduled task run", "server_id", serverID, "error", err)
+			return
+		}
+		c, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		sched.HandleScheduledTaskRun(c, serverID, &ev)
+	})
+	if err != nil {
+		return err
+	}
+	defer taskRunConsume.Stop()
+
 	// gRPC enrollment + image-relay endpoint. Enroll needs no client cert
 	// (first contact, join-token gated); the relay RPCs require a verified
 	// agent certificate on the same listener (builder-role-and-relay.md §3).
@@ -297,6 +318,7 @@ func run(log *slog.Logger) error {
 		Previews:        previewMgr,
 		Notifiers:       notifySvc,
 		NotifyDelivery:  notifyMgr,
+		ScheduledTasks:  scheduledTaskSvc,
 		Scheduler:       sched,
 		Deployments:     st,
 		Opener:          box,

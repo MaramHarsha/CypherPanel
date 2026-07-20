@@ -82,6 +82,11 @@ func Rollout(serverID string) string { return WorkPrefix + serverID + ".rollout"
 func Remove(serverID string) string  { return WorkPrefix + serverID + ".remove" }
 func Build(serverID string) string   { return WorkPrefix + serverID + ".build" }
 
+// Converge re-declares an Application's desired state without a deployment
+// (ConvergeWork) — used to propagate a scheduled-task change (scheduled-tasks.md
+// §4). Same work.<id>.> scope, so agent authorization is unchanged.
+func Converge(serverID string) string { return WorkPrefix + serverID + ".converge" }
+
 // PushImage and Distribute are the multi-server relay work subjects
 // (builder-role-and-relay.md §2): the builder pushes a built image to the
 // plane's relay, the target obtains it from there. Both sit under their
@@ -100,6 +105,10 @@ func AppState(serverID, appID string) string {
 // Sync is the request/reply subject on which an agent asks the plane for its
 // full desired set (DesiredState) — sent on connect, before consuming work.
 func Sync(serverID string) string { return StatePrefix + serverID + ".sync" }
+
+// TaskState is where an agent reports ScheduledTaskRun observations
+// (scheduled-tasks.md §3), per-server like the database backup/restore states.
+func TaskState(serverID string) string { return StatePrefix + serverID + ".task" }
 
 // WorkConsumer names the durable JetStream consumer holding one server's
 // work-item cursor. The plane creates it (agents only read from it); the name
@@ -145,4 +154,5 @@ const (
 	DbStateAll        = "state.*.db.>"
 	DbBackupStateAll  = "state.*.dbbackup"
 	DbRestoreStateAll = "state.*.dbrestore"
+	TaskStateAll      = "state.*.task"
 )

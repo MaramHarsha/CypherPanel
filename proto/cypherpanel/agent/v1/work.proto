@@ -15,8 +15,11 @@ option go_package = "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/ag
 // Contract rules (ENGINEERING 12, 14, 18): field numbers are never reused or
 // renumbered; changes are additive only; every work item carries an
 // idempotency key and every consumer is safe under redelivery. Threat-model
-// §5.1 / §8 req 4: these messages describe STATE to converge on — no message
-// here may ever carry a shell command or arbitrary exec verb.
+// §5.1 / §8 req 4 (refined by ADR-011): these messages describe STATE to
+// converge on — never an imperative "run this now" exec verb. A command that is
+// declarative workload config (a container HEALTHCHECK, or a ScheduledTask the
+// agent runs inside the app's own sandbox) is desired state and permitted; a
+// general host/privileged/cross-container exec verb is not.
 
 // AppSpec is an Application's desired state as one server's reconciler sees
 // it: run this revision's image with this config, route it, keep it healthy.
@@ -41,6 +44,20 @@ message AppSpec {
   string network = 7;
   HealthCheck health = 8;
   RouteSpec route = 9;
+  // Declarative cron tasks the agent runs inside this app's own container
+  // (scheduled-tasks.md, ADR-011). This is desired-state workload config, not
+  // an exec verb: the agent owns the clock and execution is confined to the
+  // app's container. command is argv (never a shell string).
+  repeated ScheduledTask scheduled_tasks = 10;
+}
+
+// ScheduledTask is one cron entry on an Application's desired state. The agent's
+// cron reconciler evaluates schedule against the host clock and execs command
+// (argv, ADR-011 — never parsed as a shell string) in the running app container.
+message ScheduledTask {
+  string id = 1;
+  string schedule = 2;         // standard 5-field cron
+  repeated string command = 3; // argv passed straight to exec
 }
 
 // HealthCheck gates rollout: the new container must pass before the route
@@ -75,6 +92,15 @@ message RolloutWork {
 message RemoveWork {
   string deployment_id = 1;
   string app_id = 2;
+}
+
+// ConvergeWork re-declares an Application's desired state without a deployment:
+// the agent updates its in-memory spec and reconciles silently (no deploy
+// event). Used to propagate a scheduled-task change (scheduled-tasks.md §4)
+// promptly — the container reconcile is a no-op (idempotent, rule 13) and the
+// cron reconciler re-arms. Carries no command verb; the spec is state.
+message ConvergeWork {
+  AppSpec spec = 1;
 }
 
 // BuildWork commands a builder-role agent to produce an image from source.
@@ -307,4 +333,19 @@ message DbRestoreEvent {
 
   string detail = 4;
   google.protobuf.Timestamp occurred_at = 5;
+}
+
+// ScheduledTaskRun is one execution's terminal observation, published on
+// state.<server>.task (scheduled-tasks.md §3). The plane records run history
+// from these reports and asserts nothing from work-item completion (ADR-005).
+// output_tail is a capped diagnostic slice of the task's stdout+stderr; it
+// never carries plane secrets (it is the task's own output).
+message ScheduledTaskRun {
+  string task_id = 1;
+  string run_id = 2;          // agent-minted idempotency key for the run row
+  google.protobuf.Timestamp started_at = 3;
+  google.protobuf.Timestamp finished_at = 4;
+  int32 exit_code = 5;
+  bool failed = 6;            // exec error or non-zero exit
+  string output_tail = 7;     // capped stdout+stderr tail
 }

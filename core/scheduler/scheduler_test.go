@@ -22,33 +22,36 @@ import (
 // ─── fakes ──────────────────────────────────────────────────────────────────
 
 type fakeStore struct {
-	mu          sync.Mutex
-	apps        map[string]domain.Application
-	revisions   map[string]domain.Revision
-	deployments map[string]domain.Deployment
-	envVars     map[string][]domain.EnvVar
-	deployKeys  map[string]domain.DeployKey
-	dbs         map[string]domain.Database
-	dbRevs      map[string]domain.DatabaseRevision
-	targets     map[string]domain.BackupTarget
-	schedules   map[string]domain.DatabaseBackup
-	records     map[string]domain.BackupRecord
-	servers     []domain.Server
-	seq         int
+	mu             sync.Mutex
+	apps           map[string]domain.Application
+	revisions      map[string]domain.Revision
+	deployments    map[string]domain.Deployment
+	envVars        map[string][]domain.EnvVar
+	deployKeys     map[string]domain.DeployKey
+	dbs            map[string]domain.Database
+	dbRevs         map[string]domain.DatabaseRevision
+	targets        map[string]domain.BackupTarget
+	schedules      map[string]domain.DatabaseBackup
+	records        map[string]domain.BackupRecord
+	scheduledTasks map[string]domain.ScheduledTask
+	taskRuns       []domain.ScheduledTaskRun
+	servers        []domain.Server
+	seq            int
 }
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		apps:        map[string]domain.Application{},
-		revisions:   map[string]domain.Revision{},
-		deployments: map[string]domain.Deployment{},
-		envVars:     map[string][]domain.EnvVar{},
-		deployKeys:  map[string]domain.DeployKey{},
-		dbs:         map[string]domain.Database{},
-		dbRevs:      map[string]domain.DatabaseRevision{},
-		targets:     map[string]domain.BackupTarget{},
-		schedules:   map[string]domain.DatabaseBackup{},
-		records:     map[string]domain.BackupRecord{},
+		apps:           map[string]domain.Application{},
+		revisions:      map[string]domain.Revision{},
+		deployments:    map[string]domain.Deployment{},
+		envVars:        map[string][]domain.EnvVar{},
+		deployKeys:     map[string]domain.DeployKey{},
+		dbs:            map[string]domain.Database{},
+		dbRevs:         map[string]domain.DatabaseRevision{},
+		targets:        map[string]domain.BackupTarget{},
+		schedules:      map[string]domain.DatabaseBackup{},
+		records:        map[string]domain.BackupRecord{},
+		scheduledTasks: map[string]domain.ScheduledTask{},
 	}
 }
 
@@ -403,6 +406,37 @@ func (f *fakeStore) DeleteOldBackupRecords(_ context.Context, backupID string, k
 	return nil // retention pruning is exercised in dedicated backup tests
 }
 
+func (f *fakeStore) ListEnabledScheduledTasksByApp(_ context.Context, appID string) ([]domain.ScheduledTask, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []domain.ScheduledTask
+	for _, t := range f.scheduledTasks {
+		if t.ApplicationID == appID && t.Enabled {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) GetScheduledTask(_ context.Context, id string) (domain.ScheduledTask, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	t, ok := f.scheduledTasks[id]
+	if !ok {
+		return domain.ScheduledTask{}, store.ErrNotFound
+	}
+	return t, nil
+}
+
+func (f *fakeStore) CreateTaskRun(_ context.Context, r domain.ScheduledTaskRun) (domain.ScheduledTaskRun, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.taskRuns = append(f.taskRuns, r)
+	return r, nil
+}
+
+func (f *fakeStore) DeleteOldTaskRuns(_ context.Context, _ string, _ int32) error { return nil }
+
 type published struct {
 	subject string
 	msgID   string
@@ -689,6 +723,82 @@ func TestNotifierFiresOnDeployFailure(t *testing.T) {
 	})
 	if len(rec.deploys) != 1 || rec.deploys[0].Status != domain.DeployFailed {
 		t.Fatalf("notifier calls = %+v, want one failed", rec.deploys)
+	}
+}
+
+// A scheduled task run reported by the app's own server is recorded; one from
+// another server is rejected (threat-model §5.2, scheduled-tasks.md §3).
+func TestHandleScheduledTaskRunRecordsAndGuardsServer(t *testing.T) {
+	fs, fb := newFakeStore(), &fakeBus{}
+	fs.addApp("app_1", "srv_1")
+	fs.scheduledTasks["sch_1"] = domain.ScheduledTask{ID: "sch_1", ApplicationID: "app_1", Enabled: true}
+	s := newScheduler(fs, fb)
+
+	// A different server may not report this app's task.
+	s.HandleScheduledTaskRun(context.Background(), "srv_evil", &agentv1.ScheduledTaskRun{TaskId: "sch_1", RunId: "str_1"})
+	if len(fs.taskRuns) != 0 {
+		t.Fatalf("a foreign server's run was recorded: %+v", fs.taskRuns)
+	}
+
+	// The owning server's report is recorded with the right status.
+	s.HandleScheduledTaskRun(context.Background(), "srv_1", &agentv1.ScheduledTaskRun{
+		TaskId: "sch_1", RunId: "str_2", Failed: true, ExitCode: 2, OutputTail: "boom",
+	})
+	if len(fs.taskRuns) != 1 {
+		t.Fatalf("run not recorded: %+v", fs.taskRuns)
+	}
+	if r := fs.taskRuns[0]; r.Status != domain.TaskRunFailed || r.ExitCode == nil || *r.ExitCode != 2 {
+		t.Fatalf("run = %+v, want failed exit 2", r)
+	}
+}
+
+// ConvergeApp publishes a ConvergeWork carrying the app's spec (including its
+// scheduled tasks) so a task change propagates without a redeploy.
+func TestConvergeAppPublishesSpecWithTasks(t *testing.T) {
+	fs, fb := newFakeStore(), &fakeBus{}
+	app := fs.addApp("app_1", "srv_1")
+	// A built desired revision so there is a container to converge.
+	rev := domain.Revision{ID: "rev_1", ApplicationID: "app_1", Image: "img", ConfigSnapshot: []byte("{}")}
+	fs.revisions["rev_1"] = rev
+	app.DesiredRevisionID = &rev.ID
+	fs.apps["app_1"] = app
+	fs.scheduledTasks["sch_1"] = domain.ScheduledTask{ID: "sch_1", ApplicationID: "app_1", Schedule: "* * * * *", Command: []string{"true"}, Enabled: true}
+	s := newScheduler(fs, fb)
+
+	if err := s.ConvergeApp(context.Background(), "app_1"); err != nil {
+		t.Fatalf("ConvergeApp: %v", err)
+	}
+	var found *agentv1.ConvergeWork
+	for _, p := range fb.work {
+		if p.subject == subjects.Converge("srv_1") {
+			var cw agentv1.ConvergeWork
+			if err := proto.Unmarshal(p.data, &cw); err != nil {
+				t.Fatalf("unmarshal converge: %v", err)
+			}
+			found = &cw
+		}
+	}
+	if found == nil || found.GetSpec().GetAppId() != "app_1" {
+		t.Fatalf("no converge work published for app_1; got %+v", found)
+	}
+	if tasks := found.GetSpec().GetScheduledTasks(); len(tasks) != 1 || tasks[0].GetId() != "sch_1" {
+		t.Fatalf("converge spec tasks = %+v, want sch_1 carried", tasks)
+	}
+}
+
+// ConvergeApp is a no-op (no work) when the app has no built revision — there is
+// no container to run tasks in yet.
+func TestConvergeAppNoRevisionIsNoOp(t *testing.T) {
+	fs, fb := newFakeStore(), &fakeBus{}
+	fs.addApp("app_1", "srv_1")
+	s := newScheduler(fs, fb)
+	if err := s.ConvergeApp(context.Background(), "app_1"); err != nil {
+		t.Fatalf("ConvergeApp: %v", err)
+	}
+	for _, p := range fb.work {
+		if p.subject == subjects.Converge("srv_1") {
+			t.Fatal("converge published for an app with no built revision")
+		}
 	}
 }
 

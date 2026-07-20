@@ -65,3 +65,9 @@ repository — no open-core split; trademark is the brand lever) and
 state: plane declares version+channel, agent pulls the signed artifact,
 two-slot swap with self-rollback; implementation lands with the release
 pipeline).
+
+[ADR-011](adrs/ADR-011-in-container-scheduled-tasks.md) (in-container
+scheduled-task commands are declarative desired state, executed only in the
+app's own sandbox — refining threat-model §8 req 4 from "no shell strings" to
+"no verb that can execute outside a workload's own sandbox"; unblocks the
+Phase 3 scheduled-tasks feature).

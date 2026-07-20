@@ -19,6 +19,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/notify"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
+	"github.com/MaramHarsha/cypherpanel/core/scheduledtasks"
 	"github.com/MaramHarsha/cypherpanel/core/servers"
 )
 
@@ -81,6 +82,17 @@ type NotifierDelivery interface {
 	Deliver(ctx context.Context, n domain.Notifier, ev domain.NotifyEvent) error
 }
 
+// ScheduledTaskService is the scheduled-task CRUD surface (consumer-defined;
+// *scheduledtasks.Service satisfies it — scheduled-tasks.md §7).
+type ScheduledTaskService interface {
+	Create(ctx context.Context, appID string, in scheduledtasks.Input) (domain.ScheduledTask, error)
+	Update(ctx context.Context, id string, in scheduledtasks.Input) (domain.ScheduledTask, error)
+	Get(ctx context.Context, id string) (domain.ScheduledTask, error)
+	List(ctx context.Context, appID string) ([]domain.ScheduledTask, error)
+	Delete(ctx context.Context, id string) error
+	Runs(ctx context.Context, taskID string) ([]domain.ScheduledTaskRun, error)
+}
+
 // LogSubscriber delivers the retained history and then the live tail of one
 // log subject (consumer-defined; *bus.Bus satisfies it). handle is invoked
 // from the subscriber's goroutine until stop is called.
@@ -103,6 +115,7 @@ type Deps struct {
 	Previews        PreviewManager
 	Notifiers       NotifierService
 	NotifyDelivery  NotifierDelivery
+	ScheduledTasks  ScheduledTaskService
 	Scheduler       Deployer
 	Deployments     DeploymentReader
 	Opener          Opener
@@ -226,6 +239,14 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/v1/notifiers/{id}", a.authed(a.handlePatchNotifier))
 	mux.HandleFunc("DELETE /api/v1/notifiers/{id}", a.authed(a.handleDeleteNotifier))
 	mux.HandleFunc("POST /api/v1/notifiers/{id}/test", a.authed(a.handleTestNotifier))
+
+	// Phase 3: scheduled tasks (scheduled-tasks.md §7).
+	mux.HandleFunc("POST /api/v1/applications/{id}/scheduled-tasks", a.authed(a.handleCreateScheduledTask))
+	mux.HandleFunc("GET /api/v1/applications/{id}/scheduled-tasks", a.authed(a.handleListScheduledTasks))
+	mux.HandleFunc("GET /api/v1/scheduled-tasks/{id}", a.authed(a.handleGetScheduledTask))
+	mux.HandleFunc("PATCH /api/v1/scheduled-tasks/{id}", a.authed(a.handlePatchScheduledTask))
+	mux.HandleFunc("DELETE /api/v1/scheduled-tasks/{id}", a.authed(a.handleDeleteScheduledTask))
+	mux.HandleFunc("GET /api/v1/scheduled-tasks/{id}/runs", a.authed(a.handleListTaskRuns))
 
 	// Interim console + static assets.
 	mux.Handle("GET /", a.consoleHandler())

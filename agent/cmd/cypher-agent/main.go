@@ -20,6 +20,7 @@ import (
 
 	"github.com/MaramHarsha/cypherpanel/agent/builder"
 	"github.com/MaramHarsha/cypherpanel/agent/conn"
+	"github.com/MaramHarsha/cypherpanel/agent/cron"
 	"github.com/MaramHarsha/cypherpanel/agent/driver"
 	"github.com/MaramHarsha/cypherpanel/agent/driver/docker"
 	"github.com/MaramHarsha/cypherpanel/agent/driver/docker/engine"
@@ -163,6 +164,7 @@ func runAgent(args []string, log *slog.Logger) error {
 		// everything except builder-role agents, which run nothing and must
 		// not bind :80/:443 (builder-role-and-relay.md §1).
 		var drv driver.Reconciler
+		var dockerDrv *docker.Driver // concrete handle for the cron executor
 		if *role != "builder" {
 			// The Proxy owns this host directory (routing-and-tls.md §5):
 			// fragments in <Dir>/apps, static config + acme.json alongside.
@@ -183,7 +185,8 @@ func runAgent(args []string, log *slog.Logger) error {
 			prb := prober.New()
 			strm := stream.NewStreamer(nc, eng, id.ServerID)
 			go strm.Start(ctx, 10*time.Second)
-			drv = docker.New(eng, prx, prb, log)
+			dockerDrv = docker.New(eng, prx, prb, log)
+			drv = dockerDrv
 		}
 
 		// Managed databases run on the same nodes as apps (worker/all roles),
@@ -210,6 +213,11 @@ func runAgent(args []string, log *slog.Logger) error {
 			return err
 		}
 		w := worker.New(wbus, id.ServerID, drv, dbRec, backupRunner, bld, imgRelay, log)
+		if dockerDrv != nil {
+			// Scheduled tasks run only on app-role nodes (they need a container
+			// to exec into) — scheduled-tasks.md §5, ADR-011.
+			w.SetCron(cron.New(dockerDrv, wbus, id.ServerID, log))
+		}
 		errCh := make(chan error, 1)
 		go func() {
 			if err := w.Run(ctx); err != nil {

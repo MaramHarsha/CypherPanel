@@ -26,7 +26,17 @@ type fakeClient struct {
 	removeErrForID    map[string]error
 	listErr           error
 
+	execCalls []execCall // recorded ExecAndWait invocations
+	execExit  int        // injected exit code
+	execOut   []byte     // injected output
+	execErr   error      // injected error
+
 	mutations int // count of state-changing calls
+}
+
+type execCall struct {
+	containerID string
+	cmd         []string
 }
 
 func newFakeClient() *fakeClient {
@@ -54,6 +64,11 @@ func (f *fakeClient) ListManaged(_ context.Context) ([]Container, error) {
 		out = append(out, *c)
 	}
 	return out, nil
+}
+
+func (f *fakeClient) ExecAndWait(_ context.Context, containerID string, cmd []string) (int, []byte, error) {
+	f.execCalls = append(f.execCalls, execCall{containerID: containerID, cmd: cmd})
+	return f.execExit, f.execOut, f.execErr
 }
 
 func (f *fakeClient) CreateContainer(_ context.Context, spec ContainerSpec) (string, error) {
@@ -572,5 +587,44 @@ func TestGCRemovesImagesOfAbsentApps(t *testing.T) {
 	}
 	if len(c.images) != 1 || c.images[0].AppID != "keep" {
 		t.Fatalf("GC left images = %+v, want only keep", c.images)
+	}
+}
+
+// RunningContainerForApp resolves the app's running container (the scheduled-
+// task exec target, ADR-011) and reports ok=false when none is running.
+func TestRunningContainerForApp(t *testing.T) {
+	c := newFakeClient()
+	d := newDriver(c, newFakeRouter(), &fakeProber{})
+
+	running := c.addContainer("app1", "rev2", true)
+	c.addContainer("app1", "rev1", false) // an older, stopped container
+	c.addContainer("app2", "rev1", true)  // a different app
+
+	id, ok, err := d.RunningContainerForApp(context.Background(), "app1")
+	if err != nil || !ok || id != running {
+		t.Fatalf("RunningContainerForApp = (%q, %v, %v), want the running app1 container", id, ok, err)
+	}
+
+	// An app with no running container: ok=false, no error (a skip, not a fail).
+	c2 := newFakeClient()
+	d2 := newDriver(c2, newFakeRouter(), &fakeProber{})
+	c2.addContainer("app1", "rev1", false)
+	if _, ok, err := d2.RunningContainerForApp(context.Background(), "app1"); ok || err != nil {
+		t.Fatalf("want ok=false,nil err when nothing runs; got ok=%v err=%v", ok, err)
+	}
+}
+
+// ExecAndWait delegates to the client and returns its exit code and output.
+func TestDriverExecAndWait(t *testing.T) {
+	c := newFakeClient()
+	c.execExit, c.execOut = 3, []byte("out")
+	d := newDriver(c, newFakeRouter(), &fakeProber{})
+
+	exit, out, err := d.ExecAndWait(context.Background(), "c1", []string{"sh", "-c", "x"})
+	if err != nil || exit != 3 || string(out) != "out" {
+		t.Fatalf("ExecAndWait = (%d, %q, %v), want (3, out, nil)", exit, out, err)
+	}
+	if len(c.execCalls) != 1 || c.execCalls[0].containerID != "c1" {
+		t.Fatalf("exec not delegated to client: %+v", c.execCalls)
 	}
 }
