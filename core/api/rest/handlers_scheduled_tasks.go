@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -64,6 +65,12 @@ type scheduledTaskRequest struct {
 }
 
 func (a *API) handleCreateScheduledTask(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForApplication(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	if a.deps.ScheduledTasks == nil {
 		writeError(w, http.StatusNotImplemented, "scheduled tasks are not enabled")
 		return
@@ -91,6 +98,12 @@ func (a *API) handleCreateScheduledTask(w http.ResponseWriter, r *http.Request) 
 }
 
 func (a *API) handleListScheduledTasks(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForApplication(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	if a.deps.ScheduledTasks == nil {
 		writeJSON(w, http.StatusOK, []scheduledTaskDTO{})
 		return
@@ -109,6 +122,12 @@ func (a *API) handleListScheduledTasks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleGetScheduledTask(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForScheduledTask(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	if a.deps.ScheduledTasks == nil {
 		writeError(w, http.StatusNotFound, "scheduled task not found")
 		return
@@ -127,6 +146,12 @@ func (a *API) handleGetScheduledTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handlePatchScheduledTask(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForScheduledTask(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	if a.deps.ScheduledTasks == nil {
 		writeError(w, http.StatusNotFound, "scheduled task not found")
 		return
@@ -169,6 +194,12 @@ func (a *API) handlePatchScheduledTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleDeleteScheduledTask(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForScheduledTask(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	if a.deps.ScheduledTasks == nil {
 		writeError(w, http.StatusNotFound, "scheduled task not found")
 		return
@@ -186,6 +217,12 @@ func (a *API) handleDeleteScheduledTask(w http.ResponseWriter, r *http.Request) 
 }
 
 func (a *API) handleListTaskRuns(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForScheduledTask(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
 	if a.deps.ScheduledTasks == nil {
 		writeJSON(w, http.StatusOK, []taskRunDTO{})
 		return

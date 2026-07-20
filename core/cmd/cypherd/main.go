@@ -43,6 +43,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/servers"
 	"github.com/MaramHarsha/cypherpanel/core/status"
 	"github.com/MaramHarsha/cypherpanel/core/store"
+	"github.com/MaramHarsha/cypherpanel/core/teams"
 	"github.com/MaramHarsha/cypherpanel/pkg/ids"
 	"github.com/MaramHarsha/cypherpanel/pkg/pki"
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
@@ -164,6 +165,7 @@ func run(log *slog.Logger) error {
 	projectSvc := projects.NewService(st)
 	appSvc := applications.NewService(st, box)
 	deployKeySvc := deploykeys.NewService(st, box)
+	teamSvc := teams.NewService(st)
 	authr := auth.NewAuthenticator(st, auth.NewLimiter(5, 15*time.Minute), cfg.SessionTTL)
 
 	// Deploy pipeline: the scheduler publishes work items and advances
@@ -319,6 +321,7 @@ func run(log *slog.Logger) error {
 		Notifiers:       notifySvc,
 		NotifyDelivery:  notifyMgr,
 		ScheduledTasks:  scheduledTaskSvc,
+		Teams:           teamSvc,
 		Scheduler:       sched,
 		Deployments:     st,
 		Opener:          box,
@@ -417,8 +420,22 @@ func bootstrapAdmin(ctx context.Context, st *store.Store, cfg config.Config, log
 	if err != nil {
 		return err
 	}
-	if _, err := st.CreateUser(ctx, ids.New(ids.PrefixUser), cfg.AdminEmail, hash, "owner"); err != nil {
+	admin, err := st.CreateUser(ctx, ids.New(ids.PrefixUser), cfg.AdminEmail, hash, "owner")
+	if err != nil {
 		return fmt.Errorf("creating admin user: %w", err)
+	}
+	// The default team always exists with the admin as an owner, so a fresh
+	// boot and a migrated panel converge to the same shape
+	// (teams-and-roles.md §2). Both writes are idempotent.
+	if _, err := st.GetTeam(ctx, "tm_default"); errors.Is(err, store.ErrNotFound) {
+		if _, err := st.CreateTeam(ctx, "tm_default", "default"); err != nil {
+			return fmt.Errorf("creating default team: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("checking default team: %w", err)
+	}
+	if _, err := st.UpsertTeamMember(ctx, "tm_default", admin.ID, "owner"); err != nil {
+		return fmt.Errorf("enrolling admin in default team: %w", err)
 	}
 	log.Info("bootstrapped admin account", "email", cfg.AdminEmail)
 	return nil

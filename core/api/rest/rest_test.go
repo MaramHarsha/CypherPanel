@@ -96,16 +96,91 @@ func (noopAgentBus) DisconnectAgent(string) error                     { return n
 func (noopAgentBus) EnsureWorkConsumer(context.Context, string) error { return nil }
 func (noopAgentBus) DeleteWorkConsumer(context.Context, string) error { return nil }
 
+// fakeTeams implements TeamService: the panel-owner bypass mirrors the real
+// service; explicit memberships (userID -> projectID/teamID -> role) let authz
+// tests model cross-team boundaries. The default harness user has panel role
+// "owner", so pre-teams tests keep their full-access behavior.
+type fakeTeams struct {
+	projectRoles map[string]map[string]string // userID -> projectID -> role
+	teamRoles    map[string]map[string]string // userID -> teamID -> role
+	teams        []domain.TeamWithRole        // ListFor result for non-owners
+}
+
+func newFakeTeams() *fakeTeams {
+	return &fakeTeams{
+		projectRoles: map[string]map[string]string{},
+		teamRoles:    map[string]map[string]string{},
+		teams:        []domain.TeamWithRole{{Team: domain.Team{ID: "tm_default", Name: "default"}, Role: "owner"}},
+	}
+}
+
+func (f *fakeTeams) RoleForProject(_ context.Context, actor domain.User, projectID string) (string, error) {
+	if actor.Role == domain.RoleOwner {
+		return domain.RoleOwner, nil
+	}
+	return f.projectRoles[actor.ID][projectID], nil
+}
+
+func (f *fakeTeams) RoleInTeam(_ context.Context, actor domain.User, teamID string) (string, error) {
+	if actor.Role == domain.RoleOwner {
+		return domain.RoleOwner, nil
+	}
+	return f.teamRoles[actor.ID][teamID], nil
+}
+
+func (f *fakeTeams) Create(_ context.Context, name string, _ domain.User) (domain.Team, error) {
+	return domain.Team{ID: "tm_new", Name: name}, nil
+}
+func (f *fakeTeams) Get(_ context.Context, id string) (domain.Team, error) {
+	return domain.Team{ID: id, Name: "default"}, nil
+}
+func (f *fakeTeams) ListFor(_ context.Context, _ domain.User) ([]domain.TeamWithRole, error) {
+	return f.teams, nil
+}
+func (f *fakeTeams) Rename(_ context.Context, id, name string) (domain.Team, error) {
+	return domain.Team{ID: id, Name: name}, nil
+}
+func (f *fakeTeams) Delete(context.Context, string) error { return nil }
+func (f *fakeTeams) Members(context.Context, string) ([]domain.TeamMember, error) {
+	return nil, nil
+}
+func (f *fakeTeams) AddMember(_ context.Context, teamID, email, role, _ string) (domain.TeamMember, error) {
+	return domain.TeamMember{TeamID: teamID, Email: email, Role: role}, nil
+}
+func (f *fakeTeams) ChangeMemberRole(_ context.Context, teamID, userID, role, _ string) (domain.TeamMember, error) {
+	return domain.TeamMember{TeamID: teamID, UserID: userID, Role: role}, nil
+}
+func (f *fakeTeams) RemoveMember(context.Context, string, string, string) error { return nil }
+func (f *fakeTeams) CreateUser(_ context.Context, email, _, role, _ string) (domain.User, error) {
+	return domain.User{ID: "usr_new", Email: email, Role: role}, nil
+}
+func (f *fakeTeams) ListUsers(context.Context) ([]domain.User, error) { return nil, nil }
+func (f *fakeTeams) SetUserRole(_ context.Context, userID, role string, _ domain.User) (domain.User, error) {
+	return domain.User{ID: userID, Role: role}, nil
+}
+func (f *fakeTeams) DeleteUser(context.Context, string, domain.User) error { return nil }
+
 type fakeProjectsStore struct {
 	projects map[string]domain.Project
 	envs     map[string][]domain.Environment
 }
 
 func newFakeProjectsStore() *fakeProjectsStore {
-	return &fakeProjectsStore{projects: map[string]domain.Project{}, envs: map[string][]domain.Environment{}}
+	// Seed the project/environment the resource fixtures reference, so the
+	// authz layer's env -> project resolution works for the seeded env_test
+	// (the harness user is a panel owner, so role checks then pass).
+	return &fakeProjectsStore{
+		projects: map[string]domain.Project{
+			"prj_test": {ID: "prj_test", Name: "test", TeamID: "tm_default"},
+		},
+		envs: map[string][]domain.Environment{
+			"prj_test": {{ID: "env_test", ProjectID: "prj_test", Name: "production"}},
+		},
+	}
 }
 
-func (f *fakeProjectsStore) CreateProjectWithEnvironment(_ context.Context, pid, name, eid, ename string) (domain.Project, domain.Environment, error) {
+func (f *fakeProjectsStore) CreateProjectWithEnvironment(_ context.Context, pid, name, teamID, eid, ename string) (domain.Project, domain.Environment, error) {
+	_ = teamID
 	p := domain.Project{ID: pid, Name: name, CreatedAt: time.Now()}
 	e := domain.Environment{ID: eid, ProjectID: pid, Name: ename, CreatedAt: time.Now()}
 	f.projects[pid] = p
@@ -135,6 +210,21 @@ func (f *fakeProjectsStore) DeleteProject(_ context.Context, id string) error {
 	return nil
 }
 
+func (f *fakeProjectsStore) ListProjectsByUser(context.Context, string) ([]domain.Project, error) {
+	return nil, nil
+}
+
+func (f *fakeProjectsStore) GetEnvironment(_ context.Context, id string) (domain.Environment, error) {
+	for _, envs := range f.envs {
+		for _, e := range envs {
+			if e.ID == id {
+				return e, nil
+			}
+		}
+	}
+	return domain.Environment{}, store.ErrNotFound
+}
+
 func (f *fakeProjectsStore) CreateEnvironment(_ context.Context, id, pid, name string) (domain.Environment, error) {
 	for _, e := range f.envs[pid] {
 		if e.Name == name {
@@ -161,8 +251,13 @@ func newFakeAppsStore() *fakeAppsStore {
 	return &fakeAppsStore{
 		envs:    map[string]bool{"env_test": true},
 		servers: map[string]bool{"srv_test": true},
-		apps:    map[string]domain.Application{},
-		env:     map[string][]domain.EnvVar{},
+		apps: map[string]domain.Application{
+			// app_x anchors fakeDeploymentReader's dep_test so the authz
+			// layer's deployment -> app -> env -> project chain resolves.
+			"app_x": {ID: "app_x", EnvironmentID: "env_test", Name: "x",
+				Runtime: domain.AppRuntime{ServerID: "srv_test", Port: 8080}},
+		},
+		env: map[string][]domain.EnvVar{},
 	}
 }
 
@@ -281,7 +376,9 @@ func (f *fakeDeployer) RemoveApp(_ context.Context, serverID, appID string) erro
 type fakeDeploymentReader struct{}
 
 func (fakeDeploymentReader) GetDeployment(_ context.Context, id string) (domain.Deployment, error) {
-	if id != "dep_test" {
+	// dep_unbuilt exists (so authz resolution succeeds) but its revision was
+	// never built — the deployer answers its rollback with 409.
+	if id != "dep_test" && id != "dep_unbuilt" {
 		return domain.Deployment{}, store.ErrNotFound
 	}
 	return domain.Deployment{ID: id, ApplicationID: "app_x", RevisionID: "rev_test", Status: domain.DeploySucceeded, Trigger: "manual", CreatedAt: time.Now()}, nil
@@ -441,6 +538,7 @@ func newTestServerFull(t *testing.T) (*httptest.Server, *fakeServersStore, *fake
 		Applications: applications.NewService(newFakeAppsStore(), box),
 		DeployKeys:   deploykeys.NewService(dkStore, box),
 		Databases:    dbSvc,
+		Teams:        newFakeTeams(),
 		Scheduler:    &fakeDeployer{},
 		Deployments:  fakeDeploymentReader{},
 		Opener:       box,

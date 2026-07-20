@@ -40,6 +40,9 @@ const (
 	// Phase 3: Scheduled tasks (docs/features/scheduled-tasks.md).
 	PrefixScheduledTask = "sch"
 	PrefixTaskRun       = "str"
+
+	// Phase 3: Teams (docs/features/teams-and-roles.md).
+	PrefixTeam = "tm"
 )
 
 // New returns a prefixed, URL-safe, collision-resistant identifier such as

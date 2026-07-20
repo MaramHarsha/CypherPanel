@@ -19,7 +19,8 @@ func newFakeStore() *fakeStore {
 	return &fakeStore{projects: map[string]domain.Project{}, envs: map[string][]domain.Environment{}}
 }
 
-func (f *fakeStore) CreateProjectWithEnvironment(_ context.Context, pid, name, eid, ename string) (domain.Project, domain.Environment, error) {
+func (f *fakeStore) CreateProjectWithEnvironment(_ context.Context, pid, name, teamID, eid, ename string) (domain.Project, domain.Environment, error) {
+	_ = teamID
 	p := domain.Project{ID: pid, Name: name, CreatedAt: time.Now()}
 	e := domain.Environment{ID: eid, ProjectID: pid, Name: ename, CreatedAt: time.Now()}
 	f.projects[pid] = p
@@ -48,6 +49,21 @@ func (f *fakeStore) DeleteProject(_ context.Context, id string) error {
 	return nil
 }
 
+func (f *fakeStore) ListProjectsByUser(context.Context, string) ([]domain.Project, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) GetEnvironment(_ context.Context, id string) (domain.Environment, error) {
+	for _, envs := range f.envs {
+		for _, e := range envs {
+			if e.ID == id {
+				return e, nil
+			}
+		}
+	}
+	return domain.Environment{}, store.ErrNotFound
+}
+
 func (f *fakeStore) CreateEnvironment(_ context.Context, id, pid, name string) (domain.Environment, error) {
 	e := domain.Environment{ID: id, ProjectID: pid, Name: name, CreatedAt: time.Now()}
 	f.envs[pid] = append(f.envs[pid], e)
@@ -60,7 +76,7 @@ func (f *fakeStore) ListEnvironmentsByProject(_ context.Context, pid string) ([]
 
 func TestCreateAddsDefaultEnvironment(t *testing.T) {
 	s := NewService(newFakeStore())
-	proj, env, err := s.Create(context.Background(), "  acme  ")
+	proj, env, err := s.Create(context.Background(), "  acme  ", "tm_default")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -78,7 +94,7 @@ func TestCreateAddsDefaultEnvironment(t *testing.T) {
 func TestCreateRejectsBadName(t *testing.T) {
 	s := NewService(newFakeStore())
 	for _, name := range []string{"", "   ", string(make([]byte, 101))} {
-		if _, _, err := s.Create(context.Background(), name); !errors.Is(err, ErrInvalidName) {
+		if _, _, err := s.Create(context.Background(), name, "tm_default"); !errors.Is(err, ErrInvalidName) {
 			t.Errorf("name %q: err = %v, want ErrInvalidName", name, err)
 		}
 	}
