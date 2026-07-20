@@ -61,6 +61,14 @@ type Store interface {
 	ListServers(ctx context.Context) ([]domain.Server, error)
 
 	GetDeployKey(ctx context.Context, id string) (domain.DeployKey, error)
+
+	// Phase 3: Managed Databases (managed-databases.md)
+	GetDatabase(ctx context.Context, id string) (domain.Database, error)
+	ListDatabasesByServer(ctx context.Context, serverID string) ([]domain.Database, error)
+	GetDatabaseRevision(ctx context.Context, id string) (domain.DatabaseRevision, error)
+	SetDatabaseObservedStatus(ctx context.Context, id, status, detail, observedRevisionID string, observedAt time.Time) error
+	ListPendingDeleteDatabases(ctx context.Context) ([]domain.Database, error)
+	DeleteDatabase(ctx context.Context, id string) error
 }
 
 // Bus is the work-publication side of core/bus (consumer-defined).
@@ -694,6 +702,62 @@ func (s *Scheduler) DesiredStateFor(ctx context.Context, serverID string) ([]byt
 		}
 		ds.Specs = append(ds.Specs, spec)
 	}
+
+	// Phase 3: Managed Databases (managed-databases.md §5)
+	dbs, err := s.store.ListDatabasesByServer(ctx, serverID)
+	if err != nil {
+		return nil, fmt.Errorf("scheduler: listing databases for %s: %w", serverID, err)
+	}
+	for _, db := range dbs {
+		if db.DesiredRevisionID == nil {
+			continue
+		}
+		rev, err := s.store.GetDatabaseRevision(ctx, *db.DesiredRevisionID)
+		if err != nil {
+			s.log.Error("desired state: loading db revision", "db_id", db.ID, "error", err)
+			continue
+		}
+
+		defaults := domain.EngineDefaults(db.Engine, db.Version)
+		env := make(map[string]string)
+
+		if db.RequirePassword && len(db.RootPasswordCT) > 0 {
+			pwd, err := s.opener.Open(db.RootPasswordCT, db.RootPasswordNonce)
+			if err != nil {
+				s.log.Error("desired state: decrypting db root password", "db_id", db.ID, "error", err)
+				continue
+			}
+			if defaults.PasswordEnv != "" {
+				env[defaults.PasswordEnv] = string(pwd)
+			}
+		}
+
+		spec := &agentv1.DbSpec{
+			DbId:          db.ID,
+			EnvironmentId: db.EnvironmentID,
+			RevisionId:    rev.ID,
+			Engine:        string(db.Engine),
+			Image:         defaults.Image,
+			VolumeName:    db.VolumeName,
+			DataPath:      db.DataPath,
+			Network:       db.Network,
+			Env:           env,
+			HealthCmd:     defaults.HealthCmd,
+		}
+
+		if db.ExposePort != nil {
+			spec.ExposePort = uint32(*db.ExposePort)
+		}
+		if db.CPULimit != nil {
+			spec.CpuLimit = *db.CPULimit
+		}
+		if db.MemoryLimitMB != nil {
+			spec.MemoryLimitMb = uint32(*db.MemoryLimitMB)
+		}
+
+		ds.DbSpecs = append(ds.DbSpecs, spec)
+	}
+
 	return proto.Marshal(ds)
 }
 
@@ -712,6 +776,20 @@ func (s *Scheduler) Recover(ctx context.Context) error {
 	for _, srv := range servers {
 		if err := s.bus.EnsureWorkConsumer(ctx, srv.ID); err != nil {
 			s.log.Error("recover: ensuring work consumer", "server_id", srv.ID, "error", err)
+		}
+	}
+
+	// Phase 3: Recover and publish pending database work items (provision / remove).
+	for _, srv := range servers {
+		dbs, err := s.store.ListDatabasesByServer(ctx, srv.ID)
+		if err != nil {
+			s.log.Error("recover: listing databases", "server_id", srv.ID, "error", err)
+			continue
+		}
+		for _, db := range dbs {
+			if err := s.reconcileDatabaseLocked(ctx, db.ID); err != nil {
+				s.log.Error("recover: reconciling database", "db_id", db.ID, "error", err)
+			}
 		}
 	}
 

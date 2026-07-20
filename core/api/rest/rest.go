@@ -14,6 +14,7 @@ import (
 
 	"github.com/MaramHarsha/cypherpanel/core/applications"
 	"github.com/MaramHarsha/cypherpanel/core/auth"
+	"github.com/MaramHarsha/cypherpanel/core/databases"
 	"github.com/MaramHarsha/cypherpanel/core/deploykeys"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
@@ -56,21 +57,24 @@ type LogSubscriber interface {
 
 // Deps are the dependencies the API needs.
 type Deps struct {
-	Auth         *auth.Authenticator
-	Servers      *servers.Service
-	Projects     *projects.Service
-	Applications *applications.Service
-	DeployKeys   *deploykeys.Service
-	Scheduler    Deployer
-	Deployments  DeploymentReader
-	Opener       Opener
-	Pinger       Pinger
-	CACertPEM    []byte
-	EnrollAddr   string // advertised gRPC enrollment address (host:port)
-	NATSURL      string // advertised data-plane URL
-	Logs         LogSubscriber
-	ConsoleURL   string // advertised HTTP base URL (installer + CA fetch)
-	Log          *slog.Logger
+	Auth            *auth.Authenticator
+	Servers         *servers.Service
+	Projects        *projects.Service
+	Applications    *applications.Service
+	DeployKeys      *deploykeys.Service
+	Databases       *databases.Service
+	BackupTargets   *databases.BackupTargetService
+	BackupSchedules *databases.BackupScheduleService
+	Scheduler       Deployer
+	Deployments     DeploymentReader
+	Opener          Opener
+	Pinger          Pinger
+	CACertPEM       []byte
+	EnrollAddr      string // advertised gRPC enrollment address (host:port)
+	NATSURL         string // advertised data-plane URL
+	Logs            LogSubscriber
+	ConsoleURL      string // advertised HTTP base URL (installer + CA fetch)
+	Log             *slog.Logger
 }
 
 // API holds the HTTP handlers and their dependencies.
@@ -147,6 +151,29 @@ func (a *API) Handler() http.Handler {
 	// GitHub webhook: authenticated by per-app HMAC secret, not a session
 	// (spec §4) — the only unauthenticated mutating route.
 	mux.HandleFunc("POST /webhooks/github/{id}", a.handleGitHubWebhook)
+
+	// Phase 3: Managed Databases (managed-databases.md §4).
+	mux.HandleFunc("POST /api/v1/environments/{id}/databases", a.authed(a.handleCreateDatabase))
+	mux.HandleFunc("GET /api/v1/environments/{id}/databases", a.authed(a.handleListDatabases))
+	mux.HandleFunc("GET /api/v1/databases/{id}", a.authed(a.handleGetDatabase))
+	mux.HandleFunc("PATCH /api/v1/databases/{id}", a.authed(a.handlePatchDatabase))
+	mux.HandleFunc("DELETE /api/v1/databases/{id}", a.authed(a.handleDeleteDatabase))
+	mux.HandleFunc("POST /api/v1/databases/{id}/stop", a.authed(a.handleStopDatabase))
+	mux.HandleFunc("POST /api/v1/databases/{id}/start", a.authed(a.handleStartDatabase))
+	mux.HandleFunc("POST /api/v1/databases/{id}/reset-password", a.authed(a.handleResetDatabasePassword))
+	mux.HandleFunc("GET /api/v1/databases/{id}/connection-info", a.authed(a.handleDatabaseConnectionInfo))
+
+	// Database backup schedules.
+	mux.HandleFunc("POST /api/v1/databases/{id}/backups", a.authed(a.handleCreateDatabaseBackup))
+	mux.HandleFunc("GET /api/v1/databases/{id}/backups", a.authed(a.handleListDatabaseBackups))
+	mux.HandleFunc("DELETE /api/v1/databases/{id}/backups/{bak_id}", a.authed(a.handleDeleteDatabaseBackup))
+	mux.HandleFunc("GET /api/v1/databases/{id}/backups/{bak_id}/history", a.authed(a.handleListBackupRecords))
+
+	// Backup targets.
+	mux.HandleFunc("POST /api/v1/backup-targets", a.authed(a.handleCreateBackupTarget))
+	mux.HandleFunc("GET /api/v1/backup-targets", a.authed(a.handleListBackupTargets))
+	mux.HandleFunc("GET /api/v1/backup-targets/{id}", a.authed(a.handleGetBackupTarget))
+	mux.HandleFunc("DELETE /api/v1/backup-targets/{id}", a.authed(a.handleDeleteBackupTarget))
 
 	// Interim console + static assets.
 	mux.Handle("GET /", a.consoleHandler())

@@ -123,6 +123,10 @@ message DistributeWork {
 // history.
 message DesiredState {
   repeated AppSpec specs = 1;
+  // Phase 3: Managed Database desired state (managed-databases.md §5).
+  // Databases whose db_id is absent from db_specs are removed (same
+  // absence-means-remove contract as apps).
+  repeated DbSpec db_specs = 2;
 }
 
 // AppStatus is one Application's observed state, reported on
@@ -172,4 +176,109 @@ message DeployEvent {
   // built (BuildWork may name a branch head; the revision of record needs the
   // SHA). Empty on other stages.
   string commit_sha = 7;
+}
+
+// ─── Phase 3: Managed Databases (docs/features/managed-databases.md §5) ───
+//
+// Same contract rules as Application work items above (ENGINEERING 12, 14, 18):
+// field numbers never reused, changes additive, every work item idempotent.
+
+// DbSpec is a Database's desired state as one server's reconciler sees it.
+// The agent's database reconciler converges the local Docker daemon toward
+// this spec — creating/replacing the container, volume, and network as needed.
+message DbSpec {
+  string db_id = 1;
+  string environment_id = 2;
+  string revision_id = 3;
+  string engine = 4;           // 'postgresql', 'mysql', 'mariadb', 'mongodb', 'redis', 'valkey'
+  string image = 5;            // 'postgres:16', 'mysql:8.4', etc.
+  string volume_name = 6;      // 'cypher-db-<id>'
+  string data_path = 7;        // engine-specific mount target inside the container
+  string network = 8;          // 'cypher-<environment_id>'
+  // Decrypted env for injection at container create. Sealed at rest on the
+  // plane; never logged (rule 20). Transported only over mTLS (rule 23).
+  map<string, string> env = 9;
+  string health_cmd = 10;      // shell command for Docker HEALTHCHECK
+  uint32 expose_port = 11;     // 0 = private only
+  double cpu_limit = 12;       // fractional cores; 0 = no limit
+  uint32 memory_limit_mb = 13; // 0 = no limit
+}
+
+// DbProvisionWork commands an agent to converge a database container
+// toward the desired spec. Idempotent: if the container already matches
+// the spec, no recreation occurs.
+message DbProvisionWork {
+  string idempotency_key = 1;  // database_id + revision_id
+  DbSpec spec = 2;
+}
+
+// DbRemoveWork commands absence of a database container.
+message DbRemoveWork {
+  string idempotency_key = 1;
+  string db_id = 2;
+  // Explicit opt-in for data destruction. When false, the named volume is
+  // preserved (the conservative default — accidental data loss is worse
+  // than orphaned volumes).
+  bool delete_volume = 3;
+}
+
+// DbStatus is one Database's observed state, reported on
+// state.<server_id>.db.<db_id>. The plane asserts provisioning success only
+// from these reports — never from work-item completion (ADR-005).
+message DbStatus {
+  string db_id = 1;
+  string revision_id = 2;
+  // One of: running, provisioning, stopped, error.
+  string state = 3;
+  // Human-readable detail for error state (never contains secrets).
+  string detail = 4;
+  google.protobuf.Timestamp observed_at = 5;
+}
+
+// DbBackupWork commands an agent to execute a database backup.
+message DbBackupWork {
+  string idempotency_key = 1;  // backup_record_id
+  string db_id = 2;
+  string container_name = 3;   // the running database container to exec into
+  string dump_cmd = 4;         // engine-specific dump shell command
+  // S3 coordinates. Credentials are decrypted on the plane and transported
+  // only over mTLS (rule 23); never logged (rule 20).
+  string s3_endpoint = 5;
+  string s3_bucket = 6;
+  string s3_region = 7;
+  string s3_key = 8;           // object key (path_prefix/db_id/timestamp.gz)
+  string s3_access_key = 9;
+  string s3_secret_key = 10;
+}
+
+// DbBackupEvent reports a backup's terminal outcome.
+message DbBackupEvent {
+  string backup_record_id = 1;
+  string db_id = 2;
+
+  enum Outcome {
+    OUTCOME_UNSPECIFIED = 0;
+    OUTCOME_SUCCEEDED = 1;
+    OUTCOME_FAILED = 2;
+  }
+  Outcome outcome = 3;
+  string detail = 4;
+  string object_key = 5;
+  int64 size_bytes = 6;
+  google.protobuf.Timestamp occurred_at = 7;
+}
+
+// DbRestoreWork commands an agent to restore a database from a backup.
+message DbRestoreWork {
+  string idempotency_key = 1;  // restore operation id
+  string db_id = 2;
+  string container_name = 3;
+  string restore_cmd = 4;      // engine-specific restore shell command
+  // S3 coordinates for the backup to download.
+  string s3_endpoint = 5;
+  string s3_bucket = 6;
+  string s3_region = 7;
+  string s3_key = 8;
+  string s3_access_key = 9;
+  string s3_secret_key = 10;
 }

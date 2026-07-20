@@ -17,6 +17,8 @@ package driver
 
 import (
 	"context"
+	"io"
+	"time"
 
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
 )
@@ -62,4 +64,14 @@ type Reconciler interface {
 	// and reports per-app state; the returned error is reserved for total
 	// inability to reconcile (e.g. orchestrator unreachable).
 	Reconcile(ctx context.Context, desired []*agentv1.AppSpec) ([]*agentv1.AppStatus, error)
+}
+
+// DbReconciler manages database resource reconciliation on this server.
+type DbReconciler interface {
+	ReconcileDatabases(ctx context.Context, desired []*agentv1.DbSpec) ([]*agentv1.DbStatus, error)
+	RemoveDatabase(ctx context.Context, dbID string, deleteVolume bool) error
+	Exec(ctx context.Context, containerID string, cmd []string) (io.Reader, error)
+	StartContainer(ctx context.Context, id string) error
+	StopContainer(ctx context.Context, id string, timeout time.Duration) error
+	WaitHealthy(ctx context.Context, containerID string, timeout time.Duration) error
 }

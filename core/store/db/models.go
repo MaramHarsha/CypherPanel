@@ -48,6 +48,81 @@ type Application struct {
 	StatusObservedAt      pgtype.Timestamptz
 }
 
+type BackupRecord struct {
+	ID               string
+	DatabaseBackupID string
+	ObjectKey        string
+	SizeBytes        int64
+	Status           string
+	Detail           string
+	StartedAt        pgtype.Timestamptz
+	FinishedAt       pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+}
+
+type BackupTarget struct {
+	ID             string
+	Name           string
+	Endpoint       string
+	Bucket         string
+	Region         string
+	AccessKeyCt    []byte
+	AccessKeyNonce []byte
+	SecretKeyCt    []byte
+	SecretKeyNonce []byte
+	PathPrefix     string
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type Database struct {
+	ID                 string
+	EnvironmentID      string
+	Name               string
+	Engine             string
+	Version            string
+	ServerID           string
+	CpuLimit           pgtype.Float4
+	MemoryLimitMb      pgtype.Int4
+	VolumeName         string
+	DataPath           string
+	ExposePort         pgtype.Int4
+	Network            string
+	RootUser           string
+	RootPasswordCt     []byte
+	RootPasswordNonce  []byte
+	RequirePassword    bool
+	DesiredRevisionID  pgtype.Text
+	Status             string
+	StatusDetail       string
+	ObservedRevisionID string
+	StatusObservedAt   pgtype.Timestamptz
+	PendingDelete      bool
+	DeleteVolume       bool
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
+type DatabaseBackup struct {
+	ID             string
+	DatabaseID     string
+	TargetID       string
+	Schedule       string
+	RetentionCount int32
+	Enabled        bool
+	LastRunAt      pgtype.Timestamptz
+	LastStatus     string
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type DatabaseRevision struct {
+	ID             string
+	DatabaseID     string
+	ConfigSnapshot []byte
+	CreatedAt      pgtype.Timestamptz
+}
+
 type DeployKey struct {
 	ID              string
 	Name            string

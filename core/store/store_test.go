@@ -282,3 +282,117 @@ func TestStoreProjectCascadeDeletesEverything(t *testing.T) {
 		t.Fatalf("env vars survived cascade: %+v, %v", vars, err)
 	}
 }
+
+func TestStoreDatabaseLifecycle(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	srv, err := s.CreateServerWithToken(ctx, ids.New(ids.PrefixServer), "db-host", ids.New(ids.PrefixJoinToken), []byte(ids.Secret()), time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("CreateServerWithToken: %v", err)
+	}
+
+	_, env, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject), "db-project", ids.New(ids.PrefixEnvironment), "prod")
+	if err != nil {
+		t.Fatalf("CreateProjectWithEnvironment: %v", err)
+	}
+
+	dbID := ids.New(ids.PrefixDatabase)
+	d := domain.Database{
+		ID:            dbID,
+		EnvironmentID: env.ID,
+		Name:          "postgres-db",
+		Engine:        domain.EnginePostgreSQL,
+		Version:       "16",
+		ServerID:      srv.ID,
+		CPULimit:      nil,
+		MemoryLimitMB: nil,
+		VolumeName:    "cypher-db-" + dbID,
+		DataPath:      "/var/lib/postgresql/data",
+		ExposePort:    nil,
+		Network:       "cypher-" + env.ID,
+		RootUser:      "postgres",
+		Status:        domain.DbStopped,
+	}
+
+	revID := ids.New(ids.PrefixDatabaseRevision)
+	rev := domain.DatabaseRevision{
+		ID:             revID,
+		DatabaseID:     dbID,
+		ConfigSnapshot: []byte(`{"version": "16"}`),
+	}
+
+	created, err := s.CreateDatabaseWithRevision(ctx, d, rev)
+	if err != nil {
+		t.Fatalf("CreateDatabaseWithRevision: %v", err)
+	}
+
+	if created.ID != dbID || created.Name != "postgres-db" || created.Engine != domain.EnginePostgreSQL {
+		t.Fatalf("unexpected database details: %+v", created)
+	}
+
+	// Retrieve database.
+	fetched, err := s.GetDatabase(ctx, dbID)
+	if err != nil {
+		t.Fatalf("GetDatabase: %v", err)
+	}
+	if fetched.ID != dbID || fetched.DesiredRevisionID == nil || *fetched.DesiredRevisionID != revID {
+		t.Fatalf("unexpected fetched database: %+v", fetched)
+	}
+
+	// Update database config.
+	fetched.Version = "17"
+	port := 5432
+	fetched.ExposePort = &port
+	updated, err := s.UpdateDatabaseConfig(ctx, fetched)
+	if err != nil {
+		t.Fatalf("UpdateDatabaseConfig: %v", err)
+	}
+	if updated.Version != "17" || updated.ExposePort == nil || *updated.ExposePort != 5432 {
+		t.Fatalf("unexpected updated database: %+v", updated)
+	}
+
+	// Update password.
+	if err := s.UpdateDatabasePassword(ctx, dbID, []byte("ct-pwd"), []byte("nonce-pwd")); err != nil {
+		t.Fatalf("UpdateDatabasePassword: %v", err)
+	}
+	fetchedWithPwd, err := s.GetDatabase(ctx, dbID)
+	if err != nil {
+		t.Fatalf("GetDatabase after password update: %v", err)
+	}
+	if string(fetchedWithPwd.RootPasswordCT) != "ct-pwd" {
+		t.Fatalf("password not updated: %s", fetchedWithPwd.RootPasswordCT)
+	}
+
+	// Set observed status.
+	if err := s.SetDatabaseObservedStatus(ctx, dbID, domain.DbRunning, "healthy", revID, time.Now()); err != nil {
+		t.Fatalf("SetDatabaseObservedStatus: %v", err)
+	}
+	observed, err := s.GetDatabase(ctx, dbID)
+	if err != nil {
+		t.Fatalf("GetDatabase after status update: %v", err)
+	}
+	if observed.Status != domain.DbRunning || observed.StatusDetail != "healthy" {
+		t.Fatalf("observed status incorrect: %+v", observed)
+	}
+
+	// Soft delete.
+	if err := s.SetDatabasePendingDelete(ctx, dbID, true); err != nil {
+		t.Fatalf("SetDatabasePendingDelete: %v", err)
+	}
+	pending, err := s.GetDatabase(ctx, dbID)
+	if err != nil {
+		t.Fatalf("GetDatabase after soft delete: %v", err)
+	}
+	if !pending.PendingDelete || !pending.DeleteVolume {
+		t.Fatalf("soft delete flag not set correctly: %+v", pending)
+	}
+
+	// Hard delete.
+	if err := s.DeleteDatabase(ctx, dbID); err != nil {
+		t.Fatalf("DeleteDatabase: %v", err)
+	}
+	if _, err := s.GetDatabase(ctx, dbID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("database row not hard-deleted: %v", err)
+	}
+}
