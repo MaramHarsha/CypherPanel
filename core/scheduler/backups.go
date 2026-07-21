@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"time"
 
+	robfig "github.com/robfig/cron/v3"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/MaramHarsha/cypherpanel/core/domain"
@@ -229,4 +230,54 @@ func (s *Scheduler) HandleDbRestoreEvent(_ context.Context, serverID string, ev 
 		return
 	}
 	s.log.Warn("database restore failed", "db_id", ev.GetDbId(), "restore_id", ev.GetRestoreId(), "detail", ev.GetDetail())
+}
+
+// RunBackupSweeper fires due scheduled backups on a ticker until ctx is done
+// (managed-databases.md §7). It is the plane-side cron evaluator that turns a
+// stored `schedule` into actual runs — the same sweeper pattern as previews and
+// the heartbeat-stale sweep.
+func (s *Scheduler) RunBackupSweeper(ctx context.Context, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.SweepDueBackups(ctx)
+		}
+	}
+}
+
+// SweepDueBackups runs one backup for every enabled schedule whose next cron
+// fire (measured from its last run, or its creation if it has never run) has
+// passed. RunBackup advances last_run_at when it starts, so a schedule fires at
+// most once per due window — no catch-up storms and no double-fire before the
+// run completes.
+func (s *Scheduler) SweepDueBackups(ctx context.Context) {
+	schedules, err := s.store.ListEnabledBackupSchedules(ctx)
+	if err != nil {
+		s.log.Error("backup sweep: listing schedules", "error", err)
+		return
+	}
+	now := s.now()
+	for _, sch := range schedules {
+		cronSched, err := robfig.ParseStandard(sch.Schedule)
+		if err != nil {
+			// A schedule is validated at create time; a bad one here is
+			// defensive — skip it rather than stall the whole sweep.
+			s.log.Error("backup sweep: unparseable schedule; skipped", "schedule_id", sch.ID, "schedule", sch.Schedule, "error", err)
+			continue
+		}
+		anchor := sch.CreatedAt
+		if sch.LastRunAt != nil {
+			anchor = *sch.LastRunAt
+		}
+		if cronSched.Next(anchor).After(now) {
+			continue // not due yet
+		}
+		if _, err := s.RunBackup(ctx, sch.ID); err != nil {
+			s.log.Error("backup sweep: running due backup", "schedule_id", sch.ID, "error", err)
+		}
+	}
 }
