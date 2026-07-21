@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -716,7 +718,9 @@ func TestLogoutInvalidatesSession(t *testing.T) {
 }
 
 // TestOpenAPISpecServedAndCoversRoutes: the spec ships with the binary
-// (ENGINEERING rule 19) and must mention every route the mux actually serves.
+// (ENGINEERING rule 19) and must document EVERY route the mux serves. The route
+// list is derived from rest.go itself, so adding a handler without a spec entry
+// fails this test — the drift-catcher for rule 19.
 func TestOpenAPISpecServedAndCoversRoutes(t *testing.T) {
 	ts := newTestServer(t)
 	status, _, body := doJSON(t, "GET", ts.URL+"/api/v1/openapi.yaml", "", "")
@@ -727,21 +731,38 @@ func TestOpenAPISpecServedAndCoversRoutes(t *testing.T) {
 	if !strings.Contains(spec, "openapi: 3.1.0") {
 		t.Error("spec is not OpenAPI 3.1")
 	}
-	for _, path := range []string{
-		"/healthz", "/readyz", "/api/v1/auth/login", "/api/v1/auth/logout",
-		"/api/v1/auth/me", "/api/v1/ca.pem", "/api/v1/openapi.yaml",
-		"/api/v1/servers", "/api/v1/servers/{id}", "/install/agent.sh",
-		"/api/v1/projects", "/api/v1/projects/{id}", "/api/v1/projects/{id}/environments",
-		"/api/v1/environments/{id}/applications", "/api/v1/applications/{id}",
-		"/api/v1/applications/{id}/env", "/api/v1/applications/{id}/env/{key}",
-		"/api/v1/applications/{id}/deploy", "/api/v1/applications/{id}/deployments",
-		"/api/v1/deployments/{id}", "/api/v1/deployments/{id}/rollback",
-		"/webhooks/github/{id}",
-	} {
+
+	for _, path := range routePathsFromSource(t) {
 		if !strings.Contains(spec, path+":") {
-			t.Errorf("spec does not document %s", path)
+			t.Errorf("openapi.yaml does not document %s (ENGINEERING rule 19)", path)
 		}
 	}
+}
+
+// routePathsFromSource extracts the distinct URL path templates registered in
+// rest.go's mux (the "METHOD /path" HandleFunc patterns), minus the SPA catch-
+// all which is not an API contract entry.
+func routePathsFromSource(t *testing.T) []string {
+	t.Helper()
+	src, err := os.ReadFile("rest.go")
+	if err != nil {
+		t.Fatalf("reading rest.go: %v", err)
+	}
+	re := regexp.MustCompile(`"(?:GET|POST|PATCH|PUT|DELETE) (/[^"]*)"`)
+	seen := map[string]bool{}
+	var out []string
+	for _, m := range re.FindAllStringSubmatch(string(src), -1) {
+		p := m[1]
+		if p == "/" || seen[p] { // SPA/console catch-all is not a spec path
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	if len(out) < 40 { // sanity: we have 80+ handlers; a near-empty match is a regex bug
+		t.Fatalf("extracted only %d routes from rest.go — extraction is broken", len(out))
+	}
+	return out
 }
 
 func TestApplicationLifecycleOverHTTP(t *testing.T) {
