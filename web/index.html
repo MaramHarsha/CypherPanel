@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <title>CypherPanel</title>
+    <!-- No inline script: cypherd serves a strict CSP (web-ui-design.md §5).
+         Theme init runs at the top of main.tsx; dark is the CSS default, so
+         the worst case is one dark frame for light-theme users. -->
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

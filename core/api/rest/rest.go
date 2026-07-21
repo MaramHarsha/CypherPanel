@@ -1,7 +1,8 @@
-// Package rest is the human/UI-facing HTTP API and the interim status console.
-// It is API-first (vision.md non-negotiable 3): every action here is a plain
-// REST call the console makes with a bearer token. All responses use glossary
-// vocabulary and mask secrets by default (ENGINEERING rules 5, 20).
+// Package rest is the human/UI-facing HTTP API; it also serves the embedded
+// web application (webui). It is API-first (vision.md non-negotiable 3): every
+// action here is a plain REST call the web UI makes with a bearer token. All
+// responses use glossary vocabulary and mask secrets by default (ENGINEERING
+// rules 5, 20).
 package rest
 
 import (
@@ -10,8 +11,10 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/MaramHarsha/cypherpanel/core/api/rest/webui"
 	"github.com/MaramHarsha/cypherpanel/core/applications"
 	"github.com/MaramHarsha/cypherpanel/core/auth"
 	"github.com/MaramHarsha/cypherpanel/core/databases"
@@ -308,8 +311,20 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/v1/users/{id}", a.authed(a.handleSetUserRole))
 	mux.HandleFunc("DELETE /api/v1/users/{id}", a.authed(a.handleDeleteUser))
 
-	// Interim console + static assets.
-	mux.Handle("GET /", a.consoleHandler())
+	// The embedded web app, with the SPA fallback for client routes. Unknown
+	// /api/* paths must stay JSON 404s, never index.html.
+	app, err := webui.Handler()
+	if err != nil {
+		// Programmer-error invariant: the embedded dist is compiled in.
+		panic("webui: embedded app unavailable: " + err.Error())
+	}
+	mux.Handle("GET /", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		app.ServeHTTP(w, r)
+	}))
 
 	return a.recoverer(a.securityHeaders(a.logRequests(mux)))
 }
