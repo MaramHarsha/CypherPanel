@@ -207,13 +207,39 @@ func (s *Store) UpdateBackupRecord(ctx context.Context, id string, objectKey str
 	return nil
 }
 
-func (s *Store) DeleteOldBackupRecords(ctx context.Context, backupID string, limit int32) error {
-	err := s.q.DeleteOldBackupRecords(ctx, db.DeleteOldBackupRecordsParams{
+// PrunableBackupRecord is a succeeded backup beyond the retention window: its
+// row and S3 object are both due for deletion.
+type PrunableBackupRecord struct {
+	ID        string
+	ObjectKey string
+}
+
+// ListBackupRecordsBeyondRetention returns the succeeded backups older than the
+// newest `keep` for a schedule — the retention sweep set, each carrying an S3
+// object to delete.
+func (s *Store) ListBackupRecordsBeyondRetention(ctx context.Context, backupID string, keep int32) ([]PrunableBackupRecord, error) {
+	rows, err := s.q.ListBackupRecordsBeyondRetention(ctx, db.ListBackupRecordsBeyondRetentionParams{
 		DatabaseBackupID: backupID,
-		Limit:            limit,
+		Limit:            keep,
 	})
 	if err != nil {
-		return fmt.Errorf("store: deleting old backup records: %w", err)
+		return nil, fmt.Errorf("store: listing prunable backup records: %w", err)
+	}
+	out := make([]PrunableBackupRecord, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, PrunableBackupRecord{ID: r.ID, ObjectKey: r.ObjectKey})
+	}
+	return out, nil
+}
+
+// DeleteBackupRecordsByObjectKeys removes the rows for objects the agent has
+// confirmed deleted from S3.
+func (s *Store) DeleteBackupRecordsByObjectKeys(ctx context.Context, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	if err := s.q.DeleteBackupRecordsByObjectKeys(ctx, keys); err != nil {
+		return fmt.Errorf("store: deleting pruned backup records: %w", err)
 	}
 	return nil
 }

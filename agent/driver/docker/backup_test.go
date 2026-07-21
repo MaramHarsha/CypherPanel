@@ -70,8 +70,9 @@ func (f *fakeExec) WaitHealthy(context.Context, string, time.Duration) error { r
 
 // fakeS3 captures the uploaded object and serves it back on download.
 type fakeS3 struct {
-	uploaded map[string][]byte
-	uploads  int
+	uploaded  map[string][]byte
+	deleteErr map[string]bool // keys whose Delete should fail (prune partial-failure test)
+	uploads   int
 }
 
 func newFakeS3() *fakeS3 { return &fakeS3{uploaded: map[string][]byte{}} }
@@ -92,6 +93,16 @@ func (s *fakeS3) Download(_ context.Context, _, _, _, key, _, _ string) (io.Read
 		return nil, errors.New("not found")
 	}
 	return io.NopCloser(bytes.NewReader(data)), nil
+}
+
+func (s *fakeS3) Delete(_ context.Context, _, _, _, key, _, _ string) error {
+	if s.deleteErr != nil {
+		if _, bad := s.deleteErr[key]; bad {
+			return errors.New("delete failed")
+		}
+	}
+	delete(s.uploaded, key)
+	return nil
 }
 
 // A PostgreSQL backup dumps to a file, copies it out, gzips it, and uploads —
@@ -204,4 +215,41 @@ func TestBackupUnsupportedEngine(t *testing.T) {
 	if ev.GetOutcome() != agentv1.DbBackupEvent_OUTCOME_FAILED || !strings.Contains(ev.GetDetail(), "unsupported engine") {
 		t.Fatalf("event = %+v, want unsupported-engine failure", ev)
 	}
+}
+
+// ExecutePrune deletes the requested objects and reports exactly which ones it
+// removed vs. left behind; deleting an absent key is a success (idempotent).
+func TestExecutePrunePartialAndIdempotent(t *testing.T) {
+	s3 := newFakeS3()
+	s3.uploaded["keep"] = []byte("x")
+	s3.uploaded["a"] = []byte("x")
+	s3.uploaded["b"] = []byte("x")
+	s3.deleteErr = map[string]bool{"b": true} // b fails
+	b := NewBackupExecutor(&fakeExec{}, s3, quietLog())
+
+	// "a" exists (deletes), "b" fails, "gone" is already absent (idempotent OK).
+	ev := b.ExecutePrune(context.Background(), &agentv1.DbBackupPruneWork{
+		DbId: "db_1", S3Keys: []string{"a", "b", "gone"},
+	})
+	if got := ev.GetDeletedKeys(); len(got) != 2 || !contains(got, "a") || !contains(got, "gone") {
+		t.Fatalf("deleted = %v, want [a gone]", got)
+	}
+	if got := ev.GetFailedKeys(); len(got) != 1 || got[0] != "b" {
+		t.Fatalf("failed = %v, want [b]", got)
+	}
+	if _, ok := s3.uploaded["a"]; ok {
+		t.Fatal("object a should have been deleted from S3")
+	}
+	if _, ok := s3.uploaded["keep"]; !ok {
+		t.Fatal("unrelated object keep must survive")
+	}
+}
+
+func contains(s []string, want string) bool {
+	for _, v := range s {
+		if v == want {
+			return true
+		}
+	}
+	return false
 }

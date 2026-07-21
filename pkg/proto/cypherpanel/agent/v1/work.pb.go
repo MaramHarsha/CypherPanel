@@ -2048,6 +2048,175 @@ func (x *DbRestoreEvent) GetOccurredAt() *timestamppb.Timestamp {
 	return nil
 }
 
+// DbBackupPruneWork commands a database's host agent to delete specific backup
+// objects from the S3 target — the retention sweep the plane computes (never
+// agent guesswork; retention is desired state the plane owns). Idempotent:
+// deleting an already-absent key is a no-op, so redelivery is safe. Same
+// credential discipline as DbBackupWork (S3 creds over mTLS only, never logged).
+type DbBackupPruneWork struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DbId          string                 `protobuf:"bytes,1,opt,name=db_id,json=dbId,proto3" json:"db_id,omitempty"`
+	S3Endpoint    string                 `protobuf:"bytes,2,opt,name=s3_endpoint,json=s3Endpoint,proto3" json:"s3_endpoint,omitempty"`
+	S3Bucket      string                 `protobuf:"bytes,3,opt,name=s3_bucket,json=s3Bucket,proto3" json:"s3_bucket,omitempty"`
+	S3Region      string                 `protobuf:"bytes,4,opt,name=s3_region,json=s3Region,proto3" json:"s3_region,omitempty"`
+	S3Keys        []string               `protobuf:"bytes,5,rep,name=s3_keys,json=s3Keys,proto3" json:"s3_keys,omitempty"` // objects to delete
+	S3AccessKey   string                 `protobuf:"bytes,6,opt,name=s3_access_key,json=s3AccessKey,proto3" json:"s3_access_key,omitempty"`
+	S3SecretKey   string                 `protobuf:"bytes,7,opt,name=s3_secret_key,json=s3SecretKey,proto3" json:"s3_secret_key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DbBackupPruneWork) Reset() {
+	*x = DbBackupPruneWork{}
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DbBackupPruneWork) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DbBackupPruneWork) ProtoMessage() {}
+
+func (x *DbBackupPruneWork) ProtoReflect() protoreflect.Message {
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DbBackupPruneWork.ProtoReflect.Descriptor instead.
+func (*DbBackupPruneWork) Descriptor() ([]byte, []int) {
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *DbBackupPruneWork) GetDbId() string {
+	if x != nil {
+		return x.DbId
+	}
+	return ""
+}
+
+func (x *DbBackupPruneWork) GetS3Endpoint() string {
+	if x != nil {
+		return x.S3Endpoint
+	}
+	return ""
+}
+
+func (x *DbBackupPruneWork) GetS3Bucket() string {
+	if x != nil {
+		return x.S3Bucket
+	}
+	return ""
+}
+
+func (x *DbBackupPruneWork) GetS3Region() string {
+	if x != nil {
+		return x.S3Region
+	}
+	return ""
+}
+
+func (x *DbBackupPruneWork) GetS3Keys() []string {
+	if x != nil {
+		return x.S3Keys
+	}
+	return nil
+}
+
+func (x *DbBackupPruneWork) GetS3AccessKey() string {
+	if x != nil {
+		return x.S3AccessKey
+	}
+	return ""
+}
+
+func (x *DbBackupPruneWork) GetS3SecretKey() string {
+	if x != nil {
+		return x.S3SecretKey
+	}
+	return ""
+}
+
+// DbBackupPruneEvent reports which objects the agent actually removed, published
+// on state.<server>.dbbackupprune. The plane deletes only the BackupRecords for
+// deleted_keys; failed_keys keep their rows and are retried on the next prune —
+// self-healing, with no silent S3 orphans (ADR-005: act on observation).
+type DbBackupPruneEvent struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DbId          string                 `protobuf:"bytes,1,opt,name=db_id,json=dbId,proto3" json:"db_id,omitempty"`
+	DeletedKeys   []string               `protobuf:"bytes,2,rep,name=deleted_keys,json=deletedKeys,proto3" json:"deleted_keys,omitempty"`
+	FailedKeys    []string               `protobuf:"bytes,3,rep,name=failed_keys,json=failedKeys,proto3" json:"failed_keys,omitempty"`
+	OccurredAt    *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=occurred_at,json=occurredAt,proto3" json:"occurred_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DbBackupPruneEvent) Reset() {
+	*x = DbBackupPruneEvent{}
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DbBackupPruneEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DbBackupPruneEvent) ProtoMessage() {}
+
+func (x *DbBackupPruneEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DbBackupPruneEvent.ProtoReflect.Descriptor instead.
+func (*DbBackupPruneEvent) Descriptor() ([]byte, []int) {
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *DbBackupPruneEvent) GetDbId() string {
+	if x != nil {
+		return x.DbId
+	}
+	return ""
+}
+
+func (x *DbBackupPruneEvent) GetDeletedKeys() []string {
+	if x != nil {
+		return x.DeletedKeys
+	}
+	return nil
+}
+
+func (x *DbBackupPruneEvent) GetFailedKeys() []string {
+	if x != nil {
+		return x.FailedKeys
+	}
+	return nil
+}
+
+func (x *DbBackupPruneEvent) GetOccurredAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.OccurredAt
+	}
+	return nil
+}
+
 // ScheduledTaskRun is one execution's terminal observation, published on
 // state.<server>.task (scheduled-tasks.md §3). The plane records run history
 // from these reports and asserts nothing from work-item completion (ADR-005).
@@ -2068,7 +2237,7 @@ type ScheduledTaskRun struct {
 
 func (x *ScheduledTaskRun) Reset() {
 	*x = ScheduledTaskRun{}
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[22]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2080,7 +2249,7 @@ func (x *ScheduledTaskRun) String() string {
 func (*ScheduledTaskRun) ProtoMessage() {}
 
 func (x *ScheduledTaskRun) ProtoReflect() protoreflect.Message {
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[22]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2093,7 +2262,7 @@ func (x *ScheduledTaskRun) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ScheduledTaskRun.ProtoReflect.Descriptor instead.
 func (*ScheduledTaskRun) Descriptor() ([]byte, []int) {
-	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{22}
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *ScheduledTaskRun) GetTaskId() string {
@@ -2337,7 +2506,23 @@ const file_cypherpanel_agent_v1_work_proto_rawDesc = "" +
 	"\aOutcome\x12\x17\n" +
 	"\x13OUTCOME_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11OUTCOME_SUCCEEDED\x10\x01\x12\x12\n" +
-	"\x0eOUTCOME_FAILED\x10\x02\"\x90\x02\n" +
+	"\x0eOUTCOME_FAILED\x10\x02\"\xe4\x01\n" +
+	"\x11DbBackupPruneWork\x12\x13\n" +
+	"\x05db_id\x18\x01 \x01(\tR\x04dbId\x12\x1f\n" +
+	"\vs3_endpoint\x18\x02 \x01(\tR\n" +
+	"s3Endpoint\x12\x1b\n" +
+	"\ts3_bucket\x18\x03 \x01(\tR\bs3Bucket\x12\x1b\n" +
+	"\ts3_region\x18\x04 \x01(\tR\bs3Region\x12\x17\n" +
+	"\as3_keys\x18\x05 \x03(\tR\x06s3Keys\x12\"\n" +
+	"\rs3_access_key\x18\x06 \x01(\tR\vs3AccessKey\x12\"\n" +
+	"\rs3_secret_key\x18\a \x01(\tR\vs3SecretKey\"\xaa\x01\n" +
+	"\x12DbBackupPruneEvent\x12\x13\n" +
+	"\x05db_id\x18\x01 \x01(\tR\x04dbId\x12!\n" +
+	"\fdeleted_keys\x18\x02 \x03(\tR\vdeletedKeys\x12\x1f\n" +
+	"\vfailed_keys\x18\x03 \x03(\tR\n" +
+	"failedKeys\x12;\n" +
+	"\voccurred_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"occurredAt\"\x90\x02\n" +
 	"\x10ScheduledTaskRun\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x129\n" +
@@ -2363,7 +2548,7 @@ func file_cypherpanel_agent_v1_work_proto_rawDescGZIP() []byte {
 }
 
 var file_cypherpanel_agent_v1_work_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_cypherpanel_agent_v1_work_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
+var file_cypherpanel_agent_v1_work_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
 var file_cypherpanel_agent_v1_work_proto_goTypes = []any{
 	(DeployEvent_Stage)(0),        // 0: cypherpanel.agent.v1.DeployEvent.Stage
 	(DeployEvent_Outcome)(0),      // 1: cypherpanel.agent.v1.DeployEvent.Outcome
@@ -2391,13 +2576,15 @@ var file_cypherpanel_agent_v1_work_proto_goTypes = []any{
 	(*DbRestoreWork)(nil),         // 23: cypherpanel.agent.v1.DbRestoreWork
 	(*DbBackupEvent)(nil),         // 24: cypherpanel.agent.v1.DbBackupEvent
 	(*DbRestoreEvent)(nil),        // 25: cypherpanel.agent.v1.DbRestoreEvent
-	(*ScheduledTaskRun)(nil),      // 26: cypherpanel.agent.v1.ScheduledTaskRun
-	nil,                           // 27: cypherpanel.agent.v1.AppSpec.EnvEntry
-	nil,                           // 28: cypherpanel.agent.v1.DbSpec.EnvEntry
-	(*timestamppb.Timestamp)(nil), // 29: google.protobuf.Timestamp
+	(*DbBackupPruneWork)(nil),     // 26: cypherpanel.agent.v1.DbBackupPruneWork
+	(*DbBackupPruneEvent)(nil),    // 27: cypherpanel.agent.v1.DbBackupPruneEvent
+	(*ScheduledTaskRun)(nil),      // 28: cypherpanel.agent.v1.ScheduledTaskRun
+	nil,                           // 29: cypherpanel.agent.v1.AppSpec.EnvEntry
+	nil,                           // 30: cypherpanel.agent.v1.DbSpec.EnvEntry
+	(*timestamppb.Timestamp)(nil), // 31: google.protobuf.Timestamp
 }
 var file_cypherpanel_agent_v1_work_proto_depIdxs = []int32{
-	27, // 0: cypherpanel.agent.v1.AppSpec.env:type_name -> cypherpanel.agent.v1.AppSpec.EnvEntry
+	29, // 0: cypherpanel.agent.v1.AppSpec.env:type_name -> cypherpanel.agent.v1.AppSpec.EnvEntry
 	7,  // 1: cypherpanel.agent.v1.AppSpec.health:type_name -> cypherpanel.agent.v1.HealthCheck
 	8,  // 2: cypherpanel.agent.v1.AppSpec.route:type_name -> cypherpanel.agent.v1.RouteSpec
 	6,  // 3: cypherpanel.agent.v1.AppSpec.scheduled_tasks:type_name -> cypherpanel.agent.v1.ScheduledTask
@@ -2406,24 +2593,25 @@ var file_cypherpanel_agent_v1_work_proto_depIdxs = []int32{
 	4,  // 6: cypherpanel.agent.v1.ConvergeWork.spec:type_name -> cypherpanel.agent.v1.AppSpec
 	4,  // 7: cypherpanel.agent.v1.DesiredState.specs:type_name -> cypherpanel.agent.v1.AppSpec
 	18, // 8: cypherpanel.agent.v1.DesiredState.db_specs:type_name -> cypherpanel.agent.v1.DbSpec
-	29, // 9: cypherpanel.agent.v1.AppStatus.observed_at:type_name -> google.protobuf.Timestamp
+	31, // 9: cypherpanel.agent.v1.AppStatus.observed_at:type_name -> google.protobuf.Timestamp
 	0,  // 10: cypherpanel.agent.v1.DeployEvent.stage:type_name -> cypherpanel.agent.v1.DeployEvent.Stage
 	1,  // 11: cypherpanel.agent.v1.DeployEvent.outcome:type_name -> cypherpanel.agent.v1.DeployEvent.Outcome
-	29, // 12: cypherpanel.agent.v1.DeployEvent.occurred_at:type_name -> google.protobuf.Timestamp
-	28, // 13: cypherpanel.agent.v1.DbSpec.env:type_name -> cypherpanel.agent.v1.DbSpec.EnvEntry
+	31, // 12: cypherpanel.agent.v1.DeployEvent.occurred_at:type_name -> google.protobuf.Timestamp
+	30, // 13: cypherpanel.agent.v1.DbSpec.env:type_name -> cypherpanel.agent.v1.DbSpec.EnvEntry
 	18, // 14: cypherpanel.agent.v1.DbProvisionWork.spec:type_name -> cypherpanel.agent.v1.DbSpec
-	29, // 15: cypherpanel.agent.v1.DbStatus.observed_at:type_name -> google.protobuf.Timestamp
+	31, // 15: cypherpanel.agent.v1.DbStatus.observed_at:type_name -> google.protobuf.Timestamp
 	2,  // 16: cypherpanel.agent.v1.DbBackupEvent.outcome:type_name -> cypherpanel.agent.v1.DbBackupEvent.Outcome
-	29, // 17: cypherpanel.agent.v1.DbBackupEvent.occurred_at:type_name -> google.protobuf.Timestamp
+	31, // 17: cypherpanel.agent.v1.DbBackupEvent.occurred_at:type_name -> google.protobuf.Timestamp
 	3,  // 18: cypherpanel.agent.v1.DbRestoreEvent.outcome:type_name -> cypherpanel.agent.v1.DbRestoreEvent.Outcome
-	29, // 19: cypherpanel.agent.v1.DbRestoreEvent.occurred_at:type_name -> google.protobuf.Timestamp
-	29, // 20: cypherpanel.agent.v1.ScheduledTaskRun.started_at:type_name -> google.protobuf.Timestamp
-	29, // 21: cypherpanel.agent.v1.ScheduledTaskRun.finished_at:type_name -> google.protobuf.Timestamp
-	22, // [22:22] is the sub-list for method output_type
-	22, // [22:22] is the sub-list for method input_type
-	22, // [22:22] is the sub-list for extension type_name
-	22, // [22:22] is the sub-list for extension extendee
-	0,  // [0:22] is the sub-list for field type_name
+	31, // 19: cypherpanel.agent.v1.DbRestoreEvent.occurred_at:type_name -> google.protobuf.Timestamp
+	31, // 20: cypherpanel.agent.v1.DbBackupPruneEvent.occurred_at:type_name -> google.protobuf.Timestamp
+	31, // 21: cypherpanel.agent.v1.ScheduledTaskRun.started_at:type_name -> google.protobuf.Timestamp
+	31, // 22: cypherpanel.agent.v1.ScheduledTaskRun.finished_at:type_name -> google.protobuf.Timestamp
+	23, // [23:23] is the sub-list for method output_type
+	23, // [23:23] is the sub-list for method input_type
+	23, // [23:23] is the sub-list for extension type_name
+	23, // [23:23] is the sub-list for extension extendee
+	0,  // [0:23] is the sub-list for field type_name
 }
 
 func init() { file_cypherpanel_agent_v1_work_proto_init() }
@@ -2437,7 +2625,7 @@ func file_cypherpanel_agent_v1_work_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cypherpanel_agent_v1_work_proto_rawDesc), len(file_cypherpanel_agent_v1_work_proto_rawDesc)),
 			NumEnums:      4,
-			NumMessages:   25,
+			NumMessages:   27,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

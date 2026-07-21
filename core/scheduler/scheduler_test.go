@@ -414,8 +414,39 @@ func (f *fakeStore) ListBackupRecords(_ context.Context, backupID string) ([]dom
 	return out, nil
 }
 
-func (f *fakeStore) DeleteOldBackupRecords(_ context.Context, backupID string, keep int32) error {
-	return nil // retention pruning is exercised in dedicated backup tests
+func (f *fakeStore) ListBackupRecordsBeyondRetention(_ context.Context, backupID string, keep int32) ([]store.PrunableBackupRecord, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var succeeded []domain.BackupRecord
+	for _, r := range f.records {
+		if r.DatabaseBackupID == backupID && r.Status == domain.BackupSucceeded && r.ObjectKey != "" {
+			succeeded = append(succeeded, r)
+		}
+	}
+	sort.Slice(succeeded, func(i, j int) bool { return succeeded[i].CreatedAt.After(succeeded[j].CreatedAt) })
+	var out []store.PrunableBackupRecord
+	for i, r := range succeeded {
+		if i < int(keep) {
+			continue
+		}
+		out = append(out, store.PrunableBackupRecord{ID: r.ID, ObjectKey: r.ObjectKey})
+	}
+	return out, nil
+}
+
+func (f *fakeStore) DeleteBackupRecordsByObjectKeys(_ context.Context, keys []string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	set := map[string]bool{}
+	for _, k := range keys {
+		set[k] = true
+	}
+	for id, r := range f.records {
+		if set[r.ObjectKey] {
+			delete(f.records, id)
+		}
+	}
+	return nil
 }
 
 func (f *fakeStore) ListEnabledScheduledTasksByApp(_ context.Context, appID string) ([]domain.ScheduledTask, error) {

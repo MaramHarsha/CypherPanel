@@ -210,15 +210,79 @@ func (s *Scheduler) HandleDbBackupEvent(ctx context.Context, serverID string, ev
 	}
 
 	if status == domain.BackupSucceeded {
-		sched, err := s.store.GetDatabaseBackup(ctx, rec.DatabaseBackupID)
-		if err == nil && sched.RetentionCount > 0 {
-			// Prune history rows beyond the retention window. (Deleting the
-			// pruned S3 objects is a follow-on within this feature.)
-			if err := s.store.DeleteOldBackupRecords(ctx, sched.ID, int32(sched.RetentionCount)); err != nil {
-				s.log.Error("backup event: pruning history", "schedule_id", sched.ID, "error", err)
-			}
+		if sched, err := s.store.GetDatabaseBackup(ctx, rec.DatabaseBackupID); err == nil && sched.RetentionCount > 0 {
+			s.dispatchRetentionPrune(ctx, sched)
 		}
 	}
+}
+
+// dispatchRetentionPrune computes the retention sweep — succeeded backups beyond
+// the schedule's retention_count — and commands the database's host agent to
+// delete those S3 objects. The BackupRecord rows survive until the agent
+// confirms deletion (HandleDbBackupPruneEvent), so a failed delete is retried on
+// the next backup's prune rather than orphaning the object silently (ADR-005).
+func (s *Scheduler) dispatchRetentionPrune(ctx context.Context, sched domain.DatabaseBackup) {
+	prunable, err := s.store.ListBackupRecordsBeyondRetention(ctx, sched.ID, int32(sched.RetentionCount))
+	if err != nil {
+		s.log.Error("backup prune: listing retention set", "schedule_id", sched.ID, "error", err)
+		return
+	}
+	if len(prunable) == 0 {
+		return
+	}
+	db, err := s.store.GetDatabase(ctx, sched.DatabaseID)
+	if err != nil {
+		s.log.Error("backup prune: loading database", "schedule_id", sched.ID, "error", err)
+		return
+	}
+	coords, err := s.resolveTarget(ctx, sched.TargetID)
+	if err != nil {
+		s.log.Error("backup prune: resolving target", "schedule_id", sched.ID, "error", err)
+		return
+	}
+	keys := make([]string, 0, len(prunable))
+	for _, p := range prunable {
+		keys = append(keys, p.ObjectKey)
+	}
+
+	work := &agentv1.DbBackupPruneWork{
+		DbId:        db.ID,
+		S3Endpoint:  coords.endpoint,
+		S3Bucket:    coords.bucket,
+		S3Region:    coords.region,
+		S3Keys:      keys,
+		S3AccessKey: coords.accessKey,
+		S3SecretKey: coords.secretKey,
+	}
+	data, err := proto.Marshal(work)
+	if err != nil {
+		s.log.Error("backup prune: marshaling work", "schedule_id", sched.ID, "error", err)
+		return
+	}
+	msgID := fmt.Sprintf("%s.prune.%d", sched.ID, s.now().UnixNano())
+	if err := s.bus.PublishWork(ctx, subjects.DbBackupPrune(db.ServerID), msgID, data); err != nil {
+		s.log.Error("backup prune: publishing work", "schedule_id", sched.ID, "error", err)
+	}
+}
+
+// HandleDbBackupPruneEvent deletes the BackupRecord rows for objects the agent
+// confirmed removed from S3. Rows for keys the agent could not delete are left
+// in place and swept again by the next backup's prune (self-healing).
+func (s *Scheduler) HandleDbBackupPruneEvent(ctx context.Context, serverID string, ev *agentv1.DbBackupPruneEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if len(ev.GetDeletedKeys()) == 0 {
+		if n := len(ev.GetFailedKeys()); n > 0 {
+			s.log.Warn("backup prune: agent deleted no objects", "db_id", ev.GetDbId(), "failed", n)
+		}
+		return
+	}
+	if err := s.store.DeleteBackupRecordsByObjectKeys(ctx, ev.GetDeletedKeys()); err != nil {
+		s.log.Error("backup prune event: deleting records", "db_id", ev.GetDbId(), "error", err)
+		return
+	}
+	s.log.Info("database backups pruned", "db_id", ev.GetDbId(), "deleted", len(ev.GetDeletedKeys()), "failed", len(ev.GetFailedKeys()))
 }
 
 // HandleDbRestoreEvent records a restore's terminal outcome. The database's

@@ -290,6 +290,21 @@ func run(log *slog.Logger) error {
 	}
 	defer dbRestoreConsume.Stop()
 
+	dbBackupPruneConsume, err := b.ConsumeDbBackupPruneEvents(ctx, func(serverID string, data []byte) {
+		var ev agentv1.DbBackupPruneEvent
+		if err := proto.Unmarshal(data, &ev); err != nil {
+			log.Error("unmarshaling db backup prune event", "server_id", serverID, "error", err)
+			return
+		}
+		c, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		sched.HandleDbBackupPruneEvent(c, serverID, &ev)
+	})
+	if err != nil {
+		return err
+	}
+	defer dbBackupPruneConsume.Stop()
+
 	taskRunConsume, err := b.ConsumeTaskRuns(ctx, func(serverID string, data []byte) {
 		var ev agentv1.ScheduledTaskRun
 		if err := proto.Unmarshal(data, &ev); err != nil {

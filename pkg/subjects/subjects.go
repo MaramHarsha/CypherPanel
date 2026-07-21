@@ -139,6 +139,11 @@ func DbRemove(serverID string) string    { return WorkPrefix + serverID + ".db.r
 func DbBackup(serverID string) string    { return WorkPrefix + serverID + ".db.backup" }
 func DbRestore(serverID string) string   { return WorkPrefix + serverID + ".db.restore" }
 
+// DbBackupPrune carries a retention sweep (delete specific S3 objects). Its
+// ".db.backup.prune" suffix is disjoint from ".db.backup", so the worker routes
+// the two independently.
+func DbBackupPrune(serverID string) string { return WorkPrefix + serverID + ".db.backup.prune" }
+
 // Database state subjects — agent → plane.
 func DbState(serverID, dbID string) string { return StatePrefix + serverID + ".db." + dbID }
 
@@ -146,13 +151,15 @@ func DbState(serverID, dbID string) string { return StatePrefix + serverID + ".d
 // dbrestore), NOT under state.<server>.db.*, so the DbStateAll status wildcard
 // (state.*.db.>) never captures them. Both stay inside the per-server
 // state.<server>.> publish grant.
-func DbBackupState(serverID string) string  { return StatePrefix + serverID + ".dbbackup" }
-func DbRestoreState(serverID string) string { return StatePrefix + serverID + ".dbrestore" }
+func DbBackupState(serverID string) string      { return StatePrefix + serverID + ".dbbackup" }
+func DbRestoreState(serverID string) string     { return StatePrefix + serverID + ".dbrestore" }
+func DbBackupPruneState(serverID string) string { return StatePrefix + serverID + ".dbbackupprune" }
 
 // Plane-side consumption wildcards.
 const (
-	DbStateAll        = "state.*.db.>"
-	DbBackupStateAll  = "state.*.dbbackup"
-	DbRestoreStateAll = "state.*.dbrestore"
-	TaskStateAll      = "state.*.task"
+	DbStateAll            = "state.*.db.>"
+	DbBackupStateAll      = "state.*.dbbackup"
+	DbRestoreStateAll     = "state.*.dbrestore"
+	DbBackupPruneStateAll = "state.*.dbbackupprune"
+	TaskStateAll          = "state.*.task"
 )

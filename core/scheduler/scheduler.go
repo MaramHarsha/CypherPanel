@@ -79,7 +79,8 @@ type Store interface {
 	UpdateBackupRecord(ctx context.Context, id, objectKey string, sizeBytes int64, status, detail string, finishedAt *time.Time) error
 	SetDatabaseBackupLastRun(ctx context.Context, id string, lastRunAt *time.Time, lastStatus string) error
 	ListBackupRecords(ctx context.Context, backupID string) ([]domain.BackupRecord, error)
-	DeleteOldBackupRecords(ctx context.Context, backupID string, keep int32) error
+	ListBackupRecordsBeyondRetention(ctx context.Context, backupID string, keep int32) ([]store.PrunableBackupRecord, error)
+	DeleteBackupRecordsByObjectKeys(ctx context.Context, keys []string) error
 
 	// Phase 3: scheduled tasks (scheduled-tasks.md, ADR-011)
 	ListEnabledScheduledTasksByApp(ctx context.Context, appID string) ([]domain.ScheduledTask, error)

@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -738,5 +739,86 @@ func TestStoreTOTP(t *testing.T) {
 	}
 	if n, _ := s.CountUnusedRecoveryCodes(ctx, user.ID); n != 0 {
 		t.Fatalf("codes after delete = %d, want 0", n)
+	}
+}
+
+func TestStoreBackupRetentionPrune(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	srv, err := s.CreateServerWithToken(ctx, ids.New(ids.PrefixServer), "bk-host", ids.New(ids.PrefixJoinToken), []byte(ids.Secret()), time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("CreateServerWithToken: %v", err)
+	}
+	_, env, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject), "bk-project", "tm_default", ids.New(ids.PrefixEnvironment), "prod")
+	if err != nil {
+		t.Fatalf("CreateProjectWithEnvironment: %v", err)
+	}
+	dbID := ids.New(ids.PrefixDatabase)
+	d := domain.Database{
+		ID: dbID, EnvironmentID: env.ID, Name: "pg", Engine: domain.EnginePostgreSQL, Version: "16",
+		ServerID: srv.ID, VolumeName: "cypher-db-" + dbID, DataPath: "/var/lib/postgresql/data",
+		Network: "cypher-" + env.ID, RootUser: "postgres", Status: domain.DbStopped,
+	}
+	rev := domain.DatabaseRevision{ID: ids.New(ids.PrefixDatabaseRevision), DatabaseID: dbID, ConfigSnapshot: []byte(`{}`)}
+	if _, err := s.CreateDatabaseWithRevision(ctx, d, rev); err != nil {
+		t.Fatalf("CreateDatabaseWithRevision: %v", err)
+	}
+	tgt, err := s.CreateBackupTarget(ctx, domain.BackupTarget{
+		ID: ids.New(ids.PrefixBackupTarget), Name: "t", Endpoint: "http://minio:9000", Bucket: "b", Region: "r",
+		AccessKeyCT: []byte("a"), AccessKeyNonce: []byte("n"), SecretKeyCT: []byte("s"), SecretKeyNonce: []byte("n"), PathPrefix: "pfx",
+	})
+	if err != nil {
+		t.Fatalf("CreateBackupTarget: %v", err)
+	}
+	sched, err := s.CreateDatabaseBackup(ctx, domain.DatabaseBackup{
+		ID: ids.New(ids.PrefixDatabaseBackup), DatabaseID: dbID, TargetID: tgt.ID,
+		Schedule: "0 3 * * *", RetentionCount: 2, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateDatabaseBackup: %v", err)
+	}
+
+	// Four succeeded backups (k0 oldest … k3 newest) plus a failed one (no object).
+	base := time.Now().Add(-time.Hour)
+	for i := range 4 {
+		key := "pfx/" + dbID + "/k" + string(rune('0'+i))
+		rec, err := s.CreateBackupRecord(ctx, domain.BackupRecord{
+			ID: ids.New(ids.PrefixBackupRecord), DatabaseBackupID: sched.ID,
+			Status: domain.BackupRunning, StartedAt: base.Add(time.Duration(i) * time.Minute),
+		})
+		if err != nil {
+			t.Fatalf("CreateBackupRecord: %v", err)
+		}
+		// object_key is written by the completion update, not at creation.
+		fin := base.Add(time.Duration(i) * time.Minute)
+		if err := s.UpdateBackupRecord(ctx, rec.ID, key, 100, domain.BackupSucceeded, "", &fin); err != nil {
+			t.Fatalf("UpdateBackupRecord: %v", err)
+		}
+	}
+
+	// Retention 2 → the two oldest succeeded (k0, k1) are the prune set.
+	prunable, err := s.ListBackupRecordsBeyondRetention(ctx, sched.ID, 2)
+	if err != nil {
+		t.Fatalf("ListBackupRecordsBeyondRetention: %v", err)
+	}
+	if len(prunable) != 2 {
+		t.Fatalf("prunable = %d, want 2", len(prunable))
+	}
+	keys := []string{prunable[0].ObjectKey, prunable[1].ObjectKey}
+	if !strings.HasSuffix(keys[0], "k1") && !strings.HasSuffix(keys[1], "k1") {
+		t.Fatalf("prune set should be the two oldest (k0,k1), got %v", keys)
+	}
+
+	// Deleting by object key removes exactly those rows; the newest survive.
+	if err := s.DeleteBackupRecordsByObjectKeys(ctx, keys); err != nil {
+		t.Fatalf("DeleteBackupRecordsByObjectKeys: %v", err)
+	}
+	remaining, err := s.ListBackupRecords(ctx, sched.ID)
+	if err != nil {
+		t.Fatalf("ListBackupRecords: %v", err)
+	}
+	if len(remaining) != 2 {
+		t.Fatalf("remaining records = %d, want 2 (the newest two)", len(remaining))
 	}
 }
