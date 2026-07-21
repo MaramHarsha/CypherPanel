@@ -349,6 +349,32 @@ message DbRestoreEvent {
   google.protobuf.Timestamp occurred_at = 5;
 }
 
+// DbBackupPruneWork commands a database's host agent to delete specific backup
+// objects from the S3 target — the retention sweep the plane computes (never
+// agent guesswork; retention is desired state the plane owns). Idempotent:
+// deleting an already-absent key is a no-op, so redelivery is safe. Same
+// credential discipline as DbBackupWork (S3 creds over mTLS only, never logged).
+message DbBackupPruneWork {
+  string db_id = 1;
+  string s3_endpoint = 2;
+  string s3_bucket = 3;
+  string s3_region = 4;
+  repeated string s3_keys = 5;  // objects to delete
+  string s3_access_key = 6;
+  string s3_secret_key = 7;
+}
+
+// DbBackupPruneEvent reports which objects the agent actually removed, published
+// on state.<server>.dbbackupprune. The plane deletes only the BackupRecords for
+// deleted_keys; failed_keys keep their rows and are retried on the next prune —
+// self-healing, with no silent S3 orphans (ADR-005: act on observation).
+message DbBackupPruneEvent {
+  string db_id = 1;
+  repeated string deleted_keys = 2;
+  repeated string failed_keys = 3;
+  google.protobuf.Timestamp occurred_at = 4;
+}
+
 // ScheduledTaskRun is one execution's terminal observation, published on
 // state.<server>.task (scheduled-tasks.md §3). The plane records run history
 // from these reports and asserts nothing from work-item completion (ADR-005).

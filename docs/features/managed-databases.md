@@ -397,9 +397,17 @@ command) to the agent hosting the database. The agent:
    `<path_prefix>/<db_id>/<timestamp>.gz` using the unsealed S3 credentials.
 4. Reports `DbBackupEvent` to the plane with success/failure + the object key
    + size, and removes the in-container temp file.
-5. **Retention**: after a successful upload the plane prunes older
-   `BackupRecord`s beyond `retention_count` and the agent deletes their S3
-   objects (retention is desired state the plane owns, not agent guesswork).
+5. **Retention** (retention is desired state the plane owns, not agent
+   guesswork): after a successful upload the plane computes the sweep set —
+   *succeeded* backups beyond `retention_count` — and sends a `DbBackupPruneWork`
+   listing those object keys to the database's host. The agent deletes each
+   object (S3 `DELETE` is idempotent, so redelivery and a partly-applied prior
+   sweep both converge) and reports a `DbBackupPruneEvent` of what it removed.
+   The plane then deletes the `BackupRecord` rows **only for the confirmed-gone
+   keys** — a `BackupRecord` represents an object that exists in S3, so a key the
+   agent could not delete keeps its row and is swept again on the next backup
+   (self-healing, no silent orphans; ADR-005: act on observation, not intent).
+   Failed/running records carry no object and are left as diagnostic history.
 
 ### Backup API
 

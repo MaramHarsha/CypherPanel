@@ -86,33 +86,23 @@ func (q *Queries) CreateDatabaseBackup(ctx context.Context, arg CreateDatabaseBa
 	return i, err
 }
 
+const deleteBackupRecordsByObjectKeys = `-- name: DeleteBackupRecordsByObjectKeys :exec
+DELETE FROM backup_records WHERE object_key = ANY($1::text[])
+`
+
+// Delete the rows for objects the agent has confirmed removed from S3. Object
+// keys embed the db id and a timestamp, so they are unique across schedules.
+func (q *Queries) DeleteBackupRecordsByObjectKeys(ctx context.Context, dollar_1 []string) error {
+	_, err := q.db.Exec(ctx, deleteBackupRecordsByObjectKeys, dollar_1)
+	return err
+}
+
 const deleteDatabaseBackup = `-- name: DeleteDatabaseBackup :exec
 DELETE FROM database_backups WHERE id = $1
 `
 
 func (q *Queries) DeleteDatabaseBackup(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, deleteDatabaseBackup, id)
-	return err
-}
-
-const deleteOldBackupRecords = `-- name: DeleteOldBackupRecords :exec
-DELETE FROM backup_records
-WHERE backup_records.database_backup_id = $1
-  AND backup_records.id NOT IN (
-    SELECT br.id FROM backup_records br
-    WHERE br.database_backup_id = $1
-    ORDER BY br.created_at DESC
-    LIMIT $2
-  )
-`
-
-type DeleteOldBackupRecordsParams struct {
-	DatabaseBackupID string
-	Limit            int32
-}
-
-func (q *Queries) DeleteOldBackupRecords(ctx context.Context, arg DeleteOldBackupRecordsParams) error {
-	_, err := q.db.Exec(ctx, deleteOldBackupRecords, arg.DatabaseBackupID, arg.Limit)
 	return err
 }
 
@@ -185,6 +175,56 @@ func (q *Queries) ListBackupRecords(ctx context.Context, databaseBackupID string
 			&i.FinishedAt,
 			&i.CreatedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listBackupRecordsBeyondRetention = `-- name: ListBackupRecordsBeyondRetention :many
+SELECT r.id, r.object_key FROM backup_records r
+WHERE r.database_backup_id = $1
+  AND r.status = 'succeeded'
+  AND r.object_key <> ''
+  AND r.id NOT IN (
+    SELECT br.id FROM backup_records br
+    WHERE br.database_backup_id = $1
+      AND br.status = 'succeeded'
+      AND br.object_key <> ''
+    ORDER BY br.created_at DESC
+    LIMIT $2
+  )
+ORDER BY r.created_at DESC
+`
+
+type ListBackupRecordsBeyondRetentionParams struct {
+	DatabaseBackupID string
+	Limit            int32
+}
+
+type ListBackupRecordsBeyondRetentionRow struct {
+	ID        string
+	ObjectKey string
+}
+
+// The retention sweep set: succeeded backups older than the newest `keep`, each
+// of which owns an S3 object to delete. Failed/running rows carry no object and
+// are left as diagnostic history. The plane deletes these rows only after the
+// agent confirms the objects are gone (self-healing prune, ADR-005).
+func (q *Queries) ListBackupRecordsBeyondRetention(ctx context.Context, arg ListBackupRecordsBeyondRetentionParams) ([]ListBackupRecordsBeyondRetentionRow, error) {
+	rows, err := q.db.Query(ctx, listBackupRecordsBeyondRetention, arg.DatabaseBackupID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListBackupRecordsBeyondRetentionRow{}
+	for rows.Next() {
+		var i ListBackupRecordsBeyondRetentionRow
+		if err := rows.Scan(&i.ID, &i.ObjectKey); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

@@ -86,6 +86,67 @@ func TestHandleBackupEventCompletesRecord(t *testing.T) {
 	}
 }
 
+// A successful backup beyond the retention window dispatches a prune of the
+// oldest S3 objects, and the prune event confirming deletion removes exactly
+// those rows — while a key the agent could not delete keeps its row for the
+// next sweep (self-healing).
+func TestRetentionPruneDispatchAndConfirm(t *testing.T) {
+	fs, fb := newFakeStore(), &fakeBus{}
+	seedBackupFixture(fs) // retention_count = 7
+	s := newScheduler(fs, fb)
+
+	// Nine succeeded backups; keys "k0" (oldest) … "k8" (newest).
+	base := time.Now().Add(-time.Hour)
+	for i := range 9 {
+		id := "br_" + string(rune('a'+i))
+		fs.records[id] = domain.BackupRecord{
+			ID: id, DatabaseBackupID: "bak_1", ObjectKey: "k" + string(rune('0'+i)),
+			Status: domain.BackupSucceeded, CreatedAt: base.Add(time.Duration(i) * time.Minute),
+		}
+	}
+
+	// A fresh success triggers the retention sweep. Beyond the newest 7 are the
+	// two oldest: k0 and k1.
+	s.HandleDbBackupEvent(context.Background(), "srv_1", &agentv1.DbBackupEvent{
+		BackupRecordId: "br_a", DbId: "db_1",
+		Outcome: agentv1.DbBackupEvent_OUTCOME_SUCCEEDED, ObjectKey: "k0",
+	})
+	p, ok := fb.last()
+	if !ok || p.subject != subjects.DbBackupPrune("srv_1") {
+		t.Fatalf("prune published on %+v, want %s", p, subjects.DbBackupPrune("srv_1"))
+	}
+	var w agentv1.DbBackupPruneWork
+	if err := proto.Unmarshal(p.data, &w); err != nil {
+		t.Fatalf("unmarshal prune work: %v", err)
+	}
+	if len(w.GetS3Keys()) != 2 || !hasKey(w.GetS3Keys(), "k0") || !hasKey(w.GetS3Keys(), "k1") {
+		t.Fatalf("prune keys = %v, want the two oldest [k0 k1]", w.GetS3Keys())
+	}
+	if w.GetS3AccessKey() != "AK" || w.GetS3SecretKey() != "SK" {
+		t.Fatalf("prune work missing unsealed S3 creds: %q/%q", w.GetS3AccessKey(), w.GetS3SecretKey())
+	}
+
+	// Agent confirms k0 deleted, k1 failed → k0's row goes, k1's row stays.
+	s.HandleDbBackupPruneEvent(context.Background(), "srv_1", &agentv1.DbBackupPruneEvent{
+		DbId: "db_1", DeletedKeys: []string{"k0"}, FailedKeys: []string{"k1"},
+	})
+	if _, err := fs.GetBackupRecord(context.Background(), "br_a"); err == nil {
+		t.Fatal("record for deleted key k0 should be gone")
+	}
+	if _, err := fs.GetBackupRecord(context.Background(), "br_b"); err != nil {
+		t.Fatal("record for failed key k1 must survive for the next sweep")
+	}
+}
+
+func hasKey(keys []string, want string) bool {
+	for _, k := range keys {
+		if k == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestRestoreRequiresConfirm(t *testing.T) {
 	fs, fb := newFakeStore(), &fakeBus{}
 	seedBackupFixture(fs)

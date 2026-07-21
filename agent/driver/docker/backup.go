@@ -44,6 +44,7 @@ type ExecClient interface {
 type S3Client interface {
 	Upload(ctx context.Context, endpoint, bucket, region, key, accessKey, secretKey string, body io.Reader, size int64) error
 	Download(ctx context.Context, endpoint, bucket, region, key, accessKey, secretKey string) (io.ReadCloser, error)
+	Delete(ctx context.Context, endpoint, bucket, region, key, accessKey, secretKey string) error
 }
 
 // BackupExecutor runs one backup or restore against a database container.
@@ -169,6 +170,26 @@ func (b *BackupExecutor) ExecuteBackup(ctx context.Context, work *agentv1.DbBack
 		Outcome:   agentv1.DbBackupEvent_OUTCOME_SUCCEEDED,
 		ObjectKey: work.S3Key, SizeBytes: size, OccurredAt: timestamppb.Now(),
 	}
+}
+
+// ExecutePrune deletes the given S3 objects (a retention sweep the plane
+// computed) and reports which keys were removed vs. left behind. Deleting an
+// absent object is treated as success — S3 DELETE is idempotent — so redelivery
+// and a partially-applied prior sweep both converge. The plane deletes the
+// matching BackupRecord rows only for the keys reported deleted.
+func (b *BackupExecutor) ExecutePrune(ctx context.Context, work *agentv1.DbBackupPruneWork) *agentv1.DbBackupPruneEvent {
+	ev := &agentv1.DbBackupPruneEvent{DbId: work.DbId, OccurredAt: timestamppb.Now()}
+	for _, key := range work.GetS3Keys() {
+		if err := b.s3.Delete(ctx, work.S3Endpoint, work.S3Bucket, work.S3Region, key, work.S3AccessKey, work.S3SecretKey); err != nil {
+			// Never log the key's credentials; the key itself is not a secret.
+			b.log.Error("backup prune: deleting object", "db_id", work.DbId, "key", key, "error", err)
+			ev.FailedKeys = append(ev.FailedKeys, key)
+			continue
+		}
+		ev.DeletedKeys = append(ev.DeletedKeys, key)
+	}
+	b.log.Info("backup prune complete", "db_id", work.DbId, "deleted", len(ev.DeletedKeys), "failed", len(ev.FailedKeys))
+	return ev
 }
 
 // archiveOutGzip copies path out of the container (a tar stream), extracts the

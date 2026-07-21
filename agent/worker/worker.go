@@ -62,6 +62,7 @@ type ImageRelay interface {
 type BackupRunner interface {
 	ExecuteBackup(ctx context.Context, work *agentv1.DbBackupWork) *agentv1.DbBackupEvent
 	ExecuteRestore(ctx context.Context, work *agentv1.DbRestoreWork) *agentv1.DbRestoreEvent
+	ExecutePrune(ctx context.Context, work *agentv1.DbBackupPruneWork) *agentv1.DbBackupPruneEvent
 }
 
 // Bus is everything the worker needs from the data-plane connection
@@ -438,6 +439,30 @@ func (w *Worker) handleMsg(ctx context.Context, msg Message) {
 		}
 		if data, err := proto.Marshal(status); err == nil {
 			_ = w.bus.Publish(subjects.DbState(w.serverID, work.DbId), data)
+		}
+		_ = msg.Ack()
+		return
+
+	case strings.HasSuffix(subject, ".db.backup.prune"):
+		// Retention sweep: delete specific S3 objects. Idempotent, so redelivery
+		// is safe. Reports which keys were removed; the plane deletes only those
+		// rows (self-healing — failures retry on the next prune).
+		var work agentv1.DbBackupPruneWork
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
+			w.log.Error("worker: unmarshaling db backup prune work", "error", err)
+			_ = msg.Term()
+			return
+		}
+		if w.backup == nil {
+			w.log.Error("worker: received db backup prune work but no backup runner")
+			_ = msg.Term()
+			return
+		}
+		event := w.runWithHeartbeat(ctx, msg, func(ctx context.Context) proto.Message {
+			return w.backup.ExecutePrune(ctx, &work)
+		})
+		if data, err := proto.Marshal(event); err == nil {
+			_ = w.bus.Publish(subjects.DbBackupPruneState(w.serverID), data)
 		}
 		_ = msg.Ack()
 		return
