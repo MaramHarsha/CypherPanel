@@ -188,6 +188,12 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/tokens", a.authed(a.handleListTokens))
 	mux.HandleFunc("DELETE /api/v1/tokens/{id}", a.authed(a.handleDeleteToken))
 
+	// Two-factor authentication (TOTP + recovery codes).
+	mux.HandleFunc("GET /api/v1/auth/totp", a.authed(a.handleTOTPStatus))
+	mux.HandleFunc("POST /api/v1/auth/totp/enroll", a.authed(a.handleTOTPEnroll))
+	mux.HandleFunc("POST /api/v1/auth/totp/verify", a.authed(a.handleTOTPVerify))
+	mux.HandleFunc("POST /api/v1/auth/totp/disable", a.authed(a.handleTOTPDisable))
+
 	// Public CA certificate (needed by agents to pin the plane; not secret).
 	mux.HandleFunc("GET /api/v1/ca.pem", a.handleCAPem)
 

@@ -43,6 +43,9 @@ const (
 
 	// Phase 3: Teams (docs/features/teams-and-roles.md).
 	PrefixTeam = "tm"
+
+	// V1: Two-factor auth recovery codes (docs/features/two-factor-auth.md).
+	PrefixRecoveryCode = "rc"
 )
 
 // New returns a prefixed, URL-safe, collision-resistant identifier such as

@@ -415,6 +415,88 @@ func (s *Store) DeleteAPIToken(ctx context.Context, id string) error {
 	return nil
 }
 
+// ─── TOTP two-factor auth ─────────────────────────────────────────────────────
+
+// TOTPSecret is the stored second-factor material for a user.
+type TOTPSecret struct {
+	CT      []byte
+	Nonce   []byte
+	Enabled bool
+}
+
+// SetTOTPSecret stores (or replaces) the enrolling secret; it does not activate
+// two-factor — EnableTOTP does, after a code is verified.
+func (s *Store) SetTOTPSecret(ctx context.Context, userID string, ct, nonce []byte) error {
+	if err := s.q.SetTOTPSecret(ctx, db.SetTOTPSecretParams{ID: userID, TotpSecretEnc: ct, TotpSecretNonce: nonce}); err != nil {
+		return fmt.Errorf("store: setting totp secret: %w", err)
+	}
+	return nil
+}
+
+// EnableTOTP activates two-factor for a user (after successful verification).
+func (s *Store) EnableTOTP(ctx context.Context, userID string) error {
+	if err := s.q.EnableTOTP(ctx, userID); err != nil {
+		return fmt.Errorf("store: enabling totp: %w", err)
+	}
+	return nil
+}
+
+// DisableTOTP clears the secret and deactivates two-factor.
+func (s *Store) DisableTOTP(ctx context.Context, userID string) error {
+	if err := s.q.DisableTOTP(ctx, userID); err != nil {
+		return fmt.Errorf("store: disabling totp: %w", err)
+	}
+	return nil
+}
+
+// GetTOTPSecret returns a user's stored second-factor material.
+func (s *Store) GetTOTPSecret(ctx context.Context, userID string) (TOTPSecret, error) {
+	row, err := s.q.GetTOTPSecret(ctx, userID)
+	if err != nil {
+		return TOTPSecret{}, wrap("getting totp secret", err)
+	}
+	return TOTPSecret{CT: row.TotpSecretEnc, Nonce: row.TotpSecretNonce, Enabled: row.TotpEnabled}, nil
+}
+
+// AddRecoveryCode stores one hashed single-use recovery code.
+func (s *Store) AddRecoveryCode(ctx context.Context, id, userID string, codeHash []byte) error {
+	if err := s.q.AddRecoveryCode(ctx, db.AddRecoveryCodeParams{ID: id, UserID: userID, CodeHash: codeHash}); err != nil {
+		return fmt.Errorf("store: adding recovery code: %w", err)
+	}
+	return nil
+}
+
+// ConsumeRecoveryCode marks the matching unused code used, returning true if a
+// code was actually spent (false ⇒ wrong or already-used code).
+func (s *Store) ConsumeRecoveryCode(ctx context.Context, userID string, codeHash []byte) (bool, error) {
+	_, err := s.q.ConsumeRecoveryCode(ctx, db.ConsumeRecoveryCodeParams{UserID: userID, CodeHash: codeHash})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("store: consuming recovery code: %w", err)
+	}
+	return true, nil
+}
+
+// CountUnusedRecoveryCodes returns how many recovery codes remain.
+func (s *Store) CountUnusedRecoveryCodes(ctx context.Context, userID string) (int, error) {
+	n, err := s.q.CountUnusedRecoveryCodes(ctx, userID)
+	if err != nil {
+		return 0, fmt.Errorf("store: counting recovery codes: %w", err)
+	}
+	return int(n), nil
+}
+
+// DeleteRecoveryCodes removes all of a user's recovery codes (on re-enroll or
+// disable).
+func (s *Store) DeleteRecoveryCodes(ctx context.Context, userID string) error {
+	if err := s.q.DeleteRecoveryCodes(ctx, userID); err != nil {
+		return fmt.Errorf("store: deleting recovery codes: %w", err)
+	}
+	return nil
+}
+
 // ─── mapping helpers ────────────────────────────────────────────────────────
 
 func wrap(op string, err error) error {
@@ -488,7 +570,7 @@ func userFromRow(r db.User) domain.User {
 		Email:        r.Email,
 		PasswordHash: r.PasswordHash,
 		Role:         r.Role,
-		TOTPEnabled:  len(r.TotpSecretEnc) > 0,
+		TOTPEnabled:  r.TotpEnabled,
 		CreatedAt:    r.CreatedAt.Time,
 		UpdatedAt:    r.UpdatedAt.Time,
 	}

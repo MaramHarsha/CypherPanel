@@ -134,7 +134,7 @@ func (q *Queries) TouchAPIToken(ctx context.Context, tokenHash []byte) error {
 }
 
 const userForAPIToken = `-- name: UserForAPIToken :one
-SELECT u.id, u.email, u.password_hash, u.role, u.totp_secret_enc, u.totp_secret_nonce, u.created_at, u.updated_at FROM api_tokens t
+SELECT u.id, u.email, u.password_hash, u.role, u.totp_secret_enc, u.totp_secret_nonce, u.created_at, u.updated_at, u.totp_enabled FROM api_tokens t
 JOIN users u ON u.id = t.user_id
 WHERE t.token_hash = $1
   AND (t.expires_at IS NULL OR t.expires_at > now())
@@ -152,6 +152,7 @@ func (q *Queries) UserForAPIToken(ctx context.Context, tokenHash []byte) (User, 
 		&i.TotpSecretNonce,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TotpEnabled,
 	)
 	return i, err
 }

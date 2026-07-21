@@ -283,7 +283,7 @@ func (q *Queries) ListTeamsByUser(ctx context.Context, userID string) ([]ListTea
 }
 
 const listUsers = `-- name: ListUsers :many
-SELECT id, email, password_hash, role, totp_secret_enc, totp_secret_nonce, created_at, updated_at FROM users ORDER BY created_at
+SELECT id, email, password_hash, role, totp_secret_enc, totp_secret_nonce, created_at, updated_at, totp_enabled FROM users ORDER BY created_at
 `
 
 func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
@@ -304,6 +304,7 @@ func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
 			&i.TotpSecretNonce,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.TotpEnabled,
 		); err != nil {
 			return nil, err
 		}
@@ -337,7 +338,7 @@ func (q *Queries) RenameTeam(ctx context.Context, arg RenameTeamParams) (Team, e
 }
 
 const updateUserRole = `-- name: UpdateUserRole :one
-UPDATE users SET role = $2, updated_at = now() WHERE id = $1 RETURNING id, email, password_hash, role, totp_secret_enc, totp_secret_nonce, created_at, updated_at
+UPDATE users SET role = $2, updated_at = now() WHERE id = $1 RETURNING id, email, password_hash, role, totp_secret_enc, totp_secret_nonce, created_at, updated_at, totp_enabled
 `
 
 type UpdateUserRoleParams struct {
@@ -357,6 +358,7 @@ func (q *Queries) UpdateUserRole(ctx context.Context, arg UpdateUserRoleParams) 
 		&i.TotpSecretNonce,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TotpEnabled,
 	)
 	return i, err
 }

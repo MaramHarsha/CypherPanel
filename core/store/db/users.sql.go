@@ -23,7 +23,7 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (id, email, password_hash, role)
 VALUES ($1, $2, $3, $4)
-RETURNING id, email, password_hash, role, totp_secret_enc, totp_secret_nonce, created_at, updated_at
+RETURNING id, email, password_hash, role, totp_secret_enc, totp_secret_nonce, created_at, updated_at, totp_enabled
 `
 
 type CreateUserParams struct {
@@ -50,12 +50,13 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.TotpSecretNonce,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TotpEnabled,
 	)
 	return i, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, password_hash, role, totp_secret_enc, totp_secret_nonce, created_at, updated_at FROM users WHERE email = $1
+SELECT id, email, password_hash, role, totp_secret_enc, totp_secret_nonce, created_at, updated_at, totp_enabled FROM users WHERE email = $1
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -70,12 +71,13 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.TotpSecretNonce,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TotpEnabled,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, password_hash, role, totp_secret_enc, totp_secret_nonce, created_at, updated_at FROM users WHERE id = $1
+SELECT id, email, password_hash, role, totp_secret_enc, totp_secret_nonce, created_at, updated_at, totp_enabled FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
@@ -90,6 +92,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
 		&i.TotpSecretNonce,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TotpEnabled,
 	)
 	return i, err
 }

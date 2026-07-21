@@ -13,11 +13,13 @@ import (
 // fakeStore is an in-memory Store for authenticator unit tests. Integration
 // tests exercise the real Postgres store (ENGINEERING rule 29).
 type fakeStore struct {
-	users    map[string]domain.User     // by email
-	sessions map[string]string          // token-hash → userID
-	tokens   map[string]domain.APIToken // token id → metadata
-	byHash   map[string]string          // token-hash → token id
-	touched  map[string]int             // token-hash → times touched
+	users       map[string]domain.User       // by email
+	sessions    map[string]string            // token-hash → userID
+	tokens      map[string]domain.APIToken   // token id → metadata
+	byHash      map[string]string            // token-hash → token id
+	touched     map[string]int               // token-hash → times touched
+	totpSecrets map[string]*store.TOTPSecret // userID → 2FA secret+state
+	recovery    map[string][]string          // userID → unused code-hashes
 }
 
 func newFakeStore() *fakeStore {
@@ -90,6 +92,76 @@ func (f *fakeStore) DeleteAPIToken(_ context.Context, id string) error {
 	return nil
 }
 
+// fakeBox is an identity SecretBox for tests: the sealed value is the plaintext
+// (the real AES-GCM box is exercised in the secret package). It lets TOTP tests
+// assert on the actual secret round-tripping without crypto in the way.
+type fakeBox struct{}
+
+func (fakeBox) Seal(pt []byte) (ct, nonce []byte, err error) { return pt, []byte("n"), nil }
+func (fakeBox) Open(ct, _ []byte) ([]byte, error)            { return ct, nil }
+
+func (f *fakeStore) totp(userID string) *store.TOTPSecret {
+	if f.totpSecrets == nil {
+		f.totpSecrets = map[string]*store.TOTPSecret{}
+	}
+	s, ok := f.totpSecrets[userID]
+	if !ok {
+		s = &store.TOTPSecret{}
+		f.totpSecrets[userID] = s
+	}
+	return s
+}
+
+func (f *fakeStore) SetTOTPSecret(_ context.Context, userID string, ct, nonce []byte) error {
+	s := f.totp(userID)
+	s.CT, s.Nonce, s.Enabled = ct, nonce, false
+	return nil
+}
+
+func (f *fakeStore) EnableTOTP(_ context.Context, userID string) error {
+	f.totp(userID).Enabled = true
+	return nil
+}
+
+func (f *fakeStore) DisableTOTP(_ context.Context, userID string) error {
+	f.totpSecrets[userID] = &store.TOTPSecret{}
+	return nil
+}
+
+func (f *fakeStore) GetTOTPSecret(_ context.Context, userID string) (store.TOTPSecret, error) {
+	return *f.totp(userID), nil
+}
+
+func (f *fakeStore) AddRecoveryCode(_ context.Context, _, userID string, codeHash []byte) error {
+	if f.recovery == nil {
+		f.recovery = map[string][]string{}
+	}
+	f.recovery[userID] = append(f.recovery[userID], string(codeHash))
+	return nil
+}
+
+func (f *fakeStore) ConsumeRecoveryCode(_ context.Context, userID string, codeHash []byte) (bool, error) {
+	codes := f.recovery[userID]
+	for i, h := range codes {
+		if h == string(codeHash) {
+			f.recovery[userID] = append(codes[:i], codes[i+1:]...)
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (f *fakeStore) CountUnusedRecoveryCodes(_ context.Context, userID string) (int, error) {
+	return len(f.recovery[userID]), nil
+}
+
+func (f *fakeStore) DeleteRecoveryCodes(_ context.Context, userID string) error {
+	if f.recovery != nil {
+		delete(f.recovery, userID)
+	}
+	return nil
+}
+
 func (f *fakeStore) GetUserByEmail(_ context.Context, email string) (domain.User, error) {
 	u, ok := f.users[email]
 	if !ok {
@@ -129,7 +201,7 @@ func newAuthWithUser(t *testing.T, email, password string) (*Authenticator, *fak
 		t.Fatalf("HashPassword: %v", err)
 	}
 	fs.users[email] = domain.User{ID: "usr_1", Email: email, PasswordHash: hash, Role: "owner"}
-	a := NewAuthenticator(fs, NewLimiter(5, time.Minute), time.Hour)
+	a := NewAuthenticator(fs, fakeBox{}, NewLimiter(5, time.Minute), time.Hour)
 	return a, fs
 }
 
@@ -137,7 +209,7 @@ func TestLoginSuccessIssuesUsableSession(t *testing.T) {
 	a, _ := newAuthWithUser(t, "sam@example.com", "correct horse battery")
 	ctx := context.Background()
 
-	token, user, err := a.Login(ctx, "sam@example.com", "correct horse battery", "ip1")
+	token, user, err := a.Login(ctx, "sam@example.com", "correct horse battery", "", "ip1")
 	if err != nil {
 		t.Fatalf("Login: %v", err)
 	}
@@ -158,7 +230,7 @@ func TestLoginSuccessIssuesUsableSession(t *testing.T) {
 
 func TestLoginWrongPassword(t *testing.T) {
 	a, _ := newAuthWithUser(t, "sam@example.com", "right")
-	_, _, err := a.Login(context.Background(), "sam@example.com", "wrong", "ip1")
+	_, _, err := a.Login(context.Background(), "sam@example.com", "wrong", "", "ip1")
 	if !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("err = %v, want ErrInvalidCredentials", err)
 	}
@@ -166,7 +238,7 @@ func TestLoginWrongPassword(t *testing.T) {
 
 func TestLoginUnknownUserIsIndistinguishable(t *testing.T) {
 	a, _ := newAuthWithUser(t, "sam@example.com", "right")
-	_, _, err := a.Login(context.Background(), "nobody@example.com", "whatever", "ip1")
+	_, _, err := a.Login(context.Background(), "nobody@example.com", "whatever", "", "ip1")
 	if !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("err = %v, want ErrInvalidCredentials", err)
 	}
@@ -176,14 +248,14 @@ func TestLoginRateLimited(t *testing.T) {
 	fs := newFakeStore()
 	hash, _ := HashPassword("right")
 	fs.users["sam@example.com"] = domain.User{ID: "usr_1", Email: "sam@example.com", PasswordHash: hash}
-	a := NewAuthenticator(fs, NewLimiter(3, time.Minute), time.Hour)
+	a := NewAuthenticator(fs, fakeBox{}, NewLimiter(3, time.Minute), time.Hour)
 
 	for range 3 {
-		if _, _, err := a.Login(context.Background(), "sam@example.com", "wrong", "ip1"); !errors.Is(err, ErrInvalidCredentials) {
+		if _, _, err := a.Login(context.Background(), "sam@example.com", "wrong", "", "ip1"); !errors.Is(err, ErrInvalidCredentials) {
 			t.Fatalf("expected invalid credentials, got %v", err)
 		}
 	}
-	if _, _, err := a.Login(context.Background(), "sam@example.com", "wrong", "ip1"); !errors.Is(err, ErrRateLimited) {
+	if _, _, err := a.Login(context.Background(), "sam@example.com", "wrong", "", "ip1"); !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("expected rate limit after 3 failures, got %v", err)
 	}
 }
@@ -192,13 +264,13 @@ func TestSuccessfulLoginResetsRateLimit(t *testing.T) {
 	a, _ := newAuthWithUser(t, "sam@example.com", "right")
 	ctx := context.Background()
 	// Two failures, then a success, should clear the counter.
-	_, _, _ = a.Login(ctx, "sam@example.com", "wrong", "ip1")
-	_, _, _ = a.Login(ctx, "sam@example.com", "wrong", "ip1")
-	if _, _, err := a.Login(ctx, "sam@example.com", "right", "ip1"); err != nil {
+	_, _, _ = a.Login(ctx, "sam@example.com", "wrong", "", "ip1")
+	_, _, _ = a.Login(ctx, "sam@example.com", "wrong", "", "ip1")
+	if _, _, err := a.Login(ctx, "sam@example.com", "right", "", "ip1"); err != nil {
 		t.Fatalf("Login success: %v", err)
 	}
 	// Counter reset; a fresh wrong attempt is invalid-credentials, not limited.
-	if _, _, err := a.Login(ctx, "sam@example.com", "wrong", "ip1"); !errors.Is(err, ErrInvalidCredentials) {
+	if _, _, err := a.Login(ctx, "sam@example.com", "wrong", "", "ip1"); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("expected invalid credentials after reset, got %v", err)
 	}
 }
@@ -206,7 +278,7 @@ func TestSuccessfulLoginResetsRateLimit(t *testing.T) {
 func TestLogoutRevokesSession(t *testing.T) {
 	a, _ := newAuthWithUser(t, "sam@example.com", "right")
 	ctx := context.Background()
-	token, _, err := a.Login(ctx, "sam@example.com", "right", "ip1")
+	token, _, err := a.Login(ctx, "sam@example.com", "right", "", "ip1")
 	if err != nil {
 		t.Fatalf("Login: %v", err)
 	}

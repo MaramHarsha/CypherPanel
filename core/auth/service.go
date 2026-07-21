@@ -19,7 +19,18 @@ var (
 	ErrInvalidCredentials = errors.New("auth: invalid credentials")
 	ErrRateLimited        = errors.New("auth: too many attempts, try again later")
 	ErrInvalidSession     = errors.New("auth: invalid or expired session")
+	// ErrTOTPRequired means the password was correct but the account has
+	// two-factor enabled and no (or a wrong) second factor was supplied. The
+	// caller should re-submit with a code; the password need not be re-sent.
+	ErrTOTPRequired = errors.New("auth: two-factor code required")
 )
+
+// SecretBox seals and opens the TOTP secret at rest (consumer-defined;
+// *secret.Box satisfies it — the same AES-256-GCM box that protects the CA key).
+type SecretBox interface {
+	Seal(plaintext []byte) (ciphertext, nonce []byte, err error)
+	Open(ciphertext, nonce []byte) ([]byte, error)
+}
 
 // Store is the persistence the authenticator depends on (consumer-defined,
 // ENGINEERING rule 6). The concrete *store.Store satisfies it.
@@ -35,6 +46,15 @@ type Store interface {
 	ListAPITokensByUser(ctx context.Context, userID string) ([]domain.APIToken, error)
 	GetAPIToken(ctx context.Context, id string) (domain.APIToken, error)
 	DeleteAPIToken(ctx context.Context, id string) error
+
+	SetTOTPSecret(ctx context.Context, userID string, ct, nonce []byte) error
+	EnableTOTP(ctx context.Context, userID string) error
+	DisableTOTP(ctx context.Context, userID string) error
+	GetTOTPSecret(ctx context.Context, userID string) (store.TOTPSecret, error)
+	AddRecoveryCode(ctx context.Context, id, userID string, codeHash []byte) error
+	ConsumeRecoveryCode(ctx context.Context, userID string, codeHash []byte) (bool, error)
+	CountUnusedRecoveryCodes(ctx context.Context, userID string) (int, error)
+	DeleteRecoveryCodes(ctx context.Context, userID string) error
 }
 
 // dummyHash is a valid bcrypt hash compared against when a login names a
@@ -52,21 +72,26 @@ func init() {
 // Authenticator verifies credentials and manages sessions.
 type Authenticator struct {
 	store      Store
+	box        SecretBox
 	limiter    *Limiter
 	sessionTTL time.Duration
 	now        func() time.Time
 }
 
 // NewAuthenticator wires the authenticator. limiter throttles failed logins;
-// sessionTTL is how long an issued session stays valid.
-func NewAuthenticator(s Store, limiter *Limiter, sessionTTL time.Duration) *Authenticator {
-	return &Authenticator{store: s, limiter: limiter, sessionTTL: sessionTTL, now: time.Now}
+// sessionTTL is how long an issued session stays valid; box seals the TOTP
+// secret at rest.
+func NewAuthenticator(s Store, box SecretBox, limiter *Limiter, sessionTTL time.Duration) *Authenticator {
+	return &Authenticator{store: s, box: box, limiter: limiter, sessionTTL: sessionTTL, now: time.Now}
 }
 
 // Login verifies credentials and, on success, creates a session and returns its
 // raw bearer token (shown to the client once, never stored). throttleKey scopes
-// rate limiting — typically the client IP.
-func (a *Authenticator) Login(ctx context.Context, email, password, throttleKey string) (rawToken string, user domain.User, err error) {
+// rate limiting — typically the client IP. totpCode is the optional second
+// factor: for a 2FA-enabled account it must be a valid authenticator code or an
+// unused recovery code, otherwise Login returns ErrTOTPRequired (or, for a wrong
+// code, ErrInvalidCredentials).
+func (a *Authenticator) Login(ctx context.Context, email, password, totpCode, throttleKey string) (rawToken string, user domain.User, err error) {
 	if !a.limiter.Allow(throttleKey) {
 		return "", domain.User{}, ErrRateLimited
 	}
@@ -84,6 +109,22 @@ func (a *Authenticator) Login(ctx context.Context, email, password, throttleKey 
 	if !CheckPassword(user.PasswordHash, password) {
 		a.limiter.Fail(throttleKey)
 		return "", domain.User{}, ErrInvalidCredentials
+	}
+
+	// Second factor. The password was correct, so a missing code is a benign
+	// "need the code" (no limiter penalty); a wrong code is a failed attempt.
+	if user.TOTPEnabled {
+		if totpCode == "" {
+			return "", domain.User{}, ErrTOTPRequired
+		}
+		ok, err := a.checkSecondFactor(ctx, user.ID, totpCode)
+		if err != nil {
+			return "", domain.User{}, err
+		}
+		if !ok {
+			a.limiter.Fail(throttleKey)
+			return "", domain.User{}, ErrInvalidCredentials
+		}
 	}
 	a.limiter.Reset(throttleKey)
 

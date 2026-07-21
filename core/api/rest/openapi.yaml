@@ -83,7 +83,12 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
-          description: Invalid email or password (deliberately indistinguishable).
+          description: >-
+            Invalid email or password (deliberately indistinguishable), OR the
+            account has two-factor enabled and a valid `totp_code` was not
+            supplied. In the latter case the body carries `"totp_required": true`
+            and the client should re-submit with a code (the password check
+            already passed).
           content:
             application/json:
               schema:
@@ -176,6 +181,100 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /api/v1/auth/totp:
+    get:
+      tags: [auth]
+      summary: Two-factor authentication status for the current account
+      responses:
+        "200":
+          description: Whether 2FA is enabled and how many recovery codes remain.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TOTPStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/auth/totp/enroll:
+    post:
+      tags: [auth]
+      summary: Begin two-factor enrollment
+      description: >
+        Generates a fresh TOTP secret and returns it (raw, for manual entry, and
+        as an otpauth URI for QR rendering). Enrollment is NOT active until a
+        code is confirmed via /auth/totp/verify. Fails with 409 if 2FA is
+        already enabled — disable it first to re-enroll.
+      responses:
+        "200":
+          description: A pending enrollment secret (activate it with verify).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TOTPEnrollResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: Two-factor is already enabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/auth/totp/verify:
+    post:
+      tags: [auth]
+      summary: Confirm a code and activate two-factor
+      description: >
+        Validates a code against the pending secret, activates 2FA, and returns a
+        fresh set of single-use recovery codes — shown exactly once. Store them.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TOTPCodeRequest"
+      responses:
+        "200":
+          description: Two-factor enabled; recovery codes returned once.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TOTPVerifyResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Invalid two-factor code.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/auth/totp/disable:
+    post:
+      tags: [auth]
+      summary: Disable two-factor
+      description: >
+        Turns off 2FA and clears recovery codes. Requires a valid authenticator
+        or recovery code — a session alone cannot strip an account's second
+        factor.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TOTPCodeRequest"
+      responses:
+        "204":
+          description: Two-factor disabled.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Invalid two-factor code.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /api/v1/ca.pem:
     get:
@@ -1518,6 +1617,53 @@ components:
           format: email
         password:
           type: string
+        totp_code:
+          type: string
+          description: >
+            Second factor, required only for 2FA-enabled accounts: a 6-digit
+            authenticator code or a recovery code. If omitted for such an
+            account, login returns 401 with "totp_required": true.
+
+    TOTPStatus:
+      type: object
+      required: [enabled, recovery_codes_left]
+      properties:
+        enabled:
+          type: boolean
+        recovery_codes_left:
+          type: integer
+          description: Unused single-use recovery codes remaining.
+
+    TOTPEnrollResponse:
+      type: object
+      required: [secret, otpauth_uri]
+      properties:
+        secret:
+          type: string
+          description: Base32 secret for manual entry into an authenticator app.
+        otpauth_uri:
+          type: string
+          description: otpauth:// URI the client renders as a QR code.
+
+    TOTPCodeRequest:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+          description: An authenticator code or a recovery code.
+
+    TOTPVerifyResponse:
+      type: object
+      required: [recovery_codes]
+      properties:
+        recovery_codes:
+          type: array
+          items:
+            type: string
+          description: >
+            Single-use recovery codes, shown exactly once. Store them now —
+            they are the only way in if the authenticator is lost.
 
     User:
       type: object
