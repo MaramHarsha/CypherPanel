@@ -1,0 +1,5 @@
+allowBuilds:
+  # orval's telemetry dependency — no build script wanted.
+  '@scarf/scarf': false
+  # esbuild installs its platform binary via postinstall; required by vite.
+  esbuild: true

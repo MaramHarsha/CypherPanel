@@ -1,0 +1,180 @@
+/* CypherPanel — "the calm terminal" (docs/product/web-ui-design.md §2).
+   Two faces: Inter for chrome and prose, IBM Plex Mono promoted to identity
+   duty — IDs, domains, statuses, logs, cron, tags. Color is status: the
+   chromatic palette is the six status colors plus one ANSI-cyan action accent;
+   everything else is a graphite neutral ramp. A healthy screen is almost
+   monochrome, so a red one is loud. */
+
+@import "@fontsource-variable/inter";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+@import "@fontsource/ibm-plex-mono/600.css";
+
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ── Semantic tokens: dark is the root default; .light overrides. ────────── */
+:root {
+  /* graphite ramp — cool, blue-cast, never pure black */
+  --bg: #0b0d10;
+  --surface: #12151a;
+  --raised: #171b21;
+  --overlay: #1c212a;
+  --border: #262c35;
+  --border-strong: #333b47;
+  --text: #e8ecf1;
+  --text-mid: #9aa4b1;
+  --text-faint: #5d6672;
+
+  /* the one accent: ANSI cyan, the prompt color */
+  --accent: #2fbfae;
+  --accent-hover: #45d1c0;
+  --accent-fg: #06211d;
+
+  /* status vocabulary (ui-principles §5) — 4.5:1 on --bg */
+  --status-running: #4ac26b;
+  --status-deploying: #58a6ff;
+  --status-stopped: #768390;
+  --status-error: #f85149;
+  --status-degraded: #d9a521;
+  --status-unknown: #768390;
+
+  --danger: #f85149;
+  --danger-hover: #ff6a5e;
+  --focus: #58a6ff;
+
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", monospace;
+}
+
+.light {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --raised: #ffffff;
+  --overlay: #ffffff;
+  --border: #dfe3e9;
+  --border-strong: #c6ccd6;
+  --text: #171c23;
+  --text-mid: #525c69;
+  --text-faint: #8a93a0;
+
+  --accent: #0d7d71;
+  --accent-hover: #0a6a60;
+  --accent-fg: #ffffff;
+
+  --status-running: #1a7f37;
+  --status-deploying: #0969da;
+  --status-stopped: #59636e;
+  --status-error: #cf222e;
+  --status-degraded: #9a6700;
+  --status-unknown: #59636e;
+
+  --danger: #cf222e;
+  --danger-hover: #a40e26;
+  --focus: #0969da;
+}
+
+/* ── Map semantic tokens into Tailwind utilities. ────────────────────────── */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-overlay: var(--overlay);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text);
+  --color-text-mid: var(--text-mid);
+  --color-text-faint: var(--text-faint);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-fg: var(--accent-fg);
+  --color-danger: var(--danger);
+  --color-danger-hover: var(--danger-hover);
+  --color-focus: var(--focus);
+  --color-status-running: var(--status-running);
+  --color-status-deploying: var(--status-deploying);
+  --color-status-stopped: var(--status-stopped);
+  --color-status-error: var(--status-error);
+  --color-status-degraded: var(--status-degraded);
+  --color-status-unknown: var(--status-unknown);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  html {
+    color-scheme: dark;
+  }
+  html.light {
+    color-scheme: light;
+  }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 0.875rem;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 1px;
+  }
+  /* Scrollbars in the ramp, not the browser default chrome. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+}
+
+@layer components {
+  /* Mono section eyebrow: `DEPLOYMENTS`, `ENV VARS` — structure as information. */
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+  /* Machine values: ids, domains, tags, cron. */
+  .mono {
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+  }
+}
+
+/* The deploying pulse — one of the three earned animations. */
+@keyframes status-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.animate-status-pulse {
+  animation: status-pulse 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-status-pulse {
+    animation: none;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
