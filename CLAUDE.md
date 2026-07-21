@@ -24,7 +24,7 @@ Self-hosted PaaS unifying the best of Coolify and Dokploy on a desired-state, ag
 | Port anything from the references | `research/coolify.md` / `research/dokploy.md` extraction maps |
 | Weigh feature demand or priority | `research/community-pain-points.md` (evidence-linked community votes) |
 | Name anything | `docs/glossary.md` |
-| Build UI | `docs/product/ui-principles.md`, `docs/product/personas.md` |
+| Build UI | `docs/product/web-ui-design.md` (the Phase 4 plan), `docs/product/ui-principles.md` (binding rules), `docs/product/personas.md` |
 | Decide what's in scope | `docs/vision.md` (non-negotiables incl. footprint budgets), `docs/roadmap.md` |
 | Add files/directories | `docs/project-structure.md` |
 

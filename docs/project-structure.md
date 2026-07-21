@@ -94,7 +94,7 @@ docs/
 ├── glossary.md            # canonical vocabulary + reference-repo term mapping
 ├── project-structure.md   # this file
 ├── adrs/                  # ADR-NNN-slug.md — immutable; supersede, don't edit
-├── product/               # personas, feature-matrix, ui-principles
+├── product/               # personas, feature-matrix, ui-principles, web-ui-design
 │                          #   (+ design-system.md in Phase 4, from real components)
 ├── dev/                   # ci.md — CI/CD workflow inventory
 ├── security/              # threat-model.md (written at Phase 1 start, before agent code)
