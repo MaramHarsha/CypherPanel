@@ -34,6 +34,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/guard"
 	"github.com/MaramHarsha/cypherpanel/core/identity"
 	"github.com/MaramHarsha/cypherpanel/core/notify"
+	"github.com/MaramHarsha/cypherpanel/core/onboarding"
 	"github.com/MaramHarsha/cypherpanel/core/previews"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
 	"github.com/MaramHarsha/cypherpanel/core/relay"
@@ -44,7 +45,6 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/status"
 	"github.com/MaramHarsha/cypherpanel/core/store"
 	"github.com/MaramHarsha/cypherpanel/core/teams"
-	"github.com/MaramHarsha/cypherpanel/pkg/ids"
 	"github.com/MaramHarsha/cypherpanel/pkg/pki"
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
 )
@@ -100,7 +100,8 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
-	if err := bootstrapAdmin(ctx, st, cfg, log); err != nil {
+	onboardSvc := onboarding.New(st)
+	if err := bootstrapAdmin(ctx, onboardSvc, cfg, log); err != nil {
 		return err
 	}
 
@@ -332,6 +333,7 @@ func run(log *slog.Logger) error {
 	// REST API + console.
 	api := rest.New(rest.Deps{
 		Auth:            authr,
+		Onboarding:      onboardSvc,
 		Servers:         serverSvc,
 		Projects:        projectSvc,
 		Applications:    appSvc,
@@ -421,44 +423,25 @@ func startEnrollmentServer(cfg config.Config, certPEM, keyPEM, caPEM []byte, svc
 	return srv, nil
 }
 
-func bootstrapAdmin(ctx context.Context, st *store.Store, cfg config.Config, log *slog.Logger) error {
-	if cfg.AdminEmail == "" {
-		n, err := st.CountUsers(ctx)
-		if err != nil {
-			return fmt.Errorf("counting users: %w", err)
-		}
-		if n == 0 {
-			log.Warn("no admin account and none configured — set CYPHERD_ADMIN_EMAIL/PASSWORD; login is unavailable until an account exists")
-		}
-		return nil
-	}
-	n, err := st.CountUsers(ctx)
-	if err != nil {
-		return fmt.Errorf("counting users: %w", err)
-	}
-	if n > 0 {
-		return nil // already bootstrapped; do not overwrite
-	}
-	hash, err := auth.HashPassword(cfg.AdminPassword)
+// bootstrapAdmin creates the first owner from CYPHERD_ADMIN_EMAIL/PASSWORD when
+// the panel has none. It shares CreateFirstOwner with the in-browser setup path
+// (onboarding), so an env-var boot and a browser setup produce the same shape.
+// When no admin is configured, the operator completes setup in the browser on
+// first visit (first-run-setup.md) — no longer a dead-end login screen.
+func bootstrapAdmin(ctx context.Context, onb *onboarding.Service, cfg config.Config, log *slog.Logger) error {
+	needs, err := onb.NeedsSetup(ctx)
 	if err != nil {
 		return err
 	}
-	admin, err := st.CreateUser(ctx, ids.New(ids.PrefixUser), cfg.AdminEmail, hash, "owner")
-	if err != nil {
-		return fmt.Errorf("creating admin user: %w", err)
+	if !needs {
+		return nil // already bootstrapped; do not overwrite
 	}
-	// The default team always exists with the admin as an owner, so a fresh
-	// boot and a migrated panel converge to the same shape
-	// (teams-and-roles.md §2). Both writes are idempotent.
-	if _, err := st.GetTeam(ctx, "tm_default"); errors.Is(err, store.ErrNotFound) {
-		if _, err := st.CreateTeam(ctx, "tm_default", "default"); err != nil {
-			return fmt.Errorf("creating default team: %w", err)
-		}
-	} else if err != nil {
-		return fmt.Errorf("checking default team: %w", err)
+	if cfg.AdminEmail == "" {
+		log.Info("no admin account yet — complete first-run setup in the browser, or set CYPHERD_ADMIN_EMAIL/PASSWORD")
+		return nil
 	}
-	if _, err := st.UpsertTeamMember(ctx, "tm_default", admin.ID, "owner"); err != nil {
-		return fmt.Errorf("enrolling admin in default team: %w", err)
+	if _, err := onb.CreateFirstOwner(ctx, cfg.AdminEmail, cfg.AdminPassword); err != nil {
+		return fmt.Errorf("bootstrapping admin: %w", err)
 	}
 	log.Info("bootstrapped admin account", "email", cfg.AdminEmail)
 	return nil

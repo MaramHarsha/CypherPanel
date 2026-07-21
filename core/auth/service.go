@@ -128,12 +128,26 @@ func (a *Authenticator) Login(ctx context.Context, email, password, totpCode, th
 	}
 	a.limiter.Reset(throttleKey)
 
+	token, err := a.StartSession(ctx, user.ID)
+	if err != nil {
+		return "", domain.User{}, err
+	}
+	return token, user, nil
+}
+
+// StartSession mints a fresh session for an already-authenticated user and
+// returns its raw bearer token (shown once, never stored). It is the
+// session-creation tail of Login, exposed so flows that establish identity
+// without a password check — first-run setup (onboarding) — can auto-sign-in
+// the account they just created. Callers own the authorization decision;
+// StartSession itself performs no credential check.
+func (a *Authenticator) StartSession(ctx context.Context, userID string) (rawToken string, err error) {
 	rawToken = ids.Secret()
 	expires := a.now().Add(a.sessionTTL)
-	if err := a.store.CreateSession(ctx, ids.New(ids.PrefixSession), user.ID, HashToken(rawToken), expires); err != nil {
-		return "", domain.User{}, fmt.Errorf("auth: creating session: %w", err)
+	if err := a.store.CreateSession(ctx, ids.New(ids.PrefixSession), userID, HashToken(rawToken), expires); err != nil {
+		return "", fmt.Errorf("auth: creating session: %w", err)
 	}
-	return rawToken, user, nil
+	return rawToken, nil
 }
 
 // Authenticate resolves a raw bearer token to its user, or ErrInvalidSession.

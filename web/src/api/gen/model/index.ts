@@ -121,6 +121,8 @@ export * from './serverStatus';
 export * from './setEnvVarRequest';
 export * from './setUserRoleRequest';
 export * from './setUserRoleRequestRole';
+export * from './setupRequest';
+export * from './setupStatus';
 export * from './tOTPCodeRequest';
 export * from './tOTPEnrollResponse';
 export * from './tOTPStatus';

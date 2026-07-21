@@ -1,0 +1,46 @@
+# CypherPanel control plane (cypherd) as a systemd service — the
+# binary-on-host install path (no Docker for the plane itself).
+#
+#   sudo cp cypherd /usr/local/bin/
+#   sudo cp install/cypherd.service /etc/systemd/system/
+#   sudo mkdir -p /etc/cypherpanel && sudo cp deploy/cypherd.env.example /etc/cypherpanel/cypherd.env
+#   sudo $EDITOR /etc/cypherpanel/cypherd.env      # set MASTER_KEY, DATABASE_URL, PUBLIC_HOST
+#   sudo systemctl enable --now cypherd
+#
+# Postgres is a separate dependency (managed, system package, or a container);
+# point CYPHERD_DATABASE_URL at it. See docs/dev/deployment.md.
+
+[Unit]
+Description=CypherPanel control plane
+Documentation=https://github.com/MaramHarsha/cypherpanel
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/cypherpanel/cypherd.env
+ExecStart=/usr/local/bin/cypherd
+Restart=always
+RestartSec=5
+
+# Durable state (JetStream WORK stream + runtime logs).
+StateDirectory=cypherd
+Environment=CYPHERD_DATA_DIR=/var/lib/cypherd
+
+# Hardening: cypherd needs no special privileges (it is a network service with
+# a data dir), so lock it down.
+DynamicUser=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

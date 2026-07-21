@@ -1,0 +1,52 @@
+# CypherPanel — production control plane (cypherd + PostgreSQL).
+#
+# Run this on the host that will BE your control plane. Agents run on separate
+# servers and join over the network (see install/agent.sh); they are not part
+# of this file.
+#
+#   cp cypherd.env.example cypherd.env    # then edit it — see the doc
+#   docker compose up -d
+#
+# See docs/dev/deployment.md for the full walkthrough, TLS, and DNS.
+name: cypherpanel
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cypherpanel
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in cypherd.env}
+      POSTGRES_DB: cypherpanel
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cypherpanel -d cypherpanel"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # Not published: only cypherd talks to it, over the compose network.
+
+  cypherd:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: cypherpanel/cypherd:latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: cypherd.env
+    environment:
+      # Inside the compose network Postgres is reachable as "postgres".
+      CYPHERD_DATABASE_URL: postgres://cypherpanel:${POSTGRES_PASSWORD}@postgres:5432/cypherpanel?sslmode=disable
+    ports:
+      - "8080:8080" # web UI + REST API (put your TLS terminator in front)
+      - "8443:8443" # agent enrollment (gRPC, mTLS)
+      - "4222:4222" # agent data plane (NATS, mTLS)
+    volumes:
+      - cypherd-data:/var/lib/cypherd
+
+volumes:
+  pgdata:
+  cypherd-data:

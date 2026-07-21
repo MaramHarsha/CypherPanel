@@ -133,8 +133,16 @@ type LogSubscriber interface {
 }
 
 // Deps are the dependencies the API needs.
+// OnboardingService creates the first owner on a fresh panel (consumer-defined;
+// *onboarding.Service satisfies it). Optional — nil disables the setup path.
+type OnboardingService interface {
+	NeedsSetup(ctx context.Context) (bool, error)
+	CreateFirstOwner(ctx context.Context, email, password string) (domain.User, error)
+}
+
 type Deps struct {
 	Auth            *auth.Authenticator
+	Onboarding      OnboardingService
 	Servers         *servers.Service
 	Projects        *projects.Service
 	Applications    *applications.Service
@@ -181,6 +189,11 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/events", a.authed(a.handleEvents))
 
 	// Auth.
+	// First-run setup (public, one-time): before any account exists, these
+	// let an operator create the first owner in the browser (first-run-setup.md).
+	mux.HandleFunc("GET /api/v1/auth/setup", a.handleSetupStatus)
+	mux.HandleFunc("POST /api/v1/auth/setup", a.handleSetup)
+
 	mux.HandleFunc("POST /api/v1/auth/login", a.handleLogin)
 	mux.HandleFunc("POST /api/v1/auth/logout", a.authed(a.handleLogout))
 	mux.HandleFunc("GET /api/v1/auth/me", a.authed(a.handleMe))

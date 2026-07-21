@@ -34,6 +34,8 @@ import type {
   LoginResponse,
   Me,
   NotFoundResponse,
+  SetupRequest,
+  SetupStatus,
   TOTPCodeRequest,
   TOTPEnrollResponse,
   TOTPStatus,
@@ -49,6 +51,179 @@ type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 
 
 /**
+ * Public. Returns whether the panel has no account yet, so the UI can show the first-run setup screen instead of login. Reveals no secret.
+ * @summary Whether the panel needs first-run setup
+ */
+export const getGetSetupStatusUrl = () => {
+
+
+  
+
+  return `/api/v1/auth/setup`
+}
+
+export const getSetupStatus = async ( options?: RequestInit): Promise<SetupStatus> => {
+  
+  return apiFetch<SetupStatus>(getGetSetupStatusUrl(),
+  {      
+    ...options,
+    method: 'GET'
+    
+    
+  }
+);}
+
+
+
+
+
+export const getGetSetupStatusQueryKey = () => {
+    return [
+    `/api/v1/auth/setup`
+    ] as const;
+    }
+
+    
+export const getGetSetupStatusQueryOptions = <TData = Awaited<ReturnType<typeof getSetupStatus>>, TError = unknown>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSetupStatusQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSetupStatus>>> = ({ signal }) => getSetupStatus({ signal, ...requestOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetSetupStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getSetupStatus>>>
+export type GetSetupStatusQueryError = unknown
+
+
+export function useGetSetupStatus<TData = Awaited<ReturnType<typeof getSetupStatus>>, TError = unknown>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getSetupStatus>>,
+          TError,
+          Awaited<ReturnType<typeof getSetupStatus>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetSetupStatus<TData = Awaited<ReturnType<typeof getSetupStatus>>, TError = unknown>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getSetupStatus>>,
+          TError,
+          Awaited<ReturnType<typeof getSetupStatus>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetSetupStatus<TData = Awaited<ReturnType<typeof getSetupStatus>>, TError = unknown>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Whether the panel needs first-run setup
+ */
+
+export function useGetSetupStatus<TData = Awaited<ReturnType<typeof getSetupStatus>>, TError = unknown>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSetupStatus>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetSetupStatusQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+/**
+ * Public and one-time. Creates the panel's first owner and signs it in. Once any account exists this returns 409, so it can never mint a second account on an open panel.
+ * @summary Create the first owner account (one-time)
+ */
+export const getSetupUrl = () => {
+
+
+  
+
+  return `/api/v1/auth/setup`
+}
+
+export const setup = async (setupRequest: SetupRequest, options?: RequestInit): Promise<LoginResponse> => {
+  
+  return apiFetch<LoginResponse>(getSetupUrl(),
+  {      
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      setupRequest,)
+  }
+);}
+
+
+
+
+export const getSetupMutationOptions = <TError = BadRequestResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setup>>, TError,{data: SetupRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setup>>, TError,{data: SetupRequest}, TContext> => {
+
+const mutationKey = ['setup'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setup>>, {data: SetupRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  setup(data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetupMutationResult = NonNullable<Awaited<ReturnType<typeof setup>>>
+    export type SetupMutationBody = SetupRequest
+    export type SetupMutationError = BadRequestResponse | Error
+
+    /**
+ * @summary Create the first owner account (one-time)
+ */
+export const useSetup = <TError = BadRequestResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setup>>, TError,{data: SetupRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setup>>,
+        TError,
+        {data: SetupRequest},
+        TContext
+      > => {
+
+      const mutationOptions = getSetupMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    /**
  * @summary Sign in with email and password
  */
 export const getLoginUrl = () => {

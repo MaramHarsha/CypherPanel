@@ -62,6 +62,53 @@ paths:
         "503":
           $ref: "#/components/responses/Unavailable"
 
+  /api/v1/auth/setup:
+    get:
+      operationId: getSetupStatus
+      tags: [auth]
+      summary: Whether the panel needs first-run setup
+      description: >-
+        Public. Returns whether the panel has no account yet, so the UI can show
+        the first-run setup screen instead of login. Reveals no secret.
+      security: []
+      responses:
+        "200":
+          description: Setup status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SetupStatus"
+    post:
+      operationId: setup
+      tags: [auth]
+      summary: Create the first owner account (one-time)
+      description: >-
+        Public and one-time. Creates the panel's first owner and signs it in.
+        Once any account exists this returns 409, so it can never mint a second
+        account on an open panel.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetupRequest"
+      responses:
+        "201":
+          description: Owner created and signed in. The token is returned once.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: The panel is already set up; sign in instead.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /api/v1/auth/login:
     post:
       operationId: login
@@ -1699,6 +1746,25 @@ components:
         error:
           type: string
           description: Human-readable message; never contains secrets.
+
+    SetupStatus:
+      type: object
+      required: [needs_setup]
+      properties:
+        needs_setup:
+          type: boolean
+          description: True when the panel has no account yet.
+
+    SetupRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
 
     LoginRequest:
       type: object
