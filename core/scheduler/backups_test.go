@@ -8,6 +8,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -102,5 +103,62 @@ func TestRestoreRequiresConfirm(t *testing.T) {
 	}
 	if p, _ := fb.last(); p.subject != subjects.DbRestore("srv_1") {
 		t.Fatalf("restore published on %s, want %s", p.subject, subjects.DbRestore("srv_1"))
+	}
+}
+
+// The sweeper fires a schedule whose next cron time (from last run, or creation
+// if never run) has passed, and leaves not-yet-due ones alone.
+func TestSweepDueBackupsFiresOnlyDue(t *testing.T) {
+	fs, fb := newFakeStore(), &fakeBus{}
+	seedBackupFixture(fs)
+	// due: every-minute schedule created two minutes ago, never run.
+	due := fs.schedules["bak_1"]
+	due.Schedule = "* * * * *"
+	due.Enabled = true
+	due.CreatedAt = time.Now().Add(-2 * time.Minute)
+	fs.schedules["bak_1"] = due
+	// not due: daily-at-3am schedule that ran five minutes ago.
+	ran := time.Now().Add(-5 * time.Minute)
+	fs.schedules["bak_2"] = domain.DatabaseBackup{
+		ID: "bak_2", DatabaseID: "db_1", TargetID: "bt_1", RetentionCount: 7,
+		Schedule: "0 3 * * *", Enabled: true, LastRunAt: &ran,
+	}
+	s := newScheduler(fs, fb)
+
+	s.SweepDueBackups(context.Background())
+
+	// Exactly one backup published (bak_1), and bak_1's last run advanced.
+	var published int
+	for _, p := range fb.work {
+		if p.subject == subjects.DbBackup("srv_1") {
+			published++
+		}
+	}
+	if published != 1 {
+		t.Fatalf("published %d backups, want 1 (only the due schedule)", published)
+	}
+	if fs.schedules["bak_1"].LastRunAt == nil {
+		t.Fatal("due schedule's last_run_at not advanced (would double-fire next sweep)")
+	}
+}
+
+// Disabled and manual-only (” schedule) entries are never fired, and a bad
+// cron expression is skipped without stalling the sweep.
+func TestSweepSkipsDisabledManualAndBadCron(t *testing.T) {
+	fs, fb := newFakeStore(), &fakeBus{}
+	seedBackupFixture(fs)
+	old := time.Now().Add(-time.Hour)
+	fs.schedules["bak_disabled"] = domain.DatabaseBackup{ID: "bak_disabled", DatabaseID: "db_1", TargetID: "bt_1", Schedule: "* * * * *", Enabled: false, CreatedAt: old}
+	fs.schedules["bak_manual"] = domain.DatabaseBackup{ID: "bak_manual", DatabaseID: "db_1", TargetID: "bt_1", Schedule: "", Enabled: true, CreatedAt: old}
+	fs.schedules["bak_bad"] = domain.DatabaseBackup{ID: "bak_bad", DatabaseID: "db_1", TargetID: "bt_1", Schedule: "not a cron", Enabled: true, CreatedAt: old}
+	// The seeded bak_1 has no schedule string → manual only → not fired either.
+	s := newScheduler(fs, fb)
+
+	s.SweepDueBackups(context.Background())
+
+	for _, p := range fb.work {
+		if p.subject == subjects.DbBackup("srv_1") {
+			t.Fatalf("a disabled/manual/bad-cron schedule was fired: %+v", p)
+		}
 	}
 }

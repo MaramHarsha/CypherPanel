@@ -192,7 +192,9 @@ type createDatabaseBackupRequest struct {
 	TargetID       string `json:"target_id"`
 	Schedule       string `json:"schedule"`
 	RetentionCount int    `json:"retention_count"`
-	Enabled        bool   `json:"enabled"`
+	// Enabled defaults to true when omitted (a schedule created disabled would
+	// silently never run) — same *bool pattern as notifiers and scheduled tasks.
+	Enabled *bool `json:"enabled"`
 }
 
 // --- Database Backup Schedule Handlers ---
@@ -211,11 +213,15 @@ func (a *API) handleCreateDatabaseBackup(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
 	b, err := a.deps.BackupSchedules.CreateSchedule(r.Context(), dbID, databases.BackupScheduleInput{
 		TargetID:       req.TargetID,
 		Schedule:       req.Schedule,
 		RetentionCount: req.RetentionCount,
-		Enabled:        req.Enabled,
+		Enabled:        enabled,
 	})
 	if err != nil {
 		var ve *databases.ValidationError
