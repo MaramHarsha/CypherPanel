@@ -495,7 +495,24 @@ func (s *Scheduler) buildSpec(ctx context.Context, app domain.Application, rev d
 		// applied at rollout like env vars; nil = 0 = no limit on the wire.
 		CpuLimit:      cpuLimitValue(app.Runtime.CPULimit),
 		MemoryLimitMb: memLimitValue(app.Runtime.MemoryLimitMB),
+		Volumes:       volumeMounts(app.ID, app.Volumes),
 	}, nil
+}
+
+// volumeMounts resolves an app's declared volumes to wire mounts, computing the
+// deterministic managed volume name (cypher-appvol-<app>-<name>) per mount.
+func volumeMounts(appID string, vols []domain.VolumeMount) []*agentv1.VolumeMount {
+	if len(vols) == 0 {
+		return nil
+	}
+	out := make([]*agentv1.VolumeMount, 0, len(vols))
+	for _, v := range vols {
+		out = append(out, &agentv1.VolumeMount{
+			VolumeName: "cypher-appvol-" + appID + "-" + v.Name,
+			Path:       v.Path,
+		})
+	}
+	return out
 }
 
 // cpuLimitValue / memLimitValue map the nullable domain limit to the wire's

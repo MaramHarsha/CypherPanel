@@ -8,7 +8,7 @@ INSERT INTO applications (
     health_path, health_interval_seconds, health_timeout_seconds, health_retries,
     webhook_id, webhook_secret_ct, webhook_secret_nonce,
     preview_enabled, preview_base_domain, preview_ttl_hours,
-    cpu_limit, memory_limit_mb
+    cpu_limit, memory_limit_mb, volumes
 ) VALUES (
     $1, $2, $3,
     $4, $5, $6, $7,
@@ -18,7 +18,7 @@ INSERT INTO applications (
     $17, $18, $19, $20,
     $21, $22, $23,
     $24, $25, $26,
-    $27, $28
+    $27, $28, $29
 )
 RETURNING *;
 
@@ -61,7 +61,7 @@ SET name = $2,
     route_domain = $12, route_https = $13, route_path_prefix = $14,
     health_path = $15, health_interval_seconds = $16, health_timeout_seconds = $17, health_retries = $18,
     preview_enabled = $19, preview_base_domain = $20, preview_ttl_hours = $21,
-    cpu_limit = $22, memory_limit_mb = $23,
+    cpu_limit = $22, memory_limit_mb = $23, volumes = $24,
     updated_at = now()
 WHERE id = $1
 RETURNING *;

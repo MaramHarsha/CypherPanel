@@ -15,16 +15,17 @@ import (
 // ─── DTOs (secrets always masked — ENGINEERING rule 20) ─────────────────────
 
 type applicationDTO struct {
-	ID                string        `json:"id"`
-	EnvironmentID     string        `json:"environment_id"`
-	Name              string        `json:"name"`
-	Source            appSourceDTO  `json:"source"`
-	Build             appBuildDTO   `json:"build"`
-	Runtime           appRuntimeDTO `json:"runtime"`
-	Route             appRouteDTO   `json:"route"`
-	Health            appHealthDTO  `json:"health"`
-	WebhookID         string        `json:"webhook_id"`
-	DesiredRevisionID *string       `json:"desired_revision_id"`
+	ID                string         `json:"id"`
+	EnvironmentID     string         `json:"environment_id"`
+	Name              string         `json:"name"`
+	Source            appSourceDTO   `json:"source"`
+	Build             appBuildDTO    `json:"build"`
+	Runtime           appRuntimeDTO  `json:"runtime"`
+	Route             appRouteDTO    `json:"route"`
+	Health            appHealthDTO   `json:"health"`
+	Volumes           []appVolumeDTO `json:"volumes"`
+	WebhookID         string         `json:"webhook_id"`
+	DesiredRevisionID *string        `json:"desired_revision_id"`
 	// Status is observed state (ADR-005): what the agent last reported, with
 	// the revision actually serving.
 	Status             string `json:"status"`
@@ -49,6 +50,25 @@ type appBuildDTO struct {
 	Context        string `json:"context"`
 }
 
+type appVolumeDTO struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
+// appVolumeReq is the request shape for a volume mount (create and patch).
+type appVolumeReq struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
+func reqVolumes(vs []appVolumeReq) []domain.VolumeMount {
+	out := make([]domain.VolumeMount, 0, len(vs))
+	for _, v := range vs {
+		out = append(out, domain.VolumeMount{Name: v.Name, Path: v.Path})
+	}
+	return out
+}
+
 type appRuntimeDTO struct {
 	ServerID      string   `json:"server_id"`
 	Port          int      `json:"port"`
@@ -70,6 +90,14 @@ type appHealthDTO struct {
 	Retries         int    `json:"retries"`
 }
 
+func toVolumeDTOs(vs []domain.VolumeMount) []appVolumeDTO {
+	out := make([]appVolumeDTO, 0, len(vs))
+	for _, v := range vs {
+		out = append(out, appVolumeDTO{Name: v.Name, Path: v.Path})
+	}
+	return out
+}
+
 func toApplicationDTO(a domain.Application) applicationDTO {
 	return applicationDTO{
 		ID:                 a.ID,
@@ -80,6 +108,7 @@ func toApplicationDTO(a domain.Application) applicationDTO {
 		Runtime:            appRuntimeDTO{ServerID: a.Runtime.ServerID, Port: a.Runtime.Port, Replicas: a.Runtime.Replicas, CPULimit: a.Runtime.CPULimit, MemoryLimitMB: a.Runtime.MemoryLimitMB},
 		Route:              appRouteDTO{Domain: a.Route.Domain, HTTPS: a.Route.HTTPS, PathPrefix: a.Route.PathPrefix},
 		Health:             appHealthDTO{Path: a.Health.Path, IntervalSeconds: a.Health.IntervalSeconds, TimeoutSeconds: a.Health.TimeoutSeconds, Retries: a.Health.Retries},
+		Volumes:            toVolumeDTOs(a.Volumes),
 		WebhookID:          a.WebhookID,
 		DesiredRevisionID:  a.DesiredRevisionID,
 		Status:             a.Status,
@@ -124,6 +153,7 @@ type createApplicationRequest struct {
 		TimeoutSeconds  int    `json:"timeout_seconds"`
 		Retries         int    `json:"retries"`
 	} `json:"health"`
+	Volumes           []appVolumeReq    `json:"volumes"`
 	EnvVars           map[string]string `json:"env_vars"`
 	PreviewEnabled    bool              `json:"preview_enabled"`
 	PreviewBaseDomain string            `json:"preview_base_domain"`
@@ -153,6 +183,7 @@ func (r createApplicationRequest) toInput() applications.CreateInput {
 		Runtime: domain.AppRuntime{ServerID: r.Runtime.ServerID, Port: r.Runtime.Port, Replicas: r.Runtime.Replicas, CPULimit: r.Runtime.CPULimit, MemoryLimitMB: r.Runtime.MemoryLimitMB},
 		Route:   domain.AppRoute{Domain: r.Route.Domain, HTTPS: https, PathPrefix: r.Route.PathPrefix},
 		Health:  domain.AppHealth{Path: r.Health.Path, IntervalSeconds: r.Health.IntervalSeconds, TimeoutSeconds: r.Health.TimeoutSeconds, Retries: r.Health.Retries},
+		Volumes: reqVolumes(r.Volumes),
 		EnvVars: r.EnvVars,
 
 		PreviewEnabled:    r.PreviewEnabled,
@@ -285,9 +316,10 @@ type patchApplicationRequest struct {
 		TimeoutSeconds  int    `json:"timeout_seconds"`
 		Retries         int    `json:"retries"`
 	} `json:"health"`
-	PreviewEnabled    *bool   `json:"preview_enabled"`
-	PreviewBaseDomain *string `json:"preview_base_domain"`
-	PreviewTTLHours   *int    `json:"preview_ttl_hours"`
+	Volumes           *[]appVolumeReq `json:"volumes"`
+	PreviewEnabled    *bool           `json:"preview_enabled"`
+	PreviewBaseDomain *string         `json:"preview_base_domain"`
+	PreviewTTLHours   *int            `json:"preview_ttl_hours"`
 }
 
 func (a *API) handlePatchApplication(w http.ResponseWriter, r *http.Request) {
@@ -323,6 +355,10 @@ func (a *API) handlePatchApplication(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Health != nil {
 		in.Health = &domain.AppHealth{Path: req.Health.Path, IntervalSeconds: req.Health.IntervalSeconds, TimeoutSeconds: req.Health.TimeoutSeconds, Retries: req.Health.Retries}
+	}
+	if req.Volumes != nil {
+		v := reqVolumes(*req.Volumes)
+		in.Volumes = &v
 	}
 	in.PreviewEnabled, in.PreviewBaseDomain, in.PreviewTTLHours = req.PreviewEnabled, req.PreviewBaseDomain, req.PreviewTTLHours
 	app, err := a.deps.Applications.Update(r.Context(), r.PathValue("id"), in)

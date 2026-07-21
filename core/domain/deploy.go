@@ -42,6 +42,14 @@ type AppBuild struct {
 }
 
 // AppRuntime is where and how the container runs.
+// VolumeMount is one persistent volume an application declares (feature-matrix
+// V1). Name is the operator's short label; the deterministic Docker volume name
+// is derived from it. Path is the absolute mount point in the container.
+type VolumeMount struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
 type AppRuntime struct {
 	ServerID string
 	Port     int
@@ -79,6 +87,7 @@ type Application struct {
 	Runtime       AppRuntime
 	Route         AppRoute
 	Health        AppHealth
+	Volumes       []VolumeMount
 	WebhookID     string
 	// Sealed webhook HMAC secret (threat-model §5.1). Services unseal to verify.
 	WebhookSecretCT    []byte

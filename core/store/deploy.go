@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -10,6 +11,31 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/store/db"
 )
+
+// volumesJSON marshals an app's volume mounts for the JSONB column; a nil slice
+// stores as "[]" (never SQL NULL — the column is NOT NULL).
+func volumesJSON(v []domain.VolumeMount) []byte {
+	if len(v) == 0 {
+		return []byte("[]")
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return []byte("[]")
+	}
+	return b
+}
+
+// volumesFromJSON parses the JSONB column back to volume mounts.
+func volumesFromJSON(b []byte) []domain.VolumeMount {
+	if len(b) == 0 {
+		return nil
+	}
+	var out []domain.VolumeMount
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil
+	}
+	return out
+}
 
 // Persistence for the Phase 2 resource model. Like store.go, all pgx/pgtype
 // types stay in this package; callers speak domain types.
@@ -185,6 +211,7 @@ func appParams(a domain.Application) db.CreateApplicationParams {
 		PreviewTtlHours:       int32(a.PreviewTTLHours),
 		CpuLimit:              float4FromPtr(a.Runtime.CPULimit),
 		MemoryLimitMb:         int4FromPtr(a.Runtime.MemoryLimitMB),
+		Volumes:               volumesJSON(a.Volumes),
 	}
 }
 
@@ -293,6 +320,7 @@ func (s *Store) UpdateApplicationConfig(ctx context.Context, a domain.Applicatio
 		PreviewTtlHours:       int32(a.PreviewTTLHours),
 		CpuLimit:              float4FromPtr(a.Runtime.CPULimit),
 		MemoryLimitMb:         int4FromPtr(a.Runtime.MemoryLimitMB),
+		Volumes:               volumesJSON(a.Volumes),
 	})
 	if err != nil {
 		return domain.Application{}, wrapUpdate("updating application", err)
@@ -576,6 +604,7 @@ func applicationFromRow(r db.Application) domain.Application {
 			HTTPS:      r.RouteHttps,
 			PathPrefix: r.RoutePathPrefix,
 		},
+		Volumes: volumesFromJSON(r.Volumes),
 		Health: domain.AppHealth{
 			Path:            r.HealthPath,
 			IntervalSeconds: int(r.HealthIntervalSeconds),

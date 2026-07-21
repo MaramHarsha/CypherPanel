@@ -27,6 +27,7 @@ type fakeClient struct {
 	listErr           error
 
 	lastCreateSpec ContainerSpec // the most recent CreateContainer argument
+	ensuredVolumes []string      // names passed to EnsureVolume
 	execCalls      []execCall    // recorded ExecAndWait invocations
 	execExit       int           // injected exit code
 	execOut        []byte        // injected output
@@ -53,6 +54,12 @@ func newFakeClient() *fakeClient {
 
 func (f *fakeClient) EnsureNetwork(_ context.Context, _ string, _ map[string]string) error {
 	f.mutations++
+	return nil
+}
+
+func (f *fakeClient) EnsureVolume(_ context.Context, name string, _ map[string]string) error {
+	f.mutations++
+	f.ensuredVolumes = append(f.ensuredVolumes, name)
 	return nil
 }
 
@@ -644,5 +651,33 @@ func TestReconcileAppliesResourceLimits(t *testing.T) {
 
 	if c.lastCreateSpec.CPULimit != 1.5 || c.lastCreateSpec.MemoryLimitMB != 512 {
 		t.Fatalf("container spec limits = %v/%v, want 1.5/512", c.lastCreateSpec.CPULimit, c.lastCreateSpec.MemoryLimitMB)
+	}
+}
+
+// Declared volumes are ensured and bound into the container on create; a second
+// converge (no change) makes no further EnsureVolume call (converge-twice).
+func TestReconcileEnsuresAndBindsVolumes(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	sp := spec("app1", "rev1", "img")
+	sp.Volumes = []*agentv1.VolumeMount{
+		{VolumeName: "cypher-appvol-app1-data", Path: "/data"},
+	}
+	d.Reconcile(context.Background(), []*agentv1.AppSpec{sp})
+
+	if len(c.ensuredVolumes) != 1 || c.ensuredVolumes[0] != "cypher-appvol-app1-data" {
+		t.Fatalf("ensured volumes = %v, want [cypher-appvol-app1-data]", c.ensuredVolumes)
+	}
+	if len(c.lastCreateSpec.Binds) != 1 || c.lastCreateSpec.Binds[0] != "cypher-appvol-app1-data:/data" {
+		t.Fatalf("binds = %v, want [cypher-appvol-app1-data:/data]", c.lastCreateSpec.Binds)
+	}
+
+	// Converge again with the same desired state: no new EnsureVolume (the app
+	// is already at its desired revision — converge-twice invariant).
+	before := len(c.ensuredVolumes)
+	d.Reconcile(context.Background(), []*agentv1.AppSpec{sp})
+	if len(c.ensuredVolumes) != before {
+		t.Fatalf("second converge ensured a volume again (%d → %d)", before, len(c.ensuredVolumes))
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -37,6 +38,38 @@ type ValidationError struct{ Msg string }
 func (e *ValidationError) Error() string { return "applications: " + e.Msg }
 
 func invalid(msg string) error { return &ValidationError{Msg: msg} }
+
+// volumeName bounds an operator volume label so the derived Docker volume name
+// is safe and deterministic: lowercase alphanumeric plus dashes.
+var volumeName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+// maxVolumes caps mounts per app (a sane bound, not a hard product limit).
+const maxVolumes = 20
+
+// validateVolumes checks each mount: a safe unique name and an absolute unique
+// mount path. nil/empty is valid (no volumes).
+func validateVolumes(vols []domain.VolumeMount) error {
+	if len(vols) > maxVolumes {
+		return invalid("at most 20 volumes per application")
+	}
+	seenName, seenPath := map[string]bool{}, map[string]bool{}
+	for _, v := range vols {
+		if !volumeName.MatchString(v.Name) {
+			return invalid("volume name must be lowercase alphanumeric with dashes: " + v.Name)
+		}
+		if !strings.HasPrefix(v.Path, "/") || strings.Contains(v.Path, "..") {
+			return invalid("volume path must be an absolute path: " + v.Path)
+		}
+		if seenName[v.Name] {
+			return invalid("duplicate volume name: " + v.Name)
+		}
+		if seenPath[v.Path] {
+			return invalid("duplicate volume path: " + v.Path)
+		}
+		seenName[v.Name], seenPath[v.Path] = true, true
+	}
+	return nil
+}
 
 // Store is the persistence the service needs (consumer-defined).
 type Store interface {
@@ -78,6 +111,7 @@ type CreateInput struct {
 	Runtime           domain.AppRuntime
 	Route             domain.AppRoute
 	Health            domain.AppHealth
+	Volumes           []domain.VolumeMount
 	EnvVars           map[string]string // plaintext; sealed before storage
 	PreviewEnabled    bool
 	PreviewBaseDomain string
@@ -129,6 +163,7 @@ func (s *Service) Create(ctx context.Context, envID string, in CreateInput) (app
 		Runtime:            in.Runtime,
 		Route:              in.Route,
 		Health:             in.Health,
+		Volumes:            in.Volumes,
 		WebhookID:          ids.New(ids.PrefixWebhook),
 		WebhookSecretCT:    wct,
 		WebhookSecretNonce: wnonce,
@@ -178,6 +213,8 @@ type UpdateInput struct {
 	// (same "non-nil zero removes" convention as database updates).
 	CPULimit      *float64
 	MemoryLimitMB *int
+	// Volumes: nil = unchanged; a non-nil slice (possibly empty) replaces the set.
+	Volumes *[]domain.VolumeMount
 }
 
 // Update applies a config patch. The change shapes the next revision — a
@@ -228,6 +265,9 @@ func (s *Service) Update(ctx context.Context, appID string, in UpdateInput) (dom
 			app.Runtime.MemoryLimitMB = in.MemoryLimitMB
 		}
 	}
+	if in.Volumes != nil {
+		app.Volumes = *in.Volumes
+	}
 	// The merged result must satisfy exactly the create-time rules — including
 	// the preview contract (enabling previews via PATCH still needs a base
 	// domain).
@@ -238,6 +278,7 @@ func (s *Service) Update(ctx context.Context, appID string, in UpdateInput) (dom
 		Runtime:           app.Runtime,
 		Route:             app.Route,
 		Health:            app.Health,
+		Volumes:           app.Volumes,
 		PreviewEnabled:    app.PreviewEnabled,
 		PreviewBaseDomain: app.PreviewBaseDomain,
 		PreviewTTLHours:   app.PreviewTTLHours,
@@ -245,8 +286,8 @@ func (s *Service) Update(ctx context.Context, appID string, in UpdateInput) (dom
 	if err != nil {
 		return domain.Application{}, err
 	}
-	app.Name, app.Source, app.Build, app.Runtime, app.Route, app.Health =
-		merged.Name, merged.Source, merged.Build, merged.Runtime, merged.Route, merged.Health
+	app.Name, app.Source, app.Build, app.Runtime, app.Route, app.Health, app.Volumes =
+		merged.Name, merged.Source, merged.Build, merged.Runtime, merged.Route, merged.Health, merged.Volumes
 	app.PreviewEnabled, app.PreviewBaseDomain, app.PreviewTTLHours =
 		merged.PreviewEnabled, merged.PreviewBaseDomain, merged.PreviewTTLHours
 	updated, err := s.store.UpdateApplicationConfig(ctx, app)
@@ -380,6 +421,9 @@ func validateAndDefault(in CreateInput) (CreateInput, error) {
 		if m := *in.Runtime.MemoryLimitMB; m < 0 || m > math.MaxInt32 {
 			return in, invalid("runtime.memory_limit_mb must be between 0 and 2147483647")
 		}
+	}
+	if err := validateVolumes(in.Volumes); err != nil {
+		return in, err
 	}
 
 	if strings.TrimSpace(in.Route.Domain) == "" {

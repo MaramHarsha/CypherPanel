@@ -212,6 +212,9 @@ func (c *Client) CreateContainer(ctx context.Context, spec docker.ContainerSpec)
 	if spec.MemoryLimitMB > 0 {
 		hostConfig["Memory"] = int64(spec.MemoryLimitMB) * 1024 * 1024
 	}
+	if len(spec.Binds) > 0 {
+		hostConfig["Binds"] = spec.Binds
+	}
 	body := map[string]any{
 		"Image":      spec.Image,
 		"Env":        env,

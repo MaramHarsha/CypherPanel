@@ -89,6 +89,26 @@ Status changes stream over the existing SSE channel; deployments are listable wi
 - `agent/stream/` — log tailing (`docker logs --follow`) → `logs.runtime.<app_id>`; build logs from the builder → `logs.build.<deployment_id>`. Bounded retention on the plane (JetStream limits), drains later (matrix V1.x).
 - The `reconciler-development` skill (`.claude/skills/`) is written alongside the driver interface — the carried-over Phase 1 deliverable.
 
+### Persistent volumes (feature-matrix V1)
+
+An Application may declare volume mounts (`volumes: [{name, path}]`), stored as a
+JSONB column and carried on `AppSpec` as current state (not per-revision — like
+env vars and resource limits, so rollback keeps your data mounts). Each mount is
+a **named Docker volume** with a deterministic, plane-computed name
+(`cypher-appvol-<app_id>-<name>`, app-id-labelled) bound at the absolute `path`
+inside the container. Semantics:
+
+- The agent `EnsureVolume`s each volume **only in the container-create branch**
+  (idempotent, and skipped on a no-change converge, so the converge-twice
+  invariant holds), then binds `<volume>:<path>`.
+- Volumes **persist across container recreation** (that is the point) and are
+  **never touched by desired-state GC** (GC prunes only images/containers).
+- On app delete they are **kept** (conservative — accidental data loss is worse
+  than an orphaned volume, matching the database `delete_volume` default);
+  explicit reclaim is a follow-on.
+- Validation: safe lowercase-alphanumeric-dash `name`, absolute non-`..` `path`,
+  unique names and paths, ≤20 per app.
+
 ## 6. Acceptance (from roadmap, restated testably)
 
 1. `git push` → webhook → new version live with zero dropped requests (asserted by a request loop across the flip).
