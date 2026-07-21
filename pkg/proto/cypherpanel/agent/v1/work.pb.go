@@ -253,8 +253,12 @@ type AppSpec struct {
 	// an exec verb: the agent owns the clock and execution is confined to the
 	// app's container. command is argv (never a shell string).
 	ScheduledTasks []*ScheduledTask `protobuf:"bytes,10,rep,name=scheduled_tasks,json=scheduledTasks,proto3" json:"scheduled_tasks,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Resource limits (noisy-neighbor control, feature-matrix V1). Mirror DbSpec:
+	// the agent maps these onto the container's HostConfig (NanoCpus / Memory).
+	CpuLimit      float64 `protobuf:"fixed64,11,opt,name=cpu_limit,json=cpuLimit,proto3" json:"cpu_limit,omitempty"`                 // fractional cores; 0 = no limit
+	MemoryLimitMb uint32  `protobuf:"varint,12,opt,name=memory_limit_mb,json=memoryLimitMb,proto3" json:"memory_limit_mb,omitempty"` // 0 = no limit
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *AppSpec) Reset() {
@@ -355,6 +359,20 @@ func (x *AppSpec) GetScheduledTasks() []*ScheduledTask {
 		return x.ScheduledTasks
 	}
 	return nil
+}
+
+func (x *AppSpec) GetCpuLimit() float64 {
+	if x != nil {
+		return x.CpuLimit
+	}
+	return 0
+}
+
+func (x *AppSpec) GetMemoryLimitMb() uint32 {
+	if x != nil {
+		return x.MemoryLimitMb
+	}
+	return 0
 }
 
 // ScheduledTask is one cron entry on an Application's desired state. The agent's
@@ -2067,7 +2085,7 @@ var File_cypherpanel_agent_v1_work_proto protoreflect.FileDescriptor
 
 const file_cypherpanel_agent_v1_work_proto_rawDesc = "" +
 	"\n" +
-	"\x1fcypherpanel/agent/v1/work.proto\x12\x14cypherpanel.agent.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xde\x03\n" +
+	"\x1fcypherpanel/agent/v1/work.proto\x12\x14cypherpanel.agent.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xa3\x04\n" +
 	"\aAppSpec\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12%\n" +
 	"\x0eenvironment_id\x18\x02 \x01(\tR\renvironmentId\x12\x1f\n" +
@@ -2080,7 +2098,9 @@ const file_cypherpanel_agent_v1_work_proto_rawDesc = "" +
 	"\x06health\x18\b \x01(\v2!.cypherpanel.agent.v1.HealthCheckR\x06health\x125\n" +
 	"\x05route\x18\t \x01(\v2\x1f.cypherpanel.agent.v1.RouteSpecR\x05route\x12L\n" +
 	"\x0fscheduled_tasks\x18\n" +
-	" \x03(\v2#.cypherpanel.agent.v1.ScheduledTaskR\x0escheduledTasks\x1a6\n" +
+	" \x03(\v2#.cypherpanel.agent.v1.ScheduledTaskR\x0escheduledTasks\x12\x1b\n" +
+	"\tcpu_limit\x18\v \x01(\x01R\bcpuLimit\x12&\n" +
+	"\x0fmemory_limit_mb\x18\f \x01(\rR\rmemoryLimitMb\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"U\n" +

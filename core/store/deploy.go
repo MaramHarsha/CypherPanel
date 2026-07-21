@@ -183,6 +183,8 @@ func appParams(a domain.Application) db.CreateApplicationParams {
 		PreviewEnabled:        a.PreviewEnabled,
 		PreviewBaseDomain:     a.PreviewBaseDomain,
 		PreviewTtlHours:       int32(a.PreviewTTLHours),
+		CpuLimit:              float4FromPtr(a.Runtime.CPULimit),
+		MemoryLimitMb:         int4FromPtr(a.Runtime.MemoryLimitMB),
 	}
 }
 
@@ -289,6 +291,8 @@ func (s *Store) UpdateApplicationConfig(ctx context.Context, a domain.Applicatio
 		PreviewEnabled:        a.PreviewEnabled,
 		PreviewBaseDomain:     a.PreviewBaseDomain,
 		PreviewTtlHours:       int32(a.PreviewTTLHours),
+		CpuLimit:              float4FromPtr(a.Runtime.CPULimit),
+		MemoryLimitMb:         int4FromPtr(a.Runtime.MemoryLimitMB),
 	})
 	if err != nil {
 		return domain.Application{}, wrapUpdate("updating application", err)
@@ -561,9 +565,11 @@ func applicationFromRow(r db.Application) domain.Application {
 			Context:        r.BuildContext,
 		},
 		Runtime: domain.AppRuntime{
-			ServerID: r.RuntimeServerID,
-			Port:     int(r.RuntimePort),
-			Replicas: int(r.RuntimeReplicas),
+			ServerID:      r.RuntimeServerID,
+			Port:          int(r.RuntimePort),
+			Replicas:      int(r.RuntimeReplicas),
+			CPULimit:      ptrFromFloat4(r.CpuLimit),
+			MemoryLimitMB: ptrFromInt4(r.MemoryLimitMb),
 		},
 		Route: domain.AppRoute{
 			Domain:     r.RouteDomain,

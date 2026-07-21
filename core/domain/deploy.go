@@ -46,6 +46,10 @@ type AppRuntime struct {
 	ServerID string
 	Port     int
 	Replicas int
+	// Resource limits (noisy-neighbor control, feature-matrix V1). Nil = no
+	// limit — the same shape databases use.
+	CPULimit      *float64 // fractional cores
+	MemoryLimitMB *int     // MiB
 }
 
 // AppRoute is the public routing for the Application.

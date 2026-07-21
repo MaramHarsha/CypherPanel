@@ -49,6 +49,8 @@ type Application struct {
 	PreviewEnabled        bool
 	PreviewBaseDomain     string
 	PreviewTtlHours       int32
+	CpuLimit              pgtype.Float4
+	MemoryLimitMb         pgtype.Int4
 }
 
 type BackupRecord struct {

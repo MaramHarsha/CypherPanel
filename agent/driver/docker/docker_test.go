@@ -26,10 +26,11 @@ type fakeClient struct {
 	removeErrForID    map[string]error
 	listErr           error
 
-	execCalls []execCall // recorded ExecAndWait invocations
-	execExit  int        // injected exit code
-	execOut   []byte     // injected output
-	execErr   error      // injected error
+	lastCreateSpec ContainerSpec // the most recent CreateContainer argument
+	execCalls      []execCall    // recorded ExecAndWait invocations
+	execExit       int           // injected exit code
+	execOut        []byte        // injected output
+	execErr        error         // injected error
 
 	mutations int // count of state-changing calls
 }
@@ -72,6 +73,7 @@ func (f *fakeClient) ExecAndWait(_ context.Context, containerID string, cmd []st
 }
 
 func (f *fakeClient) CreateContainer(_ context.Context, spec ContainerSpec) (string, error) {
+	f.lastCreateSpec = spec
 	if err := f.createErrForImage[spec.Image]; err != nil {
 		return "", err
 	}
@@ -626,5 +628,21 @@ func TestDriverExecAndWait(t *testing.T) {
 	}
 	if len(c.execCalls) != 1 || c.execCalls[0].containerID != "c1" {
 		t.Fatalf("exec not delegated to client: %+v", c.execCalls)
+	}
+}
+
+// Resource limits on the AppSpec reach the container's create spec (the engine
+// then maps them to HostConfig NanoCpus/Memory) — feature-matrix V1.
+func TestReconcileAppliesResourceLimits(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	sp := spec("app1", "rev1", "img")
+	sp.CpuLimit = 1.5
+	sp.MemoryLimitMb = 512
+	d.Reconcile(context.Background(), []*agentv1.AppSpec{sp})
+
+	if c.lastCreateSpec.CPULimit != 1.5 || c.lastCreateSpec.MemoryLimitMB != 512 {
+		t.Fatalf("container spec limits = %v/%v, want 1.5/512", c.lastCreateSpec.CPULimit, c.lastCreateSpec.MemoryLimitMB)
 	}
 }
