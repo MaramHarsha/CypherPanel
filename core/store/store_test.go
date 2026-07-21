@@ -605,3 +605,67 @@ func TestStoreDatabaseLifecycle(t *testing.T) {
 		t.Fatalf("database row not hard-deleted: %v", err)
 	}
 }
+
+func TestStoreAPITokens(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	user, err := s.CreateUser(ctx, ids.New(ids.PrefixUser), "tok-"+ids.Secret()+"@x.io", "h", domain.RoleOwner)
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	// A live token (no expiry) resolves to its owner and records last_used.
+	raw := []byte("hash-live-" + ids.Secret())
+	tok, err := s.CreateAPIToken(ctx, ids.New(ids.PrefixAPIToken), user.ID, "ci", raw, nil)
+	if err != nil {
+		t.Fatalf("CreateAPIToken: %v", err)
+	}
+	got, err := s.UserForAPIToken(ctx, raw)
+	if err != nil || got.ID != user.ID {
+		t.Fatalf("UserForAPIToken = %+v, %v; want user %s", got, err, user.ID)
+	}
+	if err := s.TouchAPIToken(ctx, raw); err != nil {
+		t.Fatalf("TouchAPIToken: %v", err)
+	}
+	list, err := s.ListAPITokensByUser(ctx, user.ID)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("ListAPITokensByUser = %+v, %v; want 1", list, err)
+	}
+	if list[0].LastUsedAt == nil {
+		t.Fatal("last_used_at not recorded by TouchAPIToken")
+	}
+
+	// An expired token yields no user (the SQL filters on expires_at).
+	expRaw := []byte("hash-exp-" + ids.Secret())
+	past := time.Now().Add(-time.Hour)
+	if _, err := s.CreateAPIToken(ctx, ids.New(ids.PrefixAPIToken), user.ID, "old", expRaw, &past); err != nil {
+		t.Fatalf("CreateAPIToken (expired): %v", err)
+	}
+	if _, err := s.UserForAPIToken(ctx, expRaw); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expired token resolved a user: %v", err)
+	}
+
+	// Delete revokes.
+	if err := s.DeleteAPIToken(ctx, tok.ID); err != nil {
+		t.Fatalf("DeleteAPIToken: %v", err)
+	}
+	if _, err := s.UserForAPIToken(ctx, raw); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted token still resolves: %v", err)
+	}
+
+	// Deleting the user cascades to their tokens (ON DELETE CASCADE).
+	if _, err := s.CreateAPIToken(ctx, ids.New(ids.PrefixAPIToken), user.ID, "c", []byte("hash-c-"+ids.Secret()), nil); err != nil {
+		t.Fatalf("CreateAPIToken (cascade): %v", err)
+	}
+	if err := s.DeleteUser(ctx, user.ID); err != nil {
+		t.Fatalf("DeleteUser: %v", err)
+	}
+	remaining, err := s.ListAPITokensByUser(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("ListAPITokensByUser after user delete: %v", err)
+	}
+	if len(remaining) != 0 {
+		t.Fatalf("tokens not cascaded on user delete: %d remain", len(remaining))
+	}
+}

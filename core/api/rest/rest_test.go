@@ -35,7 +35,9 @@ import (
 
 type fakeAuthStore struct {
 	user     domain.User
-	sessions map[string]domain.User // key: string(tokenHash)
+	sessions map[string]domain.User     // key: string(tokenHash)
+	tokens   map[string]domain.APIToken // token id → metadata
+	byHash   map[string]string          // string(tokenHash) → token id
 }
 
 func (f *fakeAuthStore) GetUserByEmail(_ context.Context, email string) (domain.User, error) {
@@ -60,6 +62,56 @@ func (f *fakeAuthStore) UserForSessionToken(_ context.Context, tokenHash []byte)
 
 func (f *fakeAuthStore) DeleteSession(_ context.Context, tokenHash []byte) error {
 	delete(f.sessions, string(tokenHash))
+	return nil
+}
+
+func (f *fakeAuthStore) CreateAPIToken(_ context.Context, id, userID, name string, tokenHash []byte, expiresAt *time.Time) (domain.APIToken, error) {
+	if f.tokens == nil {
+		f.tokens, f.byHash = map[string]domain.APIToken{}, map[string]string{}
+	}
+	tok := domain.APIToken{ID: id, UserID: userID, Name: name, ExpiresAt: expiresAt, CreatedAt: time.Now()}
+	f.tokens[id] = tok
+	f.byHash[string(tokenHash)] = id
+	return tok, nil
+}
+
+func (f *fakeAuthStore) UserForAPIToken(_ context.Context, tokenHash []byte) (domain.User, error) {
+	id, ok := f.byHash[string(tokenHash)]
+	if !ok {
+		return domain.User{}, store.ErrNotFound
+	}
+	tok := f.tokens[id]
+	if tok.ExpiresAt != nil && !tok.ExpiresAt.After(time.Now()) {
+		return domain.User{}, store.ErrNotFound
+	}
+	if tok.UserID != f.user.ID {
+		return domain.User{}, store.ErrNotFound
+	}
+	return f.user, nil
+}
+
+func (f *fakeAuthStore) TouchAPIToken(_ context.Context, _ []byte) error { return nil }
+
+func (f *fakeAuthStore) ListAPITokensByUser(_ context.Context, userID string) ([]domain.APIToken, error) {
+	var out []domain.APIToken
+	for _, t := range f.tokens {
+		if t.UserID == userID {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeAuthStore) GetAPIToken(_ context.Context, id string) (domain.APIToken, error) {
+	t, ok := f.tokens[id]
+	if !ok {
+		return domain.APIToken{}, store.ErrNotFound
+	}
+	return t, nil
+}
+
+func (f *fakeAuthStore) DeleteAPIToken(_ context.Context, id string) error {
+	delete(f.tokens, id)
 	return nil
 }
 

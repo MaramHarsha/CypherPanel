@@ -182,6 +182,12 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/logout", a.authed(a.handleLogout))
 	mux.HandleFunc("GET /api/v1/auth/me", a.authed(a.handleMe))
 
+	// Personal access tokens (scoped API tokens for CI/automation). A token
+	// authenticates as its owning user, inheriting that user's authorization.
+	mux.HandleFunc("POST /api/v1/tokens", a.authed(a.handleCreateToken))
+	mux.HandleFunc("GET /api/v1/tokens", a.authed(a.handleListTokens))
+	mux.HandleFunc("DELETE /api/v1/tokens/{id}", a.authed(a.handleDeleteToken))
+
 	// Public CA certificate (needed by agents to pin the plane; not secret).
 	mux.HandleFunc("GET /api/v1/ca.pem", a.handleCAPem)
 

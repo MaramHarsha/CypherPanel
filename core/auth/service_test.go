@@ -13,12 +13,81 @@ import (
 // fakeStore is an in-memory Store for authenticator unit tests. Integration
 // tests exercise the real Postgres store (ENGINEERING rule 29).
 type fakeStore struct {
-	users    map[string]domain.User // by email
-	sessions map[string]string      // token-hash-hex → userID
+	users    map[string]domain.User     // by email
+	sessions map[string]string          // token-hash → userID
+	tokens   map[string]domain.APIToken // token id → metadata
+	byHash   map[string]string          // token-hash → token id
+	touched  map[string]int             // token-hash → times touched
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{users: map[string]domain.User{}, sessions: map[string]string{}}
+	return &fakeStore{
+		users:    map[string]domain.User{},
+		sessions: map[string]string{},
+		tokens:   map[string]domain.APIToken{},
+		byHash:   map[string]string{},
+		touched:  map[string]int{},
+	}
+}
+
+func (f *fakeStore) userByID(id string) (domain.User, bool) {
+	for _, u := range f.users {
+		if u.ID == id {
+			return u, true
+		}
+	}
+	return domain.User{}, false
+}
+
+func (f *fakeStore) CreateAPIToken(_ context.Context, id, userID, name string, tokenHash []byte, expiresAt *time.Time) (domain.APIToken, error) {
+	tok := domain.APIToken{ID: id, UserID: userID, Name: name, ExpiresAt: expiresAt, CreatedAt: time.Now()}
+	f.tokens[id] = tok
+	f.byHash[string(tokenHash)] = id
+	return tok, nil
+}
+
+func (f *fakeStore) UserForAPIToken(_ context.Context, tokenHash []byte) (domain.User, error) {
+	id, ok := f.byHash[string(tokenHash)]
+	if !ok {
+		return domain.User{}, store.ErrNotFound
+	}
+	tok := f.tokens[id]
+	if tok.ExpiresAt != nil && !tok.ExpiresAt.After(time.Now()) {
+		return domain.User{}, store.ErrNotFound
+	}
+	u, ok := f.userByID(tok.UserID)
+	if !ok {
+		return domain.User{}, store.ErrNotFound
+	}
+	return u, nil
+}
+
+func (f *fakeStore) TouchAPIToken(_ context.Context, tokenHash []byte) error {
+	f.touched[string(tokenHash)]++
+	return nil
+}
+
+func (f *fakeStore) ListAPITokensByUser(_ context.Context, userID string) ([]domain.APIToken, error) {
+	var out []domain.APIToken
+	for _, t := range f.tokens {
+		if t.UserID == userID {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) GetAPIToken(_ context.Context, id string) (domain.APIToken, error) {
+	t, ok := f.tokens[id]
+	if !ok {
+		return domain.APIToken{}, store.ErrNotFound
+	}
+	return t, nil
+}
+
+func (f *fakeStore) DeleteAPIToken(_ context.Context, id string) error {
+	delete(f.tokens, id)
+	return nil
 }
 
 func (f *fakeStore) GetUserByEmail(_ context.Context, email string) (domain.User, error) {

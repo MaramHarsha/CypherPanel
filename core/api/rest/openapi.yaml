@@ -119,6 +119,64 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/v1/tokens:
+    get:
+      tags: [auth]
+      summary: List the caller's personal access tokens (metadata only)
+      responses:
+        "200":
+          description: The caller's tokens, newest first. The secret is never returned.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ApiToken"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [auth]
+      summary: Create a personal access token
+      description: >
+        Issues a scoped API token that authenticates as the calling user,
+        inheriting that user's role and team memberships. The raw token is
+        returned exactly once in this response and never again.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTokenRequest"
+      responses:
+        "201":
+          description: The created token, including the raw secret (shown once).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateTokenResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/tokens/{id}:
+    delete:
+      tags: [auth]
+      summary: Revoke a personal access token
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Token revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/v1/ca.pem:
     get:
       tags: [servers]
@@ -1482,6 +1540,53 @@ components:
           description: Bearer session token; shown once, store client-side.
         user:
           $ref: "#/components/schemas/User"
+
+    ApiToken:
+      type: object
+      required: [id, name, created_at]
+      properties:
+        id:
+          type: string
+          description: tok_… prefixed ID.
+        name:
+          type: string
+          description: Human-readable label.
+        last_used_at:
+          type: string
+          format: date-time
+          description: When the token last authenticated a request; absent if never used.
+        expires_at:
+          type: string
+          format: date-time
+          description: When the token expires; absent if it never expires.
+        created_at:
+          type: string
+          format: date-time
+
+    CreateTokenRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: Human-readable label (1–100 characters).
+        expires_in_days:
+          type: integer
+          description: Lifetime in days; 0 or omitted means the token never expires.
+          minimum: 0
+          maximum: 3650
+
+    CreateTokenResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiToken"
+        - type: object
+          required: [token]
+          properties:
+            token:
+              type: string
+              description: >
+                The raw bearer token (cyp_… prefixed). Shown exactly once —
+                store it now; it cannot be retrieved again.
 
     Server:
       type: object

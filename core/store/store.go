@@ -335,6 +335,86 @@ func (s *Store) DeleteSession(ctx context.Context, tokenHash []byte) error {
 	return nil
 }
 
+// ─── API tokens ─────────────────────────────────────────────────────────────
+
+// CreateAPIToken persists a personal access token (only its hash) and returns
+// the stored record.
+func (s *Store) CreateAPIToken(ctx context.Context, id, userID, name string, tokenHash []byte, expiresAt *time.Time) (domain.APIToken, error) {
+	row, err := s.q.CreateAPIToken(ctx, db.CreateAPITokenParams{
+		ID:        id,
+		UserID:    userID,
+		Name:      name,
+		TokenHash: tokenHash,
+		ExpiresAt: tsFromPtr(expiresAt),
+	})
+	if err != nil {
+		return domain.APIToken{}, wrapCreate("creating api token", err)
+	}
+	return apiTokenFromRow(row), nil
+}
+
+// UserForAPIToken returns the user owning a live (unexpired) token whose secret
+// hashes to tokenHash, or ErrNotFound.
+func (s *Store) UserForAPIToken(ctx context.Context, tokenHash []byte) (domain.User, error) {
+	row, err := s.q.UserForAPIToken(ctx, tokenHash)
+	if err != nil {
+		return domain.User{}, wrap("getting api token", err)
+	}
+	return userFromRow(row), nil
+}
+
+// TouchAPIToken records that a token was just used (best-effort last_used_at).
+func (s *Store) TouchAPIToken(ctx context.Context, tokenHash []byte) error {
+	if err := s.q.TouchAPIToken(ctx, tokenHash); err != nil {
+		return fmt.Errorf("store: touching api token: %w", err)
+	}
+	return nil
+}
+
+// ListAPITokensByUser returns a user's tokens, newest first (never the secret).
+func (s *Store) ListAPITokensByUser(ctx context.Context, userID string) ([]domain.APIToken, error) {
+	rows, err := s.q.ListAPITokensByUser(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing api tokens: %w", err)
+	}
+	out := make([]domain.APIToken, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, domain.APIToken{
+			ID:         r.ID,
+			UserID:     r.UserID,
+			Name:       r.Name,
+			LastUsedAt: ptrTime(r.LastUsedAt),
+			ExpiresAt:  ptrTime(r.ExpiresAt),
+			CreatedAt:  r.CreatedAt.Time,
+		})
+	}
+	return out, nil
+}
+
+// GetAPIToken returns a token's metadata by id (for ownership checks on delete).
+func (s *Store) GetAPIToken(ctx context.Context, id string) (domain.APIToken, error) {
+	r, err := s.q.GetAPIToken(ctx, id)
+	if err != nil {
+		return domain.APIToken{}, wrap("getting api token by id", err)
+	}
+	return domain.APIToken{
+		ID:         r.ID,
+		UserID:     r.UserID,
+		Name:       r.Name,
+		LastUsedAt: ptrTime(r.LastUsedAt),
+		ExpiresAt:  ptrTime(r.ExpiresAt),
+		CreatedAt:  r.CreatedAt.Time,
+	}, nil
+}
+
+// DeleteAPIToken revokes a token by id.
+func (s *Store) DeleteAPIToken(ctx context.Context, id string) error {
+	if err := s.q.DeleteAPIToken(ctx, id); err != nil {
+		return fmt.Errorf("store: deleting api token: %w", err)
+	}
+	return nil
+}
+
 // ─── mapping helpers ────────────────────────────────────────────────────────
 
 func wrap(op string, err error) error {
@@ -411,6 +491,17 @@ func userFromRow(r db.User) domain.User {
 		TOTPEnabled:  len(r.TotpSecretEnc) > 0,
 		CreatedAt:    r.CreatedAt.Time,
 		UpdatedAt:    r.UpdatedAt.Time,
+	}
+}
+
+func apiTokenFromRow(r db.ApiToken) domain.APIToken {
+	return domain.APIToken{
+		ID:         r.ID,
+		UserID:     r.UserID,
+		Name:       r.Name,
+		LastUsedAt: ptrTime(r.LastUsedAt),
+		ExpiresAt:  ptrTime(r.ExpiresAt),
+		CreatedAt:  r.CreatedAt.Time,
 	}
 }
 
