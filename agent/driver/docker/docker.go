@@ -58,9 +58,18 @@ type ContainerSpec struct {
 	Network       string
 	Port          uint32
 	Labels        map[string]string
-	CPULimit      float64  // fractional cores; 0 = no limit
-	MemoryLimitMB uint32   // 0 = no limit
-	Binds         []string // "<volume>:<path>" mounts
+	CPULimit      float64       // fractional cores; 0 = no limit
+	MemoryLimitMB uint32        // 0 = no limit
+	Binds         []string      // "<volume>:<path>" mounts
+	Ports         []PortBinding // raw host-port publishes (tcp/udp)
+}
+
+// PortBinding publishes a container port to a host port on one protocol. The
+// engine maps it onto the container's ExposedPorts + HostConfig.PortBindings.
+type PortBinding struct {
+	HostPort      uint32
+	ContainerPort uint32
+	Protocol      string // "tcp" or "udp"
 }
 
 // Image is a managed image, identified by the labels the build stamped.
@@ -272,6 +281,7 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 		CPULimit:      spec.GetCpuLimit(),
 		MemoryLimitMB: spec.GetMemoryLimitMb(),
 		Binds:         binds,
+		Ports:         portBindings(spec),
 	})
 	if err != nil {
 		return status(spec.GetAppId(), currentRevision(existing), stateError, "create: "+err.Error())
@@ -294,12 +304,23 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 		return status(spec.GetAppId(), currentRevision(existing), stateError, "health check failed: "+err.Error())
 	}
 
-	// New revision healthy: flip the route to it, then drain the old.
-	if err := d.router.SetRoute(ctx, spec.GetAppId(), spec.GetRoute(), upstream); err != nil {
+	// New revision healthy: point the route at it (or ensure no route for a raw
+	// app), then drain the old.
+	if err := d.applyDesiredRoute(ctx, spec, upstream); err != nil {
 		d.discard(ctx, newID)
 		return status(spec.GetAppId(), currentRevision(existing), stateError, "route: "+err.Error())
 	}
 	return d.finishConverge(ctx, spec, leftovers)
+}
+
+// applyDesiredRoute reconciles the proxy fragment to the app's desired route:
+// an HTTP app (non-empty domain) gets its fragment pointed at upstream; a raw
+// app (no domain) gets any fragment removed. Both are idempotent.
+func (d *Driver) applyDesiredRoute(ctx context.Context, spec *agentv1.AppSpec, upstream string) error {
+	if spec.GetRoute().GetDomain() == "" {
+		return d.router.RemoveRoute(ctx, spec.GetAppId())
+	}
+	return d.router.SetRoute(ctx, spec.GetAppId(), spec.GetRoute(), upstream)
 }
 
 // convergedApp handles the app whose desired revision is already running:
@@ -316,7 +337,16 @@ func (d *Driver) convergedApp(ctx context.Context, spec *agentv1.AppSpec, curren
 	if err != nil {
 		return status(spec.GetAppId(), spec.GetRevisionId(), stateError, "route: "+err.Error())
 	}
-	if !ok || applied != upstream {
+	if spec.GetRoute().GetDomain() == "" {
+		// Raw (routeless) app: the desired state is no fragment. Remove a stale
+		// one left by a prior HTTP config; if none exists this makes zero calls,
+		// preserving the converge-twice invariant.
+		if ok {
+			if err := d.router.RemoveRoute(ctx, spec.GetAppId()); err != nil {
+				return status(spec.GetAppId(), spec.GetRevisionId(), stateError, "route: "+err.Error())
+			}
+		}
+	} else if !ok || applied != upstream {
 		// The running revision passed its health gate when it was started; a
 		// re-observed flip still gates on health so a container that has since
 		// died can never capture the route.
@@ -432,6 +462,23 @@ func volumeLabels(spec *agentv1.AppSpec) map[string]string {
 
 func containerName(appID, revisionID string) string {
 	return "cypher-" + appID + "-" + revisionID
+}
+
+// portBindings maps the app's raw host-port publishes onto the container spec.
+func portBindings(spec *agentv1.AppSpec) []PortBinding {
+	ports := spec.GetPorts()
+	if len(ports) == 0 {
+		return nil
+	}
+	out := make([]PortBinding, 0, len(ports))
+	for _, p := range ports {
+		out = append(out, PortBinding{
+			HostPort:      p.GetHostPort(),
+			ContainerPort: p.GetContainerPort(),
+			Protocol:      p.GetProtocol(),
+		})
+	}
+	return out
 }
 
 // currentRevision returns the revision of the first running container, or "".

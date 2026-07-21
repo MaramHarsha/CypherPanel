@@ -165,15 +165,26 @@ func TestCreateSealsSecretsAndDefaults(t *testing.T) {
 func TestCreateValidation(t *testing.T) {
 	s := NewService(newFakeStore(), fakeSealer{})
 	cases := map[string]func(*CreateInput){
-		"empty name":      func(in *CreateInput) { in.Name = "" },
-		"bad source":      func(in *CreateInput) { in.Source.Kind = "svn" },
-		"empty repo":      func(in *CreateInput) { in.Source.Repo = "" },
-		"bad build":       func(in *CreateInput) { in.Build.Kind = "nixpacks" },
-		"zero port":       func(in *CreateInput) { in.Runtime.Port = 0 },
-		"huge port":       func(in *CreateInput) { in.Runtime.Port = 70000 },
-		"two replicas":    func(in *CreateInput) { in.Runtime.Replicas = 2 },
-		"no server":       func(in *CreateInput) { in.Runtime.ServerID = "" },
-		"no route domain": func(in *CreateInput) { in.Route.Domain = "" },
+		"empty name":   func(in *CreateInput) { in.Name = "" },
+		"bad source":   func(in *CreateInput) { in.Source.Kind = "svn" },
+		"empty repo":   func(in *CreateInput) { in.Source.Repo = "" },
+		"bad build":    func(in *CreateInput) { in.Build.Kind = "nixpacks" },
+		"zero port":    func(in *CreateInput) { in.Runtime.Port = 0 },
+		"huge port":    func(in *CreateInput) { in.Runtime.Port = 70000 },
+		"two replicas": func(in *CreateInput) { in.Runtime.Replicas = 2 },
+		"no server":    func(in *CreateInput) { in.Runtime.ServerID = "" },
+		// Health kind must be a known gate (feature-matrix V1: non-HTTP apps).
+		"bad health kind": func(in *CreateInput) { in.Health.Kind = "grpc" },
+		// Raw port publishes (feature-matrix V1): valid ranges, protocol, uniqueness.
+		"port bad protocol": func(in *CreateInput) {
+			in.Ports = []domain.PortMapping{{HostPort: 25565, ContainerPort: 25565, Protocol: "sctp"}}
+		},
+		"port host too high":  func(in *CreateInput) { in.Ports = []domain.PortMapping{{HostPort: 70000, ContainerPort: 25565}} },
+		"port host zero":      func(in *CreateInput) { in.Ports = []domain.PortMapping{{HostPort: 0, ContainerPort: 25565}} },
+		"port container zero": func(in *CreateInput) { in.Ports = []domain.PortMapping{{HostPort: 25565, ContainerPort: 0}} },
+		"port dup binding": func(in *CreateInput) {
+			in.Ports = []domain.PortMapping{{HostPort: 25565, ContainerPort: 1}, {HostPort: 25565, ContainerPort: 2, Protocol: "tcp"}}
+		},
 		// Negative health values would wrap to huge uint32s on the wire.
 		"negative interval": func(in *CreateInput) { in.Health.IntervalSeconds = -5 },
 		"negative timeout":  func(in *CreateInput) { in.Health.TimeoutSeconds = -1 },
@@ -212,6 +223,44 @@ func TestCreateValidation(t *testing.T) {
 				t.Fatalf("err = %v, want ValidationError", err)
 			}
 		})
+	}
+}
+
+// A raw (non-HTTP) service is valid without a route domain: it uses a tcp
+// health gate and publishes ports. Defaults are applied (health.kind and each
+// port's protocol).
+func TestCreateRawServiceNoRoute(t *testing.T) {
+	s := NewService(newFakeStore(), fakeSealer{})
+	in := validInput()
+	in.Route.Domain = ""
+	in.Health.Kind = "tcp"
+	in.Ports = []domain.PortMapping{{HostPort: 25565, ContainerPort: 25565}} // protocol empty → tcp
+
+	app, _, err := s.Create(context.Background(), "env_1", in)
+	if err != nil {
+		t.Fatalf("routeless raw service rejected: %v", err)
+	}
+	if app.Route.Domain != "" {
+		t.Errorf("route domain = %q, want empty", app.Route.Domain)
+	}
+	if app.Health.Kind != "tcp" {
+		t.Errorf("health kind = %q, want tcp", app.Health.Kind)
+	}
+	if len(app.Ports) != 1 || app.Ports[0].Protocol != "tcp" {
+		t.Errorf("port protocol not defaulted to tcp: %+v", app.Ports)
+	}
+}
+
+// An HTTP app with no explicit health kind defaults to "http" — unchanged
+// behavior for every existing application.
+func TestCreateDefaultsHealthKindHTTP(t *testing.T) {
+	s := NewService(newFakeStore(), fakeSealer{})
+	app, _, err := s.Create(context.Background(), "env_1", validInput())
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if app.Health.Kind != "http" {
+		t.Errorf("health kind = %q, want http default", app.Health.Kind)
 	}
 }
 

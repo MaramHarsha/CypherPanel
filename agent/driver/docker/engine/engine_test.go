@@ -195,6 +195,47 @@ func TestCreateContainerSendsSpec(t *testing.T) {
 	}
 }
 
+// Raw host-port publishes map onto the container's ExposedPorts and the
+// HostConfig PortBindings, per protocol.
+func TestCreateContainerPublishesPorts(t *testing.T) {
+	m := newMockDaemon(t, map[string]http.HandlerFunc{
+		"/containers/create": func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(t, w, http.StatusCreated, map[string]string{"Id": "newid"})
+		},
+	})
+	_, err := m.client().CreateContainer(context.Background(), docker.ContainerSpec{
+		Name: "cypher-app1-rev1", Image: "img", Network: "cypher-env1", Port: 25565,
+		Ports: []docker.PortBinding{
+			{HostPort: 25565, ContainerPort: 25565, Protocol: "tcp"},
+			{HostPort: 25565, ContainerPort: 25565, Protocol: "udp"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateContainer: %v", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(m.lastTo(t, "/containers/create").body, &body); err != nil {
+		t.Fatalf("body: %v", err)
+	}
+	exposed, _ := body["ExposedPorts"].(map[string]any)
+	if _, ok := exposed["25565/tcp"]; !ok {
+		t.Fatalf("ExposedPorts missing 25565/tcp: %v", exposed)
+	}
+	if _, ok := exposed["25565/udp"]; !ok {
+		t.Fatalf("ExposedPorts missing 25565/udp: %v", exposed)
+	}
+	hc, _ := body["HostConfig"].(map[string]any)
+	pb, _ := hc["PortBindings"].(map[string]any)
+	udp, _ := pb["25565/udp"].([]any)
+	if len(udp) != 1 {
+		t.Fatalf("PortBindings for 25565/udp = %v", pb["25565/udp"])
+	}
+	first, _ := udp[0].(map[string]any)
+	if first["HostPort"] != "25565" {
+		t.Fatalf("udp host port = %v, want 25565", first["HostPort"])
+	}
+}
+
 func TestStartStopRemoveIdempotency(t *testing.T) {
 	startCode, stopCode, removeCode := http.StatusNoContent, http.StatusNoContent, http.StatusNoContent
 	m := newMockDaemon(t, map[string]http.HandlerFunc{

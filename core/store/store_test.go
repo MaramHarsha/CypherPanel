@@ -105,6 +105,46 @@ func TestStoreProjectEnvironmentTx(t *testing.T) {
 	}
 }
 
+// A raw (non-HTTP) app persists its port publishes and health kind and reads
+// back with an empty route domain.
+func TestStoreAppPortsAndHealthKind(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	srv, _, env, _ := seedApp(t, s)
+
+	rawID := ids.New(ids.PrefixApplication)
+	raw := domain.Application{
+		ID:                 rawID,
+		EnvironmentID:      env.ID,
+		Name:               "game-server",
+		Source:             domain.AppSource{Kind: "github", Repo: "acme/game", Branch: "main"},
+		Build:              domain.AppBuild{Kind: "dockerfile", DockerfilePath: "./Dockerfile", Context: "."},
+		Runtime:            domain.AppRuntime{ServerID: srv.ID, Port: 25565, Replicas: 1},
+		Route:              domain.AppRoute{}, // no domain — raw service
+		Health:             domain.AppHealth{Kind: "tcp", Path: "/", IntervalSeconds: 10, TimeoutSeconds: 5, Retries: 3},
+		Ports:              []domain.PortMapping{{HostPort: 25565, ContainerPort: 25565, Protocol: "tcp"}, {HostPort: 25565, ContainerPort: 25565, Protocol: "udp"}},
+		WebhookID:          ids.New(ids.PrefixWebhook),
+		WebhookSecretCT:    []byte("ct"),
+		WebhookSecretNonce: []byte("nonce"),
+	}
+	if _, err := s.CreateApplicationWithEnv(ctx, raw, nil); err != nil {
+		t.Fatalf("CreateApplicationWithEnv: %v", err)
+	}
+	got, err := s.GetApplication(ctx, rawID)
+	if err != nil {
+		t.Fatalf("GetApplication: %v", err)
+	}
+	if got.Route.Domain != "" {
+		t.Errorf("route domain = %q, want empty", got.Route.Domain)
+	}
+	if got.Health.Kind != "tcp" {
+		t.Errorf("health kind = %q, want tcp", got.Health.Kind)
+	}
+	if len(got.Ports) != 2 || got.Ports[0].Protocol != "tcp" || got.Ports[1].Protocol != "udp" {
+		t.Errorf("ports not preserved: %+v", got.Ports)
+	}
+}
+
 func TestStoreApplicationRoundtrip(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()

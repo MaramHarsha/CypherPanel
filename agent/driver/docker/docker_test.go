@@ -681,3 +681,43 @@ func TestReconcileEnsuresAndBindsVolumes(t *testing.T) {
 		t.Fatalf("second converge ensured a volume again (%d → %d)", before, len(c.ensuredVolumes))
 	}
 }
+
+// A raw (non-HTTP) service has no route domain: the reconciler publishes its
+// ports, writes NO proxy fragment, and still converges idempotently.
+func TestReconcileRawServiceNoRouteAndPorts(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	sp := spec("app1", "rev1", "img")
+	sp.Route = &agentv1.RouteSpec{} // no domain → raw service
+	sp.Health = &agentv1.HealthCheck{Kind: "tcp"}
+	sp.Ports = []*agentv1.PortMapping{
+		{HostPort: 25565, ContainerPort: 25565, Protocol: "tcp"},
+		{HostPort: 25565, ContainerPort: 25565, Protocol: "udp"},
+	}
+
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{sp})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if st := statusOf(got, "app1"); st == nil || st.GetState() != stateRunning {
+		t.Fatalf("status = %+v, want running", st)
+	}
+	// Ports flowed onto the container spec.
+	if len(c.lastCreateSpec.Ports) != 2 {
+		t.Fatalf("container ports = %+v, want 2", c.lastCreateSpec.Ports)
+	}
+	// No proxy fragment for a routeless app.
+	if _, ok := r.routes["app1"]; ok {
+		t.Fatalf("a route was written for a raw service: %q", r.routes["app1"])
+	}
+
+	// Converge-twice: the second pass makes zero client and router mutations.
+	cm, rm := c.mutations, r.mutations
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{sp}); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	if c.mutations != cm || r.mutations != rm {
+		t.Fatalf("second converge mutated (client %d→%d, router %d→%d)", cm, c.mutations, rm, r.mutations)
+	}
+}

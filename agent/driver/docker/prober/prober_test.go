@@ -2,6 +2,7 @@ package prober_test
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -52,5 +53,43 @@ func TestProber(t *testing.T) {
 	hc.Path = "/notfound"
 	if err := p.Probe(ctx, upstream, hc); err == nil {
 		t.Fatal("Probe expected to fail, but succeeded")
+	}
+}
+
+func TestProberTCP(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			conn.Close()
+		}
+	}()
+
+	p := prober.New()
+	hc := &agentv1.HealthCheck{Kind: "tcp", TimeoutSeconds: 1, Retries: 1}
+	if err := p.Probe(context.Background(), ln.Addr().String(), hc); err != nil {
+		t.Fatalf("tcp probe of a live listener failed: %v", err)
+	}
+
+	// A closed port fails the tcp gate.
+	ln.Close()
+	if err := p.Probe(context.Background(), ln.Addr().String(), hc); err == nil {
+		t.Fatal("tcp probe of a closed port should fail")
+	}
+}
+
+func TestProberNoneIsLivenessOnly(t *testing.T) {
+	p := prober.New()
+	// "none" returns immediately even for an address nothing is listening on.
+	hc := &agentv1.HealthCheck{Kind: "none", Retries: 1}
+	if err := p.Probe(context.Background(), "127.0.0.1:1", hc); err != nil {
+		t.Fatalf("none probe should always pass: %v", err)
 	}
 }

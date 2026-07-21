@@ -21,7 +21,8 @@ INSERT INTO applications (
     health_path, health_interval_seconds, health_timeout_seconds, health_retries,
     webhook_id, webhook_secret_ct, webhook_secret_nonce,
     preview_enabled, preview_base_domain, preview_ttl_hours,
-    cpu_limit, memory_limit_mb, volumes
+    cpu_limit, memory_limit_mb, volumes,
+    ports, health_kind
 ) VALUES (
     $1, $2, $3,
     $4, $5, $6, $7,
@@ -31,9 +32,10 @@ INSERT INTO applications (
     $17, $18, $19, $20,
     $21, $22, $23,
     $24, $25, $26,
-    $27, $28, $29
+    $27, $28, $29,
+    $30, $31
 )
-RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes
+RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind
 `
 
 type CreateApplicationParams struct {
@@ -66,6 +68,8 @@ type CreateApplicationParams struct {
 	CpuLimit              pgtype.Float4
 	MemoryLimitMb         pgtype.Int4
 	Volumes               []byte
+	Ports                 []byte
+	HealthKind            string
 }
 
 func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationParams) (Application, error) {
@@ -99,6 +103,8 @@ func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationPa
 		arg.CpuLimit,
 		arg.MemoryLimitMb,
 		arg.Volumes,
+		arg.Ports,
+		arg.HealthKind,
 	)
 	var i Application
 	err := row.Scan(
@@ -138,6 +144,8 @@ func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationPa
 		&i.CpuLimit,
 		&i.MemoryLimitMb,
 		&i.Volumes,
+		&i.Ports,
+		&i.HealthKind,
 	)
 	return i, err
 }
@@ -152,7 +160,7 @@ func (q *Queries) DeleteApplication(ctx context.Context, id string) error {
 }
 
 const getApplication = `-- name: GetApplication :one
-SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes FROM applications WHERE id = $1
+SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind FROM applications WHERE id = $1
 `
 
 func (q *Queries) GetApplication(ctx context.Context, id string) (Application, error) {
@@ -195,12 +203,14 @@ func (q *Queries) GetApplication(ctx context.Context, id string) (Application, e
 		&i.CpuLimit,
 		&i.MemoryLimitMb,
 		&i.Volumes,
+		&i.Ports,
+		&i.HealthKind,
 	)
 	return i, err
 }
 
 const getApplicationByWebhookID = `-- name: GetApplicationByWebhookID :one
-SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes FROM applications WHERE webhook_id = $1
+SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind FROM applications WHERE webhook_id = $1
 `
 
 func (q *Queries) GetApplicationByWebhookID(ctx context.Context, webhookID string) (Application, error) {
@@ -243,12 +253,14 @@ func (q *Queries) GetApplicationByWebhookID(ctx context.Context, webhookID strin
 		&i.CpuLimit,
 		&i.MemoryLimitMb,
 		&i.Volumes,
+		&i.Ports,
+		&i.HealthKind,
 	)
 	return i, err
 }
 
 const listApplicationsByEnvironment = `-- name: ListApplicationsByEnvironment :many
-SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes FROM applications WHERE environment_id = $1 ORDER BY created_at DESC
+SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind FROM applications WHERE environment_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environmentID string) ([]Application, error) {
@@ -297,6 +309,8 @@ func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environment
 			&i.CpuLimit,
 			&i.MemoryLimitMb,
 			&i.Volumes,
+			&i.Ports,
+			&i.HealthKind,
 		); err != nil {
 			return nil, err
 		}
@@ -309,7 +323,7 @@ func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environment
 }
 
 const listApplicationsByServer = `-- name: ListApplicationsByServer :many
-SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes FROM applications WHERE runtime_server_id = $1 ORDER BY created_at DESC
+SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind FROM applications WHERE runtime_server_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListApplicationsByServer(ctx context.Context, runtimeServerID string) ([]Application, error) {
@@ -358,6 +372,8 @@ func (q *Queries) ListApplicationsByServer(ctx context.Context, runtimeServerID 
 			&i.CpuLimit,
 			&i.MemoryLimitMb,
 			&i.Volumes,
+			&i.Ports,
+			&i.HealthKind,
 		); err != nil {
 			return nil, err
 		}
@@ -373,7 +389,7 @@ const setApplicationDesiredRevision = `-- name: SetApplicationDesiredRevision :o
 UPDATE applications
 SET desired_revision_id = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes
+RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind
 `
 
 type SetApplicationDesiredRevisionParams struct {
@@ -421,6 +437,8 @@ func (q *Queries) SetApplicationDesiredRevision(ctx context.Context, arg SetAppl
 		&i.CpuLimit,
 		&i.MemoryLimitMb,
 		&i.Volumes,
+		&i.Ports,
+		&i.HealthKind,
 	)
 	return i, err
 }
@@ -476,9 +494,10 @@ SET name = $2,
     health_path = $15, health_interval_seconds = $16, health_timeout_seconds = $17, health_retries = $18,
     preview_enabled = $19, preview_base_domain = $20, preview_ttl_hours = $21,
     cpu_limit = $22, memory_limit_mb = $23, volumes = $24,
+    ports = $25, health_kind = $26,
     updated_at = now()
 WHERE id = $1
-RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes
+RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind
 `
 
 type UpdateApplicationConfigParams struct {
@@ -506,6 +525,8 @@ type UpdateApplicationConfigParams struct {
 	CpuLimit              pgtype.Float4
 	MemoryLimitMb         pgtype.Int4
 	Volumes               []byte
+	Ports                 []byte
+	HealthKind            string
 }
 
 func (q *Queries) UpdateApplicationConfig(ctx context.Context, arg UpdateApplicationConfigParams) (Application, error) {
@@ -534,6 +555,8 @@ func (q *Queries) UpdateApplicationConfig(ctx context.Context, arg UpdateApplica
 		arg.CpuLimit,
 		arg.MemoryLimitMb,
 		arg.Volumes,
+		arg.Ports,
+		arg.HealthKind,
 	)
 	var i Application
 	err := row.Scan(
@@ -573,6 +596,8 @@ func (q *Queries) UpdateApplicationConfig(ctx context.Context, arg UpdateApplica
 		&i.CpuLimit,
 		&i.MemoryLimitMb,
 		&i.Volumes,
+		&i.Ports,
+		&i.HealthKind,
 	)
 	return i, err
 }

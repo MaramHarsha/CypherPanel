@@ -22,8 +22,9 @@ Application:
   source:   { kind: github|git_url, repo, branch, deploy_key_id? }
   build:    { kind: dockerfile, dockerfile_path (default ./Dockerfile), context (default .) }
   runtime:  { server_id, port (container port), env_vars (sealed), replicas: 1 (fixed in slice) }
-  route:    { domain, https: true (LE HTTP-01), path_prefix? }
-  health:   { path (default /), interval, timeout, retries }   # gates rollout
+  route:    { domain?, https: true (LE HTTP-01), path_prefix? }   # domain optional: empty ⇒ raw service
+  health:   { kind: http|tcp|none (default http), path (default /), interval, timeout, retries }  # gates rollout
+  ports:    [ { host_port, container_port, protocol: tcp|udp } ]  # raw host publishes, current-state
   desired_revision_id  → Revision
 ```
 
@@ -88,6 +89,32 @@ Status changes stream over the existing SSE channel; deployments are listable wi
 - `agent/builder/` — enabled by `--role=builder`; BuildKit via the Docker daemon for the slice (Railpack/Nixpacks are separate matrix rows, not the slice).
 - `agent/stream/` — log tailing (`docker logs --follow`) → `logs.runtime.<app_id>`; build logs from the builder → `logs.build.<deployment_id>`. Bounded retention on the plane (JetStream limits), drains later (matrix V1.x).
 - The `reconciler-development` skill (`.claude/skills/`) is written alongside the driver interface — the carried-over Phase 1 deliverable.
+
+### Raw TCP/UDP ports and non-HTTP services (feature-matrix V1)
+
+Not every app is an HTTP service. An Application may publish raw host ports and
+skip the HTTP proxy entirely — a game server, message broker, or database-as-app.
+Three orthogonal knobs make this work, and every existing HTTP app is unchanged
+because each defaults to today's behavior:
+
+- **`ports: [{host_port, container_port, protocol}]`** — publishes container
+  ports to the host on `tcp` or `udp` (empty protocol defaults to `tcp`). The
+  agent maps these onto the container's `ExposedPorts` + `HostConfig.PortBindings`
+  (mirroring the managed-database `expose_port`). Ports are **current state**
+  (like volumes and resource limits), not per-revision — rollback keeps them.
+  Validation bounds each port to 1–65535 and rejects duplicate host-port +
+  protocol bindings; ≤20 per app.
+- **`route.domain` is now optional.** A non-empty domain gives the app its
+  Traefik fragment as before; an **empty domain means no proxy route** — the app
+  is reached only through its published ports. The reconciler writes no fragment
+  for a routeless app and removes a stale one if a domain is cleared, all while
+  preserving the converge-twice invariant.
+- **`health.kind`** selects the rollout gate: `http` (default — GET `health.path`,
+  today's behavior), `tcp` (dial the container port), or `none` (liveness-only,
+  for raw UDP services with no readiness signal). **The health probe is always
+  internal** (agent → container), independent of any public route — which is why
+  routing and health decompose cleanly rather than entangling. The zero-downtime
+  sequence (start new → gate → flip/settle → drain old) holds for `tcp` too.
 
 ### Persistent volumes (feature-matrix V1)
 
