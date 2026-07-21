@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/MaramHarsha/cypherpanel/core/domain"
@@ -27,6 +28,13 @@ type Store interface {
 	CreateSession(ctx context.Context, id, userID string, tokenHash []byte, expiresAt time.Time) error
 	UserForSessionToken(ctx context.Context, tokenHash []byte) (domain.User, error)
 	DeleteSession(ctx context.Context, tokenHash []byte) error
+
+	CreateAPIToken(ctx context.Context, id, userID, name string, tokenHash []byte, expiresAt *time.Time) (domain.APIToken, error)
+	UserForAPIToken(ctx context.Context, tokenHash []byte) (domain.User, error)
+	TouchAPIToken(ctx context.Context, tokenHash []byte) error
+	ListAPITokensByUser(ctx context.Context, userID string) ([]domain.APIToken, error)
+	GetAPIToken(ctx context.Context, id string) (domain.APIToken, error)
+	DeleteAPIToken(ctx context.Context, id string) error
 }
 
 // dummyHash is a valid bcrypt hash compared against when a login names a
@@ -88,7 +96,14 @@ func (a *Authenticator) Login(ctx context.Context, email, password, throttleKey 
 }
 
 // Authenticate resolves a raw bearer token to its user, or ErrInvalidSession.
+// A token carrying the API-token prefix is resolved as a personal access token
+// (authenticating as its owning user); anything else is a session. Session
+// secrets are uppercase base32 (ids.Secret) and never carry the prefix, so the
+// two spaces cannot collide.
 func (a *Authenticator) Authenticate(ctx context.Context, rawToken string) (domain.User, error) {
+	if strings.HasPrefix(rawToken, APITokenPrefix) {
+		return a.authenticateAPIToken(ctx, rawToken)
+	}
 	user, err := a.store.UserForSessionToken(ctx, HashToken(rawToken))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {

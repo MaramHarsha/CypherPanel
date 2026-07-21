@@ -88,3 +88,15 @@ type JoinToken struct {
 	ConsumedAt *time.Time
 	CreatedAt  time.Time
 }
+
+// APIToken is a personal access token: a credential that authenticates as its
+// owning user, inheriting that user's role and team memberships (the scope).
+// Only the hash is persisted; the raw token is shown exactly once at creation.
+type APIToken struct {
+	ID         string
+	UserID     string
+	Name       string
+	LastUsedAt *time.Time
+	ExpiresAt  *time.Time // nil = never expires
+	CreatedAt  time.Time
+}

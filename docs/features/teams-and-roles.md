@@ -144,5 +144,8 @@ Granular/custom RBAC (V1.x) · team-owned servers and per-team infra (the
 glossary's full "owns servers" target — lands with granular RBAC; servers stay
 shared, panel-role-gated at v1) · invitations by email (users are created with
 a password by an admin; SMTP-based invites can reuse core/notify later) · TOTP
-2FA (its own V1 feature-matrix row) · API tokens with team scopes · audit log
+2FA (its own V1 feature-matrix row) · fine-grained per-token abilities (API
+tokens themselves ship separately, [api-tokens.md](api-tokens.md) — they inherit
+their owner's role/teams; per-token read/write/deploy narrowing is the follow-on
+here) · audit log
 · team switching UI state · hostile multi-tenant isolation (§1).
