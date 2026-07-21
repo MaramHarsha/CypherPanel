@@ -116,6 +116,20 @@ Rules the tree encodes:
 - Drawers over modals; the deployment detail is the canonical drawer (list
   stays visible behind it). Modal depth 1 max (ui-principles §4).
 
+**The four items survive scale only with two companions** (recorded here so
+they are commitments, not hopes):
+
+- **Status rollups on the Projects landing.** With no home dashboard, the
+  landing must answer P2's "which of my 25 apps is broken right now?" at a
+  glance: each project row carries an aggregated status ("1 app error ·
+  1 backup failed"), worst-status-first sort, red visible from across the
+  room. If the rollup is weak, the no-dashboard bet fails.
+- **A ⌘K command palette** (slice 4): type any resource name → jump straight
+  there; common actions ("deploy web", "logs api") included. It is the fast
+  lane the 2–3-click hierarchy needs for power users (P3) — and invisible to
+  beginners until they want it (§11: layering, not removal). It is not a
+  navigation replacement and never a requirement for any flow.
+
 ## 4. Screen inventory — every screen, its data, its states
 
 Every row ships the four page-contract states; "Realtime" is what must update
@@ -212,6 +226,7 @@ dependency). The product components, each shipping both themes + all states:
 | `InlineHint` | The one plain-language line under a technical field/title ("Deploy key — lets CypherPanel read a private repository"), with an optional "learn more" expander (§11) |
 | `AdvancedSection` | Collapsed container for everything with a working default — create forms show only what a first-timer must answer (§6) |
 | `CronField` | Schedule input with next-3-runs preview (parse client-side, same 5-field grammar) |
+| `CommandPalette` | ⌘K jump-to-anything + actions (slice 4); fed by the resources the caller can already see — never a search across foreign teams |
 | `ArgvInput` | Scheduled-task command as an argv list — the UI mirrors ADR-011: never a shell-string textbox |
 
 **Definition of done, per screen** (the PR checklist):
@@ -244,7 +259,8 @@ specs (this document + ui-principles govern); the *product features* in slice
 3. **State-model breadth, part 1.** Databases (all tabs), backup targets,
    backups + restore flows.
 4. **State-model breadth, part 2.** Previews, notifiers (+ test send),
-   scheduled tasks (+ run history), Settings: teams/users/roles.
+   scheduled tasks (+ run history), Settings: teams/users/roles; the ⌘K
+   command palette (§3).
 5. **Phase 4 features, each spec-first:** template catalog (+ `adding-a-template`
    skill, per project-structure.md), Compose stacks, interactive terminal
    (WebSocket; carries its own security section — threat-model §5.6),
