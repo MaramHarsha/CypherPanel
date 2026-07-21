@@ -30,6 +30,7 @@
 | Accessibility | WCAG 2.1 AA floor; usable at 360 px | ui-principles §9 |
 | Page contract | Every data region ships Loading / Empty / Error / Content — a PR missing one is incomplete | ui-principles §1 |
 | E2E | Playwright | tech-stack.md |
+| Beginner-first | The UI must teach: chained golden-path empty states, one plain-language line per technical concept, outcome copy, no dead ends, progressive disclosure (layering, never removal) | ui-principles §11 |
 
 **One reconciliation, recorded here:** roadmap Phase 4's scope word "dashboard"
 does **not** reintroduce a home dashboard — ui-principles §4 (the later, more
@@ -207,14 +208,18 @@ dependency). The product components, each shipping both themes + all states:
 | `Breadcrumbs` | team / project / environment / resource, always |
 | `RoleGate` | Renders children only at sufficient rank; shows the required role on the disabled affordance |
 | `EnvSwitcher` | Environments incl. previews with TTL badges |
-| `EmptyState` | One sentence + one primary action, quiet |
+| `EmptyState` | One sentence + one primary action, quiet; **chains the golden path** on fresh panels (§11) |
+| `InlineHint` | The one plain-language line under a technical field/title ("Deploy key — lets CypherPanel read a private repository"), with an optional "learn more" expander (§11) |
+| `AdvancedSection` | Collapsed container for everything with a working default — create forms show only what a first-timer must answer (§6) |
 | `CronField` | Schedule input with next-3-runs preview (parse client-side, same 5-field grammar) |
 | `ArgvInput` | Scheduled-task command as an argv list — the UI mirrors ADR-011: never a shell-string textbox |
 
 **Definition of done, per screen** (the PR checklist):
 four states · both themes · 360 px usable · keyboard operable · copy from the
 glossary · data only via the generated client · role-gated actions render
-their rank · a Playwright smoke (login → screen → primary action) passes.
+their rank · the **"explain it cold" pass** (every visible term is plain or
+carries its one-line hint — ui-principles §11) · a Playwright smoke
+(login → screen → primary action) passes.
 
 ## 7. Build order — five slices, each shippable and verified
 
@@ -230,9 +235,12 @@ specs (this document + ui-principles govern); the *product features* in slice
    `cypherd`; Playwright harness; bundle-budget CI check.
 2. **The deploy loop** — the product's heart, done end to end: Projects →
    project home → application tabs (Overview, Deployments + drawer with live
-   build log, Logs, Env vars, Settings) → server join flow. *Gate: P1's
-   success moment — watch a push deploy from a phone-sized viewport.*
-   **Interim console deleted here.**
+   build log, Logs, Env vars, Settings) → server join flow, **including the
+   full golden path**: a fresh panel chains join server → create project →
+   deploy app through empty states alone (ui-principles §11). *Gate: P1's
+   success moment — an empty panel to a live app with no docs open, then watch
+   a push deploy from a phone-sized viewport.* **Interim console deleted
+   here.**
 3. **State-model breadth, part 1.** Databases (all tabs), backup targets,
    backups + restore flows.
 4. **State-model breadth, part 2.** Previews, notifiers (+ test send),
