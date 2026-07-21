@@ -669,3 +669,74 @@ func TestStoreAPITokens(t *testing.T) {
 		t.Fatalf("tokens not cascaded on user delete: %d remain", len(remaining))
 	}
 }
+
+func TestStoreTOTP(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	user, err := s.CreateUser(ctx, ids.New(ids.PrefixUser), "totp-"+ids.Secret()+"@x.io", "h", domain.RoleOwner)
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	// A brand-new user has no secret and 2FA disabled.
+	sec, err := s.GetTOTPSecret(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("GetTOTPSecret: %v", err)
+	}
+	if len(sec.CT) != 0 || sec.Enabled {
+		t.Fatalf("fresh user should have no totp: %+v", sec)
+	}
+
+	// Enroll (secret stored, not yet enabled), then enable.
+	if err := s.SetTOTPSecret(ctx, user.ID, []byte("ct"), []byte("nonce")); err != nil {
+		t.Fatalf("SetTOTPSecret: %v", err)
+	}
+	sec, _ = s.GetTOTPSecret(ctx, user.ID)
+	if string(sec.CT) != "ct" || sec.Enabled {
+		t.Fatalf("after enroll: %+v (enabled should be false)", sec)
+	}
+	if err := s.EnableTOTP(ctx, user.ID); err != nil {
+		t.Fatalf("EnableTOTP: %v", err)
+	}
+	if u, _ := s.GetUserByEmail(ctx, user.Email); !u.TOTPEnabled {
+		t.Fatal("user.TOTPEnabled not reflected after EnableTOTP")
+	}
+
+	// Recovery codes: add, count, consume once (single-use), recount.
+	h1, h2 := []byte("hash-1"), []byte("hash-2")
+	for _, h := range [][]byte{h1, h2} {
+		if err := s.AddRecoveryCode(ctx, ids.New(ids.PrefixRecoveryCode), user.ID, h); err != nil {
+			t.Fatalf("AddRecoveryCode: %v", err)
+		}
+	}
+	if n, _ := s.CountUnusedRecoveryCodes(ctx, user.ID); n != 2 {
+		t.Fatalf("unused codes = %d, want 2", n)
+	}
+	used, err := s.ConsumeRecoveryCode(ctx, user.ID, h1)
+	if err != nil || !used {
+		t.Fatalf("ConsumeRecoveryCode = %v, %v; want true", used, err)
+	}
+	// Consuming the same code again does nothing (already spent).
+	if again, _ := s.ConsumeRecoveryCode(ctx, user.ID, h1); again {
+		t.Fatal("a spent recovery code was consumed twice")
+	}
+	if n, _ := s.CountUnusedRecoveryCodes(ctx, user.ID); n != 1 {
+		t.Fatalf("unused codes after consume = %d, want 1", n)
+	}
+
+	// Disable clears the secret; DeleteRecoveryCodes clears the rest.
+	if err := s.DisableTOTP(ctx, user.ID); err != nil {
+		t.Fatalf("DisableTOTP: %v", err)
+	}
+	sec, _ = s.GetTOTPSecret(ctx, user.ID)
+	if len(sec.CT) != 0 || sec.Enabled {
+		t.Fatalf("after disable: %+v", sec)
+	}
+	if err := s.DeleteRecoveryCodes(ctx, user.ID); err != nil {
+		t.Fatalf("DeleteRecoveryCodes: %v", err)
+	}
+	if n, _ := s.CountUnusedRecoveryCodes(ctx, user.ID); n != 0 {
+		t.Fatalf("codes after delete = %d, want 0", n)
+	}
+}

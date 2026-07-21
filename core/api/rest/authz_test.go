@@ -47,7 +47,7 @@ func newAuthzServer(t *testing.T, panelRole, projectRole string) *httptest.Serve
 	ft.teams = nil
 
 	api := New(Deps{
-		Auth:         auth.NewAuthenticator(authStore, auth.NewLimiter(100, time.Minute), time.Hour),
+		Auth:         auth.NewAuthenticator(authStore, fakeBox{}, auth.NewLimiter(100, time.Minute), time.Hour),
 		Servers:      servers.NewService(&fakeServersStore{inUse: map[string]bool{}}, noopAgentBus{}, 15*time.Minute, log),
 		Projects:     projects.NewService(newFakeProjectsStore()),
 		Applications: applications.NewService(newFakeAppsStore(), box),

@@ -38,6 +38,59 @@ type fakeAuthStore struct {
 	sessions map[string]domain.User     // key: string(tokenHash)
 	tokens   map[string]domain.APIToken // token id → metadata
 	byHash   map[string]string          // string(tokenHash) → token id
+	totp     store.TOTPSecret
+	recovery [][]byte // unused recovery code-hashes
+}
+
+// fakeBox is an identity SecretBox for handler tests.
+type fakeBox struct{}
+
+func (fakeBox) Seal(pt []byte) (ct, nonce []byte, err error) { return pt, []byte("n"), nil }
+func (fakeBox) Open(ct, _ []byte) ([]byte, error)            { return ct, nil }
+
+func (f *fakeAuthStore) SetTOTPSecret(_ context.Context, _ string, ct, nonce []byte) error {
+	f.totp = store.TOTPSecret{CT: ct, Nonce: nonce, Enabled: false}
+	return nil
+}
+
+func (f *fakeAuthStore) EnableTOTP(_ context.Context, uid string) error {
+	f.totp.Enabled = true
+	f.user.TOTPEnabled = true
+	return nil
+}
+
+func (f *fakeAuthStore) DisableTOTP(_ context.Context, _ string) error {
+	f.totp = store.TOTPSecret{}
+	f.user.TOTPEnabled = false
+	return nil
+}
+
+func (f *fakeAuthStore) GetTOTPSecret(_ context.Context, _ string) (store.TOTPSecret, error) {
+	return f.totp, nil
+}
+
+func (f *fakeAuthStore) AddRecoveryCode(_ context.Context, _, _ string, codeHash []byte) error {
+	f.recovery = append(f.recovery, codeHash)
+	return nil
+}
+
+func (f *fakeAuthStore) ConsumeRecoveryCode(_ context.Context, _ string, codeHash []byte) (bool, error) {
+	for i, h := range f.recovery {
+		if string(h) == string(codeHash) {
+			f.recovery = append(f.recovery[:i], f.recovery[i+1:]...)
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (f *fakeAuthStore) CountUnusedRecoveryCodes(_ context.Context, _ string) (int, error) {
+	return len(f.recovery), nil
+}
+
+func (f *fakeAuthStore) DeleteRecoveryCodes(_ context.Context, _ string) error {
+	f.recovery = nil
+	return nil
 }
 
 func (f *fakeAuthStore) GetUserByEmail(_ context.Context, email string) (domain.User, error) {
@@ -605,7 +658,7 @@ func newTestServerFull(t *testing.T) (*httptest.Server, *fakeServersStore, *fake
 	dbSvc := databases.NewService(dbStore, box, dbReconciler)
 
 	api := New(Deps{
-		Auth:         auth.NewAuthenticator(authStore, auth.NewLimiter(100, time.Minute), time.Hour),
+		Auth:         auth.NewAuthenticator(authStore, fakeBox{}, auth.NewLimiter(100, time.Minute), time.Hour),
 		Servers:      servers.NewService(srvStore, noopAgentBus{}, 15*time.Minute, log),
 		Projects:     projects.NewService(newFakeProjectsStore()),
 		Applications: applications.NewService(newFakeAppsStore(), box),

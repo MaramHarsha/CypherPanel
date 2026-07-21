@@ -166,7 +166,7 @@ func run(log *slog.Logger) error {
 	appSvc := applications.NewService(st, box)
 	deployKeySvc := deploykeys.NewService(st, box)
 	teamSvc := teams.NewService(st)
-	authr := auth.NewAuthenticator(st, auth.NewLimiter(5, 15*time.Minute), cfg.SessionTTL)
+	authr := auth.NewAuthenticator(st, box, auth.NewLimiter(5, 15*time.Minute), cfg.SessionTTL)
 
 	// Deploy pipeline: the scheduler publishes work items and advances
 	// deployments from the agents' observed reports (ADR-005).

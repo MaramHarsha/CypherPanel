@@ -290,6 +290,14 @@ type TeamMember struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type TotpRecoveryCode struct {
+	ID        string
+	UserID    string
+	CodeHash  []byte
+	UsedAt    pgtype.Timestamptz
+	CreatedAt pgtype.Timestamptz
+}
+
 type User struct {
 	ID              string
 	Email           string
@@ -299,4 +307,5 @@ type User struct {
 	TotpSecretNonce []byte
 	CreatedAt       pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz
+	TotpEnabled     bool
 }

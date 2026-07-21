@@ -115,8 +115,8 @@ DELETE /users/{id}                  → 204                (panel owner; never s
   probeable across tenants (same posture as the webhook-id rule).
 - **Sessions unchanged** — login, rate limiting, and token hashing stay as
   they are (threat-model §5.8); this slice adds authorization, not new
-  authentication surface. TOTP remains its own V1 feature-matrix row, not
-  part of this slice (§7).
+  authentication surface. TOTP is its own V1 feature-matrix row, shipped
+  separately ([two-factor-auth.md](two-factor-auth.md)), not part of this slice.
 - The **migration defaults to over-permission** (existing users → owners of
   the default team) rather than lockout: matching their pre-migration implicit
   rights, and self-correctable by the panel owner afterwards.
@@ -144,7 +144,7 @@ Granular/custom RBAC (V1.x) · team-owned servers and per-team infra (the
 glossary's full "owns servers" target — lands with granular RBAC; servers stay
 shared, panel-role-gated at v1) · invitations by email (users are created with
 a password by an admin; SMTP-based invites can reuse core/notify later) · TOTP
-2FA (its own V1 feature-matrix row) · fine-grained per-token abilities (API
+fine-grained per-token abilities (API
 tokens themselves ship separately, [api-tokens.md](api-tokens.md) — they inherit
 their owner's role/teams; per-token read/write/deploy narrowing is the follow-on
 here) · audit log

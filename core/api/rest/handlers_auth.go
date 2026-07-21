@@ -10,6 +10,9 @@ import (
 type loginRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
+	// TOTPCode is the optional second factor: an authenticator code or a
+	// recovery code. Required only when the account has two-factor enabled.
+	TOTPCode string `json:"totp_code"`
 }
 
 type userDTO struct {
@@ -29,10 +32,19 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	token, user, err := a.deps.Auth.Login(r.Context(), req.Email, req.Password, clientIP(r))
+	token, user, err := a.deps.Auth.Login(r.Context(), req.Email, req.Password, req.TOTPCode, clientIP(r))
 	switch {
 	case errors.Is(err, auth.ErrRateLimited):
 		writeError(w, http.StatusTooManyRequests, "too many attempts, try again in a moment")
+		return
+	case errors.Is(err, auth.ErrTOTPRequired):
+		// Password was correct; the client must supply a second factor and
+		// retry. A distinct flag lets the UI prompt for the code (not the
+		// password) without leaking whether 2FA is on before the password check.
+		writeJSON(w, http.StatusUnauthorized, map[string]any{
+			"error":         "two-factor authentication code required",
+			"totp_required": true,
+		})
 		return
 	case errors.Is(err, auth.ErrInvalidCredentials):
 		writeError(w, http.StatusUnauthorized, "invalid email or password")
