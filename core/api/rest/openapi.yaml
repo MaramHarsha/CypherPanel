@@ -6,19 +6,30 @@ openapi: 3.1.0
 info:
   title: CypherPanel API
   description: >-
-    Operator-facing control-plane API. Phase 1 covers authentication and the
-    server lifecycle (register, list, inspect, delete) for the control-plane ↔
-    agent handshake. Authentication is a bearer session token from
-    /api/v1/auth/login.
-  version: 0.1.0
+    Operator-facing control-plane API covering Phases 1–3: authentication and
+    teams/roles, the server lifecycle, projects/environments, applications and
+    the deploy pipeline, managed databases with S3 backups/restore, preview
+    environments, notifications, and scheduled tasks. Authentication is a bearer
+    session token from /api/v1/auth/login; the GitHub webhook authenticates by
+    per-application HMAC instead. Every project-scoped route is authorized by
+    team membership (a non-member sees 404, insufficient rank 403).
+  version: 0.3.0
 servers:
   - url: /
 tags:
   - name: health
   - name: auth
+  - name: teams
   - name: servers
   - name: projects
   - name: applications
+  - name: deployments
+  - name: deploy-keys
+  - name: databases
+  - name: backups
+  - name: previews
+  - name: notifiers
+  - name: scheduled-tasks
 
 paths:
   /healthz:
@@ -97,14 +108,14 @@ paths:
   /api/v1/auth/me:
     get:
       tags: [auth]
-      summary: The authenticated account
+      summary: The authenticated account and its teams
       responses:
         "200":
-          description: The current user.
+          description: The current user, with the teams they belong to and their role in each.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/User"
+                $ref: "#/components/schemas/Me"
         "401":
           $ref: "#/components/responses/Unauthorized"
 
@@ -852,6 +863,515 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  # ─── Teams & users (teams-and-roles.md) ───────────────────────────────────
+  /api/v1/teams:
+    get:
+      tags: [teams]
+      summary: List the caller's teams (all teams for a panel owner)
+      responses:
+        "200":
+          description: Teams with the caller's role in each.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Team" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [teams]
+      summary: Create a team (panel admin+); the creator becomes its owner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateTeamRequest" }
+      responses:
+        "201":
+          description: Team created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Team" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/teams/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Team ID (tm_… prefix). }
+    get:
+      tags: [teams]
+      summary: Get a team (member+)
+      responses:
+        "200": { description: The team., content: { application/json: { schema: { $ref: "#/components/schemas/Team" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [teams]
+      summary: Rename a team (team owner)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/RenameTeamRequest" } } }
+      responses:
+        "200": { description: Renamed., content: { application/json: { schema: { $ref: "#/components/schemas/Team" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [teams]
+      summary: Delete a team (team owner); refused while it owns projects
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: The team still owns projects., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /api/v1/teams/{id}/members:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Team ID. }
+    get:
+      tags: [teams]
+      summary: List team members (member+)
+      responses:
+        "200": { description: The members., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/TeamMember" } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [teams]
+      summary: Add a member (team admin+; granting owner needs team owner)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/AddMemberRequest" } } }
+      responses:
+        "201": { description: Member added., content: { application/json: { schema: { $ref: "#/components/schemas/TeamMember" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/teams/{id}/members/{uid}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Team ID. }
+      - { name: uid, in: path, required: true, schema: { type: string }, description: User ID (usr_… prefix). }
+    patch:
+      tags: [teams]
+      summary: Change a member's role (grant rules apply; the last owner is protected)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ChangeMemberRoleRequest" } } }
+      responses:
+        "200": { description: Role changed., content: { application/json: { schema: { $ref: "#/components/schemas/TeamMember" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: Would leave the team without an owner., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      tags: [teams]
+      summary: Remove a member (removing an owner needs team owner; last owner protected)
+      responses:
+        "204": { description: Removed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: Would leave the team without an owner., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /api/v1/users:
+    get:
+      tags: [teams]
+      summary: List all users (panel admin+)
+      responses:
+        "200": { description: Users., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/User" } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [teams]
+      summary: Create a user (panel admin+; a panel role above member needs panel owner)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateUserRequest" } } }
+      responses:
+        "201": { description: User created., content: { application/json: { schema: { $ref: "#/components/schemas/User" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/users/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: User ID. }
+    patch:
+      tags: [teams]
+      summary: Change a user's panel role (panel owner)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetUserRoleRequest" } } }
+      responses:
+        "200": { description: Role changed., content: { application/json: { schema: { $ref: "#/components/schemas/User" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Would leave the panel without an owner., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      tags: [teams]
+      summary: Delete a user (panel owner; never your own account)
+      responses:
+        "204": { description: Deleted. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # ─── Managed databases (managed-databases.md) ─────────────────────────────
+  /api/v1/environments/{id}/databases:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Environment ID (env_… prefix). }
+    get:
+      tags: [databases]
+      summary: List databases in an environment
+      responses:
+        "200": { description: The environment's databases., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Database" } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [databases]
+      summary: Create a managed database
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateDatabaseRequest" } } }
+      responses:
+        "201":
+          description: >-
+            Database created. root_password appears exactly once here and is
+            never retrievable (fetch a fresh one via reset-password).
+          content: { application/json: { schema: { $ref: "#/components/schemas/CreateDatabaseResponse" } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/databases/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Database ID (db_… prefix). }
+    get:
+      tags: [databases]
+      summary: Get a database
+      responses:
+        "200": { description: The database., content: { application/json: { schema: { $ref: "#/components/schemas/Database" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [databases]
+      summary: Update a database's config (creates a new revision if changed)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PatchDatabaseRequest" } } }
+      responses:
+        "200": { description: Updated., content: { application/json: { schema: { $ref: "#/components/schemas/Database" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [databases]
+      summary: Delete a database
+      responses:
+        "204": { description: Deletion accepted (reconciled by the agent). }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/databases/{id}/stop:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [databases]
+      summary: Stop a database
+      responses:
+        "202": { description: Stop accepted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/databases/{id}/start:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [databases]
+      summary: Start a database
+      responses:
+        "202": { description: Start accepted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/databases/{id}/reset-password:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [databases]
+      summary: Reset the root password (returned once)
+      responses:
+        "200": { description: New password, shown once., content: { application/json: { schema: { $ref: "#/components/schemas/ResetPasswordResponse" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: Engine does not use password auth., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /api/v1/databases/{id}/connection-info:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [databases]
+      summary: Connection details (password masked)
+      responses:
+        "200": { description: Connection info., content: { application/json: { schema: { $ref: "#/components/schemas/ConnectionInfo" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ─── Backups (managed-databases.md §7) ────────────────────────────────────
+  /api/v1/backup-targets:
+    get:
+      tags: [backups]
+      summary: List S3-compatible backup targets
+      responses:
+        "200": { description: Targets (credentials never included)., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/BackupTarget" } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [backups]
+      summary: Create a backup target (panel admin+)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateBackupTargetRequest" } } }
+      responses:
+        "201": { description: Target created., content: { application/json: { schema: { $ref: "#/components/schemas/BackupTarget" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/backup-targets/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Backup target ID (bt_… prefix). }
+    get:
+      tags: [backups]
+      summary: Get a backup target
+      responses:
+        "200": { description: The target., content: { application/json: { schema: { $ref: "#/components/schemas/BackupTarget" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [backups]
+      summary: Delete a backup target (panel admin+; refused while in use)
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: In use by one or more backup schedules., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /api/v1/databases/{id}/backups:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Database ID. }
+    get:
+      tags: [backups]
+      summary: List a database's backup schedules
+      responses:
+        "200": { description: Schedules., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/DatabaseBackup" } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [backups]
+      summary: Create a backup schedule
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateDatabaseBackupRequest" } } }
+      responses:
+        "201": { description: Schedule created., content: { application/json: { schema: { $ref: "#/components/schemas/DatabaseBackup" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/databases/{id}/backups/{bak_id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Database ID. }
+      - { name: bak_id, in: path, required: true, schema: { type: string }, description: Backup schedule ID (bak_… prefix). }
+    delete:
+      tags: [backups]
+      summary: Delete a backup schedule
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/databases/{id}/backups/{bak_id}/history:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Database ID. }
+      - { name: bak_id, in: path, required: true, schema: { type: string }, description: Backup schedule ID. }
+    get:
+      tags: [backups]
+      summary: List a schedule's backup run history
+      responses:
+        "200": { description: Backup records, newest first., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/BackupRecord" } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/databases/{id}/backups/{bak_id}/run:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Database ID. }
+      - { name: bak_id, in: path, required: true, schema: { type: string }, description: Backup schedule ID. }
+    post:
+      tags: [backups]
+      summary: Run a backup now
+      responses:
+        "202": { description: Backup started; the record tracks progress., content: { application/json: { schema: { $ref: "#/components/schemas/RunBackupResponse" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/databases/{id}/restore:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Database ID. }
+    post:
+      tags: [backups]
+      summary: Restore a database from a backup (destructive; confirm required)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/RestoreRequest" } } }
+      responses:
+        "202": { description: Restore started. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: Confirmation missing or the database is not in a restorable state., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  # ─── Preview environments (preview-environments.md §7) ────────────────────
+  /api/v1/applications/{id}/previews:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Source application ID. }
+    get:
+      tags: [previews]
+      summary: List an application's previews
+      responses:
+        "200": { description: Previews., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Preview" } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/previews/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Preview ID (prv_… prefix). }
+    get:
+      tags: [previews]
+      summary: Get a preview
+      responses:
+        "200": { description: The preview., content: { application/json: { schema: { $ref: "#/components/schemas/Preview" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [previews]
+      summary: Tear down a preview (async)
+      responses:
+        "202": { description: Teardown accepted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ─── Notifications (notifications.md §7) ──────────────────────────────────
+  /api/v1/projects/{id}/notifiers:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Project ID. }
+    get:
+      tags: [notifiers]
+      summary: List a project's notifiers
+      responses:
+        "200": { description: Notifiers (channel config never included; config_hint only)., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Notifier" } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [notifiers]
+      summary: Create a notifier
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateNotifierRequest" } } }
+      responses:
+        "201": { description: Notifier created., content: { application/json: { schema: { $ref: "#/components/schemas/Notifier" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/notifiers/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Notifier ID (ntf_… prefix). }
+    get:
+      tags: [notifiers]
+      summary: Get a notifier
+      responses:
+        "200": { description: The notifier., content: { application/json: { schema: { $ref: "#/components/schemas/Notifier" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [notifiers]
+      summary: Update a notifier (omit config to keep the sealed value)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PatchNotifierRequest" } } }
+      responses:
+        "200": { description: Updated., content: { application/json: { schema: { $ref: "#/components/schemas/Notifier" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [notifiers]
+      summary: Delete a notifier
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/notifiers/{id}/test:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Notifier ID. }
+    post:
+      tags: [notifiers]
+      summary: Send a synthetic test notification through this notifier
+      responses:
+        "202": { description: Delivery attempted (a channel failure is logged, not surfaced). }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ─── Scheduled tasks (scheduled-tasks.md §7) ──────────────────────────────
+  /api/v1/applications/{id}/scheduled-tasks:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Application ID. }
+    get:
+      tags: [scheduled-tasks]
+      summary: List an application's scheduled tasks
+      responses:
+        "200": { description: Tasks., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/ScheduledTask" } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [scheduled-tasks]
+      summary: Create a scheduled task (cron; command is argv, not a shell string)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateScheduledTaskRequest" } } }
+      responses:
+        "201": { description: Task created., content: { application/json: { schema: { $ref: "#/components/schemas/ScheduledTask" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/scheduled-tasks/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Scheduled task ID (sch_… prefix). }
+    get:
+      tags: [scheduled-tasks]
+      summary: Get a scheduled task
+      responses:
+        "200": { description: The task., content: { application/json: { schema: { $ref: "#/components/schemas/ScheduledTask" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [scheduled-tasks]
+      summary: Update a scheduled task
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateScheduledTaskRequest" } } }
+      responses:
+        "200": { description: Updated., content: { application/json: { schema: { $ref: "#/components/schemas/ScheduledTask" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [scheduled-tasks]
+      summary: Delete a scheduled task
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/scheduled-tasks/{id}/runs:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Scheduled task ID. }
+    get:
+      tags: [scheduled-tasks]
+      summary: List a task's recent run history
+      responses:
+        "200": { description: Runs, newest first., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/ScheduledTaskRun" } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+
 components:
   securitySchemes:
     bearer:
@@ -874,6 +1394,20 @@ components:
             $ref: "#/components/schemas/Error"
     Unavailable:
       description: A backing dependency is unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Authenticated but the caller's role is insufficient for this action.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: >-
+        No such resource — also returned when the caller is not a member of the
+        owning team, so resource existence never leaks across tenants.
       content:
         application/json:
           schema:
@@ -1019,13 +1553,16 @@ components:
 
     Project:
       type: object
-      required: [id, name, created_at]
+      required: [id, name, team_id, created_at]
       properties:
         id:
           type: string
           description: prj_… prefixed ID.
         name:
           type: string
+        team_id:
+          type: string
+          description: tm_… prefixed ID of the owning team.
         created_at:
           type: string
           format: date-time
@@ -1053,6 +1590,11 @@ components:
           type: string
           minLength: 1
           maxLength: 100
+        team_id:
+          type: string
+          description: >-
+            Owning team. Optional when the caller belongs to exactly one team
+            (defaulted); required (400) when the caller belongs to several.
 
     CreateProjectResponse:
       type: object
@@ -1336,6 +1878,311 @@ components:
       type: array
       items:
         $ref: "#/components/schemas/DeployKey"
+    # ─── Teams & users ────────────────────────────────────────────────────────
+    Me:
+      type: object
+      required: [id, email, role, teams]
+      properties:
+        id: { type: string }
+        email: { type: string }
+        role:
+          type: string
+          description: Panel role.
+          enum: [member, admin, owner]
+        teams:
+          type: array
+          items: { $ref: "#/components/schemas/Team" }
+    Team:
+      type: object
+      required: [id, name, created_at, updated_at]
+      properties:
+        id: { type: string, description: tm_… prefixed ID. }
+        name: { type: string }
+        role:
+          type: string
+          description: The requesting user's role in this team (present on listings and /auth/me).
+          enum: [member, admin, owner]
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    TeamMember:
+      type: object
+      required: [user_id, email, role, created_at]
+      properties:
+        user_id: { type: string }
+        email: { type: string }
+        role: { type: string, enum: [member, admin, owner] }
+        created_at: { type: string, format: date-time }
+    CreateTeamRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+    RenameTeamRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+    AddMemberRequest:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string, format: email }
+        role: { type: string, enum: [member, admin, owner], default: member }
+    ChangeMemberRoleRequest:
+      type: object
+      required: [role]
+      properties:
+        role: { type: string, enum: [member, admin, owner] }
+    CreateUserRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 12 }
+        role: { type: string, enum: [member, admin, owner], default: member }
+    SetUserRoleRequest:
+      type: object
+      required: [role]
+      properties:
+        role: { type: string, enum: [member, admin, owner] }
 
+    # ─── Databases ────────────────────────────────────────────────────────────
+    Database:
+      type: object
+      required: [id, environment_id, name, engine, version, server_id, volume_name, network, root_user, require_password, status, created_at, updated_at]
+      properties:
+        id: { type: string, description: db_… prefixed ID. }
+        environment_id: { type: string }
+        name: { type: string }
+        engine: { type: string, enum: [postgresql, mysql, mariadb, mongodb, redis, valkey] }
+        version: { type: string }
+        server_id: { type: string }
+        cpu_limit: { type: [number, "null"], description: Fractional cores; null/0 = no limit. }
+        memory_limit_mb: { type: [integer, "null"] }
+        volume_name: { type: string, description: "Deterministic: cypher-db-<id>." }
+        expose_port: { type: [integer, "null"], description: Host port; null = private only. }
+        network: { type: string }
+        root_user: { type: string }
+        root_password: { type: string, description: Present only on create / reset; shown once. }
+        require_password: { type: boolean }
+        status: { type: string, enum: [running, provisioning, stopped, error, unknown] }
+        status_detail: { type: string }
+        desired_revision_id: { type: [string, "null"] }
+        observed_revision_id: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CreateDatabaseRequest:
+      type: object
+      required: [name, engine, server_id]
+      properties:
+        name: { type: string }
+        engine: { type: string, enum: [postgresql, mysql, mariadb, mongodb, redis, valkey] }
+        version: { type: string, description: Defaulted from the engine matrix when omitted. }
+        server_id: { type: string }
+        cpu_limit: { type: number, description: Fractional cores; 0 = no limit. }
+        memory_limit_mb: { type: integer }
+        expose_port: { type: integer, description: 0 or omitted = private only. }
+        require_password: { type: boolean }
+    CreateDatabaseResponse:
+      type: object
+      required: [database, root_password]
+      properties:
+        database: { $ref: "#/components/schemas/Database" }
+        root_password: { type: string, description: Shown exactly once. }
+    PatchDatabaseRequest:
+      type: object
+      properties:
+        name: { type: string }
+        version: { type: string }
+        cpu_limit: { type: number }
+        memory_limit_mb: { type: integer }
+        expose_port: { type: integer }
+    ResetPasswordResponse:
+      type: object
+      required: [root_password]
+      properties:
+        root_password: { type: string, description: Shown exactly once. }
+    ConnectionInfo:
+      type: object
+      required: [host, port, password_hint, internal_host]
+      properties:
+        host: { type: string }
+        port: { type: integer }
+        user: { type: string }
+        password_hint: { type: string, description: Never the password itself. }
+        internal_host: { type: string, description: Address on the environment's private network. }
+
+    # ─── Backups ──────────────────────────────────────────────────────────────
+    BackupTarget:
+      type: object
+      required: [id, name, endpoint, bucket, region, path_prefix, created_at, updated_at]
+      properties:
+        id: { type: string, description: bt_… prefixed ID. }
+        name: { type: string }
+        endpoint: { type: string }
+        bucket: { type: string }
+        region: { type: string }
+        path_prefix: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CreateBackupTargetRequest:
+      type: object
+      required: [name, endpoint, bucket, access_key, secret_key]
+      properties:
+        name: { type: string }
+        endpoint: { type: string }
+        bucket: { type: string }
+        region: { type: string }
+        access_key: { type: string, description: Sealed at rest; never returned. }
+        secret_key: { type: string, description: Sealed at rest; never returned. }
+        path_prefix: { type: string }
+    DatabaseBackup:
+      type: object
+      required: [id, database_id, target_id, schedule, retention_count, enabled, created_at, updated_at]
+      properties:
+        id: { type: string, description: bak_… prefixed ID. }
+        database_id: { type: string }
+        target_id: { type: string }
+        schedule: { type: string, description: 5-field cron. }
+        retention_count: { type: integer }
+        enabled: { type: boolean }
+        last_run_at: { type: [string, "null"], format: date-time }
+        last_status: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CreateDatabaseBackupRequest:
+      type: object
+      required: [target_id, schedule]
+      properties:
+        target_id: { type: string }
+        schedule: { type: string, description: 5-field cron. }
+        retention_count: { type: integer }
+        enabled: { type: boolean, default: true }
+    BackupRecord:
+      type: object
+      required: [id, database_backup_id, size_bytes, status, started_at, created_at]
+      properties:
+        id: { type: string, description: br_… prefixed ID. }
+        database_backup_id: { type: string }
+        object_key: { type: string }
+        size_bytes: { type: integer, format: int64 }
+        status: { type: string, enum: [running, succeeded, failed] }
+        detail: { type: string }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+    RunBackupResponse:
+      type: object
+      required: [record]
+      properties:
+        record: { $ref: "#/components/schemas/BackupRecord" }
+    RestoreRequest:
+      type: object
+      required: [backup_record_id, confirm]
+      properties:
+        backup_record_id: { type: string }
+        confirm: { type: boolean, description: Must be true — restore overwrites the database. }
+
+    # ─── Previews ───────────────────────────────────────────────────────────────
+    Preview:
+      type: object
+      required: [id, source_app_id, environment_id, pr_number, pr_branch, domain, status, created_at]
+      properties:
+        id: { type: string, description: prv_… prefixed ID. }
+        source_app_id: { type: string }
+        environment_id: { type: string, description: The child environment created for this preview. }
+        preview_app_id: { type: [string, "null"], description: The cloned application. }
+        pr_number: { type: integer }
+        pr_branch: { type: string }
+        domain: { type: string, description: "pr-<n>.<base>." }
+        status: { type: string, enum: [creating, running, error, destroying] }
+        expires_at: { type: [string, "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+
+    # ─── Notifiers ──────────────────────────────────────────────────────────────
+    Notifier:
+      type: object
+      required: [id, project_id, name, channel, events, enabled, config_hint, created_at, updated_at]
+      properties:
+        id: { type: string, description: ntf_… prefixed ID. }
+        project_id: { type: string }
+        name: { type: string }
+        channel: { type: string, enum: [email, discord, slack, telegram] }
+        events:
+          type: array
+          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed] }
+        enabled: { type: boolean }
+        config_hint: { type: string, description: Masked summary of the sealed channel config; never the secret. }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CreateNotifierRequest:
+      type: object
+      required: [name, channel, config, events]
+      properties:
+        name: { type: string }
+        channel: { type: string, enum: [email, discord, slack, telegram] }
+        config:
+          type: object
+          description: >-
+            Channel-specific config, sealed at rest and never returned. email:
+            {smtp_host, smtp_port, username, password, from, to}; discord/slack:
+            {webhook_url}; telegram: {bot_token, chat_id}.
+          additionalProperties: true
+        events:
+          type: array
+          minItems: 1
+          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed] }
+        enabled: { type: boolean, default: true }
+    PatchNotifierRequest:
+      type: object
+      properties:
+        name: { type: string }
+        events:
+          type: array
+          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed] }
+        enabled: { type: boolean }
+        config:
+          type: object
+          description: Supply to reseal the channel config wholesale; omit to keep the existing sealed value.
+          additionalProperties: true
+
+    # ─── Scheduled tasks ──────────────────────────────────────────────────────
+    ScheduledTask:
+      type: object
+      required: [id, application_id, name, schedule, command, enabled, created_at, updated_at]
+      properties:
+        id: { type: string, description: sch_… prefixed ID. }
+        application_id: { type: string }
+        name: { type: string }
+        schedule: { type: string, description: 5-field cron. }
+        command:
+          type: array
+          items: { type: string }
+          description: argv, passed straight to exec (never a shell string; use ["sh","-c","…"] for a shell).
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CreateScheduledTaskRequest:
+      type: object
+      required: [name, schedule, command]
+      properties:
+        name: { type: string }
+        schedule: { type: string, description: 5-field cron. }
+        command:
+          type: array
+          minItems: 1
+          items: { type: string }
+        enabled: { type: boolean, default: true }
+    ScheduledTaskRun:
+      type: object
+      required: [id, task_id, started_at, status]
+      properties:
+        id: { type: string, description: str_… prefixed ID. }
+        task_id: { type: string }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
+        exit_code: { type: [integer, "null"] }
+        status: { type: string, enum: [running, succeeded, failed] }
+        output_tail: { type: string, description: Capped stdout+stderr tail. }
 security:
   - bearer: []
