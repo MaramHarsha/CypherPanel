@@ -19,14 +19,24 @@ import { Route as AppServersServerIdRouteImport } from './routes/_app/servers/$s
 import { Route as AppSettingsIndexRouteImport } from './routes/_app/settings/index'
 import { Route as AppSettingsBackupTargetsRouteImport } from './routes/_app/settings/backup-targets'
 import { Route as AppSettingsDeployKeysRouteImport } from './routes/_app/settings/deploy-keys'
+import { Route as AppSettingsTeamsRouteImport } from './routes/_app/settings/teams'
+import { Route as AppSettingsUsersRouteImport } from './routes/_app/settings/users'
 import { Route as AppTemplatesIndexRouteImport } from './routes/_app/templates/index'
 import { Route as AppProjectsProjectIdIndexRouteImport } from './routes/_app/projects/$projectId/index'
+import { Route as AppProjectsProjectIdSettingsRouteImport } from './routes/_app/projects/$projectId/settings'
 import { Route as AppProjectsProjectIdApplicationsAppIdRouteImport } from './routes/_app/projects/$projectId/applications/$appId'
+import { Route as AppProjectsProjectIdDatabasesDbIdRouteImport } from './routes/_app/projects/$projectId/databases/$dbId'
 import { Route as AppProjectsProjectIdApplicationsAppIdIndexRouteImport } from './routes/_app/projects/$projectId/applications/$appId/index'
 import { Route as AppProjectsProjectIdApplicationsAppIdDeploymentsRouteImport } from './routes/_app/projects/$projectId/applications/$appId/deployments'
 import { Route as AppProjectsProjectIdApplicationsAppIdEnvRouteImport } from './routes/_app/projects/$projectId/applications/$appId/env'
 import { Route as AppProjectsProjectIdApplicationsAppIdLogsRouteImport } from './routes/_app/projects/$projectId/applications/$appId/logs'
+import { Route as AppProjectsProjectIdApplicationsAppIdPreviewsRouteImport } from './routes/_app/projects/$projectId/applications/$appId/previews'
 import { Route as AppProjectsProjectIdApplicationsAppIdSettingsRouteImport } from './routes/_app/projects/$projectId/applications/$appId/settings'
+import { Route as AppProjectsProjectIdApplicationsAppIdTasksRouteImport } from './routes/_app/projects/$projectId/applications/$appId/tasks'
+import { Route as AppProjectsProjectIdDatabasesDbIdIndexRouteImport } from './routes/_app/projects/$projectId/databases/$dbId/index'
+import { Route as AppProjectsProjectIdDatabasesDbIdBackupsRouteImport } from './routes/_app/projects/$projectId/databases/$dbId/backups'
+import { Route as AppProjectsProjectIdDatabasesDbIdConnectionRouteImport } from './routes/_app/projects/$projectId/databases/$dbId/connection'
+import { Route as AppProjectsProjectIdDatabasesDbIdSettingsRouteImport } from './routes/_app/projects/$projectId/databases/$dbId/settings'
 
 const AppRoute = AppRouteImport.update({
   id: '/_app',
@@ -78,6 +88,16 @@ const AppSettingsDeployKeysRoute = AppSettingsDeployKeysRouteImport.update({
   path: '/deploy-keys',
   getParentRoute: () => AppSettingsRoute,
 } as any)
+const AppSettingsTeamsRoute = AppSettingsTeamsRouteImport.update({
+  id: '/teams',
+  path: '/teams',
+  getParentRoute: () => AppSettingsRoute,
+} as any)
+const AppSettingsUsersRoute = AppSettingsUsersRouteImport.update({
+  id: '/users',
+  path: '/users',
+  getParentRoute: () => AppSettingsRoute,
+} as any)
 const AppTemplatesIndexRoute = AppTemplatesIndexRouteImport.update({
   id: '/templates/',
   path: '/templates/',
@@ -89,10 +109,22 @@ const AppProjectsProjectIdIndexRoute =
     path: '/projects/$projectId/',
     getParentRoute: () => AppRoute,
   } as any)
+const AppProjectsProjectIdSettingsRoute =
+  AppProjectsProjectIdSettingsRouteImport.update({
+    id: '/projects/$projectId/settings',
+    path: '/projects/$projectId/settings',
+    getParentRoute: () => AppRoute,
+  } as any)
 const AppProjectsProjectIdApplicationsAppIdRoute =
   AppProjectsProjectIdApplicationsAppIdRouteImport.update({
     id: '/projects/$projectId/applications/$appId',
     path: '/projects/$projectId/applications/$appId',
+    getParentRoute: () => AppRoute,
+  } as any)
+const AppProjectsProjectIdDatabasesDbIdRoute =
+  AppProjectsProjectIdDatabasesDbIdRouteImport.update({
+    id: '/projects/$projectId/databases/$dbId',
+    path: '/projects/$projectId/databases/$dbId',
     getParentRoute: () => AppRoute,
   } as any)
 const AppProjectsProjectIdApplicationsAppIdIndexRoute =
@@ -119,11 +151,47 @@ const AppProjectsProjectIdApplicationsAppIdLogsRoute =
     path: '/logs',
     getParentRoute: () => AppProjectsProjectIdApplicationsAppIdRoute,
   } as any)
+const AppProjectsProjectIdApplicationsAppIdPreviewsRoute =
+  AppProjectsProjectIdApplicationsAppIdPreviewsRouteImport.update({
+    id: '/previews',
+    path: '/previews',
+    getParentRoute: () => AppProjectsProjectIdApplicationsAppIdRoute,
+  } as any)
 const AppProjectsProjectIdApplicationsAppIdSettingsRoute =
   AppProjectsProjectIdApplicationsAppIdSettingsRouteImport.update({
     id: '/settings',
     path: '/settings',
     getParentRoute: () => AppProjectsProjectIdApplicationsAppIdRoute,
+  } as any)
+const AppProjectsProjectIdApplicationsAppIdTasksRoute =
+  AppProjectsProjectIdApplicationsAppIdTasksRouteImport.update({
+    id: '/tasks',
+    path: '/tasks',
+    getParentRoute: () => AppProjectsProjectIdApplicationsAppIdRoute,
+  } as any)
+const AppProjectsProjectIdDatabasesDbIdIndexRoute =
+  AppProjectsProjectIdDatabasesDbIdIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => AppProjectsProjectIdDatabasesDbIdRoute,
+  } as any)
+const AppProjectsProjectIdDatabasesDbIdBackupsRoute =
+  AppProjectsProjectIdDatabasesDbIdBackupsRouteImport.update({
+    id: '/backups',
+    path: '/backups',
+    getParentRoute: () => AppProjectsProjectIdDatabasesDbIdRoute,
+  } as any)
+const AppProjectsProjectIdDatabasesDbIdConnectionRoute =
+  AppProjectsProjectIdDatabasesDbIdConnectionRouteImport.update({
+    id: '/connection',
+    path: '/connection',
+    getParentRoute: () => AppProjectsProjectIdDatabasesDbIdRoute,
+  } as any)
+const AppProjectsProjectIdDatabasesDbIdSettingsRoute =
+  AppProjectsProjectIdDatabasesDbIdSettingsRouteImport.update({
+    id: '/settings',
+    path: '/settings',
+    getParentRoute: () => AppProjectsProjectIdDatabasesDbIdRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
@@ -133,17 +201,27 @@ export interface FileRoutesByFullPath {
   '/servers/$serverId': typeof AppServersServerIdRoute
   '/settings/backup-targets': typeof AppSettingsBackupTargetsRoute
   '/settings/deploy-keys': typeof AppSettingsDeployKeysRoute
+  '/settings/teams': typeof AppSettingsTeamsRoute
+  '/settings/users': typeof AppSettingsUsersRoute
   '/projects/': typeof AppProjectsIndexRoute
   '/servers/': typeof AppServersIndexRoute
   '/settings/': typeof AppSettingsIndexRoute
   '/templates/': typeof AppTemplatesIndexRoute
+  '/projects/$projectId/settings': typeof AppProjectsProjectIdSettingsRoute
   '/projects/$projectId/': typeof AppProjectsProjectIdIndexRoute
   '/projects/$projectId/applications/$appId': typeof AppProjectsProjectIdApplicationsAppIdRouteWithChildren
+  '/projects/$projectId/databases/$dbId': typeof AppProjectsProjectIdDatabasesDbIdRouteWithChildren
   '/projects/$projectId/applications/$appId/deployments': typeof AppProjectsProjectIdApplicationsAppIdDeploymentsRoute
   '/projects/$projectId/applications/$appId/env': typeof AppProjectsProjectIdApplicationsAppIdEnvRoute
   '/projects/$projectId/applications/$appId/logs': typeof AppProjectsProjectIdApplicationsAppIdLogsRoute
+  '/projects/$projectId/applications/$appId/previews': typeof AppProjectsProjectIdApplicationsAppIdPreviewsRoute
   '/projects/$projectId/applications/$appId/settings': typeof AppProjectsProjectIdApplicationsAppIdSettingsRoute
+  '/projects/$projectId/applications/$appId/tasks': typeof AppProjectsProjectIdApplicationsAppIdTasksRoute
+  '/projects/$projectId/databases/$dbId/backups': typeof AppProjectsProjectIdDatabasesDbIdBackupsRoute
+  '/projects/$projectId/databases/$dbId/connection': typeof AppProjectsProjectIdDatabasesDbIdConnectionRoute
+  '/projects/$projectId/databases/$dbId/settings': typeof AppProjectsProjectIdDatabasesDbIdSettingsRoute
   '/projects/$projectId/applications/$appId/': typeof AppProjectsProjectIdApplicationsAppIdIndexRoute
+  '/projects/$projectId/databases/$dbId/': typeof AppProjectsProjectIdDatabasesDbIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
@@ -151,16 +229,25 @@ export interface FileRoutesByTo {
   '/servers/$serverId': typeof AppServersServerIdRoute
   '/settings/backup-targets': typeof AppSettingsBackupTargetsRoute
   '/settings/deploy-keys': typeof AppSettingsDeployKeysRoute
+  '/settings/teams': typeof AppSettingsTeamsRoute
+  '/settings/users': typeof AppSettingsUsersRoute
   '/projects': typeof AppProjectsIndexRoute
   '/servers': typeof AppServersIndexRoute
   '/settings': typeof AppSettingsIndexRoute
   '/templates': typeof AppTemplatesIndexRoute
+  '/projects/$projectId/settings': typeof AppProjectsProjectIdSettingsRoute
   '/projects/$projectId': typeof AppProjectsProjectIdIndexRoute
   '/projects/$projectId/applications/$appId/deployments': typeof AppProjectsProjectIdApplicationsAppIdDeploymentsRoute
   '/projects/$projectId/applications/$appId/env': typeof AppProjectsProjectIdApplicationsAppIdEnvRoute
   '/projects/$projectId/applications/$appId/logs': typeof AppProjectsProjectIdApplicationsAppIdLogsRoute
+  '/projects/$projectId/applications/$appId/previews': typeof AppProjectsProjectIdApplicationsAppIdPreviewsRoute
   '/projects/$projectId/applications/$appId/settings': typeof AppProjectsProjectIdApplicationsAppIdSettingsRoute
+  '/projects/$projectId/applications/$appId/tasks': typeof AppProjectsProjectIdApplicationsAppIdTasksRoute
+  '/projects/$projectId/databases/$dbId/backups': typeof AppProjectsProjectIdDatabasesDbIdBackupsRoute
+  '/projects/$projectId/databases/$dbId/connection': typeof AppProjectsProjectIdDatabasesDbIdConnectionRoute
+  '/projects/$projectId/databases/$dbId/settings': typeof AppProjectsProjectIdDatabasesDbIdSettingsRoute
   '/projects/$projectId/applications/$appId': typeof AppProjectsProjectIdApplicationsAppIdIndexRoute
+  '/projects/$projectId/databases/$dbId': typeof AppProjectsProjectIdDatabasesDbIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -171,17 +258,27 @@ export interface FileRoutesById {
   '/_app/servers/$serverId': typeof AppServersServerIdRoute
   '/_app/settings/backup-targets': typeof AppSettingsBackupTargetsRoute
   '/_app/settings/deploy-keys': typeof AppSettingsDeployKeysRoute
+  '/_app/settings/teams': typeof AppSettingsTeamsRoute
+  '/_app/settings/users': typeof AppSettingsUsersRoute
   '/_app/projects/': typeof AppProjectsIndexRoute
   '/_app/servers/': typeof AppServersIndexRoute
   '/_app/settings/': typeof AppSettingsIndexRoute
   '/_app/templates/': typeof AppTemplatesIndexRoute
+  '/_app/projects/$projectId/settings': typeof AppProjectsProjectIdSettingsRoute
   '/_app/projects/$projectId/': typeof AppProjectsProjectIdIndexRoute
   '/_app/projects/$projectId/applications/$appId': typeof AppProjectsProjectIdApplicationsAppIdRouteWithChildren
+  '/_app/projects/$projectId/databases/$dbId': typeof AppProjectsProjectIdDatabasesDbIdRouteWithChildren
   '/_app/projects/$projectId/applications/$appId/deployments': typeof AppProjectsProjectIdApplicationsAppIdDeploymentsRoute
   '/_app/projects/$projectId/applications/$appId/env': typeof AppProjectsProjectIdApplicationsAppIdEnvRoute
   '/_app/projects/$projectId/applications/$appId/logs': typeof AppProjectsProjectIdApplicationsAppIdLogsRoute
+  '/_app/projects/$projectId/applications/$appId/previews': typeof AppProjectsProjectIdApplicationsAppIdPreviewsRoute
   '/_app/projects/$projectId/applications/$appId/settings': typeof AppProjectsProjectIdApplicationsAppIdSettingsRoute
+  '/_app/projects/$projectId/applications/$appId/tasks': typeof AppProjectsProjectIdApplicationsAppIdTasksRoute
+  '/_app/projects/$projectId/databases/$dbId/backups': typeof AppProjectsProjectIdDatabasesDbIdBackupsRoute
+  '/_app/projects/$projectId/databases/$dbId/connection': typeof AppProjectsProjectIdDatabasesDbIdConnectionRoute
+  '/_app/projects/$projectId/databases/$dbId/settings': typeof AppProjectsProjectIdDatabasesDbIdSettingsRoute
   '/_app/projects/$projectId/applications/$appId/': typeof AppProjectsProjectIdApplicationsAppIdIndexRoute
+  '/_app/projects/$projectId/databases/$dbId/': typeof AppProjectsProjectIdDatabasesDbIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -192,17 +289,27 @@ export interface FileRouteTypes {
     | '/servers/$serverId'
     | '/settings/backup-targets'
     | '/settings/deploy-keys'
+    | '/settings/teams'
+    | '/settings/users'
     | '/projects/'
     | '/servers/'
     | '/settings/'
     | '/templates/'
+    | '/projects/$projectId/settings'
     | '/projects/$projectId/'
     | '/projects/$projectId/applications/$appId'
+    | '/projects/$projectId/databases/$dbId'
     | '/projects/$projectId/applications/$appId/deployments'
     | '/projects/$projectId/applications/$appId/env'
     | '/projects/$projectId/applications/$appId/logs'
+    | '/projects/$projectId/applications/$appId/previews'
     | '/projects/$projectId/applications/$appId/settings'
+    | '/projects/$projectId/applications/$appId/tasks'
+    | '/projects/$projectId/databases/$dbId/backups'
+    | '/projects/$projectId/databases/$dbId/connection'
+    | '/projects/$projectId/databases/$dbId/settings'
     | '/projects/$projectId/applications/$appId/'
+    | '/projects/$projectId/databases/$dbId/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
@@ -210,16 +317,25 @@ export interface FileRouteTypes {
     | '/servers/$serverId'
     | '/settings/backup-targets'
     | '/settings/deploy-keys'
+    | '/settings/teams'
+    | '/settings/users'
     | '/projects'
     | '/servers'
     | '/settings'
     | '/templates'
+    | '/projects/$projectId/settings'
     | '/projects/$projectId'
     | '/projects/$projectId/applications/$appId/deployments'
     | '/projects/$projectId/applications/$appId/env'
     | '/projects/$projectId/applications/$appId/logs'
+    | '/projects/$projectId/applications/$appId/previews'
     | '/projects/$projectId/applications/$appId/settings'
+    | '/projects/$projectId/applications/$appId/tasks'
+    | '/projects/$projectId/databases/$dbId/backups'
+    | '/projects/$projectId/databases/$dbId/connection'
+    | '/projects/$projectId/databases/$dbId/settings'
     | '/projects/$projectId/applications/$appId'
+    | '/projects/$projectId/databases/$dbId'
   id:
     | '__root__'
     | '/_app'
@@ -229,17 +345,27 @@ export interface FileRouteTypes {
     | '/_app/servers/$serverId'
     | '/_app/settings/backup-targets'
     | '/_app/settings/deploy-keys'
+    | '/_app/settings/teams'
+    | '/_app/settings/users'
     | '/_app/projects/'
     | '/_app/servers/'
     | '/_app/settings/'
     | '/_app/templates/'
+    | '/_app/projects/$projectId/settings'
     | '/_app/projects/$projectId/'
     | '/_app/projects/$projectId/applications/$appId'
+    | '/_app/projects/$projectId/databases/$dbId'
     | '/_app/projects/$projectId/applications/$appId/deployments'
     | '/_app/projects/$projectId/applications/$appId/env'
     | '/_app/projects/$projectId/applications/$appId/logs'
+    | '/_app/projects/$projectId/applications/$appId/previews'
     | '/_app/projects/$projectId/applications/$appId/settings'
+    | '/_app/projects/$projectId/applications/$appId/tasks'
+    | '/_app/projects/$projectId/databases/$dbId/backups'
+    | '/_app/projects/$projectId/databases/$dbId/connection'
+    | '/_app/projects/$projectId/databases/$dbId/settings'
     | '/_app/projects/$projectId/applications/$appId/'
+    | '/_app/projects/$projectId/databases/$dbId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -319,6 +445,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSettingsDeployKeysRouteImport
       parentRoute: typeof AppSettingsRoute
     }
+    '/_app/settings/teams': {
+      id: '/_app/settings/teams'
+      path: '/teams'
+      fullPath: '/settings/teams'
+      preLoaderRoute: typeof AppSettingsTeamsRouteImport
+      parentRoute: typeof AppSettingsRoute
+    }
+    '/_app/settings/users': {
+      id: '/_app/settings/users'
+      path: '/users'
+      fullPath: '/settings/users'
+      preLoaderRoute: typeof AppSettingsUsersRouteImport
+      parentRoute: typeof AppSettingsRoute
+    }
     '/_app/templates/': {
       id: '/_app/templates/'
       path: '/templates'
@@ -333,11 +473,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppProjectsProjectIdIndexRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/projects/$projectId/settings': {
+      id: '/_app/projects/$projectId/settings'
+      path: '/projects/$projectId/settings'
+      fullPath: '/projects/$projectId/settings'
+      preLoaderRoute: typeof AppProjectsProjectIdSettingsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/projects/$projectId/applications/$appId': {
       id: '/_app/projects/$projectId/applications/$appId'
       path: '/projects/$projectId/applications/$appId'
       fullPath: '/projects/$projectId/applications/$appId'
       preLoaderRoute: typeof AppProjectsProjectIdApplicationsAppIdRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/projects/$projectId/databases/$dbId': {
+      id: '/_app/projects/$projectId/databases/$dbId'
+      path: '/projects/$projectId/databases/$dbId'
+      fullPath: '/projects/$projectId/databases/$dbId'
+      preLoaderRoute: typeof AppProjectsProjectIdDatabasesDbIdRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/projects/$projectId/applications/$appId/': {
@@ -368,6 +522,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppProjectsProjectIdApplicationsAppIdLogsRouteImport
       parentRoute: typeof AppProjectsProjectIdApplicationsAppIdRoute
     }
+    '/_app/projects/$projectId/applications/$appId/previews': {
+      id: '/_app/projects/$projectId/applications/$appId/previews'
+      path: '/previews'
+      fullPath: '/projects/$projectId/applications/$appId/previews'
+      preLoaderRoute: typeof AppProjectsProjectIdApplicationsAppIdPreviewsRouteImport
+      parentRoute: typeof AppProjectsProjectIdApplicationsAppIdRoute
+    }
     '/_app/projects/$projectId/applications/$appId/settings': {
       id: '/_app/projects/$projectId/applications/$appId/settings'
       path: '/settings'
@@ -375,18 +536,57 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppProjectsProjectIdApplicationsAppIdSettingsRouteImport
       parentRoute: typeof AppProjectsProjectIdApplicationsAppIdRoute
     }
+    '/_app/projects/$projectId/applications/$appId/tasks': {
+      id: '/_app/projects/$projectId/applications/$appId/tasks'
+      path: '/tasks'
+      fullPath: '/projects/$projectId/applications/$appId/tasks'
+      preLoaderRoute: typeof AppProjectsProjectIdApplicationsAppIdTasksRouteImport
+      parentRoute: typeof AppProjectsProjectIdApplicationsAppIdRoute
+    }
+    '/_app/projects/$projectId/databases/$dbId/': {
+      id: '/_app/projects/$projectId/databases/$dbId/'
+      path: '/'
+      fullPath: '/projects/$projectId/databases/$dbId/'
+      preLoaderRoute: typeof AppProjectsProjectIdDatabasesDbIdIndexRouteImport
+      parentRoute: typeof AppProjectsProjectIdDatabasesDbIdRoute
+    }
+    '/_app/projects/$projectId/databases/$dbId/backups': {
+      id: '/_app/projects/$projectId/databases/$dbId/backups'
+      path: '/backups'
+      fullPath: '/projects/$projectId/databases/$dbId/backups'
+      preLoaderRoute: typeof AppProjectsProjectIdDatabasesDbIdBackupsRouteImport
+      parentRoute: typeof AppProjectsProjectIdDatabasesDbIdRoute
+    }
+    '/_app/projects/$projectId/databases/$dbId/connection': {
+      id: '/_app/projects/$projectId/databases/$dbId/connection'
+      path: '/connection'
+      fullPath: '/projects/$projectId/databases/$dbId/connection'
+      preLoaderRoute: typeof AppProjectsProjectIdDatabasesDbIdConnectionRouteImport
+      parentRoute: typeof AppProjectsProjectIdDatabasesDbIdRoute
+    }
+    '/_app/projects/$projectId/databases/$dbId/settings': {
+      id: '/_app/projects/$projectId/databases/$dbId/settings'
+      path: '/settings'
+      fullPath: '/projects/$projectId/databases/$dbId/settings'
+      preLoaderRoute: typeof AppProjectsProjectIdDatabasesDbIdSettingsRouteImport
+      parentRoute: typeof AppProjectsProjectIdDatabasesDbIdRoute
+    }
   }
 }
 
 interface AppSettingsRouteChildren {
   AppSettingsBackupTargetsRoute: typeof AppSettingsBackupTargetsRoute
   AppSettingsDeployKeysRoute: typeof AppSettingsDeployKeysRoute
+  AppSettingsTeamsRoute: typeof AppSettingsTeamsRoute
+  AppSettingsUsersRoute: typeof AppSettingsUsersRoute
   AppSettingsIndexRoute: typeof AppSettingsIndexRoute
 }
 
 const AppSettingsRouteChildren: AppSettingsRouteChildren = {
   AppSettingsBackupTargetsRoute: AppSettingsBackupTargetsRoute,
   AppSettingsDeployKeysRoute: AppSettingsDeployKeysRoute,
+  AppSettingsTeamsRoute: AppSettingsTeamsRoute,
+  AppSettingsUsersRoute: AppSettingsUsersRoute,
   AppSettingsIndexRoute: AppSettingsIndexRoute,
 }
 
@@ -398,7 +598,9 @@ interface AppProjectsProjectIdApplicationsAppIdRouteChildren {
   AppProjectsProjectIdApplicationsAppIdDeploymentsRoute: typeof AppProjectsProjectIdApplicationsAppIdDeploymentsRoute
   AppProjectsProjectIdApplicationsAppIdEnvRoute: typeof AppProjectsProjectIdApplicationsAppIdEnvRoute
   AppProjectsProjectIdApplicationsAppIdLogsRoute: typeof AppProjectsProjectIdApplicationsAppIdLogsRoute
+  AppProjectsProjectIdApplicationsAppIdPreviewsRoute: typeof AppProjectsProjectIdApplicationsAppIdPreviewsRoute
   AppProjectsProjectIdApplicationsAppIdSettingsRoute: typeof AppProjectsProjectIdApplicationsAppIdSettingsRoute
+  AppProjectsProjectIdApplicationsAppIdTasksRoute: typeof AppProjectsProjectIdApplicationsAppIdTasksRoute
   AppProjectsProjectIdApplicationsAppIdIndexRoute: typeof AppProjectsProjectIdApplicationsAppIdIndexRoute
 }
 
@@ -410,8 +612,12 @@ const AppProjectsProjectIdApplicationsAppIdRouteChildren: AppProjectsProjectIdAp
       AppProjectsProjectIdApplicationsAppIdEnvRoute,
     AppProjectsProjectIdApplicationsAppIdLogsRoute:
       AppProjectsProjectIdApplicationsAppIdLogsRoute,
+    AppProjectsProjectIdApplicationsAppIdPreviewsRoute:
+      AppProjectsProjectIdApplicationsAppIdPreviewsRoute,
     AppProjectsProjectIdApplicationsAppIdSettingsRoute:
       AppProjectsProjectIdApplicationsAppIdSettingsRoute,
+    AppProjectsProjectIdApplicationsAppIdTasksRoute:
+      AppProjectsProjectIdApplicationsAppIdTasksRoute,
     AppProjectsProjectIdApplicationsAppIdIndexRoute:
       AppProjectsProjectIdApplicationsAppIdIndexRoute,
   }
@@ -421,6 +627,30 @@ const AppProjectsProjectIdApplicationsAppIdRouteWithChildren =
     AppProjectsProjectIdApplicationsAppIdRouteChildren,
   )
 
+interface AppProjectsProjectIdDatabasesDbIdRouteChildren {
+  AppProjectsProjectIdDatabasesDbIdBackupsRoute: typeof AppProjectsProjectIdDatabasesDbIdBackupsRoute
+  AppProjectsProjectIdDatabasesDbIdConnectionRoute: typeof AppProjectsProjectIdDatabasesDbIdConnectionRoute
+  AppProjectsProjectIdDatabasesDbIdSettingsRoute: typeof AppProjectsProjectIdDatabasesDbIdSettingsRoute
+  AppProjectsProjectIdDatabasesDbIdIndexRoute: typeof AppProjectsProjectIdDatabasesDbIdIndexRoute
+}
+
+const AppProjectsProjectIdDatabasesDbIdRouteChildren: AppProjectsProjectIdDatabasesDbIdRouteChildren =
+  {
+    AppProjectsProjectIdDatabasesDbIdBackupsRoute:
+      AppProjectsProjectIdDatabasesDbIdBackupsRoute,
+    AppProjectsProjectIdDatabasesDbIdConnectionRoute:
+      AppProjectsProjectIdDatabasesDbIdConnectionRoute,
+    AppProjectsProjectIdDatabasesDbIdSettingsRoute:
+      AppProjectsProjectIdDatabasesDbIdSettingsRoute,
+    AppProjectsProjectIdDatabasesDbIdIndexRoute:
+      AppProjectsProjectIdDatabasesDbIdIndexRoute,
+  }
+
+const AppProjectsProjectIdDatabasesDbIdRouteWithChildren =
+  AppProjectsProjectIdDatabasesDbIdRoute._addFileChildren(
+    AppProjectsProjectIdDatabasesDbIdRouteChildren,
+  )
+
 interface AppRouteChildren {
   AppSettingsRoute: typeof AppSettingsRouteWithChildren
   AppIndexRoute: typeof AppIndexRoute
@@ -428,8 +658,10 @@ interface AppRouteChildren {
   AppProjectsIndexRoute: typeof AppProjectsIndexRoute
   AppServersIndexRoute: typeof AppServersIndexRoute
   AppTemplatesIndexRoute: typeof AppTemplatesIndexRoute
+  AppProjectsProjectIdSettingsRoute: typeof AppProjectsProjectIdSettingsRoute
   AppProjectsProjectIdIndexRoute: typeof AppProjectsProjectIdIndexRoute
   AppProjectsProjectIdApplicationsAppIdRoute: typeof AppProjectsProjectIdApplicationsAppIdRouteWithChildren
+  AppProjectsProjectIdDatabasesDbIdRoute: typeof AppProjectsProjectIdDatabasesDbIdRouteWithChildren
 }
 
 const AppRouteChildren: AppRouteChildren = {
@@ -439,9 +671,12 @@ const AppRouteChildren: AppRouteChildren = {
   AppProjectsIndexRoute: AppProjectsIndexRoute,
   AppServersIndexRoute: AppServersIndexRoute,
   AppTemplatesIndexRoute: AppTemplatesIndexRoute,
+  AppProjectsProjectIdSettingsRoute: AppProjectsProjectIdSettingsRoute,
   AppProjectsProjectIdIndexRoute: AppProjectsProjectIdIndexRoute,
   AppProjectsProjectIdApplicationsAppIdRoute:
     AppProjectsProjectIdApplicationsAppIdRouteWithChildren,
+  AppProjectsProjectIdDatabasesDbIdRoute:
+    AppProjectsProjectIdDatabasesDbIdRouteWithChildren,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

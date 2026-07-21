@@ -32,6 +32,10 @@ export function normalizeStatus(s: string | undefined | null): Status {
     case "error":
     case "degraded":
       return s;
+    // A database reports "provisioning" for the same in-progress meaning apps
+    // call "deploying" — one visual vocabulary (ui-principles §5).
+    case "provisioning":
+      return "deploying";
     default:
       return "unknown";
   }

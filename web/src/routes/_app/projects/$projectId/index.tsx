@@ -1,13 +1,13 @@
 // Project home: environment switcher (tabs, not routes) + this environment's
 // resources. Empty states chain the golden path (ui-principles §11).
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { Database as DatabaseIcon, Plus } from "lucide-react";
+import { Database as DatabaseIcon, Plus, Settings as SettingsIcon } from "lucide-react";
 import { useMemo, useState, type FormEvent } from "react";
 import { useListApplications, useCreateApplication } from "@/api/gen/applications/applications";
-import { useListDatabases } from "@/api/gen/databases/databases";
+import { useCreateDatabase, useListDatabases } from "@/api/gen/databases/databases";
 import { useGetProject, useListEnvironments } from "@/api/gen/projects/projects";
 import { useListServers } from "@/api/gen/servers/servers";
-import type { Application, Database, Environment } from "@/api/gen/model";
+import type { Application, CreateDatabaseRequest, Database, Environment } from "@/api/gen/model";
 import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
 import { PageState } from "@/components/page-state";
@@ -51,7 +51,16 @@ function ProjectHome() {
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-base font-semibold text-text">{project.data?.project.name ?? "…"}</h1>
-        {activeEnv && <NewAppDialog envId={activeEnv.id} />}
+        <div className="flex items-center gap-2">
+          <Link
+            to="/projects/$projectId/settings"
+            params={{ projectId }}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[13px] text-text-mid hover:bg-raised hover:text-text"
+          >
+            <SettingsIcon className="h-3.5 w-3.5" aria-hidden /> Settings
+          </Link>
+          {activeEnv && <NewAppDialog envId={activeEnv.id} />}
+        </div>
       </div>
 
       <PageState query={envs}>
@@ -111,20 +120,24 @@ function EnvResources({ projectId, envId }: { projectId: string; envId: string }
       </section>
 
       <section className="space-y-2">
-        <Eyebrow>Databases</Eyebrow>
+        <div className="flex items-center justify-between">
+          <Eyebrow>Databases</Eyebrow>
+          <NewDatabaseDialog envId={envId} />
+        </div>
         <PageState
           query={dbs}
           empty={
             <EmptyState
               title="No databases in this environment"
-              hint="A managed database (PostgreSQL, MySQL, MongoDB, Redis …) is provisioned and backed up by CypherPanel. Create one from the API for now — the database screens arrive in the next slice."
+              hint="A managed database (PostgreSQL, MySQL, MariaDB, MongoDB, Redis, Valkey) is provisioned, credentialed, and backed up by CypherPanel."
+              action={<NewDatabaseDialog envId={envId} primary />}
             />
           }
         >
           {(list) => (
             <ul className="divide-y divide-border rounded-md border border-border bg-surface">
               {list.map((d) => (
-                <DbRow key={d.id} db={d} />
+                <DbRow key={d.id} projectId={projectId} db={d} />
               ))}
             </ul>
           )}
@@ -152,20 +165,162 @@ function AppRow({ projectId, app }: { projectId: string; app: Application }) {
   );
 }
 
-function DbRow({ db }: { db: Database }) {
+function DbRow({ projectId, db }: { projectId: string; db: Database }) {
   return (
-    <li className="flex items-center justify-between gap-3 px-4 py-3">
-      <span className="flex min-w-0 items-center gap-2.5">
-        <DatabaseIcon className="h-4 w-4 shrink-0 text-text-faint" aria-hidden />
-        <span className="flex min-w-0 flex-col">
-          <span className="truncate text-sm font-medium text-text">{db.name}</span>
-          <span className="mono truncate text-xs text-text-faint">
-            {db.engine} {db.version} · created {relativeTime(db.created_at)}
+    <li>
+      <Link
+        to="/projects/$projectId/databases/$dbId"
+        params={{ projectId, dbId: db.id }}
+        className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-raised"
+      >
+        <span className="flex min-w-0 items-center gap-2.5">
+          <DatabaseIcon className="h-4 w-4 shrink-0 text-text-faint" aria-hidden />
+          <span className="flex min-w-0 flex-col">
+            <span className="truncate text-sm font-medium text-text">{db.name}</span>
+            <span className="mono truncate text-xs text-text-faint">
+              {db.engine} {db.version} · created {relativeTime(db.created_at)}
+            </span>
           </span>
         </span>
-      </span>
-      <StatusBadge status={db.status} className="shrink-0" />
+        <StatusBadge status={db.status} className="shrink-0" />
+      </Link>
     </li>
+  );
+}
+
+const ENGINE_VERSIONS: Record<string, string[]> = {
+  postgresql: ["17", "16", "15"],
+  mysql: ["8.4", "8.0"],
+  mariadb: ["11", "10.11"],
+  mongodb: ["7", "6"],
+  redis: ["7"],
+  valkey: ["8", "7"],
+};
+
+// Simple by default (ui-principles §6): pick an engine, name it, done — server
+// and version have working defaults; limits fold into Advanced.
+function NewDatabaseDialog({ envId, primary }: { envId: string; primary?: boolean }) {
+  const navigate = useNavigate();
+  const { projectId } = Route.useParams();
+  const servers = useListServers();
+  const [name, setName] = useState("");
+  const [engine, setEngine] = useState<keyof typeof ENGINE_VERSIONS>("postgresql");
+  const [version, setVersion] = useState(ENGINE_VERSIONS.postgresql![0]!);
+  const [serverId, setServerId] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const enrolled = (servers.data ?? []).filter((s) => s.enrolled);
+  const chosenServer = serverId || enrolled[0]?.id || "";
+
+  const create = useCreateDatabase({
+    mutation: {
+      onSuccess: (res) =>
+        void navigate({ to: "/projects/$projectId/databases/$dbId", params: { projectId, dbId: res.database.id } }),
+      onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not create the database"),
+    },
+  });
+
+  if (!servers.isPending && enrolled.length === 0) {
+    return (
+      <Button variant={primary ? "primary" : "secondary"} size="sm" onClick={() => void navigate({ to: "/servers" })}>
+        <Plus className="h-3.5 w-3.5" /> New database
+      </Button>
+    );
+  }
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    create.mutate({
+      id: envId,
+      data: { name, engine: engine as CreateDatabaseRequest["engine"], version, server_id: chosenServer },
+    });
+  };
+
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button variant={primary ? "primary" : "secondary"} size="sm">
+          <Plus className="h-3.5 w-3.5" /> New database
+        </Button>
+      </DialogTrigger>
+      <DialogContent title="Create a database" description="CypherPanel provisions the engine, generates credentials, and can back it up on a schedule.">
+        <form onSubmit={submit} className="space-y-4">
+          <Field label="Name">
+            {(id) => <Input id={id} required autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="primary" />}
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Engine">
+              {(id) => (
+                <select
+                  id={id}
+                  value={engine}
+                  onChange={(e) => {
+                    const next = e.target.value as keyof typeof ENGINE_VERSIONS;
+                    setEngine(next);
+                    setVersion(ENGINE_VERSIONS[next]![0]!);
+                  }}
+                  className="h-8 w-full rounded-md border border-border bg-surface px-2 text-sm text-text"
+                >
+                  {Object.keys(ENGINE_VERSIONS).map((e) => (
+                    <option key={e} value={e}>
+                      {e}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </Field>
+            <Field label="Version">
+              {(id) => (
+                <select
+                  id={id}
+                  value={version}
+                  onChange={(e) => setVersion(e.target.value)}
+                  className="h-8 w-full rounded-md border border-border bg-surface px-2 text-sm text-text"
+                >
+                  {ENGINE_VERSIONS[engine]!.map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </Field>
+          </div>
+          {enrolled.length > 1 && (
+            <Field label="Server">
+              {(id) => (
+                <select
+                  id={id}
+                  value={chosenServer}
+                  onChange={(e) => setServerId(e.target.value)}
+                  className="h-8 w-full rounded-md border border-border bg-surface px-2 text-sm text-text"
+                >
+                  {enrolled.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </Field>
+          )}
+          {error && (
+            <p role="alert" className="text-[13px] text-danger">
+              {error}
+            </p>
+          )}
+          <div className="flex justify-end gap-2">
+            <DialogClose asChild>
+              <Button variant="ghost">Cancel</Button>
+            </DialogClose>
+            <Button type="submit" variant="primary" disabled={create.isPending}>
+              {create.isPending ? "Creating…" : "Create database"}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

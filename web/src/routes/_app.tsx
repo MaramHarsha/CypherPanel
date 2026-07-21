@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { useGetMe, useLogout } from "@/api/gen/auth/auth";
 import { Breadcrumbs } from "@/components/breadcrumbs";
+import { CommandPalette } from "@/components/command-palette";
 import { SSEBanner } from "@/components/sse-banner";
 import {
   Dropdown,
@@ -56,6 +57,7 @@ function AppShell() {
       <LiveProvider>
         <CrumbsProvider>
           <div className="flex min-h-dvh bg-bg">
+            <CommandPalette />
             <Sidebar />
             <div className="flex min-w-0 flex-1 flex-col">
               <Header />

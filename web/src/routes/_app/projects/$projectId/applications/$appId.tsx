@@ -18,6 +18,8 @@ const TABS = [
   { to: "deployments", label: "Deployments" },
   { to: "logs", label: "Logs" },
   { to: "env", label: "Env vars" },
+  { to: "previews", label: "Previews" },
+  { to: "tasks", label: "Scheduled tasks" },
   { to: "settings", label: "Settings" },
 ] as const;
 
