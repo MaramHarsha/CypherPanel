@@ -198,6 +198,14 @@ func run(log *slog.Logger) error {
 		previewMgr.RunSweeper(ctx, cfg.SweepInterval)
 	}()
 
+	// Scheduled database backups: the plane-side cron evaluator fires each
+	// enabled schedule when its next run is due (managed-databases.md §7).
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		sched.RunBackupSweeper(ctx, cfg.SweepInterval)
+	}()
+
 	if err := sched.Recover(ctx); err != nil {
 		return err
 	}

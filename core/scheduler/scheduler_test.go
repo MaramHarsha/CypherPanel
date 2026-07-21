@@ -339,6 +339,18 @@ func (f *fakeStore) GetDatabaseBackup(_ context.Context, id string) (domain.Data
 	return b, nil
 }
 
+func (f *fakeStore) ListEnabledBackupSchedules(_ context.Context) ([]domain.DatabaseBackup, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []domain.DatabaseBackup
+	for _, b := range f.schedules {
+		if b.Enabled && b.Schedule != "" {
+			out = append(out, b)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeStore) GetBackupTarget(_ context.Context, id string) (domain.BackupTarget, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -359,6 +359,17 @@ DatabaseBackup:
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 ```
 
+**Scheduled firing.** A plane-side cron evaluator (`RunBackupSweeper`, the same
+sweeper pattern as previews and the heartbeat-stale sweep, on the shared
+`CYPHERD_SWEEP_INTERVAL` — 30 s by default, finer than cron's minute
+resolution) walks every enabled schedule with a non-empty `schedule` and fires
+`RunBackup` when its next cron time — measured from `last_run_at`, or
+`created_at` if it has never run — has passed. `RunBackup` advances
+`last_run_at` when it starts, so a schedule fires at most once per due window:
+no catch-up storms, and no double-fire before a run completes. An empty
+`schedule` is manual-only (API `run` endpoint); a run missed while the plane
+was down fires on the next sweep after restart, not as a backlog.
+
 ### Backup execution
 
 Per-engine dump commands (adapted from Coolify's

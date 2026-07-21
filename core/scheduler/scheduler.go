@@ -72,6 +72,7 @@ type Store interface {
 
 	// Phase 3: database backups (managed-databases.md §7)
 	GetDatabaseBackup(ctx context.Context, id string) (domain.DatabaseBackup, error)
+	ListEnabledBackupSchedules(ctx context.Context) ([]domain.DatabaseBackup, error)
 	GetBackupTarget(ctx context.Context, id string) (domain.BackupTarget, error)
 	CreateBackupRecord(ctx context.Context, r domain.BackupRecord) (domain.BackupRecord, error)
 	GetBackupRecord(ctx context.Context, id string) (domain.BackupRecord, error)
