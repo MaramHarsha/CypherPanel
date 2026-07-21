@@ -187,6 +187,9 @@ func TestCreateValidation(t *testing.T) {
 		"negative preview ttl":    func(in *CreateInput) { in.PreviewTTLHours = -1 },
 		// TTL is persisted as int32; a value above the max would wrap on the cast.
 		"overflowing preview ttl": func(in *CreateInput) { in.PreviewTTLHours = math.MaxInt32 + 1 },
+		// Resource limits are bounded (feature-matrix V1; CWE-190 on the int32 cast).
+		"negative cpu limit":    func(in *CreateInput) { c := -1.0; in.Runtime.CPULimit = &c },
+		"overflowing mem limit": func(in *CreateInput) { m := math.MaxInt32 + 1; in.Runtime.MemoryLimitMB = &m },
 		// Health values are persisted as int32 too — same wrap risk upward.
 		"overflowing interval": func(in *CreateInput) { in.Health.IntervalSeconds = math.MaxInt32 + 1 },
 		"overflowing timeout":  func(in *CreateInput) { in.Health.TimeoutSeconds = math.MaxInt32 + 1 },

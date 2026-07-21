@@ -200,14 +200,23 @@ func (c *Client) CreateContainer(ctx context.Context, spec docker.ContainerSpec)
 	for k, v := range spec.Env {
 		env = append(env, k+"="+v)
 	}
+	hostConfig := map[string]any{
+		"NetworkMode":   spec.Network,
+		"RestartPolicy": map[string]any{"Name": "unless-stopped"},
+	}
+	// Resource limits (noisy-neighbor control); 0 = no limit. Same mapping as
+	// managed databases.
+	if spec.CPULimit > 0 {
+		hostConfig["NanoCpus"] = int64(spec.CPULimit * 1e9)
+	}
+	if spec.MemoryLimitMB > 0 {
+		hostConfig["Memory"] = int64(spec.MemoryLimitMB) * 1024 * 1024
+	}
 	body := map[string]any{
-		"Image":  spec.Image,
-		"Env":    env,
-		"Labels": spec.Labels,
-		"HostConfig": map[string]any{
-			"NetworkMode":   spec.Network,
-			"RestartPolicy": map[string]any{"Name": "unless-stopped"},
-		},
+		"Image":      spec.Image,
+		"Env":        env,
+		"Labels":     spec.Labels,
+		"HostConfig": hostConfig,
 	}
 	q := url.Values{}
 	q.Set("name", spec.Name)

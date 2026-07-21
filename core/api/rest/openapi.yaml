@@ -1685,6 +1685,12 @@ components:
         replicas:
           type: integer
           description: Fixed at 1 for v1 (multiple replicas are post-v1).
+        cpu_limit:
+          type: [number, "null"]
+          description: Fractional cores; null/omitted/0 = no limit (noisy-neighbor control).
+        memory_limit_mb:
+          type: [integer, "null"]
+          description: MiB; null/omitted/0 = no limit.
 
     AppRoute:
       type: object
@@ -1825,6 +1831,12 @@ components:
           properties:
             port:
               type: integer
+            cpu_limit:
+              type: [number, "null"]
+              description: Fractional cores; a non-positive value clears the limit.
+            memory_limit_mb:
+              type: [integer, "null"]
+              description: MiB; a non-positive value clears the limit.
         route:
           $ref: "#/components/schemas/AppRoute"
         health:

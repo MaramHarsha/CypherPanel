@@ -52,12 +52,14 @@ type Container struct {
 
 // ContainerSpec is the create request the driver builds from an AppSpec.
 type ContainerSpec struct {
-	Name    string
-	Image   string
-	Env     map[string]string
-	Network string
-	Port    uint32
-	Labels  map[string]string
+	Name          string
+	Image         string
+	Env           map[string]string
+	Network       string
+	Port          uint32
+	Labels        map[string]string
+	CPULimit      float64 // fractional cores; 0 = no limit
+	MemoryLimitMB uint32  // 0 = no limit
 }
 
 // Image is a managed image, identified by the labels the build stamped.
@@ -247,12 +249,14 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 
 	// Start the new revision alongside the old one.
 	newID, err := d.client.CreateContainer(ctx, ContainerSpec{
-		Name:    containerName(spec.GetAppId(), spec.GetRevisionId()),
-		Image:   spec.GetImage(),
-		Env:     spec.GetEnv(),
-		Network: spec.GetNetwork(),
-		Port:    spec.GetPort(),
-		Labels:  managedLabels(spec),
+		Name:          containerName(spec.GetAppId(), spec.GetRevisionId()),
+		Image:         spec.GetImage(),
+		Env:           spec.GetEnv(),
+		Network:       spec.GetNetwork(),
+		Port:          spec.GetPort(),
+		Labels:        managedLabels(spec),
+		CPULimit:      spec.GetCpuLimit(),
+		MemoryLimitMB: spec.GetMemoryLimitMb(),
 	})
 	if err != nil {
 		return status(spec.GetAppId(), currentRevision(existing), stateError, "create: "+err.Error())

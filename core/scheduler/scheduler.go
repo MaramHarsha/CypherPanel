@@ -491,7 +491,27 @@ func (s *Scheduler) buildSpec(ctx context.Context, app domain.Application, rev d
 			PathPrefix: cs.Route.PathPrefix,
 		},
 		ScheduledTasks: tasks,
+		// Resource limits are current app state (not per-revision snapshot),
+		// applied at rollout like env vars; nil = 0 = no limit on the wire.
+		CpuLimit:      cpuLimitValue(app.Runtime.CPULimit),
+		MemoryLimitMb: memLimitValue(app.Runtime.MemoryLimitMB),
 	}, nil
+}
+
+// cpuLimitValue / memLimitValue map the nullable domain limit to the wire's
+// "0 = no limit" convention.
+func cpuLimitValue(p *float64) float64 {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
+func memLimitValue(p *int) uint32 {
+	if p == nil || *p < 0 {
+		return 0
+	}
+	return uint32(*p)
 }
 
 // HandleDeployEvent advances the pipeline on a work item's terminal outcome.

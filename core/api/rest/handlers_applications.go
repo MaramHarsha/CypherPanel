@@ -50,9 +50,11 @@ type appBuildDTO struct {
 }
 
 type appRuntimeDTO struct {
-	ServerID string `json:"server_id"`
-	Port     int    `json:"port"`
-	Replicas int    `json:"replicas"`
+	ServerID      string   `json:"server_id"`
+	Port          int      `json:"port"`
+	Replicas      int      `json:"replicas"`
+	CPULimit      *float64 `json:"cpu_limit,omitempty"`
+	MemoryLimitMB *int     `json:"memory_limit_mb,omitempty"`
 }
 
 type appRouteDTO struct {
@@ -75,7 +77,7 @@ func toApplicationDTO(a domain.Application) applicationDTO {
 		Name:               a.Name,
 		Source:             appSourceDTO{Kind: a.Source.Kind, Repo: a.Source.Repo, Branch: a.Source.Branch, DeployKeyID: a.Source.DeployKeyID},
 		Build:              appBuildDTO{Kind: a.Build.Kind, DockerfilePath: a.Build.DockerfilePath, Context: a.Build.Context},
-		Runtime:            appRuntimeDTO{ServerID: a.Runtime.ServerID, Port: a.Runtime.Port, Replicas: a.Runtime.Replicas},
+		Runtime:            appRuntimeDTO{ServerID: a.Runtime.ServerID, Port: a.Runtime.Port, Replicas: a.Runtime.Replicas, CPULimit: a.Runtime.CPULimit, MemoryLimitMB: a.Runtime.MemoryLimitMB},
 		Route:              appRouteDTO{Domain: a.Route.Domain, HTTPS: a.Route.HTTPS, PathPrefix: a.Route.PathPrefix},
 		Health:             appHealthDTO{Path: a.Health.Path, IntervalSeconds: a.Health.IntervalSeconds, TimeoutSeconds: a.Health.TimeoutSeconds, Retries: a.Health.Retries},
 		WebhookID:          a.WebhookID,
@@ -105,9 +107,11 @@ type createApplicationRequest struct {
 		Context        string `json:"context"`
 	} `json:"build"`
 	Runtime struct {
-		ServerID string `json:"server_id"`
-		Port     int    `json:"port"`
-		Replicas int    `json:"replicas"`
+		ServerID      string   `json:"server_id"`
+		Port          int      `json:"port"`
+		Replicas      int      `json:"replicas"`
+		CPULimit      *float64 `json:"cpu_limit"`
+		MemoryLimitMB *int     `json:"memory_limit_mb"`
 	} `json:"runtime"`
 	Route struct {
 		Domain     string `json:"domain"`
@@ -146,7 +150,7 @@ func (r createApplicationRequest) toInput() applications.CreateInput {
 		Name:    r.Name,
 		Source:  domain.AppSource{Kind: r.Source.Kind, Repo: r.Source.Repo, Branch: r.Source.Branch, DeployKeyID: r.Source.DeployKeyID},
 		Build:   domain.AppBuild{DockerfilePath: r.Build.DockerfilePath, Context: r.Build.Context},
-		Runtime: domain.AppRuntime{ServerID: r.Runtime.ServerID, Port: r.Runtime.Port, Replicas: r.Runtime.Replicas},
+		Runtime: domain.AppRuntime{ServerID: r.Runtime.ServerID, Port: r.Runtime.Port, Replicas: r.Runtime.Replicas, CPULimit: r.Runtime.CPULimit, MemoryLimitMB: r.Runtime.MemoryLimitMB},
 		Route:   domain.AppRoute{Domain: r.Route.Domain, HTTPS: https, PathPrefix: r.Route.PathPrefix},
 		Health:  domain.AppHealth{Path: r.Health.Path, IntervalSeconds: r.Health.IntervalSeconds, TimeoutSeconds: r.Health.TimeoutSeconds, Retries: r.Health.Retries},
 		EnvVars: r.EnvVars,
@@ -266,7 +270,9 @@ type patchApplicationRequest struct {
 		Context        string `json:"context"`
 	} `json:"build"`
 	Runtime *struct {
-		Port int `json:"port"`
+		Port          *int     `json:"port"`
+		CPULimit      *float64 `json:"cpu_limit"`
+		MemoryLimitMB *int     `json:"memory_limit_mb"`
 	} `json:"runtime"`
 	Route *struct {
 		Domain     string `json:"domain"`
@@ -304,7 +310,9 @@ func (a *API) handlePatchApplication(w http.ResponseWriter, r *http.Request) {
 		in.Build = &domain.AppBuild{DockerfilePath: req.Build.DockerfilePath, Context: req.Build.Context}
 	}
 	if req.Runtime != nil {
-		in.Port = &req.Runtime.Port
+		in.Port = req.Runtime.Port // nil = unchanged; explicit 0 is rejected by validation
+		in.CPULimit = req.Runtime.CPULimit
+		in.MemoryLimitMB = req.Runtime.MemoryLimitMB
 	}
 	if req.Route != nil {
 		https := true

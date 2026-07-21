@@ -174,6 +174,10 @@ type UpdateInput struct {
 	PreviewEnabled    *bool
 	PreviewBaseDomain *string
 	PreviewTTLHours   *int
+	// Resource limits: nil = unchanged; a non-positive value clears the limit
+	// (same "non-nil zero removes" convention as database updates).
+	CPULimit      *float64
+	MemoryLimitMB *int
 }
 
 // Update applies a config patch. The change shapes the next revision — a
@@ -209,6 +213,20 @@ func (s *Service) Update(ctx context.Context, appID string, in UpdateInput) (dom
 	}
 	if in.PreviewTTLHours != nil {
 		app.PreviewTTLHours = *in.PreviewTTLHours
+	}
+	if in.CPULimit != nil {
+		if *in.CPULimit <= 0 {
+			app.Runtime.CPULimit = nil // clear
+		} else {
+			app.Runtime.CPULimit = in.CPULimit
+		}
+	}
+	if in.MemoryLimitMB != nil {
+		if *in.MemoryLimitMB <= 0 {
+			app.Runtime.MemoryLimitMB = nil // clear
+		} else {
+			app.Runtime.MemoryLimitMB = in.MemoryLimitMB
+		}
 	}
 	// The merged result must satisfy exactly the create-time rules — including
 	// the preview contract (enabling previews via PATCH still needs a base
@@ -349,6 +367,19 @@ func validateAndDefault(in CreateInput) (CreateInput, error) {
 	}
 	if in.Runtime.Replicas != 1 {
 		return in, invalid("runtime.replicas must be 1 (multiple replicas are post-v1)")
+	}
+	// Resource limits (feature-matrix V1). nil = no limit; a value must be sane,
+	// and memory_limit_mb is persisted as int32 so it must not wrap on the cast
+	// (same CWE-190 bound as the database limits).
+	if in.Runtime.CPULimit != nil {
+		if c := *in.Runtime.CPULimit; math.IsNaN(c) || math.IsInf(c, 0) || c < 0 {
+			return in, invalid("runtime.cpu_limit must be a non-negative number")
+		}
+	}
+	if in.Runtime.MemoryLimitMB != nil {
+		if m := *in.Runtime.MemoryLimitMB; m < 0 || m > math.MaxInt32 {
+			return in, invalid("runtime.memory_limit_mb must be between 0 and 2147483647")
+		}
 	}
 
 	if strings.TrimSpace(in.Route.Domain) == "" {
