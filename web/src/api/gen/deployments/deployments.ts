@@ -41,30 +41,6 @@ type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 /**
  * @summary Deploy the application (build → rollout, zero-downtime)
  */
-export type deployApplicationResponse202 = {
-  data: Deployment
-  status: 202
-}
-
-export type deployApplicationResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type deployApplicationResponse404 = {
-  data: Error
-  status: 404
-}
-    
-export type deployApplicationResponseSuccess = (deployApplicationResponse202) & {
-  headers: Headers;
-};
-export type deployApplicationResponseError = (deployApplicationResponse401 | deployApplicationResponse404) & {
-  headers: Headers;
-};
-
-export type deployApplicationResponse = (deployApplicationResponseSuccess | deployApplicationResponseError)
-
 export const getDeployApplicationUrl = (id: string,) => {
 
 
@@ -74,9 +50,9 @@ export const getDeployApplicationUrl = (id: string,) => {
 }
 
 export const deployApplication = async (id: string,
-    deployRequest?: DeployRequest, options?: RequestInit): Promise<deployApplicationResponse> => {
+    deployRequest?: DeployRequest, options?: RequestInit): Promise<Deployment> => {
   
-  return apiFetch<deployApplicationResponse>(getDeployApplicationUrl(id),
+  return apiFetch<Deployment>(getDeployApplicationUrl(id),
   {      
     ...options,
     method: 'POST',
@@ -137,30 +113,6 @@ export const useDeployApplication = <TError = UnauthorizedResponse | Error,
     /**
  * @summary The application's deployments, newest first
  */
-export type listDeploymentsResponse200 = {
-  data: Deployment[]
-  status: 200
-}
-
-export type listDeploymentsResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type listDeploymentsResponse404 = {
-  data: Error
-  status: 404
-}
-    
-export type listDeploymentsResponseSuccess = (listDeploymentsResponse200) & {
-  headers: Headers;
-};
-export type listDeploymentsResponseError = (listDeploymentsResponse401 | listDeploymentsResponse404) & {
-  headers: Headers;
-};
-
-export type listDeploymentsResponse = (listDeploymentsResponseSuccess | listDeploymentsResponseError)
-
 export const getListDeploymentsUrl = (id: string,) => {
 
 
@@ -169,9 +121,9 @@ export const getListDeploymentsUrl = (id: string,) => {
   return `/api/v1/applications/${id}/deployments`
 }
 
-export const listDeployments = async (id: string, options?: RequestInit): Promise<listDeploymentsResponse> => {
+export const listDeployments = async (id: string, options?: RequestInit): Promise<Deployment[]> => {
   
-  return apiFetch<listDeploymentsResponse>(getListDeploymentsUrl(id),
+  return apiFetch<Deployment[]>(getListDeploymentsUrl(id),
   {      
     ...options,
     method: 'GET'
@@ -261,30 +213,6 @@ export function useListDeployments<TData = Awaited<ReturnType<typeof listDeploym
 /**
  * @summary One deployment
  */
-export type getDeploymentResponse200 = {
-  data: Deployment
-  status: 200
-}
-
-export type getDeploymentResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type getDeploymentResponse404 = {
-  data: Error
-  status: 404
-}
-    
-export type getDeploymentResponseSuccess = (getDeploymentResponse200) & {
-  headers: Headers;
-};
-export type getDeploymentResponseError = (getDeploymentResponse401 | getDeploymentResponse404) & {
-  headers: Headers;
-};
-
-export type getDeploymentResponse = (getDeploymentResponseSuccess | getDeploymentResponseError)
-
 export const getGetDeploymentUrl = (id: string,) => {
 
 
@@ -293,9 +221,9 @@ export const getGetDeploymentUrl = (id: string,) => {
   return `/api/v1/deployments/${id}`
 }
 
-export const getDeployment = async (id: string, options?: RequestInit): Promise<getDeploymentResponse> => {
+export const getDeployment = async (id: string, options?: RequestInit): Promise<Deployment> => {
   
-  return apiFetch<getDeploymentResponse>(getGetDeploymentUrl(id),
+  return apiFetch<Deployment>(getGetDeploymentUrl(id),
   {      
     ...options,
     method: 'GET'
@@ -385,30 +313,6 @@ export function useGetDeployment<TData = Awaited<ReturnType<typeof getDeployment
 /**
  * @summary Stream build logs (Server-Sent Events)
  */
-export type streamDeploymentLogsResponse200 = {
-  data: string
-  status: 200
-}
-
-export type streamDeploymentLogsResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type streamDeploymentLogsResponse404 = {
-  data: Error
-  status: 404
-}
-    
-export type streamDeploymentLogsResponseSuccess = (streamDeploymentLogsResponse200) & {
-  headers: Headers;
-};
-export type streamDeploymentLogsResponseError = (streamDeploymentLogsResponse401 | streamDeploymentLogsResponse404) & {
-  headers: Headers;
-};
-
-export type streamDeploymentLogsResponse = (streamDeploymentLogsResponseSuccess | streamDeploymentLogsResponseError)
-
 export const getStreamDeploymentLogsUrl = (id: string,) => {
 
 
@@ -417,9 +321,9 @@ export const getStreamDeploymentLogsUrl = (id: string,) => {
   return `/api/v1/deployments/${id}/logs`
 }
 
-export const streamDeploymentLogs = async (id: string, options?: RequestInit): Promise<streamDeploymentLogsResponse> => {
+export const streamDeploymentLogs = async (id: string, options?: RequestInit): Promise<string> => {
   
-  return apiFetch<streamDeploymentLogsResponse>(getStreamDeploymentLogsUrl(id),
+  return apiFetch<string>(getStreamDeploymentLogsUrl(id),
   {      
     ...options,
     method: 'GET'
@@ -509,35 +413,6 @@ export function useStreamDeploymentLogs<TData = Awaited<ReturnType<typeof stream
 /**
  * @summary Roll back to the revision this deployment shipped (build skipped)
  */
-export type rollbackDeploymentResponse202 = {
-  data: Deployment
-  status: 202
-}
-
-export type rollbackDeploymentResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type rollbackDeploymentResponse404 = {
-  data: Error
-  status: 404
-}
-
-export type rollbackDeploymentResponse409 = {
-  data: Error
-  status: 409
-}
-    
-export type rollbackDeploymentResponseSuccess = (rollbackDeploymentResponse202) & {
-  headers: Headers;
-};
-export type rollbackDeploymentResponseError = (rollbackDeploymentResponse401 | rollbackDeploymentResponse404 | rollbackDeploymentResponse409) & {
-  headers: Headers;
-};
-
-export type rollbackDeploymentResponse = (rollbackDeploymentResponseSuccess | rollbackDeploymentResponseError)
-
 export const getRollbackDeploymentUrl = (id: string,) => {
 
 
@@ -546,9 +421,9 @@ export const getRollbackDeploymentUrl = (id: string,) => {
   return `/api/v1/deployments/${id}/rollback`
 }
 
-export const rollbackDeployment = async (id: string, options?: RequestInit): Promise<rollbackDeploymentResponse> => {
+export const rollbackDeployment = async (id: string, options?: RequestInit): Promise<Deployment> => {
   
-  return apiFetch<rollbackDeploymentResponse>(getRollbackDeploymentUrl(id),
+  return apiFetch<Deployment>(getRollbackDeploymentUrl(id),
   {      
     ...options,
     method: 'POST'
@@ -608,35 +483,6 @@ export const useRollbackDeployment = <TError = UnauthorizedResponse | Error,
     /**
  * @summary GitHub push webhook (HMAC-authenticated, no session)
  */
-export type handleGithubWebhookResponse202 = {
-  data: Deployment
-  status: 202
-}
-
-export type handleGithubWebhookResponse204 = {
-  data: void
-  status: 204
-}
-
-export type handleGithubWebhookResponse401 = {
-  data: Error
-  status: 401
-}
-
-export type handleGithubWebhookResponse404 = {
-  data: Error
-  status: 404
-}
-    
-export type handleGithubWebhookResponseSuccess = (handleGithubWebhookResponse202 | handleGithubWebhookResponse204) & {
-  headers: Headers;
-};
-export type handleGithubWebhookResponseError = (handleGithubWebhookResponse401 | handleGithubWebhookResponse404) & {
-  headers: Headers;
-};
-
-export type handleGithubWebhookResponse = (handleGithubWebhookResponseSuccess | handleGithubWebhookResponseError)
-
 export const getHandleGithubWebhookUrl = (id: string,) => {
 
 
@@ -645,9 +491,9 @@ export const getHandleGithubWebhookUrl = (id: string,) => {
   return `/webhooks/github/${id}`
 }
 
-export const handleGithubWebhook = async (id: string, options?: RequestInit): Promise<handleGithubWebhookResponse> => {
+export const handleGithubWebhook = async (id: string, options?: RequestInit): Promise<Deployment | void> => {
   
-  return apiFetch<handleGithubWebhookResponse>(getHandleGithubWebhookUrl(id),
+  return apiFetch<Deployment | void>(getHandleGithubWebhookUrl(id),
   {      
     ...options,
     method: 'POST'

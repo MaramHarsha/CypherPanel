@@ -14,6 +14,9 @@ export default defineConfig({
       clean: true,
       override: {
         mutator: { path: "src/api/client.ts", name: "apiFetch" },
+        // apiFetch returns the parsed body directly; don't wrap responses in
+        // a {data,status} envelope type.
+        fetch: { includeHttpResponseReturnType: false },
       },
     },
   },

@@ -138,7 +138,7 @@ function CreateProjectDialog({ primary }: { primary?: boolean }) {
 
   const create = useCreateProject({
     mutation: {
-      onSuccess: (p) => void navigate({ to: "/projects/$projectId", params: { projectId: p.id } }),
+      onSuccess: (res) => void navigate({ to: "/projects/$projectId", params: { projectId: res.project.id } }),
       onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not create the project"),
     },
   });

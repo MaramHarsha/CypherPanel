@@ -8,6 +8,7 @@ import {
   useGetApplication,
   useUpdateApplication,
 } from "@/api/gen/applications/applications";
+import type { Application } from "@/api/gen/model";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
 import { Eyebrow } from "@/components/eyebrow";
 import { PageState } from "@/components/page-state";
@@ -37,7 +38,7 @@ function SettingsForm({
 }: {
   appId: string;
   projectId: string;
-  initial: ReturnType<typeof useGetApplication>["data"] & object;
+  initial: Application;
 }) {
   const navigate = useNavigate();
   const [name, setName] = useState(initial.name);

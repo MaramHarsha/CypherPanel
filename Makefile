@@ -36,6 +36,16 @@ sqlc: ## Generate the type-safe store from core/store/queries
 build: ## Build every module for the host platform
 	@for m in $(MODULES); do echo "build $$m"; (cd $$m && go build ./...) || exit 1; done
 
+.PHONY: build-web
+build-web: ## Build the web UI and sync it into the Go embed path (webui)
+	cd web && pnpm install --frozen-lockfile && pnpm build
+	rm -rf core/api/rest/webui/dist
+	cp -r web/dist core/api/rest/webui/dist
+
+.PHONY: generate-web
+generate-web: ## Regenerate the web API client from openapi.yaml (orval)
+	cd web && pnpm generate:api
+
 .PHONY: build-crosscheck
 build-crosscheck: ## Cross-compile the binaries for linux/arm64 (catch ARM breakage in CI)
 	cd core  && GOOS=linux GOARCH=arm64 go build -o /dev/null ./cmd/cypherd

@@ -43,30 +43,6 @@ type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 /**
  * @summary List a project's notifiers
  */
-export type listNotifiersResponse200 = {
-  data: Notifier[]
-  status: 200
-}
-
-export type listNotifiersResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type listNotifiersResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type listNotifiersResponseSuccess = (listNotifiersResponse200) & {
-  headers: Headers;
-};
-export type listNotifiersResponseError = (listNotifiersResponse401 | listNotifiersResponse404) & {
-  headers: Headers;
-};
-
-export type listNotifiersResponse = (listNotifiersResponseSuccess | listNotifiersResponseError)
-
 export const getListNotifiersUrl = (id: string,) => {
 
 
@@ -75,9 +51,9 @@ export const getListNotifiersUrl = (id: string,) => {
   return `/api/v1/projects/${id}/notifiers`
 }
 
-export const listNotifiers = async (id: string, options?: RequestInit): Promise<listNotifiersResponse> => {
+export const listNotifiers = async (id: string, options?: RequestInit): Promise<Notifier[]> => {
   
-  return apiFetch<listNotifiersResponse>(getListNotifiersUrl(id),
+  return apiFetch<Notifier[]>(getListNotifiersUrl(id),
   {      
     ...options,
     method: 'GET'
@@ -167,35 +143,6 @@ export function useListNotifiers<TData = Awaited<ReturnType<typeof listNotifiers
 /**
  * @summary Create a notifier
  */
-export type createNotifierResponse201 = {
-  data: Notifier
-  status: 201
-}
-
-export type createNotifierResponse400 = {
-  data: BadRequestResponse
-  status: 400
-}
-
-export type createNotifierResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type createNotifierResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type createNotifierResponseSuccess = (createNotifierResponse201) & {
-  headers: Headers;
-};
-export type createNotifierResponseError = (createNotifierResponse400 | createNotifierResponse401 | createNotifierResponse404) & {
-  headers: Headers;
-};
-
-export type createNotifierResponse = (createNotifierResponseSuccess | createNotifierResponseError)
-
 export const getCreateNotifierUrl = (id: string,) => {
 
 
@@ -205,9 +152,9 @@ export const getCreateNotifierUrl = (id: string,) => {
 }
 
 export const createNotifier = async (id: string,
-    createNotifierRequest: CreateNotifierRequest, options?: RequestInit): Promise<createNotifierResponse> => {
+    createNotifierRequest: CreateNotifierRequest, options?: RequestInit): Promise<Notifier> => {
   
-  return apiFetch<createNotifierResponse>(getCreateNotifierUrl(id),
+  return apiFetch<Notifier>(getCreateNotifierUrl(id),
   {      
     ...options,
     method: 'POST',
@@ -268,30 +215,6 @@ export const useCreateNotifier = <TError = BadRequestResponse | UnauthorizedResp
     /**
  * @summary Get a notifier
  */
-export type getNotifierResponse200 = {
-  data: Notifier
-  status: 200
-}
-
-export type getNotifierResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type getNotifierResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type getNotifierResponseSuccess = (getNotifierResponse200) & {
-  headers: Headers;
-};
-export type getNotifierResponseError = (getNotifierResponse401 | getNotifierResponse404) & {
-  headers: Headers;
-};
-
-export type getNotifierResponse = (getNotifierResponseSuccess | getNotifierResponseError)
-
 export const getGetNotifierUrl = (id: string,) => {
 
 
@@ -300,9 +223,9 @@ export const getGetNotifierUrl = (id: string,) => {
   return `/api/v1/notifiers/${id}`
 }
 
-export const getNotifier = async (id: string, options?: RequestInit): Promise<getNotifierResponse> => {
+export const getNotifier = async (id: string, options?: RequestInit): Promise<Notifier> => {
   
-  return apiFetch<getNotifierResponse>(getGetNotifierUrl(id),
+  return apiFetch<Notifier>(getGetNotifierUrl(id),
   {      
     ...options,
     method: 'GET'
@@ -392,35 +315,6 @@ export function useGetNotifier<TData = Awaited<ReturnType<typeof getNotifier>>, 
 /**
  * @summary Update a notifier (omit config to keep the sealed value)
  */
-export type updateNotifierResponse200 = {
-  data: Notifier
-  status: 200
-}
-
-export type updateNotifierResponse400 = {
-  data: BadRequestResponse
-  status: 400
-}
-
-export type updateNotifierResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type updateNotifierResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type updateNotifierResponseSuccess = (updateNotifierResponse200) & {
-  headers: Headers;
-};
-export type updateNotifierResponseError = (updateNotifierResponse400 | updateNotifierResponse401 | updateNotifierResponse404) & {
-  headers: Headers;
-};
-
-export type updateNotifierResponse = (updateNotifierResponseSuccess | updateNotifierResponseError)
-
 export const getUpdateNotifierUrl = (id: string,) => {
 
 
@@ -430,9 +324,9 @@ export const getUpdateNotifierUrl = (id: string,) => {
 }
 
 export const updateNotifier = async (id: string,
-    patchNotifierRequest: PatchNotifierRequest, options?: RequestInit): Promise<updateNotifierResponse> => {
+    patchNotifierRequest: PatchNotifierRequest, options?: RequestInit): Promise<Notifier> => {
   
-  return apiFetch<updateNotifierResponse>(getUpdateNotifierUrl(id),
+  return apiFetch<Notifier>(getUpdateNotifierUrl(id),
   {      
     ...options,
     method: 'PATCH',
@@ -493,30 +387,6 @@ export const useUpdateNotifier = <TError = BadRequestResponse | UnauthorizedResp
     /**
  * @summary Delete a notifier
  */
-export type deleteNotifierResponse204 = {
-  data: void
-  status: 204
-}
-
-export type deleteNotifierResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type deleteNotifierResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type deleteNotifierResponseSuccess = (deleteNotifierResponse204) & {
-  headers: Headers;
-};
-export type deleteNotifierResponseError = (deleteNotifierResponse401 | deleteNotifierResponse404) & {
-  headers: Headers;
-};
-
-export type deleteNotifierResponse = (deleteNotifierResponseSuccess | deleteNotifierResponseError)
-
 export const getDeleteNotifierUrl = (id: string,) => {
 
 
@@ -525,9 +395,9 @@ export const getDeleteNotifierUrl = (id: string,) => {
   return `/api/v1/notifiers/${id}`
 }
 
-export const deleteNotifier = async (id: string, options?: RequestInit): Promise<deleteNotifierResponse> => {
+export const deleteNotifier = async (id: string, options?: RequestInit): Promise<void> => {
   
-  return apiFetch<deleteNotifierResponse>(getDeleteNotifierUrl(id),
+  return apiFetch<void>(getDeleteNotifierUrl(id),
   {      
     ...options,
     method: 'DELETE'
@@ -587,30 +457,6 @@ export const useDeleteNotifier = <TError = UnauthorizedResponse | NotFoundRespon
     /**
  * @summary Send a synthetic test notification through this notifier
  */
-export type testNotifierResponse202 = {
-  data: void
-  status: 202
-}
-
-export type testNotifierResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type testNotifierResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type testNotifierResponseSuccess = (testNotifierResponse202) & {
-  headers: Headers;
-};
-export type testNotifierResponseError = (testNotifierResponse401 | testNotifierResponse404) & {
-  headers: Headers;
-};
-
-export type testNotifierResponse = (testNotifierResponseSuccess | testNotifierResponseError)
-
 export const getTestNotifierUrl = (id: string,) => {
 
 
@@ -619,9 +465,9 @@ export const getTestNotifierUrl = (id: string,) => {
   return `/api/v1/notifiers/${id}/test`
 }
 
-export const testNotifier = async (id: string, options?: RequestInit): Promise<testNotifierResponse> => {
+export const testNotifier = async (id: string, options?: RequestInit): Promise<void> => {
   
-  return apiFetch<testNotifierResponse>(getTestNotifierUrl(id),
+  return apiFetch<void>(getTestNotifierUrl(id),
   {      
     ...options,
     method: 'POST'

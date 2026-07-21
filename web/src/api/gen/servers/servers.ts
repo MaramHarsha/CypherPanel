@@ -43,18 +43,6 @@ type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 /**
  * @summary The control plane's CA certificate (public, for agent pinning)
  */
-export type getCaCertResponse200 = {
-  data: string
-  status: 200
-}
-    
-export type getCaCertResponseSuccess = (getCaCertResponse200) & {
-  headers: Headers;
-};
-;
-
-export type getCaCertResponse = (getCaCertResponseSuccess)
-
 export const getGetCaCertUrl = () => {
 
 
@@ -63,9 +51,9 @@ export const getGetCaCertUrl = () => {
   return `/api/v1/ca.pem`
 }
 
-export const getCaCert = async ( options?: RequestInit): Promise<getCaCertResponse> => {
+export const getCaCert = async ( options?: RequestInit): Promise<string> => {
   
-  return apiFetch<getCaCertResponse>(getGetCaCertUrl(),
+  return apiFetch<string>(getGetCaCertUrl(),
   {      
     ...options,
     method: 'GET'
@@ -156,18 +144,6 @@ export function useGetCaCert<TData = Awaited<ReturnType<typeof getCaCert>>, TErr
  * POSIX shell script a joining server pipes to sh. Public and secret-free: the join token and CA fingerprint arrive via the install command from the operator's session, never in this script.
  * @summary The agent join installer
  */
-export type getAgentInstallerResponse200 = {
-  data: string
-  status: 200
-}
-    
-export type getAgentInstallerResponseSuccess = (getAgentInstallerResponse200) & {
-  headers: Headers;
-};
-;
-
-export type getAgentInstallerResponse = (getAgentInstallerResponseSuccess)
-
 export const getGetAgentInstallerUrl = () => {
 
 
@@ -176,9 +152,9 @@ export const getGetAgentInstallerUrl = () => {
   return `/install/agent.sh`
 }
 
-export const getAgentInstaller = async ( options?: RequestInit): Promise<getAgentInstallerResponse> => {
+export const getAgentInstaller = async ( options?: RequestInit): Promise<string> => {
   
-  return apiFetch<getAgentInstallerResponse>(getGetAgentInstallerUrl(),
+  return apiFetch<string>(getGetAgentInstallerUrl(),
   {      
     ...options,
     method: 'GET'
@@ -268,25 +244,6 @@ export function useGetAgentInstaller<TData = Awaited<ReturnType<typeof getAgentI
 /**
  * @summary List all servers, newest first
  */
-export type listServersResponse200 = {
-  data: Server[]
-  status: 200
-}
-
-export type listServersResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-    
-export type listServersResponseSuccess = (listServersResponse200) & {
-  headers: Headers;
-};
-export type listServersResponseError = (listServersResponse401) & {
-  headers: Headers;
-};
-
-export type listServersResponse = (listServersResponseSuccess | listServersResponseError)
-
 export const getListServersUrl = () => {
 
 
@@ -295,9 +252,9 @@ export const getListServersUrl = () => {
   return `/api/v1/servers`
 }
 
-export const listServers = async ( options?: RequestInit): Promise<listServersResponse> => {
+export const listServers = async ( options?: RequestInit): Promise<Server[]> => {
   
-  return apiFetch<listServersResponse>(getListServersUrl(),
+  return apiFetch<Server[]>(getListServersUrl(),
   {      
     ...options,
     method: 'GET'
@@ -387,30 +344,6 @@ export function useListServers<TData = Awaited<ReturnType<typeof listServers>>, 
 /**
  * @summary Register a server and issue its single-use join token
  */
-export type createServerResponse201 = {
-  data: CreateServerResponse
-  status: 201
-}
-
-export type createServerResponse400 = {
-  data: BadRequestResponse
-  status: 400
-}
-
-export type createServerResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-    
-export type createServerResponseSuccess = (createServerResponse201) & {
-  headers: Headers;
-};
-export type createServerResponseError = (createServerResponse400 | createServerResponse401) & {
-  headers: Headers;
-};
-
-export type createServerResponse = (createServerResponseSuccess | createServerResponseError)
-
 export const getCreateServerUrl = () => {
 
 
@@ -419,9 +352,9 @@ export const getCreateServerUrl = () => {
   return `/api/v1/servers`
 }
 
-export const createServer = async (createServerRequest: CreateServerRequest, options?: RequestInit): Promise<createServerResponse> => {
+export const createServer = async (createServerRequest: CreateServerRequest, options?: RequestInit): Promise<CreateServerResponse> => {
   
-  return apiFetch<createServerResponse>(getCreateServerUrl(),
+  return apiFetch<CreateServerResponse>(getCreateServerUrl(),
   {      
     ...options,
     method: 'POST',
@@ -482,30 +415,6 @@ export const useCreateServer = <TError = BadRequestResponse | UnauthorizedRespon
     /**
  * @summary One server
  */
-export type getServerResponse200 = {
-  data: Server
-  status: 200
-}
-
-export type getServerResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type getServerResponse404 = {
-  data: Error
-  status: 404
-}
-    
-export type getServerResponseSuccess = (getServerResponse200) & {
-  headers: Headers;
-};
-export type getServerResponseError = (getServerResponse401 | getServerResponse404) & {
-  headers: Headers;
-};
-
-export type getServerResponse = (getServerResponseSuccess | getServerResponseError)
-
 export const getGetServerUrl = (id: string,) => {
 
 
@@ -514,9 +423,9 @@ export const getGetServerUrl = (id: string,) => {
   return `/api/v1/servers/${id}`
 }
 
-export const getServer = async (id: string, options?: RequestInit): Promise<getServerResponse> => {
+export const getServer = async (id: string, options?: RequestInit): Promise<Server> => {
   
-  return apiFetch<getServerResponse>(getGetServerUrl(id),
+  return apiFetch<Server>(getGetServerUrl(id),
   {      
     ...options,
     method: 'GET'
@@ -607,25 +516,6 @@ export function useGetServer<TData = Awaited<ReturnType<typeof getServer>>, TErr
  * Removes the server and its join tokens, severs the agent's live bus connection, and refuses the identity on any reconnect (threat-model §8 requirement 6). Idempotent: deleting an absent server also returns 204.
  * @summary Delete a server, revoking its agent
  */
-export type deleteServerResponse204 = {
-  data: void
-  status: 204
-}
-
-export type deleteServerResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-    
-export type deleteServerResponseSuccess = (deleteServerResponse204) & {
-  headers: Headers;
-};
-export type deleteServerResponseError = (deleteServerResponse401) & {
-  headers: Headers;
-};
-
-export type deleteServerResponse = (deleteServerResponseSuccess | deleteServerResponseError)
-
 export const getDeleteServerUrl = (id: string,) => {
 
 
@@ -634,9 +524,9 @@ export const getDeleteServerUrl = (id: string,) => {
   return `/api/v1/servers/${id}`
 }
 
-export const deleteServer = async (id: string, options?: RequestInit): Promise<deleteServerResponse> => {
+export const deleteServer = async (id: string, options?: RequestInit): Promise<void> => {
   
-  return apiFetch<deleteServerResponse>(getDeleteServerUrl(id),
+  return apiFetch<void>(getDeleteServerUrl(id),
   {      
     ...options,
     method: 'DELETE'

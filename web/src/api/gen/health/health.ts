@@ -36,18 +36,6 @@ type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 /**
  * @summary Liveness probe
  */
-export type healthzResponse200 = {
-  data: Health
-  status: 200
-}
-    
-export type healthzResponseSuccess = (healthzResponse200) & {
-  headers: Headers;
-};
-;
-
-export type healthzResponse = (healthzResponseSuccess)
-
 export const getHealthzUrl = () => {
 
 
@@ -56,9 +44,9 @@ export const getHealthzUrl = () => {
   return `/healthz`
 }
 
-export const healthz = async ( options?: RequestInit): Promise<healthzResponse> => {
+export const healthz = async ( options?: RequestInit): Promise<Health> => {
   
-  return apiFetch<healthzResponse>(getHealthzUrl(),
+  return apiFetch<Health>(getHealthzUrl(),
   {      
     ...options,
     method: 'GET'
@@ -148,25 +136,6 @@ export function useHealthz<TData = Awaited<ReturnType<typeof healthz>>, TError =
 /**
  * @summary Readiness probe (checks the database)
  */
-export type readyzResponse200 = {
-  data: Health
-  status: 200
-}
-
-export type readyzResponse503 = {
-  data: UnavailableResponse
-  status: 503
-}
-    
-export type readyzResponseSuccess = (readyzResponse200) & {
-  headers: Headers;
-};
-export type readyzResponseError = (readyzResponse503) & {
-  headers: Headers;
-};
-
-export type readyzResponse = (readyzResponseSuccess | readyzResponseError)
-
 export const getReadyzUrl = () => {
 
 
@@ -175,9 +144,9 @@ export const getReadyzUrl = () => {
   return `/readyz`
 }
 
-export const readyz = async ( options?: RequestInit): Promise<readyzResponse> => {
+export const readyz = async ( options?: RequestInit): Promise<Health> => {
   
-  return apiFetch<readyzResponse>(getReadyzUrl(),
+  return apiFetch<Health>(getReadyzUrl(),
   {      
     ...options,
     method: 'GET'
@@ -268,25 +237,6 @@ export function useReadyz<TData = Awaited<ReturnType<typeof readyz>>, TError = U
  * An SSE stream of "invalidate" events — the caller fetches current state via the API on connect, then refetches a resource when this stream names it as changed (ui-principles §10). Scoped to the caller's visible resources (a panel owner sees all). Two event types: `connected` (once, empty) and `invalidate` (data: {resource, id}). The response media type is text/event-stream.
  * @summary Live resource-change stream (Server-Sent Events)
  */
-export type streamEventsResponse200 = {
-  data: string
-  status: 200
-}
-
-export type streamEventsResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-    
-export type streamEventsResponseSuccess = (streamEventsResponse200) & {
-  headers: Headers;
-};
-export type streamEventsResponseError = (streamEventsResponse401) & {
-  headers: Headers;
-};
-
-export type streamEventsResponse = (streamEventsResponseSuccess | streamEventsResponseError)
-
 export const getStreamEventsUrl = () => {
 
 
@@ -295,9 +245,9 @@ export const getStreamEventsUrl = () => {
   return `/api/v1/events`
 }
 
-export const streamEvents = async ( options?: RequestInit): Promise<streamEventsResponse> => {
+export const streamEvents = async ( options?: RequestInit): Promise<string> => {
   
-  return apiFetch<streamEventsResponse>(getStreamEventsUrl(),
+  return apiFetch<string>(getStreamEventsUrl(),
   {      
     ...options,
     method: 'GET'
@@ -387,18 +337,6 @@ export function useStreamEvents<TData = Awaited<ReturnType<typeof streamEvents>>
 /**
  * @summary This specification
  */
-export type getOpenApiSpecResponse200 = {
-  data: string
-  status: 200
-}
-    
-export type getOpenApiSpecResponseSuccess = (getOpenApiSpecResponse200) & {
-  headers: Headers;
-};
-;
-
-export type getOpenApiSpecResponse = (getOpenApiSpecResponseSuccess)
-
 export const getGetOpenApiSpecUrl = () => {
 
 
@@ -407,9 +345,9 @@ export const getGetOpenApiSpecUrl = () => {
   return `/api/v1/openapi.yaml`
 }
 
-export const getOpenApiSpec = async ( options?: RequestInit): Promise<getOpenApiSpecResponse> => {
+export const getOpenApiSpec = async ( options?: RequestInit): Promise<string> => {
   
-  return apiFetch<getOpenApiSpecResponse>(getGetOpenApiSpecUrl(),
+  return apiFetch<string>(getGetOpenApiSpecUrl(),
   {      
     ...options,
     method: 'GET'

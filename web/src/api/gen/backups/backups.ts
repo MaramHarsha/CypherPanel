@@ -49,25 +49,6 @@ type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 /**
  * @summary List S3-compatible backup targets
  */
-export type listBackupTargetsResponse200 = {
-  data: BackupTarget[]
-  status: 200
-}
-
-export type listBackupTargetsResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-    
-export type listBackupTargetsResponseSuccess = (listBackupTargetsResponse200) & {
-  headers: Headers;
-};
-export type listBackupTargetsResponseError = (listBackupTargetsResponse401) & {
-  headers: Headers;
-};
-
-export type listBackupTargetsResponse = (listBackupTargetsResponseSuccess | listBackupTargetsResponseError)
-
 export const getListBackupTargetsUrl = () => {
 
 
@@ -76,9 +57,9 @@ export const getListBackupTargetsUrl = () => {
   return `/api/v1/backup-targets`
 }
 
-export const listBackupTargets = async ( options?: RequestInit): Promise<listBackupTargetsResponse> => {
+export const listBackupTargets = async ( options?: RequestInit): Promise<BackupTarget[]> => {
   
-  return apiFetch<listBackupTargetsResponse>(getListBackupTargetsUrl(),
+  return apiFetch<BackupTarget[]>(getListBackupTargetsUrl(),
   {      
     ...options,
     method: 'GET'
@@ -168,35 +149,6 @@ export function useListBackupTargets<TData = Awaited<ReturnType<typeof listBacku
 /**
  * @summary Create a backup target (panel admin+)
  */
-export type createBackupTargetResponse201 = {
-  data: BackupTarget
-  status: 201
-}
-
-export type createBackupTargetResponse400 = {
-  data: BadRequestResponse
-  status: 400
-}
-
-export type createBackupTargetResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type createBackupTargetResponse403 = {
-  data: ForbiddenResponse
-  status: 403
-}
-    
-export type createBackupTargetResponseSuccess = (createBackupTargetResponse201) & {
-  headers: Headers;
-};
-export type createBackupTargetResponseError = (createBackupTargetResponse400 | createBackupTargetResponse401 | createBackupTargetResponse403) & {
-  headers: Headers;
-};
-
-export type createBackupTargetResponse = (createBackupTargetResponseSuccess | createBackupTargetResponseError)
-
 export const getCreateBackupTargetUrl = () => {
 
 
@@ -205,9 +157,9 @@ export const getCreateBackupTargetUrl = () => {
   return `/api/v1/backup-targets`
 }
 
-export const createBackupTarget = async (createBackupTargetRequest: CreateBackupTargetRequest, options?: RequestInit): Promise<createBackupTargetResponse> => {
+export const createBackupTarget = async (createBackupTargetRequest: CreateBackupTargetRequest, options?: RequestInit): Promise<BackupTarget> => {
   
-  return apiFetch<createBackupTargetResponse>(getCreateBackupTargetUrl(),
+  return apiFetch<BackupTarget>(getCreateBackupTargetUrl(),
   {      
     ...options,
     method: 'POST',
@@ -268,30 +220,6 @@ export const useCreateBackupTarget = <TError = BadRequestResponse | Unauthorized
     /**
  * @summary Get a backup target
  */
-export type getBackupTargetResponse200 = {
-  data: BackupTarget
-  status: 200
-}
-
-export type getBackupTargetResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type getBackupTargetResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type getBackupTargetResponseSuccess = (getBackupTargetResponse200) & {
-  headers: Headers;
-};
-export type getBackupTargetResponseError = (getBackupTargetResponse401 | getBackupTargetResponse404) & {
-  headers: Headers;
-};
-
-export type getBackupTargetResponse = (getBackupTargetResponseSuccess | getBackupTargetResponseError)
-
 export const getGetBackupTargetUrl = (id: string,) => {
 
 
@@ -300,9 +228,9 @@ export const getGetBackupTargetUrl = (id: string,) => {
   return `/api/v1/backup-targets/${id}`
 }
 
-export const getBackupTarget = async (id: string, options?: RequestInit): Promise<getBackupTargetResponse> => {
+export const getBackupTarget = async (id: string, options?: RequestInit): Promise<BackupTarget> => {
   
-  return apiFetch<getBackupTargetResponse>(getGetBackupTargetUrl(id),
+  return apiFetch<BackupTarget>(getGetBackupTargetUrl(id),
   {      
     ...options,
     method: 'GET'
@@ -392,40 +320,6 @@ export function useGetBackupTarget<TData = Awaited<ReturnType<typeof getBackupTa
 /**
  * @summary Delete a backup target (panel admin+; refused while in use)
  */
-export type deleteBackupTargetResponse204 = {
-  data: void
-  status: 204
-}
-
-export type deleteBackupTargetResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type deleteBackupTargetResponse403 = {
-  data: ForbiddenResponse
-  status: 403
-}
-
-export type deleteBackupTargetResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-
-export type deleteBackupTargetResponse409 = {
-  data: Error
-  status: 409
-}
-    
-export type deleteBackupTargetResponseSuccess = (deleteBackupTargetResponse204) & {
-  headers: Headers;
-};
-export type deleteBackupTargetResponseError = (deleteBackupTargetResponse401 | deleteBackupTargetResponse403 | deleteBackupTargetResponse404 | deleteBackupTargetResponse409) & {
-  headers: Headers;
-};
-
-export type deleteBackupTargetResponse = (deleteBackupTargetResponseSuccess | deleteBackupTargetResponseError)
-
 export const getDeleteBackupTargetUrl = (id: string,) => {
 
 
@@ -434,9 +328,9 @@ export const getDeleteBackupTargetUrl = (id: string,) => {
   return `/api/v1/backup-targets/${id}`
 }
 
-export const deleteBackupTarget = async (id: string, options?: RequestInit): Promise<deleteBackupTargetResponse> => {
+export const deleteBackupTarget = async (id: string, options?: RequestInit): Promise<void> => {
   
-  return apiFetch<deleteBackupTargetResponse>(getDeleteBackupTargetUrl(id),
+  return apiFetch<void>(getDeleteBackupTargetUrl(id),
   {      
     ...options,
     method: 'DELETE'
@@ -496,30 +390,6 @@ export const useDeleteBackupTarget = <TError = UnauthorizedResponse | ForbiddenR
     /**
  * @summary List a database's backup schedules
  */
-export type listDatabaseBackupsResponse200 = {
-  data: DatabaseBackup[]
-  status: 200
-}
-
-export type listDatabaseBackupsResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type listDatabaseBackupsResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type listDatabaseBackupsResponseSuccess = (listDatabaseBackupsResponse200) & {
-  headers: Headers;
-};
-export type listDatabaseBackupsResponseError = (listDatabaseBackupsResponse401 | listDatabaseBackupsResponse404) & {
-  headers: Headers;
-};
-
-export type listDatabaseBackupsResponse = (listDatabaseBackupsResponseSuccess | listDatabaseBackupsResponseError)
-
 export const getListDatabaseBackupsUrl = (id: string,) => {
 
 
@@ -528,9 +398,9 @@ export const getListDatabaseBackupsUrl = (id: string,) => {
   return `/api/v1/databases/${id}/backups`
 }
 
-export const listDatabaseBackups = async (id: string, options?: RequestInit): Promise<listDatabaseBackupsResponse> => {
+export const listDatabaseBackups = async (id: string, options?: RequestInit): Promise<DatabaseBackup[]> => {
   
-  return apiFetch<listDatabaseBackupsResponse>(getListDatabaseBackupsUrl(id),
+  return apiFetch<DatabaseBackup[]>(getListDatabaseBackupsUrl(id),
   {      
     ...options,
     method: 'GET'
@@ -620,35 +490,6 @@ export function useListDatabaseBackups<TData = Awaited<ReturnType<typeof listDat
 /**
  * @summary Create a backup schedule
  */
-export type createDatabaseBackupResponse201 = {
-  data: DatabaseBackup
-  status: 201
-}
-
-export type createDatabaseBackupResponse400 = {
-  data: BadRequestResponse
-  status: 400
-}
-
-export type createDatabaseBackupResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type createDatabaseBackupResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type createDatabaseBackupResponseSuccess = (createDatabaseBackupResponse201) & {
-  headers: Headers;
-};
-export type createDatabaseBackupResponseError = (createDatabaseBackupResponse400 | createDatabaseBackupResponse401 | createDatabaseBackupResponse404) & {
-  headers: Headers;
-};
-
-export type createDatabaseBackupResponse = (createDatabaseBackupResponseSuccess | createDatabaseBackupResponseError)
-
 export const getCreateDatabaseBackupUrl = (id: string,) => {
 
 
@@ -658,9 +499,9 @@ export const getCreateDatabaseBackupUrl = (id: string,) => {
 }
 
 export const createDatabaseBackup = async (id: string,
-    createDatabaseBackupRequest: CreateDatabaseBackupRequest, options?: RequestInit): Promise<createDatabaseBackupResponse> => {
+    createDatabaseBackupRequest: CreateDatabaseBackupRequest, options?: RequestInit): Promise<DatabaseBackup> => {
   
-  return apiFetch<createDatabaseBackupResponse>(getCreateDatabaseBackupUrl(id),
+  return apiFetch<DatabaseBackup>(getCreateDatabaseBackupUrl(id),
   {      
     ...options,
     method: 'POST',
@@ -721,30 +562,6 @@ export const useCreateDatabaseBackup = <TError = BadRequestResponse | Unauthoriz
     /**
  * @summary Delete a backup schedule
  */
-export type deleteDatabaseBackupResponse204 = {
-  data: void
-  status: 204
-}
-
-export type deleteDatabaseBackupResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type deleteDatabaseBackupResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type deleteDatabaseBackupResponseSuccess = (deleteDatabaseBackupResponse204) & {
-  headers: Headers;
-};
-export type deleteDatabaseBackupResponseError = (deleteDatabaseBackupResponse401 | deleteDatabaseBackupResponse404) & {
-  headers: Headers;
-};
-
-export type deleteDatabaseBackupResponse = (deleteDatabaseBackupResponseSuccess | deleteDatabaseBackupResponseError)
-
 export const getDeleteDatabaseBackupUrl = (id: string,
     bakId: string,) => {
 
@@ -755,9 +572,9 @@ export const getDeleteDatabaseBackupUrl = (id: string,
 }
 
 export const deleteDatabaseBackup = async (id: string,
-    bakId: string, options?: RequestInit): Promise<deleteDatabaseBackupResponse> => {
+    bakId: string, options?: RequestInit): Promise<void> => {
   
-  return apiFetch<deleteDatabaseBackupResponse>(getDeleteDatabaseBackupUrl(id,bakId),
+  return apiFetch<void>(getDeleteDatabaseBackupUrl(id,bakId),
   {      
     ...options,
     method: 'DELETE'
@@ -817,30 +634,6 @@ export const useDeleteDatabaseBackup = <TError = UnauthorizedResponse | NotFound
     /**
  * @summary List a schedule's backup run history
  */
-export type listBackupHistoryResponse200 = {
-  data: BackupRecord[]
-  status: 200
-}
-
-export type listBackupHistoryResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type listBackupHistoryResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type listBackupHistoryResponseSuccess = (listBackupHistoryResponse200) & {
-  headers: Headers;
-};
-export type listBackupHistoryResponseError = (listBackupHistoryResponse401 | listBackupHistoryResponse404) & {
-  headers: Headers;
-};
-
-export type listBackupHistoryResponse = (listBackupHistoryResponseSuccess | listBackupHistoryResponseError)
-
 export const getListBackupHistoryUrl = (id: string,
     bakId: string,) => {
 
@@ -851,9 +644,9 @@ export const getListBackupHistoryUrl = (id: string,
 }
 
 export const listBackupHistory = async (id: string,
-    bakId: string, options?: RequestInit): Promise<listBackupHistoryResponse> => {
+    bakId: string, options?: RequestInit): Promise<BackupRecord[]> => {
   
-  return apiFetch<listBackupHistoryResponse>(getListBackupHistoryUrl(id,bakId),
+  return apiFetch<BackupRecord[]>(getListBackupHistoryUrl(id,bakId),
   {      
     ...options,
     method: 'GET'
@@ -949,30 +742,6 @@ export function useListBackupHistory<TData = Awaited<ReturnType<typeof listBacku
 /**
  * @summary Run a backup now
  */
-export type runBackupNowResponse202 = {
-  data: RunBackupResponse
-  status: 202
-}
-
-export type runBackupNowResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type runBackupNowResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type runBackupNowResponseSuccess = (runBackupNowResponse202) & {
-  headers: Headers;
-};
-export type runBackupNowResponseError = (runBackupNowResponse401 | runBackupNowResponse404) & {
-  headers: Headers;
-};
-
-export type runBackupNowResponse = (runBackupNowResponseSuccess | runBackupNowResponseError)
-
 export const getRunBackupNowUrl = (id: string,
     bakId: string,) => {
 
@@ -983,9 +752,9 @@ export const getRunBackupNowUrl = (id: string,
 }
 
 export const runBackupNow = async (id: string,
-    bakId: string, options?: RequestInit): Promise<runBackupNowResponse> => {
+    bakId: string, options?: RequestInit): Promise<RunBackupResponse> => {
   
-  return apiFetch<runBackupNowResponse>(getRunBackupNowUrl(id,bakId),
+  return apiFetch<RunBackupResponse>(getRunBackupNowUrl(id,bakId),
   {      
     ...options,
     method: 'POST'
@@ -1045,40 +814,6 @@ export const useRunBackupNow = <TError = UnauthorizedResponse | NotFoundResponse
     /**
  * @summary Restore a database from a backup (destructive; confirm required)
  */
-export type restoreDatabaseResponse202 = {
-  data: void
-  status: 202
-}
-
-export type restoreDatabaseResponse400 = {
-  data: BadRequestResponse
-  status: 400
-}
-
-export type restoreDatabaseResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type restoreDatabaseResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-
-export type restoreDatabaseResponse409 = {
-  data: Error
-  status: 409
-}
-    
-export type restoreDatabaseResponseSuccess = (restoreDatabaseResponse202) & {
-  headers: Headers;
-};
-export type restoreDatabaseResponseError = (restoreDatabaseResponse400 | restoreDatabaseResponse401 | restoreDatabaseResponse404 | restoreDatabaseResponse409) & {
-  headers: Headers;
-};
-
-export type restoreDatabaseResponse = (restoreDatabaseResponseSuccess | restoreDatabaseResponseError)
-
 export const getRestoreDatabaseUrl = (id: string,) => {
 
 
@@ -1088,9 +823,9 @@ export const getRestoreDatabaseUrl = (id: string,) => {
 }
 
 export const restoreDatabase = async (id: string,
-    restoreRequest: RestoreRequest, options?: RequestInit): Promise<restoreDatabaseResponse> => {
+    restoreRequest: RestoreRequest, options?: RequestInit): Promise<void> => {
   
-  return apiFetch<restoreDatabaseResponse>(getRestoreDatabaseUrl(id),
+  return apiFetch<void>(getRestoreDatabaseUrl(id),
   {      
     ...options,
     method: 'POST',

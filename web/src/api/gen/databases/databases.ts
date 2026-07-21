@@ -47,30 +47,6 @@ type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 /**
  * @summary List databases in an environment
  */
-export type listDatabasesResponse200 = {
-  data: Database[]
-  status: 200
-}
-
-export type listDatabasesResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type listDatabasesResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type listDatabasesResponseSuccess = (listDatabasesResponse200) & {
-  headers: Headers;
-};
-export type listDatabasesResponseError = (listDatabasesResponse401 | listDatabasesResponse404) & {
-  headers: Headers;
-};
-
-export type listDatabasesResponse = (listDatabasesResponseSuccess | listDatabasesResponseError)
-
 export const getListDatabasesUrl = (id: string,) => {
 
 
@@ -79,9 +55,9 @@ export const getListDatabasesUrl = (id: string,) => {
   return `/api/v1/environments/${id}/databases`
 }
 
-export const listDatabases = async (id: string, options?: RequestInit): Promise<listDatabasesResponse> => {
+export const listDatabases = async (id: string, options?: RequestInit): Promise<Database[]> => {
   
-  return apiFetch<listDatabasesResponse>(getListDatabasesUrl(id),
+  return apiFetch<Database[]>(getListDatabasesUrl(id),
   {      
     ...options,
     method: 'GET'
@@ -171,35 +147,6 @@ export function useListDatabases<TData = Awaited<ReturnType<typeof listDatabases
 /**
  * @summary Create a managed database
  */
-export type createDatabaseResponse201 = {
-  data: CreateDatabaseResponse
-  status: 201
-}
-
-export type createDatabaseResponse400 = {
-  data: BadRequestResponse
-  status: 400
-}
-
-export type createDatabaseResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type createDatabaseResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type createDatabaseResponseSuccess = (createDatabaseResponse201) & {
-  headers: Headers;
-};
-export type createDatabaseResponseError = (createDatabaseResponse400 | createDatabaseResponse401 | createDatabaseResponse404) & {
-  headers: Headers;
-};
-
-export type createDatabaseResponse = (createDatabaseResponseSuccess | createDatabaseResponseError)
-
 export const getCreateDatabaseUrl = (id: string,) => {
 
 
@@ -209,9 +156,9 @@ export const getCreateDatabaseUrl = (id: string,) => {
 }
 
 export const createDatabase = async (id: string,
-    createDatabaseRequest: CreateDatabaseRequest, options?: RequestInit): Promise<createDatabaseResponse> => {
+    createDatabaseRequest: CreateDatabaseRequest, options?: RequestInit): Promise<CreateDatabaseResponse> => {
   
-  return apiFetch<createDatabaseResponse>(getCreateDatabaseUrl(id),
+  return apiFetch<CreateDatabaseResponse>(getCreateDatabaseUrl(id),
   {      
     ...options,
     method: 'POST',
@@ -272,30 +219,6 @@ export const useCreateDatabase = <TError = BadRequestResponse | UnauthorizedResp
     /**
  * @summary Get a database
  */
-export type getDatabaseResponse200 = {
-  data: Database
-  status: 200
-}
-
-export type getDatabaseResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type getDatabaseResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type getDatabaseResponseSuccess = (getDatabaseResponse200) & {
-  headers: Headers;
-};
-export type getDatabaseResponseError = (getDatabaseResponse401 | getDatabaseResponse404) & {
-  headers: Headers;
-};
-
-export type getDatabaseResponse = (getDatabaseResponseSuccess | getDatabaseResponseError)
-
 export const getGetDatabaseUrl = (id: string,) => {
 
 
@@ -304,9 +227,9 @@ export const getGetDatabaseUrl = (id: string,) => {
   return `/api/v1/databases/${id}`
 }
 
-export const getDatabase = async (id: string, options?: RequestInit): Promise<getDatabaseResponse> => {
+export const getDatabase = async (id: string, options?: RequestInit): Promise<Database> => {
   
-  return apiFetch<getDatabaseResponse>(getGetDatabaseUrl(id),
+  return apiFetch<Database>(getGetDatabaseUrl(id),
   {      
     ...options,
     method: 'GET'
@@ -396,35 +319,6 @@ export function useGetDatabase<TData = Awaited<ReturnType<typeof getDatabase>>, 
 /**
  * @summary Update a database's config (creates a new revision if changed)
  */
-export type updateDatabaseResponse200 = {
-  data: Database
-  status: 200
-}
-
-export type updateDatabaseResponse400 = {
-  data: BadRequestResponse
-  status: 400
-}
-
-export type updateDatabaseResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type updateDatabaseResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type updateDatabaseResponseSuccess = (updateDatabaseResponse200) & {
-  headers: Headers;
-};
-export type updateDatabaseResponseError = (updateDatabaseResponse400 | updateDatabaseResponse401 | updateDatabaseResponse404) & {
-  headers: Headers;
-};
-
-export type updateDatabaseResponse = (updateDatabaseResponseSuccess | updateDatabaseResponseError)
-
 export const getUpdateDatabaseUrl = (id: string,) => {
 
 
@@ -434,9 +328,9 @@ export const getUpdateDatabaseUrl = (id: string,) => {
 }
 
 export const updateDatabase = async (id: string,
-    patchDatabaseRequest: PatchDatabaseRequest, options?: RequestInit): Promise<updateDatabaseResponse> => {
+    patchDatabaseRequest: PatchDatabaseRequest, options?: RequestInit): Promise<Database> => {
   
-  return apiFetch<updateDatabaseResponse>(getUpdateDatabaseUrl(id),
+  return apiFetch<Database>(getUpdateDatabaseUrl(id),
   {      
     ...options,
     method: 'PATCH',
@@ -497,30 +391,6 @@ export const useUpdateDatabase = <TError = BadRequestResponse | UnauthorizedResp
     /**
  * @summary Delete a database
  */
-export type deleteDatabaseResponse204 = {
-  data: void
-  status: 204
-}
-
-export type deleteDatabaseResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type deleteDatabaseResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type deleteDatabaseResponseSuccess = (deleteDatabaseResponse204) & {
-  headers: Headers;
-};
-export type deleteDatabaseResponseError = (deleteDatabaseResponse401 | deleteDatabaseResponse404) & {
-  headers: Headers;
-};
-
-export type deleteDatabaseResponse = (deleteDatabaseResponseSuccess | deleteDatabaseResponseError)
-
 export const getDeleteDatabaseUrl = (id: string,) => {
 
 
@@ -529,9 +399,9 @@ export const getDeleteDatabaseUrl = (id: string,) => {
   return `/api/v1/databases/${id}`
 }
 
-export const deleteDatabase = async (id: string, options?: RequestInit): Promise<deleteDatabaseResponse> => {
+export const deleteDatabase = async (id: string, options?: RequestInit): Promise<void> => {
   
-  return apiFetch<deleteDatabaseResponse>(getDeleteDatabaseUrl(id),
+  return apiFetch<void>(getDeleteDatabaseUrl(id),
   {      
     ...options,
     method: 'DELETE'
@@ -591,30 +461,6 @@ export const useDeleteDatabase = <TError = UnauthorizedResponse | NotFoundRespon
     /**
  * @summary Stop a database
  */
-export type stopDatabaseResponse202 = {
-  data: void
-  status: 202
-}
-
-export type stopDatabaseResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type stopDatabaseResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type stopDatabaseResponseSuccess = (stopDatabaseResponse202) & {
-  headers: Headers;
-};
-export type stopDatabaseResponseError = (stopDatabaseResponse401 | stopDatabaseResponse404) & {
-  headers: Headers;
-};
-
-export type stopDatabaseResponse = (stopDatabaseResponseSuccess | stopDatabaseResponseError)
-
 export const getStopDatabaseUrl = (id: string,) => {
 
 
@@ -623,9 +469,9 @@ export const getStopDatabaseUrl = (id: string,) => {
   return `/api/v1/databases/${id}/stop`
 }
 
-export const stopDatabase = async (id: string, options?: RequestInit): Promise<stopDatabaseResponse> => {
+export const stopDatabase = async (id: string, options?: RequestInit): Promise<void> => {
   
-  return apiFetch<stopDatabaseResponse>(getStopDatabaseUrl(id),
+  return apiFetch<void>(getStopDatabaseUrl(id),
   {      
     ...options,
     method: 'POST'
@@ -685,30 +531,6 @@ export const useStopDatabase = <TError = UnauthorizedResponse | NotFoundResponse
     /**
  * @summary Start a database
  */
-export type startDatabaseResponse202 = {
-  data: void
-  status: 202
-}
-
-export type startDatabaseResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type startDatabaseResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type startDatabaseResponseSuccess = (startDatabaseResponse202) & {
-  headers: Headers;
-};
-export type startDatabaseResponseError = (startDatabaseResponse401 | startDatabaseResponse404) & {
-  headers: Headers;
-};
-
-export type startDatabaseResponse = (startDatabaseResponseSuccess | startDatabaseResponseError)
-
 export const getStartDatabaseUrl = (id: string,) => {
 
 
@@ -717,9 +539,9 @@ export const getStartDatabaseUrl = (id: string,) => {
   return `/api/v1/databases/${id}/start`
 }
 
-export const startDatabase = async (id: string, options?: RequestInit): Promise<startDatabaseResponse> => {
+export const startDatabase = async (id: string, options?: RequestInit): Promise<void> => {
   
-  return apiFetch<startDatabaseResponse>(getStartDatabaseUrl(id),
+  return apiFetch<void>(getStartDatabaseUrl(id),
   {      
     ...options,
     method: 'POST'
@@ -779,35 +601,6 @@ export const useStartDatabase = <TError = UnauthorizedResponse | NotFoundRespons
     /**
  * @summary Reset the root password (returned once)
  */
-export type resetDatabasePasswordResponse200 = {
-  data: ResetPasswordResponse
-  status: 200
-}
-
-export type resetDatabasePasswordResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type resetDatabasePasswordResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-
-export type resetDatabasePasswordResponse409 = {
-  data: Error
-  status: 409
-}
-    
-export type resetDatabasePasswordResponseSuccess = (resetDatabasePasswordResponse200) & {
-  headers: Headers;
-};
-export type resetDatabasePasswordResponseError = (resetDatabasePasswordResponse401 | resetDatabasePasswordResponse404 | resetDatabasePasswordResponse409) & {
-  headers: Headers;
-};
-
-export type resetDatabasePasswordResponse = (resetDatabasePasswordResponseSuccess | resetDatabasePasswordResponseError)
-
 export const getResetDatabasePasswordUrl = (id: string,) => {
 
 
@@ -816,9 +609,9 @@ export const getResetDatabasePasswordUrl = (id: string,) => {
   return `/api/v1/databases/${id}/reset-password`
 }
 
-export const resetDatabasePassword = async (id: string, options?: RequestInit): Promise<resetDatabasePasswordResponse> => {
+export const resetDatabasePassword = async (id: string, options?: RequestInit): Promise<ResetPasswordResponse> => {
   
-  return apiFetch<resetDatabasePasswordResponse>(getResetDatabasePasswordUrl(id),
+  return apiFetch<ResetPasswordResponse>(getResetDatabasePasswordUrl(id),
   {      
     ...options,
     method: 'POST'
@@ -878,30 +671,6 @@ export const useResetDatabasePassword = <TError = UnauthorizedResponse | NotFoun
     /**
  * @summary Connection details (password masked)
  */
-export type getDatabaseConnectionInfoResponse200 = {
-  data: ConnectionInfo
-  status: 200
-}
-
-export type getDatabaseConnectionInfoResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type getDatabaseConnectionInfoResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type getDatabaseConnectionInfoResponseSuccess = (getDatabaseConnectionInfoResponse200) & {
-  headers: Headers;
-};
-export type getDatabaseConnectionInfoResponseError = (getDatabaseConnectionInfoResponse401 | getDatabaseConnectionInfoResponse404) & {
-  headers: Headers;
-};
-
-export type getDatabaseConnectionInfoResponse = (getDatabaseConnectionInfoResponseSuccess | getDatabaseConnectionInfoResponseError)
-
 export const getGetDatabaseConnectionInfoUrl = (id: string,) => {
 
 
@@ -910,9 +679,9 @@ export const getGetDatabaseConnectionInfoUrl = (id: string,) => {
   return `/api/v1/databases/${id}/connection-info`
 }
 
-export const getDatabaseConnectionInfo = async (id: string, options?: RequestInit): Promise<getDatabaseConnectionInfoResponse> => {
+export const getDatabaseConnectionInfo = async (id: string, options?: RequestInit): Promise<ConnectionInfo> => {
   
-  return apiFetch<getDatabaseConnectionInfoResponse>(getGetDatabaseConnectionInfoUrl(id),
+  return apiFetch<ConnectionInfo>(getGetDatabaseConnectionInfoUrl(id),
   {      
     ...options,
     method: 'GET'

@@ -51,35 +51,6 @@ type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 /**
  * @summary Sign in with email and password
  */
-export type loginResponse200 = {
-  data: LoginResponse
-  status: 200
-}
-
-export type loginResponse400 = {
-  data: BadRequestResponse
-  status: 400
-}
-
-export type loginResponse401 = {
-  data: Error
-  status: 401
-}
-
-export type loginResponse429 = {
-  data: Error
-  status: 429
-}
-    
-export type loginResponseSuccess = (loginResponse200) & {
-  headers: Headers;
-};
-export type loginResponseError = (loginResponse400 | loginResponse401 | loginResponse429) & {
-  headers: Headers;
-};
-
-export type loginResponse = (loginResponseSuccess | loginResponseError)
-
 export const getLoginUrl = () => {
 
 
@@ -88,9 +59,9 @@ export const getLoginUrl = () => {
   return `/api/v1/auth/login`
 }
 
-export const login = async (loginRequest: LoginRequest, options?: RequestInit): Promise<loginResponse> => {
+export const login = async (loginRequest: LoginRequest, options?: RequestInit): Promise<LoginResponse> => {
   
-  return apiFetch<loginResponse>(getLoginUrl(),
+  return apiFetch<LoginResponse>(getLoginUrl(),
   {      
     ...options,
     method: 'POST',
@@ -151,25 +122,6 @@ export const useLogin = <TError = BadRequestResponse | Error,
     /**
  * @summary Invalidate the current session
  */
-export type logoutResponse204 = {
-  data: void
-  status: 204
-}
-
-export type logoutResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-    
-export type logoutResponseSuccess = (logoutResponse204) & {
-  headers: Headers;
-};
-export type logoutResponseError = (logoutResponse401) & {
-  headers: Headers;
-};
-
-export type logoutResponse = (logoutResponseSuccess | logoutResponseError)
-
 export const getLogoutUrl = () => {
 
 
@@ -178,9 +130,9 @@ export const getLogoutUrl = () => {
   return `/api/v1/auth/logout`
 }
 
-export const logout = async ( options?: RequestInit): Promise<logoutResponse> => {
+export const logout = async ( options?: RequestInit): Promise<void> => {
   
-  return apiFetch<logoutResponse>(getLogoutUrl(),
+  return apiFetch<void>(getLogoutUrl(),
   {      
     ...options,
     method: 'POST'
@@ -240,25 +192,6 @@ export const useLogout = <TError = UnauthorizedResponse,
     /**
  * @summary The authenticated account and its teams
  */
-export type getMeResponse200 = {
-  data: Me
-  status: 200
-}
-
-export type getMeResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-    
-export type getMeResponseSuccess = (getMeResponse200) & {
-  headers: Headers;
-};
-export type getMeResponseError = (getMeResponse401) & {
-  headers: Headers;
-};
-
-export type getMeResponse = (getMeResponseSuccess | getMeResponseError)
-
 export const getGetMeUrl = () => {
 
 
@@ -267,9 +200,9 @@ export const getGetMeUrl = () => {
   return `/api/v1/auth/me`
 }
 
-export const getMe = async ( options?: RequestInit): Promise<getMeResponse> => {
+export const getMe = async ( options?: RequestInit): Promise<Me> => {
   
-  return apiFetch<getMeResponse>(getGetMeUrl(),
+  return apiFetch<Me>(getGetMeUrl(),
   {      
     ...options,
     method: 'GET'
@@ -359,25 +292,6 @@ export function useGetMe<TData = Awaited<ReturnType<typeof getMe>>, TError = Una
 /**
  * @summary List the caller's personal access tokens (metadata only)
  */
-export type listTokensResponse200 = {
-  data: ApiToken[]
-  status: 200
-}
-
-export type listTokensResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-    
-export type listTokensResponseSuccess = (listTokensResponse200) & {
-  headers: Headers;
-};
-export type listTokensResponseError = (listTokensResponse401) & {
-  headers: Headers;
-};
-
-export type listTokensResponse = (listTokensResponseSuccess | listTokensResponseError)
-
 export const getListTokensUrl = () => {
 
 
@@ -386,9 +300,9 @@ export const getListTokensUrl = () => {
   return `/api/v1/tokens`
 }
 
-export const listTokens = async ( options?: RequestInit): Promise<listTokensResponse> => {
+export const listTokens = async ( options?: RequestInit): Promise<ApiToken[]> => {
   
-  return apiFetch<listTokensResponse>(getListTokensUrl(),
+  return apiFetch<ApiToken[]>(getListTokensUrl(),
   {      
     ...options,
     method: 'GET'
@@ -480,30 +394,6 @@ export function useListTokens<TData = Awaited<ReturnType<typeof listTokens>>, TE
 
  * @summary Create a personal access token
  */
-export type createTokenResponse201 = {
-  data: CreateTokenResponse
-  status: 201
-}
-
-export type createTokenResponse400 = {
-  data: BadRequestResponse
-  status: 400
-}
-
-export type createTokenResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-    
-export type createTokenResponseSuccess = (createTokenResponse201) & {
-  headers: Headers;
-};
-export type createTokenResponseError = (createTokenResponse400 | createTokenResponse401) & {
-  headers: Headers;
-};
-
-export type createTokenResponse = (createTokenResponseSuccess | createTokenResponseError)
-
 export const getCreateTokenUrl = () => {
 
 
@@ -512,9 +402,9 @@ export const getCreateTokenUrl = () => {
   return `/api/v1/tokens`
 }
 
-export const createToken = async (createTokenRequest: CreateTokenRequest, options?: RequestInit): Promise<createTokenResponse> => {
+export const createToken = async (createTokenRequest: CreateTokenRequest, options?: RequestInit): Promise<CreateTokenResponse> => {
   
-  return apiFetch<createTokenResponse>(getCreateTokenUrl(),
+  return apiFetch<CreateTokenResponse>(getCreateTokenUrl(),
   {      
     ...options,
     method: 'POST',
@@ -575,30 +465,6 @@ export const useCreateToken = <TError = BadRequestResponse | UnauthorizedRespons
     /**
  * @summary Revoke a personal access token
  */
-export type deleteTokenResponse204 = {
-  data: void
-  status: 204
-}
-
-export type deleteTokenResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type deleteTokenResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type deleteTokenResponseSuccess = (deleteTokenResponse204) & {
-  headers: Headers;
-};
-export type deleteTokenResponseError = (deleteTokenResponse401 | deleteTokenResponse404) & {
-  headers: Headers;
-};
-
-export type deleteTokenResponse = (deleteTokenResponseSuccess | deleteTokenResponseError)
-
 export const getDeleteTokenUrl = (id: string,) => {
 
 
@@ -607,9 +473,9 @@ export const getDeleteTokenUrl = (id: string,) => {
   return `/api/v1/tokens/${id}`
 }
 
-export const deleteToken = async (id: string, options?: RequestInit): Promise<deleteTokenResponse> => {
+export const deleteToken = async (id: string, options?: RequestInit): Promise<void> => {
   
-  return apiFetch<deleteTokenResponse>(getDeleteTokenUrl(id),
+  return apiFetch<void>(getDeleteTokenUrl(id),
   {      
     ...options,
     method: 'DELETE'
@@ -669,25 +535,6 @@ export const useDeleteToken = <TError = UnauthorizedResponse | NotFoundResponse,
     /**
  * @summary Two-factor authentication status for the current account
  */
-export type getTotpStatusResponse200 = {
-  data: TOTPStatus
-  status: 200
-}
-
-export type getTotpStatusResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-    
-export type getTotpStatusResponseSuccess = (getTotpStatusResponse200) & {
-  headers: Headers;
-};
-export type getTotpStatusResponseError = (getTotpStatusResponse401) & {
-  headers: Headers;
-};
-
-export type getTotpStatusResponse = (getTotpStatusResponseSuccess | getTotpStatusResponseError)
-
 export const getGetTotpStatusUrl = () => {
 
 
@@ -696,9 +543,9 @@ export const getGetTotpStatusUrl = () => {
   return `/api/v1/auth/totp`
 }
 
-export const getTotpStatus = async ( options?: RequestInit): Promise<getTotpStatusResponse> => {
+export const getTotpStatus = async ( options?: RequestInit): Promise<TOTPStatus> => {
   
-  return apiFetch<getTotpStatusResponse>(getGetTotpStatusUrl(),
+  return apiFetch<TOTPStatus>(getGetTotpStatusUrl(),
   {      
     ...options,
     method: 'GET'
@@ -790,30 +637,6 @@ export function useGetTotpStatus<TData = Awaited<ReturnType<typeof getTotpStatus
 
  * @summary Begin two-factor enrollment
  */
-export type enrollTotpResponse200 = {
-  data: TOTPEnrollResponse
-  status: 200
-}
-
-export type enrollTotpResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type enrollTotpResponse409 = {
-  data: Error
-  status: 409
-}
-    
-export type enrollTotpResponseSuccess = (enrollTotpResponse200) & {
-  headers: Headers;
-};
-export type enrollTotpResponseError = (enrollTotpResponse401 | enrollTotpResponse409) & {
-  headers: Headers;
-};
-
-export type enrollTotpResponse = (enrollTotpResponseSuccess | enrollTotpResponseError)
-
 export const getEnrollTotpUrl = () => {
 
 
@@ -822,9 +645,9 @@ export const getEnrollTotpUrl = () => {
   return `/api/v1/auth/totp/enroll`
 }
 
-export const enrollTotp = async ( options?: RequestInit): Promise<enrollTotpResponse> => {
+export const enrollTotp = async ( options?: RequestInit): Promise<TOTPEnrollResponse> => {
   
-  return apiFetch<enrollTotpResponse>(getEnrollTotpUrl(),
+  return apiFetch<TOTPEnrollResponse>(getEnrollTotpUrl(),
   {      
     ...options,
     method: 'POST'
@@ -886,30 +709,6 @@ export const useEnrollTotp = <TError = UnauthorizedResponse | Error,
 
  * @summary Confirm a code and activate two-factor
  */
-export type verifyTotpResponse200 = {
-  data: TOTPVerifyResponse
-  status: 200
-}
-
-export type verifyTotpResponse400 = {
-  data: BadRequestResponse
-  status: 400
-}
-
-export type verifyTotpResponse401 = {
-  data: Error
-  status: 401
-}
-    
-export type verifyTotpResponseSuccess = (verifyTotpResponse200) & {
-  headers: Headers;
-};
-export type verifyTotpResponseError = (verifyTotpResponse400 | verifyTotpResponse401) & {
-  headers: Headers;
-};
-
-export type verifyTotpResponse = (verifyTotpResponseSuccess | verifyTotpResponseError)
-
 export const getVerifyTotpUrl = () => {
 
 
@@ -918,9 +717,9 @@ export const getVerifyTotpUrl = () => {
   return `/api/v1/auth/totp/verify`
 }
 
-export const verifyTotp = async (tOTPCodeRequest: TOTPCodeRequest, options?: RequestInit): Promise<verifyTotpResponse> => {
+export const verifyTotp = async (tOTPCodeRequest: TOTPCodeRequest, options?: RequestInit): Promise<TOTPVerifyResponse> => {
   
-  return apiFetch<verifyTotpResponse>(getVerifyTotpUrl(),
+  return apiFetch<TOTPVerifyResponse>(getVerifyTotpUrl(),
   {      
     ...options,
     method: 'POST',
@@ -983,30 +782,6 @@ export const useVerifyTotp = <TError = BadRequestResponse | Error,
 
  * @summary Disable two-factor
  */
-export type disableTotpResponse204 = {
-  data: void
-  status: 204
-}
-
-export type disableTotpResponse400 = {
-  data: BadRequestResponse
-  status: 400
-}
-
-export type disableTotpResponse401 = {
-  data: Error
-  status: 401
-}
-    
-export type disableTotpResponseSuccess = (disableTotpResponse204) & {
-  headers: Headers;
-};
-export type disableTotpResponseError = (disableTotpResponse400 | disableTotpResponse401) & {
-  headers: Headers;
-};
-
-export type disableTotpResponse = (disableTotpResponseSuccess | disableTotpResponseError)
-
 export const getDisableTotpUrl = () => {
 
 
@@ -1015,9 +790,9 @@ export const getDisableTotpUrl = () => {
   return `/api/v1/auth/totp/disable`
 }
 
-export const disableTotp = async (tOTPCodeRequest: TOTPCodeRequest, options?: RequestInit): Promise<disableTotpResponse> => {
+export const disableTotp = async (tOTPCodeRequest: TOTPCodeRequest, options?: RequestInit): Promise<void> => {
   
-  return apiFetch<disableTotpResponse>(getDisableTotpUrl(),
+  return apiFetch<void>(getDisableTotpUrl(),
   {      
     ...options,
     method: 'POST',

@@ -46,25 +46,6 @@ type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 /**
  * @summary List all projects, newest first
  */
-export type listProjectsResponse200 = {
-  data: Project[]
-  status: 200
-}
-
-export type listProjectsResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-    
-export type listProjectsResponseSuccess = (listProjectsResponse200) & {
-  headers: Headers;
-};
-export type listProjectsResponseError = (listProjectsResponse401) & {
-  headers: Headers;
-};
-
-export type listProjectsResponse = (listProjectsResponseSuccess | listProjectsResponseError)
-
 export const getListProjectsUrl = () => {
 
 
@@ -73,9 +54,9 @@ export const getListProjectsUrl = () => {
   return `/api/v1/projects`
 }
 
-export const listProjects = async ( options?: RequestInit): Promise<listProjectsResponse> => {
+export const listProjects = async ( options?: RequestInit): Promise<Project[]> => {
   
-  return apiFetch<listProjectsResponse>(getListProjectsUrl(),
+  return apiFetch<Project[]>(getListProjectsUrl(),
   {      
     ...options,
     method: 'GET'
@@ -165,30 +146,6 @@ export function useListProjects<TData = Awaited<ReturnType<typeof listProjects>>
 /**
  * @summary Create a project and its default production environment
  */
-export type createProjectResponse201 = {
-  data: CreateProjectResponse
-  status: 201
-}
-
-export type createProjectResponse400 = {
-  data: BadRequestResponse
-  status: 400
-}
-
-export type createProjectResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-    
-export type createProjectResponseSuccess = (createProjectResponse201) & {
-  headers: Headers;
-};
-export type createProjectResponseError = (createProjectResponse400 | createProjectResponse401) & {
-  headers: Headers;
-};
-
-export type createProjectResponse = (createProjectResponseSuccess | createProjectResponseError)
-
 export const getCreateProjectUrl = () => {
 
 
@@ -197,9 +154,9 @@ export const getCreateProjectUrl = () => {
   return `/api/v1/projects`
 }
 
-export const createProject = async (createProjectRequest: CreateProjectRequest, options?: RequestInit): Promise<createProjectResponse> => {
+export const createProject = async (createProjectRequest: CreateProjectRequest, options?: RequestInit): Promise<CreateProjectResponse> => {
   
-  return apiFetch<createProjectResponse>(getCreateProjectUrl(),
+  return apiFetch<CreateProjectResponse>(getCreateProjectUrl(),
   {      
     ...options,
     method: 'POST',
@@ -260,30 +217,6 @@ export const useCreateProject = <TError = BadRequestResponse | UnauthorizedRespo
     /**
  * @summary One project with its environments
  */
-export type getProjectResponse200 = {
-  data: ProjectDetail
-  status: 200
-}
-
-export type getProjectResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type getProjectResponse404 = {
-  data: Error
-  status: 404
-}
-    
-export type getProjectResponseSuccess = (getProjectResponse200) & {
-  headers: Headers;
-};
-export type getProjectResponseError = (getProjectResponse401 | getProjectResponse404) & {
-  headers: Headers;
-};
-
-export type getProjectResponse = (getProjectResponseSuccess | getProjectResponseError)
-
 export const getGetProjectUrl = (id: string,) => {
 
 
@@ -292,9 +225,9 @@ export const getGetProjectUrl = (id: string,) => {
   return `/api/v1/projects/${id}`
 }
 
-export const getProject = async (id: string, options?: RequestInit): Promise<getProjectResponse> => {
+export const getProject = async (id: string, options?: RequestInit): Promise<ProjectDetail> => {
   
-  return apiFetch<getProjectResponse>(getGetProjectUrl(id),
+  return apiFetch<ProjectDetail>(getGetProjectUrl(id),
   {      
     ...options,
     method: 'GET'
@@ -385,25 +318,6 @@ export function useGetProject<TData = Awaited<ReturnType<typeof getProject>>, TE
  * Cascades to environments and their resources.
  * @summary Delete a project and everything in it
  */
-export type deleteProjectResponse204 = {
-  data: void
-  status: 204
-}
-
-export type deleteProjectResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-    
-export type deleteProjectResponseSuccess = (deleteProjectResponse204) & {
-  headers: Headers;
-};
-export type deleteProjectResponseError = (deleteProjectResponse401) & {
-  headers: Headers;
-};
-
-export type deleteProjectResponse = (deleteProjectResponseSuccess | deleteProjectResponseError)
-
 export const getDeleteProjectUrl = (id: string,) => {
 
 
@@ -412,9 +326,9 @@ export const getDeleteProjectUrl = (id: string,) => {
   return `/api/v1/projects/${id}`
 }
 
-export const deleteProject = async (id: string, options?: RequestInit): Promise<deleteProjectResponse> => {
+export const deleteProject = async (id: string, options?: RequestInit): Promise<void> => {
   
-  return apiFetch<deleteProjectResponse>(getDeleteProjectUrl(id),
+  return apiFetch<void>(getDeleteProjectUrl(id),
   {      
     ...options,
     method: 'DELETE'
@@ -474,30 +388,6 @@ export const useDeleteProject = <TError = UnauthorizedResponse,
     /**
  * @summary List a project's environments
  */
-export type listEnvironmentsResponse200 = {
-  data: Environment[]
-  status: 200
-}
-
-export type listEnvironmentsResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type listEnvironmentsResponse404 = {
-  data: Error
-  status: 404
-}
-    
-export type listEnvironmentsResponseSuccess = (listEnvironmentsResponse200) & {
-  headers: Headers;
-};
-export type listEnvironmentsResponseError = (listEnvironmentsResponse401 | listEnvironmentsResponse404) & {
-  headers: Headers;
-};
-
-export type listEnvironmentsResponse = (listEnvironmentsResponseSuccess | listEnvironmentsResponseError)
-
 export const getListEnvironmentsUrl = (id: string,) => {
 
 
@@ -506,9 +396,9 @@ export const getListEnvironmentsUrl = (id: string,) => {
   return `/api/v1/projects/${id}/environments`
 }
 
-export const listEnvironments = async (id: string, options?: RequestInit): Promise<listEnvironmentsResponse> => {
+export const listEnvironments = async (id: string, options?: RequestInit): Promise<Environment[]> => {
   
-  return apiFetch<listEnvironmentsResponse>(getListEnvironmentsUrl(id),
+  return apiFetch<Environment[]>(getListEnvironmentsUrl(id),
   {      
     ...options,
     method: 'GET'
@@ -598,35 +488,6 @@ export function useListEnvironments<TData = Awaited<ReturnType<typeof listEnviro
 /**
  * @summary Add an environment to a project
  */
-export type createEnvironmentResponse201 = {
-  data: Environment
-  status: 201
-}
-
-export type createEnvironmentResponse400 = {
-  data: BadRequestResponse
-  status: 400
-}
-
-export type createEnvironmentResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type createEnvironmentResponse404 = {
-  data: Error
-  status: 404
-}
-    
-export type createEnvironmentResponseSuccess = (createEnvironmentResponse201) & {
-  headers: Headers;
-};
-export type createEnvironmentResponseError = (createEnvironmentResponse400 | createEnvironmentResponse401 | createEnvironmentResponse404) & {
-  headers: Headers;
-};
-
-export type createEnvironmentResponse = (createEnvironmentResponseSuccess | createEnvironmentResponseError)
-
 export const getCreateEnvironmentUrl = (id: string,) => {
 
 
@@ -636,9 +497,9 @@ export const getCreateEnvironmentUrl = (id: string,) => {
 }
 
 export const createEnvironment = async (id: string,
-    createEnvironmentRequest: CreateEnvironmentRequest, options?: RequestInit): Promise<createEnvironmentResponse> => {
+    createEnvironmentRequest: CreateEnvironmentRequest, options?: RequestInit): Promise<Environment> => {
   
-  return apiFetch<createEnvironmentResponse>(getCreateEnvironmentUrl(id),
+  return apiFetch<Environment>(getCreateEnvironmentUrl(id),
   {      
     ...options,
     method: 'POST',

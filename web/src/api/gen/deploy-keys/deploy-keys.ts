@@ -44,25 +44,6 @@ type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 /**
  * @summary List all deploy keys (public key only)
  */
-export type listDeployKeysResponse200 = {
-  data: DeployKeysList
-  status: 200
-}
-
-export type listDeployKeysResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-    
-export type listDeployKeysResponseSuccess = (listDeployKeysResponse200) & {
-  headers: Headers;
-};
-export type listDeployKeysResponseError = (listDeployKeysResponse401) & {
-  headers: Headers;
-};
-
-export type listDeployKeysResponse = (listDeployKeysResponseSuccess | listDeployKeysResponseError)
-
 export const getListDeployKeysUrl = () => {
 
 
@@ -71,9 +52,9 @@ export const getListDeployKeysUrl = () => {
   return `/api/v1/deploy-keys`
 }
 
-export const listDeployKeys = async ( options?: RequestInit): Promise<listDeployKeysResponse> => {
+export const listDeployKeys = async ( options?: RequestInit): Promise<DeployKeysList> => {
   
-  return apiFetch<listDeployKeysResponse>(getListDeployKeysUrl(),
+  return apiFetch<DeployKeysList>(getListDeployKeysUrl(),
   {      
     ...options,
     method: 'GET'
@@ -163,30 +144,6 @@ export function useListDeployKeys<TData = Awaited<ReturnType<typeof listDeployKe
 /**
  * @summary Create a new deploy key for private repository access
  */
-export type createDeployKeyResponse201 = {
-  data: CreateDeployKeyResponse
-  status: 201
-}
-
-export type createDeployKeyResponse400 = {
-  data: BadRequestResponse
-  status: 400
-}
-
-export type createDeployKeyResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-    
-export type createDeployKeyResponseSuccess = (createDeployKeyResponse201) & {
-  headers: Headers;
-};
-export type createDeployKeyResponseError = (createDeployKeyResponse400 | createDeployKeyResponse401) & {
-  headers: Headers;
-};
-
-export type createDeployKeyResponse = (createDeployKeyResponseSuccess | createDeployKeyResponseError)
-
 export const getCreateDeployKeyUrl = () => {
 
 
@@ -195,9 +152,9 @@ export const getCreateDeployKeyUrl = () => {
   return `/api/v1/deploy-keys`
 }
 
-export const createDeployKey = async (createDeployKeyRequest: CreateDeployKeyRequest, options?: RequestInit): Promise<createDeployKeyResponse> => {
+export const createDeployKey = async (createDeployKeyRequest: CreateDeployKeyRequest, options?: RequestInit): Promise<CreateDeployKeyResponse> => {
   
-  return apiFetch<createDeployKeyResponse>(getCreateDeployKeyUrl(),
+  return apiFetch<CreateDeployKeyResponse>(getCreateDeployKeyUrl(),
   {      
     ...options,
     method: 'POST',
@@ -258,30 +215,6 @@ export const useCreateDeployKey = <TError = BadRequestResponse | UnauthorizedRes
     /**
  * @summary Get a deploy key by ID
  */
-export type getDeployKeyResponse200 = {
-  data: DeployKey
-  status: 200
-}
-
-export type getDeployKeyResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type getDeployKeyResponse404 = {
-  data: Error
-  status: 404
-}
-    
-export type getDeployKeyResponseSuccess = (getDeployKeyResponse200) & {
-  headers: Headers;
-};
-export type getDeployKeyResponseError = (getDeployKeyResponse401 | getDeployKeyResponse404) & {
-  headers: Headers;
-};
-
-export type getDeployKeyResponse = (getDeployKeyResponseSuccess | getDeployKeyResponseError)
-
 export const getGetDeployKeyUrl = (id: string,) => {
 
 
@@ -290,9 +223,9 @@ export const getGetDeployKeyUrl = (id: string,) => {
   return `/api/v1/deploy-keys/${id}`
 }
 
-export const getDeployKey = async (id: string, options?: RequestInit): Promise<getDeployKeyResponse> => {
+export const getDeployKey = async (id: string, options?: RequestInit): Promise<DeployKey> => {
   
-  return apiFetch<getDeployKeyResponse>(getGetDeployKeyUrl(id),
+  return apiFetch<DeployKey>(getGetDeployKeyUrl(id),
   {      
     ...options,
     method: 'GET'
@@ -382,35 +315,6 @@ export function useGetDeployKey<TData = Awaited<ReturnType<typeof getDeployKey>>
 /**
  * @summary Delete a deploy key (RESTRICT-gated by application references)
  */
-export type deleteDeployKeyResponse204 = {
-  data: void
-  status: 204
-}
-
-export type deleteDeployKeyResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type deleteDeployKeyResponse404 = {
-  data: Error
-  status: 404
-}
-
-export type deleteDeployKeyResponse409 = {
-  data: Error
-  status: 409
-}
-    
-export type deleteDeployKeyResponseSuccess = (deleteDeployKeyResponse204) & {
-  headers: Headers;
-};
-export type deleteDeployKeyResponseError = (deleteDeployKeyResponse401 | deleteDeployKeyResponse404 | deleteDeployKeyResponse409) & {
-  headers: Headers;
-};
-
-export type deleteDeployKeyResponse = (deleteDeployKeyResponseSuccess | deleteDeployKeyResponseError)
-
 export const getDeleteDeployKeyUrl = (id: string,) => {
 
 
@@ -419,9 +323,9 @@ export const getDeleteDeployKeyUrl = (id: string,) => {
   return `/api/v1/deploy-keys/${id}`
 }
 
-export const deleteDeployKey = async (id: string, options?: RequestInit): Promise<deleteDeployKeyResponse> => {
+export const deleteDeployKey = async (id: string, options?: RequestInit): Promise<void> => {
   
-  return apiFetch<deleteDeployKeyResponse>(getDeleteDeployKeyUrl(id),
+  return apiFetch<void>(getDeleteDeployKeyUrl(id),
   {      
     ...options,
     method: 'DELETE'

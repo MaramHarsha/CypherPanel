@@ -51,25 +51,6 @@ type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 /**
  * @summary List the caller's teams (all teams for a panel owner)
  */
-export type listTeamsResponse200 = {
-  data: Team[]
-  status: 200
-}
-
-export type listTeamsResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-    
-export type listTeamsResponseSuccess = (listTeamsResponse200) & {
-  headers: Headers;
-};
-export type listTeamsResponseError = (listTeamsResponse401) & {
-  headers: Headers;
-};
-
-export type listTeamsResponse = (listTeamsResponseSuccess | listTeamsResponseError)
-
 export const getListTeamsUrl = () => {
 
 
@@ -78,9 +59,9 @@ export const getListTeamsUrl = () => {
   return `/api/v1/teams`
 }
 
-export const listTeams = async ( options?: RequestInit): Promise<listTeamsResponse> => {
+export const listTeams = async ( options?: RequestInit): Promise<Team[]> => {
   
-  return apiFetch<listTeamsResponse>(getListTeamsUrl(),
+  return apiFetch<Team[]>(getListTeamsUrl(),
   {      
     ...options,
     method: 'GET'
@@ -170,35 +151,6 @@ export function useListTeams<TData = Awaited<ReturnType<typeof listTeams>>, TErr
 /**
  * @summary Create a team (panel admin+); the creator becomes its owner
  */
-export type createTeamResponse201 = {
-  data: Team
-  status: 201
-}
-
-export type createTeamResponse400 = {
-  data: BadRequestResponse
-  status: 400
-}
-
-export type createTeamResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type createTeamResponse403 = {
-  data: ForbiddenResponse
-  status: 403
-}
-    
-export type createTeamResponseSuccess = (createTeamResponse201) & {
-  headers: Headers;
-};
-export type createTeamResponseError = (createTeamResponse400 | createTeamResponse401 | createTeamResponse403) & {
-  headers: Headers;
-};
-
-export type createTeamResponse = (createTeamResponseSuccess | createTeamResponseError)
-
 export const getCreateTeamUrl = () => {
 
 
@@ -207,9 +159,9 @@ export const getCreateTeamUrl = () => {
   return `/api/v1/teams`
 }
 
-export const createTeam = async (createTeamRequest: CreateTeamRequest, options?: RequestInit): Promise<createTeamResponse> => {
+export const createTeam = async (createTeamRequest: CreateTeamRequest, options?: RequestInit): Promise<Team> => {
   
-  return apiFetch<createTeamResponse>(getCreateTeamUrl(),
+  return apiFetch<Team>(getCreateTeamUrl(),
   {      
     ...options,
     method: 'POST',
@@ -270,30 +222,6 @@ export const useCreateTeam = <TError = BadRequestResponse | UnauthorizedResponse
     /**
  * @summary Get a team (member+)
  */
-export type getTeamResponse200 = {
-  data: Team
-  status: 200
-}
-
-export type getTeamResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type getTeamResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type getTeamResponseSuccess = (getTeamResponse200) & {
-  headers: Headers;
-};
-export type getTeamResponseError = (getTeamResponse401 | getTeamResponse404) & {
-  headers: Headers;
-};
-
-export type getTeamResponse = (getTeamResponseSuccess | getTeamResponseError)
-
 export const getGetTeamUrl = (id: string,) => {
 
 
@@ -302,9 +230,9 @@ export const getGetTeamUrl = (id: string,) => {
   return `/api/v1/teams/${id}`
 }
 
-export const getTeam = async (id: string, options?: RequestInit): Promise<getTeamResponse> => {
+export const getTeam = async (id: string, options?: RequestInit): Promise<Team> => {
   
-  return apiFetch<getTeamResponse>(getGetTeamUrl(id),
+  return apiFetch<Team>(getGetTeamUrl(id),
   {      
     ...options,
     method: 'GET'
@@ -394,40 +322,6 @@ export function useGetTeam<TData = Awaited<ReturnType<typeof getTeam>>, TError =
 /**
  * @summary Rename a team (team owner)
  */
-export type renameTeamResponse200 = {
-  data: Team
-  status: 200
-}
-
-export type renameTeamResponse400 = {
-  data: BadRequestResponse
-  status: 400
-}
-
-export type renameTeamResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type renameTeamResponse403 = {
-  data: ForbiddenResponse
-  status: 403
-}
-
-export type renameTeamResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type renameTeamResponseSuccess = (renameTeamResponse200) & {
-  headers: Headers;
-};
-export type renameTeamResponseError = (renameTeamResponse400 | renameTeamResponse401 | renameTeamResponse403 | renameTeamResponse404) & {
-  headers: Headers;
-};
-
-export type renameTeamResponse = (renameTeamResponseSuccess | renameTeamResponseError)
-
 export const getRenameTeamUrl = (id: string,) => {
 
 
@@ -437,9 +331,9 @@ export const getRenameTeamUrl = (id: string,) => {
 }
 
 export const renameTeam = async (id: string,
-    renameTeamRequest: RenameTeamRequest, options?: RequestInit): Promise<renameTeamResponse> => {
+    renameTeamRequest: RenameTeamRequest, options?: RequestInit): Promise<Team> => {
   
-  return apiFetch<renameTeamResponse>(getRenameTeamUrl(id),
+  return apiFetch<Team>(getRenameTeamUrl(id),
   {      
     ...options,
     method: 'PATCH',
@@ -500,40 +394,6 @@ export const useRenameTeam = <TError = BadRequestResponse | UnauthorizedResponse
     /**
  * @summary Delete a team (team owner); refused while it owns projects
  */
-export type deleteTeamResponse204 = {
-  data: void
-  status: 204
-}
-
-export type deleteTeamResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type deleteTeamResponse403 = {
-  data: ForbiddenResponse
-  status: 403
-}
-
-export type deleteTeamResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-
-export type deleteTeamResponse409 = {
-  data: Error
-  status: 409
-}
-    
-export type deleteTeamResponseSuccess = (deleteTeamResponse204) & {
-  headers: Headers;
-};
-export type deleteTeamResponseError = (deleteTeamResponse401 | deleteTeamResponse403 | deleteTeamResponse404 | deleteTeamResponse409) & {
-  headers: Headers;
-};
-
-export type deleteTeamResponse = (deleteTeamResponseSuccess | deleteTeamResponseError)
-
 export const getDeleteTeamUrl = (id: string,) => {
 
 
@@ -542,9 +402,9 @@ export const getDeleteTeamUrl = (id: string,) => {
   return `/api/v1/teams/${id}`
 }
 
-export const deleteTeam = async (id: string, options?: RequestInit): Promise<deleteTeamResponse> => {
+export const deleteTeam = async (id: string, options?: RequestInit): Promise<void> => {
   
-  return apiFetch<deleteTeamResponse>(getDeleteTeamUrl(id),
+  return apiFetch<void>(getDeleteTeamUrl(id),
   {      
     ...options,
     method: 'DELETE'
@@ -604,30 +464,6 @@ export const useDeleteTeam = <TError = UnauthorizedResponse | ForbiddenResponse 
     /**
  * @summary List team members (member+)
  */
-export type listTeamMembersResponse200 = {
-  data: TeamMember[]
-  status: 200
-}
-
-export type listTeamMembersResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type listTeamMembersResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type listTeamMembersResponseSuccess = (listTeamMembersResponse200) & {
-  headers: Headers;
-};
-export type listTeamMembersResponseError = (listTeamMembersResponse401 | listTeamMembersResponse404) & {
-  headers: Headers;
-};
-
-export type listTeamMembersResponse = (listTeamMembersResponseSuccess | listTeamMembersResponseError)
-
 export const getListTeamMembersUrl = (id: string,) => {
 
 
@@ -636,9 +472,9 @@ export const getListTeamMembersUrl = (id: string,) => {
   return `/api/v1/teams/${id}/members`
 }
 
-export const listTeamMembers = async (id: string, options?: RequestInit): Promise<listTeamMembersResponse> => {
+export const listTeamMembers = async (id: string, options?: RequestInit): Promise<TeamMember[]> => {
   
-  return apiFetch<listTeamMembersResponse>(getListTeamMembersUrl(id),
+  return apiFetch<TeamMember[]>(getListTeamMembersUrl(id),
   {      
     ...options,
     method: 'GET'
@@ -728,40 +564,6 @@ export function useListTeamMembers<TData = Awaited<ReturnType<typeof listTeamMem
 /**
  * @summary Add a member (team admin+; granting owner needs team owner)
  */
-export type addTeamMemberResponse201 = {
-  data: TeamMember
-  status: 201
-}
-
-export type addTeamMemberResponse400 = {
-  data: BadRequestResponse
-  status: 400
-}
-
-export type addTeamMemberResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type addTeamMemberResponse403 = {
-  data: ForbiddenResponse
-  status: 403
-}
-
-export type addTeamMemberResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type addTeamMemberResponseSuccess = (addTeamMemberResponse201) & {
-  headers: Headers;
-};
-export type addTeamMemberResponseError = (addTeamMemberResponse400 | addTeamMemberResponse401 | addTeamMemberResponse403 | addTeamMemberResponse404) & {
-  headers: Headers;
-};
-
-export type addTeamMemberResponse = (addTeamMemberResponseSuccess | addTeamMemberResponseError)
-
 export const getAddTeamMemberUrl = (id: string,) => {
 
 
@@ -771,9 +573,9 @@ export const getAddTeamMemberUrl = (id: string,) => {
 }
 
 export const addTeamMember = async (id: string,
-    addMemberRequest: AddMemberRequest, options?: RequestInit): Promise<addTeamMemberResponse> => {
+    addMemberRequest: AddMemberRequest, options?: RequestInit): Promise<TeamMember> => {
   
-  return apiFetch<addTeamMemberResponse>(getAddTeamMemberUrl(id),
+  return apiFetch<TeamMember>(getAddTeamMemberUrl(id),
   {      
     ...options,
     method: 'POST',
@@ -834,45 +636,6 @@ export const useAddTeamMember = <TError = BadRequestResponse | UnauthorizedRespo
     /**
  * @summary Change a member's role (grant rules apply; the last owner is protected)
  */
-export type changeTeamMemberRoleResponse200 = {
-  data: TeamMember
-  status: 200
-}
-
-export type changeTeamMemberRoleResponse400 = {
-  data: BadRequestResponse
-  status: 400
-}
-
-export type changeTeamMemberRoleResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type changeTeamMemberRoleResponse403 = {
-  data: ForbiddenResponse
-  status: 403
-}
-
-export type changeTeamMemberRoleResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-
-export type changeTeamMemberRoleResponse409 = {
-  data: Error
-  status: 409
-}
-    
-export type changeTeamMemberRoleResponseSuccess = (changeTeamMemberRoleResponse200) & {
-  headers: Headers;
-};
-export type changeTeamMemberRoleResponseError = (changeTeamMemberRoleResponse400 | changeTeamMemberRoleResponse401 | changeTeamMemberRoleResponse403 | changeTeamMemberRoleResponse404 | changeTeamMemberRoleResponse409) & {
-  headers: Headers;
-};
-
-export type changeTeamMemberRoleResponse = (changeTeamMemberRoleResponseSuccess | changeTeamMemberRoleResponseError)
-
 export const getChangeTeamMemberRoleUrl = (id: string,
     uid: string,) => {
 
@@ -884,9 +647,9 @@ export const getChangeTeamMemberRoleUrl = (id: string,
 
 export const changeTeamMemberRole = async (id: string,
     uid: string,
-    changeMemberRoleRequest: ChangeMemberRoleRequest, options?: RequestInit): Promise<changeTeamMemberRoleResponse> => {
+    changeMemberRoleRequest: ChangeMemberRoleRequest, options?: RequestInit): Promise<TeamMember> => {
   
-  return apiFetch<changeTeamMemberRoleResponse>(getChangeTeamMemberRoleUrl(id,uid),
+  return apiFetch<TeamMember>(getChangeTeamMemberRoleUrl(id,uid),
   {      
     ...options,
     method: 'PATCH',
@@ -947,40 +710,6 @@ export const useChangeTeamMemberRole = <TError = BadRequestResponse | Unauthoriz
     /**
  * @summary Remove a member (removing an owner needs team owner; last owner protected)
  */
-export type removeTeamMemberResponse204 = {
-  data: void
-  status: 204
-}
-
-export type removeTeamMemberResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type removeTeamMemberResponse403 = {
-  data: ForbiddenResponse
-  status: 403
-}
-
-export type removeTeamMemberResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-
-export type removeTeamMemberResponse409 = {
-  data: Error
-  status: 409
-}
-    
-export type removeTeamMemberResponseSuccess = (removeTeamMemberResponse204) & {
-  headers: Headers;
-};
-export type removeTeamMemberResponseError = (removeTeamMemberResponse401 | removeTeamMemberResponse403 | removeTeamMemberResponse404 | removeTeamMemberResponse409) & {
-  headers: Headers;
-};
-
-export type removeTeamMemberResponse = (removeTeamMemberResponseSuccess | removeTeamMemberResponseError)
-
 export const getRemoveTeamMemberUrl = (id: string,
     uid: string,) => {
 
@@ -991,9 +720,9 @@ export const getRemoveTeamMemberUrl = (id: string,
 }
 
 export const removeTeamMember = async (id: string,
-    uid: string, options?: RequestInit): Promise<removeTeamMemberResponse> => {
+    uid: string, options?: RequestInit): Promise<void> => {
   
-  return apiFetch<removeTeamMemberResponse>(getRemoveTeamMemberUrl(id,uid),
+  return apiFetch<void>(getRemoveTeamMemberUrl(id,uid),
   {      
     ...options,
     method: 'DELETE'
@@ -1053,30 +782,6 @@ export const useRemoveTeamMember = <TError = UnauthorizedResponse | ForbiddenRes
     /**
  * @summary List all users (panel admin+)
  */
-export type listUsersResponse200 = {
-  data: User[]
-  status: 200
-}
-
-export type listUsersResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type listUsersResponse403 = {
-  data: ForbiddenResponse
-  status: 403
-}
-    
-export type listUsersResponseSuccess = (listUsersResponse200) & {
-  headers: Headers;
-};
-export type listUsersResponseError = (listUsersResponse401 | listUsersResponse403) & {
-  headers: Headers;
-};
-
-export type listUsersResponse = (listUsersResponseSuccess | listUsersResponseError)
-
 export const getListUsersUrl = () => {
 
 
@@ -1085,9 +790,9 @@ export const getListUsersUrl = () => {
   return `/api/v1/users`
 }
 
-export const listUsers = async ( options?: RequestInit): Promise<listUsersResponse> => {
+export const listUsers = async ( options?: RequestInit): Promise<User[]> => {
   
-  return apiFetch<listUsersResponse>(getListUsersUrl(),
+  return apiFetch<User[]>(getListUsersUrl(),
   {      
     ...options,
     method: 'GET'
@@ -1177,35 +882,6 @@ export function useListUsers<TData = Awaited<ReturnType<typeof listUsers>>, TErr
 /**
  * @summary Create a user (panel admin+; a panel role above member needs panel owner)
  */
-export type createUserResponse201 = {
-  data: User
-  status: 201
-}
-
-export type createUserResponse400 = {
-  data: BadRequestResponse
-  status: 400
-}
-
-export type createUserResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type createUserResponse403 = {
-  data: ForbiddenResponse
-  status: 403
-}
-    
-export type createUserResponseSuccess = (createUserResponse201) & {
-  headers: Headers;
-};
-export type createUserResponseError = (createUserResponse400 | createUserResponse401 | createUserResponse403) & {
-  headers: Headers;
-};
-
-export type createUserResponse = (createUserResponseSuccess | createUserResponseError)
-
 export const getCreateUserUrl = () => {
 
 
@@ -1214,9 +890,9 @@ export const getCreateUserUrl = () => {
   return `/api/v1/users`
 }
 
-export const createUser = async (createUserRequest: CreateUserRequest, options?: RequestInit): Promise<createUserResponse> => {
+export const createUser = async (createUserRequest: CreateUserRequest, options?: RequestInit): Promise<User> => {
   
-  return apiFetch<createUserResponse>(getCreateUserUrl(),
+  return apiFetch<User>(getCreateUserUrl(),
   {      
     ...options,
     method: 'POST',
@@ -1277,40 +953,6 @@ export const useCreateUser = <TError = BadRequestResponse | UnauthorizedResponse
     /**
  * @summary Change a user's panel role (panel owner)
  */
-export type updateUserRoleResponse200 = {
-  data: User
-  status: 200
-}
-
-export type updateUserRoleResponse400 = {
-  data: BadRequestResponse
-  status: 400
-}
-
-export type updateUserRoleResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type updateUserRoleResponse403 = {
-  data: ForbiddenResponse
-  status: 403
-}
-
-export type updateUserRoleResponse409 = {
-  data: Error
-  status: 409
-}
-    
-export type updateUserRoleResponseSuccess = (updateUserRoleResponse200) & {
-  headers: Headers;
-};
-export type updateUserRoleResponseError = (updateUserRoleResponse400 | updateUserRoleResponse401 | updateUserRoleResponse403 | updateUserRoleResponse409) & {
-  headers: Headers;
-};
-
-export type updateUserRoleResponse = (updateUserRoleResponseSuccess | updateUserRoleResponseError)
-
 export const getUpdateUserRoleUrl = (id: string,) => {
 
 
@@ -1320,9 +962,9 @@ export const getUpdateUserRoleUrl = (id: string,) => {
 }
 
 export const updateUserRole = async (id: string,
-    setUserRoleRequest: SetUserRoleRequest, options?: RequestInit): Promise<updateUserRoleResponse> => {
+    setUserRoleRequest: SetUserRoleRequest, options?: RequestInit): Promise<User> => {
   
-  return apiFetch<updateUserRoleResponse>(getUpdateUserRoleUrl(id),
+  return apiFetch<User>(getUpdateUserRoleUrl(id),
   {      
     ...options,
     method: 'PATCH',
@@ -1383,35 +1025,6 @@ export const useUpdateUserRole = <TError = BadRequestResponse | UnauthorizedResp
     /**
  * @summary Delete a user (panel owner; never your own account)
  */
-export type deleteUserResponse204 = {
-  data: void
-  status: 204
-}
-
-export type deleteUserResponse400 = {
-  data: BadRequestResponse
-  status: 400
-}
-
-export type deleteUserResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type deleteUserResponse403 = {
-  data: ForbiddenResponse
-  status: 403
-}
-    
-export type deleteUserResponseSuccess = (deleteUserResponse204) & {
-  headers: Headers;
-};
-export type deleteUserResponseError = (deleteUserResponse400 | deleteUserResponse401 | deleteUserResponse403) & {
-  headers: Headers;
-};
-
-export type deleteUserResponse = (deleteUserResponseSuccess | deleteUserResponseError)
-
 export const getDeleteUserUrl = (id: string,) => {
 
 
@@ -1420,9 +1033,9 @@ export const getDeleteUserUrl = (id: string,) => {
   return `/api/v1/users/${id}`
 }
 
-export const deleteUser = async (id: string, options?: RequestInit): Promise<deleteUserResponse> => {
+export const deleteUser = async (id: string, options?: RequestInit): Promise<void> => {
   
-  return apiFetch<deleteUserResponse>(getDeleteUserUrl(id),
+  return apiFetch<void>(getDeleteUserUrl(id),
   {      
     ...options,
     method: 'DELETE'

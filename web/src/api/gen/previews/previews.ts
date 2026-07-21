@@ -40,30 +40,6 @@ type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 /**
  * @summary List an application's previews
  */
-export type listPreviewsResponse200 = {
-  data: Preview[]
-  status: 200
-}
-
-export type listPreviewsResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type listPreviewsResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type listPreviewsResponseSuccess = (listPreviewsResponse200) & {
-  headers: Headers;
-};
-export type listPreviewsResponseError = (listPreviewsResponse401 | listPreviewsResponse404) & {
-  headers: Headers;
-};
-
-export type listPreviewsResponse = (listPreviewsResponseSuccess | listPreviewsResponseError)
-
 export const getListPreviewsUrl = (id: string,) => {
 
 
@@ -72,9 +48,9 @@ export const getListPreviewsUrl = (id: string,) => {
   return `/api/v1/applications/${id}/previews`
 }
 
-export const listPreviews = async (id: string, options?: RequestInit): Promise<listPreviewsResponse> => {
+export const listPreviews = async (id: string, options?: RequestInit): Promise<Preview[]> => {
   
-  return apiFetch<listPreviewsResponse>(getListPreviewsUrl(id),
+  return apiFetch<Preview[]>(getListPreviewsUrl(id),
   {      
     ...options,
     method: 'GET'
@@ -164,30 +140,6 @@ export function useListPreviews<TData = Awaited<ReturnType<typeof listPreviews>>
 /**
  * @summary Get a preview
  */
-export type getPreviewResponse200 = {
-  data: Preview
-  status: 200
-}
-
-export type getPreviewResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type getPreviewResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type getPreviewResponseSuccess = (getPreviewResponse200) & {
-  headers: Headers;
-};
-export type getPreviewResponseError = (getPreviewResponse401 | getPreviewResponse404) & {
-  headers: Headers;
-};
-
-export type getPreviewResponse = (getPreviewResponseSuccess | getPreviewResponseError)
-
 export const getGetPreviewUrl = (id: string,) => {
 
 
@@ -196,9 +148,9 @@ export const getGetPreviewUrl = (id: string,) => {
   return `/api/v1/previews/${id}`
 }
 
-export const getPreview = async (id: string, options?: RequestInit): Promise<getPreviewResponse> => {
+export const getPreview = async (id: string, options?: RequestInit): Promise<Preview> => {
   
-  return apiFetch<getPreviewResponse>(getGetPreviewUrl(id),
+  return apiFetch<Preview>(getGetPreviewUrl(id),
   {      
     ...options,
     method: 'GET'
@@ -288,30 +240,6 @@ export function useGetPreview<TData = Awaited<ReturnType<typeof getPreview>>, TE
 /**
  * @summary Tear down a preview (async)
  */
-export type deletePreviewResponse202 = {
-  data: void
-  status: 202
-}
-
-export type deletePreviewResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type deletePreviewResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type deletePreviewResponseSuccess = (deletePreviewResponse202) & {
-  headers: Headers;
-};
-export type deletePreviewResponseError = (deletePreviewResponse401 | deletePreviewResponse404) & {
-  headers: Headers;
-};
-
-export type deletePreviewResponse = (deletePreviewResponseSuccess | deletePreviewResponseError)
-
 export const getDeletePreviewUrl = (id: string,) => {
 
 
@@ -320,9 +248,9 @@ export const getDeletePreviewUrl = (id: string,) => {
   return `/api/v1/previews/${id}`
 }
 
-export const deletePreview = async (id: string, options?: RequestInit): Promise<deletePreviewResponse> => {
+export const deletePreview = async (id: string, options?: RequestInit): Promise<void> => {
   
-  return apiFetch<deletePreviewResponse>(getDeletePreviewUrl(id),
+  return apiFetch<void>(getDeletePreviewUrl(id),
   {      
     ...options,
     method: 'DELETE'

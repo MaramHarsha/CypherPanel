@@ -39,7 +39,7 @@ function ProjectHome() {
 
   useCrumbs([
     { label: "projects", to: "/projects" },
-    { label: project.data?.name ?? projectId },
+    { label: project.data?.project.name ?? projectId },
   ]);
 
   const activeEnv: Environment | undefined = useMemo(() => {
@@ -50,7 +50,7 @@ function ProjectHome() {
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-base font-semibold text-text">{project.data?.name ?? "…"}</h1>
+        <h1 className="text-base font-semibold text-text">{project.data?.project.name ?? "…"}</h1>
         {activeEnv && <NewAppDialog envId={activeEnv.id} />}
       </div>
 
@@ -190,8 +190,11 @@ function NewAppDialog({ envId, primary }: { envId: string; primary?: boolean }) 
 
   const create = useCreateApplication({
     mutation: {
-      onSuccess: (app) =>
-        void navigate({ to: "/projects/$projectId/applications/$appId", params: { projectId, appId: app.id } }),
+      onSuccess: (res) =>
+        void navigate({
+          to: "/projects/$projectId/applications/$appId",
+          params: { projectId, appId: res.application.id },
+        }),
       onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not create the application"),
     },
   });
@@ -225,7 +228,7 @@ function NewAppDialog({ envId, primary }: { envId: string; primary?: boolean }) 
           description="An application runs on one of your servers, and none has joined yet. Joining takes one copy-paste command and about a minute."
         >
           <div className="flex justify-end">
-            <Button variant="primary" asChild={false} onClick={() => void navigate({ to: "/servers" })}>
+            <Button variant="primary" onClick={() => void navigate({ to: "/servers" })}>
               Go to Servers
             </Button>
           </div>

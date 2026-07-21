@@ -8,8 +8,10 @@ import { ApiError } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
-interface PageStateProps<T> {
-  query: UseQueryResult<T>;
+interface PageStateProps<T, E> {
+  // E stays generic: the generated client's error type is the API's `Error`
+  // model, not the global Error — runtime narrowing happens via instanceof.
+  query: UseQueryResult<T, E>;
   /** Rendered when data resolves but `isEmpty(data)` (default: empty array). */
   empty?: ReactNode;
   isEmpty?: (data: T) => boolean;
@@ -18,7 +20,7 @@ interface PageStateProps<T> {
   children: (data: T) => ReactNode;
 }
 
-export function PageState<T>({ query, empty, isEmpty, loading, children }: PageStateProps<T>) {
+export function PageState<T, E = unknown>({ query, empty, isEmpty, loading, children }: PageStateProps<T, E>) {
   if (query.isPending) {
     return (
       loading ?? (

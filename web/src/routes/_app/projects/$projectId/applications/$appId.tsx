@@ -28,7 +28,7 @@ function ApplicationLayout() {
 
   useCrumbs([
     { label: "projects", to: "/projects" },
-    { label: project.data?.name ?? projectId, to: `/projects/${projectId}` },
+    { label: project.data?.project.name ?? projectId, to: `/projects/${projectId}` },
     { label: app.data?.name ?? appId },
   ]);
 

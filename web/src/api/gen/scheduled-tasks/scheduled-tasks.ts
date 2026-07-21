@@ -43,30 +43,6 @@ type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 /**
  * @summary List an application's scheduled tasks
  */
-export type listScheduledTasksResponse200 = {
-  data: ScheduledTask[]
-  status: 200
-}
-
-export type listScheduledTasksResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type listScheduledTasksResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type listScheduledTasksResponseSuccess = (listScheduledTasksResponse200) & {
-  headers: Headers;
-};
-export type listScheduledTasksResponseError = (listScheduledTasksResponse401 | listScheduledTasksResponse404) & {
-  headers: Headers;
-};
-
-export type listScheduledTasksResponse = (listScheduledTasksResponseSuccess | listScheduledTasksResponseError)
-
 export const getListScheduledTasksUrl = (id: string,) => {
 
 
@@ -75,9 +51,9 @@ export const getListScheduledTasksUrl = (id: string,) => {
   return `/api/v1/applications/${id}/scheduled-tasks`
 }
 
-export const listScheduledTasks = async (id: string, options?: RequestInit): Promise<listScheduledTasksResponse> => {
+export const listScheduledTasks = async (id: string, options?: RequestInit): Promise<ScheduledTask[]> => {
   
-  return apiFetch<listScheduledTasksResponse>(getListScheduledTasksUrl(id),
+  return apiFetch<ScheduledTask[]>(getListScheduledTasksUrl(id),
   {      
     ...options,
     method: 'GET'
@@ -167,35 +143,6 @@ export function useListScheduledTasks<TData = Awaited<ReturnType<typeof listSche
 /**
  * @summary Create a scheduled task (cron; command is argv, not a shell string)
  */
-export type createScheduledTaskResponse201 = {
-  data: ScheduledTask
-  status: 201
-}
-
-export type createScheduledTaskResponse400 = {
-  data: BadRequestResponse
-  status: 400
-}
-
-export type createScheduledTaskResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type createScheduledTaskResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type createScheduledTaskResponseSuccess = (createScheduledTaskResponse201) & {
-  headers: Headers;
-};
-export type createScheduledTaskResponseError = (createScheduledTaskResponse400 | createScheduledTaskResponse401 | createScheduledTaskResponse404) & {
-  headers: Headers;
-};
-
-export type createScheduledTaskResponse = (createScheduledTaskResponseSuccess | createScheduledTaskResponseError)
-
 export const getCreateScheduledTaskUrl = (id: string,) => {
 
 
@@ -205,9 +152,9 @@ export const getCreateScheduledTaskUrl = (id: string,) => {
 }
 
 export const createScheduledTask = async (id: string,
-    createScheduledTaskRequest: CreateScheduledTaskRequest, options?: RequestInit): Promise<createScheduledTaskResponse> => {
+    createScheduledTaskRequest: CreateScheduledTaskRequest, options?: RequestInit): Promise<ScheduledTask> => {
   
-  return apiFetch<createScheduledTaskResponse>(getCreateScheduledTaskUrl(id),
+  return apiFetch<ScheduledTask>(getCreateScheduledTaskUrl(id),
   {      
     ...options,
     method: 'POST',
@@ -268,30 +215,6 @@ export const useCreateScheduledTask = <TError = BadRequestResponse | Unauthorize
     /**
  * @summary Get a scheduled task
  */
-export type getScheduledTaskResponse200 = {
-  data: ScheduledTask
-  status: 200
-}
-
-export type getScheduledTaskResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type getScheduledTaskResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type getScheduledTaskResponseSuccess = (getScheduledTaskResponse200) & {
-  headers: Headers;
-};
-export type getScheduledTaskResponseError = (getScheduledTaskResponse401 | getScheduledTaskResponse404) & {
-  headers: Headers;
-};
-
-export type getScheduledTaskResponse = (getScheduledTaskResponseSuccess | getScheduledTaskResponseError)
-
 export const getGetScheduledTaskUrl = (id: string,) => {
 
 
@@ -300,9 +223,9 @@ export const getGetScheduledTaskUrl = (id: string,) => {
   return `/api/v1/scheduled-tasks/${id}`
 }
 
-export const getScheduledTask = async (id: string, options?: RequestInit): Promise<getScheduledTaskResponse> => {
+export const getScheduledTask = async (id: string, options?: RequestInit): Promise<ScheduledTask> => {
   
-  return apiFetch<getScheduledTaskResponse>(getGetScheduledTaskUrl(id),
+  return apiFetch<ScheduledTask>(getGetScheduledTaskUrl(id),
   {      
     ...options,
     method: 'GET'
@@ -392,35 +315,6 @@ export function useGetScheduledTask<TData = Awaited<ReturnType<typeof getSchedul
 /**
  * @summary Update a scheduled task
  */
-export type updateScheduledTaskResponse200 = {
-  data: ScheduledTask
-  status: 200
-}
-
-export type updateScheduledTaskResponse400 = {
-  data: BadRequestResponse
-  status: 400
-}
-
-export type updateScheduledTaskResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type updateScheduledTaskResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type updateScheduledTaskResponseSuccess = (updateScheduledTaskResponse200) & {
-  headers: Headers;
-};
-export type updateScheduledTaskResponseError = (updateScheduledTaskResponse400 | updateScheduledTaskResponse401 | updateScheduledTaskResponse404) & {
-  headers: Headers;
-};
-
-export type updateScheduledTaskResponse = (updateScheduledTaskResponseSuccess | updateScheduledTaskResponseError)
-
 export const getUpdateScheduledTaskUrl = (id: string,) => {
 
 
@@ -430,9 +324,9 @@ export const getUpdateScheduledTaskUrl = (id: string,) => {
 }
 
 export const updateScheduledTask = async (id: string,
-    createScheduledTaskRequest: CreateScheduledTaskRequest, options?: RequestInit): Promise<updateScheduledTaskResponse> => {
+    createScheduledTaskRequest: CreateScheduledTaskRequest, options?: RequestInit): Promise<ScheduledTask> => {
   
-  return apiFetch<updateScheduledTaskResponse>(getUpdateScheduledTaskUrl(id),
+  return apiFetch<ScheduledTask>(getUpdateScheduledTaskUrl(id),
   {      
     ...options,
     method: 'PATCH',
@@ -493,30 +387,6 @@ export const useUpdateScheduledTask = <TError = BadRequestResponse | Unauthorize
     /**
  * @summary Delete a scheduled task
  */
-export type deleteScheduledTaskResponse204 = {
-  data: void
-  status: 204
-}
-
-export type deleteScheduledTaskResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type deleteScheduledTaskResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type deleteScheduledTaskResponseSuccess = (deleteScheduledTaskResponse204) & {
-  headers: Headers;
-};
-export type deleteScheduledTaskResponseError = (deleteScheduledTaskResponse401 | deleteScheduledTaskResponse404) & {
-  headers: Headers;
-};
-
-export type deleteScheduledTaskResponse = (deleteScheduledTaskResponseSuccess | deleteScheduledTaskResponseError)
-
 export const getDeleteScheduledTaskUrl = (id: string,) => {
 
 
@@ -525,9 +395,9 @@ export const getDeleteScheduledTaskUrl = (id: string,) => {
   return `/api/v1/scheduled-tasks/${id}`
 }
 
-export const deleteScheduledTask = async (id: string, options?: RequestInit): Promise<deleteScheduledTaskResponse> => {
+export const deleteScheduledTask = async (id: string, options?: RequestInit): Promise<void> => {
   
-  return apiFetch<deleteScheduledTaskResponse>(getDeleteScheduledTaskUrl(id),
+  return apiFetch<void>(getDeleteScheduledTaskUrl(id),
   {      
     ...options,
     method: 'DELETE'
@@ -587,30 +457,6 @@ export const useDeleteScheduledTask = <TError = UnauthorizedResponse | NotFoundR
     /**
  * @summary List a task's recent run history
  */
-export type listScheduledTaskRunsResponse200 = {
-  data: ScheduledTaskRun[]
-  status: 200
-}
-
-export type listScheduledTaskRunsResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type listScheduledTaskRunsResponse404 = {
-  data: NotFoundResponse
-  status: 404
-}
-    
-export type listScheduledTaskRunsResponseSuccess = (listScheduledTaskRunsResponse200) & {
-  headers: Headers;
-};
-export type listScheduledTaskRunsResponseError = (listScheduledTaskRunsResponse401 | listScheduledTaskRunsResponse404) & {
-  headers: Headers;
-};
-
-export type listScheduledTaskRunsResponse = (listScheduledTaskRunsResponseSuccess | listScheduledTaskRunsResponseError)
-
 export const getListScheduledTaskRunsUrl = (id: string,) => {
 
 
@@ -619,9 +465,9 @@ export const getListScheduledTaskRunsUrl = (id: string,) => {
   return `/api/v1/scheduled-tasks/${id}/runs`
 }
 
-export const listScheduledTaskRuns = async (id: string, options?: RequestInit): Promise<listScheduledTaskRunsResponse> => {
+export const listScheduledTaskRuns = async (id: string, options?: RequestInit): Promise<ScheduledTaskRun[]> => {
   
-  return apiFetch<listScheduledTaskRunsResponse>(getListScheduledTaskRunsUrl(id),
+  return apiFetch<ScheduledTaskRun[]>(getListScheduledTaskRunsUrl(id),
   {      
     ...options,
     method: 'GET'

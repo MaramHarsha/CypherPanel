@@ -46,30 +46,6 @@ type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 /**
  * @summary List applications in an environment
  */
-export type listApplicationsResponse200 = {
-  data: Application[]
-  status: 200
-}
-
-export type listApplicationsResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type listApplicationsResponse404 = {
-  data: Error
-  status: 404
-}
-    
-export type listApplicationsResponseSuccess = (listApplicationsResponse200) & {
-  headers: Headers;
-};
-export type listApplicationsResponseError = (listApplicationsResponse401 | listApplicationsResponse404) & {
-  headers: Headers;
-};
-
-export type listApplicationsResponse = (listApplicationsResponseSuccess | listApplicationsResponseError)
-
 export const getListApplicationsUrl = (id: string,) => {
 
 
@@ -78,9 +54,9 @@ export const getListApplicationsUrl = (id: string,) => {
   return `/api/v1/environments/${id}/applications`
 }
 
-export const listApplications = async (id: string, options?: RequestInit): Promise<listApplicationsResponse> => {
+export const listApplications = async (id: string, options?: RequestInit): Promise<Application[]> => {
   
-  return apiFetch<listApplicationsResponse>(getListApplicationsUrl(id),
+  return apiFetch<Application[]>(getListApplicationsUrl(id),
   {      
     ...options,
     method: 'GET'
@@ -170,35 +146,6 @@ export function useListApplications<TData = Awaited<ReturnType<typeof listApplic
 /**
  * @summary Create an application
  */
-export type createApplicationResponse201 = {
-  data: CreateApplicationResponse
-  status: 201
-}
-
-export type createApplicationResponse400 = {
-  data: BadRequestResponse
-  status: 400
-}
-
-export type createApplicationResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type createApplicationResponse404 = {
-  data: Error
-  status: 404
-}
-    
-export type createApplicationResponseSuccess = (createApplicationResponse201) & {
-  headers: Headers;
-};
-export type createApplicationResponseError = (createApplicationResponse400 | createApplicationResponse401 | createApplicationResponse404) & {
-  headers: Headers;
-};
-
-export type createApplicationResponse = (createApplicationResponseSuccess | createApplicationResponseError)
-
 export const getCreateApplicationUrl = (id: string,) => {
 
 
@@ -208,9 +155,9 @@ export const getCreateApplicationUrl = (id: string,) => {
 }
 
 export const createApplication = async (id: string,
-    createApplicationRequest: CreateApplicationRequest, options?: RequestInit): Promise<createApplicationResponse> => {
+    createApplicationRequest: CreateApplicationRequest, options?: RequestInit): Promise<CreateApplicationResponse> => {
   
-  return apiFetch<createApplicationResponse>(getCreateApplicationUrl(id),
+  return apiFetch<CreateApplicationResponse>(getCreateApplicationUrl(id),
   {      
     ...options,
     method: 'POST',
@@ -271,30 +218,6 @@ export const useCreateApplication = <TError = BadRequestResponse | UnauthorizedR
     /**
  * @summary One application (secrets masked)
  */
-export type getApplicationResponse200 = {
-  data: Application
-  status: 200
-}
-
-export type getApplicationResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type getApplicationResponse404 = {
-  data: Error
-  status: 404
-}
-    
-export type getApplicationResponseSuccess = (getApplicationResponse200) & {
-  headers: Headers;
-};
-export type getApplicationResponseError = (getApplicationResponse401 | getApplicationResponse404) & {
-  headers: Headers;
-};
-
-export type getApplicationResponse = (getApplicationResponseSuccess | getApplicationResponseError)
-
 export const getGetApplicationUrl = (id: string,) => {
 
 
@@ -303,9 +226,9 @@ export const getGetApplicationUrl = (id: string,) => {
   return `/api/v1/applications/${id}`
 }
 
-export const getApplication = async (id: string, options?: RequestInit): Promise<getApplicationResponse> => {
+export const getApplication = async (id: string, options?: RequestInit): Promise<Application> => {
   
-  return apiFetch<getApplicationResponse>(getGetApplicationUrl(id),
+  return apiFetch<Application>(getGetApplicationUrl(id),
   {      
     ...options,
     method: 'GET'
@@ -395,40 +318,6 @@ export function useGetApplication<TData = Awaited<ReturnType<typeof getApplicati
 /**
  * @summary Update configuration (shapes the next revision; running revision unchanged until deploy)
  */
-export type updateApplicationResponse200 = {
-  data: Application
-  status: 200
-}
-
-export type updateApplicationResponse400 = {
-  data: Error
-  status: 400
-}
-
-export type updateApplicationResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type updateApplicationResponse404 = {
-  data: Error
-  status: 404
-}
-
-export type updateApplicationResponse409 = {
-  data: Error
-  status: 409
-}
-    
-export type updateApplicationResponseSuccess = (updateApplicationResponse200) & {
-  headers: Headers;
-};
-export type updateApplicationResponseError = (updateApplicationResponse400 | updateApplicationResponse401 | updateApplicationResponse404 | updateApplicationResponse409) & {
-  headers: Headers;
-};
-
-export type updateApplicationResponse = (updateApplicationResponseSuccess | updateApplicationResponseError)
-
 export const getUpdateApplicationUrl = (id: string,) => {
 
 
@@ -438,9 +327,9 @@ export const getUpdateApplicationUrl = (id: string,) => {
 }
 
 export const updateApplication = async (id: string,
-    patchApplicationRequest: PatchApplicationRequest, options?: RequestInit): Promise<updateApplicationResponse> => {
+    patchApplicationRequest: PatchApplicationRequest, options?: RequestInit): Promise<Application> => {
   
-  return apiFetch<updateApplicationResponse>(getUpdateApplicationUrl(id),
+  return apiFetch<Application>(getUpdateApplicationUrl(id),
   {      
     ...options,
     method: 'PATCH',
@@ -501,25 +390,6 @@ export const useUpdateApplication = <TError = Error | UnauthorizedResponse,
     /**
  * @summary Delete an application and its env vars
  */
-export type deleteApplicationResponse204 = {
-  data: void
-  status: 204
-}
-
-export type deleteApplicationResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-    
-export type deleteApplicationResponseSuccess = (deleteApplicationResponse204) & {
-  headers: Headers;
-};
-export type deleteApplicationResponseError = (deleteApplicationResponse401) & {
-  headers: Headers;
-};
-
-export type deleteApplicationResponse = (deleteApplicationResponseSuccess | deleteApplicationResponseError)
-
 export const getDeleteApplicationUrl = (id: string,) => {
 
 
@@ -528,9 +398,9 @@ export const getDeleteApplicationUrl = (id: string,) => {
   return `/api/v1/applications/${id}`
 }
 
-export const deleteApplication = async (id: string, options?: RequestInit): Promise<deleteApplicationResponse> => {
+export const deleteApplication = async (id: string, options?: RequestInit): Promise<void> => {
   
-  return apiFetch<deleteApplicationResponse>(getDeleteApplicationUrl(id),
+  return apiFetch<void>(getDeleteApplicationUrl(id),
   {      
     ...options,
     method: 'DELETE'
@@ -590,30 +460,6 @@ export const useDeleteApplication = <TError = UnauthorizedResponse,
     /**
  * @summary Stream runtime logs (Server-Sent Events)
  */
-export type streamApplicationLogsResponse200 = {
-  data: string
-  status: 200
-}
-
-export type streamApplicationLogsResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type streamApplicationLogsResponse404 = {
-  data: Error
-  status: 404
-}
-    
-export type streamApplicationLogsResponseSuccess = (streamApplicationLogsResponse200) & {
-  headers: Headers;
-};
-export type streamApplicationLogsResponseError = (streamApplicationLogsResponse401 | streamApplicationLogsResponse404) & {
-  headers: Headers;
-};
-
-export type streamApplicationLogsResponse = (streamApplicationLogsResponseSuccess | streamApplicationLogsResponseError)
-
 export const getStreamApplicationLogsUrl = (id: string,) => {
 
 
@@ -622,9 +468,9 @@ export const getStreamApplicationLogsUrl = (id: string,) => {
   return `/api/v1/applications/${id}/logs`
 }
 
-export const streamApplicationLogs = async (id: string, options?: RequestInit): Promise<streamApplicationLogsResponse> => {
+export const streamApplicationLogs = async (id: string, options?: RequestInit): Promise<string> => {
   
-  return apiFetch<streamApplicationLogsResponse>(getStreamApplicationLogsUrl(id),
+  return apiFetch<string>(getStreamApplicationLogsUrl(id),
   {      
     ...options,
     method: 'GET'
@@ -714,30 +560,6 @@ export function useStreamApplicationLogs<TData = Awaited<ReturnType<typeof strea
 /**
  * @summary List environment-variable keys (values are write-only)
  */
-export type listEnvVarKeysResponse200 = {
-  data: EnvVarKeys
-  status: 200
-}
-
-export type listEnvVarKeysResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type listEnvVarKeysResponse404 = {
-  data: Error
-  status: 404
-}
-    
-export type listEnvVarKeysResponseSuccess = (listEnvVarKeysResponse200) & {
-  headers: Headers;
-};
-export type listEnvVarKeysResponseError = (listEnvVarKeysResponse401 | listEnvVarKeysResponse404) & {
-  headers: Headers;
-};
-
-export type listEnvVarKeysResponse = (listEnvVarKeysResponseSuccess | listEnvVarKeysResponseError)
-
 export const getListEnvVarKeysUrl = (id: string,) => {
 
 
@@ -746,9 +568,9 @@ export const getListEnvVarKeysUrl = (id: string,) => {
   return `/api/v1/applications/${id}/env`
 }
 
-export const listEnvVarKeys = async (id: string, options?: RequestInit): Promise<listEnvVarKeysResponse> => {
+export const listEnvVarKeys = async (id: string, options?: RequestInit): Promise<EnvVarKeys> => {
   
-  return apiFetch<listEnvVarKeysResponse>(getListEnvVarKeysUrl(id),
+  return apiFetch<EnvVarKeys>(getListEnvVarKeysUrl(id),
   {      
     ...options,
     method: 'GET'
@@ -838,35 +660,6 @@ export function useListEnvVarKeys<TData = Awaited<ReturnType<typeof listEnvVarKe
 /**
  * @summary Set (create or replace) an environment variable
  */
-export type setEnvVarResponse204 = {
-  data: void
-  status: 204
-}
-
-export type setEnvVarResponse400 = {
-  data: BadRequestResponse
-  status: 400
-}
-
-export type setEnvVarResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type setEnvVarResponse404 = {
-  data: Error
-  status: 404
-}
-    
-export type setEnvVarResponseSuccess = (setEnvVarResponse204) & {
-  headers: Headers;
-};
-export type setEnvVarResponseError = (setEnvVarResponse400 | setEnvVarResponse401 | setEnvVarResponse404) & {
-  headers: Headers;
-};
-
-export type setEnvVarResponse = (setEnvVarResponseSuccess | setEnvVarResponseError)
-
 export const getSetEnvVarUrl = (id: string,
     key: string,) => {
 
@@ -878,9 +671,9 @@ export const getSetEnvVarUrl = (id: string,
 
 export const setEnvVar = async (id: string,
     key: string,
-    setEnvVarRequest: SetEnvVarRequest, options?: RequestInit): Promise<setEnvVarResponse> => {
+    setEnvVarRequest: SetEnvVarRequest, options?: RequestInit): Promise<void> => {
   
-  return apiFetch<setEnvVarResponse>(getSetEnvVarUrl(id,key),
+  return apiFetch<void>(getSetEnvVarUrl(id,key),
   {      
     ...options,
     method: 'PUT',
@@ -941,30 +734,6 @@ export const useSetEnvVar = <TError = BadRequestResponse | UnauthorizedResponse 
     /**
  * @summary Delete an environment variable
  */
-export type deleteEnvVarResponse204 = {
-  data: void
-  status: 204
-}
-
-export type deleteEnvVarResponse401 = {
-  data: UnauthorizedResponse
-  status: 401
-}
-
-export type deleteEnvVarResponse404 = {
-  data: Error
-  status: 404
-}
-    
-export type deleteEnvVarResponseSuccess = (deleteEnvVarResponse204) & {
-  headers: Headers;
-};
-export type deleteEnvVarResponseError = (deleteEnvVarResponse401 | deleteEnvVarResponse404) & {
-  headers: Headers;
-};
-
-export type deleteEnvVarResponse = (deleteEnvVarResponseSuccess | deleteEnvVarResponseError)
-
 export const getDeleteEnvVarUrl = (id: string,
     key: string,) => {
 
@@ -975,9 +744,9 @@ export const getDeleteEnvVarUrl = (id: string,
 }
 
 export const deleteEnvVar = async (id: string,
-    key: string, options?: RequestInit): Promise<deleteEnvVarResponse> => {
+    key: string, options?: RequestInit): Promise<void> => {
   
-  return apiFetch<deleteEnvVarResponse>(getDeleteEnvVarUrl(id,key),
+  return apiFetch<void>(getDeleteEnvVarUrl(id,key),
   {      
     ...options,
     method: 'DELETE'
