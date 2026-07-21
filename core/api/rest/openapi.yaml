@@ -34,6 +34,7 @@ tags:
 paths:
   /healthz:
     get:
+      operationId: healthz
       tags: [health]
       summary: Liveness probe
       security: []
@@ -47,6 +48,7 @@ paths:
 
   /readyz:
     get:
+      operationId: readyz
       tags: [health]
       summary: Readiness probe (checks the database)
       security: []
@@ -62,6 +64,7 @@ paths:
 
   /api/v1/auth/login:
     post:
+      operationId: login
       tags: [auth]
       summary: Sign in with email and password
       security: []
@@ -102,6 +105,7 @@ paths:
 
   /api/v1/auth/logout:
     post:
+      operationId: logout
       tags: [auth]
       summary: Invalidate the current session
       responses:
@@ -112,6 +116,7 @@ paths:
 
   /api/v1/auth/me:
     get:
+      operationId: getMe
       tags: [auth]
       summary: The authenticated account and its teams
       responses:
@@ -126,6 +131,7 @@ paths:
 
   /api/v1/tokens:
     get:
+      operationId: listTokens
       tags: [auth]
       summary: List the caller's personal access tokens (metadata only)
       responses:
@@ -140,6 +146,7 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
     post:
+      operationId: createToken
       tags: [auth]
       summary: Create a personal access token
       description: >
@@ -166,6 +173,7 @@ paths:
 
   /api/v1/tokens/{id}:
     delete:
+      operationId: deleteToken
       tags: [auth]
       summary: Revoke a personal access token
       parameters:
@@ -184,6 +192,7 @@ paths:
 
   /api/v1/auth/totp:
     get:
+      operationId: getTotpStatus
       tags: [auth]
       summary: Two-factor authentication status for the current account
       responses:
@@ -198,6 +207,7 @@ paths:
 
   /api/v1/auth/totp/enroll:
     post:
+      operationId: enrollTotp
       tags: [auth]
       summary: Begin two-factor enrollment
       description: >
@@ -223,6 +233,7 @@ paths:
 
   /api/v1/auth/totp/verify:
     post:
+      operationId: verifyTotp
       tags: [auth]
       summary: Confirm a code and activate two-factor
       description: >
@@ -252,6 +263,7 @@ paths:
 
   /api/v1/auth/totp/disable:
     post:
+      operationId: disableTotp
       tags: [auth]
       summary: Disable two-factor
       description: >
@@ -278,6 +290,7 @@ paths:
 
   /api/v1/ca.pem:
     get:
+      operationId: getCaCert
       tags: [servers]
       summary: The control plane's CA certificate (public, for agent pinning)
       security: []
@@ -291,6 +304,7 @@ paths:
 
   /api/v1/events:
     get:
+      operationId: streamEvents
       tags: [health]
       summary: Live resource-change stream (Server-Sent Events)
       description: >-
@@ -312,6 +326,7 @@ paths:
 
   /api/v1/openapi.yaml:
     get:
+      operationId: getOpenApiSpec
       tags: [health]
       summary: This specification
       security: []
@@ -325,6 +340,7 @@ paths:
 
   /install/agent.sh:
     get:
+      operationId: getAgentInstaller
       tags: [servers]
       summary: The agent join installer
       description: >-
@@ -342,6 +358,7 @@ paths:
 
   /api/v1/servers:
     get:
+      operationId: listServers
       tags: [servers]
       summary: List all servers, newest first
       responses:
@@ -356,6 +373,7 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
     post:
+      operationId: createServer
       tags: [servers]
       summary: Register a server and issue its single-use join token
       requestBody:
@@ -387,6 +405,7 @@ paths:
           type: string
         description: Server ID (srv_… prefix).
     get:
+      operationId: getServer
       tags: [servers]
       summary: One server
       responses:
@@ -405,6 +424,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
     delete:
+      operationId: deleteServer
       tags: [servers]
       summary: Delete a server, revoking its agent
       description: >-
@@ -419,6 +439,7 @@ paths:
 
   /api/v1/projects:
     get:
+      operationId: listProjects
       tags: [projects]
       summary: List all projects, newest first
       responses:
@@ -433,6 +454,7 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
     post:
+      operationId: createProject
       tags: [projects]
       summary: Create a project and its default production environment
       requestBody:
@@ -462,6 +484,7 @@ paths:
           type: string
         description: Project ID (prj_… prefix).
     get:
+      operationId: getProject
       tags: [projects]
       summary: One project with its environments
       responses:
@@ -480,6 +503,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
     delete:
+      operationId: deleteProject
       tags: [projects]
       summary: Delete a project and everything in it
       description: Cascades to environments and their resources.
@@ -498,6 +522,7 @@ paths:
           type: string
         description: Project ID (prj_… prefix).
     get:
+      operationId: listEnvironments
       tags: [projects]
       summary: List a project's environments
       responses:
@@ -518,6 +543,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
     post:
+      operationId: createEnvironment
       tags: [projects]
       summary: Add an environment to a project
       requestBody:
@@ -553,6 +579,7 @@ paths:
           type: string
         description: Environment ID (env_… prefix).
     get:
+      operationId: listApplications
       tags: [applications]
       summary: List applications in an environment
       responses:
@@ -573,6 +600,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
     post:
+      operationId: createApplication
       tags: [applications]
       summary: Create an application
       requestBody:
@@ -610,6 +638,7 @@ paths:
           type: string
         description: Application ID (app_… prefix).
     get:
+      operationId: getApplication
       tags: [applications]
       summary: One application (secrets masked)
       responses:
@@ -628,6 +657,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
     patch:
+      operationId: updateApplication
       tags: [applications]
       summary: Update configuration (shapes the next revision; running revision unchanged until deploy)
       requestBody:
@@ -664,6 +694,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
     delete:
+      operationId: deleteApplication
       tags: [applications]
       summary: Delete an application and its env vars
       responses:
@@ -674,6 +705,7 @@ paths:
 
   /api/v1/applications/{id}/logs:
     get:
+      operationId: streamApplicationLogs
       tags: [applications]
       summary: Stream runtime logs (Server-Sent Events)
       parameters:
@@ -700,6 +732,7 @@ paths:
 
   /api/v1/applications/{id}/deploy:
     post:
+      operationId: deployApplication
       tags: [deployments]
       summary: Deploy the application (build → rollout, zero-downtime)
       parameters:
@@ -732,6 +765,7 @@ paths:
 
   /api/v1/applications/{id}/deployments:
     get:
+      operationId: listDeployments
       tags: [deployments]
       summary: The application's deployments, newest first
       parameters:
@@ -760,6 +794,7 @@ paths:
 
   /api/v1/deployments/{id}:
     get:
+      operationId: getDeployment
       tags: [deployments]
       summary: One deployment
       parameters:
@@ -786,6 +821,7 @@ paths:
 
   /api/v1/deployments/{id}/logs:
     get:
+      operationId: streamDeploymentLogs
       tags: [deployments]
       summary: Stream build logs (Server-Sent Events)
       parameters:
@@ -812,6 +848,7 @@ paths:
 
   /api/v1/deployments/{id}/rollback:
     post:
+      operationId: rollbackDeployment
       tags: [deployments]
       summary: Roll back to the revision this deployment shipped (build skipped)
       parameters:
@@ -844,6 +881,7 @@ paths:
 
   /webhooks/github/{id}:
     post:
+      operationId: handleGithubWebhook
       tags: [deployments]
       summary: GitHub push webhook (HMAC-authenticated, no session)
       security: []
@@ -884,6 +922,7 @@ paths:
 
   /api/v1/deploy-keys:
     get:
+      operationId: listDeployKeys
       tags: [deploy-keys]
       summary: List all deploy keys (public key only)
       responses:
@@ -896,6 +935,7 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
     post:
+      operationId: createDeployKey
       tags: [deploy-keys]
       summary: Create a new deploy key for private repository access
       requestBody:
@@ -925,6 +965,7 @@ paths:
           type: string
         description: Deploy key ID (dk_... prefix).
     get:
+      operationId: getDeployKey
       tags: [deploy-keys]
       summary: Get a deploy key by ID
       responses:
@@ -943,6 +984,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
     delete:
+      operationId: deleteDeployKey
       tags: [deploy-keys]
       summary: Delete a deploy key (RESTRICT-gated by application references)
       responses:
@@ -972,6 +1014,7 @@ paths:
           type: string
         description: Application ID.
     get:
+      operationId: listEnvVarKeys
       tags: [applications]
       summary: List environment-variable keys (values are write-only)
       responses:
@@ -1005,6 +1048,7 @@ paths:
           type: string
         description: Environment-variable name.
     put:
+      operationId: setEnvVar
       tags: [applications]
       summary: Set (create or replace) an environment variable
       requestBody:
@@ -1027,6 +1071,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
     delete:
+      operationId: deleteEnvVar
       tags: [applications]
       summary: Delete an environment variable
       responses:
@@ -1044,6 +1089,7 @@ paths:
   # ─── Teams & users (teams-and-roles.md) ───────────────────────────────────
   /api/v1/teams:
     get:
+      operationId: listTeams
       tags: [teams]
       summary: List the caller's teams (all teams for a panel owner)
       responses:
@@ -1056,6 +1102,7 @@ paths:
                 items: { $ref: "#/components/schemas/Team" }
         "401": { $ref: "#/components/responses/Unauthorized" }
     post:
+      operationId: createTeam
       tags: [teams]
       summary: Create a team (panel admin+); the creator becomes its owner
       requestBody:
@@ -1076,6 +1123,7 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Team ID (tm_… prefix). }
     get:
+      operationId: getTeam
       tags: [teams]
       summary: Get a team (member+)
       responses:
@@ -1083,6 +1131,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
+      operationId: renameTeam
       tags: [teams]
       summary: Rename a team (team owner)
       requestBody:
@@ -1095,6 +1144,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
+      operationId: deleteTeam
       tags: [teams]
       summary: Delete a team (team owner); refused while it owns projects
       responses:
@@ -1107,6 +1157,7 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Team ID. }
     get:
+      operationId: listTeamMembers
       tags: [teams]
       summary: List team members (member+)
       responses:
@@ -1114,6 +1165,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
     post:
+      operationId: addTeamMember
       tags: [teams]
       summary: Add a member (team admin+; granting owner needs team owner)
       requestBody:
@@ -1130,6 +1182,7 @@ paths:
       - { name: id, in: path, required: true, schema: { type: string }, description: Team ID. }
       - { name: uid, in: path, required: true, schema: { type: string }, description: User ID (usr_… prefix). }
     patch:
+      operationId: changeTeamMemberRole
       tags: [teams]
       summary: Change a member's role (grant rules apply; the last owner is protected)
       requestBody:
@@ -1143,6 +1196,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { description: Would leave the team without an owner., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
     delete:
+      operationId: removeTeamMember
       tags: [teams]
       summary: Remove a member (removing an owner needs team owner; last owner protected)
       responses:
@@ -1153,6 +1207,7 @@ paths:
         "409": { description: Would leave the team without an owner., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /api/v1/users:
     get:
+      operationId: listUsers
       tags: [teams]
       summary: List all users (panel admin+)
       responses:
@@ -1160,6 +1215,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
+      operationId: createUser
       tags: [teams]
       summary: Create a user (panel admin+; a panel role above member needs panel owner)
       requestBody:
@@ -1174,6 +1230,7 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: User ID. }
     patch:
+      operationId: updateUserRole
       tags: [teams]
       summary: Change a user's panel role (panel owner)
       requestBody:
@@ -1186,6 +1243,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { description: Would leave the panel without an owner., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
     delete:
+      operationId: deleteUser
       tags: [teams]
       summary: Delete a user (panel owner; never your own account)
       responses:
@@ -1199,6 +1257,7 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Environment ID (env_… prefix). }
     get:
+      operationId: listDatabases
       tags: [databases]
       summary: List databases in an environment
       responses:
@@ -1206,6 +1265,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
     post:
+      operationId: createDatabase
       tags: [databases]
       summary: Create a managed database
       requestBody:
@@ -1224,6 +1284,7 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Database ID (db_… prefix). }
     get:
+      operationId: getDatabase
       tags: [databases]
       summary: Get a database
       responses:
@@ -1231,6 +1292,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
+      operationId: updateDatabase
       tags: [databases]
       summary: Update a database's config (creates a new revision if changed)
       requestBody:
@@ -1242,6 +1304,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
+      operationId: deleteDatabase
       tags: [databases]
       summary: Delete a database
       responses:
@@ -1252,6 +1315,7 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string } }
     post:
+      operationId: stopDatabase
       tags: [databases]
       summary: Stop a database
       responses:
@@ -1262,6 +1326,7 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string } }
     post:
+      operationId: startDatabase
       tags: [databases]
       summary: Start a database
       responses:
@@ -1272,6 +1337,7 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string } }
     post:
+      operationId: resetDatabasePassword
       tags: [databases]
       summary: Reset the root password (returned once)
       responses:
@@ -1283,6 +1349,7 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string } }
     get:
+      operationId: getDatabaseConnectionInfo
       tags: [databases]
       summary: Connection details (password masked)
       responses:
@@ -1293,12 +1360,14 @@ paths:
   # ─── Backups (managed-databases.md §7) ────────────────────────────────────
   /api/v1/backup-targets:
     get:
+      operationId: listBackupTargets
       tags: [backups]
       summary: List S3-compatible backup targets
       responses:
         "200": { description: Targets (credentials never included)., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/BackupTarget" } } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
     post:
+      operationId: createBackupTarget
       tags: [backups]
       summary: Create a backup target (panel admin+)
       requestBody:
@@ -1313,6 +1382,7 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Backup target ID (bt_… prefix). }
     get:
+      operationId: getBackupTarget
       tags: [backups]
       summary: Get a backup target
       responses:
@@ -1320,6 +1390,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
+      operationId: deleteBackupTarget
       tags: [backups]
       summary: Delete a backup target (panel admin+; refused while in use)
       responses:
@@ -1332,6 +1403,7 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Database ID. }
     get:
+      operationId: listDatabaseBackups
       tags: [backups]
       summary: List a database's backup schedules
       responses:
@@ -1339,6 +1411,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
     post:
+      operationId: createDatabaseBackup
       tags: [backups]
       summary: Create a backup schedule
       requestBody:
@@ -1354,6 +1427,7 @@ paths:
       - { name: id, in: path, required: true, schema: { type: string }, description: Database ID. }
       - { name: bak_id, in: path, required: true, schema: { type: string }, description: Backup schedule ID (bak_… prefix). }
     delete:
+      operationId: deleteDatabaseBackup
       tags: [backups]
       summary: Delete a backup schedule
       responses:
@@ -1365,6 +1439,7 @@ paths:
       - { name: id, in: path, required: true, schema: { type: string }, description: Database ID. }
       - { name: bak_id, in: path, required: true, schema: { type: string }, description: Backup schedule ID. }
     get:
+      operationId: listBackupHistory
       tags: [backups]
       summary: List a schedule's backup run history
       responses:
@@ -1376,6 +1451,7 @@ paths:
       - { name: id, in: path, required: true, schema: { type: string }, description: Database ID. }
       - { name: bak_id, in: path, required: true, schema: { type: string }, description: Backup schedule ID. }
     post:
+      operationId: runBackupNow
       tags: [backups]
       summary: Run a backup now
       responses:
@@ -1386,6 +1462,7 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Database ID. }
     post:
+      operationId: restoreDatabase
       tags: [backups]
       summary: Restore a database from a backup (destructive; confirm required)
       requestBody:
@@ -1403,6 +1480,7 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Source application ID. }
     get:
+      operationId: listPreviews
       tags: [previews]
       summary: List an application's previews
       responses:
@@ -1413,6 +1491,7 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Preview ID (prv_… prefix). }
     get:
+      operationId: getPreview
       tags: [previews]
       summary: Get a preview
       responses:
@@ -1420,6 +1499,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
+      operationId: deletePreview
       tags: [previews]
       summary: Tear down a preview (async)
       responses:
@@ -1432,6 +1512,7 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Project ID. }
     get:
+      operationId: listNotifiers
       tags: [notifiers]
       summary: List a project's notifiers
       responses:
@@ -1439,6 +1520,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
     post:
+      operationId: createNotifier
       tags: [notifiers]
       summary: Create a notifier
       requestBody:
@@ -1453,6 +1535,7 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Notifier ID (ntf_… prefix). }
     get:
+      operationId: getNotifier
       tags: [notifiers]
       summary: Get a notifier
       responses:
@@ -1460,6 +1543,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
+      operationId: updateNotifier
       tags: [notifiers]
       summary: Update a notifier (omit config to keep the sealed value)
       requestBody:
@@ -1471,6 +1555,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
+      operationId: deleteNotifier
       tags: [notifiers]
       summary: Delete a notifier
       responses:
@@ -1481,6 +1566,7 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Notifier ID. }
     post:
+      operationId: testNotifier
       tags: [notifiers]
       summary: Send a synthetic test notification through this notifier
       responses:
@@ -1493,6 +1579,7 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Application ID. }
     get:
+      operationId: listScheduledTasks
       tags: [scheduled-tasks]
       summary: List an application's scheduled tasks
       responses:
@@ -1500,6 +1587,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
     post:
+      operationId: createScheduledTask
       tags: [scheduled-tasks]
       summary: Create a scheduled task (cron; command is argv, not a shell string)
       requestBody:
@@ -1514,6 +1602,7 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Scheduled task ID (sch_… prefix). }
     get:
+      operationId: getScheduledTask
       tags: [scheduled-tasks]
       summary: Get a scheduled task
       responses:
@@ -1521,6 +1610,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
+      operationId: updateScheduledTask
       tags: [scheduled-tasks]
       summary: Update a scheduled task
       requestBody:
@@ -1532,6 +1622,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
+      operationId: deleteScheduledTask
       tags: [scheduled-tasks]
       summary: Delete a scheduled task
       responses:
@@ -1542,6 +1633,7 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Scheduled task ID. }
     get:
+      operationId: listScheduledTaskRuns
       tags: [scheduled-tasks]
       summary: List a task's recent run history
       responses:
