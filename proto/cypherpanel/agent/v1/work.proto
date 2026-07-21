@@ -57,6 +57,18 @@ message AppSpec {
   // (deterministic name, plane-computed) bound at an absolute path in the
   // container; survives container recreation, never touched by desired-state GC.
   repeated VolumeMount volumes = 13;
+  // Raw host-port publishes (feature-matrix V1). Each maps a container port to a
+  // host port on tcp or udp — for services reached directly, not through the
+  // HTTP proxy (databases-as-apps, game servers, brokers). Independent of route.
+  repeated PortMapping ports = 14;
+}
+
+// PortMapping publishes a container port to a host port on one protocol. The
+// agent maps it onto the container's ExposedPorts + HostConfig.PortBindings.
+message PortMapping {
+  uint32 host_port = 1;
+  uint32 container_port = 2;
+  string protocol = 3;  // "tcp" or "udp"
 }
 
 // VolumeMount binds one named Docker volume into the app container.
@@ -82,6 +94,11 @@ message HealthCheck {
   uint32 interval_seconds = 2;
   uint32 timeout_seconds = 3;
   uint32 retries = 4;
+  // Gate kind: "http" (GET path, default when empty) probes an HTTP endpoint;
+  // "tcp" dials the container port; "none" is liveness-only (the container is
+  // running) for raw UDP services that expose no readiness signal. The probe is
+  // always internal (agent → container), independent of any public route.
+  string kind = 5;
 }
 
 // RouteSpec is what the proxy driver (agent/proxy) turns into a Traefik

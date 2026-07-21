@@ -1954,12 +1954,32 @@ components:
           type: [integer, "null"]
           description: MiB; null/omitted/0 = no limit.
 
+    AppPort:
+      type: object
+      required: [host_port, container_port, protocol]
+      properties:
+        host_port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        container_port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        protocol:
+          type: string
+          enum: [tcp, udp]
+          description: Empty on input defaults to tcp.
+
     AppRoute:
       type: object
-      required: [domain, https, path_prefix]
+      required: [https, path_prefix]
       properties:
         domain:
           type: string
+          description: >
+            Public HTTP hostname. OPTIONAL — an empty domain makes the app a raw
+            (non-HTTP) service with no proxy route; expose it via `ports` instead.
         https:
           type: boolean
         path_prefix:
@@ -1969,6 +1989,12 @@ components:
       type: object
       required: [path, interval_seconds, timeout_seconds, retries]
       properties:
+        kind:
+          type: string
+          enum: [http, tcp, none]
+          description: >
+            Rollout gate. "http" (default) probes path; "tcp" dials the container
+            port; "none" is liveness-only for raw UDP services. Probe is internal.
         path:
           type: string
         interval_seconds:
@@ -2004,6 +2030,10 @@ components:
           type: array
           items: { $ref: "#/components/schemas/AppVolume" }
           description: Persistent volume mounts (survive redeploys).
+        ports:
+          type: array
+          items: { $ref: "#/components/schemas/AppPort" }
+          description: Raw host-port publishes (tcp/udp), independent of the HTTP route.
         webhook_id:
           type: string
           description: Public webhook identifier used in the webhook URL.
@@ -2044,6 +2074,10 @@ components:
         volumes:
           type: array
           items: { $ref: "#/components/schemas/AppVolume" }
+        ports:
+          type: array
+          items: { $ref: "#/components/schemas/AppPort" }
+          description: Raw host-port publishes (tcp/udp); route.domain may be empty for a raw service.
         env_vars:
           type: object
           additionalProperties:
@@ -2114,6 +2148,10 @@ components:
           type: array
           items: { $ref: "#/components/schemas/AppVolume" }
           description: Present = replace the volume set wholesale.
+        ports:
+          type: array
+          items: { $ref: "#/components/schemas/AppPort" }
+          description: Present = replace the port set wholesale.
 
     DeployRequest:
       type: object

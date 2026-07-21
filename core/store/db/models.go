@@ -62,6 +62,8 @@ type Application struct {
 	CpuLimit              pgtype.Float4
 	MemoryLimitMb         pgtype.Int4
 	Volumes               []byte
+	Ports                 []byte
+	HealthKind            string
 }
 
 type BackupRecord struct {

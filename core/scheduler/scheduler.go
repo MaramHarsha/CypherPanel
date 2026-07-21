@@ -148,6 +148,7 @@ type configSnapshot struct {
 		PathPrefix string `json:"path_prefix"`
 	} `json:"route"`
 	Health struct {
+		Kind            string `json:"kind"`
 		Path            string `json:"path"`
 		IntervalSeconds int    `json:"interval_seconds"`
 		TimeoutSeconds  int    `json:"timeout_seconds"`
@@ -162,6 +163,7 @@ func snapshotOf(app domain.Application) ([]byte, error) {
 	cs.Route.Domain = app.Route.Domain
 	cs.Route.HTTPS = app.Route.HTTPS
 	cs.Route.PathPrefix = app.Route.PathPrefix
+	cs.Health.Kind = app.Health.Kind
 	cs.Health.Path = app.Health.Path
 	cs.Health.IntervalSeconds = app.Health.IntervalSeconds
 	cs.Health.TimeoutSeconds = app.Health.TimeoutSeconds
@@ -481,6 +483,7 @@ func (s *Scheduler) buildSpec(ctx context.Context, app domain.Application, rev d
 		Env:           env,
 		Network:       cs.Network,
 		Health: &agentv1.HealthCheck{
+			Kind:            cs.Health.Kind,
 			Path:            cs.Health.Path,
 			IntervalSeconds: uint32(cs.Health.IntervalSeconds),
 			TimeoutSeconds:  uint32(cs.Health.TimeoutSeconds),
@@ -497,7 +500,24 @@ func (s *Scheduler) buildSpec(ctx context.Context, app domain.Application, rev d
 		CpuLimit:      cpuLimitValue(app.Runtime.CPULimit),
 		MemoryLimitMb: memLimitValue(app.Runtime.MemoryLimitMB),
 		Volumes:       volumeMounts(app.ID, app.Volumes),
+		Ports:         portMappings(app.Ports),
 	}, nil
+}
+
+// portMappings maps an app's raw host-port publishes to the wire.
+func portMappings(ports []domain.PortMapping) []*agentv1.PortMapping {
+	if len(ports) == 0 {
+		return nil
+	}
+	out := make([]*agentv1.PortMapping, 0, len(ports))
+	for _, p := range ports {
+		out = append(out, &agentv1.PortMapping{
+			HostPort:      uint32(p.HostPort),
+			ContainerPort: uint32(p.ContainerPort),
+			Protocol:      p.Protocol,
+		})
+	}
+	return out
 }
 
 // volumeMounts resolves an app's declared volumes to wire mounts, computing the

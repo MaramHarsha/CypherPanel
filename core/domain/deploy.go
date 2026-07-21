@@ -68,11 +68,24 @@ type AppRoute struct {
 }
 
 // AppHealth gates rollout: the new revision must pass before the route flips.
+// Kind selects how: "http" (GET Path, the default) probes an HTTP endpoint;
+// "tcp" dials the container port; "none" is liveness-only (container running)
+// for raw UDP services with no readiness signal. The probe is always internal.
 type AppHealth struct {
+	Kind            string
 	Path            string
 	IntervalSeconds int
 	TimeoutSeconds  int
 	Retries         int
+}
+
+// PortMapping publishes a container port to a host port on one protocol, for
+// services reached directly rather than through the HTTP proxy (feature-matrix
+// V1). Independent of the (now optional) HTTP route.
+type PortMapping struct {
+	HostPort      int    `json:"host_port"`
+	ContainerPort int    `json:"container_port"`
+	Protocol      string `json:"protocol"` // "tcp" or "udp"
 }
 
 // Application is a resource built from a git repository and owned end to end.
@@ -88,6 +101,7 @@ type Application struct {
 	Route         AppRoute
 	Health        AppHealth
 	Volumes       []VolumeMount
+	Ports         []PortMapping
 	WebhookID     string
 	// Sealed webhook HMAC secret (threat-model §5.1). Services unseal to verify.
 	WebhookSecretCT    []byte

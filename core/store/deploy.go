@@ -37,6 +37,31 @@ func volumesFromJSON(b []byte) []domain.VolumeMount {
 	return out
 }
 
+// portsJSON marshals an app's port mappings for the JSONB column; a nil slice
+// stores as "[]" (never SQL NULL — the column is NOT NULL).
+func portsJSON(p []domain.PortMapping) []byte {
+	if len(p) == 0 {
+		return []byte("[]")
+	}
+	b, err := json.Marshal(p)
+	if err != nil {
+		return []byte("[]")
+	}
+	return b
+}
+
+// portsFromJSON parses the JSONB column back to port mappings.
+func portsFromJSON(b []byte) []domain.PortMapping {
+	if len(b) == 0 {
+		return nil
+	}
+	var out []domain.PortMapping
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
 // Persistence for the Phase 2 resource model. Like store.go, all pgx/pgtype
 // types stay in this package; callers speak domain types.
 
@@ -199,6 +224,7 @@ func appParams(a domain.Application) db.CreateApplicationParams {
 		RouteDomain:           a.Route.Domain,
 		RouteHttps:            a.Route.HTTPS,
 		RoutePathPrefix:       a.Route.PathPrefix,
+		HealthKind:            a.Health.Kind,
 		HealthPath:            a.Health.Path,
 		HealthIntervalSeconds: int32(a.Health.IntervalSeconds),
 		HealthTimeoutSeconds:  int32(a.Health.TimeoutSeconds),
@@ -212,6 +238,7 @@ func appParams(a domain.Application) db.CreateApplicationParams {
 		CpuLimit:              float4FromPtr(a.Runtime.CPULimit),
 		MemoryLimitMb:         int4FromPtr(a.Runtime.MemoryLimitMB),
 		Volumes:               volumesJSON(a.Volumes),
+		Ports:                 portsJSON(a.Ports),
 	}
 }
 
@@ -311,6 +338,7 @@ func (s *Store) UpdateApplicationConfig(ctx context.Context, a domain.Applicatio
 		RouteDomain:           a.Route.Domain,
 		RouteHttps:            a.Route.HTTPS,
 		RoutePathPrefix:       a.Route.PathPrefix,
+		HealthKind:            a.Health.Kind,
 		HealthPath:            a.Health.Path,
 		HealthIntervalSeconds: int32(a.Health.IntervalSeconds),
 		HealthTimeoutSeconds:  int32(a.Health.TimeoutSeconds),
@@ -321,6 +349,7 @@ func (s *Store) UpdateApplicationConfig(ctx context.Context, a domain.Applicatio
 		CpuLimit:              float4FromPtr(a.Runtime.CPULimit),
 		MemoryLimitMb:         int4FromPtr(a.Runtime.MemoryLimitMB),
 		Volumes:               volumesJSON(a.Volumes),
+		Ports:                 portsJSON(a.Ports),
 	})
 	if err != nil {
 		return domain.Application{}, wrapUpdate("updating application", err)
@@ -605,7 +634,9 @@ func applicationFromRow(r db.Application) domain.Application {
 			PathPrefix: r.RoutePathPrefix,
 		},
 		Volumes: volumesFromJSON(r.Volumes),
+		Ports:   portsFromJSON(r.Ports),
 		Health: domain.AppHealth{
+			Kind:            r.HealthKind,
 			Path:            r.HealthPath,
 			IntervalSeconds: int(r.HealthIntervalSeconds),
 			TimeoutSeconds:  int(r.HealthTimeoutSeconds),

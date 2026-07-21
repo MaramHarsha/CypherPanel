@@ -221,6 +221,20 @@ func (c *Client) CreateContainer(ctx context.Context, spec docker.ContainerSpec)
 		"Labels":     spec.Labels,
 		"HostConfig": hostConfig,
 	}
+	// Raw host-port publishes (tcp/udp): the container config declares the
+	// exposed ports and the HostConfig binds each to its host port. Mirrors the
+	// managed-database expose_port mapping.
+	if len(spec.Ports) > 0 {
+		exposed := map[string]any{}
+		bindings := map[string]any{}
+		for _, p := range spec.Ports {
+			key := strconv.Itoa(int(p.ContainerPort)) + "/" + p.Protocol
+			exposed[key] = struct{}{}
+			bindings[key] = []map[string]any{{"HostPort": strconv.Itoa(int(p.HostPort))}}
+		}
+		body["ExposedPorts"] = exposed
+		hostConfig["PortBindings"] = bindings
+	}
 	q := url.Values{}
 	q.Set("name", spec.Name)
 	var resp struct {

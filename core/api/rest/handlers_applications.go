@@ -24,6 +24,7 @@ type applicationDTO struct {
 	Route             appRouteDTO    `json:"route"`
 	Health            appHealthDTO   `json:"health"`
 	Volumes           []appVolumeDTO `json:"volumes"`
+	Ports             []appPortDTO   `json:"ports"`
 	WebhookID         string         `json:"webhook_id"`
 	DesiredRevisionID *string        `json:"desired_revision_id"`
 	// Status is observed state (ADR-005): what the agent last reported, with
@@ -69,6 +70,36 @@ func reqVolumes(vs []appVolumeReq) []domain.VolumeMount {
 	return out
 }
 
+// appPortDTO / appPortReq describe a raw host-port publish (create, patch, and
+// response).
+type appPortDTO struct {
+	HostPort      int    `json:"host_port"`
+	ContainerPort int    `json:"container_port"`
+	Protocol      string `json:"protocol"`
+}
+
+type appPortReq struct {
+	HostPort      int    `json:"host_port"`
+	ContainerPort int    `json:"container_port"`
+	Protocol      string `json:"protocol"`
+}
+
+func reqPorts(ps []appPortReq) []domain.PortMapping {
+	out := make([]domain.PortMapping, 0, len(ps))
+	for _, p := range ps {
+		out = append(out, domain.PortMapping{HostPort: p.HostPort, ContainerPort: p.ContainerPort, Protocol: p.Protocol})
+	}
+	return out
+}
+
+func toPortDTOs(ps []domain.PortMapping) []appPortDTO {
+	out := make([]appPortDTO, 0, len(ps))
+	for _, p := range ps {
+		out = append(out, appPortDTO{HostPort: p.HostPort, ContainerPort: p.ContainerPort, Protocol: p.Protocol})
+	}
+	return out
+}
+
 type appRuntimeDTO struct {
 	ServerID      string   `json:"server_id"`
 	Port          int      `json:"port"`
@@ -84,6 +115,7 @@ type appRouteDTO struct {
 }
 
 type appHealthDTO struct {
+	Kind            string `json:"kind"`
 	Path            string `json:"path"`
 	IntervalSeconds int    `json:"interval_seconds"`
 	TimeoutSeconds  int    `json:"timeout_seconds"`
@@ -107,8 +139,9 @@ func toApplicationDTO(a domain.Application) applicationDTO {
 		Build:              appBuildDTO{Kind: a.Build.Kind, DockerfilePath: a.Build.DockerfilePath, Context: a.Build.Context},
 		Runtime:            appRuntimeDTO{ServerID: a.Runtime.ServerID, Port: a.Runtime.Port, Replicas: a.Runtime.Replicas, CPULimit: a.Runtime.CPULimit, MemoryLimitMB: a.Runtime.MemoryLimitMB},
 		Route:              appRouteDTO{Domain: a.Route.Domain, HTTPS: a.Route.HTTPS, PathPrefix: a.Route.PathPrefix},
-		Health:             appHealthDTO{Path: a.Health.Path, IntervalSeconds: a.Health.IntervalSeconds, TimeoutSeconds: a.Health.TimeoutSeconds, Retries: a.Health.Retries},
+		Health:             appHealthDTO{Kind: a.Health.Kind, Path: a.Health.Path, IntervalSeconds: a.Health.IntervalSeconds, TimeoutSeconds: a.Health.TimeoutSeconds, Retries: a.Health.Retries},
 		Volumes:            toVolumeDTOs(a.Volumes),
+		Ports:              toPortDTOs(a.Ports),
 		WebhookID:          a.WebhookID,
 		DesiredRevisionID:  a.DesiredRevisionID,
 		Status:             a.Status,
@@ -148,12 +181,14 @@ type createApplicationRequest struct {
 		PathPrefix string `json:"path_prefix"`
 	} `json:"route"`
 	Health struct {
+		Kind            string `json:"kind"`
 		Path            string `json:"path"`
 		IntervalSeconds int    `json:"interval_seconds"`
 		TimeoutSeconds  int    `json:"timeout_seconds"`
 		Retries         int    `json:"retries"`
 	} `json:"health"`
 	Volumes           []appVolumeReq    `json:"volumes"`
+	Ports             []appPortReq      `json:"ports"`
 	EnvVars           map[string]string `json:"env_vars"`
 	PreviewEnabled    bool              `json:"preview_enabled"`
 	PreviewBaseDomain string            `json:"preview_base_domain"`
@@ -182,8 +217,9 @@ func (r createApplicationRequest) toInput() applications.CreateInput {
 		Build:   domain.AppBuild{DockerfilePath: r.Build.DockerfilePath, Context: r.Build.Context},
 		Runtime: domain.AppRuntime{ServerID: r.Runtime.ServerID, Port: r.Runtime.Port, Replicas: r.Runtime.Replicas, CPULimit: r.Runtime.CPULimit, MemoryLimitMB: r.Runtime.MemoryLimitMB},
 		Route:   domain.AppRoute{Domain: r.Route.Domain, HTTPS: https, PathPrefix: r.Route.PathPrefix},
-		Health:  domain.AppHealth{Path: r.Health.Path, IntervalSeconds: r.Health.IntervalSeconds, TimeoutSeconds: r.Health.TimeoutSeconds, Retries: r.Health.Retries},
+		Health:  domain.AppHealth{Kind: r.Health.Kind, Path: r.Health.Path, IntervalSeconds: r.Health.IntervalSeconds, TimeoutSeconds: r.Health.TimeoutSeconds, Retries: r.Health.Retries},
 		Volumes: reqVolumes(r.Volumes),
+		Ports:   reqPorts(r.Ports),
 		EnvVars: r.EnvVars,
 
 		PreviewEnabled:    r.PreviewEnabled,
@@ -311,12 +347,14 @@ type patchApplicationRequest struct {
 		PathPrefix string `json:"path_prefix"`
 	} `json:"route"`
 	Health *struct {
+		Kind            string `json:"kind"`
 		Path            string `json:"path"`
 		IntervalSeconds int    `json:"interval_seconds"`
 		TimeoutSeconds  int    `json:"timeout_seconds"`
 		Retries         int    `json:"retries"`
 	} `json:"health"`
 	Volumes           *[]appVolumeReq `json:"volumes"`
+	Ports             *[]appPortReq   `json:"ports"`
 	PreviewEnabled    *bool           `json:"preview_enabled"`
 	PreviewBaseDomain *string         `json:"preview_base_domain"`
 	PreviewTTLHours   *int            `json:"preview_ttl_hours"`
@@ -354,11 +392,15 @@ func (a *API) handlePatchApplication(w http.ResponseWriter, r *http.Request) {
 		in.Route = &domain.AppRoute{Domain: req.Route.Domain, HTTPS: https, PathPrefix: req.Route.PathPrefix}
 	}
 	if req.Health != nil {
-		in.Health = &domain.AppHealth{Path: req.Health.Path, IntervalSeconds: req.Health.IntervalSeconds, TimeoutSeconds: req.Health.TimeoutSeconds, Retries: req.Health.Retries}
+		in.Health = &domain.AppHealth{Kind: req.Health.Kind, Path: req.Health.Path, IntervalSeconds: req.Health.IntervalSeconds, TimeoutSeconds: req.Health.TimeoutSeconds, Retries: req.Health.Retries}
 	}
 	if req.Volumes != nil {
 		v := reqVolumes(*req.Volumes)
 		in.Volumes = &v
+	}
+	if req.Ports != nil {
+		p := reqPorts(*req.Ports)
+		in.Ports = &p
 	}
 	in.PreviewEnabled, in.PreviewBaseDomain, in.PreviewTTLHours = req.PreviewEnabled, req.PreviewBaseDomain, req.PreviewTTLHours
 	app, err := a.deps.Applications.Update(r.Context(), r.PathValue("id"), in)

@@ -46,6 +46,47 @@ var volumeName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 // maxVolumes caps mounts per app (a sane bound, not a hard product limit).
 const maxVolumes = 20
 
+// Health gate kinds (AppHealth.Kind). Empty defaults to http.
+const (
+	healthHTTP = "http"
+	healthTCP  = "tcp"
+	healthNone = "none"
+)
+
+// maxPorts caps raw host-port publishes per app.
+const maxPorts = 20
+
+// validatePorts checks raw host-port publishes: valid port ranges, a known
+// protocol (empty defaults to tcp), no two mappings on the same host port and
+// protocol, and a sane count. Ports are independent of the HTTP route.
+func validatePorts(ports []domain.PortMapping) error {
+	if len(ports) > maxPorts {
+		return invalid("at most 20 published ports per application")
+	}
+	seen := map[string]bool{}
+	for i := range ports {
+		p := &ports[i]
+		if p.Protocol == "" {
+			p.Protocol = "tcp"
+		}
+		if p.Protocol != "tcp" && p.Protocol != "udp" {
+			return invalid("port protocol must be tcp or udp: " + p.Protocol)
+		}
+		if p.HostPort < 1 || p.HostPort > 65535 {
+			return invalid("host_port must be between 1 and 65535")
+		}
+		if p.ContainerPort < 1 || p.ContainerPort > 65535 {
+			return invalid("container_port must be between 1 and 65535")
+		}
+		key := strconv.Itoa(p.HostPort) + "/" + p.Protocol
+		if seen[key] {
+			return invalid("duplicate host port binding: " + key)
+		}
+		seen[key] = true
+	}
+	return nil
+}
+
 // validateVolumes checks each mount: a safe unique name and an absolute unique
 // mount path. nil/empty is valid (no volumes).
 func validateVolumes(vols []domain.VolumeMount) error {
@@ -112,6 +153,7 @@ type CreateInput struct {
 	Route             domain.AppRoute
 	Health            domain.AppHealth
 	Volumes           []domain.VolumeMount
+	Ports             []domain.PortMapping
 	EnvVars           map[string]string // plaintext; sealed before storage
 	PreviewEnabled    bool
 	PreviewBaseDomain string
@@ -164,6 +206,7 @@ func (s *Service) Create(ctx context.Context, envID string, in CreateInput) (app
 		Route:              in.Route,
 		Health:             in.Health,
 		Volumes:            in.Volumes,
+		Ports:              in.Ports,
 		WebhookID:          ids.New(ids.PrefixWebhook),
 		WebhookSecretCT:    wct,
 		WebhookSecretNonce: wnonce,
@@ -215,6 +258,8 @@ type UpdateInput struct {
 	MemoryLimitMB *int
 	// Volumes: nil = unchanged; a non-nil slice (possibly empty) replaces the set.
 	Volumes *[]domain.VolumeMount
+	// Ports: nil = unchanged; a non-nil slice (possibly empty) replaces the set.
+	Ports *[]domain.PortMapping
 }
 
 // Update applies a config patch. The change shapes the next revision — a
@@ -268,6 +313,9 @@ func (s *Service) Update(ctx context.Context, appID string, in UpdateInput) (dom
 	if in.Volumes != nil {
 		app.Volumes = *in.Volumes
 	}
+	if in.Ports != nil {
+		app.Ports = *in.Ports
+	}
 	// The merged result must satisfy exactly the create-time rules — including
 	// the preview contract (enabling previews via PATCH still needs a base
 	// domain).
@@ -279,6 +327,7 @@ func (s *Service) Update(ctx context.Context, appID string, in UpdateInput) (dom
 		Route:             app.Route,
 		Health:            app.Health,
 		Volumes:           app.Volumes,
+		Ports:             app.Ports,
 		PreviewEnabled:    app.PreviewEnabled,
 		PreviewBaseDomain: app.PreviewBaseDomain,
 		PreviewTTLHours:   app.PreviewTTLHours,
@@ -286,8 +335,8 @@ func (s *Service) Update(ctx context.Context, appID string, in UpdateInput) (dom
 	if err != nil {
 		return domain.Application{}, err
 	}
-	app.Name, app.Source, app.Build, app.Runtime, app.Route, app.Health, app.Volumes =
-		merged.Name, merged.Source, merged.Build, merged.Runtime, merged.Route, merged.Health, merged.Volumes
+	app.Name, app.Source, app.Build, app.Runtime, app.Route, app.Health, app.Volumes, app.Ports =
+		merged.Name, merged.Source, merged.Build, merged.Runtime, merged.Route, merged.Health, merged.Volumes, merged.Ports
 	app.PreviewEnabled, app.PreviewBaseDomain, app.PreviewTTLHours =
 		merged.PreviewEnabled, merged.PreviewBaseDomain, merged.PreviewTTLHours
 	updated, err := s.store.UpdateApplicationConfig(ctx, app)
@@ -425,9 +474,26 @@ func validateAndDefault(in CreateInput) (CreateInput, error) {
 	if err := validateVolumes(in.Volumes); err != nil {
 		return in, err
 	}
+	if err := validatePorts(in.Ports); err != nil {
+		return in, err
+	}
 
-	if strings.TrimSpace(in.Route.Domain) == "" {
-		return in, invalid("route.domain is required")
+	// The public HTTP route is optional: an app may expose only raw ports (a
+	// non-HTTP service). When present the domain is trimmed; when absent the
+	// agent writes no proxy fragment. A trailing-space-only domain is treated as
+	// unset. (A health path/kind is still validated below either way — the probe
+	// is internal to the agent, independent of any public route.)
+	in.Route.Domain = strings.TrimSpace(in.Route.Domain)
+
+	// Health gate kind: http (default) probes the path; tcp dials the container
+	// port; none is liveness-only for raw UDP services. An empty kind defaults to
+	// http, preserving every existing app's behavior.
+	switch in.Health.Kind {
+	case "", healthHTTP:
+		in.Health.Kind = healthHTTP
+	case healthTCP, healthNone:
+	default:
+		return in, invalid("health.kind must be one of http, tcp, none")
 	}
 
 	// Negative values must be rejected, not defaulted: the wire contract
