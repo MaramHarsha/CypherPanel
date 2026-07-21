@@ -1672,6 +1672,17 @@ components:
         context:
           type: string
 
+    AppVolume:
+      type: object
+      required: [name, path]
+      properties:
+        name:
+          type: string
+          description: Operator label (lowercase alphanumeric + dashes); the Docker volume name is derived from it.
+        path:
+          type: string
+          description: Absolute mount path inside the container.
+
     AppRuntime:
       type: object
       required: [server_id, port, replicas]
@@ -1738,6 +1749,10 @@ components:
           $ref: "#/components/schemas/AppRoute"
         health:
           $ref: "#/components/schemas/AppHealth"
+        volumes:
+          type: array
+          items: { $ref: "#/components/schemas/AppVolume" }
+          description: Persistent volume mounts (survive redeploys).
         webhook_id:
           type: string
           description: Public webhook identifier used in the webhook URL.
@@ -1775,6 +1790,9 @@ components:
           $ref: "#/components/schemas/AppRoute"
         health:
           $ref: "#/components/schemas/AppHealth"
+        volumes:
+          type: array
+          items: { $ref: "#/components/schemas/AppVolume" }
         env_vars:
           type: object
           additionalProperties:
@@ -1841,6 +1859,10 @@ components:
           $ref: "#/components/schemas/AppRoute"
         health:
           $ref: "#/components/schemas/AppHealth"
+        volumes:
+          type: array
+          items: { $ref: "#/components/schemas/AppVolume" }
+          description: Present = replace the volume set wholesale.
 
     DeployRequest:
       type: object

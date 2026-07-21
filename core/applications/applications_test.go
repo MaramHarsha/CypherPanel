@@ -190,6 +190,13 @@ func TestCreateValidation(t *testing.T) {
 		// Resource limits are bounded (feature-matrix V1; CWE-190 on the int32 cast).
 		"negative cpu limit":    func(in *CreateInput) { c := -1.0; in.Runtime.CPULimit = &c },
 		"overflowing mem limit": func(in *CreateInput) { m := math.MaxInt32 + 1; in.Runtime.MemoryLimitMB = &m },
+		// Volume mounts (feature-matrix V1): safe name + absolute unique path.
+		"volume bad name":  func(in *CreateInput) { in.Volumes = []domain.VolumeMount{{Name: "Bad Name", Path: "/data"}} },
+		"volume rel path":  func(in *CreateInput) { in.Volumes = []domain.VolumeMount{{Name: "data", Path: "data"}} },
+		"volume traversal": func(in *CreateInput) { in.Volumes = []domain.VolumeMount{{Name: "data", Path: "/a/../b"}} },
+		"volume dup path": func(in *CreateInput) {
+			in.Volumes = []domain.VolumeMount{{Name: "a", Path: "/data"}, {Name: "b", Path: "/data"}}
+		},
 		// Health values are persisted as int32 too — same wrap risk upward.
 		"overflowing interval": func(in *CreateInput) { in.Health.IntervalSeconds = math.MaxInt32 + 1 },
 		"overflowing timeout":  func(in *CreateInput) { in.Health.TimeoutSeconds = math.MaxInt32 + 1 },

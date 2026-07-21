@@ -58,8 +58,9 @@ type ContainerSpec struct {
 	Network       string
 	Port          uint32
 	Labels        map[string]string
-	CPULimit      float64 // fractional cores; 0 = no limit
-	MemoryLimitMB uint32  // 0 = no limit
+	CPULimit      float64  // fractional cores; 0 = no limit
+	MemoryLimitMB uint32   // 0 = no limit
+	Binds         []string // "<volume>:<path>" mounts
 }
 
 // Image is a managed image, identified by the labels the build stamped.
@@ -73,6 +74,9 @@ type Image struct {
 type Client interface {
 	// EnsureNetwork creates the named network if absent (idempotent).
 	EnsureNetwork(ctx context.Context, name string, labels map[string]string) error
+	// EnsureVolume creates a named volume if absent (idempotent). App volumes
+	// persist across container recreation and are never touched by GC.
+	EnsureVolume(ctx context.Context, name string, labels map[string]string) error
 	// ListManaged returns every container carrying this driver's managed label.
 	ListManaged(ctx context.Context) ([]Container, error)
 	CreateContainer(ctx context.Context, spec ContainerSpec) (id string, err error)
@@ -234,6 +238,16 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 	if err := d.client.EnsureNetwork(ctx, spec.GetNetwork(), networkLabels()); err != nil {
 		return status(spec.GetAppId(), currentRevision(existing), stateError, "network: "+err.Error())
 	}
+	// Ensure the app's persistent volumes exist before binding them. Idempotent,
+	// and only in the create path — the converged (no-change) path skips it, so
+	// converge-twice stays zero-mutation.
+	binds := make([]string, 0, len(spec.GetVolumes()))
+	for _, v := range spec.GetVolumes() {
+		if err := d.client.EnsureVolume(ctx, v.GetVolumeName(), volumeLabels(spec)); err != nil {
+			return status(spec.GetAppId(), currentRevision(existing), stateError, "volume: "+err.Error())
+		}
+		binds = append(binds, v.GetVolumeName()+":"+v.GetPath())
+	}
 
 	// A dead container of the desired revision (crash between create and
 	// start) holds the deterministic name; clear it so create cannot collide.
@@ -257,6 +271,7 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 		Labels:        managedLabels(spec),
 		CPULimit:      spec.GetCpuLimit(),
 		MemoryLimitMB: spec.GetMemoryLimitMb(),
+		Binds:         binds,
 	})
 	if err != nil {
 		return status(spec.GetAppId(), currentRevision(existing), stateError, "create: "+err.Error())
@@ -404,6 +419,15 @@ func managedLabels(spec *agentv1.AppSpec) map[string]string {
 // every app in the environment, so per-app labels would be wrong on them.
 func networkLabels() map[string]string {
 	return map[string]string{driver.LabelManaged: driverName}
+}
+
+// volumeLabels marks a persistent app volume with the app id (no revision — the
+// volume outlives revisions) so it is discoverable and, later, reclaimable.
+func volumeLabels(spec *agentv1.AppSpec) map[string]string {
+	return map[string]string{
+		driver.LabelManaged: driverName,
+		driver.LabelAppID:   spec.GetAppId(),
+	}
 }
 
 func containerName(appID, revisionID string) string {

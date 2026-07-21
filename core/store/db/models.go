@@ -51,6 +51,7 @@ type Application struct {
 	PreviewTtlHours       int32
 	CpuLimit              pgtype.Float4
 	MemoryLimitMb         pgtype.Int4
+	Volumes               []byte
 }
 
 type BackupRecord struct {
