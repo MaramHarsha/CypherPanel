@@ -132,6 +132,27 @@ paths:
               schema:
                 type: string
 
+  /api/v1/events:
+    get:
+      tags: [health]
+      summary: Live resource-change stream (Server-Sent Events)
+      description: >-
+        An SSE stream of "invalidate" events — the caller fetches current state
+        via the API on connect, then refetches a resource when this stream names
+        it as changed (ui-principles §10). Scoped to the caller's visible
+        resources (a panel owner sees all). Two event types: `connected` (once,
+        empty) and `invalidate` (data: {resource, id}). The response media type
+        is text/event-stream.
+      responses:
+        "200":
+          description: The event stream (never closes until the client disconnects).
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /api/v1/openapi.yaml:
     get:
       tags: [health]

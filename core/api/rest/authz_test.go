@@ -5,10 +5,12 @@ package rest
 // panel-role gates guard shared infrastructure.
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,6 +119,78 @@ func TestPanelAdminCanCreateServer(t *testing.T) {
 	if status, _, _ := doJSON(t, "POST", ts.URL+"/api/v1/servers", token, `{"name":"box"}`); status != http.StatusCreated {
 		t.Fatalf("panel admin create server = %d, want 201", status)
 	}
+}
+
+func TestResourceFromSubject(t *testing.T) {
+	cases := map[string]struct {
+		res, id string
+		ok      bool
+	}{
+		"state.srv1.app.app_123": {"application", "app_123", true},
+		"state.srv1.db.db_456":   {"database", "db_456", true},
+		"state.srv1.deploy":      {"", "", false}, // no id token
+		"state.srv1.dbbackup":    {"", "", false},
+		"logs.srv1.app.x":        {"", "", false}, // not a state subject
+		"state.srv1.app":         {"", "", false}, // too few tokens
+	}
+	for subject, want := range cases {
+		ev, ok := resourceFromSubject(subject)
+		if ok != want.ok || ev.Resource != want.res || ev.ID != want.id {
+			t.Errorf("%s → (%+v, %v), want (%s/%s, %v)", subject, ev, ok, want.res, want.id, want.ok)
+		}
+	}
+}
+
+// The /events SSE stream connects and emits an "invalidate" frame naming the
+// changed resource; a panel owner sees every resource (bypass).
+func TestEventsStreamEmitsInvalidate(t *testing.T) {
+	ts, _, logs, _ := newTestServerFull(t) // default user is a panel owner
+	token := login(t, ts)
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/events", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	res, err := http.DefaultClient.Do(req.WithContext(ctx))
+	if err != nil {
+		t.Fatalf("GET events: %v", err)
+	}
+	defer res.Body.Close()
+	if ct := res.Header.Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
+		t.Fatalf("content-type = %q", ct)
+	}
+
+	// Wait for the connection to register the subscriber, then push a status
+	// observation and a non-status subject (which must be ignored).
+	deadline := time.Now().Add(3 * time.Second)
+	fired := false
+	buf := make([]byte, 0, 512)
+	tmp := make([]byte, 256)
+	for time.Now().Before(deadline) {
+		if !fired {
+			logs.mu.Lock()
+			ready := logs.status != nil
+			logs.mu.Unlock()
+			if ready {
+				logs.emitStatus("state.srv1.deploy")      // ignored (no resource id)
+				logs.emitStatus("state.srv1.app.app_xyz") // → invalidate
+				fired = true
+			}
+		}
+		n, rerr := res.Body.Read(tmp)
+		buf = append(buf, tmp[:n]...)
+		got := string(buf)
+		if strings.Contains(got, "event: connected") &&
+			strings.Contains(got, "event: invalidate") &&
+			strings.Contains(got, `"resource":"application"`) &&
+			strings.Contains(got, `"id":"app_xyz"`) {
+			return // success
+		}
+		if rerr != nil {
+			break
+		}
+	}
+	t.Fatalf("events stream missing invalidate frame; got:\n%s", buf)
 }
 
 func TestOnlyPanelOwnerChangesUserRole(t *testing.T) {

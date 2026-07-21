@@ -124,6 +124,9 @@ type ScheduledTaskService interface {
 type LogSubscriber interface {
 	SubscribeLogs(ctx context.Context, subject string, handle func(data []byte)) (stop func(), err error)
 	SubscribeRuntimeLogs(ctx context.Context, subject string, handle func(data []byte)) (stop func(), err error)
+	// SubscribeStatus delivers new app/database status observations (subject +
+	// payload) — the source for the /events SSE stream (ui-principles §10).
+	SubscribeStatus(ctx context.Context, handle func(subject string, data []byte)) (stop func(), err error)
 }
 
 // Deps are the dependencies the API needs.
@@ -169,6 +172,10 @@ func (a *API) Handler() http.Handler {
 	// Health (unauthenticated).
 	mux.HandleFunc("GET /healthz", a.handleHealthz)
 	mux.HandleFunc("GET /readyz", a.handleReadyz)
+
+	// Live status stream (SSE): the UI subscribes once and refetches the
+	// resources it names as they change, instead of polling (ui-principles §10).
+	mux.HandleFunc("GET /api/v1/events", a.authed(a.handleEvents))
 
 	// Auth.
 	mux.HandleFunc("POST /api/v1/auth/login", a.handleLogin)

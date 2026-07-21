@@ -305,6 +305,30 @@ func (b *Bus) SubscribeRuntimeLogs(ctx context.Context, subject string, handle f
 	return b.subscribeStream(ctx, streamRuntimeLogs, subject, handle)
 }
 
+// SubscribeStatus delivers new application/database status observations (the
+// state.*.app.> and state.*.db.> subjects) to handle, with the subject so the
+// caller can extract the resource identity. Backed by an ephemeral ordered
+// consumer on the STATE stream with DeliverNew — the SSE client fetches current
+// state via the API on connect, then only needs *changes* (web-ui-design.md §8;
+// ui-principles §10). Each client gets its own cursor; nothing is retained
+// after stop.
+func (b *Bus) SubscribeStatus(ctx context.Context, handle func(subject string, data []byte)) (stop func(), err error) {
+	cons, err := b.js.OrderedConsumer(ctx, streamState, jetstream.OrderedConsumerConfig{
+		FilterSubjects: []string{subjects.AppStateAll, subjects.DbStateAll},
+		DeliverPolicy:  jetstream.DeliverNewPolicy,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bus: creating status consumer: %w", err)
+	}
+	cc, err := cons.Consume(func(msg jetstream.Msg) {
+		handle(msg.Subject(), msg.Data())
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bus: starting status consume: %w", err)
+	}
+	return cc.Stop, nil
+}
+
 func (b *Bus) subscribeStream(ctx context.Context, stream, subject string, handle func(data []byte)) (stop func(), err error) {
 	cons, err := b.js.OrderedConsumer(ctx, stream, jetstream.OrderedConsumerConfig{
 		FilterSubjects: []string{subject},

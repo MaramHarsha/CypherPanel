@@ -395,9 +395,28 @@ type fakeLogs struct {
 	mu      sync.Mutex
 	lines   map[string][]string
 	stopped int
+	// status pushes test status observations to the /events subscriber.
+	status func(subject string, data []byte)
 }
 
 func newFakeLogs() *fakeLogs { return &fakeLogs{lines: map[string][]string{}} }
+
+func (f *fakeLogs) SubscribeStatus(_ context.Context, handle func(subject string, data []byte)) (func(), error) {
+	f.mu.Lock()
+	f.status = handle
+	f.mu.Unlock()
+	return func() {}, nil
+}
+
+// emitStatus feeds one observation to the live /events subscriber, if any.
+func (f *fakeLogs) emitStatus(subject string) {
+	f.mu.Lock()
+	h := f.status
+	f.mu.Unlock()
+	if h != nil {
+		h(subject, nil)
+	}
+}
 
 func (f *fakeLogs) SubscribeLogs(_ context.Context, subject string, handle func(data []byte)) (func(), error) {
 	return f.subscribe(subject, handle)
