@@ -26,7 +26,11 @@ BASE_URL="${CYPHER_DOWNLOAD_BASE:-https://downloads.cypherpanel.example/${VERSIO
 log()  { printf '\033[1;35m[cypher]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; exit 1; }
-run()  { if [ "$DRY_RUN" -eq 1 ]; then printf '  + %s\n' "$*"; else eval "$@"; fi; }
+# Callers pass ONE string holding a complete shell command — redirections and
+# `||` fallbacks included (see the useradd and systemctl calls below) — so eval
+# is deliberate, not accidental. "$*" rather than "$@" states that intent:
+# concatenate into a single command string to evaluate (ShellCheck SC2294).
+run()  { if [ "$DRY_RUN" -eq 1 ]; then printf '  + %s\n' "$*"; else eval "$*"; fi; }
 
 usage() {
   cat <<EOF
