@@ -3,3 +3,30 @@ allowBuilds:
   '@scarf/scarf': false
   # esbuild installs its platform binary via postinstall; required by vite.
   esbuild: true
+
+# pnpm's supply-chain gate holds back very recently published versions. This
+# one is exempted deliberately: it is the release that fixes the advisories
+# below, so waiting out the age window would mean staying vulnerable.
+minimumReleaseAgeExclude:
+  - js-yaml@4.3.1
+
+# Forced versions for transitively-pulled packages with published advisories.
+# Both arrive under `orval` (dev-only, API codegen) through its Stoplight /
+# Spectral and json-schema-ref-parser dependencies, which still request older
+# ranges. Each override stays inside the dependency's own major, so it is a
+# semver-compatible bump rather than a breaking one.
+#
+# Remove an entry once every dependent has moved past it on its own.
+overrides:
+  # GHSA-52cp-r559-cp3m (high) + GHSA-h67p-54hq-rp68 (moderate): quadratic
+  # CPU consumption from YAML merge-key chains / repeated aliases. Fixed 4.3.0.
+  js-yaml: ^4.3.1
+  # GHSA-r5fr-rjxr-66jc (high): code injection via `_.template` import key
+  # names. GHSA-f23m-r3pf-42rh (moderate): prototype pollution via array-path
+  # bypass in `_.unset`/`_.omit`. Both fixed in 4.18.0.
+  lodash: ^4.18.1
+  # GHSA-mh99-v99m-4gvg (high): unbounded brace expansion crashes the process
+  # with an OOM. Two majors are present in the tree and each is patched on its
+  # own line, so neither consumer is forced across a major boundary.
+  brace-expansion@1: ^1.1.17
+  brace-expansion@5: ^5.0.8
