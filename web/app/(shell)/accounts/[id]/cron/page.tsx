@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -39,7 +39,11 @@ const schedulePresets = [
 export default function CronPage() {
   const { id } = useParams<{ id: string }>();
   const { account } = useAccount(id);
-  const [content, setContent] = useState("");
+  // draft is null until the operator types: the textarea shows the server's
+  // crontab until then. Deriving beats copying the fetched value into state
+  // via an effect, which would cascade a render on every refetch and could
+  // clobber unsaved edits.
+  const [draft, setDraft] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [preset, setPreset] = useState(schedulePresets[2].cron);
@@ -50,15 +54,16 @@ export default function CronPage() {
     queryFn: () => getCron(id),
   });
 
-  useEffect(() => {
-    if (data) setContent(data.content);
-  }, [data]);
+  const content = draft ?? data?.content ?? "";
 
   const save = useMutation({
     mutationFn: () => setCron(id, content),
     onSuccess: () => {
       setError(null);
       setSaved(true);
+      // Hand the textarea back to server state so it reflects what was
+      // actually stored, not what was typed.
+      setDraft(null);
       setTimeout(() => setSaved(false), 2000);
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : "Failed to save crontab"),
@@ -67,7 +72,7 @@ export default function CronPage() {
   function insertJob() {
     if (!command.trim()) return;
     const line = `${preset} ${command.trim()}`;
-    setContent((c) => (c && !c.endsWith("\n") ? `${c}\n${line}\n` : `${c}${line}\n`));
+    setDraft(content && !content.endsWith("\n") ? `${content}\n${line}\n` : `${content}${line}\n`);
     setCommand("");
   }
 
@@ -144,7 +149,7 @@ export default function CronPage() {
             id="cron-raw"
             className="h-64 resize-none font-mono text-xs"
             value={isFetching ? "loading…" : content}
-            onChange={(e) => setContent(e.target.value)}
+            onChange={(e) => setDraft(e.target.value)}
             spellCheck={false}
           />
           {error && <p className="text-sm text-destructive">{error}</p>}

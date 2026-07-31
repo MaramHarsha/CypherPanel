@@ -24,9 +24,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AgentService_Register_FullMethodName         = "/cypherpanel.agent.v1.AgentService/Register"
-	AgentService_Heartbeat_FullMethodName        = "/cypherpanel.agent.v1.AgentService/Heartbeat"
-	AgentService_ReportTaskResult_FullMethodName = "/cypherpanel.agent.v1.AgentService/ReportTaskResult"
+	AgentService_Register_FullMethodName               = "/cypherpanel.agent.v1.AgentService/Register"
+	AgentService_Heartbeat_FullMethodName              = "/cypherpanel.agent.v1.AgentService/Heartbeat"
+	AgentService_ReportTaskResult_FullMethodName       = "/cypherpanel.agent.v1.AgentService/ReportTaskResult"
+	AgentService_FetchBackupCredentials_FullMethodName = "/cypherpanel.agent.v1.AgentService/FetchBackupCredentials"
 )
 
 // AgentServiceClient is the client API for AgentService service.
@@ -43,6 +44,13 @@ type AgentServiceClient interface {
 	// picked up from the job queue. Tasks are idempotent and identified by
 	// task_id, so redelivery after a network failure is safe.
 	ReportTaskResult(ctx context.Context, in *ReportTaskResultRequest, opts ...grpc.CallOption) (*ReportTaskResultResponse, error)
+	// FetchBackupCredentials hands an agent the secrets for one backup
+	// destination. Destination credentials (restic repo password, S3/SFTP keys)
+	// are deliberately kept OUT of the task payload: JetStream retains task
+	// messages, so a payload secret would be readable by anyone with stream
+	// access. The agent instead pulls them over this authenticated mTLS channel,
+	// proving it holds the task that references the destination.
+	FetchBackupCredentials(ctx context.Context, in *FetchBackupCredentialsRequest, opts ...grpc.CallOption) (*FetchBackupCredentialsResponse, error)
 }
 
 type agentServiceClient struct {
@@ -83,6 +91,16 @@ func (c *agentServiceClient) ReportTaskResult(ctx context.Context, in *ReportTas
 	return out, nil
 }
 
+func (c *agentServiceClient) FetchBackupCredentials(ctx context.Context, in *FetchBackupCredentialsRequest, opts ...grpc.CallOption) (*FetchBackupCredentialsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FetchBackupCredentialsResponse)
+	err := c.cc.Invoke(ctx, AgentService_FetchBackupCredentials_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AgentServiceServer is the server API for AgentService service.
 // All implementations must embed UnimplementedAgentServiceServer
 // for forward compatibility.
@@ -97,6 +115,13 @@ type AgentServiceServer interface {
 	// picked up from the job queue. Tasks are idempotent and identified by
 	// task_id, so redelivery after a network failure is safe.
 	ReportTaskResult(context.Context, *ReportTaskResultRequest) (*ReportTaskResultResponse, error)
+	// FetchBackupCredentials hands an agent the secrets for one backup
+	// destination. Destination credentials (restic repo password, S3/SFTP keys)
+	// are deliberately kept OUT of the task payload: JetStream retains task
+	// messages, so a payload secret would be readable by anyone with stream
+	// access. The agent instead pulls them over this authenticated mTLS channel,
+	// proving it holds the task that references the destination.
+	FetchBackupCredentials(context.Context, *FetchBackupCredentialsRequest) (*FetchBackupCredentialsResponse, error)
 	mustEmbedUnimplementedAgentServiceServer()
 }
 
@@ -115,6 +140,9 @@ func (UnimplementedAgentServiceServer) Heartbeat(context.Context, *HeartbeatRequ
 }
 func (UnimplementedAgentServiceServer) ReportTaskResult(context.Context, *ReportTaskResultRequest) (*ReportTaskResultResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportTaskResult not implemented")
+}
+func (UnimplementedAgentServiceServer) FetchBackupCredentials(context.Context, *FetchBackupCredentialsRequest) (*FetchBackupCredentialsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FetchBackupCredentials not implemented")
 }
 func (UnimplementedAgentServiceServer) mustEmbedUnimplementedAgentServiceServer() {}
 func (UnimplementedAgentServiceServer) testEmbeddedByValue()                      {}
@@ -191,6 +219,24 @@ func _AgentService_ReportTaskResult_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AgentService_FetchBackupCredentials_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FetchBackupCredentialsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).FetchBackupCredentials(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_FetchBackupCredentials_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).FetchBackupCredentials(ctx, req.(*FetchBackupCredentialsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AgentService_ServiceDesc is the grpc.ServiceDesc for AgentService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -209,6 +255,10 @@ var AgentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReportTaskResult",
 			Handler:    _AgentService_ReportTaskResult_Handler,
+		},
+		{
+			MethodName: "FetchBackupCredentials",
+			Handler:    _AgentService_FetchBackupCredentials_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

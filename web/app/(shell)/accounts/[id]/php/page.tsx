@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -100,21 +100,25 @@ export default function PHPSettingsPage() {
   const { id } = useParams<{ id: string }>();
   const qc = useQueryClient();
   const { account } = useAccount(id);
-  const [values, setValues] = useState<Record<string, string>>({});
-  const [version, setVersion] = useState<string>("");
+  // Drafts stay null until the operator edits; the form renders the account's
+  // current settings until then. Deriving beats copying the fetched account
+  // into state via an effect, which would cascade a render on every refetch
+  // and could clobber unsaved edits.
+  const [draftValues, setDraftValues] = useState<Record<string, string> | null>(null);
+  const [draftVersion, setDraftVersion] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
   const { data: keys } = useQuery({ queryKey: ["php-ini-keys"], queryFn: phpIniKeys });
   const { data: versions } = useQuery({ queryKey: ["php-versions"], queryFn: phpVersions });
 
-  // Seed the form once the account's current settings are known.
-  useEffect(() => {
-    if (account) {
-      setValues({ ...(account.php_settings ?? {}) } as Record<string, string>);
-      setVersion(account.php_version ?? "");
-    }
-  }, [account]);
+  const values = draftValues ?? ((account?.php_settings ?? {}) as Record<string, string>);
+  const version = draftVersion ?? account?.php_version ?? "";
+
+  // Edits start from whatever is currently displayed, so the first keystroke
+  // seeds the draft from server state rather than from an empty object.
+  const setValues = (update: (prev: Record<string, string>) => Record<string, string>) =>
+    setDraftValues((prev) => update(prev ?? ((account?.php_settings ?? {}) as Record<string, string>)));
 
   const save = useMutation({
     mutationFn: async () => {
@@ -135,6 +139,10 @@ export default function PHPSettingsPage() {
       qc.invalidateQueries({ queryKey: ["accounts"] });
       setError(null);
       setSaved(true);
+      // Hand the form back to server state so it shows what was actually
+      // stored (blank overrides are dropped server-side), not what was typed.
+      setDraftValues(null);
+      setDraftVersion(null);
       setTimeout(() => setSaved(false), 2000);
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : "Failed to update settings"),
@@ -157,7 +165,7 @@ export default function PHPSettingsPage() {
         <CardContent className="grid gap-5 p-5">
           <div className="grid gap-1.5">
             <Label htmlFor="php-version">PHP version</Label>
-            <Select value={version} onValueChange={(v) => setVersion(v ?? "")}>
+            <Select value={version} onValueChange={(v) => setDraftVersion(v ?? "")}>
               <SelectTrigger id="php-version" className="sm:w-64">
                 <SelectValue>{(v: string | null) => (v ? `PHP ${v}` : "Select version")}</SelectValue>
               </SelectTrigger>

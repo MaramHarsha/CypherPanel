@@ -10,8 +10,12 @@ import (
 )
 
 // MariaDB is the MVP-default Manager. It runs DDL as the admin connection from
-// the provided *sql.DB (a provisioning account with GRANT OPTION).
-type MariaDB struct{ db *sql.DB }
+// the provided *sql.DB (a provisioning account with GRANT OPTION). dsn is kept
+// so Dump can hand the same admin credentials to mysqldump.
+type MariaDB struct {
+	db  *sql.DB
+	dsn string
+}
 
 // OpenMariaDB connects to the admin MariaDB using a go-sql-driver/mysql DSN,
 // e.g. "root:pass@tcp(127.0.0.1:3306)/". The caller closes it.
@@ -22,7 +26,7 @@ func OpenMariaDB(dsn string) (*MariaDB, error) {
 	}
 	db.SetConnMaxLifetime(3 * time.Minute)
 	db.SetMaxOpenConns(4)
-	return &MariaDB{db: db}, nil
+	return &MariaDB{db: db, dsn: dsn}, nil
 }
 
 func NewMariaDB(db *sql.DB) *MariaDB { return &MariaDB{db: db} }

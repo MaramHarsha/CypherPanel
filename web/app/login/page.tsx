@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Shield } from "lucide-react";
+import { BrandMark } from "@/components/brand-mark";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -51,12 +51,13 @@ export default function LoginPage() {
 
       <div className="relative z-10 w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center text-center">
-          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-primary/60 text-primary-foreground shadow-xl shadow-primary/30">
-            <Shield className="h-7 w-7" />
-          </div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Cypher<span className="text-gradient-brand">Panel</span>
-          </h1>
+          {/* The tile lockup here: on the login screen the mark is the only
+              brand element on the page, so it gets its own bounded shape. */}
+          <BrandMark tile className="mb-4 h-14 w-14 rounded-2xl shadow-xl shadow-black/20" />
+          {/* Solid, not the violet brand gradient: this sits directly under the
+              mark, so it is the logo lockup — and the approved lockup sets
+              "CypherPanel" in one weight and one colour. */}
+          <h1 className="text-2xl font-semibold tracking-tight">CypherPanel</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Open-source hosting control panel
           </p>

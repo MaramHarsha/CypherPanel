@@ -39,7 +39,9 @@ export function CommandPalette({
   const { data: accounts } = useQuery({ queryKey: ["accounts"], queryFn: listAccounts, enabled: open });
   const { data: servers } = useQuery({
     queryKey: ["servers"],
-    queryFn: listServers,
+    // Wrapped, not passed bare: listServers takes an optional region, and
+    // TanStack would hand it the query context as that argument.
+    queryFn: () => listServers(),
     enabled: open && isAdmin,
   });
 

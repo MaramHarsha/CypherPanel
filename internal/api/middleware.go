@@ -1,7 +1,6 @@
 package api
 
 import (
-	"net/http"
 	"sync"
 	"time"
 
@@ -24,8 +23,8 @@ func SecurityHeaders() gin.HandlerFunc {
 }
 
 // rateLimiter is a tiny in-memory fixed-window limiter keyed by client IP. It
-// blunts credential stuffing on the auth endpoints without a Redis round-trip;
-// a distributed limiter is a scale-out follow-up.
+// is the per-instance fallback behind the Redis-backed distributed limiter in
+// ratelimit.go — used when Redis is unconfigured or unreachable.
 type rateLimiter struct {
 	mu       sync.Mutex
 	hits     map[string]*window
@@ -37,19 +36,6 @@ type rateLimiter struct {
 type window struct {
 	count int
 	reset time.Time
-}
-
-// RateLimit allows `limit` requests per `per` window per client IP.
-func RateLimit(limit int, per time.Duration) gin.HandlerFunc {
-	rl := &rateLimiter{hits: make(map[string]*window), limit: limit, window: per, lastSweep: time.Now()}
-	return func(c *gin.Context) {
-		if !rl.allow(c.ClientIP(), time.Now()) {
-			c.Header("Retry-After", "60")
-			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "too many requests, slow down"})
-			return
-		}
-		c.Next()
-	}
 }
 
 func (rl *rateLimiter) allow(ip string, now time.Time) bool {

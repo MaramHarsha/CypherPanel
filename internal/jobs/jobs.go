@@ -34,6 +34,8 @@ const (
 	TypeFTPDelete        = "ftp.delete"          // payload: FTPDeletePayload
 	TypeMailCreate       = "mail.create"         // payload: MailCreatePayload
 	TypeMailDelete       = "mail.delete"         // payload: MailDeletePayload
+	TypeBackupRun        = "backup.run"          // payload: BackupRunPayload
+	TypeBackupRestore    = "backup.restore"      // payload: BackupRestorePayload
 )
 
 // Task is the wire format published to JetStream.
@@ -159,12 +161,54 @@ type FTPDeletePayload struct {
 	Username string `json:"username"`
 }
 
+// BackupRetention mirrors the restic forget policy Core stores per destination.
+type BackupRetention struct {
+	Daily   int `json:"daily"`
+	Weekly  int `json:"weekly"`
+	Monthly int `json:"monthly"`
+}
+
+// BackupRunPayload snapshots one account (files + coordinated database dumps)
+// into a destination repository.
+//
+// It is deliberately secret-free: the destination's repository password and
+// backend credentials are NOT here. JetStream retains task messages, so a
+// payload secret would outlive the task and be readable by anything with
+// stream access. The agent fetches them over the mTLS gRPC channel keyed by
+// DestinationID instead (AgentService.FetchBackupCredentials).
+type BackupRunPayload struct {
+	DestinationID string          `json:"destination_id"`
+	AccountID     string          `json:"account_id"`
+	Username      string          `json:"username"`
+	Databases     []string        `json:"databases,omitempty"` // dumped, then snapshotted with the files
+	Excludes      []string        `json:"excludes,omitempty"`
+	Retention     BackupRetention `json:"retention"`
+}
+
+// BackupRestorePayload restores a snapshot. Target is optional; empty means the
+// agent's per-account restore staging directory, so a restore never overwrites
+// live account data without an explicit, operator-chosen target.
+type BackupRestorePayload struct {
+	DestinationID string `json:"destination_id"`
+	AccountID     string `json:"account_id"`
+	Username      string `json:"username"`
+	SnapshotID    string `json:"snapshot_id"`
+	Target        string `json:"target,omitempty"`
+}
+
 // Result metadata keys.
 const (
-	MetaSSLNotAfter = "ssl_not_after" // RFC3339 certificate expiry (ssl.issue)
-	MetaDBPassword  = "db_password"   // generated DB password (db.create) — secret, never logged/audited
-	MetaFTPPassword = "ftp_password"  // generated FTP password (ftp.create) — secret
-	MetaFTPHome     = "ftp_home"      // agent-derived home dir (ftp.create)
+	MetaSSLNotAfter      = "ssl_not_after" // RFC3339 certificate expiry (ssl.issue)
+	MetaDBPassword       = "db_password"   // generated DB password (db.create) — secret, never logged/audited
+	MetaFTPPassword      = "ftp_password"  // generated FTP password (ftp.create) — secret
+	MetaFTPHome          = "ftp_home"      // agent-derived home dir (ftp.create)
+	MetaBackupSnapshotID = "backup_snapshot_id"  // restic snapshot id (backup.run)
+	MetaBackupSizeBytes  = "backup_size_bytes"   // bytes processed (backup.run)
+	MetaBackupRestorePath = "backup_restore_path" // where a restore landed (backup.restore)
+	// DKIM public key + selector from mail.create. The private half never
+	// leaves the mail server; Core publishes only these as the DNS record.
+	MetaDKIMPublicTXT = "dkim_public_txt"
+	MetaDKIMSelector  = "dkim_selector"
 )
 
 // ValidType reports whether the task type is known to this build. Core
@@ -172,7 +216,7 @@ const (
 // on every agent redelivery.
 func ValidType(t string) bool {
 	switch t {
-	case TypeNoop, TypeSystemUserCreate, TypeSystemUserRemove, TypeSiteProvision, TypeSiteDeprovision, TypeSSLIssue, TypePHPVersionChange, TypeServiceControl, TypePHPRuntime, TypeDBCreate, TypeDBDrop, TypeFTPCreate, TypeFTPDelete, TypeMailCreate, TypeMailDelete:
+	case TypeNoop, TypeSystemUserCreate, TypeSystemUserRemove, TypeSiteProvision, TypeSiteDeprovision, TypeSSLIssue, TypePHPVersionChange, TypeServiceControl, TypePHPRuntime, TypeDBCreate, TypeDBDrop, TypeFTPCreate, TypeFTPDelete, TypeMailCreate, TypeMailDelete, TypeBackupRun, TypeBackupRestore:
 		return true
 	}
 	return false

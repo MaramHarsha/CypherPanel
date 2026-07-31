@@ -32,6 +32,10 @@ type Request struct {
 	NewPath    string `json:"new_path,omitempty"` // rename destination
 	Content    []byte `json:"content,omitempty"`  // write body
 	QuotaBytes int64  `json:"quota_bytes,omitempty"` // account disk limit (0 = unlimited)
+	// QuotaInodes caps the account's total file+directory count (0 = unlimited).
+	// Bytes alone do not protect the server: millions of empty files exhaust the
+	// filesystem's inode table while using almost no disk.
+	QuotaInodes int64 `json:"quota_inodes,omitempty"`
 }
 
 // Entry is one directory listing item.

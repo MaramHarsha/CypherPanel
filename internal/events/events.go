@@ -40,6 +40,43 @@ const (
 	SubjectResellerCreated    = "events.reseller.created"
 )
 
+// allSubjects is every subject a consumer may subscribe to. Keep it in step
+// with the constants above — webhook subscriptions are validated against it,
+// so a subject missing here is a subject nobody can subscribe to.
+var allSubjects = []string{
+	SubjectAccountCreated,
+	SubjectAccountActivated,
+	SubjectAccountSuspended,
+	SubjectAccountUnsuspended,
+	SubjectAccountTerminating,
+	SubjectAccountTerminated,
+	SubjectAccountFailed,
+	SubjectAccountSSLIssued,
+	SubjectPackageCreated,
+	SubjectPackageDeleted,
+	SubjectServerRegistered,
+	SubjectResellerCreated,
+}
+
+// AllSubjects returns a copy of the subscribable subject list.
+func AllSubjects() []string {
+	out := make([]string, len(allSubjects))
+	copy(out, allSubjects)
+	return out
+}
+
+// KnownSubject reports whether s is a subject this build publishes. Callers
+// validate subscriptions with it so a typo fails loudly at registration rather
+// than silently never firing.
+func KnownSubject(s string) bool {
+	for _, k := range allSubjects {
+		if k == s {
+			return true
+		}
+	}
+	return false
+}
+
 // Event is the wire format on the bus. Data is a minimal, immutable snapshot
 // of the aggregate — enough for a consumer to act without re-fetching, and
 // never containing secrets.

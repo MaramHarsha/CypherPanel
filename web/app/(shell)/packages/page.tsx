@@ -36,6 +36,12 @@ import {
 
 const limitFields: { key: keyof PackageLimits; label: string; unit?: string; hint: string }[] = [
   { key: "disk_mb", label: "Disk space", unit: "MB", hint: "Total storage this account may use." },
+  {
+    key: "inodes",
+    label: "File count",
+    unit: "files",
+    hint: "Total files and folders. Caps tiny-file floods that exhaust the server's inode table long before they fill the disk.",
+  },
   { key: "bandwidth_mb", label: "Bandwidth", unit: "MB/mo", hint: "Monthly data transfer allowance." },
   { key: "domains", label: "Domains", hint: "Addon domains, subdomains, and aliases combined." },
   { key: "databases", label: "Databases", hint: "MariaDB databases the account may create." },
@@ -46,6 +52,7 @@ const limitFields: { key: keyof PackageLimits; label: string; unit?: string; hin
 
 const emptyLimits: PackageLimits = {
   disk_mb: 0,
+  inodes: 0,
   bandwidth_mb: 0,
   domains: 0,
   databases: 0,

@@ -33,6 +33,7 @@ import (
 	"github.com/MaramHarsha/CypherPanel/internal/api"
 	"github.com/MaramHarsha/CypherPanel/internal/audit"
 	"github.com/MaramHarsha/CypherPanel/internal/auth"
+	"github.com/MaramHarsha/CypherPanel/internal/backupsched"
 	"github.com/MaramHarsha/CypherPanel/internal/config"
 	"github.com/MaramHarsha/CypherPanel/internal/dns"
 	"github.com/MaramHarsha/CypherPanel/internal/events"
@@ -42,6 +43,7 @@ import (
 	"github.com/MaramHarsha/CypherPanel/internal/sslrenew"
 	"github.com/MaramHarsha/CypherPanel/internal/store"
 	"github.com/MaramHarsha/CypherPanel/internal/version"
+	"github.com/MaramHarsha/CypherPanel/internal/webhooks"
 )
 
 // @title           CypherPanel API
@@ -151,6 +153,8 @@ func run() error {
 	databasesStore := store.NewDatabases(pool)
 	ftpStore := store.NewFTPAccounts(pool)
 	mailStore := store.NewMailAccounts(pool)
+	backupsStore := store.NewBackups(pool)
+	webhooksStore := store.NewWebhooks(pool)
 
 	crypt, err := secretcrypt.New(cfg.DBEncryptionKey)
 	if err != nil {
@@ -178,8 +182,17 @@ func run() error {
 			slog.Info("DNS management enabled (PowerDNS)")
 		}
 	}
+	// Shared by the HTTP surface and the scheduler so an on-demand backup and a
+	// scheduled one take exactly the same dispatch path and record identical
+	// history.
+	backupsHandler := &api.BackupsHandler{
+		Accounts: accountsStore, Backups: backupsStore, Databases: databasesStore,
+		Tasks: tasksStore, Publisher: publisher, Crypt: crypt, Audit: auditLog,
+	}
+
 	router := api.NewRouter(api.Deps{
 		Config:   cfg,
+		Redis:    rdb,
 		Tokens:   tokens,
 		Auth:     &api.AuthHandler{Users: users, Tokens: tokens, Audit: auditLog},
 		Tasks:    &api.TasksHandler{Tasks: tasksStore, Publisher: publisher, Audit: auditLog},
@@ -194,7 +207,7 @@ func run() error {
 			Tasks: tasksStore, Publisher: publisher, Events: eventBus, Audit: auditLog,
 			PHPVersion: cfg.DefaultPHPVersion, PHPVersions: cfg.PHPVersions,
 		},
-		Plugins:   &api.PluginsHandler{Plugins: store.NewPlugins(pool)},
+		Plugins:   &api.PluginsHandler{Plugins: store.NewPlugins(pool), Audit: auditLog},
 		Resellers: &api.ResellersHandler{Resellers: resellersStore, Events: eventBus, Audit: auditLog},
 		Databases: &api.DatabasesHandler{
 			Accounts: accountsStore, Databases: databasesStore, Packages: packagesStore,
@@ -222,6 +235,8 @@ func run() error {
 			DNS: dnsProvider, Nameservers: cfg.DNSNameservers,
 		},
 		Terminal: &api.TerminalHandler{Accounts: accountsStore, Tokens: tokens, NC: nc},
+		Backups:  backupsHandler,
+		Webhooks: &api.WebhooksHandler{Webhooks: webhooksStore, Crypt: crypt, Audit: auditLog},
 	})
 
 	// SSL auto-renewal: re-dispatches the idempotent ssl.issue task for certs
@@ -248,6 +263,33 @@ func run() error {
 		},
 	}
 	go renewer.Run(ctx)
+
+	// Scheduled backups: sweep hourly and dispatch for destinations whose
+	// daily/weekly cadence has come due.
+	backupScheduler := &backupsched.Scheduler{
+		Destinations: backupsStore,
+		Accounts:     accountsStore,
+		Interval:     time.Hour,
+		Dispatch: func(ctx context.Context, a store.Account, dest store.BackupDestination) error {
+			// actorID "" → NULL: system-initiated, no human actor.
+			_, err := backupsHandler.Dispatch(ctx, &a, &dest, "scheduled", "")
+			return err
+		},
+	}
+	go backupScheduler.Run(ctx)
+
+	// Webhooks: one durable JetStream consumer turns domain events into
+	// delivery rows, and a worker owns retry/dead-lettering from those rows.
+	webhookDispatcher := &webhooks.Dispatcher{
+		Store: webhooksStore,
+		Crypt: crypt,
+	}
+	go func() {
+		if err := webhookDispatcher.Consume(ctx, nc); err != nil {
+			slog.Error("webhook event consumer stopped", "error", err)
+		}
+	}()
+	go webhookDispatcher.Run(ctx)
 
 	// Audit retention: prune rows older than the policy once a day (append-only
 	// log; retention is age-based pruning, never in-place edits).
@@ -292,6 +334,8 @@ func run() error {
 		Databases: databasesStore,
 		FTP:       ftpStore,
 		Mail:      mailStore,
+		Backups:   backupsStore,
+		DNS:       dnsProvider,
 		Events:    eventBus,
 		Audit:     auditLog,
 		Crypt:     crypt,

@@ -34,6 +34,14 @@ type Layout struct {
 	SSLDir         string // issued certificates + ACME account keys
 	MailRoot       string // virtual-mailbox Maildir storage root
 	DKIMDir        string // per-domain DKIM signing keys
+	// BackupStagingDir holds database dumps produced during a backup run, and
+	// restore output. It is agent-owned (0700, outside every account home) so
+	// an account can neither read another account's dump nor tamper with the
+	// data about to be snapshotted.
+	BackupStagingDir string
+	// RspamdLocalDir is rspamd's local.d override tree, where the DKIM signing
+	// config is written.
+	RspamdLocalDir string
 }
 
 // ForFamily returns the default layout for a distro family, with any
@@ -49,6 +57,9 @@ func ForFamily(f Family) Layout {
 		SSLDir:         "/var/lib/cypherpanel/ssl",
 		MailRoot:       "/var/mail/vhosts",
 		DKIMDir:        "/var/lib/cypherpanel/dkim",
+
+		BackupStagingDir: "/var/lib/cypherpanel/backup",
+		RspamdLocalDir:   "/etc/rspamd/local.d",
 	}
 	switch f {
 	case FamilyDebian:
@@ -140,6 +151,25 @@ func (l *Layout) applyEnvOverrides() {
 	override(&l.SSLDir, "CYPHER_PATH_SSL_DIR")
 	override(&l.MailRoot, "CYPHER_PATH_MAIL_ROOT")
 	override(&l.DKIMDir, "CYPHER_PATH_DKIM_DIR")
+	override(&l.BackupStagingDir, "CYPHER_PATH_BACKUP_STAGING_DIR")
+	override(&l.RspamdLocalDir, "CYPHER_PATH_RSPAMD_LOCAL_DIR")
+}
+
+// BackupDumpDir is where an account's database dumps are staged before being
+// snapshotted alongside its files.
+func (l Layout) BackupDumpDir(username string) string {
+	return filepath.Join(l.BackupStagingDir, "dumps", username)
+}
+
+// BackupRestoreDir is the default landing area for a restore, kept separate
+// from live account data so an operator inspects before promoting.
+func (l Layout) BackupRestoreDir(username string) string {
+	return filepath.Join(l.BackupStagingDir, "restore", username)
+}
+
+// DKIMKeyPath is the per-domain DKIM private signing key.
+func (l Layout) DKIMKeyPath(domain, selector string) string {
+	return filepath.Join(l.DKIMDir, domain, selector+".private")
 }
 
 // MaildirPath returns the absolute Maildir for a mailbox (rel is domain/user/).

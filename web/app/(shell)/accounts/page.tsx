@@ -11,7 +11,6 @@ import {
   Card,
   CardContent,
   CardDescription,
-  CardHeader,
   CardTitle,
 } from "@/components/ui/card";
 import {
@@ -68,7 +67,9 @@ const statusVariant: Record<
 
 function CreateAccountDialog({ defaultOpen = false }: { defaultOpen?: boolean }) {
   const qc = useQueryClient();
-  const { data: servers } = useQuery({ queryKey: ["servers"], queryFn: listServers });
+  // Wrapped, not passed bare: listServers takes an optional region, and
+  // TanStack would hand it the query context as that argument.
+  const { data: servers } = useQuery({ queryKey: ["servers"], queryFn: () => listServers() });
   const { data: packages } = useQuery({ queryKey: ["packages"], queryFn: listPackages });
 
   const [open, setOpen] = useState(defaultOpen);

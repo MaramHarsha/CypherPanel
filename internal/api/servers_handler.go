@@ -36,6 +36,7 @@ type serverResponse struct {
 	Hostname         string          `json:"hostname"`
 	IPAddress        string          `json:"ip_address"`
 	AgentStatus      string          `json:"agent_status"`
+	Region           string          `json:"region"`
 	LastSeenAt       *time.Time      `json:"last_seen_at"`
 	CreatedAt        time.Time       `json:"created_at"`
 	Load1m           float64         `json:"load_1m"`
@@ -46,16 +47,18 @@ type serverResponse struct {
 	Services         []serviceStatus `json:"services"`
 }
 
-// List returns all registered servers with their latest host snapshot.
+// List returns registered servers with their latest host snapshot, optionally
+// scoped to one region.
 //
 //	@Summary  List servers (root admin only)
 //	@Tags     admin
 //	@Produce  json
+//	@Param    region query string false "Filter to one region"
 //	@Success  200 {array} serverResponse
 //	@Security BearerAuth
 //	@Router   /admin/servers [get]
 func (h *ServersHandler) List(c *gin.Context) {
-	servers, err := h.Servers.List(c.Request.Context())
+	servers, err := h.Servers.List(c.Request.Context(), c.Query("region"))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
@@ -74,7 +77,7 @@ func toServerResponse(s store.Server) serverResponse {
 	}
 	return serverResponse{
 		ID: s.ID, Name: s.Name, Hostname: s.Hostname, IPAddress: s.IPAddress,
-		AgentStatus: s.AgentStatus, LastSeenAt: s.LastSeenAt, CreatedAt: s.CreatedAt,
+		AgentStatus: s.AgentStatus, Region: s.Region, LastSeenAt: s.LastSeenAt, CreatedAt: s.CreatedAt,
 		Load1m:           s.Stats.Load1m,
 		MemoryTotalBytes: s.Stats.MemoryTotalBytes,
 		MemoryUsedBytes:  s.Stats.MemoryUsedBytes,

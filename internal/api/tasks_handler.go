@@ -22,7 +22,9 @@ type TasksHandler struct {
 
 type createTaskRequest struct {
 	Type    string          `json:"type" binding:"required"`
-	Payload json.RawMessage `json:"payload"`
+	// swaggertype: the spec generator cannot resolve json.RawMessage, and the
+	// payload really is a task-type-specific object to any client.
+	Payload json.RawMessage `json:"payload" swaggertype:"object"`
 }
 
 // Create dispatches a task to a server's agent: persist first (durable

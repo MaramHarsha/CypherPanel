@@ -94,6 +94,9 @@ type Agent struct {
 	// MailDSN is the admin connection to the virtual-mailbox auth DB (MariaDB)
 	// that Postfix/Dovecot query. Empty → mailbox provisioning is unavailable.
 	MailDSN string
+	// Region groups this server in the panel's fleet view and scopes
+	// data-residency queries (plan.md §17). Empty = unassigned.
+	Region string
 }
 
 // insecureDevSecret is only ever used when CYPHER_ENV=development and no
@@ -189,6 +192,7 @@ func LoadAgent() (Agent, error) {
 		PDNSAPIURL:    os.Getenv("CYPHER_AGENT_PDNS_API_URL"),
 		PDNSAPIKey:    os.Getenv("CYPHER_AGENT_PDNS_API_KEY"),
 		MailDSN:       os.Getenv("CYPHER_AGENT_MAIL_DSN"),
+		Region:        os.Getenv("CYPHER_AGENT_REGION"),
 		TLSCertFile:   os.Getenv("CYPHER_AGENT_TLS_CERT"),
 		TLSKeyFile:    os.Getenv("CYPHER_AGENT_TLS_KEY"),
 		TLSCAFile:     os.Getenv("CYPHER_AGENT_TLS_CA"),

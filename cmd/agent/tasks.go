@@ -15,6 +15,8 @@ import (
 
 	agentv1 "github.com/MaramHarsha/CypherPanel/gen/agent/v1"
 	"github.com/MaramHarsha/CypherPanel/internal/acme"
+	"github.com/MaramHarsha/CypherPanel/internal/backups"
+	"github.com/MaramHarsha/CypherPanel/internal/dkim"
 	"github.com/MaramHarsha/CypherPanel/internal/ftp"
 	"github.com/MaramHarsha/CypherPanel/internal/jobs"
 	"github.com/MaramHarsha/CypherPanel/internal/mailstore"
@@ -38,6 +40,12 @@ type taskExecutor struct {
 	usersDB usersdb.Manager // nil when no user-DB backend is configured
 	ftp     ftp.Manager
 	mail    mailstore.Manager // nil when no mail backend is configured
+	backups backups.Engine   // nil when no backup engine (restic) is installed
+	dumper  usersdb.Dumper   // nil when no user-DB backend is configured
+	// core + serverID let backup tasks fetch destination credentials over the
+	// authenticated mTLS channel instead of carrying them in task payloads.
+	core     agentv1.AgentServiceClient
+	serverID string
 }
 
 // Handle runs a task and returns optional result metadata (reported back with
@@ -110,10 +118,16 @@ func (e *taskExecutor) Handle(ctx context.Context, t jobs.Task) (map[string]stri
 		return nil, e.deleteFTP(ctx, t.Payload)
 
 	case jobs.TypeMailCreate:
-		return nil, e.createMail(ctx, t.Payload)
+		return e.createMail(ctx, t.Payload)
 
 	case jobs.TypeMailDelete:
 		return nil, e.deleteMail(ctx, t.Payload)
+
+	case jobs.TypeBackupRun:
+		return e.runBackup(ctx, t.ID, t.Payload)
+
+	case jobs.TypeBackupRestore:
+		return e.runRestore(ctx, t.ID, t.Payload)
 
 	default:
 		// Unknown type: this agent build is older than the control plane.
@@ -264,33 +278,58 @@ func (e *taskExecutor) phpRuntime(ctx context.Context, raw []byte) error {
 }
 
 // createMail provisions a virtual mailbox: it upserts the auth-DB row (address
-// → bcrypt hash / maildir / quota) and creates the Maildir on disk. The
-// password never appears here — Core sends only the bcrypt hash.
-func (e *taskExecutor) createMail(ctx context.Context, raw []byte) error {
+// → bcrypt hash / maildir / quota), creates the Maildir on disk, and ensures
+// the domain has a DKIM signing key. The password never appears here — Core
+// sends only the bcrypt hash.
+//
+// The DKIM public key is returned as result metadata so Core can publish the
+// `<selector>._domainkey` TXT record; the private half never leaves this host.
+func (e *taskExecutor) createMail(ctx context.Context, raw []byte) (map[string]string, error) {
 	var p jobs.MailCreatePayload
 	if err := json.Unmarshal(raw, &p); err != nil {
-		return jobs.Permanent(fmt.Errorf("invalid payload: %w", err))
+		return nil, jobs.Permanent(fmt.Errorf("invalid payload: %w", err))
 	}
 	if e.mail == nil {
-		return jobs.Permanent(mailstore.ErrUnsupported)
+		return nil, jobs.Permanent(mailstore.ErrUnsupported)
 	}
 	if err := e.mail.EnsureSchema(ctx); err != nil {
-		return err
+		return nil, err
 	}
 	if err := e.mail.UpsertMailbox(ctx, mailstore.Mailbox{
 		Address: p.Address, Domain: p.Domain, Maildir: p.Maildir,
 		PasswordHash: p.PasswordHash, QuotaBytes: int64(p.QuotaMB) << 20,
 	}); err != nil {
-		return err
+		return nil, err
 	}
 	// Create the Maildir (cur/new/tmp) so the MTA can deliver immediately.
 	base := e.layout.MaildirPath(p.Maildir)
 	for _, sub := range []string{"cur", "new", "tmp"} {
 		if err := os.MkdirAll(filepath.Join(base, sub), 0o700); err != nil {
-			return fmt.Errorf("creating maildir: %w", err)
+			return nil, fmt.Errorf("creating maildir: %w", err)
 		}
 	}
-	return nil
+
+	// DKIM is idempotent per domain: an existing key is reused, so a
+	// redelivered task never rotates a key out from under working senders.
+	meta := map[string]string{}
+	key, err := dkim.EnsureKey(e.layout.DKIMDir, p.Domain, dkim.DefaultSelector)
+	if err != nil {
+		// The mailbox itself is provisioned and usable; failing the whole task
+		// would retry the mailbox work too. Surface it in the log and let the
+		// operator fix signing separately.
+		slog.Error("provisioning DKIM key", "domain", p.Domain, "error", err)
+		return meta, nil
+	}
+	if err := dkim.WriteRspamdConfig(e.layout.RspamdLocalDir, e.layout.DKIMDir, key.Selector); err != nil {
+		slog.Warn("writing rspamd DKIM config", "error", err)
+	} else if rerr := services.Control(ctx, "rspamd", "reload"); rerr != nil {
+		// Not fatal: the key and config are on disk, so the next rspamd
+		// restart picks them up.
+		slog.Warn("reloading rspamd after DKIM config change", "error", rerr)
+	}
+	meta[jobs.MetaDKIMPublicTXT] = key.PublicTXT
+	meta[jobs.MetaDKIMSelector] = key.Selector
+	return meta, nil
 }
 
 // deleteMail removes the mailbox row and its Maildir (idempotent).

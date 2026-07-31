@@ -19,6 +19,10 @@ var ErrInUse = errors.New("store: resource is in use")
 // Zero means "unlimited" for counts and "no cap" for resources (MVP).
 type PackageLimits struct {
 	DiskMB        int `json:"disk_mb"`
+	// Inodes caps total files+directories. Separate from DiskMB because the
+	// two exhaust independently: a tiny-file flood fills the inode table long
+	// before it fills the disk.
+	Inodes        int `json:"inodes"`
 	BandwidthMB   int `json:"bandwidth_mb"`
 	Domains       int `json:"domains"`
 	Databases     int `json:"databases"`

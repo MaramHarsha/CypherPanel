@@ -22,6 +22,27 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/page-header";
 import {
@@ -36,6 +57,110 @@ import {
 
 function join(dir: string, name: string): string {
   return dir ? `${dir}/${name}` : name;
+}
+
+// Dialog-based name prompt, replacing the native window.prompt() so file/folder
+// creation matches the rest of the app's custom Dialog styling instead of
+// dropping into an unstyled browser popup.
+function NewEntryDialog({
+  label,
+  icon: Icon,
+  onCreate,
+  pending,
+}: {
+  label: string;
+  icon: typeof FolderPlus;
+  onCreate: (name: string) => void;
+  pending: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (!o) setName("");
+      }}
+    >
+      <DialogTrigger render={<Button variant="outline" size="sm" />}>
+        <Icon className="h-4 w-4" /> {label}
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>New {label.toLowerCase()}</DialogTitle>
+          <DialogDescription>Created in the current directory.</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-1.5">
+          <Label htmlFor="new-entry-name">Name</Label>
+          <Input
+            id="new-entry-name"
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && name.trim()) {
+                onCreate(name.trim());
+                setOpen(false);
+              }
+            }}
+          />
+        </div>
+        <DialogFooter>
+          <Button
+            disabled={!name.trim() || pending}
+            onClick={() => {
+              onCreate(name.trim());
+              setOpen(false);
+            }}
+          >
+            Create
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DeleteEntryButton({
+  name,
+  onDelete,
+}: {
+  name: string;
+  onDelete: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label={`Delete ${name}`}
+        onClick={() => setOpen(true)}
+      >
+        <Trash2 className="h-3.5 w-3.5 text-destructive" />
+      </Button>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete {name}?</AlertDialogTitle>
+          <AlertDialogDescription>This cannot be undone.</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={(e) => {
+              e.preventDefault();
+              onDelete();
+              setOpen(false);
+            }}
+          >
+            Delete
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
 }
 
 export default function FileManagerPage() {
@@ -88,26 +213,18 @@ export default function FileManagerPage() {
         <ArrowLeft className="h-4 w-4" /> Back
       </Link>
       <PageHeader title="File manager" description="Browse and edit this account's files.">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            const name = prompt("New folder name");
-            if (name) mkdir.mutate(name);
-          }}
-        >
-          <FolderPlus className="h-4 w-4" /> Folder
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            const name = prompt("New file name");
-            if (name) newFile.mutate(name);
-          }}
-        >
-          <FilePlus className="h-4 w-4" /> File
-        </Button>
+        <NewEntryDialog
+          label="Folder"
+          icon={FolderPlus}
+          pending={mkdir.isPending}
+          onCreate={(name) => mkdir.mutate(name)}
+        />
+        <NewEntryDialog
+          label="File"
+          icon={FilePlus}
+          pending={newFile.isPending}
+          onCreate={(name) => newFile.mutate(name)}
+        />
       </PageHeader>
 
       {/* Breadcrumb */}
@@ -161,16 +278,10 @@ export default function FileManagerPage() {
                     <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
                       {e.is_dir ? "—" : `${e.size}B`}
                     </span>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={`Delete ${e.name}`}
-                      onClick={() => {
-                        if (confirm(`Delete ${e.name}?`)) remove.mutate(join(cwd, e.name));
-                      }}
-                    >
-                      <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                    </Button>
+                    <DeleteEntryButton
+                      name={e.name}
+                      onDelete={() => remove.mutate(join(cwd, e.name))}
+                    />
                   </li>
                 ))}
               </ul>

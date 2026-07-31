@@ -49,7 +49,7 @@ func (h *MetricsHandler) Prometheus(c *gin.Context) {
 	ctx := c.Request.Context()
 	var b strings.Builder
 
-	servers, _ := h.Servers.List(ctx)
+	servers, _ := h.Servers.List(ctx, "")
 	online := 0
 	b.WriteString("# HELP cypher_server_up Whether the agent on a server is reporting (1) or not (0).\n")
 	b.WriteString("# TYPE cypher_server_up gauge\n")
@@ -107,7 +107,7 @@ func (h *MetricsHandler) Scoped(c *gin.Context) {
 	ctx := c.Request.Context()
 	switch c.Param("scope") {
 	case "server":
-		servers, err := h.Servers.List(ctx)
+		servers, err := h.Servers.List(ctx, "")
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return

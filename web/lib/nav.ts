@@ -1,10 +1,13 @@
 import {
+  ArchiveRestore,
   LayoutDashboard,
   Package,
+  Plug,
   ScrollText,
   Server,
   Store,
   Users,
+  Webhook,
   type LucideIcon,
 } from "lucide-react";
 
@@ -33,6 +36,7 @@ export const navGroups: NavGroup[] = [
     label: "Infrastructure",
     items: [
       { href: "/servers", label: "Servers", icon: Server, adminOnly: true },
+      { href: "/backups", label: "Backups", icon: ArchiveRestore, adminOnly: true },
       { href: "/audit", label: "Audit log", icon: ScrollText, adminOnly: true },
     ],
   },
@@ -42,6 +46,13 @@ export const navGroups: NavGroup[] = [
       { href: "/packages", label: "Packages", icon: Package, adminOnly: false },
       { href: "/accounts", label: "Accounts", icon: Users, adminOnly: false },
       { href: "/resellers", label: "Resellers", icon: Store, adminOnly: true },
+    ],
+  },
+  {
+    label: "Integrations",
+    items: [
+      { href: "/webhooks", label: "Webhooks", icon: Webhook, adminOnly: true },
+      { href: "/plugins", label: "Plugins", icon: Plug, adminOnly: true },
     ],
   },
 ];

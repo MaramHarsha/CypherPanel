@@ -5,7 +5,7 @@ MODULE   := github.com/MaramHarsha/CypherPanel
 BIN_DIR  := bin
 GOFLAGS  := CGO_ENABLED=0
 
-.PHONY: all build build-local test vet proto tools compose-up compose-down migrate-up migrate-down clean
+.PHONY: all build build-cli build-local test vet proto tools compose-up compose-down migrate-up migrate-down clean
 
 all: vet test build
 
@@ -13,8 +13,16 @@ all: vet test build
 build:
 	$(GOFLAGS) GOOS=linux GOARCH=amd64 go build -trimpath -o $(BIN_DIR)/linux-amd64/cypher-core ./cmd/core
 	$(GOFLAGS) GOOS=linux GOARCH=amd64 go build -trimpath -o $(BIN_DIR)/linux-amd64/cypher-agent ./cmd/agent
+	$(GOFLAGS) GOOS=linux GOARCH=amd64 go build -trimpath -o $(BIN_DIR)/linux-amd64/cypherctl ./cmd/cypherctl
 	$(GOFLAGS) GOOS=linux GOARCH=arm64 go build -trimpath -o $(BIN_DIR)/linux-arm64/cypher-core ./cmd/core
 	$(GOFLAGS) GOOS=linux GOARCH=arm64 go build -trimpath -o $(BIN_DIR)/linux-arm64/cypher-agent ./cmd/agent
+	$(GOFLAGS) GOOS=linux GOARCH=arm64 go build -trimpath -o $(BIN_DIR)/linux-arm64/cypherctl ./cmd/cypherctl
+
+## cypherctl is a client, not a server — operators run it from macOS/Windows too.
+build-cli:
+	$(GOFLAGS) GOOS=darwin  GOARCH=arm64 go build -trimpath -o $(BIN_DIR)/darwin-arm64/cypherctl ./cmd/cypherctl
+	$(GOFLAGS) GOOS=darwin  GOARCH=amd64 go build -trimpath -o $(BIN_DIR)/darwin-amd64/cypherctl ./cmd/cypherctl
+	$(GOFLAGS) GOOS=windows GOARCH=amd64 go build -trimpath -o $(BIN_DIR)/windows-amd64/cypherctl.exe ./cmd/cypherctl
 
 ## Native binaries for the current dev machine (for running cypher-core locally).
 build-local:

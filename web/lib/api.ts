@@ -126,8 +126,10 @@ export async function accessTokenForWS(): Promise<string | null> {
   return null;
 }
 
-export function listServers(): Promise<ServerInfo[]> {
-  return apiFetch<ServerInfo[]>("/api/v1/admin/servers");
+/** Lists the fleet. A non-empty region scopes the result to that region. */
+export function listServers(region = ""): Promise<ServerInfo[]> {
+  const q = region ? `?region=${encodeURIComponent(region)}` : "";
+  return apiFetch<ServerInfo[]>(`/api/v1/admin/servers${q}`);
 }
 
 export function getServer(id: string): Promise<ServerInfo> {
@@ -444,6 +446,225 @@ export interface AuditRecord {
 export function listAudit(action = "", limit = 100, offset = 0): Promise<AuditRecord[]> {
   const q = new URLSearchParams({ action, limit: String(limit), offset: String(offset) });
   return apiFetch<AuditRecord[]>(`/api/v1/admin/audit?${q.toString()}`);
+}
+
+export interface BackupDestination {
+  id: string;
+  name: string;
+  kind: "local" | "s3" | "sftp" | "rest";
+  repository: string;
+  schedule: "off" | "daily" | "weekly";
+  retention_daily: number;
+  retention_weekly: number;
+  retention_monthly: number;
+  last_run_at?: string;
+  created_at: string;
+}
+
+// Credentials are write-only: the API never returns them for any role, so
+// there is deliberately no field for them on BackupDestination.
+export interface CreateDestinationRequest {
+  name: string;
+  kind: BackupDestination["kind"];
+  repository: string;
+  password: string;
+  env?: Record<string, string>;
+  schedule?: BackupDestination["schedule"];
+  retention_daily?: number;
+  retention_weekly?: number;
+  retention_monthly?: number;
+}
+
+export interface AccountBackup {
+  id: string;
+  account_id: string;
+  destination_id: string;
+  task_id?: string;
+  snapshot_id?: string;
+  kind: "manual" | "scheduled" | "restore";
+  status: "running" | "completed" | "failed";
+  size_bytes: number;
+  error?: string;
+  started_at: string;
+  completed_at?: string;
+}
+
+export function listDestinations(): Promise<BackupDestination[]> {
+  return apiFetch<BackupDestination[]>("/api/v1/admin/backup/destinations");
+}
+
+export function createDestination(req: CreateDestinationRequest): Promise<BackupDestination> {
+  return apiFetch<BackupDestination>("/api/v1/admin/backup/destinations", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+export function updateDestination(
+  id: string,
+  body: {
+    schedule: BackupDestination["schedule"];
+    retention_daily: number;
+    retention_weekly: number;
+    retention_monthly: number;
+  },
+): Promise<BackupDestination> {
+  return apiFetch<BackupDestination>(`/api/v1/admin/backup/destinations/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteDestination(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/admin/backup/destinations/${id}`, { method: "DELETE" });
+}
+
+export function listBackups(accountId: string): Promise<AccountBackup[]> {
+  return apiFetch<AccountBackup[]>(`/api/v1/admin/accounts/${accountId}/backups`);
+}
+
+export function runBackup(accountId: string, destinationId: string): Promise<AccountBackup> {
+  return apiFetch<AccountBackup>(`/api/v1/admin/accounts/${accountId}/backups`, {
+    method: "POST",
+    body: JSON.stringify({ destination_id: destinationId }),
+  });
+}
+
+export function restoreBackup(
+  accountId: string,
+  backupId: string,
+  snapshotId: string,
+  target: "" | "home",
+): Promise<AccountBackup> {
+  return apiFetch<AccountBackup>(
+    `/api/v1/admin/accounts/${accountId}/backups/${backupId}/restore`,
+    { method: "POST", body: JSON.stringify({ snapshot_id: snapshotId, target }) },
+  );
+}
+
+export interface Webhook {
+  id: string;
+  name: string;
+  url: string;
+  events: string[];
+  active: boolean;
+  created_at: string;
+  /** Only present in the create response — the signing key is never shown again. */
+  secret?: string;
+}
+
+export interface WebhookDelivery {
+  id: string;
+  webhook_id: string;
+  webhook_name: string;
+  event_id: string;
+  subject: string;
+  payload: unknown;
+  status: "pending" | "delivered" | "failed" | "dead";
+  attempts: number;
+  response_status: number;
+  error?: string;
+  created_at: string;
+  delivered_at?: string;
+}
+
+export function listWebhooks(): Promise<Webhook[]> {
+  return apiFetch<Webhook[]>("/api/v1/admin/webhooks");
+}
+
+export function createWebhook(body: {
+  name: string;
+  url: string;
+  events: string[];
+}): Promise<Webhook> {
+  return apiFetch<Webhook>("/api/v1/admin/webhooks", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function setWebhookActive(id: string, active: boolean): Promise<Webhook> {
+  return apiFetch<Webhook>(`/api/v1/admin/webhooks/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ active }),
+  });
+}
+
+export function deleteWebhook(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/admin/webhooks/${id}`, { method: "DELETE" });
+}
+
+export function webhookEventSubjects(): Promise<string[]> {
+  return apiFetch<string[]>("/api/v1/admin/webhooks/event-subjects");
+}
+
+export function listWebhookDeliveries(webhookId = "", limit = 50): Promise<WebhookDelivery[]> {
+  const q = new URLSearchParams({ webhook_id: webhookId, limit: String(limit) });
+  return apiFetch<WebhookDelivery[]>(`/api/v1/admin/webhooks/deliveries?${q.toString()}`);
+}
+
+export function redeliverWebhook(deliveryId: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/admin/webhooks/deliveries/${deliveryId}/redeliver`, {
+    method: "POST",
+  });
+}
+
+export interface PluginManifest {
+  api_version: string;
+  name: string;
+  version: string;
+  kind: string;
+  description?: string;
+  author?: string;
+  ui?: {
+    sidebar?: { label: string; path: string; icon: string }[];
+    dashboard_cards?: { id: string; title: string }[];
+    settings_pages?: { label: string; path: string }[];
+  };
+  events?: string[];
+  permissions?: string[];
+}
+
+export interface PluginInfo {
+  name: string;
+  version: string;
+  kind: string;
+  enabled: boolean;
+  manifest?: PluginManifest;
+  installed_at: string;
+}
+
+export interface PluginSurface {
+  plugin: string;
+  sidebar: { label: string; path: string; icon: string }[];
+  dashboard_cards: { id: string; title: string }[];
+  settings_pages: { label: string; path: string }[];
+}
+
+export function listPlugins(): Promise<PluginInfo[]> {
+  return apiFetch<PluginInfo[]>("/api/v1/admin/plugins");
+}
+
+export function installPlugin(manifest: string): Promise<PluginInfo> {
+  return apiFetch<PluginInfo>("/api/v1/admin/plugins", {
+    method: "POST",
+    body: JSON.stringify({ manifest }),
+  });
+}
+
+export function setPluginEnabled(name: string, enabled: boolean): Promise<PluginInfo> {
+  return apiFetch<PluginInfo>(`/api/v1/admin/plugins/${name}`, {
+    method: "PATCH",
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+export function uninstallPlugin(name: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/admin/plugins/${name}`, { method: "DELETE" });
+}
+
+export function pluginSurfaces(): Promise<PluginSurface[]> {
+  return apiFetch<PluginSurface[]>("/api/v1/admin/plugins/surfaces");
 }
 
 export interface Me {

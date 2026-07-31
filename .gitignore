@@ -1,7 +1,10 @@
-# Binaries
+# Binaries — build output, never committed (see Makefile targets)
 /bin/
 /dist/
 *.exe
+/agent
+/core
+/cypherctl
 
 # Go
 /vendor/

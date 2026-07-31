@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/page-header";
 import {
   adminerHandoff,
@@ -33,6 +34,12 @@ function openAdminer(h: {
 }) {
   const win = window.open("about:blank", "_blank");
   if (!win) return;
+  const escape = (v: string) =>
+    v
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
   const fields: Record<string, string> = {
     "auth[driver]": h.driver,
     "auth[server]": h.server,
@@ -41,13 +48,10 @@ function openAdminer(h: {
     "auth[db]": h.db,
   };
   const inputs = Object.entries(fields)
-    .map(
-      ([k, v]) =>
-        `<input type="hidden" name="${k}" value="${v.replace(/"/g, "&quot;")}">`,
-    )
+    .map(([k, v]) => `<input type="hidden" name="${escape(k)}" value="${escape(v)}">`)
     .join("");
   win.document.write(
-    `<form id="a" method="post" action="${h.url}">${inputs}</form><script>document.getElementById('a').submit()</script>`,
+    `<form id="a" method="post" action="${escape(h.url)}">${inputs}</form><script>document.getElementById('a').submit()</script>`,
   );
 }
 
@@ -110,18 +114,22 @@ export default function DatabasesPage() {
 
       <Card>
         <CardContent className="p-4">
-          <div className="flex gap-2">
-            <Input
-              placeholder="name (e.g. blog)"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && name) create.mutate();
-              }}
-            />
-            <Button onClick={() => create.mutate()} disabled={!name || create.isPending}>
-              <Plus className="h-4 w-4" /> Create
-            </Button>
+          <div className="grid gap-1.5">
+            <Label htmlFor="db-name">Database name</Label>
+            <div className="flex gap-2">
+              <Input
+                id="db-name"
+                placeholder="name (e.g. blog)"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && name) create.mutate();
+                }}
+              />
+              <Button onClick={() => create.mutate()} disabled={!name || create.isPending}>
+                <Plus className="h-4 w-4" /> Create
+              </Button>
+            </div>
           </div>
           {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
 

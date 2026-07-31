@@ -19,8 +19,12 @@ type PackagesHandler struct {
 	Audit    *audit.Logger
 }
 
+// packageLimits mirrors store.PackageLimits field-for-field so the two convert
+// directly. Adding a limit means adding it in both places — the compiler
+// catches a mismatch at the conversion below.
 type packageLimits struct {
 	DiskMB        int `json:"disk_mb"`
+	Inodes        int `json:"inodes"`
 	BandwidthMB   int `json:"bandwidth_mb"`
 	Domains       int `json:"domains"`
 	Databases     int `json:"databases"`

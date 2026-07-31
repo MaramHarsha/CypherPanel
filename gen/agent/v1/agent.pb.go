@@ -82,8 +82,12 @@ type RegisterRequest struct {
 	AgentVersion     string                 `protobuf:"bytes,3,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
 	DistroFamily     string                 `protobuf:"bytes,4,opt,name=distro_family,json=distroFamily,proto3" json:"distro_family,omitempty"` // "debian" | "rhel" | "unknown"
 	DistroPrettyName string                 `protobuf:"bytes,5,opt,name=distro_pretty_name,json=distroPrettyName,proto3" json:"distro_pretty_name,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Operator-assigned region for fleet grouping and data-residency scoping
+	// (plan.md §17). Add-only field; older agents omit it and their server keeps
+	// whatever region the panel already recorded.
+	Region        string `protobuf:"bytes,6,opt,name=region,proto3" json:"region,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *RegisterRequest) Reset() {
@@ -147,6 +151,13 @@ func (x *RegisterRequest) GetDistroFamily() string {
 func (x *RegisterRequest) GetDistroPrettyName() string {
 	if x != nil {
 		return x.DistroPrettyName
+	}
+	return ""
+}
+
+func (x *RegisterRequest) GetRegion() string {
+	if x != nil {
+		return x.Region
 	}
 	return ""
 }
@@ -535,18 +546,148 @@ func (*ReportTaskResultResponse) Descriptor() ([]byte, []int) {
 	return file_agent_v1_agent_proto_rawDescGZIP(), []int{7}
 }
 
+type FetchBackupCredentialsRequest struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	ServerId string                 `protobuf:"bytes,1,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
+	// task_id must be a task assigned to this server that references
+	// destination_id — Core re-checks the pairing before releasing secrets.
+	TaskId        string `protobuf:"bytes,2,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	DestinationId string `protobuf:"bytes,3,opt,name=destination_id,json=destinationId,proto3" json:"destination_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FetchBackupCredentialsRequest) Reset() {
+	*x = FetchBackupCredentialsRequest{}
+	mi := &file_agent_v1_agent_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FetchBackupCredentialsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FetchBackupCredentialsRequest) ProtoMessage() {}
+
+func (x *FetchBackupCredentialsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_agent_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FetchBackupCredentialsRequest.ProtoReflect.Descriptor instead.
+func (*FetchBackupCredentialsRequest) Descriptor() ([]byte, []int) {
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *FetchBackupCredentialsRequest) GetServerId() string {
+	if x != nil {
+		return x.ServerId
+	}
+	return ""
+}
+
+func (x *FetchBackupCredentialsRequest) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *FetchBackupCredentialsRequest) GetDestinationId() string {
+	if x != nil {
+		return x.DestinationId
+	}
+	return ""
+}
+
+type FetchBackupCredentialsResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// repository is the restic repository URL, e.g.
+	// "s3:s3.amazonaws.com/bucket/prefix" or an absolute local path.
+	Repository string `protobuf:"bytes,1,opt,name=repository,proto3" json:"repository,omitempty"`
+	// password unlocks the restic repository (repo encryption key).
+	Password string `protobuf:"bytes,2,opt,name=password,proto3" json:"password,omitempty"`
+	// env carries backend credentials as restic expects them in the process
+	// environment (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, ...). They are
+	// passed to restic via env, never as argv, so they stay out of the process
+	// table and any command log.
+	Env           map[string]string `protobuf:"bytes,3,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FetchBackupCredentialsResponse) Reset() {
+	*x = FetchBackupCredentialsResponse{}
+	mi := &file_agent_v1_agent_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FetchBackupCredentialsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FetchBackupCredentialsResponse) ProtoMessage() {}
+
+func (x *FetchBackupCredentialsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_agent_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FetchBackupCredentialsResponse.ProtoReflect.Descriptor instead.
+func (*FetchBackupCredentialsResponse) Descriptor() ([]byte, []int) {
+	return file_agent_v1_agent_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *FetchBackupCredentialsResponse) GetRepository() string {
+	if x != nil {
+		return x.Repository
+	}
+	return ""
+}
+
+func (x *FetchBackupCredentialsResponse) GetPassword() string {
+	if x != nil {
+		return x.Password
+	}
+	return ""
+}
+
+func (x *FetchBackupCredentialsResponse) GetEnv() map[string]string {
+	if x != nil {
+		return x.Env
+	}
+	return nil
+}
+
 var File_agent_v1_agent_proto protoreflect.FileDescriptor
 
 const file_agent_v1_agent_proto_rawDesc = "" +
 	"\n" +
-	"\x14agent/v1/agent.proto\x12\x14cypherpanel.agent.v1\"\xc4\x01\n" +
+	"\x14agent/v1/agent.proto\x12\x14cypherpanel.agent.v1\"\xdc\x01\n" +
 	"\x0fRegisterRequest\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x1d\n" +
 	"\n" +
 	"ip_address\x18\x02 \x01(\tR\tipAddress\x12#\n" +
 	"\ragent_version\x18\x03 \x01(\tR\fagentVersion\x12#\n" +
 	"\rdistro_family\x18\x04 \x01(\tR\fdistroFamily\x12,\n" +
-	"\x12distro_pretty_name\x18\x05 \x01(\tR\x10distroPrettyName\"/\n" +
+	"\x12distro_pretty_name\x18\x05 \x01(\tR\x10distroPrettyName\x12\x16\n" +
+	"\x06region\x18\x06 \x01(\tR\x06region\"/\n" +
 	"\x10RegisterResponse\x12\x1b\n" +
 	"\tserver_id\x18\x01 \x01(\tR\bserverId\"\xa7\x01\n" +
 	"\x10HeartbeatRequest\x12\x1b\n" +
@@ -572,16 +713,30 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x1a\n" +
-	"\x18ReportTaskResultResponse*\\\n" +
+	"\x18ReportTaskResultResponse\"|\n" +
+	"\x1dFetchBackupCredentialsRequest\x12\x1b\n" +
+	"\tserver_id\x18\x01 \x01(\tR\bserverId\x12\x17\n" +
+	"\atask_id\x18\x02 \x01(\tR\x06taskId\x12%\n" +
+	"\x0edestination_id\x18\x03 \x01(\tR\rdestinationId\"\xe5\x01\n" +
+	"\x1eFetchBackupCredentialsResponse\x12\x1e\n" +
+	"\n" +
+	"repository\x18\x01 \x01(\tR\n" +
+	"repository\x12\x1a\n" +
+	"\bpassword\x18\x02 \x01(\tR\bpassword\x12O\n" +
+	"\x03env\x18\x03 \x03(\v2=.cypherpanel.agent.v1.FetchBackupCredentialsResponse.EnvEntryR\x03env\x1a6\n" +
+	"\bEnvEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01*\\\n" +
 	"\n" +
 	"TaskStatus\x12\x1b\n" +
 	"\x17TASK_STATUS_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15TASK_STATUS_SUCCEEDED\x10\x01\x12\x16\n" +
-	"\x12TASK_STATUS_FAILED\x10\x022\xba\x02\n" +
+	"\x12TASK_STATUS_FAILED\x10\x022\xc0\x03\n" +
 	"\fAgentService\x12Y\n" +
 	"\bRegister\x12%.cypherpanel.agent.v1.RegisterRequest\x1a&.cypherpanel.agent.v1.RegisterResponse\x12\\\n" +
 	"\tHeartbeat\x12&.cypherpanel.agent.v1.HeartbeatRequest\x1a'.cypherpanel.agent.v1.HeartbeatResponse\x12q\n" +
-	"\x10ReportTaskResult\x12-.cypherpanel.agent.v1.ReportTaskResultRequest\x1a..cypherpanel.agent.v1.ReportTaskResultResponseB9Z7github.com/MaramHarsha/CypherPanel/gen/agent/v1;agentv1b\x06proto3"
+	"\x10ReportTaskResult\x12-.cypherpanel.agent.v1.ReportTaskResultRequest\x1a..cypherpanel.agent.v1.ReportTaskResultResponse\x12\x83\x01\n" +
+	"\x16FetchBackupCredentials\x123.cypherpanel.agent.v1.FetchBackupCredentialsRequest\x1a4.cypherpanel.agent.v1.FetchBackupCredentialsResponseB9Z7github.com/MaramHarsha/CypherPanel/gen/agent/v1;agentv1b\x06proto3"
 
 var (
 	file_agent_v1_agent_proto_rawDescOnce sync.Once
@@ -596,35 +751,41 @@ func file_agent_v1_agent_proto_rawDescGZIP() []byte {
 }
 
 var file_agent_v1_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_agent_v1_agent_proto_goTypes = []any{
-	(TaskStatus)(0),                  // 0: cypherpanel.agent.v1.TaskStatus
-	(*RegisterRequest)(nil),          // 1: cypherpanel.agent.v1.RegisterRequest
-	(*RegisterResponse)(nil),         // 2: cypherpanel.agent.v1.RegisterResponse
-	(*HeartbeatRequest)(nil),         // 3: cypherpanel.agent.v1.HeartbeatRequest
-	(*ServiceStatus)(nil),            // 4: cypherpanel.agent.v1.ServiceStatus
-	(*HostStats)(nil),                // 5: cypherpanel.agent.v1.HostStats
-	(*HeartbeatResponse)(nil),        // 6: cypherpanel.agent.v1.HeartbeatResponse
-	(*ReportTaskResultRequest)(nil),  // 7: cypherpanel.agent.v1.ReportTaskResultRequest
-	(*ReportTaskResultResponse)(nil), // 8: cypherpanel.agent.v1.ReportTaskResultResponse
-	nil,                              // 9: cypherpanel.agent.v1.ReportTaskResultRequest.MetadataEntry
+	(TaskStatus)(0),                        // 0: cypherpanel.agent.v1.TaskStatus
+	(*RegisterRequest)(nil),                // 1: cypherpanel.agent.v1.RegisterRequest
+	(*RegisterResponse)(nil),               // 2: cypherpanel.agent.v1.RegisterResponse
+	(*HeartbeatRequest)(nil),               // 3: cypherpanel.agent.v1.HeartbeatRequest
+	(*ServiceStatus)(nil),                  // 4: cypherpanel.agent.v1.ServiceStatus
+	(*HostStats)(nil),                      // 5: cypherpanel.agent.v1.HostStats
+	(*HeartbeatResponse)(nil),              // 6: cypherpanel.agent.v1.HeartbeatResponse
+	(*ReportTaskResultRequest)(nil),        // 7: cypherpanel.agent.v1.ReportTaskResultRequest
+	(*ReportTaskResultResponse)(nil),       // 8: cypherpanel.agent.v1.ReportTaskResultResponse
+	(*FetchBackupCredentialsRequest)(nil),  // 9: cypherpanel.agent.v1.FetchBackupCredentialsRequest
+	(*FetchBackupCredentialsResponse)(nil), // 10: cypherpanel.agent.v1.FetchBackupCredentialsResponse
+	nil,                                    // 11: cypherpanel.agent.v1.ReportTaskResultRequest.MetadataEntry
+	nil,                                    // 12: cypherpanel.agent.v1.FetchBackupCredentialsResponse.EnvEntry
 }
 var file_agent_v1_agent_proto_depIdxs = []int32{
-	5, // 0: cypherpanel.agent.v1.HeartbeatRequest.stats:type_name -> cypherpanel.agent.v1.HostStats
-	4, // 1: cypherpanel.agent.v1.HeartbeatRequest.services:type_name -> cypherpanel.agent.v1.ServiceStatus
-	0, // 2: cypherpanel.agent.v1.ReportTaskResultRequest.status:type_name -> cypherpanel.agent.v1.TaskStatus
-	9, // 3: cypherpanel.agent.v1.ReportTaskResultRequest.metadata:type_name -> cypherpanel.agent.v1.ReportTaskResultRequest.MetadataEntry
-	1, // 4: cypherpanel.agent.v1.AgentService.Register:input_type -> cypherpanel.agent.v1.RegisterRequest
-	3, // 5: cypherpanel.agent.v1.AgentService.Heartbeat:input_type -> cypherpanel.agent.v1.HeartbeatRequest
-	7, // 6: cypherpanel.agent.v1.AgentService.ReportTaskResult:input_type -> cypherpanel.agent.v1.ReportTaskResultRequest
-	2, // 7: cypherpanel.agent.v1.AgentService.Register:output_type -> cypherpanel.agent.v1.RegisterResponse
-	6, // 8: cypherpanel.agent.v1.AgentService.Heartbeat:output_type -> cypherpanel.agent.v1.HeartbeatResponse
-	8, // 9: cypherpanel.agent.v1.AgentService.ReportTaskResult:output_type -> cypherpanel.agent.v1.ReportTaskResultResponse
-	7, // [7:10] is the sub-list for method output_type
-	4, // [4:7] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	5,  // 0: cypherpanel.agent.v1.HeartbeatRequest.stats:type_name -> cypherpanel.agent.v1.HostStats
+	4,  // 1: cypherpanel.agent.v1.HeartbeatRequest.services:type_name -> cypherpanel.agent.v1.ServiceStatus
+	0,  // 2: cypherpanel.agent.v1.ReportTaskResultRequest.status:type_name -> cypherpanel.agent.v1.TaskStatus
+	11, // 3: cypherpanel.agent.v1.ReportTaskResultRequest.metadata:type_name -> cypherpanel.agent.v1.ReportTaskResultRequest.MetadataEntry
+	12, // 4: cypherpanel.agent.v1.FetchBackupCredentialsResponse.env:type_name -> cypherpanel.agent.v1.FetchBackupCredentialsResponse.EnvEntry
+	1,  // 5: cypherpanel.agent.v1.AgentService.Register:input_type -> cypherpanel.agent.v1.RegisterRequest
+	3,  // 6: cypherpanel.agent.v1.AgentService.Heartbeat:input_type -> cypherpanel.agent.v1.HeartbeatRequest
+	7,  // 7: cypherpanel.agent.v1.AgentService.ReportTaskResult:input_type -> cypherpanel.agent.v1.ReportTaskResultRequest
+	9,  // 8: cypherpanel.agent.v1.AgentService.FetchBackupCredentials:input_type -> cypherpanel.agent.v1.FetchBackupCredentialsRequest
+	2,  // 9: cypherpanel.agent.v1.AgentService.Register:output_type -> cypherpanel.agent.v1.RegisterResponse
+	6,  // 10: cypherpanel.agent.v1.AgentService.Heartbeat:output_type -> cypherpanel.agent.v1.HeartbeatResponse
+	8,  // 11: cypherpanel.agent.v1.AgentService.ReportTaskResult:output_type -> cypherpanel.agent.v1.ReportTaskResultResponse
+	10, // 12: cypherpanel.agent.v1.AgentService.FetchBackupCredentials:output_type -> cypherpanel.agent.v1.FetchBackupCredentialsResponse
+	9,  // [9:13] is the sub-list for method output_type
+	5,  // [5:9] is the sub-list for method input_type
+	5,  // [5:5] is the sub-list for extension type_name
+	5,  // [5:5] is the sub-list for extension extendee
+	0,  // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_agent_v1_agent_proto_init() }
@@ -638,7 +799,7 @@ func file_agent_v1_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agent_v1_agent_proto_rawDesc), len(file_agent_v1_agent_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   9,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

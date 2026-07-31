@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
+  ArchiveRestore,
   ArrowLeft,
   Clock,
   Database,
@@ -150,6 +151,12 @@ export default function AccountHubPage() {
           icon={Settings2}
           title="PHP Settings"
           description="Version and php.ini overrides."
+        />
+        <FeatureCard
+          href={`/accounts/${id}/backups`}
+          icon={ArchiveRestore}
+          title="Backups"
+          description="Snapshot history, restore, and on-demand backups."
         />
         {active && (
           <FeatureCard

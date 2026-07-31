@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160" role="img" aria-label="CypherPanel">
+  <title>CypherPanel</title>
+  <rect x="14" y="14" width="40" height="40" rx="9" fill="#E5E8EB"/>
+  <rect x="60" y="14" width="40" height="40" rx="9" fill="#E5E8EB"/>
+  <rect x="106" y="14" width="40" height="40" rx="9" fill="#65EBAC"/>
+  <rect x="14" y="60" width="40" height="40" rx="9" fill="#E5E8EB"/>
+  <rect x="14" y="106" width="40" height="40" rx="9" fill="#E5E8EB"/>
+  <rect x="60" y="106" width="40" height="40" rx="9" fill="#E5E8EB"/>
+  <rect x="106" y="106" width="40" height="40" rx="9" fill="#E5E8EB"/>
+</svg>

@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/page-header";
 import { ApiError, createMail, deleteMail, listMail } from "@/lib/api";
 import { useAccount } from "../../use-account";
@@ -66,29 +67,40 @@ export default function MailPage() {
       <Card>
         <CardContent className="p-4">
           <div className="grid grid-cols-[1fr_auto] items-end gap-2">
-            <div className="flex items-center gap-1">
-              <Input
-                placeholder="name"
-                value={form.local}
-                onChange={(e) => setForm((f) => ({ ...f, local: e.target.value }))}
-              />
-              <span className="whitespace-nowrap text-sm text-muted-foreground">
-                @{account?.primary_domain}
-              </span>
+            <div className="grid gap-1.5">
+              <Label htmlFor="mail-local">Mailbox name</Label>
+              <div className="flex items-center gap-1">
+                <Input
+                  id="mail-local"
+                  placeholder="name"
+                  value={form.local}
+                  onChange={(e) => setForm((f) => ({ ...f, local: e.target.value }))}
+                />
+                <span className="whitespace-nowrap text-sm text-muted-foreground">
+                  @{account?.primary_domain}
+                </span>
+              </div>
             </div>
-            <Input
-              className="w-24"
-              placeholder="quota MB"
-              value={form.quota}
-              onChange={(e) => setForm((f) => ({ ...f, quota: e.target.value }))}
-            />
-            <Input
-              className="col-span-2"
-              type="password"
-              placeholder="mailbox password (8+ chars)"
-              value={form.password}
-              onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-            />
+            <div className="grid gap-1.5">
+              <Label htmlFor="mail-quota">Quota</Label>
+              <Input
+                id="mail-quota"
+                className="w-24"
+                placeholder="MB"
+                value={form.quota}
+                onChange={(e) => setForm((f) => ({ ...f, quota: e.target.value }))}
+              />
+            </div>
+            <div className="col-span-2 grid gap-1.5">
+              <Label htmlFor="mail-password">Password (8+ chars)</Label>
+              <Input
+                id="mail-password"
+                type="password"
+                placeholder="mailbox password"
+                value={form.password}
+                onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+              />
+            </div>
             <Button
               className="col-span-2"
               onClick={() => create.mutate()}

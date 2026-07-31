@@ -1,23 +1,30 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { LogOut, Search, Shield } from "lucide-react";
+import { LogOut, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { BrandMark } from "@/components/brand-mark";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { CommandPalette } from "@/components/command-palette";
 import { visibleNavGroups } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 import { getMe, hasSession, logout } from "@/lib/api";
 
+// subscribeToSession notifies React when the session changes in another tab.
+// Same-tab changes (login/logout) navigate, which remounts this layout, so the
+// storage event is the only case that needs an explicit subscription.
+function subscribeToSession(onChange: () => void) {
+  window.addEventListener("storage", onChange);
+  return () => window.removeEventListener("storage", onChange);
+}
+
 function Brand() {
   return (
     <Link href="/dashboard" className="flex items-center gap-2.5">
-      <span className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-primary/60 text-primary-foreground shadow-lg shadow-primary/25">
-        <Shield className="h-5 w-5" />
-      </span>
+      <BrandMark className="h-9 w-9 text-sidebar-foreground" />
       <span className="flex flex-col leading-none">
         <span className="text-[15px] font-semibold tracking-tight">CypherPanel</span>
         <span className="mt-1 text-[11px] font-medium text-muted-foreground">
@@ -106,20 +113,24 @@ function UserFooter() {
 export default function ShellLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const [ready, setReady] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+
+  // The session lives in localStorage — external state, so it is read with
+  // useSyncExternalStore rather than copied into state from an effect. The
+  // server snapshot is false so SSR and the first client render agree, then
+  // hydration settles on the real value.
+  const ready = useSyncExternalStore(subscribeToSession, hasSession, () => false);
+
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: getMe, enabled: ready });
   const isAdmin = me?.role === "root_admin";
 
   // Client-side session guard: no session → login. (Server-side enforcement
   // is the API itself; this only avoids rendering a dead shell.)
   useEffect(() => {
-    if (!hasSession()) {
+    if (!ready) {
       router.replace("/login");
-    } else {
-      setReady(true);
     }
-  }, [router]);
+  }, [ready, router]);
 
   // Global command-palette shortcut (Design.md §5) — the escape hatch for a
   // deep feature set, so it needs to work from anywhere in the shell.
@@ -149,7 +160,7 @@ export default function ShellLayout({ children }: { children: React.ReactNode })
       <div className="flex min-w-0 flex-1 flex-col md:pl-64">
         <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-background/80 px-4 backdrop-blur-md md:px-8">
           <div className="flex items-center gap-2 font-semibold md:hidden">
-            <Shield className="h-5 w-5 text-primary" />
+            <BrandMark className="h-5 w-5 text-foreground" />
             CypherPanel
           </div>
           <button

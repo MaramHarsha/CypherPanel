@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"github.com/swaggo/swag/v2"
 
 	_ "github.com/MaramHarsha/CypherPanel/docs" // registers the generated OpenAPI spec
@@ -15,8 +16,11 @@ import (
 )
 
 type Deps struct {
-	Config   config.Core
-	Tokens   *auth.TokenService
+	Config config.Core
+	// Redis backs the auth rate limiter with a fleet-wide window. Nil falls
+	// back to per-instance limiting.
+	Redis  *redis.Client
+	Tokens *auth.TokenService
 	Auth     *AuthHandler
 	Tasks    *TasksHandler
 	Servers  *ServersHandler
@@ -33,6 +37,8 @@ type Deps struct {
 	Cron        *CronHandler
 	Mail        *MailHandler
 	Terminal    *TerminalHandler
+	Backups     *BackupsHandler
+	Webhooks    *WebhooksHandler
 }
 
 func NewRouter(d Deps) *gin.Engine {
@@ -63,8 +69,10 @@ func NewRouter(d Deps) *gin.Engine {
 	})
 
 	// Unauthenticated auth endpoints, rate-limited per IP to blunt credential
-	// stuffing / refresh abuse (20 requests / minute / IP).
-	authLimited := v1.Group("", RateLimit(20, time.Minute))
+	// stuffing / refresh abuse (20 requests / minute / IP). The window is
+	// shared through Redis so the limit holds across every Core instance
+	// behind a load balancer, not per-instance.
+	authLimited := v1.Group("", RateLimit(d.Redis, 20, time.Minute))
 	authLimited.POST("/auth/login", d.Auth.Login)
 	authLimited.POST("/auth/refresh", d.Auth.Refresh)
 
@@ -88,9 +96,32 @@ func NewRouter(d Deps) *gin.Engine {
 	admin.GET("/tasks/:id", d.Tasks.Get)
 	admin.GET("/resellers", d.Resellers.List)
 	admin.POST("/resellers", d.Resellers.Create)
-	admin.GET("/plugins", d.Plugins.List)
+	// Static plugin segments precede the :name parameter so they resolve as
+	// their own routes rather than being read as a plugin name.
 	admin.GET("/plugins/manifest-schema", d.Plugins.ManifestSchema)
+	admin.GET("/plugins/surfaces", d.Plugins.Surfaces)
+	admin.GET("/plugins", d.Plugins.List)
+	admin.POST("/plugins", d.Plugins.Install)
+	admin.PATCH("/plugins/:name", d.Plugins.SetEnabled)
+	admin.DELETE("/plugins/:name", d.Plugins.Uninstall)
 	admin.GET("/audit", d.AuditLog.List)
+	// Backup destinations are fleet infrastructure (repositories + their
+	// credentials), so they are root-admin only; running a backup for an
+	// account is reseller-accessible below.
+	admin.GET("/backup/destinations", d.Backups.ListDestinations)
+	admin.POST("/backup/destinations", d.Backups.CreateDestination)
+	admin.PATCH("/backup/destinations/:destid", d.Backups.UpdateDestination)
+	admin.DELETE("/backup/destinations/:destid", d.Backups.DeleteDestination)
+	// Webhooks receive the whole fleet's event feed, which crosses reseller
+	// boundaries — root-admin only. Static segments are registered before the
+	// :hookid parameter so they are not swallowed by it.
+	admin.GET("/webhooks/event-subjects", d.Webhooks.EventSubjects)
+	admin.GET("/webhooks/deliveries", d.Webhooks.ListDeliveries)
+	admin.POST("/webhooks/deliveries/:deliveryid/redeliver", d.Webhooks.Redeliver)
+	admin.GET("/webhooks", d.Webhooks.List)
+	admin.POST("/webhooks", d.Webhooks.Create)
+	admin.PATCH("/webhooks/:hookid", d.Webhooks.SetActive)
+	admin.DELETE("/webhooks/:hookid", d.Webhooks.Delete)
 
 	// Shared management surface: root admin AND resellers. Every handler here
 	// scopes results/actions to the caller (root = unrestricted, reseller =
@@ -136,6 +167,9 @@ func NewRouter(d Deps) *gin.Engine {
 	mgr.GET("/accounts/:id/mail", d.Mail.List)
 	mgr.POST("/accounts/:id/mail", d.Mail.Create)
 	mgr.DELETE("/accounts/:id/mail/:mailid", d.Mail.Delete)
+	mgr.GET("/accounts/:id/backups", d.Backups.ListBackups)
+	mgr.POST("/accounts/:id/backups", d.Backups.RunBackup)
+	mgr.POST("/accounts/:id/backups/:backupid/restore", d.Backups.RestoreBackup)
 
 	return r
 }

@@ -23,6 +23,9 @@ type Server struct {
 	Hostname    string
 	IPAddress   string
 	AgentStatus string
+	// Region groups the fleet for multi-region deployments and data-residency
+	// filtering. Empty means unassigned.
+	Region      string
 	LastSeenAt  *time.Time
 	CreatedAt   time.Time
 	Stats       HostStats
@@ -39,31 +42,39 @@ func NewServers(pool *pgxpool.Pool) *Servers {
 
 // UpsertByHostname registers a server or refreshes an existing one (agent
 // re-registration after reinstall/restart is normal, not an error).
-func (s *Servers) UpsertByHostname(ctx context.Context, hostname, ip string) (*Server, error) {
+func (s *Servers) UpsertByHostname(ctx context.Context, hostname, ip, region string) (*Server, error) {
 	row := s.pool.QueryRow(ctx, `
-		INSERT INTO servers (name, hostname, ip_address, agent_status, last_seen_at)
-		VALUES ($1, $1, $2::inet, 'online', now())
+		INSERT INTO servers (name, hostname, ip_address, agent_status, region, last_seen_at)
+		VALUES ($1, $1, $2::inet, 'online', $3, now())
 		ON CONFLICT (name) DO UPDATE
 			SET hostname = EXCLUDED.hostname,
 			    ip_address = EXCLUDED.ip_address,
 			    agent_status = 'online',
+			    -- Keep the recorded region when a re-registering agent reports
+			    -- none, so an operator-set region is not silently cleared by an
+			    -- agent that lost its config.
+			    region = COALESCE(NULLIF(EXCLUDED.region, ''), servers.region),
 			    last_seen_at = now()
-		RETURNING id, name, hostname, host(ip_address), agent_status, last_seen_at, created_at`,
-		hostname, ip)
+		RETURNING id, name, hostname, host(ip_address), agent_status, region, last_seen_at, created_at`,
+		hostname, ip, region)
 
 	var srv Server
-	if err := row.Scan(&srv.ID, &srv.Name, &srv.Hostname, &srv.IPAddress, &srv.AgentStatus, &srv.LastSeenAt, &srv.CreatedAt); err != nil {
+	if err := row.Scan(&srv.ID, &srv.Name, &srv.Hostname, &srv.IPAddress, &srv.AgentStatus, &srv.Region, &srv.LastSeenAt, &srv.CreatedAt); err != nil {
 		return nil, fmt.Errorf("store: upserting server %s: %w", hostname, err)
 	}
 	return &srv, nil
 }
 
-// List returns all registered servers, most recently seen first.
-func (s *Servers) List(ctx context.Context) ([]Server, error) {
+// List returns registered servers, most recently seen first. A non-empty
+// region filters to that region only (data-residency scoping); "" returns the
+// whole fleet, grouped by region.
+func (s *Servers) List(ctx context.Context, region string) ([]Server, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, name, hostname, host(ip_address), agent_status, last_seen_at, created_at,
+		SELECT id, name, hostname, host(ip_address), agent_status, region, last_seen_at, created_at,
 		       load_1m, memory_total_bytes, memory_used_bytes, disk_total_bytes, disk_used_bytes, services
-		FROM servers ORDER BY last_seen_at DESC NULLS LAST`)
+		FROM servers
+		WHERE $1 = '' OR region = $1
+		ORDER BY region, last_seen_at DESC NULLS LAST`, region)
 	if err != nil {
 		return nil, fmt.Errorf("store: listing servers: %w", err)
 	}
@@ -75,7 +86,7 @@ func (s *Servers) List(ctx context.Context) ([]Server, error) {
 		var memTotal, memUsed, diskTotal, diskUsed int64
 		var svcBlob []byte
 		if err := rows.Scan(&srv.ID, &srv.Name, &srv.Hostname, &srv.IPAddress, &srv.AgentStatus,
-			&srv.LastSeenAt, &srv.CreatedAt,
+			&srv.Region, &srv.LastSeenAt, &srv.CreatedAt,
 			&srv.Stats.Load1m, &memTotal, &memUsed, &diskTotal, &diskUsed, &svcBlob); err != nil {
 			return nil, fmt.Errorf("store: scanning server: %w", err)
 		}
@@ -94,7 +105,7 @@ func (s *Servers) List(ctx context.Context) ([]Server, error) {
 // GetByID returns one server with its latest host snapshot and service states.
 func (s *Servers) GetByID(ctx context.Context, id string) (*Server, error) {
 	row := s.pool.QueryRow(ctx, `
-		SELECT id, name, hostname, host(ip_address), agent_status, last_seen_at, created_at,
+		SELECT id, name, hostname, host(ip_address), agent_status, region, last_seen_at, created_at,
 		       load_1m, memory_total_bytes, memory_used_bytes, disk_total_bytes, disk_used_bytes, services
 		FROM servers WHERE id = $1`, id)
 
@@ -102,7 +113,7 @@ func (s *Servers) GetByID(ctx context.Context, id string) (*Server, error) {
 	var memTotal, memUsed, diskTotal, diskUsed int64
 	var svcBlob []byte
 	if err := row.Scan(&srv.ID, &srv.Name, &srv.Hostname, &srv.IPAddress, &srv.AgentStatus,
-		&srv.LastSeenAt, &srv.CreatedAt,
+		&srv.Region, &srv.LastSeenAt, &srv.CreatedAt,
 		&srv.Stats.Load1m, &memTotal, &memUsed, &diskTotal, &diskUsed, &svcBlob); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound

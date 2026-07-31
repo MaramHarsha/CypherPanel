@@ -49,12 +49,18 @@ func (h *FileManagerHandler) scopedAccount(c *gin.Context) *store.Account {
 }
 
 // do sends one request to the account's agent and returns the response. It
-// stamps the account's disk quota so the agent can enforce it on writes/extracts.
+// stamps the account's disk and inode quotas so the agent can enforce them on
+// writes/extracts.
 func (h *FileManagerHandler) do(account *store.Account, req filemanager.Request) (filemanager.Response, error) {
 	req.Username = account.SystemUsername
 	if h.Packages != nil {
-		if pkg, err := h.Packages.GetByID(context.Background(), account.PackageID); err == nil && pkg.Limits.DiskMB > 0 {
-			req.QuotaBytes = int64(pkg.Limits.DiskMB) << 20
+		if pkg, err := h.Packages.GetByID(context.Background(), account.PackageID); err == nil {
+			if pkg.Limits.DiskMB > 0 {
+				req.QuotaBytes = int64(pkg.Limits.DiskMB) << 20
+			}
+			if pkg.Limits.Inodes > 0 {
+				req.QuotaInodes = int64(pkg.Limits.Inodes)
+			}
 		}
 	}
 	data, err := json.Marshal(req)

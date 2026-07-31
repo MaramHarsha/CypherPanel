@@ -6,9 +6,41 @@
 package plugins
 
 import (
+	"bytes"
 	"fmt"
 	"regexp"
+
+	"gopkg.in/yaml.v3"
 )
+
+// MaxManifestBytes bounds a submitted plugin.yaml. A manifest is metadata, not
+// content; anything larger is a mistake or an attempt to exhaust memory.
+const MaxManifestBytes = 64 * 1024
+
+// Parse decodes and validates a plugin.yaml. It is the only way a Manifest is
+// produced — callers never hand-build one, so every manifest in the system has
+// passed Validate.
+func Parse(data []byte) (*Manifest, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("plugins: manifest is empty")
+	}
+	if len(data) > MaxManifestBytes {
+		return nil, fmt.Errorf("plugins: manifest exceeds %d bytes", MaxManifestBytes)
+	}
+	var m Manifest
+	// KnownFields rejects unrecognised keys: a typo'd surface or permission
+	// would otherwise be silently ignored and the plugin would fail at runtime
+	// with no explanation.
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&m); err != nil {
+		return nil, fmt.Errorf("plugins: parsing manifest: %w", err)
+	}
+	if err := m.Validate(); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
 
 // ManifestAPIVersion is the only manifest schema version currently accepted.
 // Bump (and support the old value) only via an additive, backward-compatible

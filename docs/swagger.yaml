@@ -35,6 +35,31 @@ components:
         username:
           type: string
       type: object
+    api.backupResponse:
+      properties:
+        account_id:
+          type: string
+        completed_at:
+          type: string
+        destination_id:
+          type: string
+        error:
+          type: string
+        id:
+          type: string
+        kind:
+          type: string
+        size_bytes:
+          type: integer
+        snapshot_id:
+          type: string
+        started_at:
+          type: string
+        status:
+          type: string
+        task_id:
+          type: string
+      type: object
     api.changePHPVersionRequest:
       properties:
         version:
@@ -71,6 +96,35 @@ components:
           type: string
       required:
       - name
+      type: object
+    api.createDestinationRequest:
+      properties:
+        env:
+          additionalProperties:
+            type: string
+          type: object
+        kind:
+          type: string
+        name:
+          type: string
+        password:
+          minLength: 8
+          type: string
+        repository:
+          type: string
+        retention_daily:
+          type: integer
+        retention_monthly:
+          type: integer
+        retention_weekly:
+          type: integer
+        schedule:
+          type: string
+      required:
+      - kind
+      - name
+      - password
+      - repository
       type: object
     api.createFTPRequest:
       properties:
@@ -120,6 +174,33 @@ components:
       - username
       type: object
     api.createTaskRequest:
+      properties:
+        payload:
+          description: |-
+            swaggertype: the spec generator cannot resolve json.RawMessage, and the
+            payload really is a task-type-specific object to any client.
+          type: object
+        type:
+          type: string
+      required:
+      - type
+      type: object
+    api.createWebhookRequest:
+      properties:
+        events:
+          description: Events is an allowlist of exact subjects. Empty means every
+            event.
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        name:
+          type: string
+        url:
+          type: string
+      required:
+      - name
+      - url
       type: object
     api.cronResponse:
       properties:
@@ -139,6 +220,59 @@ components:
         name:
           type: string
         status:
+          type: string
+      type: object
+    api.deliveryResponse:
+      properties:
+        attempts:
+          type: integer
+        created_at:
+          type: string
+        delivered_at:
+          type: string
+        error:
+          type: string
+        event_id:
+          type: string
+        id:
+          type: string
+        payload:
+          description: |-
+            swaggertype: the spec generator cannot resolve json.RawMessage, and the
+            payload really is an arbitrary event object to any client.
+          type: object
+        response_status:
+          type: integer
+        status:
+          type: string
+        subject:
+          type: string
+        webhook_id:
+          type: string
+        webhook_name:
+          type: string
+      type: object
+    api.destinationResponse:
+      properties:
+        created_at:
+          type: string
+        id:
+          type: string
+        kind:
+          type: string
+        last_run_at:
+          type: string
+        name:
+          type: string
+        repository:
+          type: string
+        retention_daily:
+          type: integer
+        retention_monthly:
+          type: integer
+        retention_weekly:
+          type: integer
+        schedule:
           type: string
       type: object
     api.dnsRecordRequest:
@@ -176,6 +310,16 @@ components:
           type: string
         username:
           type: string
+      type: object
+    api.installPluginRequest:
+      properties:
+        manifest:
+          description: |-
+            Manifest is the raw plugin.yaml text. It is parsed and validated against
+            the finalized schema before anything is recorded.
+          type: string
+      required:
+      - manifest
       type: object
     api.loginRequest:
       properties:
@@ -219,6 +363,8 @@ components:
           type: integer
         email_accounts:
           type: integer
+        inodes:
+          type: integer
         memory_max_mb:
           type: integer
       type: object
@@ -259,10 +405,32 @@ components:
           type: string
         kind:
           type: string
+        manifest:
+          $ref: '#/components/schemas/plugins.Manifest'
         name:
           type: string
         version:
           type: string
+      type: object
+    api.pluginSurface:
+      properties:
+        dashboard_cards:
+          items:
+            $ref: '#/components/schemas/plugins.DashboardCard'
+          type: array
+          uniqueItems: false
+        plugin:
+          type: string
+        settings_pages:
+          items:
+            $ref: '#/components/schemas/plugins.SettingsPage'
+          type: array
+          uniqueItems: false
+        sidebar:
+          items:
+            $ref: '#/components/schemas/plugins.SidebarEntry'
+          type: array
+          uniqueItems: false
       type: object
     api.refreshRequest:
       properties:
@@ -298,6 +466,25 @@ components:
         username:
           type: string
       type: object
+    api.restoreRequest:
+      properties:
+        snapshot_id:
+          type: string
+        target:
+          description: |-
+            Target is optional. Empty restores into the agent's staging area for
+            inspection; "home" restores in place over the account's live data.
+          type: string
+      required:
+      - snapshot_id
+      type: object
+    api.runBackupRequest:
+      properties:
+        destination_id:
+          type: string
+      required:
+      - destination_id
+      type: object
     api.serverResponse:
       properties:
         agent_status:
@@ -324,6 +511,8 @@ components:
           type: integer
         name:
           type: string
+        region:
+          type: string
         services:
           items:
             $ref: '#/components/schemas/api.serviceStatus'
@@ -349,6 +538,16 @@ components:
         content:
           type: string
       type: object
+    api.setPluginEnabledRequest:
+      properties:
+        enabled:
+          type: boolean
+      type: object
+    api.setWebhookActiveRequest:
+      properties:
+        active:
+          type: boolean
+      type: object
     api.tokenResponse:
       properties:
         access_token:
@@ -358,12 +557,48 @@ components:
         token_type:
           type: string
       type: object
+    api.updateDestinationRequest:
+      properties:
+        retention_daily:
+          type: integer
+        retention_monthly:
+          type: integer
+        retention_weekly:
+          type: integer
+        schedule:
+          type: string
+      required:
+      - schedule
+      type: object
     api.updatePHPSettingsRequest:
       properties:
         settings:
           additionalProperties:
             type: string
           type: object
+      type: object
+    api.webhookResponse:
+      properties:
+        active:
+          type: boolean
+        created_at:
+          type: string
+        events:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        id:
+          type: string
+        name:
+          type: string
+        secret:
+          description: |-
+            Secret is set ONLY in the create response — this is the one and only
+            time the plaintext signing key is shown.
+          type: string
+        url:
+          type: string
       type: object
     api.writeFileRequest:
       properties:
@@ -443,6 +678,83 @@ components:
         error:
           type: string
       type: object
+    plugins.DashboardCard:
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+      type: object
+    plugins.Manifest:
+      properties:
+        api_version:
+          type: string
+        author:
+          type: string
+        description:
+          type: string
+        events:
+          description: |-
+            Events the plugin subscribes to (must be `events.*` subjects; see the
+            events package). Declares intent; the runtime will enforce it.
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        kind:
+          type: string
+        name:
+          type: string
+        permissions:
+          description: |-
+            Permissions the plugin may exercise, enforced against this list at
+            runtime — a plugin gets exactly what it declares, nothing ambient.
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        ui:
+          $ref: '#/components/schemas/plugins.UISurfaces'
+        version:
+          type: string
+      type: object
+    plugins.SettingsPage:
+      properties:
+        label:
+          type: string
+        path:
+          type: string
+      type: object
+    plugins.SidebarEntry:
+      properties:
+        icon:
+          type: string
+        label:
+          type: string
+        path:
+          type: string
+      type: object
+    plugins.UISurfaces:
+      description: |-
+        UI surfaces the plugin registers. Core renders these from the manifest;
+        plugins never edit core UI directly.
+      properties:
+        dashboard_cards:
+          items:
+            $ref: '#/components/schemas/plugins.DashboardCard'
+          type: array
+          uniqueItems: false
+        settings_pages:
+          items:
+            $ref: '#/components/schemas/plugins.SettingsPage'
+          type: array
+          uniqueItems: false
+        sidebar:
+          items:
+            $ref: '#/components/schemas/plugins.SidebarEntry'
+          type: array
+          uniqueItems: false
+      type: object
   securitySchemes:
     BearerAuth:
       description: Type "Bearer" followed by a space and the access token.
@@ -508,6 +820,130 @@ paths:
       security:
       - BearerAuth: []
       summary: Create a hosting account (root admin only)
+      tags:
+      - admin
+  /admin/accounts/{id}/backups:
+    get:
+      parameters:
+      - description: Account ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/api.backupResponse'
+                type: array
+          description: OK
+      security:
+      - BearerAuth: []
+      summary: List an account's backups
+      tags:
+      - admin
+    post:
+      parameters:
+      - description: Account ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.runBackupRequest'
+                description: Destination
+                summary: request
+        description: Destination
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.backupResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Back up an account now
+      tags:
+      - admin
+  /admin/accounts/{id}/backups/{backupid}/restore:
+    post:
+      parameters:
+      - description: Account ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - description: Backup ID
+        in: path
+        name: backupid
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.restoreRequest'
+                description: Snapshot
+                summary: request
+        description: Snapshot
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.backupResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Restore an account from a snapshot
       tags:
       - admin
   /admin/accounts/{id}/cron:
@@ -1627,6 +2063,132 @@ paths:
       summary: List audit-log entries (root admin only)
       tags:
       - admin
+  /admin/backup/destinations:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/api.destinationResponse'
+                type: array
+          description: OK
+      security:
+      - BearerAuth: []
+      summary: List backup destinations
+      tags:
+      - admin
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.createDestinationRequest'
+                description: Destination
+                summary: request
+        description: Destination
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.destinationResponse'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Bad Request
+      security:
+      - BearerAuth: []
+      summary: Create a backup destination
+      tags:
+      - admin
+  /admin/backup/destinations/{destid}:
+    delete:
+      parameters:
+      - description: Destination ID
+        in: path
+        name: destid
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Delete a backup destination
+      tags:
+      - admin
+    patch:
+      parameters:
+      - description: Destination ID
+        in: path
+        name: destid
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.updateDestinationRequest'
+                description: Schedule
+                summary: request
+        description: Schedule
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.destinationResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Update a backup destination's schedule and retention
+      tags:
+      - admin
   /admin/dns/record-types:
     get:
       responses:
@@ -1808,6 +2370,108 @@ paths:
       summary: List installed plugins (root admin only)
       tags:
       - admin
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.installPluginRequest'
+                description: plugin.yaml
+                summary: request
+        description: plugin.yaml
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.pluginResponse'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Bad Request
+      security:
+      - BearerAuth: []
+      summary: Install a plugin from its manifest (root admin only)
+      tags:
+      - admin
+  /admin/plugins/{name}:
+    delete:
+      parameters:
+      - description: Plugin name
+        in: path
+        name: name
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Uninstall a plugin (root admin only)
+      tags:
+      - admin
+    patch:
+      parameters:
+      - description: Plugin name
+        in: path
+        name: name
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.setPluginEnabledRequest'
+                description: State
+                summary: request
+        description: State
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.pluginResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Enable or disable a plugin (root admin only)
+      tags:
+      - admin
   /admin/plugins/manifest-schema:
     get:
       responses:
@@ -1821,6 +2485,22 @@ paths:
       security:
       - BearerAuth: []
       summary: Plugin manifest schema info (root admin only)
+      tags:
+      - admin
+  /admin/plugins/surfaces:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/api.pluginSurface'
+                type: array
+          description: OK
+      security:
+      - BearerAuth: []
+      summary: UI surfaces contributed by enabled plugins
       tags:
       - admin
   /admin/resellers:
@@ -1873,6 +2553,12 @@ paths:
       - admin
   /admin/servers:
     get:
+      parameters:
+      - description: Filter to one region
+        in: query
+        name: region
+        schema:
+          type: string
       responses:
         "200":
           content:
@@ -2139,6 +2825,198 @@ paths:
       security:
       - BearerAuth: []
       summary: Inspect a task (root admin only)
+      tags:
+      - admin
+  /admin/webhooks:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/api.webhookResponse'
+                type: array
+          description: OK
+      security:
+      - BearerAuth: []
+      summary: List webhook endpoints
+      tags:
+      - admin
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.createWebhookRequest'
+                description: Endpoint
+                summary: request
+        description: Endpoint
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.webhookResponse'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Bad Request
+      security:
+      - BearerAuth: []
+      summary: Create a webhook endpoint
+      tags:
+      - admin
+  /admin/webhooks/{hookid}:
+    delete:
+      parameters:
+      - description: Webhook ID
+        in: path
+        name: hookid
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Delete a webhook endpoint
+      tags:
+      - admin
+    patch:
+      parameters:
+      - description: Webhook ID
+        in: path
+        name: hookid
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.setWebhookActiveRequest'
+                description: State
+                summary: request
+        description: State
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.webhookResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Enable or disable a webhook endpoint
+      tags:
+      - admin
+  /admin/webhooks/deliveries:
+    get:
+      parameters:
+      - description: Filter by endpoint
+        in: query
+        name: webhook_id
+        schema:
+          type: string
+      - description: Max rows (default 50)
+        in: query
+        name: limit
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/api.deliveryResponse'
+                type: array
+          description: OK
+      security:
+      - BearerAuth: []
+      summary: List webhook deliveries
+      tags:
+      - admin
+  /admin/webhooks/deliveries/{deliveryid}/redeliver:
+    post:
+      parameters:
+      - description: Delivery ID
+        in: path
+        name: deliveryid
+        required: true
+        schema:
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Accepted
+        "404":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Redeliver a webhook delivery
+      tags:
+      - admin
+  /admin/webhooks/event-subjects:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  type: string
+                type: array
+          description: OK
+      security:
+      - BearerAuth: []
+      summary: List subscribable event subjects
       tags:
       - admin
   /auth/login:

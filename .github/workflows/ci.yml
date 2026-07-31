@@ -17,8 +17,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: stable
-          check-latest: true
+          go-version-file: go.mod
 
       - name: Build
         run: go build ./...
@@ -44,8 +43,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: stable
-          check-latest: true
+          go-version-file: go.mod
 
       - name: Build linux/amd64 + linux/arm64
         env:
@@ -53,8 +51,10 @@ jobs:
         run: |
           GOOS=linux GOARCH=amd64 go build -trimpath -o /dev/null ./cmd/core
           GOOS=linux GOARCH=amd64 go build -trimpath -o /dev/null ./cmd/agent
+          GOOS=linux GOARCH=amd64 go build -trimpath -o /dev/null ./cmd/cypherctl
           GOOS=linux GOARCH=arm64 go build -trimpath -o /dev/null ./cmd/core
           GOOS=linux GOARCH=arm64 go build -trimpath -o /dev/null ./cmd/agent
+          GOOS=linux GOARCH=arm64 go build -trimpath -o /dev/null ./cmd/cypherctl
 
   security:
     name: Security (vuln scan, shell lint)
@@ -63,8 +63,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: stable
-          check-latest: true
+          go-version-file: go.mod
 
       - name: govulncheck (Go vulnerability scan)
         run: |
@@ -100,14 +99,59 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
+      - name: Lint
+        run: npm run lint
+
       - name: Build
         run: npm run build
 
       # Playwright end-to-end UI tests. Job tier is wired; specs are added as the
       # UI stabilises (plan.md §19).
       - name: Playwright tests
-        run: npx playwright test || echo "no Playwright specs yet"
+        run: |
+          if [ -f playwright.config.ts ] || [ -f playwright.config.js ]; then
+            npx playwright test
+          else
+            echo "no Playwright specs yet"
+          fi
         continue-on-error: true
+
+  migrations:
+    name: Migrations (up, down, re-up)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: cypher
+          POSTGRES_PASSWORD: cypher-dev-only
+          POSTGRES_DB: cypherpanel
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cypher"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Every migration must apply cleanly, roll back cleanly, and re-apply —
+      # the down files are only ever exercised here and at rollback time.
+      - name: Apply, roll back, re-apply all migrations
+        env:
+          DB_URL: postgres://cypher:cypher-dev-only@localhost:5432/cypherpanel?sslmode=disable
+        run: |
+          migrate() {
+            go run -tags postgres github.com/golang-migrate/migrate/v4/cmd/migrate@latest \
+              -path migrations -database "$DB_URL" "$@"
+          }
+          migrate up
+          migrate down -all
+          migrate up
 
   install-test:
     name: Installer dry-run (1GB-target claim)

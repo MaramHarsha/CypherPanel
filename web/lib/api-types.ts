@@ -76,6 +76,163 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/accounts/{id}/backups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List an account's backups */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Account ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["api.backupResponse"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Back up an account now */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Account ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            /** @description Destination */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["api.runBackupRequest"];
+                };
+            };
+            responses: {
+                /** @description Accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["api.backupResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/accounts/{id}/backups/{backupid}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore an account from a snapshot */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Account ID */
+                    id: string;
+                    /** @description Backup ID */
+                    backupid: string;
+                };
+                cookie?: never;
+            };
+            /** @description Snapshot */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["api.restoreRequest"];
+                };
+            };
+            responses: {
+                /** @description Accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["api.backupResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/accounts/{id}/cron": {
         parameters: {
             query?: never;
@@ -1616,6 +1773,180 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/backup/destinations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List backup destinations */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["api.destinationResponse"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create a backup destination */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            /** @description Destination */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["api.createDestinationRequest"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["api.destinationResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/backup/destinations/{destid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a backup destination */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Destination ID */
+                    destid: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Update a backup destination's schedule and retention */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Destination ID */
+                    destid: string;
+                };
+                cookie?: never;
+            };
+            /** @description Schedule */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["api.updateDestinationRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["api.destinationResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
     "/admin/dns/record-types": {
         parameters: {
             query?: never;
@@ -1940,7 +2271,43 @@ export interface paths {
             };
         };
         put?: never;
-        post?: never;
+        /** Install a plugin from its manifest (root admin only) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            /** @description plugin.yaml */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["api.installPluginRequest"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["api.pluginResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -1983,6 +2350,133 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/admin/plugins/surfaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** UI surfaces contributed by enabled plugins */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["api.pluginSurface"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/plugins/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Uninstall a plugin (root admin only) */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Plugin name */
+                    name: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Enable or disable a plugin (root admin only) */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Plugin name */
+                    name: string;
+                };
+                cookie?: never;
+            };
+            /** @description State */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["api.setPluginEnabledRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["api.pluginResponse"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+            };
+        };
         trace?: never;
     };
     "/admin/resellers": {
@@ -2067,7 +2561,10 @@ export interface paths {
         /** List servers (root admin only) */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Filter to one region */
+                    region?: string;
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
@@ -2448,6 +2945,298 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/webhooks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List webhook endpoints */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["api.webhookResponse"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create a webhook endpoint */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            /** @description Endpoint */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["api.createWebhookRequest"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["api.webhookResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/webhooks/deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List webhook deliveries */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Filter by endpoint */
+                    webhook_id?: string;
+                    /** @description Max rows (default 50) */
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["api.deliveryResponse"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/webhooks/deliveries/{deliveryid}/redeliver": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Redeliver a webhook delivery */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Delivery ID */
+                    deliveryid: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/webhooks/event-subjects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List subscribable event subjects */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": string[];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/webhooks/{hookid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a webhook endpoint */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Webhook ID */
+                    hookid: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Enable or disable a webhook endpoint */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Webhook ID */
+                    hookid: string;
+                };
+                cookie?: never;
+            };
+            /** @description State */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["api.setWebhookActiveRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["api.webhookResponse"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: string;
+                        };
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
     "/auth/login": {
         parameters: {
             query?: never;
@@ -2714,6 +3503,19 @@ export interface components {
             system_username?: string;
             username?: string;
         };
+        "api.backupResponse": {
+            account_id?: string;
+            completed_at?: string;
+            destination_id?: string;
+            error?: string;
+            id?: string;
+            kind?: string;
+            size_bytes?: number;
+            snapshot_id?: string;
+            started_at?: string;
+            status?: string;
+            task_id?: string;
+        };
         "api.changePHPVersionRequest": {
             version: string;
         };
@@ -2727,6 +3529,19 @@ export interface components {
         };
         "api.createDatabaseRequest": {
             name: string;
+        };
+        "api.createDestinationRequest": {
+            env?: {
+                [key: string]: string;
+            };
+            kind: string;
+            name: string;
+            password: string;
+            repository: string;
+            retention_daily?: number;
+            retention_monthly?: number;
+            retention_weekly?: number;
+            schedule?: string;
         };
         "api.createFTPRequest": {
             name: string;
@@ -2747,7 +3562,20 @@ export interface components {
             password: string;
             username: string;
         };
-        "api.createTaskRequest": Record<string, never>;
+        "api.createTaskRequest": {
+            /**
+             * @description swaggertype: the spec generator cannot resolve json.RawMessage, and the
+             *     payload really is a task-type-specific object to any client.
+             */
+            payload?: Record<string, never>;
+            type: string;
+        };
+        "api.createWebhookRequest": {
+            /** @description Events is an allowlist of exact subjects. Empty means every event. */
+            events?: string[];
+            name: string;
+            url: string;
+        };
         "api.cronResponse": {
             content?: string;
         };
@@ -2758,6 +3586,36 @@ export interface components {
             id?: string;
             name?: string;
             status?: string;
+        };
+        "api.deliveryResponse": {
+            attempts?: number;
+            created_at?: string;
+            delivered_at?: string;
+            error?: string;
+            event_id?: string;
+            id?: string;
+            /**
+             * @description swaggertype: the spec generator cannot resolve json.RawMessage, and the
+             *     payload really is an arbitrary event object to any client.
+             */
+            payload?: Record<string, never>;
+            response_status?: number;
+            status?: string;
+            subject?: string;
+            webhook_id?: string;
+            webhook_name?: string;
+        };
+        "api.destinationResponse": {
+            created_at?: string;
+            id?: string;
+            kind?: string;
+            last_run_at?: string;
+            name?: string;
+            repository?: string;
+            retention_daily?: number;
+            retention_monthly?: number;
+            retention_weekly?: number;
+            schedule?: string;
         };
         "api.dnsRecordRequest": {
             contents: string[];
@@ -2774,6 +3632,13 @@ export interface components {
             id?: string;
             status?: string;
             username?: string;
+        };
+        "api.installPluginRequest": {
+            /**
+             * @description Manifest is the raw plugin.yaml text. It is parsed and validated against
+             *     the finalized schema before anything is recorded.
+             */
+            manifest: string;
         };
         "api.loginRequest": {
             password: string;
@@ -2796,6 +3661,7 @@ export interface components {
             disk_mb?: number;
             domains?: number;
             email_accounts?: number;
+            inodes?: number;
             memory_max_mb?: number;
         };
         "api.packageResponse": {
@@ -2816,8 +3682,15 @@ export interface components {
             enabled?: boolean;
             installed_at?: string;
             kind?: string;
+            manifest?: components["schemas"]["plugins.Manifest"];
             name?: string;
             version?: string;
+        };
+        "api.pluginSurface": {
+            dashboard_cards?: components["schemas"]["plugins.DashboardCard"][];
+            plugin?: string;
+            settings_pages?: components["schemas"]["plugins.SettingsPage"][];
+            sidebar?: components["schemas"]["plugins.SidebarEntry"][];
         };
         "api.refreshRequest": {
             refresh_token: string;
@@ -2835,6 +3708,17 @@ export interface components {
             max_disk_mb?: number;
             username?: string;
         };
+        "api.restoreRequest": {
+            snapshot_id: string;
+            /**
+             * @description Target is optional. Empty restores into the agent's staging area for
+             *     inspection; "home" restores in place over the account's live data.
+             */
+            target?: string;
+        };
+        "api.runBackupRequest": {
+            destination_id: string;
+        };
         "api.serverResponse": {
             agent_status?: string;
             created_at?: string;
@@ -2848,6 +3732,7 @@ export interface components {
             memory_total_bytes?: number;
             memory_used_bytes?: number;
             name?: string;
+            region?: string;
             services?: components["schemas"]["api.serviceStatus"][];
         };
         "api.serviceControlRequest": {
@@ -2860,15 +3745,40 @@ export interface components {
         "api.setCronRequest": {
             content?: string;
         };
+        "api.setPluginEnabledRequest": {
+            enabled?: boolean;
+        };
+        "api.setWebhookActiveRequest": {
+            active?: boolean;
+        };
         "api.tokenResponse": {
             access_token?: string;
             refresh_token?: string;
             token_type?: string;
         };
+        "api.updateDestinationRequest": {
+            retention_daily?: number;
+            retention_monthly?: number;
+            retention_weekly?: number;
+            schedule: string;
+        };
         "api.updatePHPSettingsRequest": {
             settings?: {
                 [key: string]: string;
             };
+        };
+        "api.webhookResponse": {
+            active?: boolean;
+            created_at?: string;
+            events?: string[];
+            id?: string;
+            name?: string;
+            /**
+             * @description Secret is set ONLY in the create response — this is the one and only
+             *     time the plaintext signing key is shown.
+             */
+            secret?: string;
+            url?: string;
         };
         "api.writeFileRequest": {
             content?: string;
@@ -2909,6 +3819,47 @@ export interface components {
             content?: number[];
             entries?: components["schemas"]["filemanager.Entry"][];
             error?: string;
+        };
+        "plugins.DashboardCard": {
+            id?: string;
+            title?: string;
+        };
+        "plugins.Manifest": {
+            api_version?: string;
+            author?: string;
+            description?: string;
+            /**
+             * @description Events the plugin subscribes to (must be `events.*` subjects; see the
+             *     events package). Declares intent; the runtime will enforce it.
+             */
+            events?: string[];
+            kind?: string;
+            name?: string;
+            /**
+             * @description Permissions the plugin may exercise, enforced against this list at
+             *     runtime — a plugin gets exactly what it declares, nothing ambient.
+             */
+            permissions?: string[];
+            ui?: components["schemas"]["plugins.UISurfaces"];
+            version?: string;
+        };
+        "plugins.SettingsPage": {
+            label?: string;
+            path?: string;
+        };
+        "plugins.SidebarEntry": {
+            icon?: string;
+            label?: string;
+            path?: string;
+        };
+        /**
+         * @description UI surfaces the plugin registers. Core renders these from the manifest;
+         *     plugins never edit core UI directly.
+         */
+        "plugins.UISurfaces": {
+            dashboard_cards?: components["schemas"]["plugins.DashboardCard"][];
+            settings_pages?: components["schemas"]["plugins.SettingsPage"][];
+            sidebar?: components["schemas"]["plugins.SidebarEntry"][];
         };
     };
     responses: never;

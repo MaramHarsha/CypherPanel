@@ -218,7 +218,9 @@ export default function DashboardPage() {
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: getMe });
   const { data, isLoading, error } = useQuery({
     queryKey: ["servers"],
-    queryFn: listServers,
+    // Wrapped, not passed bare: listServers takes an optional region, and
+    // TanStack would hand it the query context as that argument.
+    queryFn: () => listServers(),
     refetchInterval: 15_000, // live-ish: heartbeats land every 30s
     enabled: me?.role === "root_admin",
   });

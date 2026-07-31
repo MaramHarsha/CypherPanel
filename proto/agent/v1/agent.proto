@@ -20,6 +20,14 @@ service AgentService {
   // picked up from the job queue. Tasks are idempotent and identified by
   // task_id, so redelivery after a network failure is safe.
   rpc ReportTaskResult(ReportTaskResultRequest) returns (ReportTaskResultResponse);
+
+  // FetchBackupCredentials hands an agent the secrets for one backup
+  // destination. Destination credentials (restic repo password, S3/SFTP keys)
+  // are deliberately kept OUT of the task payload: JetStream retains task
+  // messages, so a payload secret would be readable by anyone with stream
+  // access. The agent instead pulls them over this authenticated mTLS channel,
+  // proving it holds the task that references the destination.
+  rpc FetchBackupCredentials(FetchBackupCredentialsRequest) returns (FetchBackupCredentialsResponse);
 }
 
 message RegisterRequest {
@@ -28,6 +36,10 @@ message RegisterRequest {
   string agent_version = 3;
   string distro_family = 4; // "debian" | "rhel" | "unknown"
   string distro_pretty_name = 5;
+  // Operator-assigned region for fleet grouping and data-residency scoping
+  // (plan.md §17). Add-only field; older agents omit it and their server keeps
+  // whatever region the panel already recorded.
+  string region = 6;
 }
 
 message RegisterResponse {
@@ -74,3 +86,24 @@ enum TaskStatus {
 }
 
 message ReportTaskResultResponse {}
+
+message FetchBackupCredentialsRequest {
+  string server_id = 1;
+  // task_id must be a task assigned to this server that references
+  // destination_id — Core re-checks the pairing before releasing secrets.
+  string task_id = 2;
+  string destination_id = 3;
+}
+
+message FetchBackupCredentialsResponse {
+  // repository is the restic repository URL, e.g.
+  // "s3:s3.amazonaws.com/bucket/prefix" or an absolute local path.
+  string repository = 1;
+  // password unlocks the restic repository (repo encryption key).
+  string password = 2;
+  // env carries backend credentials as restic expects them in the process
+  // environment (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, ...). They are
+  // passed to restic via env, never as argv, so they stay out of the process
+  // table and any command log.
+  map<string, string> env = 3;
+}

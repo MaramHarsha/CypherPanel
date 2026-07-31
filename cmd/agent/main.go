@@ -24,6 +24,7 @@ import (
 
 	agentv1 "github.com/MaramHarsha/CypherPanel/gen/agent/v1"
 	"github.com/MaramHarsha/CypherPanel/internal/acme"
+	"github.com/MaramHarsha/CypherPanel/internal/backups"
 	"github.com/MaramHarsha/CypherPanel/internal/config"
 	"github.com/MaramHarsha/CypherPanel/internal/cron"
 	"github.com/MaramHarsha/CypherPanel/internal/dns"
@@ -81,7 +82,7 @@ func run() error {
 	defer conn.Close()
 	client := agentv1.NewAgentServiceClient(conn)
 
-	serverID, err := register(ctx, client, string(family))
+	serverID, err := register(ctx, client, string(family), cfg.Region)
 	if err != nil {
 		return err
 	}
@@ -98,13 +99,24 @@ func run() error {
 	}
 	defer nc.Drain()
 	executor := &taskExecutor{
-		layout: layout,
-		family: family,
-		users:  platform.New(),
-		sites:  platform.NewSites(),
-		vhost:  webserver.Nginx{},
-		acme:   acme.NewIssuer(cfg.ACMEDirectory, layout.ACMEAccountDir()),
-		ftp:    ftp.NewPureFTPd(), // self-checks pure-pw availability at task time
+		layout:   layout,
+		family:   family,
+		users:    platform.New(),
+		sites:    platform.NewSites(),
+		vhost:    webserver.Nginx{},
+		acme:     acme.NewIssuer(cfg.ACMEDirectory, layout.ACMEAccountDir()),
+		ftp:      ftp.NewPureFTPd(), // self-checks pure-pw availability at task time
+		core:     client,
+		serverID: serverID,
+	}
+	// Backups need restic on the server. Absent it, backup.* tasks fail
+	// permanently with a clear "not installed" error instead of a bare exec
+	// failure the operator has to decode.
+	if engine, err := backups.NewRestic(); err == nil {
+		executor.backups = engine
+		slog.Info("backups enabled (restic)")
+	} else {
+		slog.Warn("backups unavailable on this server", "reason", err)
 	}
 	// Wildcard SSL needs a DNS-01 solver; wire it when PowerDNS is configured.
 	if cfg.PDNSAPIURL != "" {
@@ -120,6 +132,7 @@ func run() error {
 		}
 		defer mdb.Close()
 		executor.usersDB = mdb
+		executor.dumper = mdb // same admin connection dumps account DBs for backups
 		slog.Info("user-database provisioning enabled (MariaDB)")
 	}
 	// Mailbox provisioning is available only when a mail auth-DB DSN is set.
@@ -220,8 +233,12 @@ func run() error {
 			case status.Code(err) == codes.NotFound:
 				// Control plane no longer knows us (row deleted): re-enroll.
 				slog.Warn("server unknown to control plane; re-registering")
-				if serverID, err = register(ctx, client, string(family)); err != nil {
+				if serverID, err = register(ctx, client, string(family), cfg.Region); err != nil {
 					slog.Error("re-registration failed; will retry on next heartbeat", "error", err)
+				} else {
+					// Keep the executor's identity in step: backup credential
+					// fetches are authorized against the server id Core knows.
+					executor.serverID = serverID
 				}
 			default:
 				slog.Warn("heartbeat failed; will retry", "error", err)
@@ -246,7 +263,7 @@ func dialCore(cfg config.Agent) (*grpc.ClientConn, error) {
 	return grpc.NewClient(cfg.CoreAddr, grpc.WithTransportCredentials(creds))
 }
 
-func register(ctx context.Context, client agentv1.AgentServiceClient, distroFamily string) (string, error) {
+func register(ctx context.Context, client agentv1.AgentServiceClient, distroFamily, region string) (string, error) {
 	hostname, err := os.Hostname()
 	if err != nil {
 		return "", err
@@ -262,6 +279,7 @@ func register(ctx context.Context, client agentv1.AgentServiceClient, distroFami
 			IpAddress:    outboundIP(),
 			AgentVersion: version,
 			DistroFamily: distroFamily,
+			Region:       region,
 		})
 		cancel()
 		if err == nil {

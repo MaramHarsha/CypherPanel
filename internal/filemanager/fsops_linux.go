@@ -58,11 +58,20 @@ func (h *Handler) Handle(req Request) Response {
 			resp.Content = content
 			return err
 		case OpWrite:
-			if err := checkQuota(root, req.QuotaBytes, int64(len(req.Content))); err != nil {
+			// Overwriting an existing file adds no inode; only a new file does.
+			var newInodes int64 = 1
+			if _, statErr := os.Lstat(target); statErr == nil {
+				newInodes = 0
+			}
+			if err := checkQuota(root, req.QuotaBytes, int64(len(req.Content)), req.QuotaInodes, newInodes); err != nil {
 				return err
 			}
 			return writeFile(target, req.Content)
 		case OpMkdir:
+			// A directory consumes an inode exactly like a file does.
+			if err := checkQuota(root, req.QuotaBytes, 0, req.QuotaInodes, 1); err != nil {
+				return err
+			}
 			return os.Mkdir(target, 0o755)
 		case OpDelete:
 			return os.RemoveAll(target)
@@ -73,7 +82,7 @@ func (h *Handler) Handle(req Request) Response {
 			}
 			return os.Rename(target, dst)
 		case OpExtract:
-			return extractZip(target, root, req.QuotaBytes)
+			return extractZip(target, root, req.QuotaBytes, req.QuotaInodes)
 		default:
 			return fmt.Errorf("unknown op %q", req.Op)
 		}
@@ -194,25 +203,45 @@ func writeFile(p string, content []byte) error {
 	return os.WriteFile(p, content, 0o644)
 }
 
-// dirSize sums the on-disk size of a directory tree (used for quota checks).
-func dirSize(root string) int64 {
-	var total int64
+// usage is a directory tree's byte size and file count.
+type usage struct {
+	bytes  int64
+	inodes int64
+}
+
+// dirUsage walks a tree once, collecting both quota dimensions.
+//
+// Bytes alone are not enough: a few million empty files exhaust a filesystem's
+// inode table while using almost no space, taking down every account on the
+// server. Directories count too — they consume inodes exactly like files do.
+func dirUsage(root string) usage {
+	var u usage
 	_ = filepath.Walk(root, func(_ string, info os.FileInfo, err error) error {
-		if err == nil && !info.IsDir() {
-			total += info.Size()
+		if err != nil {
+			return nil
+		}
+		u.inodes++
+		if !info.IsDir() {
+			u.bytes += info.Size()
 		}
 		return nil
 	})
-	return total
+	return u
 }
 
-// checkQuota rejects a write that would push the account over its disk limit.
-func checkQuota(root string, quota, incoming int64) error {
-	if quota <= 0 {
-		return nil // unlimited
+// checkQuota rejects a write that would push the account over its disk or
+// inode limit. incomingInodes is how many new filesystem entries the operation
+// creates (1 for a write or mkdir).
+func checkQuota(root string, quota, incoming int64, inodeQuota, incomingInodes int64) error {
+	if quota <= 0 && inodeQuota <= 0 {
+		return nil // unlimited on both dimensions
 	}
-	if dirSize(root)+incoming > quota {
+	u := dirUsage(root)
+	if quota > 0 && u.bytes+incoming > quota {
 		return fmt.Errorf("disk quota exceeded")
+	}
+	if inodeQuota > 0 && u.inodes+incomingInodes > inodeQuota {
+		return fmt.Errorf("file count (inode) quota exceeded")
 	}
 	return nil
 }
@@ -227,7 +256,7 @@ const (
 // entry's destination against the account root (zip-slip: an entry named
 // `../../etc/passwd` is rejected before any write). Symlinks and oversized
 // expansions are refused, and the account's disk quota is honoured.
-func extractZip(archivePath, root string, quota int64) error {
+func extractZip(archivePath, root string, quota, inodeQuota int64) error {
 	zr, err := zip.OpenReader(archivePath)
 	if err != nil {
 		return fmt.Errorf("cannot open archive: %w", err)
@@ -239,7 +268,14 @@ func extractZip(archivePath, root string, quota int64) error {
 	}
 	destDir := filepath.Dir(archivePath)
 
-	used := dirSize(root)
+	used := dirUsage(root)
+	// An archive of a million tiny files is the cheapest way to exhaust the
+	// inode table, so reject the whole extraction up front rather than
+	// discovering it partway through.
+	if inodeQuota > 0 && used.inodes+int64(len(zr.File)) > inodeQuota {
+		return fmt.Errorf("extraction would exceed the file count (inode) quota")
+	}
+
 	var expanded int64
 	for _, f := range zr.File {
 		// Reject entries that escape the root (zip-slip) or are symlinks.
@@ -260,7 +296,7 @@ func extractZip(archivePath, root string, quota int64) error {
 		if expanded > maxExtractBytes {
 			return fmt.Errorf("archive expands beyond the extraction limit")
 		}
-		if quota > 0 && used+expanded > quota {
+		if quota > 0 && used.bytes+expanded > quota {
 			return fmt.Errorf("extraction would exceed the disk quota")
 		}
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {

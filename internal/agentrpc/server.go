@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -15,6 +16,8 @@ import (
 
 	agentv1 "github.com/MaramHarsha/CypherPanel/gen/agent/v1"
 	"github.com/MaramHarsha/CypherPanel/internal/audit"
+	"github.com/MaramHarsha/CypherPanel/internal/dkim"
+	"github.com/MaramHarsha/CypherPanel/internal/dns"
 	"github.com/MaramHarsha/CypherPanel/internal/events"
 	"github.com/MaramHarsha/CypherPanel/internal/jobs"
 	"github.com/MaramHarsha/CypherPanel/internal/store"
@@ -29,12 +32,18 @@ type Server struct {
 	Databases *store.Databases
 	FTP       *store.FTPAccounts
 	Mail      *store.MailAccounts
+	Backups   *store.Backups
 	Events    *events.Bus
 	Audit     *audit.Logger
+	// DNS publishes records Core owns on behalf of agents — today the DKIM
+	// public key an agent generates. Nil when DNS is not configured.
+	DNS dns.Provider
 	// Crypt encrypts secrets returned in task metadata (DB passwords) before
-	// they are persisted. Never nil in production wiring.
+	// they are persisted, and decrypts backup-destination credentials when an
+	// agent asks for them. Never nil in production wiring.
 	Crypt interface {
 		Encrypt([]byte) ([]byte, error)
+		Decrypt([]byte) ([]byte, error)
 	}
 }
 
@@ -52,7 +61,7 @@ func (s *Server) Register(ctx context.Context, req *agentv1.RegisterRequest) (*a
 		slog.Warn("agent registered with a non-release version", "hostname", req.GetHostname(), "agent_version", req.GetAgentVersion(), "note", reason)
 	}
 
-	srv, err := s.Servers.UpsertByHostname(ctx, req.GetHostname(), req.GetIpAddress())
+	srv, err := s.Servers.UpsertByHostname(ctx, req.GetHostname(), req.GetIpAddress(), req.GetRegion())
 	if err != nil {
 		slog.Error("registering agent", "hostname", req.GetHostname(), "error", err)
 		return nil, status.Error(codes.Internal, "registration failed")
@@ -159,7 +168,12 @@ func (s *Server) applyAccountTransition(ctx context.Context, taskID, result stri
 	}
 	// Mail tasks drive the mail_account record, keyed by address.
 	if task.Type == "mail.create" || task.Type == "mail.delete" {
-		s.applyMailResult(ctx, task, result)
+		s.applyMailResult(ctx, task, result, meta)
+		return
+	}
+	// Backup/restore tasks close out their account_backups row.
+	if task.Type == jobs.TypeBackupRun || task.Type == jobs.TypeBackupRestore {
+		s.applyBackupResult(ctx, task, result, meta)
 		return
 	}
 
@@ -288,15 +302,15 @@ func (s *Server) applyFTPResult(ctx context.Context, task *store.Task, result st
 // applyMailResult applies a mail task's outcome to its record (keyed by the
 // address in the payload): create-success → active, create-failure → failed,
 // delete-success → removed.
-func (s *Server) applyMailResult(ctx context.Context, task *store.Task, result string) {
-	var address string
+func (s *Server) applyMailResult(ctx context.Context, task *store.Task, result string, meta map[string]string) {
+	var address, domain string
 	switch task.Type {
 	case "mail.create":
 		var p jobs.MailCreatePayload
 		if err := json.Unmarshal(task.Payload, &p); err != nil {
 			return
 		}
-		address = p.Address
+		address, domain = p.Address, p.Domain
 	case "mail.delete":
 		var p jobs.MailDeletePayload
 		if err := json.Unmarshal(task.Payload, &p); err != nil {
@@ -311,6 +325,10 @@ func (s *Server) applyMailResult(ctx context.Context, task *store.Task, result s
 	if task.Type == "mail.create" {
 		if result == "succeeded" {
 			_ = s.Mail.SetStatus(ctx, rec.ID, "active")
+			// The agent generated (or reused) the domain's DKIM key and
+			// returned only the public half; publish it so outbound mail can
+			// actually be verified.
+			s.publishDKIM(ctx, domain, meta)
 		} else {
 			_ = s.Mail.SetStatus(ctx, rec.ID, "failed")
 		}
@@ -321,6 +339,138 @@ func (s *Server) applyMailResult(ctx context.Context, task *store.Task, result s
 	} else {
 		_ = s.Mail.SetStatus(ctx, rec.ID, "failed")
 	}
+}
+
+// applyBackupResult closes out the account_backups row a task belongs to.
+// Failures are recorded with their message, not dropped — a backup history
+// that only shows successes hides the one thing an operator must know.
+func (s *Server) applyBackupResult(ctx context.Context, task *store.Task, result string, meta map[string]string) {
+	if s.Backups == nil {
+		return
+	}
+	run, err := s.Backups.GetRunByTask(ctx, task.ID)
+	if err != nil {
+		return
+	}
+	if result != "succeeded" {
+		msg := task.Error
+		if msg == "" {
+			msg = "task failed"
+		}
+		_ = s.Backups.CompleteRun(ctx, run.ID, "", 0, msg)
+		return
+	}
+
+	snapshotID := meta[jobs.MetaBackupSnapshotID]
+	var size int64
+	if v := meta[jobs.MetaBackupSizeBytes]; v != "" {
+		if n, perr := strconv.ParseInt(v, 10, 64); perr == nil {
+			size = n
+		}
+	}
+	if err := s.Backups.CompleteRun(ctx, run.ID, snapshotID, size, ""); err != nil {
+		slog.Error("completing backup run", "backup_id", run.ID, "error", err)
+	}
+}
+
+// publishDKIM publishes a domain's DKIM public key as its `_domainkey` TXT
+// record. Best-effort: mail is already provisioned, and a DNS blip must not
+// fail the mailbox — the record is republished on the next mailbox creation.
+func (s *Server) publishDKIM(ctx context.Context, domain string, meta map[string]string) {
+	pub := meta[jobs.MetaDKIMPublicTXT]
+	if s.DNS == nil || domain == "" || pub == "" {
+		return
+	}
+	selector := meta[jobs.MetaDKIMSelector]
+	if selector == "" {
+		selector = dkim.DefaultSelector
+	}
+	// A 2048-bit key overflows a single 255-byte DNS character-string, so the
+	// value must be published as multiple quoted chunks.
+	rec := dns.Record{
+		Name:     dkim.RecordName(domain, selector),
+		Type:     "TXT",
+		TTL:      3600,
+		Contents: []string{dkim.SplitTXT(pub)},
+	}
+	if err := s.DNS.UpsertRecord(ctx, domain, rec); err != nil {
+		slog.Warn("publishing DKIM record", "domain", domain, "selector", selector, "error", err)
+		return
+	}
+	slog.Info("published DKIM record", "domain", domain, "selector", selector)
+}
+
+// FetchBackupCredentials releases one destination's secrets to an agent.
+//
+// Authorization is the mTLS client certificate (an agent) plus a re-check that
+// the named task really belongs to the calling server and really references
+// the requested destination — so a compromised agent cannot enumerate
+// credentials for destinations it was never asked to write to.
+func (s *Server) FetchBackupCredentials(ctx context.Context, req *agentv1.FetchBackupCredentialsRequest) (*agentv1.FetchBackupCredentialsResponse, error) {
+	if req.GetServerId() == "" || req.GetTaskId() == "" || req.GetDestinationId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "server_id, task_id and destination_id are required")
+	}
+	if s.Backups == nil || s.Crypt == nil {
+		return nil, status.Error(codes.FailedPrecondition, "backups are not configured")
+	}
+
+	task, err := s.Tasks.GetByID(ctx, req.GetTaskId())
+	if err != nil {
+		return nil, status.Error(codes.NotFound, "unknown task_id")
+	}
+	if task.ServerID != req.GetServerId() {
+		return nil, status.Error(codes.PermissionDenied, "task does not belong to this server")
+	}
+	if task.Type != jobs.TypeBackupRun && task.Type != jobs.TypeBackupRestore {
+		return nil, status.Error(codes.PermissionDenied, "task is not a backup task")
+	}
+	// The destination must be the one this task was created for.
+	var payloadDest string
+	switch task.Type {
+	case jobs.TypeBackupRun:
+		var p jobs.BackupRunPayload
+		if json.Unmarshal(task.Payload, &p) == nil {
+			payloadDest = p.DestinationID
+		}
+	case jobs.TypeBackupRestore:
+		var p jobs.BackupRestorePayload
+		if json.Unmarshal(task.Payload, &p) == nil {
+			payloadDest = p.DestinationID
+		}
+	}
+	if payloadDest == "" || payloadDest != req.GetDestinationId() {
+		return nil, status.Error(codes.PermissionDenied, "task does not reference this destination")
+	}
+
+	dest, err := s.Backups.GetDestination(ctx, req.GetDestinationId())
+	if err != nil {
+		return nil, status.Error(codes.NotFound, "unknown destination")
+	}
+	plain, err := s.Crypt.Decrypt(dest.CredentialsEncrypted)
+	if err != nil {
+		slog.Error("decrypting backup credentials", "destination_id", dest.ID, "error", err)
+		return nil, status.Error(codes.Internal, "could not read destination credentials")
+	}
+	var creds struct {
+		Password string            `json:"password"`
+		Env      map[string]string `json:"env,omitempty"`
+	}
+	if err := json.Unmarshal(plain, &creds); err != nil {
+		return nil, status.Error(codes.Internal, "malformed destination credentials")
+	}
+
+	// Audit the release of credentials — but never the credentials themselves.
+	_ = s.Audit.Record(ctx, audit.Entry{
+		ActorRole: "agent", Action: "backup.credentials.fetch",
+		TargetType: "backup_destination", TargetID: dest.ID,
+		Detail: map[string]any{"server_id": req.GetServerId(), "task_id": req.GetTaskId()},
+	})
+
+	return &agentv1.FetchBackupCredentialsResponse{
+		Repository: dest.Repository,
+		Password:   creds.Password,
+		Env:        creds.Env,
+	}, nil
 }
 
 func (s *Server) applySSLResult(ctx context.Context, accountID, result string, meta map[string]string) {
