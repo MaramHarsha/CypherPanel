@@ -129,6 +129,16 @@ jobs:
   # machine joins via curl|sh from the plane in under 60 seconds. The binary
   # URL is injected because hosted releases arrive with release.yml (Phase 2);
   # curl preinstall is outside the timed window (real VMs ship with curl).
+  #
+  # Docker is skipped for the same reason curl is preinstalled: the gate
+  # measures ENROLMENT latency (roadmap evidence: ~1s wall), not how long
+  # apt takes to lay down a container runtime. It is also not merely slow
+  # here — `fresh` is an unprivileged container with no init, so a Docker
+  # daemon cannot run inside it at all, at any timeout.
+  #
+  # Known coverage gap: agent.sh's ensure_docker install path is therefore
+  # not exercised by CI. Testing it needs a privileged systemd container;
+  # tracked separately rather than faked here.
   installer:
     name: curl|sh join under 60s
     runs-on: ubuntu-latest
@@ -181,7 +191,7 @@ jobs:
           CMD=$(echo "$CREATE" | jq -r .join.install_command)
           echo "running: $CMD"
           T0=$(date +%s)
-          docker exec fresh sh -c "export CYPHER_AGENT_URL=http://localhost:8000/cypher-agent; $CMD"
+          docker exec fresh sh -c "export CYPHER_SKIP_DOCKER=1 CYPHER_AGENT_URL=http://localhost:8000/cypher-agent; $CMD"
           docker exec -d fresh /usr/local/bin/cypher-agent run --state-dir /var/lib/cypher-agent --heartbeat 2s
           for i in $(seq 1 60); do
             STATUS=$(curl -sf "$API/api/v1/servers/$SRV" -H "Authorization: Bearer $TOKEN" | jq -r .status)
@@ -201,9 +211,19 @@ jobs:
           JOIN=$(echo "$CREATE" | jq -r .join.token)
           ENROLL=$(echo "$CREATE" | jq -r .join.enroll_addr)
           BAD_FP=$(printf 'not-the-plane' | sha256sum | cut -d' ' -f1)
-          if docker exec fresh sh -c "rm -rf /var/lib/cypher-agent && curl -fsSL $API/install/agent.sh | CYPHER_PLANE=$ENROLL CYPHER_TOKEN=$JOIN CYPHER_CA_FINGERPRINT=$BAD_FP CYPHER_AGENT_URL=http://localhost:8000/cypher-agent sh"; then
+          if OUT=$(docker exec fresh sh -c "rm -rf /var/lib/cypher-agent && curl -fsSL $API/install/agent.sh | CYPHER_SKIP_DOCKER=1 CYPHER_PLANE=$ENROLL CYPHER_TOKEN=$JOIN CYPHER_CA_FINGERPRINT=$BAD_FP CYPHER_AGENT_URL=http://localhost:8000/cypher-agent sh" 2>&1); then
+            echo "$OUT"
             echo "installer accepted a mismatched CA fingerprint"; exit 1
           fi
+          echo "$OUT"
+          # A non-zero exit alone is not proof: the installer can fail for many
+          # unrelated reasons (a missing dependency, a bad download), and any of
+          # them would make a bare exit-code check pass while the fingerprint
+          # was never actually verified. Assert the refusal reason.
+          echo "$OUT" | grep -q "fingerprint mismatch" || {
+            echo "installer failed, but NOT on the fingerprint check — this assertion would have passed for the wrong reason"
+            exit 1
+          }
           echo "fingerprint mismatch correctly refused"
 
   store-tests:
