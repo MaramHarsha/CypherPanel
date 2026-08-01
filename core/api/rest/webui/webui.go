@@ -9,12 +9,19 @@ package webui
 import (
 	"embed"
 	"io/fs"
+	"mime"
 	"net/http"
 	"strings"
 )
 
 //go:embed all:dist
 var distFS embed.FS
+
+func init() {
+	// Go's builtin table has no entry for .webmanifest, and content sniffing
+	// would label it text/plain — which browsers refuse to install from.
+	_ = mime.AddExtensionType(".webmanifest", "application/manifest+json")
+}
 
 // csp locks the app to its own origin: no external scripts, styles, fonts, or
 // connections — the property that keeps a bearer token in localStorage
