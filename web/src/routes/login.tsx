@@ -5,6 +5,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
 import { ApiError } from "@/api/client";
 import { useGetSetupStatus, useLogin, useSetup } from "@/api/gen/auth/auth";
+import { Logo } from "@/components/logo";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -26,9 +27,7 @@ function EntryPage() {
   return (
     <main className="flex min-h-dvh items-center justify-center bg-bg p-4">
       <div className="w-full max-w-sm">
-        <p className="mono mb-8 text-center text-sm tracking-wide text-text">
-          <span className="text-accent">▲</span> cypherpanel
-        </p>
+        <Logo className="mb-8 flex items-center justify-center gap-2.5 text-base text-text" />
         {setup.isPending ? (
           <div className="h-40 animate-pulse rounded-lg border border-border bg-surface" aria-hidden />
         ) : setup.data?.needs_setup ? (

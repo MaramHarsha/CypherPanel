@@ -20,6 +20,7 @@ import {
 import { useGetMe, useLogout } from "@/api/gen/auth/auth";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { CommandPalette } from "@/components/command-palette";
+import { Logo } from "@/components/logo";
 import { SSEBanner } from "@/components/sse-banner";
 import {
   Dropdown,
@@ -78,8 +79,8 @@ function AppShell() {
 function Sidebar() {
   return (
     <aside className="sticky top-0 hidden h-dvh w-52 shrink-0 flex-col border-r border-border bg-surface sm:flex">
-      <Link to="/projects" className="mono block px-4 py-4 text-[13px] tracking-wide text-text">
-        <span className="text-accent">▲</span> cypherpanel
+      <Link to="/projects" aria-label="CypherPanel — projects" className="px-4 py-4 text-text">
+        <Logo className="flex items-center gap-2 text-[14px]" />
       </Link>
       <nav className="flex-1 space-y-0.5 px-2" aria-label="Main">
         {NAV.map(({ to, label, icon: Icon }) => (

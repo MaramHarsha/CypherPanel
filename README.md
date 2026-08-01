@@ -1,6 +1,16 @@
-# CypherPanel
+<p align="center">
+  <img src="docs/assets/cypherpanel-lockup.svg" alt="CypherPanel" width="360">
+</p>
 
-**A self-hosted PaaS: push code, get a URL, sleep well.**
+<p align="center"><strong>A self-hosted PaaS: push code, get a URL, sleep well.</strong></p>
+
+<p align="center">
+  <a href="#quickstart-current-dev-state">Quickstart</a> ·
+  <a href="#what-works-today">What works today</a> ·
+  <a href="docs/architecture.md">Architecture</a> ·
+  <a href="#the-api">API</a> ·
+  <a href="LICENSE">Apache-2.0</a>
+</p>
 
 CypherPanel deploys your applications from git to a live, TLS-terminated URL on your own servers. It unifies the best of **Coolify** (breadth: one-click templates, every database) and **Dokploy** (polish: rollbacks, backups, a clean data model) on an architecture neither has: a lightweight Go control plane commanding **dial-home agents** — no SSH keys stored anywhere, no builds on the panel, desired-state reconciliation throughout.
 

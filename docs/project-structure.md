@@ -65,7 +65,8 @@ cypherpanel/
 │   ├── proto/                   # generated protobuf code (from /proto)
 │   └── subjects/                # NATS subject contracts (work.*, state.*)
 │
-├── web/                         # (planned, Phase 4) ── UI (static build, embedded) ──
+├── web/                         # ── UI (static build, embedded into cypherd) ──
+│   ├── public/                  # copied to dist verbatim: favicon set, web manifest
 │   ├── src/
 │   │   ├── api/                 # generated client from OpenAPI — never hand-written
 │   │   ├── features/            # projects/, applications/, databases/, servers/,
@@ -93,6 +94,8 @@ docs/
 ├── roadmap.md             # phases, acceptance gates, open decisions
 ├── glossary.md            # canonical vocabulary + reference-repo term mapping
 ├── project-structure.md   # this file
+├── assets/                # images referenced by the README and docs (the mark,
+│                          #   the lockup); the app's own copies live in web/public
 ├── adrs/                  # ADR-NNN-slug.md — immutable; supersede, don't edit
 ├── product/               # personas, feature-matrix, ui-principles, web-ui-design
 │                          #   (+ design-system.md in Phase 4, from real components)

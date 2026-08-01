@@ -32,6 +32,9 @@
   --accent-hover: #45d1c0;
   --accent-fg: #06211d;
 
+  /* mint used by the mark's live block — fixed, not part of the status palette */
+  --mark-accent: #65ebac;
+
   /* status vocabulary (ui-principles §5) — 4.5:1 on --bg */
   --status-running: #4ac26b;
   --status-deploying: #58a6ff;
@@ -62,6 +65,9 @@
   --accent: #0d7d71;
   --accent-hover: #0a6a60;
   --accent-fg: #ffffff;
+
+  /* the mark's mint deepens on light so the live block keeps its contrast */
+  --mark-accent: #12c281;
 
   --status-running: #1a7f37;
   --status-deploying: #0969da;
