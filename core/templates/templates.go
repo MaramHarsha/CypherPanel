@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/MaramHarsha/cypherpanel/core/applications"
 	"github.com/MaramHarsha/cypherpanel/core/databases"
@@ -114,6 +115,28 @@ func (e *ValidationError) Error() string { return e.Msg }
 // ErrNotFound is returned for an unknown slug.
 var ErrNotFound = errors.New("templates: template not found")
 
+// cleanupTimeout bounds rollback of a failed install. Generous enough for a
+// handful of deletes, short enough that a wedged daemon cannot hold the
+// request path open indefinitely.
+const cleanupTimeout = 30 * time.Second
+
+// needsDomain reports whether this template cannot be installed without one —
+// either because an application takes the public route, or because some value
+// interpolates {{domain}} and would otherwise resolve to an empty string.
+func (t Template) needsDomain() bool {
+	for _, a := range t.Resources.Applications {
+		if a.Route {
+			return true
+		}
+		for _, v := range a.Env {
+			if strings.Contains(v, "{{domain}}") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Install resolves a template into ordinary resources: databases first (their
 // root passwords exist in plaintext only inside this call), then image-source
 // applications with sealed env vars, then one deploy per application. On a
@@ -132,6 +155,13 @@ func (s *Service) Install(ctx context.Context, slug string, in InstallInput) (In
 		return InstallResult{}, &ValidationError{Msg: "name must be lowercase [a-z0-9-], ≤40 chars"}
 	}
 	in.Domain = strings.TrimSpace(in.Domain)
+	// A template that routes, or that builds URLs from {{domain}}, cannot be
+	// installed without one: resolving the placeholder to "" would write
+	// settings like `https:///` into the container and report success. Refuse
+	// up front rather than produce a running-but-misconfigured app.
+	if in.Domain == "" && tpl.needsDomain() {
+		return InstallResult{}, &ValidationError{Msg: "this template needs a domain: it publishes a public URL"}
+	}
 
 	// Collision check before creating anything: every name this install will
 	// use must be free in the environment.
@@ -163,7 +193,18 @@ func (s *Service) Install(ctx context.Context, slug string, in InstallInput) (In
 
 	var res InstallResult
 	fail := func(cause error) (InstallResult, error) {
-		s.cleanup(ctx, res)
+		// Roll back on a context detached from the request's: an install that
+		// failed *because* the client disconnected or the deadline expired
+		// would otherwise cancel every cleanup call immediately and strand
+		// exactly the resources it was meant to remove.
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
+		defer cancel()
+		if left := s.cleanup(cleanupCtx, res); len(left) > 0 {
+			// The caller must be able to see what the failed install left
+			// behind — otherwise orphaned resources are invisible and
+			// unidentifiable (they still hold names, volumes, and ports).
+			return InstallResult{}, fmt.Errorf("%w (rollback incomplete, these remain: %s)", cause, strings.Join(left, ", "))
+		}
 		return InstallResult{}, cause
 	}
 
@@ -178,10 +219,16 @@ func (s *Service) Install(ctx context.Context, slug string, in InstallInput) (In
 			ServerID:        in.ServerID,
 			RequirePassword: true,
 		})
+		// The row can be persisted and the call still fail (reconciliation is
+		// triggered inside Create), so record any id we were handed *before*
+		// failing — otherwise cleanup cannot reach it and the install strands a
+		// database whose generated password was never returned to anyone.
+		if created.ID != "" {
+			res.DatabaseIDs = append(res.DatabaseIDs, created.ID)
+		}
 		if err != nil {
 			return fail(operatorError(fmt.Errorf("templates: creating database %s: %w", d.Name, err), err))
 		}
-		res.DatabaseIDs = append(res.DatabaseIDs, created.ID)
 		dbInfos[d.Name] = infoFor(created, rootPwd)
 	}
 
@@ -219,10 +266,13 @@ func (s *Service) Install(ctx context.Context, slug string, in InstallInput) (In
 			Ports:   ports,
 			EnvVars: env,
 		})
+		// Same reasoning as databases: track anything persisted before failing.
+		if created.ID != "" {
+			res.ApplicationIDs = append(res.ApplicationIDs, created.ID)
+		}
 		if err != nil {
 			return fail(operatorError(fmt.Errorf("templates: creating application %s: %w", a.Name, err), err))
 		}
-		res.ApplicationIDs = append(res.ApplicationIDs, created.ID)
 		apps = append(apps, created)
 	}
 
@@ -259,7 +309,10 @@ func operatorError(wrapped, cause error) error {
 // matching the DELETE handlers' semantics (row + desired absence). Failures
 // are logged, not returned — the install's root cause is the error that
 // matters, and the operator can see whatever survived.
-func (s *Service) cleanup(ctx context.Context, res InstallResult) {
+// It returns the ids it could not remove, so the caller can tell the operator
+// exactly what survived a failed install.
+func (s *Service) cleanup(ctx context.Context, res InstallResult) []string {
+	var left []string
 	for i := len(res.ApplicationIDs) - 1; i >= 0; i-- {
 		id := res.ApplicationIDs[i]
 		serverID := ""
@@ -268,6 +321,7 @@ func (s *Service) cleanup(ctx context.Context, res InstallResult) {
 		}
 		if err := s.apps.Delete(ctx, id); err != nil {
 			s.log.Error("template install cleanup: deleting application", "app_id", id, "error", err)
+			left = append(left, id)
 			continue
 		}
 		if serverID != "" {
@@ -280,8 +334,10 @@ func (s *Service) cleanup(ctx context.Context, res InstallResult) {
 		// The volume is minutes old and belongs to this failed install: delete it.
 		if err := s.dbs.Delete(ctx, res.DatabaseIDs[i], true); err != nil {
 			s.log.Error("template install cleanup: deleting database", "db_id", res.DatabaseIDs[i], "error", err)
+			left = append(left, res.DatabaseIDs[i])
 		}
 	}
+	return left
 }
 
 // appName gives a single-app template the install name itself; multi-app

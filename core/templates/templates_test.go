@@ -64,6 +64,12 @@ type fakeDbs struct {
 	deleted   []string
 	nextID    int
 	createErr error // injected failure for error-mapping tests
+	deleteErr error // injected cleanup failure
+	// createErrAfterPersist models databases.Service.Create's real contract:
+	// the row is persisted and a populated record returned *alongside* an
+	// error when reconciliation fails.
+	createErrAfterPersist bool
+	onCreate              func() // fired after a successful create (context-cancel test)
 }
 
 func (f *fakeDbs) Create(_ context.Context, envID string, in databases.CreateInput) (domain.Database, string, error) {
@@ -72,18 +78,28 @@ func (f *fakeDbs) Create(_ context.Context, envID string, in databases.CreateInp
 	}
 	f.nextID++
 	f.created = append(f.created, in)
-	return domain.Database{
+	db := domain.Database{
 		ID:            "db_" + strings.Repeat("y", f.nextID),
 		EnvironmentID: envID,
 		Name:          in.Name,
 		Engine:        domain.DbEngine(in.Engine),
 		RootUser:      "postgres",
-	}, "s3cret-root", nil
+	}
+	if f.onCreate != nil {
+		f.onCreate()
+	}
+	if f.createErrAfterPersist {
+		return db, "s3cret-root", errors.New("databases: triggering reconciliation: agent unreachable")
+	}
+	return db, "s3cret-root", nil
 }
 
 func (f *fakeDbs) List(context.Context, string) ([]domain.Database, error) { return nil, nil }
 
 func (f *fakeDbs) Delete(_ context.Context, id string, _ bool) error {
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
 	f.deleted = append(f.deleted, id)
 	return nil
 }
@@ -291,7 +307,7 @@ func TestInstallMapsOperatorErrors(t *testing.T) {
 		apps, dbs := &fakeApps{}, &fakeDbs{createErr: cause}
 		s := newTestService(t, apps, dbs, &fakeDeployer{})
 
-		_, err := s.Install(context.Background(), "n8n", InstallInput{EnvironmentID: "env_1", ServerID: "srv_bad"})
+		_, err := s.Install(context.Background(), "n8n", InstallInput{EnvironmentID: "env_1", ServerID: "srv_bad", Domain: "n8n.example.com"})
 		var ve *ValidationError
 		if !errors.As(err, &ve) {
 			t.Errorf("%s: err = %v, want ValidationError", name, err)
@@ -313,7 +329,7 @@ func TestInstallFailureCleansUp(t *testing.T) {
 	dbs, dep := &fakeDbs{}, &fakeDeployer{}
 	s := newTestService(t, apps, dbs, dep)
 
-	_, err := s.Install(context.Background(), "n8n", InstallInput{EnvironmentID: "env_1", ServerID: "srv_1"})
+	_, err := s.Install(context.Background(), "n8n", InstallInput{EnvironmentID: "env_1", ServerID: "srv_1", Domain: "n8n.example.com"})
 	if err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("err = %v, want the create failure", err)
 	}
@@ -328,7 +344,7 @@ func TestInstallDeployFailureCleansUpApps(t *testing.T) {
 	dep := &fakeDeployer{failOn: "app_x"} // first created app id
 	s := newTestService(t, apps, dbs, dep)
 
-	_, err := s.Install(context.Background(), "n8n", InstallInput{EnvironmentID: "env_1", ServerID: "srv_1"})
+	_, err := s.Install(context.Background(), "n8n", InstallInput{EnvironmentID: "env_1", ServerID: "srv_1", Domain: "n8n.example.com"})
 	if err == nil {
 		t.Fatal("want deploy failure")
 	}
@@ -337,5 +353,79 @@ func TestInstallDeployFailureCleansUpApps(t *testing.T) {
 	}
 	if len(dep.removed) != 1 {
 		t.Fatalf("desired absence not published for cleaned-up app: %v", dep.removed)
+	}
+}
+
+// ── review findings (#47) ───────────────────────────────────────────────────
+
+// A template that routes, or builds a URL from {{domain}}, cannot install
+// without one: resolving it to "" would write settings like `https:///` into
+// the container and still report success.
+func TestInstallRequiresDomainForRoutedTemplates(t *testing.T) {
+	apps, dbs := &fakeApps{}, &fakeDbs{}
+	s := newTestService(t, apps, dbs, &fakeDeployer{})
+
+	_, err := s.Install(context.Background(), "n8n", InstallInput{EnvironmentID: "env_1", ServerID: "srv_1"})
+	var ve *ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("err = %v, want ValidationError about the domain", err)
+	}
+	if len(apps.created) != 0 || len(dbs.created) != 0 {
+		t.Fatal("resources were created despite the missing domain")
+	}
+}
+
+// A database row can be persisted while Create still fails (reconciliation is
+// triggered inside it). That id must be tracked, or cleanup cannot reach it and
+// the install strands a database whose password was never returned.
+func TestInstallCleansUpDatabasePersistedBeforeError(t *testing.T) {
+	dbs := &fakeDbs{createErrAfterPersist: true}
+	s := newTestService(t, &fakeApps{}, dbs, &fakeDeployer{})
+
+	_, err := s.Install(context.Background(), "n8n", InstallInput{
+		EnvironmentID: "env_1", ServerID: "srv_1", Domain: "n8n.example.com",
+	})
+	if err == nil {
+		t.Fatal("want the reconciliation failure")
+	}
+	if len(dbs.deleted) != 1 {
+		t.Fatalf("deleted = %v, want the persisted database cleaned up", dbs.deleted)
+	}
+}
+
+// Rollback must survive the request context being cancelled — an install that
+// failed *because* the client disconnected is exactly when cleanup matters.
+func TestInstallCleansUpAfterContextCancelled(t *testing.T) {
+	apps, dbs := &fakeApps{failOn: "n8n"}, &fakeDbs{}
+	s := newTestService(t, apps, dbs, &fakeDeployer{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	dbs.onCreate = cancel // the client goes away mid-install
+
+	_, err := s.Install(ctx, "n8n", InstallInput{
+		EnvironmentID: "env_1", ServerID: "srv_1", Domain: "n8n.example.com",
+	})
+	if err == nil {
+		t.Fatal("want the create failure")
+	}
+	if len(dbs.deleted) != 1 {
+		t.Fatalf("deleted = %v, want cleanup to run on a detached context", dbs.deleted)
+	}
+}
+
+// What a failed rollback left behind has to reach the operator: orphaned
+// resources still hold names, volumes, and ports.
+func TestInstallReportsIncompleteRollback(t *testing.T) {
+	dbs := &fakeDbs{deleteErr: errors.New("daemon unreachable")}
+	s := newTestService(t, &fakeApps{failOn: "n8n"}, dbs, &fakeDeployer{})
+
+	_, err := s.Install(context.Background(), "n8n", InstallInput{
+		EnvironmentID: "env_1", ServerID: "srv_1", Domain: "n8n.example.com",
+	})
+	if err == nil || !strings.Contains(err.Error(), "rollback incomplete") {
+		t.Fatalf("err = %v, want the surviving resources named", err)
+	}
+	if !strings.Contains(err.Error(), "db_") {
+		t.Fatalf("err = %v, want the orphaned id included", err)
 	}
 }

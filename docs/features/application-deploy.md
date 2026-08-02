@@ -109,6 +109,18 @@ because each defaults to today's behavior:
   is reached only through its published ports. The reconciler writes no fragment
   for a routeless app and removes a stale one if a domain is cleared, all while
   preserving the converge-twice invariant.
+**Known limitation — host ports and redeploys.** The zero-downtime sequence
+starts the new revision *alongside* the old one, and both carry the same fixed
+`PortBindings`, so the second bind fails with address-in-use: an app that
+publishes host ports cannot currently be redeployed or rolled back. The health
+gate never passes, the new container is discarded, and the old revision keeps
+serving — no outage and no data loss, but the update does not land. Fixing it
+means accepting a brief handover gap for this class of app (a fixed host port
+cannot be held by two containers at once), which changes the zero-downtime
+invariant for them and therefore needs its own decision rather than a quiet
+behaviour change. Recorded here because it constrains what the bundled catalog
+can ship: no template declares host ports until it is resolved.
+
 - **`health.kind`** selects the rollout gate: `http` (default — GET `health.path`,
   today's behavior), `tcp` (dial the container port), or `none` (liveness-only,
   for raw UDP services with no readiness signal). **The health probe is always

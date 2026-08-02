@@ -158,6 +158,18 @@ license checks apply before reading any Dokploy path (CLAUDE.md rule 1);
 the importer reads only Coolify's Apache-licensed template files, and the
 translated output contains configuration facts, not copied code.
 
+**No bundled template declares host ports.** An app publishing fixed host
+ports cannot currently be redeployed (see the known limitation in
+[application-deploy.md](application-deploy.md) §5), and a catalog entry that
+installs but can never be updated is worse than an absent one. Syncthing was
+dropped from the launch set for exactly this reason; it returns when that
+limitation is resolved.
+
+**Image tags are pinned, never floating.** A bundled template must resolve to
+the same version on every panel running a given CypherPanel release — and
+mutable tags are re-pulled on every deploy, so `:latest` would let a routine
+redeploy cross a major version unannounced.
+
 ## 7. Non-goals (this slice)
 
 Remote template index (ADR-007 records it as a later escape hatch) ·
