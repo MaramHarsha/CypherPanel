@@ -577,3 +577,34 @@ func TestEnsureContainerRefusesUnmanagedNameCollision(t *testing.T) {
 		t.Fatalf("err = %v, want a refusal to replace an unmanaged container", err)
 	}
 }
+
+// ── image references ────────────────────────────────────────────────────────
+
+// The daemon's /images/create takes the name and the tag-or-digest separately.
+// A digest reference must split on '@': splitting on the last colon would ask
+// for `fromImage=repo@sha256`, which names no image any registry can serve.
+func TestPullImageSplitsReferences(t *testing.T) {
+	cases := []struct{ ref, name, tag string }{
+		{"ghost:5", "ghost", "5"},
+		{"ghost", "ghost", "latest"},
+		{"ghcr.io/acme/web:1.2", "ghcr.io/acme/web", "1.2"},
+		{"registry:5000/acme/web", "registry:5000/acme/web", "latest"},
+		{"ghcr.io/acme/web@sha256:abc123", "ghcr.io/acme/web", "sha256:abc123"},
+		{"acme/web:1.2@sha256:abc123", "acme/web:1.2", "sha256:abc123"},
+	}
+	for _, c := range cases {
+		m := newMockDaemon(t, map[string]http.HandlerFunc{
+			"/images/create": func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("{}\n")) },
+		})
+		if err := m.client().PullImage(context.Background(), c.ref); err != nil {
+			t.Fatalf("%s: PullImage: %v", c.ref, err)
+		}
+		q := m.lastTo(t, "/images/create").query
+		if got := q.Get("fromImage"); got != c.name {
+			t.Errorf("%s: fromImage = %q, want %q", c.ref, got, c.name)
+		}
+		if got := q.Get("tag"); got != c.tag {
+			t.Errorf("%s: tag = %q, want %q", c.ref, got, c.tag)
+		}
+	}
+}

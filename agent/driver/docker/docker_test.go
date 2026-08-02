@@ -141,12 +141,14 @@ func (f *fakeClient) ContainerIP(_ context.Context, id, _ string) (string, error
 	return f.ipByID[id], nil
 }
 
+// EnsureImage models the real engine's contract: a digest is immutable, so a
+// local copy is accepted; a tag is mutable and always re-fetched.
 func (f *fakeClient) EnsureImage(_ context.Context, ref string) error {
 	if f.pullErr != nil {
 		return f.pullErr
 	}
-	if f.localImages[ref] {
-		return nil // present: zero mutating calls, per the Client contract
+	if strings.Contains(ref, "@") && f.localImages[ref] {
+		return nil
 	}
 	f.mutations++
 	f.pulledImages = append(f.pulledImages, ref)
@@ -865,6 +867,44 @@ func TestPullSpecConvergeTwicePullsOnce(t *testing.T) {
 	}
 	if len(c.pulledImages) != 1 {
 		t.Fatalf("pull count = %d, want exactly 1 across both converges", len(c.pulledImages))
+	}
+}
+
+// A mutable tag must be re-fetched for every new revision. Skipping the pull
+// because `ghost:5` happens to be cached would start the new container from
+// the stale image and then report success — the stale-container failure
+// ADR-005 exists to make impossible.
+func TestNewRevisionRepullsMutableTag(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}); err != nil {
+		t.Fatalf("rev1: %v", err)
+	}
+	// Same reference, new revision — the operator moved the tag and redeployed.
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev2", "ghost:5")}); err != nil {
+		t.Fatalf("rev2: %v", err)
+	}
+	if len(c.pulledImages) != 2 {
+		t.Fatalf("pulled %v, want the tag re-fetched for the new revision", c.pulledImages)
+	}
+}
+
+// A digest is immutable: once local, those are provably the right bits, so a
+// new revision on the same digest needs no registry round trip.
+func TestNewRevisionSkipsPullForLocalDigest(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+	const ref = "ghcr.io/acme/web@sha256:abc"
+
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", ref)}); err != nil {
+		t.Fatalf("rev1: %v", err)
+	}
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev2", ref)}); err != nil {
+		t.Fatalf("rev2: %v", err)
+	}
+	if len(c.pulledImages) != 1 {
+		t.Fatalf("pulled %v, want one fetch for an immutable digest", c.pulledImages)
 	}
 }
 

@@ -99,10 +99,12 @@ type Client interface {
 	// ListManagedImages returns every image carrying this driver's managed label.
 	ListManagedImages(ctx context.Context) ([]Image, error)
 	RemoveImage(ctx context.Context, id string) error
-	// EnsureImage makes an image reference present in the local daemon, pulling
-	// from its registry iff absent (idempotent: a present image makes zero
-	// mutating calls). Only pull-marked specs reach it (AppSpec.pull — deploy
-	// from container image); built images keep the ADR-008 local/relay contract.
+	// EnsureImage makes the local daemon hold the bits this reference currently
+	// designates. A digest is immutable, so a local copy satisfies it; a tag is
+	// mutable and is re-fetched, because a redeploy of `acme/web:latest` must
+	// pick up whatever that tag points at now rather than silently reusing the
+	// cached image. Only pull-marked specs reach it (AppSpec.pull — deploy from
+	// container image); built images keep the ADR-008 local/relay contract.
 	EnsureImage(ctx context.Context, image string) error
 	// ExecAndWait runs argv in a running container to completion, returning its
 	// exit code and captured output (scheduled tasks, backups). A non-zero exit

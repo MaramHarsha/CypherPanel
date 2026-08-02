@@ -189,10 +189,7 @@ func (c *Client) EnsureContainer(ctx context.Context, cfg RunConfig) error {
 // JSON-lines pull progress; this reads it to completion and surfaces a stream
 // error (auth failure, missing tag) as the returned error.
 func (c *Client) PullImage(ctx context.Context, ref string) error {
-	name, tag := ref, "latest"
-	if i := strings.LastIndex(ref, ":"); i > strings.LastIndex(ref, "/") {
-		name, tag = ref[:i], ref[i+1:]
-	}
+	name, tag := splitRef(ref)
 	q := url.Values{}
 	q.Set("fromImage", name)
 	q.Set("tag", tag)
@@ -219,19 +216,46 @@ func (c *Client) PullImage(ctx context.Context, ref string) error {
 	}
 }
 
-// EnsureImage makes ref present in the local daemon, pulling iff absent
-// (docker.Client contract): registry-sourced apps (AppSpec.pull) resolve their
-// image here; a reference that is already local makes zero mutating calls, so
-// the driver's converge-twice and crash-resume invariants hold through it.
-func (c *Client) EnsureImage(ctx context.Context, ref string) error {
-	var ignored struct{}
-	err := c.doJSON(ctx, http.MethodGet, "/images/"+url.PathEscape(ref)+"/json", nil, nil, &ignored)
-	if err == nil {
-		return nil // already local
+// splitRef separates an OCI reference into the name and the tag-or-digest the
+// daemon's /images/create expects. A digest reference (`repo@sha256:…`) splits
+// on '@' — splitting it on the last colon instead would send
+// `fromImage=repo@sha256&tag=…`, which names no image the registry can serve.
+// A tagless reference defaults to `latest`, as the CLI does.
+func splitRef(ref string) (name, tag string) {
+	if i := strings.LastIndex(ref, "@"); i >= 0 {
+		return ref[:i], ref[i+1:]
 	}
-	var se *StatusError
-	if !asStatus(err, &se) || se.Code != http.StatusNotFound {
-		return fmt.Errorf("engine: inspecting image %s: %w", ref, err)
+	if i := strings.LastIndex(ref, ":"); i > strings.LastIndex(ref, "/") {
+		return ref[:i], ref[i+1:]
+	}
+	return ref, "latest"
+}
+
+// EnsureImage makes the local daemon hold the bits ref currently designates
+// (docker.Client contract) — which is not the same as "some image with that
+// name exists here".
+//
+// A **digest** reference is immutable: if it is already local, those are
+// provably the right bits, so the pull is skipped. A **tag** is mutable —
+// `acme/web:latest` can point at something new since the last deploy — so it is
+// always pulled. Skipping that would let a redeploy start a container from the
+// stale cached image and then report success, which is precisely the
+// stale-container failure ADR-005 exists to make impossible.
+//
+// This does not weaken the reconciler invariants: only the create branch calls
+// EnsureImage, and a converged app never enters it (the desired revision is
+// already running), so converge-twice still makes zero calls.
+func (c *Client) EnsureImage(ctx context.Context, ref string) error {
+	if strings.Contains(ref, "@") {
+		var ignored struct{}
+		err := c.doJSON(ctx, http.MethodGet, "/images/"+url.PathEscape(ref)+"/json", nil, nil, &ignored)
+		if err == nil {
+			return nil // immutable and already local
+		}
+		var se *StatusError
+		if !asStatus(err, &se) || se.Code != http.StatusNotFound {
+			return fmt.Errorf("engine: inspecting image %s: %w", ref, err)
+		}
 	}
 	return c.PullImage(ctx, ref)
 }

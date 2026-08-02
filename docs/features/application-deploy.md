@@ -116,6 +116,31 @@ because each defaults to today's behavior:
   routing and health decompose cleanly rather than entangling. The zero-downtime
   sequence (start new → gate → flip/settle → drain old) holds for `tcp` too.
 
+### Deploy from a container image (feature-matrix V1)
+
+`source.kind = image` runs a prebuilt OCI reference with **no build stage**:
+`Deploy` records the reference as an already-built revision and goes straight
+to rollout — the same path a rollback takes. No builder is selected and nothing
+is distributed. The reference is stored in its own `source_image` column rather
+than overloading `source_repo`, because a git remote and an OCI reference are
+different vocabularies; git fields are cleared and deploy keys are rejected for
+image sources.
+
+The spec carries `pull` (per revision, in the config snapshot — so rolling back
+to an image revision still pulls correctly after the app was re-pointed at a
+git source). The reconciler resolves it **only in the create branch**, so a
+converged app never touches the registry and converge-twice stays
+zero-mutation.
+
+**Mutable vs immutable references.** A **digest** (`repo@sha256:…`) is
+immutable: if it is already local, those are provably the right bits and the
+pull is skipped. A **tag** is mutable — `acme/web:latest` can point somewhere
+new since the last deploy — so every new revision re-fetches it. Skipping that
+would start the new container from the stale cached image and then report
+success, which is exactly the stale-container failure ADR-005 exists to make
+impossible. A pull that fails leaves the old revision serving and reports
+`error`; it never silently falls back to the cached image.
+
 ### Persistent volumes (feature-matrix V1)
 
 An Application may declare volume mounts (`volumes: [{name, path}]`), stored as a
