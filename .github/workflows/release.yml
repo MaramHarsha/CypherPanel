@@ -18,8 +18,10 @@ on:
         description: "Tag to build (must already exist)"
         required: true
 
+# Read-only by default. Write is granted to the publish job alone, which never
+# executes anything built from the tag.
 permissions:
-  contents: write
+  contents: read
 
 env:
   GO_VERSION: "1.25.x"
@@ -33,14 +35,23 @@ env:
   VERSION: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
-  release:
-    name: Build and publish
+  # Builds and smoke-tests. This job RUNS code from the tag, so it holds no
+  # credential worth stealing: contents:read, and persist-credentials:false so
+  # the job token is not left in .git/config for the binary under test to read.
+  # A malicious tag previously reached a runner that could rewrite tags and
+  # release assets — the compromised-tag case the offline signing key exists to
+  # contain, defeated by handing the same power to the runner instead.
+  build:
+    name: Build and smoke-test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ env.VERSION }}
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: actions/setup-go@v7
         with:
@@ -88,6 +99,28 @@ jobs:
             *DATABASE_URL*|*database*|*config*) echo "starts and reaches config validation" ;;
             *) echo "unexpected startup output — refusing to publish"; exit 1 ;;
           esac
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error
+
+  # Holds contents:write and therefore executes nothing from the tag: no
+  # checkout, no build, no binary invoked. It only moves bytes the previous job
+  # produced into a draft release.
+  publish:
+    name: Publish draft
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist
 
       - name: Publish
         env:

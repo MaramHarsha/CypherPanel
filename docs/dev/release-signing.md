@@ -71,9 +71,26 @@ export CYPHER_RELEASE_SIGNING_KEY="$(cat cypher-release.key)"
 make release-sign VERSION=v0.1.0
 ```
 
-That downloads the draft's artifacts, re-checks every digest against
-`SHA256SUMS`, signs the manifest, verifies the signature it just made, uploads
-`SHA256SUMS.sig`, and only then flips the release out of draft.
+That does not take the draft's word for anything. It checks out the tag from
+the repository, **rebuilds both binaries from source** with the same flags CI
+used, and compares them byte for byte against what the draft published — then
+signs a manifest computed from its own rebuild, verifies that signature, uploads
+it, and only then flips the release out of draft.
+
+The rebuild is the whole point. Downloading the binaries and the `SHA256SUMS`
+from the same draft and confirming they agree proves nothing: whoever can write
+to the draft writes both, and they agree perfectly. That check is circular, and
+trusting it would have had the offline key turn CI-supplied bytes into an
+authentic fleet release — precisely the compromise the offline key exists to
+survive. Comparing against a local rebuild makes the signature mean *"I built
+this from source I read"* rather than *"CI agrees with itself"*.
+
+Go builds are reproducible under `-trimpath` with `CGO_ENABLED=0` and fixed
+ldflags, which is what lets a mismatch carry meaning. The script refuses to run
+on a different Go toolchain than the release was built with, because a version
+skew is indistinguishable from a tampered artifact once the comparison fails —
+and an operator who learns that mismatches are normal is an operator who will
+sign through a real one.
 
 ## Verifying a release by hand
 

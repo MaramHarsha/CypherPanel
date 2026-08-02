@@ -422,5 +422,7 @@ test("the policy source is plain text and ** still spans separators", () => {
 // The release signer handles the private key on whatever machine signs, so a
 // change making it disclose that key must never be auto-approvable.
 test("the release signer is protected", () => {
-  assert.equal(call({ files: ["core/cmd/release-sign/main.go"] }).action, "comment-sensitive");
+  for (const f of ["core/cmd/release-sign/main.go", "scripts/release-sign.sh"]) {
+    assert.equal(call({ files: [f] }).action, "comment-sensitive", f);
+  }
 });
