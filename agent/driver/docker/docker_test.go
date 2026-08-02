@@ -165,6 +165,10 @@ func (f *fakeClient) EnsureImage(_ context.Context, ref string) error {
 	return nil
 }
 
+func (f *fakeClient) HasImage(_ context.Context, ref string) (bool, error) {
+	return f.localImages[ref], nil
+}
+
 func (f *fakeClient) TagImage(_ context.Context, source, target string) error {
 	if f.tagErr != nil {
 		return f.tagErr
@@ -1033,7 +1037,7 @@ func TestBuiltImageIsNotTagged(t *testing.T) {
 // revision to the artifact rather than to a tag that can move.
 func TestPullSpecReportsResolvedDigest(t *testing.T) {
 	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
-	c.digests = map[string]string{"ghost:5": "ghost@sha256:deadbeef"}
+	c.digests = map[string]string{"cypher/app1:rev1": "ghost@sha256:deadbeef"}
 	d := newDriver(c, r, p)
 
 	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")})
@@ -1094,10 +1098,11 @@ func TestGCReclaimsAllReferencesOfRemovedApp(t *testing.T) {
 // its own managed alias, but the layers are one image.
 func TestGCKeepsImageSharedWithDesiredApp(t *testing.T) {
 	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	c.localImages = map[string]bool{"ghost:5": true} // operator's reference; the rollout leaves it
 	c.images = []Image{{
 		ID:         "sha256:shared",
 		AppIDs:     []string{"gone", "kept"},
-		References: []string{"cypher/gone:rev1", "cypher/kept:rev1", "ghost:5"},
+		References: []string{"cypher/gone:rev1", "cypher/kept:rev1"},
 	}}
 	d := newDriver(c, r, p)
 
@@ -1105,6 +1110,77 @@ func TestGCKeepsImageSharedWithDesiredApp(t *testing.T) {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	if len(c.removedImages) != 0 {
-		t.Fatalf("removed %v — an image a desired app still runs must survive", c.removedImages)
+		t.Fatalf("removed %v — an image a desired app still runs must survive whole", c.removedImages)
+	}
+}
+
+// The reference our own pull created is dropped once the managed alias holds
+// the image: leaving it would keep every layer alive after the app is deleted,
+// because GC only reclaims references CypherPanel created.
+func TestPullDropsTheReferenceItCreated(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if !c.removedImages["ghost:5"] {
+		t.Fatalf("removed = %v, want the floating reference our pull created", c.removedImages)
+	}
+}
+
+// A reference that already existed belongs to the operator — running an app
+// from it must never untag it.
+func TestPullKeepsAPreexistingReference(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	c.localImages = map[string]bool{"ghost:5": true} // the operator pulled it
+	d := newDriver(c, r, p)
+
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if c.removedImages["ghost:5"] {
+		t.Fatal("untagged a reference CypherPanel did not create")
+	}
+}
+
+// GC reclaims only managed aliases. An unrelated tag on the same image — an
+// operator's, or another tool's — must survive the app's deletion.
+func TestGCLeavesUnownedReferences(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	c.images = []Image{{
+		ID:         "sha256:img",
+		AppIDs:     []string{"app1"},
+		References: []string{"cypher/app1:rev1"}, // engine filters unmanaged tags out
+	}}
+	d := newDriver(c, r, p)
+
+	if _, err := d.Reconcile(context.Background(), nil); err != nil {
+		t.Fatalf("teardown: %v", err)
+	}
+	if !c.removedImages["cypher/app1:rev1"] {
+		t.Fatal("the managed alias was not reclaimed")
+	}
+	if c.removedImages["ghost:5"] {
+		t.Fatal("an unowned reference was removed")
+	}
+}
+
+// The digest is resolved from the alias this rollout pinned, not the source
+// tag — which another app can repoint, making it name an image we never ran.
+func TestDigestResolvedFromManagedAlias(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	c.digests = map[string]string{
+		"cypher/app1:rev1": "ghost@sha256:whatweran",
+		"ghost:5":          "ghost@sha256:somethingelse",
+	}
+	d := newDriver(c, r, p)
+
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if st := statusOf(got, "app1"); st.GetResolvedImage() != "ghost@sha256:whatweran" {
+		t.Fatalf("resolved_image = %q, want the digest behind the managed alias", st.GetResolvedImage())
 	}
 }

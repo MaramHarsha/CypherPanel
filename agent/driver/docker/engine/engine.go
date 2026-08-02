@@ -361,7 +361,18 @@ func (c *Client) ListManagedImages(ctx context.Context) ([]docker.Image, error) 
 		if len(appIDs) == 0 {
 			continue // not ours: never touched
 		}
-		out = append(out, docker.Image{ID: s.ID, AppIDs: appIDs, References: s.RepoTags})
+		// Only references CypherPanel created are reclaimable. An image can
+		// also carry tags an operator or another tool made — deleting an app
+		// must never untag those (reconciler contract: never touch what is not
+		// ours). The floating reference a pull arrives under is dropped at
+		// rollout instead, and only when we were the ones who created it.
+		managed := make([]string, 0, len(s.RepoTags))
+		for _, tag := range s.RepoTags {
+			if _, _, ok := parseManagedTag(tag); ok {
+				managed = append(managed, tag)
+			}
+		}
+		out = append(out, docker.Image{ID: s.ID, AppIDs: appIDs, References: managed})
 	}
 	return out, nil
 }

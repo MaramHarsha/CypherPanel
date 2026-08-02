@@ -126,6 +126,10 @@ type Client interface {
 	// images cannot carry our labels, so this is how they become visible to
 	// desired-state GC. Idempotent.
 	TagImage(ctx context.Context, source, target string) error
+	// HasImage reports whether a reference already exists locally. Used before
+	// a pull to learn whether the reference is one we are about to create — the
+	// only way to know later whether it is ours to remove.
+	HasImage(ctx context.Context, image string) (bool, error)
 	// ExecAndWait runs argv in a running container to completion, returning its
 	// exit code and captured output (scheduled tasks, backups). A non-zero exit
 	// is not an error — the caller interprets it.
@@ -307,6 +311,13 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 	// when the reference is already local (crash-resume between pull and start).
 	image := spec.GetImage()
 	if spec.GetPull() {
+		// Learn whether this reference is ours *before* the pull creates it.
+		hadSource, hasErr := d.client.HasImage(ctx, image)
+		if hasErr != nil {
+			// Unknown provenance: assume the operator's and leave it alone.
+			hadSource = true
+			d.log.Warn("checking image provenance", "image", image, "error", hasErr)
+		}
 		if err := d.client.EnsureImage(ctx, image); err != nil {
 			return status(spec.GetAppId(), currentRevision(existing), stateError, "pull: "+err.Error())
 		}
@@ -319,6 +330,17 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 		managed := managedImageTag(spec.GetAppId(), spec.GetRevisionId())
 		if err := d.client.TagImage(ctx, image, managed); err != nil {
 			return status(spec.GetAppId(), currentRevision(existing), stateError, "tag: "+err.Error())
+		}
+		// If the pull created the source reference, drop it: the managed alias
+		// now holds the image, and leaving the floating tag behind would keep
+		// every layer alive after the app is deleted (GC only removes
+		// references we created, so it could never reclaim this one). A
+		// reference that already existed belongs to the operator and is left
+		// untouched. Best-effort — failing to tidy must not fail a rollout.
+		if !hadSource {
+			if err := d.client.RemoveImage(ctx, spec.GetImage()); err != nil {
+				d.log.Warn("dropping the reference our pull created", "image", spec.GetImage(), "error", err)
+			}
 		}
 		image = managed
 	}
@@ -458,7 +480,12 @@ func (d *Driver) runningStatus(ctx context.Context, spec *agentv1.AppSpec) *agen
 	if !spec.GetPull() {
 		return st
 	}
-	digest, err := d.client.ImageDigest(ctx, spec.GetImage())
+	// Resolve from the managed alias, not the source tag: that tag can be
+	// repointed locally (another app pulling the same `ghost:5`), and resolving
+	// it would report a digest this container never ran — which the plane would
+	// then pin to the revision, so a later rollback would deploy the wrong
+	// artifact. The alias is fixed to what this rollout tagged.
+	digest, err := d.client.ImageDigest(ctx, managedImageTag(spec.GetAppId(), spec.GetRevisionId()))
 	if err != nil {
 		d.log.Warn("resolving image digest", "app_id", spec.GetAppId(), "image", spec.GetImage(), "error", err)
 		return st
