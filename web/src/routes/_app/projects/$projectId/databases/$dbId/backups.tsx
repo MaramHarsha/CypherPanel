@@ -107,7 +107,7 @@ function ScheduleCard({ dbId, schedule }: { dbId: string; schedule: DatabaseBack
   });
 
   return (
-    <div className="rounded-md border border-border bg-surface">
+    <div className="rounded-lg border border-border bg-surface">
       <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -239,7 +239,7 @@ function NewScheduleDialog({ dbId, primary }: { dbId: string; primary?: boolean 
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <Button variant={primary ? "primary" : "secondary"} size="sm">
+        <Button variant="primary" size={primary ? "lg" : "md"}>
           <Plus className="h-3.5 w-3.5" /> New schedule
         </Button>
       </DialogTrigger>
@@ -251,7 +251,7 @@ function NewScheduleDialog({ dbId, primary }: { dbId: string; primary?: boolean 
                 id={id}
                 value={chosen}
                 onChange={(e) => setTargetId(e.target.value)}
-                className="h-8 w-full rounded-md border border-border bg-surface px-2 text-sm text-text"
+                className="h-8 w-full rounded-lg border border-border bg-surface px-2 text-sm text-text"
               >
                 {(targets.data ?? []).map((t) => (
                   <option key={t.id} value={t.id}>

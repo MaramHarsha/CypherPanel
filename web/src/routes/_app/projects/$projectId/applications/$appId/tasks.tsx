@@ -78,7 +78,7 @@ function TaskCard({ appId, task }: { appId: string; task: ScheduledTask }) {
   });
 
   return (
-    <div className="rounded-md border border-border bg-surface">
+    <div className="rounded-lg border border-border bg-surface">
       <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -186,7 +186,7 @@ function NewTaskDialog({ appId, primary }: { appId: string; primary?: boolean })
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <Button variant={primary ? "primary" : "secondary"} size="sm">
+        <Button variant="primary" size={primary ? "lg" : "md"}>
           <Plus className="h-3.5 w-3.5" /> New task
         </Button>
       </DialogTrigger>

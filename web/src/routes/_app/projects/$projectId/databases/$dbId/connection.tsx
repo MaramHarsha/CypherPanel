@@ -30,9 +30,21 @@ function ConnectionTab() {
 
           <section className="space-y-2">
             <Eyebrow>From outside</Eyebrow>
-            <InlineHint>Reachable externally only if you exposed a port when creating the database.</InlineHint>
-            <Pair label="Host" value={c.host} />
-            <Pair label="Port" value={String(c.port)} />
+            {/* No exposed port means there is no external host to copy. Say so
+                and name the remedy rather than offering an empty field to
+                copy — a screen you can only stare at is a bug (§11). */}
+            {c.host ? (
+              <>
+                <InlineHint>Reachable externally only if you exposed a port when creating the database.</InlineHint>
+                <Pair label="Host" value={c.host} />
+                <Pair label="Port" value={String(c.port)} />
+              </>
+            ) : (
+              <InlineHint>
+                This database isn't reachable from outside — no host port was exposed when it was created. Set one in
+                Settings to connect from your laptop.
+              </InlineHint>
+            )}
           </section>
         </div>
       )}

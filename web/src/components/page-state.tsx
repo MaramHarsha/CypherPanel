@@ -37,9 +37,9 @@ export function PageState<T, E = unknown>({ query, empty, isEmpty, loading, chil
     const err = query.error;
     const headline = err instanceof ApiError ? err.message : "Something went wrong loading this";
     return (
-      <div className="rounded-md border border-danger/30 bg-danger/5 p-4">
-        <p className="text-sm text-text">{headline}</p>
-        <div className="mt-3 flex items-center gap-3">
+      <div className="rounded-lg border border-danger/35 bg-danger/[0.06] p-5">
+        <p className="text-[15px] font-semibold text-text">{headline}</p>
+        <div className="mt-4 flex items-center gap-3">
           <Button size="sm" onClick={() => void query.refetch()}>
             <RotateCw className="h-3.5 w-3.5" /> Retry
           </Button>

@@ -73,7 +73,7 @@ function EnvTab() {
         empty={<EmptyState title="No env vars" hint="Anything your app reads from the environment — API keys, connection strings — goes here." />}
       >
         {(d) => (
-          <ul className="divide-y divide-border rounded-md border border-border bg-surface">
+          <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-surface">
             {d.keys.map((k) => (
               <EnvRow
                 key={k}

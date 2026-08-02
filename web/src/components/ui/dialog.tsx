@@ -25,9 +25,11 @@ export function DialogContent({ title, description, children, className, ...prop
         )}
         {...props}
       >
-        <DialogPrimitive.Title className="text-sm font-semibold text-text">{title}</DialogPrimitive.Title>
+        <DialogPrimitive.Title className="text-[15px] font-bold tracking-tight text-text">
+          {title}
+        </DialogPrimitive.Title>
         {description ? (
-          <DialogPrimitive.Description className="mt-1 text-xs text-text-mid">
+          <DialogPrimitive.Description className="mt-1.5 text-[13px] leading-relaxed text-text-mid">
             {description}
           </DialogPrimitive.Description>
         ) : (

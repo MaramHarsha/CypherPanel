@@ -32,7 +32,7 @@ function PreviewsTab() {
       }
     >
       {(list) => (
-        <ul className="divide-y divide-border rounded-md border border-border bg-surface">
+        <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-surface">
           {list.map((p) => (
             <PreviewRow key={p.id} preview={p} />
           ))}

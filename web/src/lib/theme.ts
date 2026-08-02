@@ -1,5 +1,6 @@
-// Dark is the default; light is the stored opt-in (ui-principles §9). The
-// class lives on <html>; main.tsx applies it before first render.
+// Light is the default; dark is the stored opt-in (ui-principles §9, revised
+// 2026-08-02 with the Mission Control direction). The class lives on <html>;
+// main.tsx applies it before first render.
 import { useSyncExternalStore } from "react";
 
 const STORAGE_KEY = "cypher.theme";
@@ -9,9 +10,9 @@ const listeners = new Set<() => void>();
 
 export function storedTheme(): Theme {
   try {
-    return localStorage.getItem(STORAGE_KEY) === "light" ? "light" : "dark";
+    return localStorage.getItem(STORAGE_KEY) === "dark" ? "dark" : "light";
   } catch {
-    return "dark";
+    return "light";
   }
 }
 

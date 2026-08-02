@@ -4,8 +4,12 @@
   "version": "0.1.0",
   "type": "module",
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"],
-    "ignoredBuiltDependencies": ["@scarf/scarf"]
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ],
+    "ignoredBuiltDependencies": [
+      "@scarf/scarf"
+    ]
   },
   "scripts": {
     "dev": "vite",
@@ -15,7 +19,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fontsource-variable/instrument-sans": "^5.3.0",
     "@fontsource-variable/inter": "^5.2.5",
+    "@fontsource/fragment-mono": "^5.3.0",
     "@fontsource/ibm-plex-mono": "^5.2.5",
     "@microsoft/fetch-event-source": "^2.0.1",
     "@radix-ui/react-dialog": "^1.1.6",

@@ -30,7 +30,8 @@ A PR adding a page without all four is incomplete by definition (see ENGINEERING
 ## 4. Navigation & density
 
 - **Landing page is Projects.** V1 has no separate "home dashboard" — decided 2026-07-17 after checking both references: Coolify's dashboard is literally two lists (projects, servers), Dokploy lands straight on the projects grid, and that directness is what users describe as "easy to manage." A richer overview page is post-v1, and only if real usage demands it.
-- **The sidebar is exactly four items: Projects · Servers · Templates · Settings.** (Coolify has ~12, Dokploy 8.) Everything else lives *inside* its context — backups as tabs on databases plus a Settings section, logs/domains/deploys as tabs on resources. A new top-level nav item requires a recorded decision; it competes with every existing one.
+- **Top-level nav is exactly four items: Projects · Servers · Templates · Settings.** (Coolify has ~12, Dokploy 8.) Everything else lives *inside* its context — backups as tabs on databases plus a Settings section, logs/domains/deploys as tabs on resources. A new top-level nav item requires a recorded decision; it competes with every existing one.
+- **Those four items live in a top bar, not a sidebar** (revised 2026-08-02 with the Mission Control direction; the count and the composition are unchanged). The panel's content is wide tables and side-by-side resource boards, and a persistent 208 px sidebar taxes every one of them on every screen. The bar sits on the product's strongest rule — a 1.5 px ink line — so chrome and content never blur. Below `sm` it stays a bar and scrolls horizontally rather than becoming a second navigation model to learn.
 - No jargon in the nav — "Sources", "Destinations" as top-level concepts (Coolify) are what the [glossary](../glossary.md) exists to prevent.
 - Hierarchy is Team → Project → Environment → Resource, always visible as breadcrumbs.
 - Prefer drawers/panels over modals; modal depth is 1, maximum.
@@ -67,7 +68,8 @@ Status changes stream in via SSE — no manual refresh, ever.
 
 - WCAG 2.1 AA as the working floor: visible focus states, 4.5:1 text contrast, `aria-live` for status changes, full keyboard operability.
 - Usable at 360 px wide: tables collapse to cards; monitoring/deploy status must work on a phone (P1's success moment happens there).
-- Dark mode is the default (the audience lives there); light mode is fully supported, not an afterthought. Both themes ship with every component from day one — retrofitting themes is how inconsistency wins.
+- **Light is the default; dark is the stored opt-in** (revised 2026-08-02 with the Mission Control direction — previously dark-default). The surface is warm paper, not a terminal emulator: the panel is read in daylight as often as at 2am, and the editorial light face is what makes a wall of machine state legible rather than oppressive. The audience that lives in the dark still gets a first-class dark theme, one click away and remembered. Both themes ship with every component from day one — retrofitting themes is how inconsistency wins.
+- Log and terminal panes are ink in **both** themes. They are already terminals; inverting them in light mode would make them harder to read, not easier.
 
 ## 10. Real-time integrity
 

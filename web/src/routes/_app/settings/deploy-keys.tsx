@@ -57,7 +57,7 @@ function KeyRow({ k }: { k: DeployKey }) {
     },
   });
   return (
-    <li className="space-y-2 rounded-md border border-border bg-surface p-3">
+    <li className="space-y-2 rounded-lg border border-border bg-surface p-3">
       <div className="flex items-center justify-between gap-2">
         <span className="text-[13px] font-medium text-text">{k.name}</span>
         <span className="flex items-center gap-2">
@@ -94,7 +94,7 @@ function CreateKeyDialog({ primary }: { primary?: boolean }) {
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <Button variant={primary ? "primary" : "secondary"} size="sm">
+        <Button variant="primary" size={primary ? "lg" : "md"}>
           <Plus className="h-3.5 w-3.5" /> New deploy key
         </Button>
       </DialogTrigger>

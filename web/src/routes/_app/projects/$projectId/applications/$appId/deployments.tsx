@@ -1,10 +1,10 @@
-// Application · Deployments: the pipeline list, deploy/rollback actions, and
-// the deployment drawer — live build log + the celebrated stage animation
-// (web-ui-design.md §4). Never blocks navigation during a deploy.
+// Application · Deployments: the pipeline list plus the live deploy drawer —
+// an ink panel in both themes, because what it frames is a log (4e token
+// table). Never blocks navigation during a deploy: the state lives on the
+// server and this is a window onto it (ui-principles §3).
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Rocket, Undo2 } from "lucide-react";
 import { toast } from "sonner";
-import { useGetApplication } from "@/api/gen/applications/applications";
 import {
   getStreamDeploymentLogsUrl,
   useDeployApplication,
@@ -13,14 +13,15 @@ import {
   useRollbackDeployment,
 } from "@/api/gen/deployments/deployments";
 import type { Deployment } from "@/api/gen/model";
-import { Eyebrow } from "@/components/eyebrow";
 import { EmptyState } from "@/components/empty-state";
 import { LogViewer } from "@/components/log-viewer";
 import { PageState } from "@/components/page-state";
 import { PipelineStages } from "@/components/pipeline-stages";
+import { StatusDot } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Drawer } from "@/components/ui/drawer";
 import { relativeTime, absoluteTime } from "@/lib/time";
+import { cn } from "@/lib/utils";
 
 interface DeploymentsSearch {
   dep?: string;
@@ -32,12 +33,34 @@ export const Route = createFileRoute("/_app/projects/$projectId/applications/$ap
   component: DeploymentsTab,
 });
 
+function isTerminal(status: string): boolean {
+  return status === "succeeded" || status === "failed";
+}
+
+/** Deployment status → the shared status vocabulary (ui-principles §5). */
+function toStatus(d: Deployment, isNewest: boolean): string {
+  if (d.status === "failed") return "error";
+  if (!isTerminal(d.status)) return "deploying";
+  return isNewest ? "running" : "stopped";
+}
+
+/** The word for what this deployment is now — serving, superseded, failed. */
+function outcome(d: Deployment, isNewest: boolean): string {
+  if (d.status === "failed") return "failed";
+  if (!isTerminal(d.status)) return d.status;
+  return isNewest ? "serving" : "superseded";
+}
+
+function shortRev(id: string): string {
+  const tail = id.includes("_") ? id.slice(id.lastIndexOf("_") + 1) : id;
+  return tail.slice(0, 7);
+}
+
 function DeploymentsTab() {
   const { appId } = Route.useParams();
   const { dep } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const deployments = useListDeployments(appId);
-  const app = useGetApplication(appId);
 
   const deploy = useDeployApplication({
     mutation: {
@@ -49,30 +72,26 @@ function DeploymentsTab() {
     },
   });
 
-  const active = (deployments.data ?? []).some((d) => !isTerminal(d.status));
+  // "Serving" is the newest succeeded deployment — everything older that also
+  // succeeded has been superseded by it.
+  const newestSucceeded = (deployments.data ?? []).find((d) => d.status === "succeeded")?.id;
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <Eyebrow>Deployments</Eyebrow>
-        <Button
-          variant="primary"
-          size="sm"
-          disabled={deploy.isPending || active}
-          onClick={() => deploy.mutate({ id: appId, data: {} })}
-        >
-          <Rocket className="h-3.5 w-3.5" /> Deploy {app.data?.source.branch ?? ""}
-        </Button>
-      </div>
-
+    <>
       <PageState
         query={deployments}
         empty={
           <EmptyState
+            emphasis
             title="No deployments yet"
             hint="Deploy builds the repository's Dockerfile and rolls it out with a health-gated, zero-downtime switch. Push-to-deploy is on the Overview tab."
             action={
-              <Button variant="primary" size="sm" disabled={deploy.isPending} onClick={() => deploy.mutate({ id: appId, data: {} })}>
+              <Button
+                variant="primary"
+                size="lg"
+                disabled={deploy.isPending}
+                onClick={() => deploy.mutate({ id: appId, data: {} })}
+              >
                 <Rocket className="h-3.5 w-3.5" /> Deploy now
               </Button>
             }
@@ -80,25 +99,36 @@ function DeploymentsTab() {
         }
       >
         {(list) => (
-          <ul className="divide-y divide-border rounded-md border border-border bg-surface">
-            {list.map((d) => (
-              <DeploymentRow key={d.id} deployment={d} onOpen={() => void navigate({ search: { dep: d.id } })} />
+          <ul>
+            {list.map((d, i) => (
+              <DeploymentRow
+                key={d.id}
+                deployment={d}
+                first={i === 0}
+                isNewest={d.id === newestSucceeded}
+                onOpen={() => void navigate({ search: { dep: d.id } })}
+              />
             ))}
           </ul>
         )}
       </PageState>
 
       <DeploymentDrawer depId={dep ?? null} onClose={() => void navigate({ search: {} })} />
-    </div>
+    </>
   );
 }
 
-function isTerminal(status: string): boolean {
-  return status === "succeeded" || status === "failed";
-}
-
-function DeploymentRow({ deployment: d, onOpen }: { deployment: Deployment; onOpen: () => void }) {
-  const { appId } = Route.useParams();
+function DeploymentRow({
+  deployment: d,
+  first,
+  isNewest,
+  onOpen,
+}: {
+  deployment: Deployment;
+  first: boolean;
+  isNewest: boolean;
+  onOpen: () => void;
+}) {
   const rollback = useRollbackDeployment({
     mutation: {
       onSuccess: () => toast.success("Rollback started — the previous revision is coming back"),
@@ -106,24 +136,44 @@ function DeploymentRow({ deployment: d, onOpen }: { deployment: Deployment; onOp
     },
   });
 
+  const status = toStatus(d, isNewest);
+  const live = !isTerminal(d.status);
+
   return (
-    <li className="flex items-center justify-between gap-3 px-4 py-3">
-      <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 flex-col items-start gap-1 text-left">
-        <span className="flex items-center gap-2">
-          <span className="mono text-xs text-text-mid">{d.revision_id}</span>
-          <span className="mono text-[11px] text-text-faint">{d.trigger}</span>
+    <li
+      className={cn(
+        "flex items-center gap-4 border-t py-4 pr-2",
+        first ? "border-t-[1.5px] border-border-strong" : "border-border",
+        live && "bg-linear-to-r from-status-deploying/[0.05] to-transparent to-70%",
+        d.status === "failed" && "bg-linear-to-r from-status-error/[0.04] to-transparent to-70%",
+      )}
+    >
+      <StatusDot status={status} />
+      <button type="button" onClick={onOpen} className="min-w-0 flex-1 text-left">
+        <span className="flex flex-wrap items-baseline gap-x-2.5">
+          <span className="font-mono text-[13px] font-medium">{shortRev(d.revision_id)}</span>
+          {d.detail && <span className="min-w-0 truncate text-[13px] text-text-mid">{d.detail}</span>}
         </span>
-        <PipelineStages status={d.status} detail={d.detail} />
+        <span className="mt-1 block text-[11.5px] text-text-faint">
+          {d.trigger} · <span title={absoluteTime(d.created_at)}>{relativeTime(d.created_at)}</span>
+          {d.finished_at && ` · finished ${relativeTime(d.finished_at)}`}
+        </span>
+        {live && <PipelineStages status={d.status} detail={d.detail} className="mt-2" />}
       </button>
-      <span className="flex shrink-0 items-center gap-2">
-        <span className="mono text-xs text-text-faint" title={absoluteTime(d.created_at)}>
-          {relativeTime(d.created_at)}
+      <span className="flex shrink-0 items-center gap-3">
+        <span
+          className={cn(
+            "font-mono text-[11px] font-medium uppercase tracking-wide",
+            status === "error" ? "text-danger" : status === "deploying" ? "text-status-deploying" : "text-text-faint",
+          )}
+        >
+          {outcome(d, isNewest)}
         </span>
-        {d.status === "succeeded" && (
+        {d.status === "succeeded" && !isNewest && (
           <Button
             size="sm"
             variant="ghost"
-            aria-label={`Roll back to ${d.revision_id}`}
+            aria-label={`Roll back to ${shortRev(d.revision_id)}`}
             disabled={rollback.isPending}
             onClick={() => rollback.mutate({ id: d.id })}
           >
@@ -131,7 +181,6 @@ function DeploymentRow({ deployment: d, onOpen }: { deployment: Deployment; onOp
           </Button>
         )}
       </span>
-      {appId !== d.application_id && null}
     </li>
   );
 }
@@ -147,22 +196,33 @@ function DeploymentDrawer({ depId, onClose }: { depId: string | null; onClose: (
         if (!o) onClose();
       }}
       label="Deployment detail"
-      title={<span className="mono">{depId ?? ""}</span>}
+      title={
+        <span className="flex items-baseline gap-2.5">
+          <span className="font-mono">{d ? shortRev(d.revision_id) : ""}</span>
+          <span className="text-[12px] font-normal text-[#8a8375]">deployment</span>
+        </span>
+      }
       wide
+      tone="ink"
     >
       {d && (
-        <div className="flex h-full min-h-0 flex-col gap-4 p-4">
-          <div className="space-y-2">
-            <PipelineStages status={d.status} detail={d.detail} />
-            {d.status === "failed" && d.detail && (
-              <p className="rounded-md border border-danger/30 bg-danger/5 px-3 py-2 text-[13px] text-text">{d.detail}</p>
-            )}
-            <p className="mono text-xs text-text-faint">
-              revision {d.revision_id} · {d.trigger} · started {relativeTime(d.created_at)}
-              {d.finished_at ? ` · finished ${relativeTime(d.finished_at)}` : ""}
+        <div className="flex h-full min-h-0 flex-col gap-4 p-5">
+          <PipelineStages status={d.status} detail={d.detail} tone="ink" />
+          {d.status === "failed" && d.detail && (
+            <p className="rounded-md border border-[#ff6a5e]/40 bg-[#ff6a5e]/10 px-3 py-2.5 text-[13px] text-[#ff9d94]">
+              {d.detail}
             </p>
-          </div>
+          )}
           <LogViewer url={getStreamDeploymentLogsUrl(d.id)} className="min-h-0 flex-1" />
+          <p className="font-mono text-[11.5px] text-[#8a8375]">
+            {d.trigger} · started <span title={absoluteTime(d.created_at)}>{relativeTime(d.created_at)}</span>
+            {d.finished_at ? ` · finished ${relativeTime(d.finished_at)}` : ""}
+          </p>
+          {!isTerminal(d.status) && (
+            <p className="text-[12px] text-[#8a8375]">
+              Zero-downtime rollout — the old revision keeps serving until the new one is provably healthy.
+            </p>
+          )}
         </div>
       )}
     </Drawer>

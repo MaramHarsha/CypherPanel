@@ -54,7 +54,7 @@ function UsersTab() {
         empty={<EmptyState title="No other users" hint="Invite teammates by creating their account here." action={<CreateUserDialog primary />} />}
       >
         {(list) => (
-          <ul className="divide-y divide-border rounded-md border border-border bg-surface">
+          <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-surface">
             {list.map((u) => (
               <UserRow key={u.id} user={u} isSelf={u.id === me.data?.id} />
             ))}
@@ -88,7 +88,7 @@ function UserRow({ user, isSelf }: { user: User; isSelf: boolean }) {
         disabled={isSelf || update.isPending}
         onChange={(e) => update.mutate({ id: user.id, data: { role: e.target.value as "member" | "admin" | "owner" } })}
         aria-label={`Role for ${user.email}`}
-        className="h-7 rounded-md border border-border bg-surface px-2 text-xs text-text disabled:opacity-50"
+        className="h-7 rounded-lg border border-border bg-surface px-2 text-xs text-text disabled:opacity-50"
       >
         <option value="member">member</option>
         <option value="admin">admin</option>
@@ -135,7 +135,7 @@ function CreateUserDialog({ primary }: { primary?: boolean }) {
       }}
     >
       <DialogTrigger asChild>
-        <Button variant={primary ? "primary" : "secondary"} size="sm">
+        <Button variant="primary" size={primary ? "lg" : "md"}>
           <Plus className="h-3.5 w-3.5" /> New user
         </Button>
       </DialogTrigger>
@@ -162,7 +162,7 @@ function CreateUserDialog({ primary }: { primary?: boolean }) {
             </Field>
             <Field label="Panel role">
               {(id) => (
-                <select id={id} value={role} onChange={(e) => setRole(e.target.value)} className="h-8 w-full rounded-md border border-border bg-surface px-2 text-sm text-text">
+                <select id={id} value={role} onChange={(e) => setRole(e.target.value)} className="h-8 w-full rounded-lg border border-border bg-surface px-2 text-sm text-text">
                   <option value="member">member</option>
                   <option value="admin">admin</option>
                   <option value="owner">owner</option>

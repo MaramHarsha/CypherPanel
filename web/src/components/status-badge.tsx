@@ -1,18 +1,21 @@
 // StatusBadge — the single source of status rendering (web-ui-design.md §6).
-// One vocabulary everywhere (ui-principles §5): mono label + dot; `deploying`
-// pulses (an earned animation); `unknown` is a hollow dot — never fake
+// One vocabulary everywhere (ui-principles §5). Mission Control gives the
+// marker a shape as well as a color, so status survives a color-blind reader
+// and a phone in sunlight: `error` is a square, everything else is a dot,
+// `deploying` wears a halo and pulses, `unknown` is hollow — never fake
 // certainty.
 import { cn } from "@/lib/utils";
 
 export type Status = "running" | "deploying" | "stopped" | "error" | "degraded" | "unknown";
 
-const DOT: Record<Status, string> = {
-  running: "bg-status-running",
-  deploying: "bg-status-deploying animate-status-pulse",
-  stopped: "bg-status-stopped",
-  error: "bg-status-error",
-  degraded: "bg-status-degraded",
-  unknown: "border border-status-unknown bg-transparent",
+const MARKER: Record<Status, string> = {
+  running: "rounded-full bg-status-running",
+  deploying:
+    "rounded-full bg-status-deploying animate-status-pulse ring-3 ring-status-deploying/20",
+  stopped: "rounded-full bg-status-stopped",
+  error: "rounded-[2px] bg-status-error",
+  degraded: "rounded-full bg-status-degraded",
+  unknown: "rounded-full border border-status-unknown bg-transparent",
 };
 
 const TEXT: Record<Status, string> = {
@@ -22,6 +25,16 @@ const TEXT: Record<Status, string> = {
   error: "text-status-error",
   degraded: "text-status-degraded",
   unknown: "text-status-unknown",
+};
+
+/** Tinted pill for rollups: `1 APP ERROR`, `ALL RUNNING`, `2 STOPPED`. */
+const PILL: Record<Status, string> = {
+  running: "text-status-running bg-status-running/8 border-status-running/25",
+  deploying: "text-status-deploying bg-status-deploying/8 border-status-deploying/25",
+  stopped: "text-text-mid bg-text-mid/6 border-border",
+  error: "text-danger bg-status-error/9 border-status-error/30",
+  degraded: "text-status-degraded bg-status-degraded/8 border-status-degraded/25",
+  unknown: "text-text-mid bg-text-mid/6 border-border",
 };
 
 export function normalizeStatus(s: string | undefined | null): Status {
@@ -44,23 +57,50 @@ export function normalizeStatus(s: string | undefined | null): Status {
 export function StatusBadge({ status, className }: { status: string | undefined | null; className?: string }) {
   const s = normalizeStatus(status);
   return (
-    <span className={cn("inline-flex items-center gap-1.5", className)}>
-      <span className={cn("h-2 w-2 shrink-0 rounded-full", DOT[s])} aria-hidden />
-      <span className={cn("mono text-xs", TEXT[s])} aria-live="polite">
+    <span className={cn("inline-flex items-center gap-2", className)}>
+      <StatusDot status={s} />
+      <span
+        className={cn("font-mono text-[11px] font-medium uppercase tracking-wide", TEXT[s])}
+        aria-live="polite"
+      >
         {s}
       </span>
     </span>
   );
 }
 
-/** Dot-only variant for dense rows and rollups. */
+/** Marker-only variant for dense rows and rollups. */
 export function StatusDot({ status, className }: { status: string | undefined | null; className?: string }) {
   const s = normalizeStatus(status);
   return (
     <span
-      className={cn("inline-block h-2 w-2 rounded-full", DOT[s], className)}
+      className={cn("inline-block h-2.5 w-2.5 shrink-0", MARKER[s], className)}
       role="img"
       aria-label={s}
     />
+  );
+}
+
+/** Tinted rollup pill — carries its own sentence, e.g. "1 app error". */
+export function StatusPill({
+  status,
+  children,
+  className,
+}: {
+  status: string | undefined | null;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  const s = normalizeStatus(status);
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded border px-2 py-0.5 font-mono text-[11px] font-medium uppercase tracking-wide",
+        PILL[s],
+        className,
+      )}
+    >
+      {children}
+    </span>
   );
 }

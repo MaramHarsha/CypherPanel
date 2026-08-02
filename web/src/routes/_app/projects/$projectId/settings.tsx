@@ -18,6 +18,7 @@ import type { Notifier } from "@/api/gen/model";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
 import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
+import { PageBody, PageHeader } from "@/components/page-header";
 import { PageState } from "@/components/page-state";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
@@ -49,15 +50,15 @@ function ProjectSettings() {
   ]);
 
   return (
-    <div className="max-w-xl space-y-4">
-      <div className="flex items-center justify-between">
+    <>
+      <PageHeader
+        title="Project settings"
+        hint="Get a message when a deploy or backup in this project succeeds or fails — on Discord, Slack, Telegram, or email."
+        actions={<NewNotifierDialog projectId={projectId} />}
+      />
+      <PageBody className="max-w-2xl space-y-3.5">
         <Eyebrow>Notifiers</Eyebrow>
-        <NewNotifierDialog projectId={projectId} />
-      </div>
-      <p className="text-[13px] text-text-mid">
-        Get a message when a deploy or backup in this project succeeds or fails — on Discord, Slack, Telegram, or email.
-      </p>
-      <PageState
+        <PageState
         query={notifiers}
         empty={
           <EmptyState
@@ -67,15 +68,16 @@ function ProjectSettings() {
           />
         }
       >
-        {(list) => (
-          <ul className="divide-y divide-border rounded-md border border-border bg-surface">
-            {list.map((n) => (
-              <NotifierRow key={n.id} projectId={projectId} notifier={n} />
-            ))}
-          </ul>
-        )}
-      </PageState>
-    </div>
+          {(list) => (
+            <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-surface">
+              {list.map((n) => (
+                <NotifierRow key={n.id} projectId={projectId} notifier={n} />
+              ))}
+            </ul>
+          )}
+        </PageState>
+      </PageBody>
+    </>
   );
 }
 
@@ -173,7 +175,7 @@ function NewNotifierDialog({ projectId, primary }: { projectId: string; primary?
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <Button variant={primary ? "primary" : "secondary"} size="sm">
+        <Button variant="primary" size={primary ? "lg" : "md"}>
           <Plus className="h-3.5 w-3.5" /> New notifier
         </Button>
       </DialogTrigger>
@@ -191,7 +193,7 @@ function NewNotifierDialog({ projectId, primary }: { projectId: string; primary?
                   setChannel(e.target.value as Channel);
                   setCfg({});
                 }}
-                className="h-8 w-full rounded-md border border-border bg-surface px-2 text-sm text-text"
+                className="h-8 w-full rounded-lg border border-border bg-surface px-2 text-sm text-text"
               >
                 {CHANNELS.map((c) => (
                   <option key={c} value={c}>

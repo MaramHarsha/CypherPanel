@@ -22,11 +22,11 @@
 | API client | **Generated from the OpenAPI spec** (orval or openapi-typescript); hand-written fetch calls are forbidden | tech-stack.md |
 | Real-time | SSE for status/logs; WebSocket only for the interactive terminal | tech-stack.md |
 | Location | `web/` with `src/{api, features, components, routes}` | [project-structure.md](../project-structure.md) |
-| Navigation | Sidebar is **exactly four items**: Projects · Servers · Templates · Settings | ui-principles §4 |
+| Navigation | Top bar with **exactly four items**: Projects · Servers · Templates · Settings (a sidebar until 2026-08-02; the count never changed) | ui-principles §4 |
 | Landing page | **Projects** — no separate home dashboard at v1 (decided 2026-07-17) | ui-principles §4 |
 | Hierarchy | Team → Project → Environment → Resource, always visible as breadcrumbs | ui-principles §4 |
 | Status vocabulary | `running` green · `deploying` animated blue · `stopped` gray · `error` red · `degraded` amber · `unknown` hollow gray | ui-principles §5 |
-| Themes | Dark is default; light fully supported; **both ship with every component from day one** | ui-principles §9 |
+| Themes | **Light is default**; dark is the stored opt-in; **both ship with every component from day one** (dark was default until 2026-08-02) | ui-principles §9 |
 | Accessibility | WCAG 2.1 AA floor; usable at 360 px | ui-principles §9 |
 | Page contract | Every data region ships Loading / Empty / Error / Content — a PR missing one is incomplete | ui-principles §1 |
 | E2E | Playwright | tech-stack.md |
@@ -38,7 +38,13 @@ specific decision) stands. "Dashboard" in the roadmap means the *product
 surface as a whole*: the Projects landing plus rich in-context resource views.
 If real usage later demands an overview page, that is a new recorded decision.
 
-## 2. Aesthetic direction — "the calm terminal"
+## 2. Aesthetic direction — "Mission Control"
+
+> Revised 2026-08-02. The previous direction, "the calm terminal" (cool
+> graphite, dark-first, Inter + IBM Plex Mono, teal accent), shipped the first
+> Phase 4 slices. Mission Control replaces it wholesale. What carried over
+> unchanged is listed at the end — most of the *thinking* survived; the
+> surface did not.
 
 The [frontend-design skill](../../.claude/skills/frontend-design/SKILL.md)
 demands a named, opinionated direction so the UI cannot read as a shadcn
@@ -47,34 +53,58 @@ this direction.
 
 **Thesis.** CypherPanel's product truth is *honesty under pressure*: an ops
 tool whose UI is a window onto server-side state, watched at 2am and from
-phones. The aesthetic is **the calm terminal** — the confidence of a good
-tmux session with the legibility of a well-set book. Dense but never busy;
-dark-first because the audience lives there; nothing decorative that isn't
-information.
+phones. The aesthetic is **Mission Control** — an operations broadsheet.
+Warm paper and ink rather than a terminal emulator; large tight headlines over
+a mono dateline; wide tables ruled like a printed timetable. The panel should
+feel like something *published* about your infrastructure — authoritative,
+legible at a glance, and calm even when a row is on fire.
 
-- **Typography carries the identity.** Two faces only: a humanist sans for UI
-  chrome and prose (e.g. Inter or a similarly quiet face), and a **monospace
-  face promoted to a first-class display role** — not just code blocks:
-  resource IDs, domains, statuses, log excerpts, cron expressions, image tags
+- **Warm paper, not cool graphite.** The neutral ramp is warm (`#faf8f4`
+  paper, `#16130e` ink); dark is the same system on warm ink (`#14120c`).
+  Nothing is pure white or pure black. This is the single largest break from
+  the old direction and the reason the UI reads as editorial rather than
+  administrative.
+- **Typography carries the identity.** Two faces only: **Instrument Sans**
+  for chrome and prose, and **Fragment Mono** promoted to a first-class
+  display role — not just code blocks: resource IDs, domains, statuses, log
+  excerpts, cron expressions, breadcrumbs, section eyebrows, and form inputs
   all set in mono. The mono-as-identity is the one deliberate aesthetic risk;
-  it encodes the truth that this product's content *is* machine state.
-- **Color is status.** The chromatic palette is reserved almost entirely for
-  the six status colors (§1 vocabulary) plus one restrained accent for primary
-  actions. Everything else is a neutral ramp. A screen with nothing wrong on
-  it should be almost monochrome — so that when something *is* wrong, the red
-  is the loudest thing in the room. Both themes derive from the same tokens;
-  status colors must hold 4.5:1 contrast in both.
+  it encodes the truth that this product's content *is* machine state. Both
+  are self-hosted via `@fontsource` — the strict CSP (§5) forbids a CDN, and
+  fonts must never be inlined as `data:` URIs for the same reason.
+- **One accent, and it is signal orange** (`#e8490f`; `#ff6a33` on dark).
+  It marks exactly two things: the active top-bar item and the single
+  unmissable action on a screen. The everyday primary button is not orange —
+  it is an **ink pill** (inverted to a paper pill on dark), which keeps the
+  orange rare enough to mean something.
+- **Color is status.** Beyond that one accent the chromatic palette is the six
+  status colors (§1 vocabulary). A screen with nothing wrong on it is almost
+  achromatic — so when something *is* wrong, the red is the loudest thing in
+  the room. Status also carries **shape**, not only hue: `error` is a square,
+  everything else a dot, `deploying` wears a halo — so status survives a
+  color-blind reader and a phone in sunlight.
+- **Rules do the work of boxes.** Hierarchy comes from horizontal rules at two
+  weights — a 1.5 px ink rule under the top bar and above a table's first row,
+  hairlines between rows — rather than from nested cards. Maximum 3 levels of
+  visual nesting still holds (ui-principles §4).
 - **Structure is information** (skill principle, applied): section labels are
-  set as small mono eyebrows (`DEPLOYMENTS`, `ENV VARS`); no numbered markers
-  anywhere (nothing here is a sequence except pipeline stages — which *are*
-  one, and render as one: `build → distribute → rollout → serving`).
+  small mono eyebrows, widely tracked (`DEPLOYMENTS`, `ENV VARS`); the
+  breadcrumb is the page's dateline, uppercase mono with the current resource
+  in the accent. No numbered markers anywhere — nothing here is a sequence
+  except pipeline stages, which *are* one and render as one:
+  `build → distribute → rollout → serving`.
 - **Motion is earned.** Exactly three animations own the product: the
   `deploying` status pulse, the live log tail, and the deploy pipeline stage
   progression. Everything else is instant or a ≤150 ms fade. No scroll
   reveals, no hero moments, no skeleton shimmer louder than the content.
-- **Density with air.** Information-dense tables at comfortable line height;
+- **Density with air.** Information-dense tables at generous row height;
   scannable from across the room (ui-principles §4). Empty states are quiet,
   single-action, and never illustrated with mascots.
+
+**Carried over unchanged** from the calm terminal: mono-as-identity,
+color-is-status, structure-as-mono-eyebrows, motion-is-earned, the six-status
+vocabulary, and the ban list below. Only the palette, the two typefaces, the
+default theme, and the navigation shell changed.
 
 What this direction bans: gradient heroes, glassmorphism, decorative
 illustration, celebratory confetti, more than one accent color, and any

@@ -1,6 +1,8 @@
-// Settings layout. Teams/users management arrives with slice 4 — the tabs
-// shown are the ones that work today, no stubs.
+// Settings layout: the account, the people, and the credentials that outlive
+// any one project. Everything project-scoped lives inside its project instead
+// (ui-principles §4 — nav items compete with each other).
 import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
+import { PageBody, PageHeader } from "@/components/page-header";
 import { useCrumbs } from "@/lib/crumbs";
 
 export const Route = createFileRoute("/_app/settings")({ component: SettingsLayout });
@@ -16,21 +18,29 @@ const TABS = [
 function SettingsLayout() {
   useCrumbs([{ label: "settings" }]);
   return (
-    <div className="space-y-4">
-      <nav className="flex gap-0.5 overflow-x-auto border-b border-border" aria-label="Settings">
-        {TABS.map((t) => (
-          <Link
-            key={t.to}
-            to={t.to}
-            activeOptions={{ exact: t.exact }}
-            className="-mb-px whitespace-nowrap border-b-2 border-transparent px-3 py-2 text-[13px] text-text-mid hover:text-text"
-            activeProps={{ className: "-mb-px border-accent text-text" }}
-          >
-            {t.label}
-          </Link>
-        ))}
-      </nav>
-      <Outlet />
-    </div>
+    <>
+      <PageHeader
+        title="Settings"
+        below={
+          <nav className="-mb-px flex gap-5 overflow-x-auto" aria-label="Settings">
+            {TABS.map((t) => (
+              <Link
+                key={t.to}
+                to={t.to}
+                activeOptions={{ exact: t.exact }}
+                className="whitespace-nowrap border-b-2 border-transparent px-0.5 py-2.5 text-[13px] text-text-mid hover:text-text"
+                activeProps={{ className: "border-border-strong font-semibold text-text" }}
+              >
+                {t.label}
+              </Link>
+            ))}
+          </nav>
+        }
+      />
+      {/* The layout owns the page gutters so every tab is inset identically. */}
+      <PageBody>
+        <Outlet />
+      </PageBody>
+    </>
   );
 }
