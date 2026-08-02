@@ -6,10 +6,15 @@
  * OpenAPI spec version: 0.3.0
  */
 
+/**
+ * How the checkout becomes an image. `dockerfile` builds the file at `dockerfile_path`. `static` serves the build context as a website behind nginx, listening on `runtime.port`. `auto` decides by looking at the repository: a Dockerfile if there is one, otherwise a static site if there is an index.html, and a clear failure naming both if neither. Detection runs on the builder agent, where the source actually is — the control plane never fetches a repository.
+ */
 export type AppBuildKind = typeof AppBuildKind[keyof typeof AppBuildKind];
 
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const AppBuildKind = {
+  auto: 'auto',
   dockerfile: 'dockerfile',
+  static: 'static',
 } as const;

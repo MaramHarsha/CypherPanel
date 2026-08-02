@@ -2075,9 +2075,19 @@ components:
       properties:
         kind:
           type: string
-          enum: [dockerfile]
+          enum: [auto, dockerfile, static]
+          default: auto
+          description: >-
+            How the checkout becomes an image. `dockerfile` builds the file at
+            `dockerfile_path`. `static` serves the build context as a website
+            behind nginx, listening on `runtime.port`. `auto` decides by looking
+            at the repository: a Dockerfile if there is one, otherwise a static
+            site if there is an index.html, and a clear failure naming both if
+            neither. Detection runs on the builder agent, where the source
+            actually is — the control plane never fetches a repository.
         dockerfile_path:
           type: string
+          description: Ignored for a `static` build.
         context:
           type: string
 

@@ -14,7 +14,7 @@ import { Eyebrow } from "@/components/eyebrow";
 import { PageState } from "@/components/page-state";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
+import { Input, Select } from "@/components/ui/input";
 
 export const Route = createFileRoute("/_app/projects/$projectId/applications/$appId/settings")({
   component: SettingsTab,
@@ -45,6 +45,7 @@ function SettingsForm({
   const [repo, setRepo] = useState(initial.source.repo);
   const [branch, setBranch] = useState(initial.source.branch);
   const [domain, setDomain] = useState(initial.route.domain ?? "");
+  const [buildKind, setBuildKind] = useState(initial.build.kind ?? "dockerfile");
   const [dockerfile, setDockerfile] = useState(initial.build.dockerfile_path);
   const [context, setContext] = useState(initial.build.context);
   const [previewEnabled, setPreviewEnabled] = useState(initial.preview_enabled ?? false);
@@ -56,6 +57,7 @@ function SettingsForm({
     repo !== initial.source.repo ||
     branch !== initial.source.branch ||
     domain !== (initial.route.domain ?? "") ||
+    buildKind !== (initial.build.kind ?? "dockerfile") ||
     dockerfile !== initial.build.dockerfile_path ||
     context !== initial.build.context ||
     previewEnabled !== (initial.preview_enabled ?? false) ||
@@ -103,7 +105,7 @@ function SettingsForm({
       data: {
         name,
         source: { ...initial.source, repo, branch },
-        build: { ...initial.build, dockerfile_path: dockerfile, context },
+        build: { ...initial.build, kind: buildKind, dockerfile_path: dockerfile, context },
         route: { ...initial.route, domain: domain || undefined },
         preview_enabled: previewEnabled,
         preview_base_domain: previewDomain.trim(),
@@ -128,12 +130,23 @@ function SettingsForm({
             {(id) => <Input id={id} value={domain} onChange={(e) => setDomain(e.target.value)} className="mono" />}
           </Field>
         </div>
+        <Field label="How to build it" hint="Detect picks a Dockerfile if the repository has one, otherwise serves it as a static site.">
+          {(id) => (
+            <Select id={id} value={buildKind} onChange={(e) => setBuildKind(e.target.value as typeof buildKind)}>
+              <option value="auto">Detect automatically</option>
+              <option value="dockerfile">Dockerfile</option>
+              <option value="static">Static site (HTML, CSS, JS)</option>
+            </Select>
+          )}
+        </Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Dockerfile path">
-            {(id) => <Input id={id} value={dockerfile} onChange={(e) => setDockerfile(e.target.value)} className="mono" />}
-          </Field>
+          {buildKind !== "static" && (
+            <Field label="Dockerfile path">
+              {(id) => <Input id={id} value={dockerfile} onChange={(e) => setDockerfile(e.target.value)} />}
+            </Field>
+          )}
           <Field label="Build context">
-            {(id) => <Input id={id} value={context} onChange={(e) => setContext(e.target.value)} className="mono" />}
+            {(id) => <Input id={id} value={context} onChange={(e) => setContext(e.target.value)} />}
           </Field>
         </div>
         {/* Preview environments were reachable in the API but nowhere in the

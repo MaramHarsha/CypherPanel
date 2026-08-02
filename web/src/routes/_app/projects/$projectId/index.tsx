@@ -17,7 +17,7 @@ import { AdvancedSection } from "@/components/advanced-section";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
+import { Input, Select } from "@/components/ui/input";
 import { useCrumbs } from "@/lib/crumbs";
 import { relativeTime } from "@/lib/time";
 import { cn } from "@/lib/utils";
@@ -382,6 +382,7 @@ function NewAppDialog({ envId, primary }: { envId: string; primary?: boolean }) 
   const [domain, setDomain] = useState("");
   const [serverId, setServerId] = useState("");
   const [port, setPort] = useState("8080");
+  const [buildKind, setBuildKind] = useState<"auto" | "dockerfile" | "static">("auto");
   const [dockerfile, setDockerfile] = useState("./Dockerfile");
   const [context, setContext] = useState(".");
   const [error, setError] = useState<string | null>(null);
@@ -408,7 +409,7 @@ function NewAppDialog({ envId, primary }: { envId: string; primary?: boolean }) 
       data: {
         name,
         source: { kind: "github", repo, branch },
-        build: { kind: "dockerfile", dockerfile_path: dockerfile, context },
+        build: { kind: buildKind, dockerfile_path: dockerfile, context },
         runtime: { server_id: chosenServer, port: Number(port), replicas: 1 },
         route: { domain: domain || undefined, https: true, path_prefix: "" },
       },
@@ -482,13 +483,28 @@ function NewAppDialog({ envId, primary }: { envId: string; primary?: boolean }) 
               )}
             </Field>
           )}
+          {/* Simple by default (ui-principles §6): a repository with an
+              index.html and no Dockerfile used to demand a Dockerfile path
+              anyway. Detection happens on the builder, so the form asks for
+              nothing here unless the operator wants to override it. */}
+          <Field label="How to build it" hint="Detect works for most repositories — a Dockerfile if there is one, otherwise a static site.">
+            {(id) => (
+              <Select id={id} value={buildKind} onChange={(e) => setBuildKind(e.target.value as typeof buildKind)}>
+                <option value="auto">Detect automatically</option>
+                <option value="dockerfile">Dockerfile</option>
+                <option value="static">Static site (HTML, CSS, JS)</option>
+              </Select>
+            )}
+          </Field>
           <AdvancedSection>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Dockerfile path">
-                {(id) => <Input id={id} value={dockerfile} onChange={(e) => setDockerfile(e.target.value)} className="mono" />}
-              </Field>
-              <Field label="Build context">
-                {(id) => <Input id={id} value={context} onChange={(e) => setContext(e.target.value)} className="mono" />}
+              {buildKind !== "static" && (
+                <Field label="Dockerfile path" hint={buildKind === "auto" ? "Used only if a Dockerfile is found." : undefined}>
+                  {(id) => <Input id={id} value={dockerfile} onChange={(e) => setDockerfile(e.target.value)} />}
+                </Field>
+              )}
+              <Field label="Build context" hint="The directory to build from.">
+                {(id) => <Input id={id} value={context} onChange={(e) => setContext(e.target.value)} />}
               </Field>
             </div>
           </AdvancedSection>

@@ -144,6 +144,23 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 		contextDir = filepath.Join(buildDir, work.BuildContext)
 	}
 
+	// Decide how to build before tarring: a static site has its Dockerfile
+	// synthesized into the context, so it has to exist before the walk.
+	dockerfilePath := work.DockerfilePath
+	kind, err := resolveBuildKind(work.BuildKind, contextDir, dockerfilePath)
+	if err != nil {
+		onLog(err.Error())
+		return "", err
+	}
+	if kind == kindStatic {
+		onLog("No Dockerfile found — detected a static site; building an nginx image to serve it.")
+		generated, wErr := writeStaticBuild(contextDir, work.RuntimePort)
+		if wErr != nil {
+			return "", wErr
+		}
+		dockerfilePath = generated
+	}
+
 	tarPipeR, tarPipeW := io.Pipe()
 
 	ignoreRules := parseDockerIgnore(contextDir)
@@ -227,7 +244,7 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 	}
 
 	defer func() { _ = tarPipeR.Close() }()
-	if err := b.engine.BuildImage(ctx, tarPipeR, work.Image, work.DockerfilePath, labels, onLog); err != nil {
+	if err := b.engine.BuildImage(ctx, tarPipeR, work.Image, dockerfilePath, labels, onLog); err != nil {
 		return "", fmt.Errorf("build failed: %w", err)
 	}
 

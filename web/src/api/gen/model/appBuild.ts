@@ -8,7 +8,9 @@
 import type { AppBuildKind } from './appBuildKind';
 
 export interface AppBuild {
+  /** How the checkout becomes an image. `dockerfile` builds the file at `dockerfile_path`. `static` serves the build context as a website behind nginx, listening on `runtime.port`. `auto` decides by looking at the repository: a Dockerfile if there is one, otherwise a static site if there is an index.html, and a clear failure naming both if neither. Detection runs on the builder agent, where the source actually is — the control plane never fetches a repository. */
   kind: AppBuildKind;
+  /** Ignored for a `static` build. */
   dockerfile_path: string;
   context: string;
 }

@@ -434,10 +434,14 @@ func validateAndDefault(in CreateInput) (CreateInput, error) {
 	}
 
 	if in.Build.Kind == "" {
-		in.Build.Kind = "dockerfile"
+		// Existing applications and any client that omits the field keep the
+		// behaviour they had; only new ones opt into detection.
+		in.Build.Kind = domain.BuildDockerfile
 	}
-	if in.Build.Kind != "dockerfile" {
-		return in, invalid(`build.kind must be "dockerfile" (the only supported build at v1)`)
+	switch in.Build.Kind {
+	case domain.BuildDockerfile, domain.BuildStatic, domain.BuildAuto:
+	default:
+		return in, invalid(`build.kind must be one of "auto", "dockerfile", "static"`)
 	}
 	if in.Build.DockerfilePath == "" {
 		in.Build.DockerfilePath = "./Dockerfile"

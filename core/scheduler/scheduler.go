@@ -416,6 +416,10 @@ func (s *Scheduler) buildWork(ctx context.Context, dep domain.Deployment, app do
 		BuildContext:   app.Build.Context,
 		Image:          imageTag(app.ID, rev.ID),
 		DeployKeyPem:   deployKeyPem,
+		BuildKind:      app.Build.Kind,
+		// A synthesized static image must listen where the route and health
+		// check already expect it, not on whatever its base image defaults to.
+		RuntimePort: uint32(app.Runtime.Port), //nolint:gosec // validated 1–65535
 	}, nil
 }
 
