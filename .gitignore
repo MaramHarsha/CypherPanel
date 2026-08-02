@@ -19,6 +19,10 @@ go.work.sum
 /web/node_modules/
 /web/dist/
 
+# Local secrets — never commit
+.env
+.env.*
+
 # Editor / OS
 .DS_Store
 .idea/
