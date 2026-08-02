@@ -63,6 +63,15 @@ func (s Server) Builds() bool {
 	return s.Role == RoleAll || s.Role == RoleBuilder || s.Role == ""
 }
 
+// Runs reports whether this server's role accepts Applications and Managed
+// Databases. A builder-only agent is deliberately constructed without an
+// application driver and rejects rollout work, so placing a resource there
+// would create the row and then strand it in a failed deployment. An unset
+// role means "all", matching Builds.
+func (s Server) Runs() bool {
+	return s.Role != RoleBuilder
+}
+
 // User is an account that can sign in to the control plane. Phase 1 bootstraps
 // exactly one owner. The account model supports TOTP (threat-model §8 req 7):
 // the sealed seed stays in the store; the domain only surfaces whether it is

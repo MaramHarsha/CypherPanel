@@ -256,7 +256,9 @@ function NewDatabaseDialog({ envId, primary }: { envId: string; primary?: boolea
   const [serverId, setServerId] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const enrolled = (servers.data ?? []).filter((s) => s.enrolled);
+  // A builder-only agent is built without a workload driver and rejects rollout
+  // work, so offering it would create the resource and then fail every deploy.
+  const enrolled = (servers.data ?? []).filter((s) => s.enrolled && s.role !== "builder");
   const chosenServer = serverId || enrolled[0]?.id || "";
 
   // The root password exists in plaintext exactly once, in the create
@@ -418,7 +420,9 @@ function NewAppDialog({ envId, primary, eyebrow }: { envId: string; primary?: bo
   const [context, setContext] = useState(".");
   const [error, setError] = useState<string | null>(null);
 
-  const enrolled = (servers.data ?? []).filter((s) => s.enrolled);
+  // A builder-only agent is built without a workload driver and rejects rollout
+  // work, so offering it would create the resource and then fail every deploy.
+  const enrolled = (servers.data ?? []).filter((s) => s.enrolled && s.role !== "builder");
   const chosenServer = serverId || enrolled[0]?.id || "";
 
   const create = useCreateApplication({

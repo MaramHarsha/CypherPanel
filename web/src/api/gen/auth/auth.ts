@@ -1158,7 +1158,7 @@ export const verifyTotp = async (tOTPCodeRequest: TOTPCodeRequest, options?: Req
 
 
 
-export const getVerifyTotpMutationOptions = <TError = Error | ForbiddenResponse,
+export const getVerifyTotpMutationOptions = <TError = Error | UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyTotp>>, TError,{data: TOTPCodeRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof verifyTotp>>, TError,{data: TOTPCodeRequest}, TContext> => {
 
@@ -1185,12 +1185,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type VerifyTotpMutationResult = NonNullable<Awaited<ReturnType<typeof verifyTotp>>>
     export type VerifyTotpMutationBody = TOTPCodeRequest
-    export type VerifyTotpMutationError = Error | ForbiddenResponse
+    export type VerifyTotpMutationError = Error | UnauthorizedResponse | ForbiddenResponse
 
     /**
  * @summary Confirm a code and activate two-factor
  */
-export const useVerifyTotp = <TError = Error | ForbiddenResponse,
+export const useVerifyTotp = <TError = Error | UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyTotp>>, TError,{data: TOTPCodeRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof verifyTotp>>,
@@ -1231,7 +1231,7 @@ export const disableTotp = async (tOTPCodeRequest: TOTPCodeRequest, options?: Re
 
 
 
-export const getDisableTotpMutationOptions = <TError = Error | ForbiddenResponse,
+export const getDisableTotpMutationOptions = <TError = Error | UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof disableTotp>>, TError,{data: TOTPCodeRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof disableTotp>>, TError,{data: TOTPCodeRequest}, TContext> => {
 
@@ -1258,12 +1258,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type DisableTotpMutationResult = NonNullable<Awaited<ReturnType<typeof disableTotp>>>
     export type DisableTotpMutationBody = TOTPCodeRequest
-    export type DisableTotpMutationError = Error | ForbiddenResponse
+    export type DisableTotpMutationError = Error | UnauthorizedResponse | ForbiddenResponse
 
     /**
  * @summary Disable two-factor
  */
-export const useDisableTotp = <TError = Error | ForbiddenResponse,
+export const useDisableTotp = <TError = Error | UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof disableTotp>>, TError,{data: TOTPCodeRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof disableTotp>>,

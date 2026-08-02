@@ -174,11 +174,18 @@ func (s *Service) Create(ctx context.Context, envID string, in CreateInput) (app
 	if err != nil {
 		return domain.Application{}, "", err
 	}
-	if _, err := s.store.GetServer(ctx, in.Runtime.ServerID); err != nil {
+	srv, err := s.store.GetServer(ctx, in.Runtime.ServerID)
+	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return domain.Application{}, "", ErrServerNotFound
 		}
 		return domain.Application{}, "", fmt.Errorf("applications: getting server: %w", err)
+	}
+	// A builder-only agent has no application driver and rejects rollout work,
+	// so placing an app there would create the row and then leave every deploy
+	// failing. Refuse at creation rather than at the first deployment.
+	if !srv.Runs() {
+		return domain.Application{}, "", invalid("that server has the builder role and does not run applications")
 	}
 
 	webhookSecret = ids.Secret()

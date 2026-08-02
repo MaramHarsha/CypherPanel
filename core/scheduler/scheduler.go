@@ -792,6 +792,17 @@ func (s *Scheduler) pinRevisionImage(ctx context.Context, st *agentv1.AppStatus)
 	if err != nil || rev.Image == digest {
 		return
 	}
+	// The reporting server owns this app (checked above), but that does not make
+	// the revision id it supplied one of the app's. Without this check a
+	// compromised agent could report its own app alongside another
+	// application's revision and an attacker-chosen digest, overwriting that
+	// revision's image — and a later rollback would then pull and run it on a
+	// different server. An agent may only pin revisions of the app it reported.
+	if rev.ApplicationID != st.GetAppId() {
+		s.log.Warn("app status: revision does not belong to the reported application",
+			"app_id", st.GetAppId(), "revision_id", rev.ID, "revision_app_id", rev.ApplicationID)
+		return
+	}
 	if _, err := s.store.SetRevisionImage(ctx, rev.ID, digest); err != nil {
 		s.log.Warn("pinning revision to observed digest", "revision_id", rev.ID, "error", err)
 		return

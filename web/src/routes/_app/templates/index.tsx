@@ -166,7 +166,7 @@ function InstallDialog({ template }: { template: Template }) {
         <form onSubmit={submit} className="space-y-4">
           <Field label="Project">{(id) => <Select id={id} required value={projectID} onChange={(e) => { setProjectID(e.target.value); setEnvironmentID(""); }}><option value="">Select a project</option>{(projects.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</Select>}</Field>
           <Field label="Environment">{(id) => <Select id={id} required disabled={!projectID} value={environmentID} onChange={(e) => setEnvironmentID(e.target.value)}><option value="">Select an environment</option>{(environments.data ?? []).map((env) => <option key={env.id} value={env.id}>{env.name}</option>)}</Select>}</Field>
-          <Field label="Server">{(id) => <Select id={id} required value={serverID} onChange={(e) => setServerID(e.target.value)}><option value="">Select a server</option>{(servers.data ?? []).filter((s) => s.enrolled).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</Select>}</Field>
+          <Field label="Server">{(id) => <Select id={id} required value={serverID} onChange={(e) => setServerID(e.target.value)}><option value="">Select a server</option>{(servers.data ?? []).filter((s) => s.enrolled && s.role !== "builder").map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</Select>}</Field>
           <Field label="Name" hint={`Defaults to ${template.slug}`}>{(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} placeholder={template.slug} />}</Field>
           {/* Every routed template needs a domain — the server refuses without
               one, because resolving {{domain}} to "" would write settings like

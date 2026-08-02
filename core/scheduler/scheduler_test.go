@@ -1206,3 +1206,34 @@ func TestNoDigestLeavesRevisionUnchanged(t *testing.T) {
 		t.Fatalf("revision image = %q, want it untouched", got)
 	}
 }
+
+// A compromised agent must not be able to pin a revision belonging to another
+// application: it could otherwise substitute an attacker-chosen image that a
+// later rollback would pull and run — on a different server.
+func TestDigestPinRejectsForeignRevision(t *testing.T) {
+	fs, fb := newFakeStore(), &fakeBus{}
+	victim := fs.addApp("app_victim", "srv_2")
+	victim.Source = domain.AppSource{Kind: "image", Image: "trusted:1"}
+	fs.apps["app_victim"] = victim
+	attacker := fs.addApp("app_attacker", "srv_1")
+	attacker.Source = domain.AppSource{Kind: "image", Image: "ghost:5"}
+	fs.apps["app_attacker"] = attacker
+	s := newScheduler(fs, fb)
+
+	victimDep, err := s.Deploy(context.Background(), "app_victim", "manual", "")
+	if err != nil {
+		t.Fatalf("victim Deploy: %v", err)
+	}
+
+	// srv_1 legitimately owns app_attacker, but names the victim's revision.
+	s.HandleAppStatus(context.Background(), "srv_1", &agentv1.AppStatus{
+		AppId:         "app_attacker",
+		RevisionId:    victimDep.RevisionID,
+		State:         domain.AppRunning,
+		ResolvedImage: "evil@sha256:beef",
+	})
+
+	if got := fs.revisions[victimDep.RevisionID].Image; got != "trusted:1" {
+		t.Fatalf("victim revision image = %q — a foreign agent overwrote it", got)
+	}
+}

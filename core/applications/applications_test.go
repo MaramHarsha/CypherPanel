@@ -29,7 +29,7 @@ type fakeStore struct {
 func newFakeStore() *fakeStore {
 	return &fakeStore{
 		envs:    map[string]bool{"env_1": true},
-		servers: map[string]bool{"srv_1": true},
+		servers: map[string]bool{"srv_1": true, "srv_builder": true},
 		apps:    map[string]domain.Application{},
 		envVars: map[string][]domain.EnvVar{},
 	}
@@ -91,6 +91,11 @@ func (f *fakeStore) GetEnvironment(_ context.Context, id string) (domain.Environ
 func (f *fakeStore) GetServer(_ context.Context, id string) (domain.Server, error) {
 	if !f.servers[id] {
 		return domain.Server{}, store.ErrNotFound
+	}
+	// srv_builder models a builder-only agent: it takes build work but has no
+	// application driver, so it never runs workloads.
+	if id == "srv_builder" {
+		return domain.Server{ID: id, Role: domain.RoleBuilder}, nil
 	}
 	return domain.Server{ID: id}, nil
 }
@@ -174,6 +179,7 @@ func TestCreateValidation(t *testing.T) {
 			in.Source = domain.AppSource{Kind: "image", Image: "ghost:5; rm -rf /"}
 		},
 		// Previews need a branch to match pull_request events against.
+		"builder-role server": func(in *CreateInput) { in.Runtime.ServerID = "srv_builder" },
 		"image with previews": func(in *CreateInput) {
 			in.Source = domain.AppSource{Kind: "image", Image: "ghost:5"}
 			in.PreviewEnabled = true
