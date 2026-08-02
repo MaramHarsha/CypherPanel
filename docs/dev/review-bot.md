@@ -76,6 +76,17 @@ will not issue one, and dismisses its own if a commit lands afterwards. Pair it
 with branch protection's stale-review dismissal so this holds even when the
 workflow does not run.
 
+**Authorization is enforced at the call sites, not just where it is defined.**
+Thirteen handler files call `require*Role` / `authorizeResolved`, so removing one
+such line takes an endpoint's role gate off with nothing else in the diff — which
+is why `core/api/rest/*.go` is protected wholesale rather than a short list of
+"boundary" files. `core/domain/team.go` defines `RoleRank`, the ordering every
+minimum-rank check compares against: reorder it once and every call site weakens
+at the same time. `core/teams/`, `core/onboarding/` and the team store round it
+out. The pattern is `*.go`, not `**`, so the committed web UI build output under
+`core/api/rest/webui/dist/` stays approvable — every frontend pull request
+rewrites it, and a comment that fires on all of them is one nobody reads.
+
 **The authorization boundary is wider than `core/auth/**`.** `core/api/rest/rest.go`
 holds the route table, where each route declares whether it is `a.authed(...)`
 — deleting that one call un-authenticates an endpoint. `core/api/rest/authz.go`

@@ -345,17 +345,60 @@ test("authorization tests are protected with their code", () => {
   }
 });
 
-// The counterweight: protecting the whole package would make every backend pull
-// request sensitive, and a comment that fires on everything gets ignored — which
-// is how a real one gets waved through. Ordinary handlers must stay approvable.
-test("ordinary handlers are not swept into the protected set", () => {
+// Enforcement lives at the CALL SITES, not only in authz.go. Thirteen of the
+// handler files invoke require*Role/authorizeResolved, so deleting one such
+// line removes an endpoint's role gate with no protected file in the diff —
+// which is why the narrow "boundary files only" list was not enough and the
+// whole package is protected instead.
+test("every authorization enforcement point is protected", () => {
   for (const f of [
-    "core/api/rest/handlers_applications.go",
     "core/api/rest/handlers_projects.go",
+    "core/api/rest/handlers_servers.go",
+    "core/api/rest/handlers_applications.go",
     "core/api/rest/handlers_databases.go",
+    "core/api/rest/handlers_backups.go",
+    "core/api/rest/handlers_previews.go",
+    "core/api/rest/handlers_deployments.go",
+    "core/api/rest/handlers_scheduled_tasks.go",
+    "core/api/rest/handlers_notifiers.go",
+    "core/api/rest/handlers_deploy_keys.go",
+    "core/api/rest/handlers_domaincheck.go",
     "core/api/rest/sse.go",
+  ]) {
+    assert.equal(call({ files: [f] }).action, "comment-sensitive", f);
+  }
+});
+
+// RoleRank is the shared ordering every minimum-rank check compares against:
+// reorder it once and every require*Role call site weakens at the same time,
+// without any of them appearing in the diff.
+test("the role ordering and team membership layer are protected", () => {
+  for (const f of [
+    "core/domain/team.go",
+    "core/teams/teams.go",
+    "core/teams/teams_test.go",
+    "core/store/teams.go",
+    "core/store/db/teams.sql.go",
+    "core/onboarding/onboarding.go",
+  ]) {
+    assert.equal(call({ files: [f] }).action, "comment-sensitive", f);
+  }
+});
+
+// The list still has to stop somewhere, or the comment fires on everything and
+// stops being read. Code with no authorization role keeps auto-approving.
+test("code outside the authorization surface still auto-approves", () => {
+  for (const f of [
     "core/scheduler/scheduler.go",
     "agent/driver/docker/docker.go",
+    "web/src/routes/index.tsx",
+    "docs/roadmap.md",
+    // The web UI is committed built, so every frontend pull request rewrites
+    // these. Sweeping the package with ** would have flagged all of them as
+    // touching authorization, which is exactly the noise that gets the comment
+    // ignored — core/api/rest/*.go covers the Go files without the build output.
+    "core/api/rest/webui/dist/assets/_app-DVgVhcSj.js",
+    "core/api/rest/webui/dist/index.html",
   ]) {
     assert.equal(call({ files: [f] }).action, "approve", f);
   }
