@@ -3,7 +3,7 @@ slug: gitea
 name: Gitea
 description: Lightweight self-hosted git service with issues and CI hooks.
 category: dev-tools
-version: "1.23"
+version: "1.23.8"
 resources:
   databases:
     - name: db
@@ -11,7 +11,7 @@ resources:
       version: "16"
   applications:
     - name: gitea
-      image: gitea/gitea:1.23
+      image: gitea/gitea:1.23.8
       port: 3000
       route: true
       health:

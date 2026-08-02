@@ -37,6 +37,7 @@ type fakeClient struct {
 	digestErr      error             // injected ImageDigest failure
 	tagged         []string          // "source -> target" per TagImage call
 	removedImages  map[string]bool   // refs passed to RemoveImage
+	removeImageErr map[string]error  // injected RemoveImage failures by ref
 	tagErr         error             // injected TagImage failure
 	execCalls      []execCall        // recorded ExecAndWait invocations
 	execExit       int               // injected exit code
@@ -209,6 +210,9 @@ func (f *fakeClient) ListManagedImages(_ context.Context) ([]Image, error) {
 }
 
 func (f *fakeClient) RemoveImage(_ context.Context, id string) error {
+	if err := f.removeImageErr[id]; err != nil {
+		return err
+	}
 	f.mutations++
 	if f.removedImages == nil {
 		f.removedImages = map[string]bool{}
@@ -1182,5 +1186,54 @@ func TestDigestResolvedFromManagedAlias(t *testing.T) {
 	}
 	if st := statusOf(got, "app1"); st.GetResolvedImage() != "ghost@sha256:whatweran" {
 		t.Fatalf("resolved_image = %q, want the digest behind the managed alias", st.GetResolvedImage())
+	}
+}
+
+// Ownership of a pull-created reference is only knowable at pull time, so a
+// removal that fails then must not be forgotten: it is recorded on the
+// container and retried, rather than leaking the layers behind one transient
+// daemon error.
+func TestFailedReferenceCleanupIsRecordedAndRetried(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	c.removeImageErr = map[string]error{"ghost:5": errors.New("daemon busy")}
+	d := newDriver(c, r, p)
+
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}); err != nil {
+		t.Fatalf("rollout: %v", err)
+	}
+	if got := c.lastCreateSpec.Labels[driver.LabelPullCreatedRef]; got != "ghost:5" {
+		t.Fatalf("pending reference label = %q, want it recorded for retry", got)
+	}
+	// Carry the label onto the observed container, as the daemon would.
+	for _, ct := range c.containers {
+		ct.PullCreatedRef = "ghost:5"
+	}
+
+	// The daemon recovers; the next converge finishes the job.
+	c.removeImageErr = nil
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}); err != nil {
+		t.Fatalf("second converge: %v", err)
+	}
+	if !c.removedImages["ghost:5"] {
+		t.Fatalf("removed = %v, want the pending reference reclaimed on retry", c.removedImages)
+	}
+}
+
+// A converged app with nothing pending still makes zero mutating calls — the
+// retry is guarded by a read, so it cannot break converge-twice.
+func TestConvergeTwiceUnaffectedByReferenceRetry(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+	specs := []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}
+
+	if _, err := d.Reconcile(context.Background(), specs); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	baseline := c.mutations + r.mutations
+	if _, err := d.Reconcile(context.Background(), specs); err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if after := c.mutations + r.mutations; after != baseline {
+		t.Fatalf("second converge mutated state: %d calls (want 0)", after-baseline)
 	}
 }

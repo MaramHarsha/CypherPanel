@@ -3,11 +3,11 @@ slug: uptime-kuma
 name: Uptime Kuma
 description: Self-hosted uptime monitoring with status pages and alerting.
 category: monitoring
-version: "1"
+version: "1.23.16"
 resources:
   applications:
     - name: uptime-kuma
-      image: louislam/uptime-kuma:1
+      image: louislam/uptime-kuma:1.23.16
       port: 3001
       route: true
       health:

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -437,5 +438,30 @@ func TestParseValidatesHealthPathWithDefaultKind(t *testing.T) {
 	y := strings.Replace(minimalYAML(""), "      route: true", "      route: true\n      health:\n        path: healthz", 1)
 	if _, err := Parse([]byte(y)); err == nil || !strings.Contains(err.Error(), "health path") {
 		t.Fatalf("relative health path accepted with a defaulted kind (err=%v)", err)
+	}
+}
+
+// Every bundled image must name an exact artifact. `:latest` is the obvious
+// trap, but a series tag like `:1` or `:1.23` is the same hazard in slower
+// motion: EnsureImage deliberately re-pulls mutable tags, so an ordinary
+// redeploy can cross versions — silently applying upstream migrations — while
+// the catalog still advertises the version it was curated against.
+func TestBundledImagesArePinnedToAnExactVersion(t *testing.T) {
+	s := newTestService(t, &fakeApps{}, &fakeDbs{}, &fakeDeployer{})
+	// A digest is exact by definition; otherwise the tag must carry a full
+	// major.minor.patch, whatever prefix it wears (umami ships
+	// `postgresql-v2.19.0`).
+	digest := regexp.MustCompile(`@sha256:[0-9a-f]{64}$`)
+	patch := regexp.MustCompile(`\d+\.\d+\.\d+`)
+	for _, tpl := range s.List() {
+		for _, app := range tpl.Resources.Applications {
+			tag := ""
+			if i := strings.LastIndex(app.Image, ":"); i > strings.LastIndex(app.Image, "/") {
+				tag = app.Image[i+1:]
+			}
+			if !digest.MatchString(app.Image) && !patch.MatchString(tag) {
+				t.Errorf("%s: image %q is not pinned to an exact version — a moving tag makes installs from one release non-reproducible", tpl.Slug, app.Image)
+			}
+		}
 	}
 }

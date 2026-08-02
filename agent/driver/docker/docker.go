@@ -48,7 +48,10 @@ type Container struct {
 	Name       string
 	AppID      string
 	RevisionID string
-	Running    bool
+	// PullCreatedRef is a registry reference this agent created and could not
+	// remove at rollout; convergence retries it. Empty in the normal case.
+	PullCreatedRef string
+	Running        bool
 }
 
 // ContainerSpec is the create request the driver builds from an AppSpec.
@@ -309,7 +312,7 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 	// Only in the create branch — the converged fast path never gets here, so
 	// converge-twice stays zero-mutation — and EnsureImage itself is a no-op
 	// when the reference is already local (crash-resume between pull and start).
-	image := spec.GetImage()
+	image, pendingRef := spec.GetImage(), ""
 	if spec.GetPull() {
 		// Learn whether this reference is ours *before* the pull creates it.
 		hadSource, hasErr := d.client.HasImage(ctx, image)
@@ -339,6 +342,11 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 		// untouched. Best-effort — failing to tidy must not fail a rollout.
 		if !hadSource {
 			if err := d.client.RemoveImage(ctx, spec.GetImage()); err != nil {
+				// Ownership is only knowable here; afterwards nothing tells our
+				// reference apart from one the operator made. Record it on the
+				// container so a later reconcile can finish the job instead of
+				// leaking the layers forever behind one transient error.
+				pendingRef = spec.GetImage()
 				d.log.Warn("dropping the reference our pull created", "image", spec.GetImage(), "error", err)
 			}
 		}
@@ -364,7 +372,7 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 		Env:           spec.GetEnv(),
 		Network:       spec.GetNetwork(),
 		Port:          spec.GetPort(),
-		Labels:        managedLabels(spec),
+		Labels:        managedLabels(spec, pendingRef),
 		CPULimit:      spec.GetCpuLimit(),
 		MemoryLimitMB: spec.GetMemoryLimitMb(),
 		Binds:         binds,
@@ -416,6 +424,16 @@ func (d *Driver) applyDesiredRoute(ctx context.Context, spec *agentv1.AppSpec, u
 // between flip and drain leaves the old revision running unrouted). When
 // reality fully matches desired, this makes zero mutating calls.
 func (d *Driver) convergedApp(ctx context.Context, spec *agentv1.AppSpec, current *Container, leftovers []Container) *agentv1.AppStatus {
+	// Finish a reference tidy-up an earlier rollout could not complete. Guarded
+	// by a read so a converged app with nothing pending still makes zero
+	// mutating calls, and idempotent once the reference is gone.
+	if current.PullCreatedRef != "" {
+		if present, err := d.client.HasImage(ctx, current.PullCreatedRef); err == nil && present {
+			if err := d.client.RemoveImage(ctx, current.PullCreatedRef); err != nil {
+				d.log.Warn("retrying removal of the reference our pull created", "image", current.PullCreatedRef, "error", err)
+			}
+		}
+	}
 	upstream, err := d.upstreamOf(ctx, current.ID, spec)
 	if err != nil {
 		return status(spec.GetAppId(), spec.GetRevisionId(), stateError, "address: "+err.Error())
@@ -574,12 +592,16 @@ func (d *Driver) upstreamOf(ctx context.Context, containerID string, spec *agent
 	return net.JoinHostPort(ip, strconv.Itoa(int(spec.GetPort()))), nil
 }
 
-func managedLabels(spec *agentv1.AppSpec) map[string]string {
-	return map[string]string{
+func managedLabels(spec *agentv1.AppSpec, pendingRef string) map[string]string {
+	labels := map[string]string{
 		driver.LabelManaged:    driverName,
 		driver.LabelAppID:      spec.GetAppId(),
 		driver.LabelRevisionID: spec.GetRevisionId(),
 	}
+	if pendingRef != "" {
+		labels[driver.LabelPullCreatedRef] = pendingRef
+	}
+	return labels
 }
 
 // networkLabels marks the network as managed without app or revision labels:

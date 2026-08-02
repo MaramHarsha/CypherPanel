@@ -33,6 +33,12 @@ const (
 	LabelAppID = "cypherpanel.app-id"
 	// LabelRevisionID carries the revision the resource was created from.
 	LabelRevisionID = "cypherpanel.revision-id"
+	// LabelPullCreatedRef carries a registry reference this agent's own pull
+	// created and then failed to tidy away. Ownership of that reference is only
+	// knowable at pull time — afterwards nothing distinguishes it from a tag the
+	// operator made — so it is recorded here and retried on later reconciles.
+	// Absent in the normal case, where the reference is dropped immediately.
+	LabelPullCreatedRef = "cypherpanel.pull-created-ref"
 )
 
 // Reconciler is the driver contract. Implementations: driver/docker (launch),
