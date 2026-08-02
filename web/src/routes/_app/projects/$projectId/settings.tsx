@@ -2,7 +2,7 @@
 // is write-only (masked hint after saving); the Test button is first-class —
 // a notifier that silently never fires is the common footgun (notifications.md).
 import { useQueryClient } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Plus, Send, Trash2 } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { toast } from "sonner";
@@ -13,8 +13,9 @@ import {
   useListNotifiers,
   useTestNotifier,
 } from "@/api/gen/notifiers/notifiers";
-import { useGetProject } from "@/api/gen/projects/projects";
+import { useDeleteProject, useGetProject } from "@/api/gen/projects/projects";
 import type { Notifier } from "@/api/gen/model";
+import { ApiError } from "@/api/client";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
 import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
@@ -76,8 +77,64 @@ function ProjectSettings() {
             </ul>
           )}
         </PageState>
+
+        <DangerZone projectId={projectId} name={project.data?.project.name ?? ""} />
       </PageBody>
     </>
+  );
+}
+
+/** Deleting a project takes its environments, applications and databases with
+ *  it, so the API refuses while any remain — a managed database's container and
+ *  data volume are torn down from its own row, which the cascade would remove
+ *  first. The refusal is surfaced here rather than as a toast, because it is an
+ *  instruction, not a notification. */
+function DangerZone({ projectId, name }: { projectId: string; name: string }) {
+  const navigate = useNavigate();
+  const [blocked, setBlocked] = useState<string | null>(null);
+
+  const del = useDeleteProject({
+    mutation: {
+      onSuccess: () => {
+        toast.success(`Deleted ${name}`);
+        void navigate({ to: "/projects" });
+      },
+      onError: (e: unknown) => {
+        if (e instanceof ApiError && e.status === 409) {
+          setBlocked(e.message);
+          return;
+        }
+        toast.error(e instanceof Error ? e.message : "Could not delete the project");
+      },
+    },
+  });
+
+  return (
+    <section className="mt-8 rounded-lg border border-danger/35 p-4.5">
+      <h2 className="eyebrow text-danger">Danger zone</h2>
+      <div className="mt-3.5 flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[13px] font-semibold text-text">Delete this project</p>
+          <p className="mt-0.5 text-[12.5px] leading-relaxed text-text-mid">
+            Removes the project and its environments. Delete its applications and databases first.
+          </p>
+        </div>
+        <ConfirmDestructive
+          trigger={<Button variant="danger">Delete</Button>}
+          title={`Delete ${name}?`}
+          blastRadius="Deletes this project and every environment in it, along with their notifiers. It cannot be undone. Applications and databases must be deleted first — their containers and data volumes are torn down individually."
+          confirmName={name}
+          actionLabel="Delete project"
+          pending={del.isPending}
+          onConfirm={() => del.mutate({ id: projectId })}
+        />
+      </div>
+      {blocked && (
+        <p role="alert" className="mt-3 rounded-md border border-danger/35 bg-danger/[0.06] px-3 py-2 text-[13px] text-danger">
+          {blocked}
+        </p>
+      )}
+    </section>
   );
 }
 

@@ -8,6 +8,7 @@ import { useCreateDatabase, useListDatabases } from "@/api/gen/databases/databas
 import { useGetProject, useListEnvironments } from "@/api/gen/projects/projects";
 import { useListServers } from "@/api/gen/servers/servers";
 import type { Application, CreateDatabaseRequest, Database, Environment } from "@/api/gen/model";
+import { CopyField } from "@/components/copy-field";
 import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
 import { PageBody, PageHeader } from "@/components/page-header";
@@ -17,7 +18,7 @@ import { AdvancedSection } from "@/components/advanced-section";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
+import { Input, Select } from "@/components/ui/input";
 import { useCrumbs } from "@/lib/crumbs";
 import { relativeTime } from "@/lib/time";
 import { cn } from "@/lib/utils";
@@ -59,7 +60,7 @@ function ProjectHome() {
                 <SettingsIcon className="h-3.5 w-3.5" aria-hidden /> Project settings
               </Button>
             </Link>
-            {activeEnv && <NewAppDialog envId={activeEnv.id} />}
+            {activeEnv && <NewAppDialog envId={activeEnv.id} eyebrow={`${project.data?.project.name ?? ""} / ${activeEnv.name} / new application`} />}
           </>
         }
         below={
@@ -258,10 +259,16 @@ function NewDatabaseDialog({ envId, primary }: { envId: string; primary?: boolea
   const enrolled = (servers.data ?? []).filter((s) => s.enrolled);
   const chosenServer = serverId || enrolled[0]?.id || "";
 
+  // The root password exists in plaintext exactly once, in the create
+  // response. Navigating straight to the database threw it away, and nothing
+  // can recover it afterwards — the stored copy is sealed. So the dialog stays
+  // open and hands it over first (ui-principles §6: every generated value gets
+  // a copy button).
+  const [created, setCreated] = useState<{ id: string; password: string } | null>(null);
+
   const create = useCreateDatabase({
     mutation: {
-      onSuccess: (res) =>
-        void navigate({ to: "/projects/$projectId/databases/$dbId", params: { projectId, dbId: res.database.id } }),
+      onSuccess: (res) => setCreated({ id: res.database.id, password: res.root_password }),
       onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not create the database"),
     },
   });
@@ -284,12 +291,33 @@ function NewDatabaseDialog({ envId, primary }: { envId: string; primary?: boolea
   };
 
   return (
-    <Dialog>
+    <Dialog onOpenChange={(open) => !open && setCreated(null)}>
       <DialogTrigger asChild>
         <Button variant="primary" size={primary ? "lg" : "md"}>
           <Plus className="h-3.5 w-3.5" /> New database
         </Button>
       </DialogTrigger>
+      {created ? (
+        <DialogContent
+          title="Copy the root password now"
+          description="This is the only time it is shown — the stored copy is sealed and cannot be read back."
+        >
+          <CopyField value={created.password} />
+          <div className="mt-5 flex justify-end">
+            <Button
+              variant="primary"
+              onClick={() =>
+                void navigate({
+                  to: "/projects/$projectId/databases/$dbId",
+                  params: { projectId, dbId: created.id },
+                })
+              }
+            >
+              I've saved it — open the database
+            </Button>
+          </div>
+        </DialogContent>
+      ) : (
       <DialogContent title="Create a database" description="CypherPanel provisions the engine, generates credentials, and can back it up on a schedule.">
         <form onSubmit={submit} className="space-y-4">
           <Field label="Name">
@@ -366,13 +394,14 @@ function NewDatabaseDialog({ envId, primary }: { envId: string; primary?: boolea
           </div>
         </form>
       </DialogContent>
+      )}
     </Dialog>
   );
 }
 
 // Simple by default, power underneath (ui-principles §6): the create form asks
 // only what a first-timer must answer; every working default is visible.
-function NewAppDialog({ envId, primary }: { envId: string; primary?: boolean }) {
+function NewAppDialog({ envId, primary, eyebrow }: { envId: string; primary?: boolean; eyebrow?: string }) {
   const navigate = useNavigate();
   const { projectId } = Route.useParams();
   const servers = useListServers();
@@ -382,6 +411,7 @@ function NewAppDialog({ envId, primary }: { envId: string; primary?: boolean }) 
   const [domain, setDomain] = useState("");
   const [serverId, setServerId] = useState("");
   const [port, setPort] = useState("8080");
+  const [buildKind, setBuildKind] = useState<"auto" | "dockerfile" | "static">("auto");
   const [dockerfile, setDockerfile] = useState("./Dockerfile");
   const [context, setContext] = useState(".");
   const [error, setError] = useState<string | null>(null);
@@ -408,7 +438,7 @@ function NewAppDialog({ envId, primary }: { envId: string; primary?: boolean }) 
       data: {
         name,
         source: { kind: "github", repo, branch },
-        build: { kind: "dockerfile", dockerfile_path: dockerfile, context },
+        build: { kind: buildKind, dockerfile_path: dockerfile, context },
         runtime: { server_id: chosenServer, port: Number(port), replicas: 1 },
         route: { domain: domain || undefined, https: true, path_prefix: "" },
       },
@@ -445,65 +475,102 @@ function NewAppDialog({ envId, primary }: { envId: string; primary?: boolean }) 
           <Plus className="h-3.5 w-3.5" /> New application
         </Button>
       </DialogTrigger>
-      <DialogContent title="Deploy an application" description="CypherPanel clones the repository, builds the Dockerfile, and keeps the app running at your domain.">
+      <DialogContent
+        size="form"
+        eyebrow={eyebrow}
+        title="Deploy an application"
+        description="CypherPanel clones the repository, builds it, and keeps it running at your domain."
+      >
         <form onSubmit={submit} className="space-y-4">
-          <Field label="Name">
-            {(id) => <Input id={id} required autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="web" />}
+          {/* Repository first: it is the one thing only the operator knows.
+              Everything with a working default folds into Advanced below
+              (ui-principles §6, design 5w). */}
+          <Field label="Repository" hint="Public, or private with a deploy key (Settings → Deploy keys).">
+            {(id) => (
+              <Input
+                id={id}
+                required
+                autoFocus
+                value={repo}
+                onChange={(e) => setRepo(e.target.value)}
+                placeholder="github.com/acme/web"
+              />
+            )}
           </Field>
-          <Field label="Repository" hint="A GitHub repository, owner/name or full URL. Private repos need a deploy key (Settings → Deploy keys).">
-            {(id) => <Input id={id} required value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="acme/web" className="mono" />}
-          </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Branch">
-              {(id) => <Input id={id} required value={branch} onChange={(e) => setBranch(e.target.value)} className="mono" />}
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Name">
+              {(id) => <Input id={id} required value={name} onChange={(e) => setName(e.target.value)} placeholder="web" />}
             </Field>
-            <Field label="Port" hint="The port your app listens on.">
-              {(id) => <Input id={id} required inputMode="numeric" value={port} onChange={(e) => setPort(e.target.value)} className="mono" />}
-            </Field>
+            {enrolled.length > 1 ? (
+              <Field label="Server">
+                {(id) => (
+                  <Select id={id} value={chosenServer} onChange={(e) => setServerId(e.target.value)}>
+                    {enrolled.map((sv) => (
+                      <option key={sv.id} value={sv.id}>
+                        {sv.name}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+            ) : (
+              <Field label="Server">
+                {(id) => <Input id={id} value={enrolled[0]?.name ?? ""} readOnly tabIndex={-1} className="opacity-60" />}
+              </Field>
+            )}
           </div>
-          <Field label="Domain" hint="Your app will be live at this domain (leave empty for a service without a public URL).">
-            {(id) => <Input id={id} value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="app.example.com" className="mono" />}
+
+          <Field label="Domain" hint="TLS via Let's Encrypt, automatic. Leave empty for internal-only.">
+            {(id) => (
+              <Input id={id} value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="app.example.com" />
+            )}
           </Field>
-          {enrolled.length > 1 && (
-            <Field label="Server">
+
+          <AdvancedSection note="defaults work">
+            <Field label="How to build it" hint="Detect picks a Dockerfile if there is one, otherwise serves the repo as a static site.">
               {(id) => (
-                <select
-                  id={id}
-                  value={chosenServer}
-                  onChange={(e) => setServerId(e.target.value)}
-                  className="h-8 w-full rounded-lg border border-border bg-surface px-2 text-sm text-text"
-                >
-                  {enrolled.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
+                <Select id={id} value={buildKind} onChange={(e) => setBuildKind(e.target.value as typeof buildKind)}>
+                  <option value="auto">Detect automatically</option>
+                  <option value="dockerfile">Dockerfile</option>
+                  <option value="static">Static site (HTML, CSS, JS)</option>
+                </Select>
               )}
             </Field>
-          )}
-          <AdvancedSection>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Dockerfile path">
-                {(id) => <Input id={id} value={dockerfile} onChange={(e) => setDockerfile(e.target.value)} className="mono" />}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Branch">
+                {(id) => <Input id={id} required value={branch} onChange={(e) => setBranch(e.target.value)} />}
               </Field>
-              <Field label="Build context">
-                {(id) => <Input id={id} value={context} onChange={(e) => setContext(e.target.value)} className="mono" />}
+              <Field label="Port" hint="The port your app listens on.">
+                {(id) => <Input id={id} required inputMode="numeric" value={port} onChange={(e) => setPort(e.target.value)} />}
+              </Field>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {buildKind !== "static" && (
+                <Field label="Dockerfile path">
+                  {(id) => <Input id={id} value={dockerfile} onChange={(e) => setDockerfile(e.target.value)} />}
+                </Field>
+              )}
+              <Field label="Build context" hint="The directory to build from.">
+                {(id) => <Input id={id} value={context} onChange={(e) => setContext(e.target.value)} />}
               </Field>
             </div>
           </AdvancedSection>
+
           {error && (
-            <p role="alert" className="text-[13px] text-danger">
+            <p role="alert" className="rounded-md border border-danger/35 bg-danger/[0.06] px-3 py-2 text-[13px] text-danger">
               {error}
             </p>
           )}
-          <div className="flex justify-end gap-2">
-            <DialogClose asChild>
-              <Button variant="ghost">Cancel</Button>
-            </DialogClose>
-            <Button type="submit" variant="primary" disabled={create.isPending}>
-              {create.isPending ? "Creating…" : "Create application"}
+          <div className="flex items-center gap-2 pt-1">
+            <Button type="submit" variant="accent" size="lg" disabled={create.isPending || repo.trim() === ""}>
+              {create.isPending ? "Deploying…" : "Deploy →"}
             </Button>
+            <DialogClose asChild>
+              <Button variant="ghost" size="lg">
+                Cancel
+              </Button>
+            </DialogClose>
           </div>
         </form>
       </DialogContent>

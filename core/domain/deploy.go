@@ -154,6 +154,13 @@ type Preview struct {
 
 // Application status vocabulary (ui-principles §5).
 const (
+	// Build kinds. "auto" is the default for new applications: the builder
+	// looks at the checked-out repository and picks, because that is where the
+	// source is — the control plane never fetches a repo (ADR-001).
+	BuildDockerfile = "dockerfile"
+	BuildStatic     = "static"
+	BuildAuto       = "auto"
+
 	AppRunning   = "running"
 	AppDeploying = "deploying"
 	AppStopped   = "stopped"

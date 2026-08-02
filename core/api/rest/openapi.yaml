@@ -750,6 +750,34 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/v1/applications/{id}/domain-check:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: checkApplicationDomain
+      summary: Check whether this app's domain actually reaches it
+      description: >-
+        Resolves the domain and fetches it from the control plane, the way the
+        public internet would, then reports who answered. A domain can resolve
+        correctly and still be served by another program listening on port 80,
+        which is invisible from inside the panel otherwise.
+      tags: [applications]
+      responses:
+        "200":
+          description: The check result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DomainCheck" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: Application not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /api/v1/applications/{id}/logs:
     get:
       operationId: streamApplicationLogs
@@ -2069,15 +2097,47 @@ components:
         deploy_key_id:
           type: [string, "null"]
 
+    DomainCheck:
+      type: object
+      required: [domain, verdict, summary, resolved_ips]
+      properties:
+        domain: { type: string }
+        verdict:
+          type: string
+          enum: [ok, no_domain, no_dns, unreachable, served_by_other]
+        summary:
+          type: string
+          description: One plain-language sentence describing what was found.
+        remedy:
+          type: string
+          description: What to do about it; absent when the verdict is ok.
+        resolved_ips:
+          type: array
+          items: { type: string }
+        http_status: { type: integer }
+        served_by:
+          type: string
+          description: The Server header of whatever answered, when it was not CypherPanel.
+
     AppBuild:
       type: object
       required: [kind, dockerfile_path, context]
       properties:
         kind:
           type: string
-          enum: [dockerfile]
+          enum: [auto, dockerfile, static]
+          default: auto
+          description: >-
+            How the checkout becomes an image. `dockerfile` builds the file at
+            `dockerfile_path`. `static` serves the build context as a website
+            behind nginx, listening on `runtime.port`. `auto` decides by looking
+            at the repository: a Dockerfile if there is one, otherwise a static
+            site if there is an index.html, and a clear failure naming both if
+            neither. Detection runs on the builder agent, where the source
+            actually is — the control plane never fetches a repository.
         dockerfile_path:
           type: string
+          description: Ignored for a `static` build.
         context:
           type: string
 

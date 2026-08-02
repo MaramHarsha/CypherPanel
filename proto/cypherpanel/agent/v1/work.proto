@@ -151,6 +151,19 @@ message BuildWork {
   // Sealed at rest on the plane; transported only over mTLS (rule 23).
   // Empty when the repo is public. Never logged (rule 20).
   string deploy_key_pem = 8;
+  // How to turn the checkout into an image: "dockerfile" builds the file at
+  // dockerfile_path; "static" serves the context as a static site; "auto"
+  // picks between them by looking at what the repository actually contains.
+  //
+  // Detection belongs here rather than on the plane because this is where the
+  // source is: the control plane never fetches a repository (ADR-001, and no
+  // builds on the panel). Empty means "dockerfile", so agents that predate
+  // this field keep their behaviour.
+  string build_kind = 9;
+  // The port the app's route and health check expect. A synthesized static
+  // image has to listen on it — otherwise "it just works" would depend on the
+  // operator having guessed the web server's default.
+  uint32 runtime_port = 10;
 }
 
 // PushImageWork commands a builder-role agent to stream a built image to the

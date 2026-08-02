@@ -896,7 +896,20 @@ type BuildWork struct {
 	// Decrypted deploy-key PEM for SSH-based git clone of private repos.
 	// Sealed at rest on the plane; transported only over mTLS (rule 23).
 	// Empty when the repo is public. Never logged (rule 20).
-	DeployKeyPem  string `protobuf:"bytes,8,opt,name=deploy_key_pem,json=deployKeyPem,proto3" json:"deploy_key_pem,omitempty"`
+	DeployKeyPem string `protobuf:"bytes,8,opt,name=deploy_key_pem,json=deployKeyPem,proto3" json:"deploy_key_pem,omitempty"`
+	// How to turn the checkout into an image: "dockerfile" builds the file at
+	// dockerfile_path; "static" serves the context as a static site; "auto"
+	// picks between them by looking at what the repository actually contains.
+	//
+	// Detection belongs here rather than on the plane because this is where the
+	// source is: the control plane never fetches a repository (ADR-001, and no
+	// builds on the panel). Empty means "dockerfile", so agents that predate
+	// this field keep their behaviour.
+	BuildKind string `protobuf:"bytes,9,opt,name=build_kind,json=buildKind,proto3" json:"build_kind,omitempty"`
+	// The port the app's route and health check expect. A synthesized static
+	// image has to listen on it — otherwise "it just works" would depend on the
+	// operator having guessed the web server's default.
+	RuntimePort   uint32 `protobuf:"varint,10,opt,name=runtime_port,json=runtimePort,proto3" json:"runtime_port,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -985,6 +998,20 @@ func (x *BuildWork) GetDeployKeyPem() string {
 		return x.DeployKeyPem
 	}
 	return ""
+}
+
+func (x *BuildWork) GetBuildKind() string {
+	if x != nil {
+		return x.BuildKind
+	}
+	return ""
+}
+
+func (x *BuildWork) GetRuntimePort() uint32 {
+	if x != nil {
+		return x.RuntimePort
+	}
+	return 0
 }
 
 // PushImageWork commands a builder-role agent to stream a built image to the
@@ -2455,7 +2482,7 @@ const file_cypherpanel_agent_v1_work_proto_rawDesc = "" +
 	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12\x15\n" +
 	"\x06app_id\x18\x02 \x01(\tR\x05appId\"A\n" +
 	"\fConvergeWork\x121\n" +
-	"\x04spec\x18\x01 \x01(\v2\x1d.cypherpanel.agent.v1.AppSpecR\x04spec\"\x8b\x02\n" +
+	"\x04spec\x18\x01 \x01(\v2\x1d.cypherpanel.agent.v1.AppSpecR\x04spec\"\xcd\x02\n" +
 	"\tBuildWork\x12#\n" +
 	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12\x15\n" +
 	"\x06app_id\x18\x02 \x01(\tR\x05appId\x12\x19\n" +
@@ -2465,7 +2492,11 @@ const file_cypherpanel_agent_v1_work_proto_rawDesc = "" +
 	"\x0fdockerfile_path\x18\x05 \x01(\tR\x0edockerfilePath\x12#\n" +
 	"\rbuild_context\x18\x06 \x01(\tR\fbuildContext\x12\x14\n" +
 	"\x05image\x18\a \x01(\tR\x05image\x12$\n" +
-	"\x0edeploy_key_pem\x18\b \x01(\tR\fdeployKeyPem\"a\n" +
+	"\x0edeploy_key_pem\x18\b \x01(\tR\fdeployKeyPem\x12\x1d\n" +
+	"\n" +
+	"build_kind\x18\t \x01(\tR\tbuildKind\x12!\n" +
+	"\fruntime_port\x18\n" +
+	" \x01(\rR\vruntimePort\"a\n" +
 	"\rPushImageWork\x12#\n" +
 	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12\x15\n" +
 	"\x06app_id\x18\x02 \x01(\tR\x05appId\x12\x14\n" +

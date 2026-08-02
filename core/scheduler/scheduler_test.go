@@ -1066,3 +1066,57 @@ func TestRecoverWithUnsealableDeployKeyFailsDeployment(t *testing.T) {
 		t.Fatal("recover republished build work despite an unsealable deploy key")
 	}
 }
+
+// start() overrides the app's status with 'deploying'; fail() has to take that
+// back. A build failure never touches a container, so the agent has nothing new
+// to report and the override would otherwise stick forever — the Deployments
+// tab saying FAILED while Overview pulsed DEPLOYING indefinitely
+// (ui-principles §10).
+func TestFailedDeployClearsDeployingStatus(t *testing.T) {
+	t.Run("first deploy ever: nothing is serving, so error", func(t *testing.T) {
+		fs, fb := newFakeStore(), &fakeBus{}
+		fs.addApp("app_1", "srv_1")
+		s := newScheduler(fs, fb)
+
+		dep, _ := s.Deploy(context.Background(), "app_1", "manual", "")
+		if got := fs.apps["app_1"].Status; got != domain.AppDeploying {
+			t.Fatalf("status while building = %q, want deploying", got)
+		}
+		s.HandleDeployEvent(context.Background(), "srv_1", &agentv1.DeployEvent{
+			DeploymentId: dep.ID, Stage: agentv1.DeployEvent_STAGE_BUILD,
+			Outcome: agentv1.DeployEvent_OUTCOME_FAILED, Detail: "no Dockerfile at ./Dockerfile",
+		})
+
+		app := fs.apps["app_1"]
+		if app.Status != domain.AppError {
+			t.Errorf("status after failure = %q, want error", app.Status)
+		}
+		if !strings.Contains(app.StatusDetail, "Dockerfile") {
+			t.Errorf("detail should carry the reason, got %q", app.StatusDetail)
+		}
+	})
+
+	t.Run("a revision was serving: it still is, so running", func(t *testing.T) {
+		fs, fb := newFakeStore(), &fakeBus{}
+		fs.addApp("app_2", "srv_1")
+		// Zero-downtime: a failed build never disturbs the live container.
+		a := fs.apps["app_2"]
+		a.ObservedRevisionID = "rev_live"
+		fs.apps["app_2"] = a
+		s := newScheduler(fs, fb)
+
+		dep, _ := s.Deploy(context.Background(), "app_2", "manual", "")
+		s.HandleDeployEvent(context.Background(), "srv_1", &agentv1.DeployEvent{
+			DeploymentId: dep.ID, Stage: agentv1.DeployEvent_STAGE_BUILD,
+			Outcome: agentv1.DeployEvent_OUTCOME_FAILED, Detail: "compile error",
+		})
+
+		app := fs.apps["app_2"]
+		if app.Status != domain.AppRunning {
+			t.Errorf("status after failure = %q, want running (previous revision still serves)", app.Status)
+		}
+		if !strings.Contains(app.StatusDetail, "still serving") {
+			t.Errorf("detail should say the old revision still serves, got %q", app.StatusDetail)
+		}
+	})
+}

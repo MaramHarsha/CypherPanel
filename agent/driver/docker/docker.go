@@ -362,12 +362,22 @@ func (d *Driver) convergedApp(ctx context.Context, spec *agentv1.AppSpec, curren
 				return status(spec.GetAppId(), spec.GetRevisionId(), stateError, "route: "+err.Error())
 			}
 		}
-	} else if !ok || applied != upstream {
-		// The running revision passed its health gate when it was started; a
-		// re-observed flip still gates on health so a container that has since
-		// died can never capture the route.
-		if err := d.prober.Probe(ctx, upstream, spec.GetHealth()); err != nil {
-			return status(spec.GetAppId(), spec.GetRevisionId(), stateError, "health check failed: "+err.Error())
+	} else {
+		// Probing is what must stay gated — it costs a network round trip per
+		// cycle. The route itself is written every time: the fragment on disk is
+		// the observable truth (see the Router doc above), and comparing only
+		// the upstream meant any change to the fragment's *shape* never reached
+		// a stable app. A middleware added to the template stayed invisible
+		// until something unrelated moved the container's IP. SetRoute skips the
+		// write when the bytes already match, so this stays a no-op in the
+		// common case and does not churn the proxy's file watcher.
+		if !ok || applied != upstream {
+			// The running revision passed its health gate when it was started; a
+			// re-observed flip still gates on health so a container that has
+			// since died can never capture the route.
+			if err := d.prober.Probe(ctx, upstream, spec.GetHealth()); err != nil {
+				return status(spec.GetAppId(), spec.GetRevisionId(), stateError, "health check failed: "+err.Error())
+			}
 		}
 		if err := d.router.SetRoute(ctx, spec.GetAppId(), spec.GetRoute(), upstream); err != nil {
 			return status(spec.GetAppId(), spec.GetRevisionId(), stateError, "route: "+err.Error())

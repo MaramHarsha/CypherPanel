@@ -1548,3 +1548,59 @@ func (f *fakeDatabasesStore) GetEnvironment(_ context.Context, id string) (domai
 func (f *fakeDatabasesStore) GetServer(_ context.Context, id string) (domain.Server, error) {
 	return domain.Server{ID: id, Name: "srv"}, nil
 }
+
+// Deleting a project cascades its rows away in one statement. Applications
+// survive that — the driver tears down anything absent from desired state — but
+// a managed database is removed by a two-phase flow keyed on its own row, so
+// cascading it skips the teardown and strands the container and its data volume
+// on the server with nothing left in the panel that knows they exist. The
+// delete is refused while resources remain.
+func TestDeleteProjectRefusesWhileResourcesRemain(t *testing.T) {
+	// An empty project deletes cleanly. Uses a freshly created project so it
+	// does not depend on what other tests left in the shared fixture.
+	t.Run("empty project deletes", func(t *testing.T) {
+		ts := newTestServer(t)
+		token := login(t, ts)
+
+		st, _, resp := doJSON(t, "POST", ts.URL+"/api/v1/projects", token, `{"name":"guard-empty"}`)
+		if st != http.StatusCreated {
+			t.Fatalf("creating project: %d %s", st, resp)
+		}
+		var proj struct {
+			Project struct {
+				ID string `json:"id"`
+			} `json:"project"`
+		}
+		if err := json.Unmarshal(resp, &proj); err != nil {
+			t.Fatal(err)
+		}
+		if st, _, b := doJSON(t, "DELETE", ts.URL+"/api/v1/projects/"+proj.Project.ID, token, ""); st != http.StatusNoContent {
+			t.Fatalf("empty project should delete: %d %s", st, b)
+		}
+	})
+
+	// A project holding an application is refused, because the cascade would
+	// take its resources with it — and a managed database's container and data
+	// volume would be stranded on the server, since its teardown is driven by
+	// the row the cascade removes.
+	t.Run("project with an application is refused", func(t *testing.T) {
+		ts := newTestServer(t)
+		token := login(t, ts)
+
+		// The seeded env_test is the one the applications fixture knows.
+		body := `{"name":"web","source":{"kind":"github","repo":"acme/web"},` +
+			`"runtime":{"server_id":"srv_test","port":8080},"route":{"domain":"guard.example.com"}}`
+		if st, _, b := doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, body); st != http.StatusCreated {
+			t.Fatalf("seeding an application: %d %s", st, b)
+		}
+
+		st, _, resp := doJSON(t, "DELETE", ts.URL+"/api/v1/projects/prj_test", token, "")
+		if st != http.StatusConflict {
+			t.Fatalf("delete with an app present: status %d, want 409; body %s", st, resp)
+		}
+		// The operator has to be told what is in the way, not just refused.
+		if !bytes.Contains(resp, []byte("application")) {
+			t.Errorf("refusal should name what remains, got %s", resp)
+		}
+	})
+}

@@ -2,12 +2,13 @@
 // first, machine detail in mono (web-ui-design.md §4).
 import { createFileRoute } from "@tanstack/react-router";
 import { ExternalLink } from "lucide-react";
-import { useGetApplication } from "@/api/gen/applications/applications";
+import { useCheckApplicationDomain, useGetApplication } from "@/api/gen/applications/applications";
 import { getHandleGithubWebhookUrl } from "@/api/gen/deployments/deployments";
 import { CopyField } from "@/components/copy-field";
 import { Fact, FactCard } from "@/components/fact-card";
 import { PageState } from "@/components/page-state";
 import { StatusDot } from "@/components/status-badge";
+import { Button } from "@/components/ui/button";
 import { relativeTime, absoluteTime } from "@/lib/time";
 
 export const Route = createFileRoute("/_app/projects/$projectId/applications/$appId/")({
@@ -93,6 +94,8 @@ function OverviewTab() {
                 </FactCard>
               </div>
 
+              {a.route.domain && <DomainCheck appId={appId} />}
+
               <FactCard title="Push to deploy">
                 <p className="text-[12.5px] leading-relaxed text-text-mid">
                   Add this webhook to the GitHub repository (Settings → Webhooks, content type JSON) and every push
@@ -105,5 +108,48 @@ function OverviewTab() {
           );
       }}
     </PageState>
+  );
+}
+
+/** "Is this domain actually reaching my app?" — a domain can resolve perfectly
+ *  and still be answered by another program on port 80, which nothing in the
+ *  panel could see before. Checked on demand rather than polled: it makes an
+ *  outbound request to the public internet. */
+function DomainCheck({ appId }: { appId: string }) {
+  const check = useCheckApplicationDomain(appId, { query: { enabled: false, retry: false } });
+  const r = check.data;
+
+  const tone =
+    r?.verdict === "ok"
+      ? "border-status-running/40 bg-status-running/[0.06]"
+      : r
+        ? "border-status-degraded/40 bg-status-degraded/[0.07]"
+        : "border-border bg-surface";
+
+  return (
+    <section className={`rounded-lg border p-4.5 ${tone}`}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="eyebrow">Domain</h2>
+        <Button size="sm" disabled={check.isFetching} onClick={() => void check.refetch()}>
+          {check.isFetching ? "Checking…" : "Check domain"}
+        </Button>
+      </div>
+      {r ? (
+        <div className="mt-3 space-y-1.5">
+          <p className="text-[13px] leading-relaxed text-text">{r.summary}</p>
+          {r.remedy && <p className="text-[12.5px] leading-relaxed text-text-mid">{r.remedy}</p>}
+          {r.resolved_ips.length > 0 && (
+            <p className="font-mono text-[11.5px] text-text-faint">
+              resolves to {r.resolved_ips.join(", ")}
+              {r.http_status ? ` · answered ${r.http_status}` : ""}
+            </p>
+          )}
+        </div>
+      ) : (
+        <p className="mt-3 text-[12.5px] leading-relaxed text-text-mid">
+          Confirms the domain resolves here and that this app — not something else on the server — is what answers.
+        </p>
+      )}
+    </section>
   );
 }

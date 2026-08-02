@@ -416,6 +416,10 @@ func (s *Scheduler) buildWork(ctx context.Context, dep domain.Deployment, app do
 		BuildContext:   app.Build.Context,
 		Image:          imageTag(app.ID, rev.ID),
 		DeployKeyPem:   deployKeyPem,
+		BuildKind:      app.Build.Kind,
+		// A synthesized static image must listen where the route and health
+		// check already expect it, not on whatever its base image defaults to.
+		RuntimePort: uint32(app.Runtime.Port), //nolint:gosec // validated 1–65535
 	}, nil
 }
 
@@ -759,14 +763,45 @@ func (s *Scheduler) fail(ctx context.Context, dep domain.Deployment, detail stri
 		return
 	}
 	s.log.Warn("deployment failed", "deployment_id", dep.ID, "app_id", dep.ApplicationID, "detail", detail)
-	if s.notify != nil {
-		// Load the app for the message; a lookup miss just drops the notice
-		// (the failure is already recorded and logged).
-		if app, err := s.store.GetApplication(ctx, dep.ApplicationID); err == nil {
+	// Load the app for the notification and to clear the plane-driven
+	// 'deploying' override; a lookup miss just drops the notice (the failure is
+	// already recorded and logged).
+	if app, err := s.store.GetApplication(ctx, dep.ApplicationID); err == nil {
+		s.clearDeployingStatus(ctx, app, detail)
+		if s.notify != nil {
 			s.notify.NotifyDeploy(ctx, app, failed)
 		}
 	}
 	s.promoteNext(ctx, dep.ApplicationID)
+}
+
+// clearDeployingStatus takes back the 'deploying' override start() applied.
+//
+// Status is the agent's observation except while a pipeline runs, when the
+// scheduler overrides it (domain.Application.Status). Observations overwrite
+// the override as reports arrive — but a build or distribute failure never
+// touches a container, so the agent has nothing new to report and the override
+// would stick forever: the Deployments tab said FAILED while Overview pulsed
+// DEPLOYING indefinitely. That is precisely the state ui-principles §10 forbids
+// showing.
+//
+// The plane cannot re-observe, so it says the truest thing it can derive. A
+// previously observed revision means the old container was never disturbed —
+// zero-downtime means the previous revision keeps serving a failed rollout — so
+// the app is running, and the detail explains that the newest attempt failed.
+// With nothing ever observed, nothing is serving, and error is honest.
+func (s *Scheduler) clearDeployingStatus(ctx context.Context, app domain.Application, detail string) {
+	if app.Status != domain.AppDeploying {
+		return // an observation already corrected it; don't fight the agent
+	}
+	status, msg := domain.AppError, detail
+	if app.ObservedRevisionID != "" {
+		status = domain.AppRunning
+		msg = "last deploy failed (" + detail + "); the previous revision is still serving"
+	}
+	if err := s.store.SetApplicationStatus(ctx, app.ID, status, msg); err != nil {
+		s.log.Error("clearing deploying status", "app_id", app.ID, "error", err)
+	}
 }
 
 // promoteNext starts the oldest queued deployment for the app, if any.

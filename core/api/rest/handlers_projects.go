@@ -1,10 +1,14 @@
 package rest
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/MaramHarsha/cypherpanel/core/applications"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
 	"github.com/MaramHarsha/cypherpanel/core/store"
@@ -160,6 +164,19 @@ func (a *API) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 	if !a.requireProjectRole(w, r, user, id, domain.RoleAdmin) {
 		return
 	}
+	// The projects row cascades: environments, applications and databases all
+	// disappear with it. For applications that is survivable — the docker
+	// driver tears down anything absent from desired state — but a managed
+	// database is removed by a two-phase flow keyed on its own row
+	// (pending_delete -> agent removes the container -> row deleted). Cascading
+	// the row away skips that entirely, leaving the container AND its data
+	// volume running on the server with nothing in the panel that knows they
+	// exist. So the delete is refused while the project still holds resources,
+	// which is the same stance server deletion already takes.
+	if inUse, detail := a.projectResourcesInUse(r.Context(), id); inUse {
+		writeError(w, http.StatusConflict, detail)
+		return
+	}
 	if err := a.deps.Projects.Delete(r.Context(), id); err != nil {
 		a.deps.Log.Error("deleting project", "error", err)
 		writeError(w, http.StatusInternalServerError, "could not delete project")
@@ -220,4 +237,62 @@ func (a *API) handleCreateEnvironment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, toEnvironmentDTO(env))
+}
+
+// cannotConfirmEmpty is the fail-closed answer: never cascade a project away
+// on a guess.
+const cannotConfirmEmpty = "could not confirm the project is empty, so it was not deleted — try again"
+
+// projectResourcesInUse reports whether a project still holds applications or
+// databases, and a message naming what to remove first.
+//
+// This lives here rather than in the projects service because the service
+// deliberately knows nothing about applications or databases — wiring those in
+// would invert the dependency for one guard. The counts come from the services
+// that already own them.
+func (a *API) projectResourcesInUse(ctx context.Context, projectID string) (bool, string) {
+	envs, err := a.deps.Projects.ListEnvironments(ctx, projectID)
+	if err != nil {
+		// Fail closed: if we cannot prove the project is empty, do not cascade.
+		a.deps.Log.Error("listing environments before project delete", "error", err)
+		return true, cannotConfirmEmpty
+	}
+	apps, dbs := 0, 0
+	for _, env := range envs {
+		switch list, lerr := a.deps.Applications.List(ctx, env.ID); {
+		case lerr == nil:
+			apps += len(list)
+		case errors.Is(lerr, applications.ErrEnvironmentNotFound):
+			// An environment the applications side does not know cannot hold
+			// applications; that is a zero, not an unknown.
+		default:
+			a.deps.Log.Error("listing applications before project delete", "error", lerr)
+			return true, cannotConfirmEmpty
+		}
+		if list, lerr := a.deps.Databases.List(ctx, env.ID); lerr == nil {
+			dbs += len(list)
+		} else {
+			a.deps.Log.Error("listing databases before project delete", "error", lerr)
+			return true, cannotConfirmEmpty
+		}
+	}
+	if apps == 0 && dbs == 0 {
+		return false, ""
+	}
+	parts := make([]string, 0, 2)
+	if apps > 0 {
+		parts = append(parts, plural(apps, "application", "applications"))
+	}
+	if dbs > 0 {
+		parts = append(parts, plural(dbs, "database", "databases"))
+	}
+	return true, "this project still contains " + strings.Join(parts, " and ") +
+		" — delete them first so their containers and data volumes are properly torn down"
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return strconv.Itoa(n) + " " + many
 }
