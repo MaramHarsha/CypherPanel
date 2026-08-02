@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -938,6 +939,86 @@ func routePathsFromSource(t *testing.T) []string {
 		t.Fatalf("extracted only %d routes from rest.go — extraction is broken", len(out))
 	}
 	return out
+}
+
+// Every route behind a role check or session-only guard can answer 403, and the
+// spec has to say so — a generated client that does not model a response the
+// endpoint actually produces cannot handle it (ENGINEERING rule 19). This
+// catches the whole class rather than one endpoint at a time.
+func TestForbiddenResponsesAreDocumented(t *testing.T) {
+	src, err := os.ReadFile("rest.go")
+	if err != nil {
+		t.Fatalf("reading rest.go: %v", err)
+	}
+	guarded := guardedHandlers(t)
+	spec, err := os.ReadFile("openapi.yaml")
+	if err != nil {
+		t.Fatalf("reading openapi.yaml: %v", err)
+	}
+
+	// Operations in the spec, as "method path" → the block of text under it.
+	re := regexp.MustCompile(`mux\.HandleFunc\("(GET|POST|PATCH|PUT|DELETE) ([^"]+)",\s*a\.(authed|sessionOnly)\(a\.(handle\w+)\)\)`)
+	checked := 0
+	for _, m := range re.FindAllStringSubmatch(string(src), -1) {
+		method, path, wrapper, handler := m[1], m[2], m[3], m[4]
+		if wrapper != "sessionOnly" && !guarded[handler] {
+			continue
+		}
+		checked++
+		if !operationDocuments(string(spec), path, strings.ToLower(method), "403") {
+			t.Errorf("%s %s can return 403 (%s) but openapi.yaml does not document it", method, path, handler)
+		}
+	}
+	if checked < 40 {
+		t.Fatalf("only %d guarded routes found — the extraction is broken", checked)
+	}
+}
+
+// guardedHandlers are the handlers that perform a role check, and so can 403.
+func guardedHandlers(t *testing.T) map[string]bool {
+	t.Helper()
+	entries, err := filepath.Glob("handlers_*.go")
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("globbing handlers: %v", err)
+	}
+	fn := regexp.MustCompile(`(?s)func \(a \*API\) (handle\w+)\(w http\.ResponseWriter, r \*http\.Request\) \{(.*?)\n\}\n`)
+	role := regexp.MustCompile(`authorizeResolved|requireProjectRole|requireTeamRole|requirePanelRole`)
+	out := map[string]bool{}
+	for _, f := range entries {
+		body, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("reading %s: %v", f, err)
+		}
+		for _, m := range fn.FindAllStringSubmatch(string(body), -1) {
+			if role.MatchString(m[2]) {
+				out[m[1]] = true
+			}
+		}
+	}
+	return out
+}
+
+// operationDocuments reports whether the spec's path/method block lists status.
+// A deliberately simple scan: the block runs from the method key to the next
+// line at the same or shallower indentation.
+func operationDocuments(spec, path, method, status string) bool {
+	pathIdx := strings.Index(spec, "\n  "+path+":\n")
+	if pathIdx < 0 {
+		return false
+	}
+	rest := spec[pathIdx+1:]
+	if next := regexp.MustCompile(`\n  /`).FindStringIndex(rest[1:]); next != nil {
+		rest = rest[:next[1]]
+	}
+	mIdx := strings.Index(rest, "\n    "+method+":\n")
+	if mIdx < 0 {
+		return false
+	}
+	block := rest[mIdx+1:]
+	if next := regexp.MustCompile(`\n    \w+:\n`).FindStringIndex(block[1:]); next != nil {
+		block = block[:next[0]+1]
+	}
+	return strings.Contains(block, `"`+status+`":`)
 }
 
 // The request bodies the OpenAPI schema describes must actually be accepted.

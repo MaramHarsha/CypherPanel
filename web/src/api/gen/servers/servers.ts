@@ -29,6 +29,7 @@ import type {
   CreateServerRequest,
   CreateServerResponse,
   Error,
+  ForbiddenResponse,
   Server,
   UnauthorizedResponse
 } from '.././model';
@@ -367,7 +368,7 @@ export const createServer = async (createServerRequest: CreateServerRequest, opt
 
 
 
-export const getCreateServerMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse,
+export const getCreateServerMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createServer>>, TError,{data: CreateServerRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof createServer>>, TError,{data: CreateServerRequest}, TContext> => {
 
@@ -394,12 +395,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type CreateServerMutationResult = NonNullable<Awaited<ReturnType<typeof createServer>>>
     export type CreateServerMutationBody = CreateServerRequest
-    export type CreateServerMutationError = BadRequestResponse | UnauthorizedResponse
+    export type CreateServerMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
 
     /**
  * @summary Register a server and issue its single-use join token
  */
-export const useCreateServer = <TError = BadRequestResponse | UnauthorizedResponse,
+export const useCreateServer = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createServer>>, TError,{data: CreateServerRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof createServer>>,
@@ -538,7 +539,7 @@ export const deleteServer = async (id: string, options?: RequestInit): Promise<v
 
 
 
-export const getDeleteServerMutationOptions = <TError = UnauthorizedResponse,
+export const getDeleteServerMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteServer>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof deleteServer>>, TError,{id: string}, TContext> => {
 
@@ -565,12 +566,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type DeleteServerMutationResult = NonNullable<Awaited<ReturnType<typeof deleteServer>>>
     
-    export type DeleteServerMutationError = UnauthorizedResponse
+    export type DeleteServerMutationError = UnauthorizedResponse | ForbiddenResponse
 
     /**
  * @summary Delete a server, revoking its agent
  */
-export const useDeleteServer = <TError = UnauthorizedResponse,
+export const useDeleteServer = <TError = UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteServer>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof deleteServer>>,

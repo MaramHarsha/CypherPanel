@@ -27,6 +27,7 @@ import type {
 import type {
   BadRequestResponse,
   CreateScheduledTaskRequest,
+  ForbiddenResponse,
   NotFoundResponse,
   ScheduledTask,
   ScheduledTaskRun,
@@ -73,7 +74,7 @@ export const getListScheduledTasksQueryKey = (id?: string,) => {
     }
 
     
-export const getListScheduledTasksQueryOptions = <TData = Awaited<ReturnType<typeof listScheduledTasks>>, TError = UnauthorizedResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listScheduledTasks>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getListScheduledTasksQueryOptions = <TData = Awaited<ReturnType<typeof listScheduledTasks>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listScheduledTasks>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -92,10 +93,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type ListScheduledTasksQueryResult = NonNullable<Awaited<ReturnType<typeof listScheduledTasks>>>
-export type ListScheduledTasksQueryError = UnauthorizedResponse | NotFoundResponse
+export type ListScheduledTasksQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
 
-export function useListScheduledTasks<TData = Awaited<ReturnType<typeof listScheduledTasks>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useListScheduledTasks<TData = Awaited<ReturnType<typeof listScheduledTasks>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listScheduledTasks>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listScheduledTasks>>,
@@ -105,7 +106,7 @@ export function useListScheduledTasks<TData = Awaited<ReturnType<typeof listSche
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListScheduledTasks<TData = Awaited<ReturnType<typeof listScheduledTasks>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useListScheduledTasks<TData = Awaited<ReturnType<typeof listScheduledTasks>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listScheduledTasks>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listScheduledTasks>>,
@@ -115,7 +116,7 @@ export function useListScheduledTasks<TData = Awaited<ReturnType<typeof listSche
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListScheduledTasks<TData = Awaited<ReturnType<typeof listScheduledTasks>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useListScheduledTasks<TData = Awaited<ReturnType<typeof listScheduledTasks>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listScheduledTasks>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -123,7 +124,7 @@ export function useListScheduledTasks<TData = Awaited<ReturnType<typeof listSche
  * @summary List an application's scheduled tasks
  */
 
-export function useListScheduledTasks<TData = Awaited<ReturnType<typeof listScheduledTasks>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useListScheduledTasks<TData = Awaited<ReturnType<typeof listScheduledTasks>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listScheduledTasks>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -167,7 +168,7 @@ export const createScheduledTask = async (id: string,
 
 
 
-export const getCreateScheduledTaskMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse,
+export const getCreateScheduledTaskMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createScheduledTask>>, TError,{id: string;data: CreateScheduledTaskRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof createScheduledTask>>, TError,{id: string;data: CreateScheduledTaskRequest}, TContext> => {
 
@@ -194,12 +195,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type CreateScheduledTaskMutationResult = NonNullable<Awaited<ReturnType<typeof createScheduledTask>>>
     export type CreateScheduledTaskMutationBody = CreateScheduledTaskRequest
-    export type CreateScheduledTaskMutationError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse
+    export type CreateScheduledTaskMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
     /**
  * @summary Create a scheduled task (cron; command is argv, not a shell string)
  */
-export const useCreateScheduledTask = <TError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse,
+export const useCreateScheduledTask = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createScheduledTask>>, TError,{id: string;data: CreateScheduledTaskRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof createScheduledTask>>,
@@ -245,7 +246,7 @@ export const getGetScheduledTaskQueryKey = (id?: string,) => {
     }
 
     
-export const getGetScheduledTaskQueryOptions = <TData = Awaited<ReturnType<typeof getScheduledTask>>, TError = UnauthorizedResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getScheduledTask>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getGetScheduledTaskQueryOptions = <TData = Awaited<ReturnType<typeof getScheduledTask>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getScheduledTask>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -264,10 +265,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetScheduledTaskQueryResult = NonNullable<Awaited<ReturnType<typeof getScheduledTask>>>
-export type GetScheduledTaskQueryError = UnauthorizedResponse | NotFoundResponse
+export type GetScheduledTaskQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
 
-export function useGetScheduledTask<TData = Awaited<ReturnType<typeof getScheduledTask>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetScheduledTask<TData = Awaited<ReturnType<typeof getScheduledTask>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getScheduledTask>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getScheduledTask>>,
@@ -277,7 +278,7 @@ export function useGetScheduledTask<TData = Awaited<ReturnType<typeof getSchedul
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetScheduledTask<TData = Awaited<ReturnType<typeof getScheduledTask>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetScheduledTask<TData = Awaited<ReturnType<typeof getScheduledTask>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getScheduledTask>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getScheduledTask>>,
@@ -287,7 +288,7 @@ export function useGetScheduledTask<TData = Awaited<ReturnType<typeof getSchedul
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetScheduledTask<TData = Awaited<ReturnType<typeof getScheduledTask>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetScheduledTask<TData = Awaited<ReturnType<typeof getScheduledTask>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getScheduledTask>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -295,7 +296,7 @@ export function useGetScheduledTask<TData = Awaited<ReturnType<typeof getSchedul
  * @summary Get a scheduled task
  */
 
-export function useGetScheduledTask<TData = Awaited<ReturnType<typeof getScheduledTask>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetScheduledTask<TData = Awaited<ReturnType<typeof getScheduledTask>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getScheduledTask>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -339,7 +340,7 @@ export const updateScheduledTask = async (id: string,
 
 
 
-export const getUpdateScheduledTaskMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse,
+export const getUpdateScheduledTaskMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateScheduledTask>>, TError,{id: string;data: CreateScheduledTaskRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof updateScheduledTask>>, TError,{id: string;data: CreateScheduledTaskRequest}, TContext> => {
 
@@ -366,12 +367,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type UpdateScheduledTaskMutationResult = NonNullable<Awaited<ReturnType<typeof updateScheduledTask>>>
     export type UpdateScheduledTaskMutationBody = CreateScheduledTaskRequest
-    export type UpdateScheduledTaskMutationError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse
+    export type UpdateScheduledTaskMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
     /**
  * @summary Update a scheduled task
  */
-export const useUpdateScheduledTask = <TError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse,
+export const useUpdateScheduledTask = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateScheduledTask>>, TError,{id: string;data: CreateScheduledTaskRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof updateScheduledTask>>,
@@ -409,7 +410,7 @@ export const deleteScheduledTask = async (id: string, options?: RequestInit): Pr
 
 
 
-export const getDeleteScheduledTaskMutationOptions = <TError = UnauthorizedResponse | NotFoundResponse,
+export const getDeleteScheduledTaskMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteScheduledTask>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof deleteScheduledTask>>, TError,{id: string}, TContext> => {
 
@@ -436,12 +437,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type DeleteScheduledTaskMutationResult = NonNullable<Awaited<ReturnType<typeof deleteScheduledTask>>>
     
-    export type DeleteScheduledTaskMutationError = UnauthorizedResponse | NotFoundResponse
+    export type DeleteScheduledTaskMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
     /**
  * @summary Delete a scheduled task
  */
-export const useDeleteScheduledTask = <TError = UnauthorizedResponse | NotFoundResponse,
+export const useDeleteScheduledTask = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteScheduledTask>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof deleteScheduledTask>>,
@@ -487,7 +488,7 @@ export const getListScheduledTaskRunsQueryKey = (id?: string,) => {
     }
 
     
-export const getListScheduledTaskRunsQueryOptions = <TData = Awaited<ReturnType<typeof listScheduledTaskRuns>>, TError = UnauthorizedResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listScheduledTaskRuns>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getListScheduledTaskRunsQueryOptions = <TData = Awaited<ReturnType<typeof listScheduledTaskRuns>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listScheduledTaskRuns>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -506,10 +507,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type ListScheduledTaskRunsQueryResult = NonNullable<Awaited<ReturnType<typeof listScheduledTaskRuns>>>
-export type ListScheduledTaskRunsQueryError = UnauthorizedResponse | NotFoundResponse
+export type ListScheduledTaskRunsQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
 
-export function useListScheduledTaskRuns<TData = Awaited<ReturnType<typeof listScheduledTaskRuns>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useListScheduledTaskRuns<TData = Awaited<ReturnType<typeof listScheduledTaskRuns>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listScheduledTaskRuns>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listScheduledTaskRuns>>,
@@ -519,7 +520,7 @@ export function useListScheduledTaskRuns<TData = Awaited<ReturnType<typeof listS
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListScheduledTaskRuns<TData = Awaited<ReturnType<typeof listScheduledTaskRuns>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useListScheduledTaskRuns<TData = Awaited<ReturnType<typeof listScheduledTaskRuns>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listScheduledTaskRuns>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listScheduledTaskRuns>>,
@@ -529,7 +530,7 @@ export function useListScheduledTaskRuns<TData = Awaited<ReturnType<typeof listS
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListScheduledTaskRuns<TData = Awaited<ReturnType<typeof listScheduledTaskRuns>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useListScheduledTaskRuns<TData = Awaited<ReturnType<typeof listScheduledTaskRuns>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listScheduledTaskRuns>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -537,7 +538,7 @@ export function useListScheduledTaskRuns<TData = Awaited<ReturnType<typeof listS
  * @summary List a task's recent run history
  */
 
-export function useListScheduledTaskRuns<TData = Awaited<ReturnType<typeof listScheduledTaskRuns>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useListScheduledTaskRuns<TData = Awaited<ReturnType<typeof listScheduledTaskRuns>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listScheduledTaskRuns>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {

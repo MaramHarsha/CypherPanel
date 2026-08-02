@@ -537,6 +537,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /api/v1/servers/{id}:
     parameters:
@@ -578,6 +580,8 @@ paths:
           description: Deleted (or already absent).
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /api/v1/projects:
     get:
@@ -616,6 +620,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /api/v1/templates:
     get:
@@ -674,6 +680,8 @@ paths:
               schema: { $ref: "#/components/schemas/InstallTemplateResponse" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/projects/{id}:
     parameters:
@@ -696,6 +704,8 @@ paths:
                 $ref: "#/components/schemas/ProjectDetail"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           description: No such project.
           content:
@@ -712,6 +722,8 @@ paths:
           description: Deleted (or already absent).
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /api/v1/projects/{id}/environments:
     parameters:
@@ -736,6 +748,8 @@ paths:
                   $ref: "#/components/schemas/Environment"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           description: No such project.
           content:
@@ -763,6 +777,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           description: No such project.
           content:
@@ -793,6 +809,8 @@ paths:
                   $ref: "#/components/schemas/Application"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           description: No such environment.
           content:
@@ -822,6 +840,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           description: No such environment.
           content:
@@ -850,6 +870,8 @@ paths:
                 $ref: "#/components/schemas/Application"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           description: No such application.
           content:
@@ -881,6 +903,8 @@ paths:
                 $ref: "#/components/schemas/Error"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           description: No such application.
           content:
@@ -902,6 +926,8 @@ paths:
           description: Deleted (or already absent).
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /api/v1/applications/{id}/domain-check:
     parameters:
@@ -925,6 +951,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/DomainCheck" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           description: Application not found
           content:
@@ -951,6 +979,8 @@ paths:
                 type: string
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           description: No such application.
           content:
@@ -984,6 +1014,8 @@ paths:
                 $ref: "#/components/schemas/Deployment"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           description: No such application.
           content:
@@ -1013,6 +1045,8 @@ paths:
                   $ref: "#/components/schemas/Deployment"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           description: No such application.
           content:
@@ -1040,6 +1074,8 @@ paths:
                 $ref: "#/components/schemas/Deployment"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           description: No such deployment.
           content:
@@ -1067,6 +1103,8 @@ paths:
                 type: string
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           description: No such deployment.
           content:
@@ -1094,6 +1132,8 @@ paths:
                 $ref: "#/components/schemas/Deployment"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           description: No such deployment.
           content:
@@ -1183,6 +1223,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /api/v1/deploy-keys/{id}:
     parameters:
@@ -1220,6 +1262,8 @@ paths:
           description: Deleted successfully.
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           description: No such deploy key.
           content:
@@ -1254,6 +1298,8 @@ paths:
                 $ref: "#/components/schemas/EnvVarKeys"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           description: No such application.
           content:
@@ -1292,6 +1338,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           description: No such application.
           content:
@@ -1307,6 +1355,8 @@ paths:
           description: Deleted (or already absent).
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           description: No such application.
           content:
@@ -1357,6 +1407,8 @@ paths:
       responses:
         "200": { description: The team., content: { application/json: { schema: { $ref: "#/components/schemas/Team" } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
       operationId: renameTeam
@@ -1391,6 +1443,8 @@ paths:
       responses:
         "200": { description: The members., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/TeamMember" } } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
     post:
       operationId: addTeamMember
@@ -1491,6 +1545,8 @@ paths:
       responses:
         "200": { description: The environment's databases., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Database" } } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
     post:
       operationId: createDatabase
@@ -1507,6 +1563,8 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/CreateDatabaseResponse" } } }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/databases/{id}:
     parameters:
@@ -1518,6 +1576,8 @@ paths:
       responses:
         "200": { description: The database., content: { application/json: { schema: { $ref: "#/components/schemas/Database" } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
       operationId: updateDatabase
@@ -1530,6 +1590,8 @@ paths:
         "200": { description: Updated., content: { application/json: { schema: { $ref: "#/components/schemas/Database" } } } }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
       operationId: deleteDatabase
@@ -1538,6 +1600,8 @@ paths:
       responses:
         "204": { description: Deletion accepted (reconciled by the agent). }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/databases/{id}/stop:
     parameters:
@@ -1549,6 +1613,8 @@ paths:
       responses:
         "202": { description: Stop accepted. }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/databases/{id}/start:
     parameters:
@@ -1560,6 +1626,8 @@ paths:
       responses:
         "202": { description: Start accepted. }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/databases/{id}/reset-password:
     parameters:
@@ -1571,6 +1639,8 @@ paths:
       responses:
         "200": { description: New password, shown once., content: { application/json: { schema: { $ref: "#/components/schemas/ResetPasswordResponse" } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { description: Engine does not use password auth., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /api/v1/databases/{id}/connection-info:
@@ -1583,6 +1653,8 @@ paths:
       responses:
         "200": { description: Connection info., content: { application/json: { schema: { $ref: "#/components/schemas/ConnectionInfo" } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
 
   # ─── Backups (managed-databases.md §7) ────────────────────────────────────
@@ -1637,6 +1709,8 @@ paths:
       responses:
         "200": { description: Schedules., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/DatabaseBackup" } } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
     post:
       operationId: createDatabaseBackup
@@ -1649,6 +1723,8 @@ paths:
         "201": { description: Schedule created., content: { application/json: { schema: { $ref: "#/components/schemas/DatabaseBackup" } } } }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/databases/{id}/backups/{bak_id}:
     parameters:
@@ -1661,6 +1737,8 @@ paths:
       responses:
         "204": { description: Deleted. }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/databases/{id}/backups/{bak_id}/history:
     parameters:
@@ -1673,6 +1751,8 @@ paths:
       responses:
         "200": { description: Backup records, newest first., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/BackupRecord" } } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/databases/{id}/backups/{bak_id}/run:
     parameters:
@@ -1685,6 +1765,8 @@ paths:
       responses:
         "202": { description: Backup started; the record tracks progress., content: { application/json: { schema: { $ref: "#/components/schemas/RunBackupResponse" } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/databases/{id}/restore:
     parameters:
@@ -1700,6 +1782,8 @@ paths:
         "202": { description: Restore started. }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { description: Confirmation missing or the database is not in a restorable state., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
@@ -1714,6 +1798,8 @@ paths:
       responses:
         "200": { description: Previews., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Preview" } } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/previews/{id}:
     parameters:
@@ -1725,6 +1811,8 @@ paths:
       responses:
         "200": { description: The preview., content: { application/json: { schema: { $ref: "#/components/schemas/Preview" } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
       operationId: deletePreview
@@ -1733,6 +1821,8 @@ paths:
       responses:
         "202": { description: Teardown accepted. }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
 
   # ─── Notifications (notifications.md §7) ──────────────────────────────────
@@ -1746,6 +1836,8 @@ paths:
       responses:
         "200": { description: Notifiers (channel config never included; config_hint only)., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Notifier" } } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
     post:
       operationId: createNotifier
@@ -1758,6 +1850,8 @@ paths:
         "201": { description: Notifier created., content: { application/json: { schema: { $ref: "#/components/schemas/Notifier" } } } }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/notifiers/{id}:
     parameters:
@@ -1769,6 +1863,8 @@ paths:
       responses:
         "200": { description: The notifier., content: { application/json: { schema: { $ref: "#/components/schemas/Notifier" } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
       operationId: updateNotifier
@@ -1781,6 +1877,8 @@ paths:
         "200": { description: Updated., content: { application/json: { schema: { $ref: "#/components/schemas/Notifier" } } } }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
       operationId: deleteNotifier
@@ -1789,6 +1887,8 @@ paths:
       responses:
         "204": { description: Deleted. }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/notifiers/{id}/test:
     parameters:
@@ -1800,6 +1900,8 @@ paths:
       responses:
         "202": { description: Delivery attempted (a channel failure is logged, not surfaced). }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
 
   # ─── Scheduled tasks (scheduled-tasks.md §7) ──────────────────────────────
@@ -1813,6 +1915,8 @@ paths:
       responses:
         "200": { description: Tasks., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/ScheduledTask" } } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
     post:
       operationId: createScheduledTask
@@ -1825,6 +1929,8 @@ paths:
         "201": { description: Task created., content: { application/json: { schema: { $ref: "#/components/schemas/ScheduledTask" } } } }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/scheduled-tasks/{id}:
     parameters:
@@ -1836,6 +1942,8 @@ paths:
       responses:
         "200": { description: The task., content: { application/json: { schema: { $ref: "#/components/schemas/ScheduledTask" } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
       operationId: updateScheduledTask
@@ -1848,6 +1956,8 @@ paths:
         "200": { description: Updated., content: { application/json: { schema: { $ref: "#/components/schemas/ScheduledTask" } } } }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
       operationId: deleteScheduledTask
@@ -1856,6 +1966,8 @@ paths:
       responses:
         "204": { description: Deleted. }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/scheduled-tasks/{id}/runs:
     parameters:
@@ -1867,6 +1979,8 @@ paths:
       responses:
         "200": { description: Runs, newest first., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/ScheduledTaskRun" } } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
 
 

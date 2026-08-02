@@ -25,6 +25,7 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  ForbiddenResponse,
   NotFoundResponse,
   Preview,
   UnauthorizedResponse
@@ -70,7 +71,7 @@ export const getListPreviewsQueryKey = (id?: string,) => {
     }
 
     
-export const getListPreviewsQueryOptions = <TData = Awaited<ReturnType<typeof listPreviews>>, TError = UnauthorizedResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPreviews>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getListPreviewsQueryOptions = <TData = Awaited<ReturnType<typeof listPreviews>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPreviews>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -89,10 +90,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type ListPreviewsQueryResult = NonNullable<Awaited<ReturnType<typeof listPreviews>>>
-export type ListPreviewsQueryError = UnauthorizedResponse | NotFoundResponse
+export type ListPreviewsQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
 
-export function useListPreviews<TData = Awaited<ReturnType<typeof listPreviews>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useListPreviews<TData = Awaited<ReturnType<typeof listPreviews>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPreviews>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listPreviews>>,
@@ -102,7 +103,7 @@ export function useListPreviews<TData = Awaited<ReturnType<typeof listPreviews>>
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListPreviews<TData = Awaited<ReturnType<typeof listPreviews>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useListPreviews<TData = Awaited<ReturnType<typeof listPreviews>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPreviews>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listPreviews>>,
@@ -112,7 +113,7 @@ export function useListPreviews<TData = Awaited<ReturnType<typeof listPreviews>>
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListPreviews<TData = Awaited<ReturnType<typeof listPreviews>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useListPreviews<TData = Awaited<ReturnType<typeof listPreviews>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPreviews>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -120,7 +121,7 @@ export function useListPreviews<TData = Awaited<ReturnType<typeof listPreviews>>
  * @summary List an application's previews
  */
 
-export function useListPreviews<TData = Awaited<ReturnType<typeof listPreviews>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useListPreviews<TData = Awaited<ReturnType<typeof listPreviews>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPreviews>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -170,7 +171,7 @@ export const getGetPreviewQueryKey = (id?: string,) => {
     }
 
     
-export const getGetPreviewQueryOptions = <TData = Awaited<ReturnType<typeof getPreview>>, TError = UnauthorizedResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPreview>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getGetPreviewQueryOptions = <TData = Awaited<ReturnType<typeof getPreview>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPreview>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -189,10 +190,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetPreviewQueryResult = NonNullable<Awaited<ReturnType<typeof getPreview>>>
-export type GetPreviewQueryError = UnauthorizedResponse | NotFoundResponse
+export type GetPreviewQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
 
-export function useGetPreview<TData = Awaited<ReturnType<typeof getPreview>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetPreview<TData = Awaited<ReturnType<typeof getPreview>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPreview>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getPreview>>,
@@ -202,7 +203,7 @@ export function useGetPreview<TData = Awaited<ReturnType<typeof getPreview>>, TE
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetPreview<TData = Awaited<ReturnType<typeof getPreview>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetPreview<TData = Awaited<ReturnType<typeof getPreview>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPreview>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getPreview>>,
@@ -212,7 +213,7 @@ export function useGetPreview<TData = Awaited<ReturnType<typeof getPreview>>, TE
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetPreview<TData = Awaited<ReturnType<typeof getPreview>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetPreview<TData = Awaited<ReturnType<typeof getPreview>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPreview>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -220,7 +221,7 @@ export function useGetPreview<TData = Awaited<ReturnType<typeof getPreview>>, TE
  * @summary Get a preview
  */
 
-export function useGetPreview<TData = Awaited<ReturnType<typeof getPreview>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetPreview<TData = Awaited<ReturnType<typeof getPreview>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPreview>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -262,7 +263,7 @@ export const deletePreview = async (id: string, options?: RequestInit): Promise<
 
 
 
-export const getDeletePreviewMutationOptions = <TError = UnauthorizedResponse | NotFoundResponse,
+export const getDeletePreviewMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deletePreview>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof deletePreview>>, TError,{id: string}, TContext> => {
 
@@ -289,12 +290,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type DeletePreviewMutationResult = NonNullable<Awaited<ReturnType<typeof deletePreview>>>
     
-    export type DeletePreviewMutationError = UnauthorizedResponse | NotFoundResponse
+    export type DeletePreviewMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
     /**
  * @summary Tear down a preview (async)
  */
-export const useDeletePreview = <TError = UnauthorizedResponse | NotFoundResponse,
+export const useDeletePreview = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deletePreview>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof deletePreview>>,
