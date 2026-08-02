@@ -41,17 +41,25 @@ export function LogViewer({ url, className }: { url: string; className?: string 
   };
 
   return (
-    <div className={cn("flex min-h-0 flex-col overflow-hidden rounded-md border border-border bg-bg", className)}>
+    // The log pane is ink in BOTH themes (4e token table): it is already a
+    // terminal, and inverting it in light mode would only make it harder to
+    // read at 2am.
+    <div
+      className={cn(
+        "flex min-h-0 flex-col overflow-hidden rounded-md border border-pane-border bg-pane",
+        className,
+      )}
+    >
       <SSEBanner status={status} />
-      <div className="flex items-center justify-between border-b border-border px-2 py-1">
-        <span className="eyebrow">log</span>
+      <div className="flex items-center justify-between border-b border-pane-border px-2.5 py-1">
+        <span className="eyebrow text-pane-faint">log</span>
         <div className="flex items-center gap-1">
           <button
             type="button"
             aria-pressed={wrap}
             aria-label="Toggle line wrap"
             onClick={() => setWrap((w) => !w)}
-            className={cn("rounded p-1 hover:bg-raised", wrap ? "text-accent" : "text-text-faint")}
+            className={cn("rounded p-1 hover:bg-white/10", wrap ? "text-accent" : "text-pane-faint")}
           >
             <WrapText className="h-3.5 w-3.5" />
           </button>
@@ -63,7 +71,7 @@ export function LogViewer({ url, className }: { url: string; className?: string 
               setFollow(true);
               scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
             }}
-            className={cn("rounded p-1 hover:bg-raised", follow ? "text-accent" : "text-text-faint")}
+            className={cn("rounded p-1 hover:bg-white/10", follow ? "text-accent" : "text-pane-faint")}
           >
             <ArrowDownToLine className="h-3.5 w-3.5" />
           </button>
@@ -72,14 +80,19 @@ export function LogViewer({ url, className }: { url: string; className?: string 
       <div
         ref={scrollRef}
         onScroll={onScroll}
-        className="min-h-0 flex-1 overflow-auto p-2.5"
+        className="min-h-0 flex-1 overflow-auto p-3"
         role="log"
         aria-live="off"
       >
         {lines.length === 0 ? (
-          <p className="mono text-xs text-text-faint">Waiting for output…</p>
+          <p className="font-mono text-xs text-pane-faint">Waiting for output…</p>
         ) : (
-          <pre className={cn("mono text-xs leading-5 text-text-mid", wrap ? "whitespace-pre-wrap break-all" : "whitespace-pre")}>
+          <pre
+            className={cn(
+              "font-mono text-[11.5px] leading-[1.75] text-pane-text",
+              wrap ? "whitespace-pre-wrap break-all" : "whitespace-pre",
+            )}
+          >
             {lines.join("\n")}
           </pre>
         )}

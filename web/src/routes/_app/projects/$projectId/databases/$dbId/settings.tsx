@@ -36,7 +36,7 @@ function DatabaseSettings() {
       {(d) => (
         <div className="max-w-xl space-y-2">
           <Eyebrow className="text-danger">Danger zone</Eyebrow>
-          <div className="flex items-center justify-between gap-3 rounded-md border border-danger/30 p-4">
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-danger/35 p-4">
             <div>
               <p className="text-[13px] font-medium text-text">Delete this database</p>
               <p className="text-xs text-text-mid">Stops the container and deletes its data volume. Backup files in your S3 targets are kept.</p>

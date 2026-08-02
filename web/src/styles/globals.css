@@ -1,84 +1,98 @@
-/* CypherPanel — "the calm terminal" (docs/product/web-ui-design.md §2).
-   Two faces: Inter for chrome and prose, IBM Plex Mono promoted to identity
-   duty — IDs, domains, statuses, logs, cron, tags. Color is status: the
-   chromatic palette is the six status colors plus one ANSI-cyan action accent;
-   everything else is a graphite neutral ramp. A healthy screen is almost
-   monochrome, so a red one is loud. */
+/* CypherPanel — "Mission Control" (docs/product/web-ui-design.md §2).
+   Warm paper and ink rather than a cool graphite: the panel reads like a
+   well-set operations broadsheet, not a terminal emulator. Two faces —
+   Instrument Sans for chrome and prose, Fragment Mono promoted to identity
+   duty (IDs, domains, statuses, logs, cron, tags, eyebrows). One chromatic
+   accent (signal orange) reserved for primary actions and the active nav;
+   every other color in the system is a status color, so a healthy screen is
+   almost achromatic and a broken one is unmissable.
 
-@import "@fontsource-variable/inter";
-@import "@fontsource/ibm-plex-mono/400.css";
-@import "@fontsource/ibm-plex-mono/500.css";
-@import "@fontsource/ibm-plex-mono/600.css";
+   Light is the default surface here (ui-principles §9, revised 2026-08-02);
+   dark maps mechanically through the same token names. */
+
+@import "@fontsource-variable/instrument-sans";
+@import "@fontsource/fragment-mono";
 
 @import "tailwindcss";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* ── Semantic tokens: dark is the root default; .light overrides. ────────── */
+/* ── Semantic tokens: light is the root default; .dark overrides. ────────── */
 :root {
-  /* graphite ramp — cool, blue-cast, never pure black */
-  --bg: #0b0d10;
-  --surface: #12151a;
-  --raised: #171b21;
-  --overlay: #1c212a;
-  --border: #262c35;
-  --border-strong: #333b47;
-  --text: #e8ecf1;
-  --text-mid: #9aa4b1;
-  --text-faint: #5d6672;
-
-  /* the one accent: ANSI cyan, the prompt color */
-  --accent: #2fbfae;
-  --accent-hover: #45d1c0;
-  --accent-fg: #06211d;
-
-  /* mint used by the mark's live block — fixed, not part of the status palette */
-  --mark-accent: #65ebac;
-
-  /* status vocabulary (ui-principles §5) — 4.5:1 on --bg */
-  --status-running: #4ac26b;
-  --status-deploying: #58a6ff;
-  --status-stopped: #768390;
-  --status-error: #f85149;
-  --status-degraded: #d9a521;
-  --status-unknown: #768390;
-
-  --danger: #f85149;
-  --danger-hover: #ff6a5e;
-  --focus: #58a6ff;
-
-  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", monospace;
-}
-
-.light {
-  --bg: #f6f7f9;
+  /* warm paper ramp — never pure white, never pure gray */
+  --bg: #faf8f4;
   --surface: #ffffff;
-  --raised: #ffffff;
+  --raised: #f4f1ea;
   --overlay: #ffffff;
-  --border: #dfe3e9;
-  --border-strong: #c6ccd6;
-  --text: #171c23;
-  --text-mid: #525c69;
-  --text-faint: #8a93a0;
+  --border: #e4dfd5;
+  --border-strong: #16130e;
+  --text: #16130e;
+  --text-mid: #6f695e;
+  --text-faint: #8a8375;
 
-  --accent: #0d7d71;
-  --accent-hover: #0a6a60;
+  /* the one accent: signal orange, the primary-action and active-nav color */
+  --accent: #e8490f;
+  --accent-hover: #b93607;
   --accent-fg: #ffffff;
 
-  /* the mark's mint deepens on light so the live block keeps its contrast */
-  --mark-accent: #12c281;
+  /* the primary button is an ink pill; it inverts in dark */
+  --primary: #16130e;
+  --primary-hover: #2a261d;
+  --primary-fg: #faf8f4;
 
-  --status-running: #1a7f37;
-  --status-deploying: #0969da;
-  --status-stopped: #59636e;
-  --status-error: #cf222e;
+  /* status vocabulary (ui-principles §5) — each holds 4.5:1 on --bg */
+  --status-running: #2f7d4f;
+  --status-deploying: #1b62c4;
+  --status-stopped: #8a8375;
+  --status-error: #d92d0a;
   --status-degraded: #9a6700;
-  --status-unknown: #59636e;
+  --status-unknown: #8a8375;
 
-  --danger: #cf222e;
-  --danger-hover: #a40e26;
-  --focus: #0969da;
+  /* error text needs more depth than the error dot to stay readable */
+  --danger: #c1330a;
+  --danger-hover: #9c2708;
+  --focus: #1b62c4;
+
+  /* log and terminal panes are ink in BOTH themes — they are already ink */
+  --pane: #0d0b08;
+  --pane-text: #b8b2a6;
+  --pane-faint: #5d5850;
+  --pane-border: #3a3630;
+
+  --font-sans: "Instrument Sans Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Fragment Mono", ui-monospace, "Cascadia Mono", monospace;
+}
+
+.dark {
+  --bg: #14120c;
+  --surface: #1c1914;
+  --raised: #23201a;
+  --overlay: #1c1914;
+  --border: #2a261d;
+  --border-strong: #3a352b;
+  --text: #ece7db;
+  --text-mid: #a49c8c;
+  --text-faint: #6f695e;
+
+  --accent: #ff6a33;
+  --accent-hover: #ff8757;
+  --accent-fg: #14120c;
+
+  /* inverted: paper pill, ink text */
+  --primary: #ece7db;
+  --primary-hover: #ffffff;
+  --primary-fg: #14120c;
+
+  --status-running: #5cbf7f;
+  --status-deploying: #5f9fe8;
+  --status-stopped: #6f695e;
+  --status-error: #ff6a5e;
+  --status-degraded: #e0b23f;
+  --status-unknown: #6f695e;
+
+  --danger: #ff6a5e;
+  --danger-hover: #ff8a80;
+  --focus: #5f9fe8;
 }
 
 /* ── Map semantic tokens into Tailwind utilities. ────────────────────────── */
@@ -95,9 +109,16 @@
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
   --color-accent-fg: var(--accent-fg);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-fg: var(--primary-fg);
   --color-danger: var(--danger);
   --color-danger-hover: var(--danger-hover);
   --color-focus: var(--focus);
+  --color-pane: var(--pane);
+  --color-pane-text: var(--pane-text);
+  --color-pane-faint: var(--pane-faint);
+  --color-pane-border: var(--pane-border);
   --color-status-running: var(--status-running);
   --color-status-deploying: var(--status-deploying);
   --color-status-stopped: var(--status-stopped);
@@ -116,10 +137,10 @@
     border-color: var(--border);
   }
   html {
-    color-scheme: dark;
-  }
-  html.light {
     color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
   }
   body {
     background: var(--bg);
@@ -130,7 +151,7 @@
     -webkit-font-smoothing: antialiased;
   }
   ::selection {
-    background: color-mix(in srgb, var(--accent) 30%, transparent);
+    background: color-mix(in srgb, var(--accent) 25%, transparent);
   }
   :focus-visible {
     outline: 2px solid var(--focus);
@@ -144,19 +165,32 @@
 }
 
 @layer components {
-  /* Mono section eyebrow: `DEPLOYMENTS`, `ENV VARS` — structure as information. */
+  /* Mono section eyebrow: `DEPLOYMENTS`, `ENV VARS` — structure as information.
+     Wider tracking than the old system; these carry the editorial voice. */
   .eyebrow {
     font-family: var(--font-mono);
-    font-size: 0.6875rem;
-    font-weight: 500;
-    letter-spacing: 0.08em;
+    font-size: 0.65625rem;
+    font-weight: 400;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--text-faint);
   }
-  /* Machine values: ids, domains, tags, cron. */
+  /* Machine values: ids, domains, tags, cron, timestamps. */
   .mono {
     font-family: var(--font-mono);
-    font-size: 0.8125rem;
+    font-size: 0.78125rem;
+  }
+  /* Page titles — tight, large, the one place the sans gets to be loud. */
+  .page-title {
+    font-weight: 700;
+    font-size: 2.125rem;
+    line-height: 1;
+    letter-spacing: -0.03em;
+  }
+  /* The rule under the top bar and above a table's first row: ink, not border.
+     It is the strongest line on the page and separates chrome from content. */
+  .rule-ink {
+    border-color: var(--border-strong);
   }
 }
 

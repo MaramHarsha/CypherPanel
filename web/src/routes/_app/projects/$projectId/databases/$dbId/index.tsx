@@ -50,7 +50,7 @@ function DatabaseOverview() {
         const running = d.status === "running";
         return (
           <div className="max-w-xl space-y-6">
-            <dl className="space-y-2 rounded-md border border-border bg-surface p-4 text-[13px]">
+            <dl className="space-y-2 rounded-lg border border-border bg-surface p-4 text-[13px]">
               <Row label="Status">
                 <span className="flex items-center gap-2">
                   <StatusBadge status={d.status} />

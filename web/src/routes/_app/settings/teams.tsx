@@ -57,7 +57,7 @@ function TeamsTab() {
 
 function TeamCard({ team, open, onToggle }: { team: Team; open: boolean; onToggle: () => void }) {
   return (
-    <li className="rounded-md border border-border bg-surface">
+    <li className="rounded-lg border border-border bg-surface">
       <button type="button" onClick={onToggle} className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left">
         <span className="flex items-center gap-2">
           <Users className="h-4 w-4 text-text-faint" aria-hidden />
@@ -139,7 +139,7 @@ function CreateTeamDialog({ primary }: { primary?: boolean }) {
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <Button variant={primary ? "primary" : "secondary"} size="sm">
+        <Button variant="primary" size={primary ? "lg" : "md"}>
           <Plus className="h-3.5 w-3.5" /> New team
         </Button>
       </DialogTrigger>
@@ -196,7 +196,7 @@ function AddMemberDialog({ teamId }: { teamId: string }) {
           </Field>
           <Field label="Role" hint="Members deploy; admins manage the team; owners can add and remove other owners.">
             {(id) => (
-              <select id={id} value={role} onChange={(e) => setRole(e.target.value)} className="h-8 w-full rounded-md border border-border bg-surface px-2 text-sm text-text">
+              <select id={id} value={role} onChange={(e) => setRole(e.target.value)} className="h-8 w-full rounded-lg border border-border bg-surface px-2 text-sm text-text">
                 <option value="member">member</option>
                 <option value="admin">admin</option>
                 <option value="owner">owner</option>

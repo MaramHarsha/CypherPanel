@@ -10,8 +10,9 @@ import { useListServers } from "@/api/gen/servers/servers";
 import type { Application, CreateDatabaseRequest, Database, Environment } from "@/api/gen/model";
 import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
+import { PageBody, PageHeader } from "@/components/page-header";
 import { PageState } from "@/components/page-state";
-import { StatusBadge } from "@/components/status-badge";
+import { normalizeStatus, StatusDot } from "@/components/status-badge";
 import { AdvancedSection } from "@/components/advanced-section";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
@@ -48,46 +49,52 @@ function ProjectHome() {
   }, [envs.data, env]);
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-base font-semibold text-text">{project.data?.project.name ?? "…"}</h1>
-        <div className="flex items-center gap-2">
-          <Link
-            to="/projects/$projectId/settings"
-            params={{ projectId }}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[13px] text-text-mid hover:bg-raised hover:text-text"
-          >
-            <SettingsIcon className="h-3.5 w-3.5" aria-hidden /> Settings
-          </Link>
-          {activeEnv && <NewAppDialog envId={activeEnv.id} />}
-        </div>
+    <>
+      <PageHeader
+        title={project.data?.project.name ?? "…"}
+        actions={
+          <>
+            <Link to="/projects/$projectId/settings" params={{ projectId }}>
+              <Button variant="secondary">
+                <SettingsIcon className="h-3.5 w-3.5" aria-hidden /> Project settings
+              </Button>
+            </Link>
+            {activeEnv && <NewAppDialog envId={activeEnv.id} />}
+          </>
+        }
+        below={
+          // Environments are tabs, not routes: switching one is a filter on
+          // this page, not a new place (web-ui-design.md §3).
+          <PageState query={envs} loading={<div className="h-9" />}>
+            {(list) => (
+              <div className="-mb-px flex gap-1 overflow-x-auto" role="tablist" aria-label="Environments">
+                {list.map((e) => (
+                  <Link
+                    key={e.id}
+                    to="/projects/$projectId"
+                    params={{ projectId }}
+                    search={{ env: e.id }}
+                    role="tab"
+                    aria-selected={activeEnv?.id === e.id}
+                    className={cn(
+                      "whitespace-nowrap rounded-t-lg px-4 py-2.5 text-[13px] text-text-mid hover:text-text",
+                      activeEnv?.id === e.id &&
+                        "border border-b-0 border-border bg-surface font-semibold text-text",
+                    )}
+                  >
+                    {e.name}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </PageState>
+        }
+      />
+      {/* The resource board sits on the raised surface the active tab joins. */}
+      <div className="bg-surface">
+        <PageBody>{activeEnv && <EnvResources projectId={projectId} envId={activeEnv.id} />}</PageBody>
       </div>
-
-      <PageState query={envs}>
-        {(list) => (
-          <div className="flex gap-0.5 overflow-x-auto border-b border-border" role="tablist" aria-label="Environments">
-            {list.map((e) => (
-              <Link
-                key={e.id}
-                to="/projects/$projectId"
-                params={{ projectId }}
-                search={{ env: e.id }}
-                role="tab"
-                aria-selected={activeEnv?.id === e.id}
-                className={cn(
-                  "mono -mb-px whitespace-nowrap border-b-2 border-transparent px-3 py-2 text-xs text-text-mid hover:text-text",
-                  activeEnv?.id === e.id && "border-accent text-text",
-                )}
-              >
-                {e.name}
-              </Link>
-            ))}
-          </div>
-        )}
-      </PageState>
-
-      {activeEnv && <EnvResources projectId={projectId} envId={activeEnv.id} />}
-    </div>
+    </>
   );
 }
 
@@ -96,21 +103,22 @@ function EnvResources({ projectId, envId }: { projectId: string; envId: string }
   const dbs = useListDatabases(envId);
 
   return (
-    <div className="space-y-6">
-      <section className="space-y-2">
-        <Eyebrow>Applications</Eyebrow>
+    <div className="space-y-8">
+      <section className="space-y-3.5">
+        <Eyebrow>Applications{apps.data ? ` — ${apps.data.length}` : ""}</Eyebrow>
         <PageState
           query={apps}
           empty={
             <EmptyState
-              title="No applications in this environment"
-              hint="Deploy your first app: point CypherPanel at a git repository and it will build and run it, live at your domain."
+              emphasis
+              title="Deploy your first app"
+              hint="Point CypherPanel at a git repository and it will build and run it, live at your domain."
               action={<NewAppDialog envId={envId} primary />}
             />
           }
         >
           {(list) => (
-            <ul className="divide-y divide-border rounded-md border border-border bg-surface">
+            <ul className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
               {list.map((a) => (
                 <AppRow key={a.id} projectId={projectId} app={a} />
               ))}
@@ -119,9 +127,9 @@ function EnvResources({ projectId, envId }: { projectId: string; envId: string }
         </PageState>
       </section>
 
-      <section className="space-y-2">
-        <div className="flex items-center justify-between">
-          <Eyebrow>Databases</Eyebrow>
+      <section className="space-y-3.5">
+        <div className="flex items-center justify-between gap-3">
+          <Eyebrow>Databases{dbs.data ? ` — ${dbs.data.length}` : ""}</Eyebrow>
           <NewDatabaseDialog envId={envId} />
         </div>
         <PageState
@@ -135,7 +143,7 @@ function EnvResources({ projectId, envId }: { projectId: string; envId: string }
           }
         >
           {(list) => (
-            <ul className="divide-y divide-border rounded-md border border-border bg-surface">
+            <ul className="space-y-2.5">
               {list.map((d) => (
                 <DbRow key={d.id} projectId={projectId} db={d} />
               ))}
@@ -147,19 +155,58 @@ function EnvResources({ projectId, envId }: { projectId: string; envId: string }
   );
 }
 
+/** Short revision for display — the first 7 of the revision id's suffix. */
+function shortRev(id: string | null | undefined): string | null {
+  if (!id) return null;
+  const tail = id.includes("_") ? id.slice(id.lastIndexOf("_") + 1) : id;
+  return tail.slice(0, 7);
+}
+
 function AppRow({ projectId, app }: { projectId: string; app: Application }) {
+  const status = normalizeStatus(app.status);
+  const broken = status === "error";
+  const rev = shortRev(app.observed_revision_id ?? app.desired_revision_id);
+
   return (
     <li>
       <Link
         to="/projects/$projectId/applications/$appId"
         params={{ projectId, appId: app.id }}
-        className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-raised"
+        className={cn(
+          "flex h-full flex-col rounded-lg border bg-bg p-4.5 transition-colors hover:border-border-strong",
+          broken ? "border-[1.5px] border-status-error/50" : "border-border",
+        )}
       >
-        <span className="flex min-w-0 flex-col">
-          <span className="truncate text-sm font-medium text-text">{app.name}</span>
-          {app.route.domain && <span className="mono truncate text-xs text-text-faint">{app.route.domain}</span>}
+        <span className="flex items-center gap-2.5">
+          <StatusDot status={status} />
+          <span className="min-w-0 truncate text-base font-semibold">{app.name}</span>
+          <span
+            className={cn(
+              "ml-auto shrink-0 font-mono text-[10.5px] font-medium uppercase tracking-wide",
+              broken ? "text-danger" : "text-text-faint",
+            )}
+          >
+            {status}
+          </span>
         </span>
-        <StatusBadge status={app.status} className="shrink-0" />
+
+        <span className="mt-2 block truncate font-mono text-[11.5px] text-text-faint">
+          {app.route.domain || "internal"}
+          {rev && ` · rev ${rev}`}
+        </span>
+
+        {/* An error card says what broke and offers the remedy inline — a
+            screen you can only stare at is a bug (ui-principles §11). */}
+        {broken ? (
+          <span className="mt-3.5 block rounded-md bg-status-error/[0.07] px-3 py-2.5 text-xs leading-relaxed text-danger">
+            {app.status_detail ?? "The container exited unexpectedly."}
+            <span className="mt-1 block font-semibold text-text">View logs →</span>
+          </span>
+        ) : (
+          <span className="mt-3.5 block font-mono text-[11px] text-text-faint">
+            created {relativeTime(app.created_at)}
+          </span>
+        )}
       </Link>
     </li>
   );
@@ -171,18 +218,17 @@ function DbRow({ projectId, db }: { projectId: string; db: Database }) {
       <Link
         to="/projects/$projectId/databases/$dbId"
         params={{ projectId, dbId: db.id }}
-        className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-raised"
+        className="flex items-center gap-3.5 rounded-lg border border-border bg-bg px-4 py-3.5 transition-colors hover:border-border-strong"
       >
-        <span className="flex min-w-0 items-center gap-2.5">
-          <DatabaseIcon className="h-4 w-4 shrink-0 text-text-faint" aria-hidden />
-          <span className="flex min-w-0 flex-col">
-            <span className="truncate text-sm font-medium text-text">{db.name}</span>
-            <span className="mono truncate text-xs text-text-faint">
-              {db.engine} {db.version} · created {relativeTime(db.created_at)}
-            </span>
-          </span>
+        <StatusDot status={db.status} />
+        <DatabaseIcon className="h-4 w-4 shrink-0 text-text-faint" aria-hidden />
+        <span className="min-w-0 truncate text-[15px] font-semibold">{db.name}</span>
+        <span className="min-w-0 truncate font-mono text-[11.5px] text-text-faint">
+          {db.engine} {db.version}
         </span>
-        <StatusBadge status={db.status} className="shrink-0" />
+        <span className="ml-auto shrink-0 font-mono text-[11.5px] text-text-faint">
+          created {relativeTime(db.created_at)}
+        </span>
       </Link>
     </li>
   );
@@ -222,7 +268,7 @@ function NewDatabaseDialog({ envId, primary }: { envId: string; primary?: boolea
 
   if (!servers.isPending && enrolled.length === 0) {
     return (
-      <Button variant={primary ? "primary" : "secondary"} size="sm" onClick={() => void navigate({ to: "/servers" })}>
+      <Button variant="primary" size="sm" onClick={() => void navigate({ to: "/servers" })}>
         <Plus className="h-3.5 w-3.5" /> New database
       </Button>
     );
@@ -240,7 +286,7 @@ function NewDatabaseDialog({ envId, primary }: { envId: string; primary?: boolea
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <Button variant={primary ? "primary" : "secondary"} size="sm">
+        <Button variant="primary" size={primary ? "lg" : "md"}>
           <Plus className="h-3.5 w-3.5" /> New database
         </Button>
       </DialogTrigger>
@@ -260,7 +306,7 @@ function NewDatabaseDialog({ envId, primary }: { envId: string; primary?: boolea
                     setEngine(next);
                     setVersion(ENGINE_VERSIONS[next]![0]!);
                   }}
-                  className="h-8 w-full rounded-md border border-border bg-surface px-2 text-sm text-text"
+                  className="h-8 w-full rounded-lg border border-border bg-surface px-2 text-sm text-text"
                 >
                   {Object.keys(ENGINE_VERSIONS).map((e) => (
                     <option key={e} value={e}>
@@ -276,7 +322,7 @@ function NewDatabaseDialog({ envId, primary }: { envId: string; primary?: boolea
                   id={id}
                   value={version}
                   onChange={(e) => setVersion(e.target.value)}
-                  className="h-8 w-full rounded-md border border-border bg-surface px-2 text-sm text-text"
+                  className="h-8 w-full rounded-lg border border-border bg-surface px-2 text-sm text-text"
                 >
                   {ENGINE_VERSIONS[engine]!.map((v) => (
                     <option key={v} value={v}>
@@ -294,7 +340,7 @@ function NewDatabaseDialog({ envId, primary }: { envId: string; primary?: boolea
                   id={id}
                   value={chosenServer}
                   onChange={(e) => setServerId(e.target.value)}
-                  className="h-8 w-full rounded-md border border-border bg-surface px-2 text-sm text-text"
+                  className="h-8 w-full rounded-lg border border-border bg-surface px-2 text-sm text-text"
                 >
                   {enrolled.map((s) => (
                     <option key={s.id} value={s.id}>
@@ -374,7 +420,7 @@ function NewAppDialog({ envId, primary }: { envId: string; primary?: boolean }) 
     return (
       <Dialog>
         <DialogTrigger asChild>
-          <Button variant={primary ? "primary" : "secondary"} size="sm">
+          <Button variant="primary" size={primary ? "lg" : "md"}>
             <Plus className="h-3.5 w-3.5" /> New application
           </Button>
         </DialogTrigger>
@@ -395,7 +441,7 @@ function NewAppDialog({ envId, primary }: { envId: string; primary?: boolean }) 
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <Button variant={primary ? "primary" : "secondary"} size="sm">
+        <Button variant="primary" size={primary ? "lg" : "md"}>
           <Plus className="h-3.5 w-3.5" /> New application
         </Button>
       </DialogTrigger>
@@ -425,7 +471,7 @@ function NewAppDialog({ envId, primary }: { envId: string; primary?: boolean }) 
                   id={id}
                   value={chosenServer}
                   onChange={(e) => setServerId(e.target.value)}
-                  className="h-8 w-full rounded-md border border-border bg-surface px-2 text-sm text-text"
+                  className="h-8 w-full rounded-lg border border-border bg-surface px-2 text-sm text-text"
                 >
                   {enrolled.map((s) => (
                     <option key={s.id} value={s.id}>

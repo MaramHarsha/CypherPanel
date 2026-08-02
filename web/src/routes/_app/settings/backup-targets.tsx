@@ -37,7 +37,7 @@ function BackupTargetsTab() {
         empty={<EmptyState title="No backup targets" hint="Add one, then schedule backups on any database." action={<CreateTargetDialog primary />} />}
       >
         {(list) => (
-          <ul className="divide-y divide-border rounded-md border border-border bg-surface">
+          <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-surface">
             {list.map((t) => (
               <TargetRow key={t.id} t={t} />
             ))}
@@ -105,7 +105,7 @@ function CreateTargetDialog({ primary }: { primary?: boolean }) {
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <Button variant={primary ? "primary" : "secondary"} size="sm">
+        <Button variant="primary" size={primary ? "lg" : "md"}>
           <Plus className="h-3.5 w-3.5" /> New target
         </Button>
       </DialogTrigger>

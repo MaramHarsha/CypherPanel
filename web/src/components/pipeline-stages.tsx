@@ -32,9 +32,21 @@ function failedAt(detail: string | undefined): number {
   return 2;
 }
 
-export function PipelineStages({ status, detail, className }: { status: DeployStatus; detail?: string; className?: string }) {
+export function PipelineStages({
+  status,
+  detail,
+  className,
+  tone = "paper",
+}: {
+  status: DeployStatus;
+  detail?: string;
+  className?: string;
+  /** `ink` is the live-deploy drawer, which is ink in both themes. */
+  tone?: "paper" | "ink";
+}) {
   const failed = status === "failed";
   const active = failed ? failedAt(detail) : (ORDER[status] ?? -1);
+  const ink = tone === "ink";
 
   return (
     <ol className={cn("flex flex-wrap items-center gap-y-1", className)} aria-label="Deploy pipeline">
@@ -43,22 +55,43 @@ export function PipelineStages({ status, detail, className }: { status: DeploySt
         const current = !failed && active === i && status !== "succeeded";
         const failedHere = failed && i === active;
         const serving = status === "succeeded" && i === STAGES.length - 1;
+        const reached = done || serving || (failed && i <= active);
         return (
           <Fragment key={stage.key}>
             {i > 0 && (
               <span
                 aria-hidden
-                className={cn("mx-2 h-px w-4 sm:w-6", done || serving || (failed && i <= active) ? "bg-border-strong" : "bg-border")}
+                className={cn(
+                  "mx-2 h-px w-4 sm:w-6",
+                  ink
+                    ? reached
+                      ? "bg-[#5cbf7f]"
+                      : "bg-[#3a3630]"
+                    : reached
+                      ? "bg-border-strong"
+                      : "bg-border",
+                )}
               />
             )}
             <li
               className={cn(
-                "mono inline-flex items-center gap-1.5 text-xs",
-                serving && "text-status-running",
-                done && "text-text-mid",
-                current && "text-status-deploying",
-                failedHere && "text-status-error",
-                !done && !current && !failedHere && !serving && "text-text-faint",
+                "inline-flex items-center gap-1.5 font-mono text-[10.5px] uppercase tracking-wider",
+                ink
+                  ? cn(
+                      serving && "text-[#5cbf7f]",
+                      done && "text-[#5cbf7f]",
+                      current &&
+                        "rounded border border-[#5f9fe8]/40 bg-[#5f9fe8]/12 px-1.5 py-0.5 text-[#5f9fe8]",
+                      failedHere && "text-[#ff6a5e]",
+                      !done && !current && !failedHere && !serving && "text-[#6f695e]",
+                    )
+                  : cn(
+                      serving && "text-status-running",
+                      done && "text-text-mid",
+                      current && "text-status-deploying",
+                      failedHere && "text-status-error",
+                      !done && !current && !failedHere && !serving && "text-text-faint",
+                    ),
               )}
               aria-current={current ? "step" : undefined}
             >

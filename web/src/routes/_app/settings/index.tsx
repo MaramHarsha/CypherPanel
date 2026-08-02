@@ -24,7 +24,7 @@ function AccountTab() {
     <div className="max-w-xl space-y-8">
       <section className="space-y-2">
         <Eyebrow>Account</Eyebrow>
-        <div className="rounded-md border border-border bg-surface p-4 text-[13px]">
+        <div className="rounded-lg border border-border bg-surface p-4 text-[13px]">
           <p className="text-text">{me.data?.email ?? "…"}</p>
           <p className="mono mt-1 text-xs text-text-faint">panel role: {me.data?.role ?? "…"}</p>
         </div>
@@ -43,7 +43,7 @@ function AccountTab() {
           empty={<EmptyState title="No API tokens" hint="Create one to drive deploys from CI or the command line." action={<CreateTokenDialog primary />} />}
         >
           {(list) => (
-            <ul className="divide-y divide-border rounded-md border border-border bg-surface">
+            <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-surface">
               {list.map((t) => (
                 <TokenRow key={t.id} id={t.id} name={t.name} lastUsed={t.last_used_at} created={t.created_at} />
               ))}
@@ -106,7 +106,7 @@ function CreateTokenDialog({ primary }: { primary?: boolean }) {
       }}
     >
       <DialogTrigger asChild>
-        <Button variant={primary ? "primary" : "secondary"} size="sm">
+        <Button variant="primary" size={primary ? "lg" : "md"}>
           <Plus className="h-3.5 w-3.5" /> New token
         </Button>
       </DialogTrigger>
