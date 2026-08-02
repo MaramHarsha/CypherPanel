@@ -142,6 +142,11 @@ func (s *Scheduler) SetNotifier(n Notifier) { s.notify = n }
 type configSnapshot struct {
 	Port    int    `json:"port"`
 	Network string `json:"network"`
+	// Pull marks the revision's image as a registry reference the target agent
+	// fetches itself (source.kind=image). In the snapshot — not derived from the
+	// app's current source — so rolling back to an image revision still pulls
+	// after the app was re-pointed at a git source, and vice versa.
+	Pull bool `json:"pull,omitempty"`
 	Route   struct {
 		Domain     string `json:"domain"`
 		HTTPS      bool   `json:"https"`
@@ -160,6 +165,7 @@ func snapshotOf(app domain.Application) ([]byte, error) {
 	var cs configSnapshot
 	cs.Port = app.Runtime.Port
 	cs.Network = "cypher-" + app.EnvironmentID
+	cs.Pull = app.Source.Kind == "image"
 	cs.Route.Domain = app.Route.Domain
 	cs.Route.HTTPS = app.Route.HTTPS
 	cs.Route.PathPrefix = app.Route.PathPrefix
@@ -197,12 +203,24 @@ func (s *Scheduler) Deploy(ctx context.Context, appID, trigger, ref string) (dom
 	if err != nil {
 		return domain.Deployment{}, err
 	}
-	if ref == "" {
+	imageSource := app.Source.Kind == "image"
+	if imageSource {
+		// An image app has no commit to name: the revision's source identity is
+		// the configured reference, and the image is known up front — start()
+		// sees a built revision and goes straight to rollout, the same path
+		// rollback takes. ref (a git commit override) does not apply.
+		ref = app.Source.Image
+	} else if ref == "" {
 		ref = app.Source.Branch
 	}
 	rev, err := s.store.CreateRevision(ctx, ids.New(ids.PrefixRevision), app.ID, ref, snapshot)
 	if err != nil {
 		return domain.Deployment{}, fmt.Errorf("scheduler: creating revision: %w", err)
+	}
+	if imageSource {
+		if rev, err = s.store.SetRevisionImage(ctx, rev.ID, app.Source.Image); err != nil {
+			return domain.Deployment{}, fmt.Errorf("scheduler: recording image revision: %w", err)
+		}
 	}
 	dep, err := s.store.CreateDeployment(ctx, ids.New(ids.PrefixDeployment), app.ID, rev.ID, trigger)
 	if err != nil {
@@ -499,6 +517,7 @@ func (s *Scheduler) buildSpec(ctx context.Context, app domain.Application, rev d
 			PathPrefix: cs.Route.PathPrefix,
 		},
 		ScheduledTasks: tasks,
+		Pull:           cs.Pull,
 		// Resource limits are current app state (not per-revision snapshot),
 		// applied at rollout like env vars; nil = 0 = no limit on the wire.
 		CpuLimit:      cpuLimitValue(app.Runtime.CPULimit),

@@ -264,7 +264,15 @@ type AppSpec struct {
 	// Raw host-port publishes (feature-matrix V1). Each maps a container port to a
 	// host port on tcp or udp — for services reached directly, not through the
 	// HTTP proxy (databases-as-apps, game servers, brokers). Independent of route.
-	Ports         []*PortMapping `protobuf:"bytes,14,rep,name=ports,proto3" json:"ports,omitempty"`
+	Ports []*PortMapping `protobuf:"bytes,14,rep,name=ports,proto3" json:"ports,omitempty"`
+	// pull marks image as a registry reference the reconciler fetches itself
+	// (source.kind=image apps — deploy-from-container-image, feature-matrix V1).
+	// False keeps the ADR-008 contract: the image is already in the local daemon
+	// via local build or completed relay. The fetch happens only in the create
+	// branch and only when the image is absent locally, so converge-twice stays
+	// zero-mutation. Carried per revision (config snapshot), so rollback of an
+	// image revision pulls correctly even after the app's source changed kind.
+	Pull          bool `protobuf:"varint,15,opt,name=pull,proto3" json:"pull,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -395,6 +403,13 @@ func (x *AppSpec) GetPorts() []*PortMapping {
 		return x.Ports
 	}
 	return nil
+}
+
+func (x *AppSpec) GetPull() bool {
+	if x != nil {
+		return x.Pull
+	}
+	return false
 }
 
 // PortMapping publishes a container port to a host port on one protocol. The
@@ -2430,7 +2445,7 @@ var File_cypherpanel_agent_v1_work_proto protoreflect.FileDescriptor
 
 const file_cypherpanel_agent_v1_work_proto_rawDesc = "" +
 	"\n" +
-	"\x1fcypherpanel/agent/v1/work.proto\x12\x14cypherpanel.agent.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\x99\x05\n" +
+	"\x1fcypherpanel/agent/v1/work.proto\x12\x14cypherpanel.agent.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xad\x05\n" +
 	"\aAppSpec\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12%\n" +
 	"\x0eenvironment_id\x18\x02 \x01(\tR\renvironmentId\x12\x1f\n" +
@@ -2447,7 +2462,8 @@ const file_cypherpanel_agent_v1_work_proto_rawDesc = "" +
 	"\tcpu_limit\x18\v \x01(\x01R\bcpuLimit\x12&\n" +
 	"\x0fmemory_limit_mb\x18\f \x01(\rR\rmemoryLimitMb\x12;\n" +
 	"\avolumes\x18\r \x03(\v2!.cypherpanel.agent.v1.VolumeMountR\avolumes\x127\n" +
-	"\x05ports\x18\x0e \x03(\v2!.cypherpanel.agent.v1.PortMappingR\x05ports\x1a6\n" +
+	"\x05ports\x18\x0e \x03(\v2!.cypherpanel.agent.v1.PortMappingR\x05ports\x12\x12\n" +
+	"\x04pull\x18\x0f \x01(\bR\x04pull\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"m\n" +

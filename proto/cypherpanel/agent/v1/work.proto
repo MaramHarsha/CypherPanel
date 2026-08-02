@@ -61,6 +61,14 @@ message AppSpec {
   // host port on tcp or udp — for services reached directly, not through the
   // HTTP proxy (databases-as-apps, game servers, brokers). Independent of route.
   repeated PortMapping ports = 14;
+  // pull marks image as a registry reference the reconciler fetches itself
+  // (source.kind=image apps — deploy-from-container-image, feature-matrix V1).
+  // False keeps the ADR-008 contract: the image is already in the local daemon
+  // via local build or completed relay. The fetch happens only in the create
+  // branch and only when the image is absent locally, so converge-twice stays
+  // zero-mutation. Carried per revision (config snapshot), so rollback of an
+  // image revision pulls correctly even after the app's source changed kind.
+  bool pull = 15;
 }
 
 // PortMapping publishes a container port to a host port on one protocol. The

@@ -43,6 +43,7 @@ type appSourceDTO struct {
 	Repo        string  `json:"repo"`
 	Branch      string  `json:"branch"`
 	DeployKeyID *string `json:"deploy_key_id"`
+	Image       string  `json:"image"` // OCI reference; set iff kind == "image"
 }
 
 type appBuildDTO struct {
@@ -135,7 +136,7 @@ func toApplicationDTO(a domain.Application) applicationDTO {
 		ID:                 a.ID,
 		EnvironmentID:      a.EnvironmentID,
 		Name:               a.Name,
-		Source:             appSourceDTO{Kind: a.Source.Kind, Repo: a.Source.Repo, Branch: a.Source.Branch, DeployKeyID: a.Source.DeployKeyID},
+		Source:             appSourceDTO{Kind: a.Source.Kind, Repo: a.Source.Repo, Branch: a.Source.Branch, DeployKeyID: a.Source.DeployKeyID, Image: a.Source.Image},
 		Build:              appBuildDTO{Kind: a.Build.Kind, DockerfilePath: a.Build.DockerfilePath, Context: a.Build.Context},
 		Runtime:            appRuntimeDTO{ServerID: a.Runtime.ServerID, Port: a.Runtime.Port, Replicas: a.Runtime.Replicas, CPULimit: a.Runtime.CPULimit, MemoryLimitMB: a.Runtime.MemoryLimitMB},
 		Route:              appRouteDTO{Domain: a.Route.Domain, HTTPS: a.Route.HTTPS, PathPrefix: a.Route.PathPrefix},
@@ -163,6 +164,7 @@ type createApplicationRequest struct {
 		Repo        string  `json:"repo"`
 		Branch      string  `json:"branch"`
 		DeployKeyID *string `json:"deploy_key_id"`
+		Image       string  `json:"image"`
 	} `json:"source"`
 	Build struct {
 		// AppBuild.kind is required by the OpenAPI schema, so every generated
@@ -220,7 +222,7 @@ func (r createApplicationRequest) toInput() applications.CreateInput {
 	}
 	return applications.CreateInput{
 		Name:    r.Name,
-		Source:  domain.AppSource{Kind: r.Source.Kind, Repo: r.Source.Repo, Branch: r.Source.Branch, DeployKeyID: r.Source.DeployKeyID},
+		Source:  domain.AppSource{Kind: r.Source.Kind, Repo: r.Source.Repo, Branch: r.Source.Branch, DeployKeyID: r.Source.DeployKeyID, Image: r.Source.Image},
 		Build:   domain.AppBuild{Kind: r.Build.Kind, DockerfilePath: r.Build.DockerfilePath, Context: r.Build.Context},
 		Runtime: domain.AppRuntime{ServerID: r.Runtime.ServerID, Port: r.Runtime.Port, Replicas: r.Runtime.Replicas, CPULimit: r.Runtime.CPULimit, MemoryLimitMB: r.Runtime.MemoryLimitMB},
 		Route:   domain.AppRoute{Domain: r.Route.Domain, HTTPS: https, PathPrefix: r.Route.PathPrefix},
@@ -338,6 +340,7 @@ type patchApplicationRequest struct {
 		Repo        string  `json:"repo"`
 		Branch      string  `json:"branch"`
 		DeployKeyID *string `json:"deploy_key_id"`
+		Image       string  `json:"image"`
 	} `json:"source"`
 	Build *struct {
 		// Same contract mismatch as createApplicationRequest.Build — a client
@@ -384,7 +387,7 @@ func (a *API) handlePatchApplication(w http.ResponseWriter, r *http.Request) {
 	}
 	in := applications.UpdateInput{Name: req.Name}
 	if req.Source != nil {
-		in.Source = &domain.AppSource{Kind: req.Source.Kind, Repo: req.Source.Repo, Branch: req.Source.Branch, DeployKeyID: req.Source.DeployKeyID}
+		in.Source = &domain.AppSource{Kind: req.Source.Kind, Repo: req.Source.Repo, Branch: req.Source.Branch, DeployKeyID: req.Source.DeployKeyID, Image: req.Source.Image}
 	}
 	if req.Build != nil {
 		in.Build = &domain.AppBuild{Kind: req.Build.Kind, DockerfilePath: req.Build.DockerfilePath, Context: req.Build.Context}

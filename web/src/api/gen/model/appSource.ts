@@ -10,7 +10,14 @@ import type { AppSourceDeployKeyId } from './appSourceDeployKeyId';
 
 export interface AppSource {
   kind: AppSourceKind;
-  repo: string;
-  branch: string;
+  /** Git remote; required for `github` and `git_url`, empty for `image`. */
+  repo?: string;
+  /** Branch to build; defaults to `main` for git kinds, empty for `image`. */
+  branch?: string;
   deploy_key_id?: AppSourceDeployKeyId;
+  /**
+   * OCI image reference (registry/repository[:tag][@digest]); required for kind `image`, empty otherwise. The target agent pulls it — no build stage runs, and deploys go straight to rollout.
+   * @maxLength 512
+   */
+  image?: string;
 }

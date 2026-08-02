@@ -64,6 +64,7 @@ type Application struct {
 	Volumes               []byte
 	Ports                 []byte
 	HealthKind            string
+	SourceImage           string
 }
 
 type BackupRecord struct {

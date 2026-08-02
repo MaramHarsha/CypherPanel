@@ -168,6 +168,15 @@ func TestCreateValidation(t *testing.T) {
 		"empty name":   func(in *CreateInput) { in.Name = "" },
 		"bad source":   func(in *CreateInput) { in.Source.Kind = "svn" },
 		"empty repo":   func(in *CreateInput) { in.Source.Repo = "" },
+		// Image sources (deploy from container image, feature-matrix V1).
+		"image kind no ref": func(in *CreateInput) { in.Source = domain.AppSource{Kind: "image"} },
+		"image ref junk": func(in *CreateInput) {
+			in.Source = domain.AppSource{Kind: "image", Image: "ghost:5; rm -rf /"}
+		},
+		"image with deploy key": func(in *CreateInput) {
+			key := "dk_1"
+			in.Source = domain.AppSource{Kind: "image", Image: "ghost:5", DeployKeyID: &key}
+		},
 		"bad build":    func(in *CreateInput) { in.Build.Kind = "nixpacks" },
 		"zero port":    func(in *CreateInput) { in.Runtime.Port = 0 },
 		"huge port":    func(in *CreateInput) { in.Runtime.Port = 70000 },
@@ -229,6 +238,25 @@ func TestCreateValidation(t *testing.T) {
 // A raw (non-HTTP) service is valid without a route domain: it uses a tcp
 // health gate and publishes ports. Defaults are applied (health.kind and each
 // port's protocol).
+// An image source keeps only the OCI reference: git fields are cleared, and
+// the reference survives round-tripping (the deploy pipeline reads it back).
+func TestCreateImageSource(t *testing.T) {
+	s := NewService(newFakeStore(), fakeSealer{})
+	in := validInput()
+	in.Source = domain.AppSource{Kind: "image", Repo: "leftover", Branch: "stale", Image: " ghcr.io/acme/web:1.2 "}
+
+	app, _, err := s.Create(context.Background(), "env_1", in)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if app.Source.Image != "ghcr.io/acme/web:1.2" {
+		t.Errorf("image = %q, want trimmed reference", app.Source.Image)
+	}
+	if app.Source.Repo != "" || app.Source.Branch != "" {
+		t.Errorf("git fields not cleared: %+v", app.Source)
+	}
+}
+
 func TestCreateRawServiceNoRoute(t *testing.T) {
 	s := NewService(newFakeStore(), fakeSealer{})
 	in := validInput()

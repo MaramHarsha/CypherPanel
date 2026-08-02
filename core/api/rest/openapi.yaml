@@ -2085,17 +2085,26 @@ components:
 
     AppSource:
       type: object
-      required: [kind, repo, branch]
+      required: [kind]
       properties:
         kind:
           type: string
-          enum: [github, git_url]
+          enum: [github, git_url, image]
         repo:
           type: string
+          description: Git remote; required for `github` and `git_url`, empty for `image`.
         branch:
           type: string
+          description: Branch to build; defaults to `main` for git kinds, empty for `image`.
         deploy_key_id:
           type: [string, "null"]
+        image:
+          type: string
+          maxLength: 512
+          description: >-
+            OCI image reference (registry/repository[:tag][@digest]); required
+            for kind `image`, empty otherwise. The target agent pulls it — no
+            build stage runs, and deploys go straight to rollout.
 
     DomainCheck:
       type: object

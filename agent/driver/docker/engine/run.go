@@ -219,6 +219,23 @@ func (c *Client) PullImage(ctx context.Context, ref string) error {
 	}
 }
 
+// EnsureImage makes ref present in the local daemon, pulling iff absent
+// (docker.Client contract): registry-sourced apps (AppSpec.pull) resolve their
+// image here; a reference that is already local makes zero mutating calls, so
+// the driver's converge-twice and crash-resume invariants hold through it.
+func (c *Client) EnsureImage(ctx context.Context, ref string) error {
+	var ignored struct{}
+	err := c.doJSON(ctx, http.MethodGet, "/images/"+url.PathEscape(ref)+"/json", nil, nil, &ignored)
+	if err == nil {
+		return nil // already local
+	}
+	var se *StatusError
+	if !asStatus(err, &se) || se.Code != http.StatusNotFound {
+		return fmt.Errorf("engine: inspecting image %s: %w", ref, err)
+	}
+	return c.PullImage(ctx, ref)
+}
+
 // ConnectNetwork attaches container to network. Idempotent: a container
 // already on the network (403 from the daemon) is success.
 func (c *Client) ConnectNetwork(ctx context.Context, container, network string) error {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,8 +27,11 @@ type fakeClient struct {
 	removeErrForID    map[string]error
 	listErr           error
 
-	lastCreateSpec ContainerSpec // the most recent CreateContainer argument
-	ensuredVolumes []string      // names passed to EnsureVolume
+	lastCreateSpec ContainerSpec   // the most recent CreateContainer argument
+	ensuredVolumes []string        // names passed to EnsureVolume
+	pulledImages   []string        // refs EnsureImage actually fetched
+	localImages    map[string]bool // refs EnsureImage treats as already present
+	pullErr        error           // injected EnsureImage failure
 	execCalls      []execCall    // recorded ExecAndWait invocations
 	execExit       int           // injected exit code
 	execOut        []byte        // injected output
@@ -135,6 +139,22 @@ func (f *fakeClient) RemoveContainer(_ context.Context, id string) error {
 
 func (f *fakeClient) ContainerIP(_ context.Context, id, _ string) (string, error) {
 	return f.ipByID[id], nil
+}
+
+func (f *fakeClient) EnsureImage(_ context.Context, ref string) error {
+	if f.pullErr != nil {
+		return f.pullErr
+	}
+	if f.localImages[ref] {
+		return nil // present: zero mutating calls, per the Client contract
+	}
+	f.mutations++
+	f.pulledImages = append(f.pulledImages, ref)
+	if f.localImages == nil {
+		f.localImages = map[string]bool{}
+	}
+	f.localImages[ref] = true
+	return nil
 }
 
 func (f *fakeClient) ListManagedImages(_ context.Context) ([]Image, error) {
@@ -799,5 +819,94 @@ func TestReconcileRewritesRouteWhenOnlyTheTemplateChanged(t *testing.T) {
 	}
 	if p.calls != probesBefore {
 		t.Errorf("an unchanged upstream must not be re-probed: %d -> %d", probesBefore, p.calls)
+	}
+}
+
+// ── deploy-from-image (AppSpec.pull) ────────────────────────────────────────
+
+func pullSpec(appID, revID, image string) *agentv1.AppSpec {
+	s := spec(appID, revID, image)
+	s.Pull = true
+	return s
+}
+
+func TestPullSpecFetchesImageAndRollsOut(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	st := statusOf(got, "app1")
+	if st == nil || st.GetState() != stateRunning || st.GetRevisionId() != "rev1" {
+		t.Fatalf("status = %+v, want running rev1", st)
+	}
+	if len(c.pulledImages) != 1 || c.pulledImages[0] != "ghost:5" {
+		t.Fatalf("pulled = %v, want [ghost:5]", c.pulledImages)
+	}
+}
+
+func TestPullSpecConvergeTwicePullsOnce(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+	specs := []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}
+
+	if _, err := d.Reconcile(context.Background(), specs); err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+	baseline := c.mutations + r.mutations
+
+	if _, err := d.Reconcile(context.Background(), specs); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	if after := c.mutations + r.mutations; after != baseline {
+		t.Fatalf("second converge mutated state: %d calls (want 0)", after-baseline)
+	}
+	if len(c.pulledImages) != 1 {
+		t.Fatalf("pull count = %d, want exactly 1 across both converges", len(c.pulledImages))
+	}
+}
+
+func TestPullFailureLeavesOldServing(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	// rev1 (a pulled image) healthy and serving.
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5.0")}); err != nil {
+		t.Fatalf("rev1 rollout: %v", err)
+	}
+	rev1Route := r.routes["app1"]
+
+	// rev2's registry fetch fails (missing tag, registry down).
+	c.pullErr = errors.New("pull failed: manifest unknown")
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev2", "ghost:9.9")})
+	if err != nil {
+		t.Fatalf("rev2 rollout: %v", err)
+	}
+	st := statusOf(got, "app1")
+	if st.GetState() != stateError || st.GetRevisionId() != "rev1" {
+		t.Fatalf("status = %+v, want error with rev1 still serving", st)
+	}
+	if !strings.Contains(st.GetDetail(), "pull:") {
+		t.Fatalf("detail = %q, want the pull failure surfaced", st.GetDetail())
+	}
+	if r.routes["app1"] != rev1Route {
+		t.Fatal("route moved despite failed pull")
+	}
+	if len(runningRev(c, "app1", "rev1")) != 1 {
+		t.Fatal("rev1 stopped serving despite rev2's failed pull")
+	}
+}
+
+func TestNonPullSpecNeverPulls(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "img:rev1")}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(c.pulledImages) != 0 {
+		t.Fatalf("pulled = %v, want none for a locally-built image (ADR-008)", c.pulledImages)
 	}
 }

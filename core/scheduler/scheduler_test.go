@@ -569,6 +569,40 @@ func TestDeployStartsBuild(t *testing.T) {
 	}
 }
 
+// An image-source application (deploy from container image, feature-matrix V1)
+// skips build and distribute entirely: Deploy records the reference as an
+// already-built revision and goes straight to rollout with a pull-marked spec —
+// the same path rollback takes.
+func TestDeployImageSourceGoesStraightToRollout(t *testing.T) {
+	fs, fb := newFakeStore(), &fakeBus{}
+	app := fs.addApp("app_1", "srv_1")
+	app.Source = domain.AppSource{Kind: "image", Image: "ghost:5"}
+	fs.apps["app_1"] = app
+	s := newScheduler(fs, fb)
+
+	dep, err := s.Deploy(context.Background(), "app_1", "manual", "")
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	if dep.Status != domain.DeployRollingOut {
+		t.Fatalf("status = %s, want rolling_out (no build stage)", dep.Status)
+	}
+	p, ok := fb.last()
+	if !ok || p.subject != subjects.Rollout("srv_1") {
+		t.Fatalf("work = %+v, want rollout on srv_1", p)
+	}
+	var rw agentv1.RolloutWork
+	if err := proto.Unmarshal(p.data, &rw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if rw.GetSpec().GetImage() != "ghost:5" || !rw.GetSpec().GetPull() {
+		t.Fatalf("spec = %+v, want image ghost:5 with pull set", rw.GetSpec())
+	}
+	if rev := fs.revisions[dep.RevisionID]; rev.Image != "ghost:5" || rev.SourceCommit != "ghost:5" {
+		t.Fatalf("revision = %+v, want the reference recorded up front", rev)
+	}
+}
+
 // An application referencing a deploy key gets the unsealed PEM in its
 // BuildWork — decrypted only at spec-build time, carried only on the mTLS
 // bus (deploy-key-private-repos.md §4).
