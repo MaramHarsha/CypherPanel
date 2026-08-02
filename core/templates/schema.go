@@ -11,8 +11,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"gopkg.in/yaml.v3"
+
+	"github.com/MaramHarsha/cypherpanel/core/domain"
 )
 
 // Template is one catalog entry (template-catalog.md §2).
