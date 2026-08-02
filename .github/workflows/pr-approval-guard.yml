@@ -1,0 +1,51 @@
+# Takes the bot's approval back when a blocked label is added.
+#
+# Approval is driven by workflow_run (CI finishing), and adding a label does
+# not re-run CI — so without this workflow the operator's "hands off" label,
+# applied after an approval, changed nothing and the stale approval went on
+# satisfying the one-approval merge gate.
+#
+# Same privilege rules as the other two: no pull-request code is checked out or
+# executed, and every fact comes from the API.
+name: PR approval guard
+
+on:
+  pull_request_target:
+    # synchronize = a new commit was pushed. GitHub keeps an existing approval
+    # across that unless branch protection dismisses stale reviews, so the bot
+    # takes its own back rather than relying on that box being ticked.
+    types: [labeled, unlabeled, synchronize]
+
+permissions: {}
+
+concurrency:
+  # Same group as pr-auto-approve.yml (see the note there): keyed on the head
+  # commit so a label change and an approval can never overlap.
+  group: review-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    name: Re-evaluate approval on label change
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # Dismisses on two conditions: a blocked label is present, or the
+      # approval was given for a commit that is no longer head. Removing a
+      # label deliberately does NOT re-approve — that must go back through the
+      # CI-verified path, because restoring an approval here would put one back
+      # without re-checking the current head.
+      - name: Dismiss the bot's approval if it is blocked or stale
+        env:
+          GITHUB_TOKEN: ${{ secrets.CYPHERPANEL_REVIEW_BOT_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node .github/review-bot/run.mjs labels

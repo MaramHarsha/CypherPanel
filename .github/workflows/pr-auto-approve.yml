@@ -1,0 +1,74 @@
+# Policy approval, once CI has finished.
+#
+# workflow_run is the only safe trigger for privileged work on pull requests:
+# the workflow definition comes from the default branch, so a fork cannot
+# change what runs here. Nothing from the pull request is checked out or
+# executed — every fact is read from the API.
+#
+# The triggering run finishing green proves nothing on its own: CI and
+# Integration are separate workflows, so run.mjs re-queries the combined check
+# status for the head commit and requires every required check to be green.
+name: PR auto approve
+
+on:
+  workflow_run:
+    workflows: ["CI", "Integration"]
+    types: [completed]
+
+permissions: {}
+
+concurrency:
+  # Deliberately the SAME group as pr-approval-guard.yml, keyed on the head
+  # commit. Separate namespaces let a blocked label race an in-flight approval:
+  # the approval job read the old label set, the guard found no review to
+  # dismiss and exited, and the approval landed anyway. Sharing the key makes
+  # one wait for the other, so whichever runs second sees the other's result.
+  group: review-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  approve:
+    name: Policy approval
+    runs-on: ubuntu-latest
+    # Only a successful CI run is worth inspecting; everything else is a no-op.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Resolve the pull request for this run
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.CYPHERPANEL_REVIEW_BOT_TOKEN }}
+          # workflow_run carries the PR list for same-repo runs; fork runs need
+          # a lookup by head sha. Both go through the API, never the payload's
+          # branch name (which is attacker-controlled on a fork).
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          num="$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" \
+                  --jq '[.[] | select(.state=="open")] | first | .number // empty')"
+          if [ -z "$num" ]; then
+            echo "no open pull request for $HEAD_SHA — nothing to do"
+            echo "number=" >> "$GITHUB_OUTPUT"
+          else
+            echo "number=$num" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Approve if policy allows
+        if: steps.pr.outputs.number != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.CYPHERPANEL_REVIEW_BOT_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          TRIGGER_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: node .github/review-bot/run.mjs approve

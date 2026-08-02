@@ -106,3 +106,8 @@ run-plane: ## Run cypherd from source against local Postgres
 clean: ## Remove build output and local dev state
 	rm -rf bin dist .dev
 	@for m in $(MODULES); do (cd $$m && go clean); done
+
+.PHONY: release-sign
+release-sign: ## Rebuild, verify, sign offline and publish a draft release (VERSION=vX.Y.Z)
+	@test -n "$(VERSION)" || { echo "usage: make release-sign VERSION=v0.1.0"; exit 1; }
+	sh scripts/release-sign.sh "$(VERSION)"

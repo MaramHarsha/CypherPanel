@@ -1,0 +1,39 @@
+{
+  "botLogin": "cypherpanel-review-bot",
+  "trustedAuthors": ["MaramHarsha", "dependabot[bot]", "renovate[bot]"],
+  "blockedLabels": [
+    "do-not-approve", "needs-manual-review", "security-review-required",
+    "breaking-change", "work-in-progress", "blocked"
+  ],
+  "requiredChecks": [
+    "Format & lint", "Unit tests (-race)", "Build (amd64 + arm64 cross)",
+    "Proto lint & wire compatibility", "Generated-code drift",
+    "Handshake, outage reconvergence, revocation", "curl|sh join under 60s",
+    "Store layer against real Postgres",
+    "Deploy slice (build → rollout → serving → rollback)",
+    "Deploy resilience (agent outage → converge on restart)"
+  ],
+  "sensitivePaths": [
+    ".github/**",
+    "CODEOWNERS", "**/CODEOWNERS",
+    "core/auth/**",
+    "core/api/rest/*.go",
+    "core/api/grpc/**",
+    "core/teams/**",
+    "core/onboarding/**",
+    "core/domain/team.go",
+    "core/store/teams.go",
+    "core/store/db/teams.sql.go",
+    "core/cmd/release-sign/**",
+    "scripts/release-sign.sh", "core/guard/**", "core/identity/**", "core/secret/**",
+    "pkg/pki/**", "agent/identity/**",
+    "core/store/migrations/**",
+    "proto/**", "pkg/proto/**", "**/openapi.yaml",
+    "go.mod", "go.sum", "**/go.mod", "**/go.sum",
+    "go.work", "go.work.sum", "**/go.work", "**/go.work.sum",
+    "**/package.json", "**/pnpm-lock.yaml",
+    "Dockerfile", "**/Dockerfile*", "docker-compose*.yml", "**/docker-compose*.yml",
+    "install/**", "deploy/**", "Makefile"
+  ],
+  "commentMarker": "<!-- cypherpanel-review-bot:sensitive -->"
+}
