@@ -165,9 +165,9 @@ func TestCreateSealsSecretsAndDefaults(t *testing.T) {
 func TestCreateValidation(t *testing.T) {
 	s := NewService(newFakeStore(), fakeSealer{})
 	cases := map[string]func(*CreateInput){
-		"empty name":   func(in *CreateInput) { in.Name = "" },
-		"bad source":   func(in *CreateInput) { in.Source.Kind = "svn" },
-		"empty repo":   func(in *CreateInput) { in.Source.Repo = "" },
+		"empty name": func(in *CreateInput) { in.Name = "" },
+		"bad source": func(in *CreateInput) { in.Source.Kind = "svn" },
+		"empty repo": func(in *CreateInput) { in.Source.Repo = "" },
 		// Image sources (deploy from container image, feature-matrix V1).
 		"image kind no ref": func(in *CreateInput) { in.Source = domain.AppSource{Kind: "image"} },
 		"image ref junk": func(in *CreateInput) {

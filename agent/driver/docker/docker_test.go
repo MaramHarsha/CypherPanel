@@ -32,10 +32,10 @@ type fakeClient struct {
 	pulledImages   []string        // refs EnsureImage actually fetched
 	localImages    map[string]bool // refs EnsureImage treats as already present
 	pullErr        error           // injected EnsureImage failure
-	execCalls      []execCall    // recorded ExecAndWait invocations
-	execExit       int           // injected exit code
-	execOut        []byte        // injected output
-	execErr        error         // injected error
+	execCalls      []execCall      // recorded ExecAndWait invocations
+	execExit       int             // injected exit code
+	execOut        []byte          // injected output
+	execErr        error           // injected error
 
 	mutations int // count of state-changing calls
 }

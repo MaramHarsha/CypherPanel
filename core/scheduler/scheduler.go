@@ -146,8 +146,8 @@ type configSnapshot struct {
 	// fetches itself (source.kind=image). In the snapshot — not derived from the
 	// app's current source — so rolling back to an image revision still pulls
 	// after the app was re-pointed at a git source, and vice versa.
-	Pull bool `json:"pull,omitempty"`
-	Route   struct {
+	Pull  bool `json:"pull,omitempty"`
+	Route struct {
 		Domain     string `json:"domain"`
 		HTTPS      bool   `json:"https"`
 		PathPrefix string `json:"path_prefix"`
