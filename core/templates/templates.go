@@ -115,6 +115,22 @@ func (e *ValidationError) Error() string { return e.Msg }
 // ErrNotFound is returned for an unknown slug.
 var ErrNotFound = errors.New("templates: template not found")
 
+// PartialInstallError reports an install that failed *and* could not fully roll
+// itself back. Remaining names the resources that survived, because an operator
+// cannot clean up what they cannot identify — those rows still hold names,
+// volumes, and ports.
+type PartialInstallError struct {
+	Cause     error
+	Remaining []string
+}
+
+func (e *PartialInstallError) Error() string {
+	return fmt.Sprintf("%v (rollback incomplete, these resources remain: %s)",
+		e.Cause, strings.Join(e.Remaining, ", "))
+}
+
+func (e *PartialInstallError) Unwrap() error { return e.Cause }
+
 // cleanupTimeout bounds rollback of a failed install. Generous enough for a
 // handful of deletes, short enough that a wedged daemon cannot hold the
 // request path open indefinitely.
@@ -202,8 +218,10 @@ func (s *Service) Install(ctx context.Context, slug string, in InstallInput) (In
 		if left := s.cleanup(cleanupCtx, res); len(left) > 0 {
 			// The caller must be able to see what the failed install left
 			// behind — otherwise orphaned resources are invisible and
-			// unidentifiable (they still hold names, volumes, and ports).
-			return InstallResult{}, fmt.Errorf("%w (rollback incomplete, these remain: %s)", cause, strings.Join(left, ", "))
+			// unidentifiable (they still hold names, volumes, and ports). A
+			// typed error carries the ids all the way to the HTTP response
+			// instead of being flattened into a generic 500.
+			return InstallResult{}, &PartialInstallError{Cause: cause, Remaining: left}
 		}
 		return InstallResult{}, cause
 	}

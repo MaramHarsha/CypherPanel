@@ -1154,3 +1154,55 @@ func TestFailedDeployClearsDeployingStatus(t *testing.T) {
 		}
 	})
 }
+
+// The agent observes which image a registry-sourced revision actually runs; the
+// plane pins the revision to that digest. Without this, rolling back to a
+// revision created from a mutable tag would re-pull the tag and start whatever
+// it points at now while reporting the old revision restored.
+func TestObservedDigestPinsRevision(t *testing.T) {
+	fs, fb := newFakeStore(), &fakeBus{}
+	app := fs.addApp("app_1", "srv_1")
+	app.Source = domain.AppSource{Kind: "image", Image: "ghost:5"}
+	fs.apps["app_1"] = app
+	s := newScheduler(fs, fb)
+
+	dep, err := s.Deploy(context.Background(), "app_1", "manual", "")
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	if got := fs.revisions[dep.RevisionID].Image; got != "ghost:5" {
+		t.Fatalf("revision image = %q, want the configured tag before observation", got)
+	}
+
+	s.HandleAppStatus(context.Background(), "srv_1", &agentv1.AppStatus{
+		AppId:         "app_1",
+		RevisionId:    dep.RevisionID,
+		State:         domain.AppRunning,
+		ResolvedImage: "ghost@sha256:deadbeef",
+	})
+
+	if got := fs.revisions[dep.RevisionID].Image; got != "ghost@sha256:deadbeef" {
+		t.Fatalf("revision image = %q, want it pinned to the observed digest", got)
+	}
+}
+
+// An agent that reports no digest (a built image, or a lookup failure) leaves
+// the revision exactly as it was.
+func TestNoDigestLeavesRevisionUnchanged(t *testing.T) {
+	fs, fb := newFakeStore(), &fakeBus{}
+	app := fs.addApp("app_1", "srv_1")
+	app.Source = domain.AppSource{Kind: "image", Image: "ghost:5"}
+	fs.apps["app_1"] = app
+	s := newScheduler(fs, fb)
+
+	dep, err := s.Deploy(context.Background(), "app_1", "manual", "")
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	s.HandleAppStatus(context.Background(), "srv_1", &agentv1.AppStatus{
+		AppId: "app_1", RevisionId: dep.RevisionID, State: domain.AppRunning,
+	})
+	if got := fs.revisions[dep.RevisionID].Image; got != "ghost:5" {
+		t.Fatalf("revision image = %q, want it untouched", got)
+	}
+}

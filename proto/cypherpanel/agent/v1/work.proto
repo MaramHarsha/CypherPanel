@@ -220,6 +220,15 @@ message AppStatus {
   // Human-readable detail for error/degraded (never contains secrets).
   string detail = 4;
   google.protobuf.Timestamp observed_at = 5;
+  // resolved_image is the immutable digest reference of the image this
+  // revision is actually running (repo@sha256:…), reported for registry-sourced
+  // apps once they converge. A revision created from a mutable tag records the
+  // tag, which no longer identifies the artifact after that tag moves — so
+  // rolling back to it would re-pull and start something newer while claiming
+  // to restore the old revision. The plane pins the revision to this observed
+  // digest, which is the only way it can know it (ADR-001: the control plane
+  // never talks to a registry; ADR-005: status is observation).
+  string resolved_image = 6;
 }
 
 // DeployEvent reports a work item's terminal outcome for a deployment,

@@ -106,6 +106,15 @@ type Client interface {
 	// cached image. Only pull-marked specs reach it (AppSpec.pull — deploy from
 	// container image); built images keep the ADR-008 local/relay contract.
 	EnsureImage(ctx context.Context, image string) error
+	// ImageDigest returns the immutable digest reference (repo@sha256:…) of a
+	// local image, or "" when it has none (a locally-built image never pushed
+	// anywhere). This is what lets the plane pin a revision to the artifact it
+	// actually ran instead of to a tag that can move underneath it.
+	ImageDigest(ctx context.Context, image string) (string, error)
+	// TagImage points a managed reference at an existing local image. Pulled
+	// images cannot carry our labels, so this is how they become visible to
+	// desired-state GC. Idempotent.
+	TagImage(ctx context.Context, source, target string) error
 	// ExecAndWait runs argv in a running container to completion, returning its
 	// exit code and captured output (scheduled tasks, backups). A non-zero exit
 	// is not an error — the caller interprets it.
@@ -285,10 +294,22 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 	// Only in the create branch — the converged fast path never gets here, so
 	// converge-twice stays zero-mutation — and EnsureImage itself is a no-op
 	// when the reference is already local (crash-resume between pull and start).
+	image := spec.GetImage()
 	if spec.GetPull() {
-		if err := d.client.EnsureImage(ctx, spec.GetImage()); err != nil {
+		if err := d.client.EnsureImage(ctx, image); err != nil {
 			return status(spec.GetAppId(), currentRevision(existing), stateError, "pull: "+err.Error())
 		}
+		// Give the pulled image a managed reference and run the container from
+		// that. A pulled image cannot carry our labels — they are baked in by
+		// whoever built it — so without this it is invisible to desired-state
+		// GC and deleting the app would never reclaim it. Tagging also pins the
+		// container to the exact image this rollout resolved, so a tag moving
+		// mid-rollout cannot swap what starts.
+		managed := managedImageTag(spec.GetAppId(), spec.GetRevisionId())
+		if err := d.client.TagImage(ctx, image, managed); err != nil {
+			return status(spec.GetAppId(), currentRevision(existing), stateError, "tag: "+err.Error())
+		}
+		image = managed
 	}
 
 	// A dead container of the desired revision (crash between create and
@@ -306,7 +327,7 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 	// Start the new revision alongside the old one.
 	newID, err := d.client.CreateContainer(ctx, ContainerSpec{
 		Name:          containerName(spec.GetAppId(), spec.GetRevisionId()),
-		Image:         spec.GetImage(),
+		Image:         image,
 		Env:           spec.GetEnv(),
 		Network:       spec.GetNetwork(),
 		Port:          spec.GetPort(),
@@ -413,7 +434,26 @@ func (d *Driver) finishConverge(ctx context.Context, spec *agentv1.AppSpec, left
 			return status(spec.GetAppId(), spec.GetRevisionId(), stateDegraded, "draining old revision: "+err.Error())
 		}
 	}
-	return status(spec.GetAppId(), spec.GetRevisionId(), stateRunning, "")
+	return d.runningStatus(ctx, spec)
+}
+
+// runningStatus reports a converged app, carrying the immutable digest of what
+// it is actually running for registry-sourced revisions. Resolution is
+// best-effort: an image with no digest (never pushed) or a daemon hiccup must
+// not turn a healthy rollout into a failure — the plane simply keeps the
+// reference it already had.
+func (d *Driver) runningStatus(ctx context.Context, spec *agentv1.AppSpec) *agentv1.AppStatus {
+	st := status(spec.GetAppId(), spec.GetRevisionId(), stateRunning, "")
+	if !spec.GetPull() {
+		return st
+	}
+	digest, err := d.client.ImageDigest(ctx, spec.GetImage())
+	if err != nil {
+		d.log.Warn("resolving image digest", "app_id", spec.GetAppId(), "image", spec.GetImage(), "error", err)
+		return st
+	}
+	st.ResolvedImage = digest
+	return st
 }
 
 // removeApp tears down every container for an app that is no longer desired
@@ -505,6 +545,13 @@ func volumeLabels(spec *agentv1.AppSpec) map[string]string {
 
 func containerName(appID, revisionID string) string {
 	return "cypher-" + appID + "-" + revisionID
+}
+
+// managedImageTag is the deterministic reference every managed image lives
+// under — what the build path tags into, and what a pulled image is tagged as
+// so both routes are equally visible to desired-state GC.
+func managedImageTag(appID, revisionID string) string {
+	return "cypher/" + appID + ":" + revisionID
 }
 
 // portBindings maps the app's raw host-port publishes onto the container spec.

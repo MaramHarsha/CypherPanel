@@ -173,6 +173,12 @@ func TestCreateValidation(t *testing.T) {
 		"image ref junk": func(in *CreateInput) {
 			in.Source = domain.AppSource{Kind: "image", Image: "ghost:5; rm -rf /"}
 		},
+		// Previews need a branch to match pull_request events against.
+		"image with previews": func(in *CreateInput) {
+			in.Source = domain.AppSource{Kind: "image", Image: "ghost:5"}
+			in.PreviewEnabled = true
+			in.PreviewBaseDomain = "preview.example.com"
+		},
 		"image with deploy key": func(in *CreateInput) {
 			key := "dk_1"
 			in.Source = domain.AppSource{Kind: "image", Image: "ghost:5", DeployKeyID: &key}

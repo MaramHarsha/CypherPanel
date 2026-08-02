@@ -1229,8 +1229,17 @@ type AppStatus struct {
 	// Application: running, deploying, stopped, error, degraded.
 	State string `protobuf:"bytes,3,opt,name=state,proto3" json:"state,omitempty"`
 	// Human-readable detail for error/degraded (never contains secrets).
-	Detail        string                 `protobuf:"bytes,4,opt,name=detail,proto3" json:"detail,omitempty"`
-	ObservedAt    *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`
+	Detail     string                 `protobuf:"bytes,4,opt,name=detail,proto3" json:"detail,omitempty"`
+	ObservedAt *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`
+	// resolved_image is the immutable digest reference of the image this
+	// revision is actually running (repo@sha256:…), reported for registry-sourced
+	// apps once they converge. A revision created from a mutable tag records the
+	// tag, which no longer identifies the artifact after that tag moves — so
+	// rolling back to it would re-pull and start something newer while claiming
+	// to restore the old revision. The plane pins the revision to this observed
+	// digest, which is the only way it can know it (ADR-001: the control plane
+	// never talks to a registry; ADR-005: status is observation).
+	ResolvedImage string `protobuf:"bytes,6,opt,name=resolved_image,json=resolvedImage,proto3" json:"resolved_image,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1298,6 +1307,13 @@ func (x *AppStatus) GetObservedAt() *timestamppb.Timestamp {
 		return x.ObservedAt
 	}
 	return nil
+}
+
+func (x *AppStatus) GetResolvedImage() string {
+	if x != nil {
+		return x.ResolvedImage
+	}
+	return ""
 }
 
 // DeployEvent reports a work item's terminal outcome for a deployment,
@@ -2523,7 +2539,7 @@ const file_cypherpanel_agent_v1_work_proto_rawDesc = "" +
 	"\x05image\x18\x03 \x01(\tR\x05image\"|\n" +
 	"\fDesiredState\x123\n" +
 	"\x05specs\x18\x01 \x03(\v2\x1d.cypherpanel.agent.v1.AppSpecR\x05specs\x127\n" +
-	"\bdb_specs\x18\x02 \x03(\v2\x1c.cypherpanel.agent.v1.DbSpecR\adbSpecs\"\xae\x01\n" +
+	"\bdb_specs\x18\x02 \x03(\v2\x1c.cypherpanel.agent.v1.DbSpecR\adbSpecs\"\xd5\x01\n" +
 	"\tAppStatus\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12\x1f\n" +
 	"\vrevision_id\x18\x02 \x01(\tR\n" +
@@ -2531,7 +2547,8 @@ const file_cypherpanel_agent_v1_work_proto_rawDesc = "" +
 	"\x05state\x18\x03 \x01(\tR\x05state\x12\x16\n" +
 	"\x06detail\x18\x04 \x01(\tR\x06detail\x12;\n" +
 	"\vobserved_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"observedAt\"\xfc\x03\n" +
+	"observedAt\x12%\n" +
+	"\x0eresolved_image\x18\x06 \x01(\tR\rresolvedImage\"\xfc\x03\n" +
 	"\vDeployEvent\x12#\n" +
 	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12\x15\n" +
 	"\x06app_id\x18\x02 \x01(\tR\x05appId\x12=\n" +

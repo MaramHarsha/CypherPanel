@@ -27,15 +27,19 @@ type fakeClient struct {
 	removeErrForID    map[string]error
 	listErr           error
 
-	lastCreateSpec ContainerSpec   // the most recent CreateContainer argument
-	ensuredVolumes []string        // names passed to EnsureVolume
-	pulledImages   []string        // refs EnsureImage actually fetched
-	localImages    map[string]bool // refs EnsureImage treats as already present
-	pullErr        error           // injected EnsureImage failure
-	execCalls      []execCall      // recorded ExecAndWait invocations
-	execExit       int             // injected exit code
-	execOut        []byte          // injected output
-	execErr        error           // injected error
+	lastCreateSpec ContainerSpec     // the most recent CreateContainer argument
+	ensuredVolumes []string          // names passed to EnsureVolume
+	pulledImages   []string          // refs EnsureImage actually fetched
+	localImages    map[string]bool   // refs EnsureImage treats as already present
+	pullErr        error             // injected EnsureImage failure
+	digests        map[string]string // explicit ref → digest overrides
+	digestErr      error             // injected ImageDigest failure
+	tagged         []string          // "source -> target" per TagImage call
+	tagErr         error             // injected TagImage failure
+	execCalls      []execCall        // recorded ExecAndWait invocations
+	execExit       int               // injected exit code
+	execOut        []byte            // injected output
+	execErr        error             // injected error
 
 	mutations int // count of state-changing calls
 }
@@ -157,6 +161,41 @@ func (f *fakeClient) EnsureImage(_ context.Context, ref string) error {
 	}
 	f.localImages[ref] = true
 	return nil
+}
+
+func (f *fakeClient) TagImage(_ context.Context, source, target string) error {
+	if f.tagErr != nil {
+		return f.tagErr
+	}
+	f.mutations++
+	f.tagged = append(f.tagged, source+" -> "+target)
+	if f.localImages == nil {
+		f.localImages = map[string]bool{}
+	}
+	f.localImages[target] = true
+	return nil
+}
+
+// ImageDigest models the engine: a pulled reference resolves to an immutable
+// digest; a locally-built image has none.
+func (f *fakeClient) ImageDigest(_ context.Context, ref string) (string, error) {
+	if f.digestErr != nil {
+		return "", f.digestErr
+	}
+	if d, ok := f.digests[ref]; ok {
+		return d, nil
+	}
+	if strings.Contains(ref, "@") {
+		return ref, nil // already a digest reference
+	}
+	if !f.localImages[ref] {
+		return "", nil // never pulled here
+	}
+	name, _ := ref, ""
+	if i := strings.LastIndex(ref, ":"); i > strings.LastIndex(ref, "/") {
+		name = ref[:i]
+	}
+	return name + "@sha256:" + strings.Repeat("a", 8), nil
 }
 
 func (f *fakeClient) ListManagedImages(_ context.Context) ([]Image, error) {
@@ -948,5 +987,74 @@ func TestNonPullSpecNeverPulls(t *testing.T) {
 	}
 	if len(c.pulledImages) != 0 {
 		t.Fatalf("pulled = %v, want none for a locally-built image (ADR-008)", c.pulledImages)
+	}
+}
+
+// A pulled image is tagged into the managed namespace and the container is
+// created from that reference — the only way a registry image becomes visible
+// to desired-state GC, since labels are baked in by whoever built it.
+func TestPulledImageIsTaggedManagedAndUsed(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	want := "ghost:5 -> cypher/app1:rev1"
+	if len(c.tagged) != 1 || c.tagged[0] != want {
+		t.Fatalf("tagged = %v, want [%s]", c.tagged, want)
+	}
+	if got := c.lastCreateSpec.Image; got != "cypher/app1:rev1" {
+		t.Fatalf("container created from %q, want the managed reference", got)
+	}
+}
+
+// A locally-built image already lives in the managed namespace and carries our
+// labels, so it is neither pulled nor re-tagged (ADR-008).
+func TestBuiltImageIsNotTagged(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "cypher/app1:rev1")}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(c.tagged) != 0 || len(c.pulledImages) != 0 {
+		t.Fatalf("built image was tagged/pulled: tagged=%v pulled=%v", c.tagged, c.pulledImages)
+	}
+}
+
+// The digest actually running is reported back, so the plane can pin the
+// revision to the artifact rather than to a tag that can move.
+func TestPullSpecReportsResolvedDigest(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	c.digests = map[string]string{"ghost:5": "ghost@sha256:deadbeef"}
+	d := newDriver(c, r, p)
+
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if st := statusOf(got, "app1"); st.GetResolvedImage() != "ghost@sha256:deadbeef" {
+		t.Fatalf("resolved_image = %q, want the observed digest", st.GetResolvedImage())
+	}
+}
+
+// A built image has no registry digest, and an unresolvable one must not turn a
+// healthy rollout into a failure.
+func TestResolvedDigestOmittedWhenUnavailable(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	c.digestErr = errors.New("daemon hiccup")
+	d := newDriver(c, r, p)
+
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	st := statusOf(got, "app1")
+	if st.GetState() != stateRunning {
+		t.Fatalf("state = %q, want running despite the digest lookup failing", st.GetState())
+	}
+	if st.GetResolvedImage() != "" {
+		t.Fatalf("resolved_image = %q, want empty", st.GetResolvedImage())
 	}
 }

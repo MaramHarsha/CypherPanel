@@ -142,6 +142,12 @@ function InstallDialog({ template }: { template: Template }) {
     },
     onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not install template"),
   }});
+  // Mirrors the server's Template.needsDomain: a routed app, or any value that
+  // interpolates {{domain}}, makes the domain mandatory.
+  const needsDomain = template.resources.applications.some(
+    (app) => app.route || Object.values(app.env ?? {}).some((v) => v.includes("{{domain}}")),
+  );
+
   const submit = (e: FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -162,9 +168,25 @@ function InstallDialog({ template }: { template: Template }) {
           <Field label="Environment">{(id) => <Select id={id} required disabled={!projectID} value={environmentID} onChange={(e) => setEnvironmentID(e.target.value)}><option value="">Select an environment</option>{(environments.data ?? []).map((env) => <option key={env.id} value={env.id}>{env.name}</option>)}</Select>}</Field>
           <Field label="Server">{(id) => <Select id={id} required value={serverID} onChange={(e) => setServerID(e.target.value)}><option value="">Select a server</option>{(servers.data ?? []).filter((s) => s.enrolled).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</Select>}</Field>
           <Field label="Name" hint={`Defaults to ${template.slug}`}>{(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} placeholder={template.slug} />}</Field>
-          {template.resources.applications.some((app) => app.route) && <Field label="Domain" hint="Optional; HTTPS is enabled when supplied">{(id) => <Input id={id} value={domain} onChange={(e) => setDomain(e.target.value)} placeholder={`${template.slug}.example.com`} />}</Field>}
+          {/* Every routed template needs a domain — the server refuses without
+              one, because resolving {{domain}} to "" would write settings like
+              https:/// into the container. Ask for it as required rather than
+              letting the form advertise a default that always fails. */}
+          {needsDomain && (
+            <Field label="Domain" hint="Required — this template publishes a public URL. TLS is automatic.">
+              {(id) => (
+                <Input
+                  id={id}
+                  required
+                  value={domain}
+                  onChange={(e) => setDomain(e.target.value)}
+                  placeholder={`${template.slug}.example.com`}
+                />
+              )}
+            </Field>
+          )}
           {error && <p className="text-sm text-danger">{error}</p>}
-          <div className="flex justify-end gap-2 pt-2"><DialogClose asChild><Button variant="ghost">Cancel</Button></DialogClose><Button type="submit" variant="primary" disabled={install.isPending || !environmentID || !serverID}>{install.isPending ? "Installing…" : "Install and deploy"}</Button></div>
+          <div className="flex justify-end gap-2 pt-2"><DialogClose asChild><Button variant="ghost">Cancel</Button></DialogClose><Button type="submit" variant="primary" disabled={install.isPending || !environmentID || !serverID || (needsDomain && domain.trim() === "")}>{install.isPending ? "Installing…" : "Install and deploy"}</Button></div>
         </form>
       </DialogContent>
     </Dialog>

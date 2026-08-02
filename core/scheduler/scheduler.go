@@ -750,6 +750,7 @@ func (s *Scheduler) HandleAppStatus(ctx context.Context, serverID string, st *ag
 	if st.GetState() != domain.AppRunning {
 		return
 	}
+	s.pinRevisionImage(ctx, st)
 	active, err := s.store.ListActiveDeploymentsByApplication(ctx, st.GetAppId())
 	if err != nil {
 		s.log.Error("app status: listing active deployments", "app_id", st.GetAppId(), "error", err)
@@ -770,6 +771,32 @@ func (s *Scheduler) HandleAppStatus(ctx context.Context, serverID string, st *ag
 			return
 		}
 	}
+}
+
+// pinRevisionImage records the immutable digest the agent observed running, so
+// the revision names the artifact it actually shipped rather than a tag that
+// can move underneath it. Without this, rolling back to a revision created from
+// `acme/web:latest` would re-pull that tag and start whatever it points at now
+// while reporting the old revision restored.
+//
+// The plane cannot resolve a digest itself — it never talks to a registry
+// (ADR-001) — so this is only knowable as an observation (ADR-005). Best
+// effort: a failure here leaves the revision as it was and never affects the
+// deployment's outcome.
+func (s *Scheduler) pinRevisionImage(ctx context.Context, st *agentv1.AppStatus) {
+	digest := st.GetResolvedImage()
+	if digest == "" {
+		return
+	}
+	rev, err := s.store.GetRevision(ctx, st.GetRevisionId())
+	if err != nil || rev.Image == digest {
+		return
+	}
+	if _, err := s.store.SetRevisionImage(ctx, rev.ID, digest); err != nil {
+		s.log.Warn("pinning revision to observed digest", "revision_id", rev.ID, "error", err)
+		return
+	}
+	s.log.Info("revision pinned to observed digest", "revision_id", rev.ID, "was", rev.Image, "now", digest)
 }
 
 // fail terminates a deployment and promotes the next queued one. The

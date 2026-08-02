@@ -319,25 +319,95 @@ func (c *Client) ContainerIP(ctx context.Context, id, network string) (string, e
 }
 
 type imageSummary struct {
-	ID     string            `json:"Id"`
-	Labels map[string]string `json:"Labels"`
+	ID       string            `json:"Id"`
+	Labels   map[string]string `json:"Labels"`
+	RepoTags []string          `json:"RepoTags"`
 }
 
-// ListManagedImages returns every image carrying the managed label.
+// ListManagedImages returns every image this driver owns, discovered two ways
+// because managed images arrive by two routes:
+//
+//   - **Built** images carry our labels, stamped at build time.
+//   - **Pulled** images (registry-sourced apps) cannot: labels are baked into
+//     an image by whoever built it, and we do not rebuild what we pull. They
+//     are instead tagged into our own `cypher/<app>:<revision>` namespace at
+//     rollout, which is the reference the container is created from.
+//
+// Without the second route a pulled image is invisible to desired-state GC, so
+// deleting a registry-sourced app would never reclaim its image and every moved
+// tag would strand its predecessor on disk.
 func (c *Client) ListManagedImages(ctx context.Context) ([]docker.Image, error) {
-	var list []imageSummary
-	if err := c.doJSON(ctx, http.MethodGet, "/images/json", labelFilter(), nil, &list); err != nil {
+	var labelled []imageSummary
+	if err := c.doJSON(ctx, http.MethodGet, "/images/json", labelFilter(), nil, &labelled); err != nil {
 		return nil, err
 	}
-	out := make([]docker.Image, 0, len(list))
-	for _, s := range list {
+	seen := make(map[string]struct{}, len(labelled))
+	out := make([]docker.Image, 0, len(labelled))
+	for _, s := range labelled {
+		seen[s.ID] = struct{}{}
 		out = append(out, docker.Image{
 			ID:         s.ID,
 			AppID:      s.Labels[driver.LabelAppID],
 			RevisionID: s.Labels[driver.LabelRevisionID],
 		})
 	}
+
+	var all []imageSummary
+	if err := c.doJSON(ctx, http.MethodGet, "/images/json", nil, nil, &all); err != nil {
+		return nil, err
+	}
+	for _, s := range all {
+		if _, dup := seen[s.ID]; dup {
+			continue
+		}
+		for _, tag := range s.RepoTags {
+			appID, revID, ok := parseManagedTag(tag)
+			if !ok {
+				continue
+			}
+			// Remove by the managed reference, not the image id: a pulled image
+			// may still carry its original registry tag, and deleting the id
+			// would fail while that reference exists.
+			out = append(out, docker.Image{ID: tag, AppID: appID, RevisionID: revID})
+			seen[s.ID] = struct{}{}
+			break
+		}
+	}
 	return out, nil
+}
+
+// managedImagePrefix is the repository namespace every managed image reference
+// lives under — the same convention the build path tags into.
+const managedImagePrefix = "cypher/"
+
+// parseManagedTag splits `cypher/<app_id>:<revision_id>` into its parts.
+func parseManagedTag(tag string) (appID, revisionID string, ok bool) {
+	rest, found := strings.CutPrefix(tag, managedImagePrefix)
+	if !found {
+		return "", "", false
+	}
+	appID, revisionID, found = strings.Cut(rest, ":")
+	if !found || appID == "" || revisionID == "" || strings.Contains(appID, "/") {
+		return "", "", false
+	}
+	return appID, revisionID, true
+}
+
+// TagImage points a managed reference at an existing local image, so a pulled
+// image becomes discoverable by desired-state GC (see ListManagedImages).
+// Idempotent: re-tagging the same image is a no-op to the daemon.
+func (c *Client) TagImage(ctx context.Context, source, target string) error {
+	repo, tag, found := strings.Cut(target, ":")
+	if !found {
+		return fmt.Errorf("engine: managed image reference %q has no tag", target)
+	}
+	q := url.Values{}
+	q.Set("repo", repo)
+	q.Set("tag", tag)
+	if err := c.doJSON(ctx, http.MethodPost, "/images/"+url.PathEscape(source)+"/tag", q, nil, nil); err != nil {
+		return fmt.Errorf("engine: tagging %s as %s: %w", source, target, err)
+	}
+	return nil
 }
 
 // RemoveImage deletes an image (missing removes idempotently; in-use is the

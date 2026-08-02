@@ -260,6 +260,34 @@ func (c *Client) EnsureImage(ctx context.Context, ref string) error {
 	return c.PullImage(ctx, ref)
 }
 
+// ImageDigest returns the immutable digest reference (repo@sha256:…) of a local
+// image, or "" when the image carries none — a locally-built image that was
+// never pushed has no repo digest, and that is not an error.
+func (c *Client) ImageDigest(ctx context.Context, ref string) (string, error) {
+	var img struct {
+		RepoDigests []string `json:"RepoDigests"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/images/"+url.PathEscape(ref)+"/json", nil, nil, &img); err != nil {
+		var se *StatusError
+		if asStatus(err, &se) && se.Code == http.StatusNotFound {
+			return "", nil
+		}
+		return "", fmt.Errorf("engine: inspecting image %s: %w", ref, err)
+	}
+	// Prefer the digest for the repository we were asked about; a widely-mirrored
+	// image can carry several.
+	name, _ := splitRef(ref)
+	for _, d := range img.RepoDigests {
+		if strings.HasPrefix(d, name+"@") {
+			return d, nil
+		}
+	}
+	if len(img.RepoDigests) > 0 {
+		return img.RepoDigests[0], nil
+	}
+	return "", nil
+}
+
 // ConnectNetwork attaches container to network. Idempotent: a container
 // already on the network (403 from the daemon) is success.
 func (c *Client) ConnectNetwork(ctx context.Context, container, network string) error {

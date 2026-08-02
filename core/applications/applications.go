@@ -460,6 +460,13 @@ func validateAndDefault(in CreateInput) (CreateInput, error) {
 		if in.Source.DeployKeyID != nil {
 			return in, invalid("source.deploy_key_id does not apply to image sources")
 		}
+		// Previews are driven by pull_request webhooks matched against the
+		// app's branch, which an image source does not have. Accepting the
+		// combination would report previews as enabled while no PR could ever
+		// create one — refuse it instead of failing silently.
+		if in.PreviewEnabled {
+			return in, invalid("preview environments need a git source; they cannot be enabled for an image source")
+		}
 		in.Source.Repo, in.Source.Branch = "", ""
 	default:
 		return in, invalid(`source.kind must be "github", "git_url", or "image"`)

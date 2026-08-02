@@ -44,6 +44,10 @@ function SettingsForm({
   const [name, setName] = useState(initial.name);
   const [repo, setRepo] = useState(initial.source.repo);
   const [branch, setBranch] = useState(initial.source.branch);
+  const [image, setImage] = useState(initial.source.image ?? "");
+  // An image-source app has no repository, branch, or build step — showing
+  // those fields would invite edits the server rejects.
+  const isImageSource = initial.source.kind === "image";
   const [domain, setDomain] = useState(initial.route.domain ?? "");
   const [buildKind, setBuildKind] = useState(initial.build.kind ?? "dockerfile");
   const [dockerfile, setDockerfile] = useState(initial.build.dockerfile_path);
@@ -56,6 +60,7 @@ function SettingsForm({
     name !== initial.name ||
     repo !== initial.source.repo ||
     branch !== initial.source.branch ||
+    image !== (initial.source.image ?? "") ||
     domain !== (initial.route.domain ?? "") ||
     buildKind !== (initial.build.kind ?? "dockerfile") ||
     dockerfile !== initial.build.dockerfile_path ||
@@ -104,7 +109,7 @@ function SettingsForm({
       id: appId,
       data: {
         name,
-        source: { ...initial.source, repo, branch },
+        source: isImageSource ? { ...initial.source, image } : { ...initial.source, repo, branch },
         build: { ...initial.build, kind: buildKind, dockerfile_path: dockerfile, context },
         route: { ...initial.route, domain: domain || undefined },
         preview_enabled: previewEnabled,
@@ -119,39 +124,64 @@ function SettingsForm({
       <form onSubmit={submit} className="space-y-4">
         <Eyebrow>General</Eyebrow>
         <Field label="Name">{(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} />}</Field>
-        <Field label="Repository">
-          {(id) => <Input id={id} value={repo} onChange={(e) => setRepo(e.target.value)} className="mono" />}
-        </Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Branch">
-            {(id) => <Input id={id} value={branch} onChange={(e) => setBranch(e.target.value)} className="mono" />}
-          </Field>
-          <Field label="Domain" hint="Where the app is reachable.">
-            {(id) => <Input id={id} value={domain} onChange={(e) => setDomain(e.target.value)} className="mono" />}
-          </Field>
-        </div>
-        <Field label="How to build it" hint="Detect picks a Dockerfile if the repository has one, otherwise serves it as a static site.">
-          {(id) => (
-            <Select id={id} value={buildKind} onChange={(e) => setBuildKind(e.target.value as typeof buildKind)}>
-              <option value="auto">Detect automatically</option>
-              <option value="dockerfile">Dockerfile</option>
-              <option value="static">Static site (HTML, CSS, JS)</option>
-            </Select>
-          )}
-        </Field>
-        <div className="grid grid-cols-2 gap-3">
-          {buildKind !== "static" && (
-            <Field label="Dockerfile path">
-              {(id) => <Input id={id} value={dockerfile} onChange={(e) => setDockerfile(e.target.value)} />}
+        {isImageSource ? (
+          <>
+            <Field label="Image" hint="A moving tag is re-pulled on every deploy; a digest is pinned.">
+              {(id) => <Input id={id} required value={image} onChange={(e) => setImage(e.target.value)} className="mono" />}
             </Field>
-          )}
-          <Field label="Build context">
-            {(id) => <Input id={id} value={context} onChange={(e) => setContext(e.target.value)} />}
-          </Field>
-        </div>
+            <Field label="Domain" hint="Where the app is reachable.">
+              {(id) => <Input id={id} value={domain} onChange={(e) => setDomain(e.target.value)} className="mono" />}
+            </Field>
+          </>
+        ) : (
+          <>
+            <Field label="Repository">
+              {(id) => <Input id={id} value={repo} onChange={(e) => setRepo(e.target.value)} className="mono" />}
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Branch">
+                {(id) => <Input id={id} value={branch} onChange={(e) => setBranch(e.target.value)} className="mono" />}
+              </Field>
+              <Field label="Domain" hint="Where the app is reachable.">
+                {(id) => <Input id={id} value={domain} onChange={(e) => setDomain(e.target.value)} className="mono" />}
+              </Field>
+            </div>
+          </>
+        )}
+        {/* No build stage runs for an image source — the agent pulls the
+            reference and rolls it out, so build settings would be inert. */}
+        {!isImageSource && (
+          <>
+            <Field label="How to build it" hint="Detect picks a Dockerfile if the repository has one, otherwise serves it as a static site.">
+              {(id) => (
+                <Select id={id} value={buildKind} onChange={(e) => setBuildKind(e.target.value as typeof buildKind)}>
+                  <option value="auto">Detect automatically</option>
+                  <option value="dockerfile">Dockerfile</option>
+                  <option value="static">Static site (HTML, CSS, JS)</option>
+                </Select>
+              )}
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              {buildKind !== "static" && (
+                <Field label="Dockerfile path">
+                  {(id) => <Input id={id} value={dockerfile} onChange={(e) => setDockerfile(e.target.value)} />}
+                </Field>
+              )}
+              <Field label="Build context">
+                {(id) => <Input id={id} value={context} onChange={(e) => setContext(e.target.value)} />}
+              </Field>
+            </div>
+          </>
+        )}
         {/* Preview environments were reachable in the API but nowhere in the
             UI, while the Previews tab told the operator to enable them "in
-            Settings" — a dead end (ui-principles §11). */}
+            Settings" — a dead end (ui-principles §11).
+
+            They are driven by pull_request webhooks matched against the app's
+            branch, which an image source has none of, so the server refuses
+            the combination — don't offer it. */}
+        {!isImageSource && (
+        <>
         <Eyebrow className="pt-4">Preview environments</Eyebrow>
         <p className="text-[12.5px] leading-relaxed text-text-mid">
           When on, opening a pull request against this repository builds a throwaway copy of the app at its own
@@ -189,6 +219,8 @@ function SettingsForm({
               )}
             </Field>
           </div>
+        )}
+        </>
         )}
         {error && (
           <p role="alert" className="rounded-md border border-danger/35 bg-danger/[0.06] px-3 py-2 text-[13px] text-danger">

@@ -429,3 +429,13 @@ func TestInstallReportsIncompleteRollback(t *testing.T) {
 		t.Fatalf("err = %v, want the orphaned id included", err)
 	}
 }
+
+// The health path is validated even when kind is omitted — Parse applies the
+// http default only after Validate runs, so an unguarded empty kind would let
+// a bad path through.
+func TestParseValidatesHealthPathWithDefaultKind(t *testing.T) {
+	y := strings.Replace(minimalYAML(""), "      route: true", "      route: true\n      health:\n        path: healthz", 1)
+	if _, err := Parse([]byte(y)); err == nil || !strings.Contains(err.Error(), "health path") {
+		t.Fatalf("relative health path accepted with a defaulted kind (err=%v)", err)
+	}
+}

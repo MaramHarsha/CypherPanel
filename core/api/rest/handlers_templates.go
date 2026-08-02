@@ -3,6 +3,7 @@ package rest
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/templates"
@@ -67,11 +68,20 @@ func (a *API) handleInstallTemplate(w http.ResponseWriter, r *http.Request) {
 		Name:          req.Name,
 	})
 	var validation *templates.ValidationError
+	var partial *templates.PartialInstallError
 	switch {
 	case errors.Is(err, templates.ErrNotFound):
 		writeError(w, http.StatusNotFound, "template not found")
 	case errors.As(err, &validation):
 		writeError(w, http.StatusBadRequest, validation.Error())
+	case errors.As(err, &partial):
+		// The install failed *and* left resources behind. Still a 500 — the
+		// operator did nothing wrong — but the response has to name what
+		// survived, or those resources are unfindable.
+		a.deps.Log.Error("installing template: rollback incomplete", "slug", r.PathValue("slug"),
+			"environment_id", req.EnvironmentID, "remaining", partial.Remaining, "error", partial.Cause)
+		writeError(w, http.StatusInternalServerError,
+			"could not install template, and rolling it back left resources behind: "+strings.Join(partial.Remaining, ", "))
 	case err != nil:
 		a.deps.Log.Error("installing template", "slug", r.PathValue("slug"), "environment_id", req.EnvironmentID, "error", err)
 		writeError(w, http.StatusInternalServerError, "could not install template")

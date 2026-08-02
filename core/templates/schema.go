@@ -195,7 +195,10 @@ func (t Template) Validate() error {
 		default:
 			return invalid("application %q: health.kind must be http, tcp, or none", a.Name)
 		}
-		if a.Health.Kind == "http" && a.Health.Path != "" && !strings.HasPrefix(a.Health.Path, "/") {
+		// An omitted kind defaults to http (applied in Parse, after this runs),
+		// so the path must be checked for the empty kind too — otherwise a
+		// template that sets only a path bypasses validation entirely.
+		if (a.Health.Kind == "" || a.Health.Kind == "http") && a.Health.Path != "" && !strings.HasPrefix(a.Health.Path, "/") {
 			return invalid("application %q: HTTP health path must start with /", a.Name)
 		}
 		if len(a.Volumes) > 5 {

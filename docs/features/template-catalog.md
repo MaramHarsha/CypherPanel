@@ -133,7 +133,13 @@ page (today an empty state) becomes: category-grouped catalog with search →
 detail pane (what it creates, env keys, volumes) → install dialog
 (environment, server, domain) → navigate to the created application.
 
-## 6. The Coolify importer
+## 6. The Coolify importer — *planned, not yet built*
+
+> **Status: not implemented.** The catalog above is hand-written. This section
+> specifies the importer so it can be built against a settled design; nothing
+> in the shipped code depends on it, and the bundled templates do not come
+> from it. It is the mechanism for widening the catalog beyond what one person
+> can curate, not a launch requirement.
 
 `core/cmd/coolify-import` — a **build-time tool**, not a runtime code path
 (ADR-007 §Decision 2): reads one Coolify compose template
@@ -185,7 +191,8 @@ follow-up above).
   panel yields running, routed, health-gated resources with sealed secrets,
   drivable purely via REST.
 - Deleting the created resources leaves nothing behind (ordinary deletes).
-- The importer converts at least one real Coolify template end-to-end and
-  rejects one that needs a Compose Stack, with actionable reasons.
+- *(When the importer lands)* it converts at least one real Coolify template
+  end-to-end and rejects one that needs a Compose Stack, with actionable
+  reasons.
 - `.claude/skills/adding-a-template` exists (project-structure.md plans it)
   and walking it produces a template that passes the catalog test.
