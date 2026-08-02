@@ -252,6 +252,10 @@ paths:
       operationId: listTokens
       tags: [auth]
       summary: List the caller's personal access tokens (metadata only)
+      description: >
+        Requires an interactive session. Credential management is unreachable
+        from a personal access token, whatever its abilities, so that a leaked
+        token cannot mint itself a wider one.
       responses:
         "200":
           description: The caller's tokens, newest first. The secret is never returned.
@@ -263,6 +267,8 @@ paths:
                   $ref: "#/components/schemas/ApiToken"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     post:
       operationId: createToken
       tags: [auth]
@@ -288,6 +294,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /api/v1/tokens/{id}:
     delete:
@@ -305,6 +313,8 @@ paths:
           description: Token revoked.
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -322,6 +332,8 @@ paths:
                 $ref: "#/components/schemas/TOTPStatus"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /api/v1/auth/totp/enroll:
     post:
@@ -342,6 +354,8 @@ paths:
                 $ref: "#/components/schemas/TOTPEnrollResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "409":
           description: Two-factor is already enabled.
           content:
@@ -379,6 +393,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /api/v1/auth/totp/disable:
     post:
@@ -407,6 +423,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /api/v1/ca.pem:
     get:

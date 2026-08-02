@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -18,12 +19,14 @@ const maxTokenExpiryDays = 3650
 type createTokenRequest struct {
 	Name          string `json:"name"`
 	ExpiresInDays int    `json:"expires_in_days"` // 0 = never expires
-	// Abilities is a pointer so an omitted field is distinguishable from an
-	// explicit []. Omitted means "full access", preserving the behaviour of
-	// clients written before abilities existed; an explicit empty list is a
-	// request for no authority and is rejected, never silently widened into a
-	// fully privileged credential.
-	Abilities *[]string `json:"abilities"`
+	// Abilities is raw so that *presence* is what decides the default, not the
+	// decoded value. A pointer would still be nil for an explicit `null`,
+	// making `"abilities": null` — a request for no authority — indistinguishable
+	// from an omitted field and silently granting full access. Omitted means
+	// "full access" (preserving clients written before abilities existed);
+	// anything present, including `null` and `[]`, is taken literally and
+	// rejected when it grants nothing.
+	Abilities json.RawMessage `json:"abilities"`
 }
 
 type tokenDTO struct {
@@ -85,12 +88,17 @@ func (a *API) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 
 	// An omitted ability list means "same authority as before this feature
 	// existed" — full access — so existing clients keep working. A present
-	// list, including an empty one, is taken literally and validated against
-	// the vocabulary (an empty set is refused by the service).
+	// list is taken literally: `null` and `[]` both decode to nothing and are
+	// refused by the service rather than widened.
 	abilities := domain.AllAbilities()
 	if req.Abilities != nil {
-		abilities = make([]domain.Ability, 0, len(*req.Abilities))
-		for _, s := range *req.Abilities {
+		var list []string
+		if err := json.Unmarshal(req.Abilities, &list); err != nil {
+			writeError(w, http.StatusBadRequest, "abilities must be an array of read, write, deploy")
+			return
+		}
+		abilities = make([]domain.Ability, 0, len(list))
+		for _, s := range list {
 			abilities = append(abilities, domain.Ability(s))
 		}
 	}

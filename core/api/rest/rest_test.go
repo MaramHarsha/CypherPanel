@@ -1743,14 +1743,28 @@ func TestCreateTokenExplicitEmptyAbilitiesRejected(t *testing.T) {
 	ts, _, _, _ := newTestServerFull(t)
 	session := login(t, ts)
 
-	status, _, body := doJSON(t, "POST", ts.URL+"/api/v1/tokens", session, `{"name":"empty","abilities":[]}`)
-	if status != http.StatusBadRequest {
-		t.Fatalf("explicit empty abilities: status %d, want 400 (body %s)", status, body)
+	// Anything *present* that grants nothing is refused — including an explicit
+	// null, which decodes identically to an omitted field unless presence is
+	// tracked separately.
+	for _, body := range []string{
+		`{"name":"empty","abilities":[]}`,
+		`{"name":"null","abilities":null}`,
+	} {
+		status, _, resp := doJSON(t, "POST", ts.URL+"/api/v1/tokens", session, body)
+		if status != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400 (resp %s)", body, status, resp)
+		}
 	}
 	// An omitted list still means full access, so old clients keep working.
-	status, _, body = doJSON(t, "POST", ts.URL+"/api/v1/tokens", session, `{"name":"omitted"}`)
+	status, _, resp := doJSON(t, "POST", ts.URL+"/api/v1/tokens", session, `{"name":"omitted"}`)
 	if status != http.StatusCreated {
-		t.Fatalf("omitted abilities: status %d, want 201 (body %s)", status, body)
+		t.Fatalf("omitted abilities: status %d, want 201 (resp %s)", status, resp)
+	}
+	var created struct {
+		Abilities []string `json:"abilities"`
+	}
+	if err := json.Unmarshal(resp, &created); err != nil || len(created.Abilities) != 3 {
+		t.Fatalf("omitted abilities produced %v, want the full set", created.Abilities)
 	}
 }
 

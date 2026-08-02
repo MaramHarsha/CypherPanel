@@ -172,7 +172,12 @@ function EnrollTotpDialog() {
         // Once the codes are on screen, 2FA is already enabled and this is the
         // only time they are shown — so Escape, the close button, and an
         // outside click must not discard them. Only acknowledgement closes.
-        if (!next && codes) return;
+        //
+        // The same applies while verification is still in flight: closing then
+        // would let the response enable 2FA and return the one-time codes into
+        // a dialog nobody is looking at, and reopening would fail with 409
+        // (already enabled) leaving the account with no recovery codes at all.
+        if (!next && (codes || verify.isPending)) return;
         setOpen(next);
         if (next) {
           reset();
