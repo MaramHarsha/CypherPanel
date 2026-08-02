@@ -1,0 +1,1 @@
+import{j as r}from"./index-aiHnZFbm.js";import{c as a}from"./utils-DCADjnpI.js";function i({className:e}){return r.jsx("div",{className:a("animate-pulse rounded bg-raised",e),"aria-hidden":!0})}export{i as S};

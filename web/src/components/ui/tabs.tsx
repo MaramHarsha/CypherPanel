@@ -10,8 +10,12 @@ export const TabsContent = TabsPrimitive.Content;
 
 export function TabsList({ className, ...props }: ComponentPropsWithoutRef<typeof TabsPrimitive.List>) {
   return (
+    // The negative margin lives on the list, never on the triggers: a trigger
+    // pulled 1px below an `overflow-x-auto` parent overflows it vertically and
+    // the browser paints a vertical scrollbar inside the tab strip. That is
+    // what went wrong in the top bar.
     <TabsPrimitive.List
-      className={cn("flex gap-5 overflow-x-auto border-b border-border", className)}
+      className={cn("-mb-px flex gap-5 overflow-x-auto border-b border-border", className)}
       {...props}
     />
   );
@@ -21,7 +25,7 @@ export function TabsTrigger({ className, ...props }: ComponentPropsWithoutRef<ty
   return (
     <TabsPrimitive.Trigger
       className={cn(
-        "-mb-px whitespace-nowrap border-b-2 border-transparent px-0.5 py-2.5 text-[13px] text-text-mid",
+        "whitespace-nowrap border-b-2 border-transparent px-0.5 py-2.5 text-[13px] text-text-mid",
         "hover:text-text data-[state=active]:border-border-strong data-[state=active]:font-semibold",
         "data-[state=active]:text-text",
         className,

@@ -72,21 +72,31 @@ export function Wordmark({ className }: { className?: string }) {
 function TopBar() {
   return (
     <header className="sticky top-0 z-30 border-b-[1.5px] border-border-strong bg-bg">
-      <div className="mx-auto flex h-14 max-w-[1400px] items-stretch gap-6 px-4 sm:px-8">
+      {/* The bar never scrolls. Four short items always fit beside the
+          wordmark, so the nav is shrink-0 and owns its width; the right-hand
+          controls give ground instead (the ⌘K pill hides below lg, the team
+          name below sm). Below sm the nav wraps onto its own full-width line
+          rather than scrolling — a scroll container here both clipped the
+          active underline, which is pulled 1.5px down onto the header rule,
+          and painted a scrollbar inside 56px of chrome. */}
+      <div className="mx-auto flex min-h-14 max-w-[1400px] flex-wrap items-stretch gap-x-6 px-4 sm:flex-nowrap sm:px-8">
         <Link
           to="/projects"
           aria-label="CypherPanel — projects"
-          className="flex shrink-0 items-center text-base font-bold tracking-tight"
+          className="order-1 flex h-14 shrink-0 items-center text-base font-bold tracking-tight"
         >
           <Wordmark />
         </Link>
 
-        <nav aria-label="Main" className="flex min-w-0 items-stretch gap-5 overflow-x-auto">
+        <nav
+          aria-label="Main"
+          className="order-3 flex w-full shrink-0 items-stretch gap-5 sm:order-2 sm:w-auto"
+        >
           {NAV.map(({ to, label }) => (
             <Link
               key={to}
               to={to}
-              className="-mb-[1.5px] flex items-center whitespace-nowrap border-b-[2.5px] border-transparent text-[13.5px] font-medium text-text-mid hover:text-text"
+              className="-mb-[1.5px] flex items-center whitespace-nowrap border-b-[2.5px] border-transparent pb-2.5 text-[13.5px] font-medium text-text-mid hover:text-text sm:pb-0"
               activeProps={{ className: "border-accent text-text" }}
             >
               {label}
@@ -94,7 +104,7 @@ function TopBar() {
           ))}
         </nav>
 
-        <div className="ml-auto flex shrink-0 items-center gap-2.5">
+        <div className="order-2 ml-auto flex h-14 shrink-0 items-center gap-2.5 sm:order-3">
           <button
             type="button"
             onClick={openCommandPalette}
