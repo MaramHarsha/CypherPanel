@@ -23,6 +23,14 @@ permissions:
 
 env:
   GO_VERSION: "1.25.x"
+  # One source of truth for the ref being released. Resolving this per-step is
+  # what broke manual runs: on workflow_dispatch GITHUB_REF_NAME is the branch
+  # the run was started from and is always non-empty, so a
+  # "${GITHUB_REF_NAME:-<input>}" fallback silently never reached the input —
+  # binaries were stamped "main" and `gh release create main --verify-tag`
+  # aborted, because main is a branch. github.ref_name is the tag on a tag push
+  # and the input takes precedence on a dispatch.
+  VERSION: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
   release:
@@ -31,7 +39,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ env.VERSION }}
           fetch-depth: 0
 
       - uses: actions/setup-go@v7
@@ -51,7 +59,6 @@ jobs:
       - name: Build binaries
         run: |
           set -eu
-          VERSION="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
           mkdir -p dist
           for arch in amd64 arm64; do
             # Static, no cgo: these land on unknown distros and must not need a
@@ -87,7 +94,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          VERSION="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
           cat > notes.md <<EOF
           ## Install the control plane
 
