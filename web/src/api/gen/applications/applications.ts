@@ -29,6 +29,7 @@ import type {
   BadRequestResponse,
   CreateApplicationRequest,
   CreateApplicationResponse,
+  DomainCheck,
   EnvVarKeys,
   Error,
   PatchApplicationRequest,
@@ -458,6 +459,107 @@ export const useDeleteApplication = <TError = UnauthorizedResponse,
       return useMutation(mutationOptions, queryClient);
     }
     /**
+ * Resolves the domain and fetches it from the control plane, the way the public internet would, then reports who answered. A domain can resolve correctly and still be served by another program listening on port 80, which is invisible from inside the panel otherwise.
+ * @summary Check whether this app's domain actually reaches it
+ */
+export const getCheckApplicationDomainUrl = (id: string,) => {
+
+
+  
+
+  return `/api/v1/applications/${id}/domain-check`
+}
+
+export const checkApplicationDomain = async (id: string, options?: RequestInit): Promise<DomainCheck> => {
+  
+  return apiFetch<DomainCheck>(getCheckApplicationDomainUrl(id),
+  {      
+    ...options,
+    method: 'GET'
+    
+    
+  }
+);}
+
+
+
+
+
+export const getCheckApplicationDomainQueryKey = (id?: string,) => {
+    return [
+    `/api/v1/applications/${id}/domain-check`
+    ] as const;
+    }
+
+    
+export const getCheckApplicationDomainQueryOptions = <TData = Awaited<ReturnType<typeof checkApplicationDomain>>, TError = UnauthorizedResponse | Error>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof checkApplicationDomain>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getCheckApplicationDomainQueryKey(id);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof checkApplicationDomain>>> = ({ signal }) => checkApplicationDomain(id, { signal, ...requestOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof checkApplicationDomain>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type CheckApplicationDomainQueryResult = NonNullable<Awaited<ReturnType<typeof checkApplicationDomain>>>
+export type CheckApplicationDomainQueryError = UnauthorizedResponse | Error
+
+
+export function useCheckApplicationDomain<TData = Awaited<ReturnType<typeof checkApplicationDomain>>, TError = UnauthorizedResponse | Error>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof checkApplicationDomain>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof checkApplicationDomain>>,
+          TError,
+          Awaited<ReturnType<typeof checkApplicationDomain>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useCheckApplicationDomain<TData = Awaited<ReturnType<typeof checkApplicationDomain>>, TError = UnauthorizedResponse | Error>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof checkApplicationDomain>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof checkApplicationDomain>>,
+          TError,
+          Awaited<ReturnType<typeof checkApplicationDomain>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useCheckApplicationDomain<TData = Awaited<ReturnType<typeof checkApplicationDomain>>, TError = UnauthorizedResponse | Error>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof checkApplicationDomain>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Check whether this app's domain actually reaches it
+ */
+
+export function useCheckApplicationDomain<TData = Awaited<ReturnType<typeof checkApplicationDomain>>, TError = UnauthorizedResponse | Error>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof checkApplicationDomain>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getCheckApplicationDomainQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+/**
  * @summary Stream runtime logs (Server-Sent Events)
  */
 export const getStreamApplicationLogsUrl = (id: string,) => {

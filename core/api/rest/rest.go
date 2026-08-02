@@ -248,6 +248,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/applications/{id}", a.authed(a.handleGetApplication))
 	mux.HandleFunc("PATCH /api/v1/applications/{id}", a.authed(a.handlePatchApplication))
 	mux.HandleFunc("DELETE /api/v1/applications/{id}", a.authed(a.handleDeleteApplication))
+	mux.HandleFunc("GET /api/v1/applications/{id}/domain-check", a.authed(a.handleCheckApplicationDomain))
 	mux.HandleFunc("GET /api/v1/applications/{id}/logs", a.authed(a.handleGetApplicationLogs))
 	mux.HandleFunc("GET /api/v1/applications/{id}/env", a.authed(a.handleListEnvVars))
 	mux.HandleFunc("PUT /api/v1/applications/{id}/env/{key}", a.authed(a.handleSetEnvVar))

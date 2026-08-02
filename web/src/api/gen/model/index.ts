@@ -76,6 +76,8 @@ export * from './deployRequest';
 export * from './deployment';
 export * from './deploymentStatus';
 export * from './deploymentTrigger';
+export * from './domainCheck';
+export * from './domainCheckVerdict';
 export * from './envVarKeys';
 export * from './environment';
 export * from './error';

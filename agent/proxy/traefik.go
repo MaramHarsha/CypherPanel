@@ -69,10 +69,13 @@ func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.Rou
 		} `yaml:"tls,omitempty"`
 	}
 	type Middleware struct {
-		RedirectScheme struct {
+		RedirectScheme *struct {
 			Scheme    string `yaml:"scheme"`
 			Permanent bool   `yaml:"permanent"`
-		} `yaml:"redirectScheme"`
+		} `yaml:"redirectScheme,omitempty"`
+		Headers *struct {
+			CustomResponseHeaders map[string]string `yaml:"customResponseHeaders"`
+		} `yaml:"headers,omitempty"`
 	}
 
 	doc := struct {
@@ -85,6 +88,18 @@ func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.Rou
 
 	doc.HTTP.Routers = make(map[string]Router)
 	doc.HTTP.Services = make(map[string]Service)
+	doc.HTTP.Middlewares = make(map[string]Middleware)
+
+	// Every proxied response carries a marker so "is this domain actually
+	// reaching my app?" has a definitive answer rather than a guess. Without
+	// it the only signal is the upstream's own Server header, which tells you
+	// what answered but not whether it was us (routing-and-tls.md).
+	markName := appID + "-mark"
+	mark := Middleware{}
+	mark.Headers = &struct {
+		CustomResponseHeaders map[string]string `yaml:"customResponseHeaders"`
+	}{CustomResponseHeaders: map[string]string{ServedByHeader: ServedByValue}}
+	doc.HTTP.Middlewares[markName] = mark
 
 	rule := fmt.Sprintf("Host(`%s`)", route.Domain)
 	if route.PathPrefix != "" {
@@ -111,6 +126,7 @@ func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.Rou
 		doc.HTTP.Routers[appID] = Router{
 			Rule:        rule,
 			EntryPoints: []string{"websecure"},
+			Middlewares: []string{markName},
 			Service:     appID,
 			TLS:         tlsConf,
 		}
@@ -121,14 +137,17 @@ func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.Rou
 			Service:     appID,
 		}
 		mw := Middleware{}
-		mw.RedirectScheme.Scheme = "https"
-		mw.RedirectScheme.Permanent = true
-		doc.HTTP.Middlewares = map[string]Middleware{appID + "-redirect": mw}
+		mw.RedirectScheme = &struct {
+			Scheme    string `yaml:"scheme"`
+			Permanent bool   `yaml:"permanent"`
+		}{Scheme: "https", Permanent: true}
+		doc.HTTP.Middlewares[appID+"-redirect"] = mw
 	} else {
 		doc.HTTP.Routers[appID] = Router{
-			Rule:    rule,
-			Service: appID,
-			TLS:     tlsConf,
+			Rule:        rule,
+			Middlewares: []string{markName},
+			Service:     appID,
+			TLS:         tlsConf,
 		}
 	}
 
@@ -233,3 +252,12 @@ func (t *Traefik) Route(ctx context.Context, appID string) (upstream string, ok 
 	url = strings.TrimPrefix(url, "http://")
 	return url, true, nil
 }
+
+// ServedByHeader marks responses that actually passed through this panel's
+// proxy. A domain can resolve to the right host and still be answered by
+// something else on :80 — another web server, a control panel's default vhost
+// — and that failure is invisible without a marker to look for.
+const (
+	ServedByHeader = "X-Served-By"
+	ServedByValue  = "cypherpanel"
+)
