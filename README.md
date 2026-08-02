@@ -103,6 +103,25 @@ Also shipped in Phase 2: deploy-key private repos, bounded runtime-log retention
 
 **Not yet built** (tracked in [docs/roadmap.md](docs/roadmap.md)): template catalog, Compose stacks, dashboard, metrics, real web UI (Phase 4) · TOTP 2FA, granular RBAC, backup-cron auto-scheduling + S3-object pruning (V1.x) · agent auto-update implementation ([ADR-010](docs/adrs/ADR-010-agent-auto-update.md), lands with the release pipeline).
 
+## Install
+
+One command on a fresh Linux VPS (amd64 or arm64, systemd, root):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/MaramHarsha/CypherPanel/main/install/install.sh | sh
+```
+
+It installs Docker, starts PostgreSQL on loopback, installs the `cypherd`
+binary, generates a master key, and enables a systemd service that survives
+reboots. Then open the panel and create the owner account in the browser — no
+password is ever printed or defaulted.
+
+Re-running is safe: an existing master key is never regenerated (that would
+make every sealed secret unrecoverable) and an existing database is left alone.
+
+Servers are joined afterwards from the panel's own copy-paste command, one per
+host. Details and options: [install/install.sh](install/install.sh) header.
+
 ## Quickstart (current dev state)
 
 Prerequisites: Go 1.25+, Docker, PostgreSQL (or `make dev-up` for a local one). There are no hosted releases yet — you build the two binaries yourself.
