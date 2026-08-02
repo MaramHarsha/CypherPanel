@@ -15,22 +15,22 @@ import (
 // --- DTOs ---
 
 type databaseDTO struct {
-	ID                 string    `json:"id"`
-	EnvironmentID      string    `json:"environment_id"`
-	Name               string    `json:"name"`
-	Engine             string    `json:"engine"`
-	Version            string    `json:"version"`
-	ServerID           string    `json:"server_id"`
-	CPULimit           *float64  `json:"cpu_limit,omitempty"`
-	MemoryLimitMB      *int      `json:"memory_limit_mb,omitempty"`
-	VolumeName         string    `json:"volume_name"`
-	ExposePort         *int      `json:"expose_port,omitempty"`
-	Network            string    `json:"network"`
-	RootUser           string    `json:"root_user"`
-	RootPassword       string    `json:"root_password,omitempty"` // only on create / reset
-	RequirePassword    bool      `json:"require_password"`
-	Status             string    `json:"status"`
-	StatusDetail       string    `json:"status_detail,omitempty"`
+	ID              string   `json:"id"`
+	EnvironmentID   string   `json:"environment_id"`
+	Name            string   `json:"name"`
+	Engine          string   `json:"engine"`
+	Version         string   `json:"version"`
+	ServerID        string   `json:"server_id"`
+	CPULimit        *float64 `json:"cpu_limit,omitempty"`
+	MemoryLimitMB   *int     `json:"memory_limit_mb,omitempty"`
+	VolumeName      string   `json:"volume_name"`
+	ExposePort      *int     `json:"expose_port,omitempty"`
+	Network         string   `json:"network"`
+	RootUser        string   `json:"root_user"`
+	RootPassword    string   `json:"root_password,omitempty"` // only on create / reset
+	RequirePassword bool     `json:"require_password"`
+	Status          string   `json:"status"`
+	StatusDetail    string   `json:"status_detail,omitempty"`
 	// What the operator asked for, as distinct from Status (what the agent
 	// observes). Clients need both: gating a Start button on the observed
 	// status offers the action whenever reality lags intent, and the call then
