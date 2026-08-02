@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   decide, approvalBody, sensitiveBody, alreadyCommented, shouldRequestReview, matchesGlob,
+  decideOnLabels, dismissalMessage, blockedLabelsOf,
 } from "./policy.mjs";
 
 const config = JSON.parse(readFileSync(new URL("./config.json", import.meta.url)));
@@ -196,4 +197,47 @@ test("glob matching distinguishes * from **", () => {
   assert.ok(matchesGlob("go.sum", "go.sum"));
   assert.equal(matchesGlob("*.md", "docs/readme.md"), false);
   assert.equal(matchesGlob("core/auth/**", "core/authz.go"), false);
+});
+
+
+// A blocked label added AFTER the bot approved must take the approval back.
+// Adding a label does not re-run CI, so nothing else re-evaluates the PR and
+// the stale approval would keep satisfying the one-approval merge gate.
+test("dismisses the bot's approval when a blocked label is added", () => {
+  const reviews = [{ id: 11, user: { login: config.botLogin }, state: "APPROVED", commit_id: SHA }];
+  const d = decideOnLabels(prOf({ labels: [{ name: "do-not-approve" }] }), reviews, config);
+  assert.equal(d.action, "dismiss");
+  assert.deepEqual(d.reviewIds, [11]);
+  assert.deepEqual(d.labels, ["do-not-approve"]);
+  assert.match(dismissalMessage(d.labels), /do-not-approve/);
+});
+
+test("every configured blocked label triggers dismissal", () => {
+  const reviews = [{ id: 1, user: { login: config.botLogin }, state: "APPROVED", commit_id: SHA }];
+  for (const name of config.blockedLabels) {
+    assert.equal(decideOnLabels(prOf({ labels: [{ name }] }), reviews, config).action, "dismiss", name);
+  }
+});
+
+test("no dismissal when there is nothing to dismiss or nothing blocking", () => {
+  const approved = [{ id: 1, user: { login: config.botLogin }, state: "APPROVED", commit_id: SHA }];
+  // Label present, but the bot never approved.
+  assert.equal(decideOnLabels(prOf({ labels: [{ name: "blocked" }] }), [], config).action, "none");
+  // Approved, but no blocking label.
+  assert.equal(decideOnLabels(prOf({ labels: [{ name: "enhancement" }] }), approved, config).action, "none");
+  // Someone else's approval is not the bot's to dismiss.
+  const other = [{ id: 2, user: { login: "MaramHarsha" }, state: "APPROVED", commit_id: SHA }];
+  assert.equal(decideOnLabels(prOf({ labels: [{ name: "blocked" }] }), other, config).action, "none");
+});
+
+test("dismissal is idempotent: an already-dismissed review is not re-dismissed", () => {
+  const reviews = [{ id: 1, user: { login: config.botLogin }, state: "DISMISSED", commit_id: SHA }];
+  assert.equal(decideOnLabels(prOf({ labels: [{ name: "blocked" }] }), reviews, config).action, "none");
+});
+
+test("label handling fails closed on unreadable input", () => {
+  assert.equal(decideOnLabels(undefined, [], config).action, "none");
+  assert.equal(decideOnLabels(prOf(), undefined, config).action, "none");
+  assert.equal(decideOnLabels(prOf(), [], undefined).action, "none");
+  assert.deepEqual(blockedLabelsOf(undefined, config), []);
 });

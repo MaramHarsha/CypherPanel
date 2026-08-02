@@ -1,0 +1,45 @@
+# Takes the bot's approval back when a blocked label is added.
+#
+# Approval is driven by workflow_run (CI finishing), and adding a label does
+# not re-run CI — so without this workflow the operator's "hands off" label,
+# applied after an approval, changed nothing and the stale approval went on
+# satisfying the one-approval merge gate.
+#
+# Same privilege rules as the other two: no pull-request code is checked out or
+# executed, and every fact comes from the API.
+name: PR label guard
+
+on:
+  pull_request_target:
+    types: [labeled, unlabeled]
+
+permissions: {}
+
+concurrency:
+  group: review-labels-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    name: Re-evaluate approval on label change
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # Dismiss on `labeled`. Removing a blocked label deliberately does NOT
+      # re-approve here: re-approval must go back through the full CI-verified
+      # path, so push a commit or re-run CI. Silently restoring an approval on
+      # `unlabeled` would approve without re-checking the current head.
+      - name: Dismiss approval if a blocked label is present
+        env:
+          GITHUB_TOKEN: ${{ secrets.CYPHERPANEL_REVIEW_BOT_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node .github/review-bot/run.mjs labels

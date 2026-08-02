@@ -37,6 +37,15 @@ bot is not operational before that.
 - **Approve** (`pr-auto-approve.yml`, on `workflow_run` after CI or
   Integration): re-reads the pull request through the API and approves only if
   every rule below holds.
+- **Label guard** (`pr-label-guard.yml`, on `pull_request_target` labeled /
+  unlabeled): **dismisses** the bot's approval when a blocked label appears.
+  Approval is driven by CI finishing, and labelling does not re-run CI — so
+  without this a "hands off" label added *after* an approval changed nothing
+  and the stale approval kept satisfying the one-approval merge gate.
+
+  Removing the label deliberately does **not** restore the approval: that must
+  go back through the CI-verified path, so push a commit or re-run CI.
+  Re-approving on `unlabeled` would approve without re-checking the head.
 
 ## The rules, in order
 

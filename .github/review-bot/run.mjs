@@ -4,12 +4,15 @@
 // It never sees pull-request *code* — only API metadata — and never shells out,
 // so no PR-controlled string can reach a command line.
 import { readFileSync } from "node:fs";
-import { decide, approvalBody, sensitiveBody, alreadyCommented, shouldRequestReview } from "./policy.mjs";
+import {
+  decide, approvalBody, sensitiveBody, alreadyCommented, shouldRequestReview,
+  decideOnLabels, dismissalMessage,
+} from "./policy.mjs";
 
 const API = process.env.GITHUB_API_URL || "https://api.github.com";
 const token = process.env.GITHUB_TOKEN;
 const [owner, repo] = (process.env.GITHUB_REPOSITORY || "").split("/");
-const mode = process.argv[2]; // "assign" | "approve"
+const mode = process.argv[2]; // "assign" | "approve" | "labels"
 const prNumber = Number(process.env.PR_NUMBER);
 const triggerSha = process.env.TRIGGER_SHA;
 const config = JSON.parse(readFileSync(new URL("./config.json", import.meta.url)));
@@ -86,6 +89,23 @@ try {
           body: JSON.stringify({ body: sensitiveBody(d.paths, config.commentMarker) }),
         });
         log("posted the sensitive-change comment");
+      }
+    }
+  } else if (mode === "labels") {
+    // Approving is triggered by CI finishing, and labelling does not re-run
+    // CI — so a "hands off" label added after an approval had no effect and the
+    // stale approval kept satisfying the merge gate. This takes it back.
+    const pr = await api(`${base}/pulls/${prNumber}`);
+    const reviews = await all(`${base}/pulls/${prNumber}/reviews`);
+    const d = decideOnLabels(pr, reviews, config);
+    log(`label decision: ${d.action}${d.reason ? ` — ${d.reason}` : ""}`);
+    if (d.action === "dismiss") {
+      for (const id of d.reviewIds) {
+        await api(`${base}/pulls/${prNumber}/reviews/${id}/dismissals`, {
+          method: "PUT",
+          body: JSON.stringify({ message: dismissalMessage(d.labels), event: "DISMISS" }),
+        });
+        log(`dismissed review ${id} on #${prNumber}`);
       }
     }
   } else {
