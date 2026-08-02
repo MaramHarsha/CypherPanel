@@ -110,8 +110,12 @@ jobs:
           release:
 
           \`\`\`sh
-          CYPHER_AGENT_URL=https://github.com/${{ github.repository }}/releases/download/$VERSION/cypher-agent-linux-{arch}
+          export CYPHER_AGENT_URL=https://github.com/${{ github.repository }}/releases/download/$VERSION/cypher-agent-linux-{arch}
           \`\`\`
+
+          The \`export\` matters: the panel's join command passes its own
+          variables directly to \`sh\`, so a plain assignment would not be
+          inherited and the installer would stop at "no agent binary found".
 
           Checksums for both binaries are in \`SHA256SUMS\`; \`install.sh\` and
           \`agent.sh\` verify them when you pass \`CYPHERD_SHA256\` /

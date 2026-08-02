@@ -19,7 +19,9 @@ on:
 permissions: {}
 
 concurrency:
-  group: review-labels-${{ github.event.pull_request.number }}
+  # Same group as pr-auto-approve.yml (see the note there): keyed on the head
+  # commit so a label change and an approval can never overlap.
+  group: review-${{ github.event.pull_request.head.sha }}
   cancel-in-progress: false
 
 jobs:

@@ -74,12 +74,27 @@ try {
     const head = pr?.head?.sha;
     const checks = head ? (await api(`${base}/commits/${head}/check-runs?per_page=100`))?.check_runs ?? null : null;
     const reviews = await all(`${base}/pulls/${prNumber}/reviews`);
-    const files = (await all(`${base}/pulls/${prNumber}/files`))?.map((f) => f.filename) ?? null;
+    // Whole entries, not just `filename`: a rename's protected SOURCE lives in
+    // `previous_filename`, and policy needs both sides to judge it.
+    const files = await all(`${base}/pulls/${prNumber}/files`);
 
     const d = decide({ pr, checks, reviews, files, triggerSha, config });
     log(`decision: ${d.action}${d.reason ? ` — ${d.reason}` : ""}`);
 
     if (d.action === "approve") {
+      // Re-read the pull request and re-run the whole decision against it,
+      // immediately before posting. The label guard and this job are in one
+      // concurrency group, but a label can still land in the window between the
+      // fetch above and this POST — and a label that arrives one second too
+      // late to be seen would otherwise be a blocked label with an approval
+      // sitting under it. Re-deciding closes that window; checks and files
+      // still apply because a changed head sha fails the decision outright.
+      const fresh = await api(`${base}/pulls/${prNumber}`);
+      const again = decide({ pr: fresh, checks, reviews, files, triggerSha, config });
+      if (again.action !== "approve") {
+        log(`stood down before approving: ${again.reason ?? again.action}`);
+        process.exit(0);
+      }
       await api(`${base}/pulls/${prNumber}/reviews`, {
         method: "POST",
         body: JSON.stringify({ event: "APPROVE", commit_id: pr.head.sha, body: approvalBody(pr.head.sha) }),

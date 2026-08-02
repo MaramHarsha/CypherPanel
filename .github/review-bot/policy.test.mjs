@@ -7,7 +7,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   decide, approvalBody, sensitiveBody, alreadyCommented, shouldRequestReview, matchesGlob,
-  decideOnLabels, dismissalMessage, blockedLabelsOf,
+  decideOnLabels,
+  pathsOf, dismissalMessage, blockedLabelsOf,
 } from "./policy.mjs";
 
 const config = JSON.parse(readFileSync(new URL("./config.json", import.meta.url)));
@@ -279,4 +280,39 @@ test("root-level dependency manifests are sensitive, not just nested ones", () =
   // A leading **/ must not turn into "match anything".
   assert.equal(matchesGlob("**/package.json", "packagexjson"), false);
   assert.equal(matchesGlob("**/go.sum", "notgo.sum"), false);
+});
+
+// A rename reports the destination as `filename` and the source as
+// `previous_filename`. Reading only the destination let a pull request move a
+// protected file out of its protected path *while editing it* and draw no
+// attention at all — the one change that most deserves a human.
+test("a rename away from a protected path is still sensitive", () => {
+  const d = call({
+    files: [{ filename: "docs/notes.go", previous_filename: "core/auth/session.go" }],
+  });
+  assert.equal(d.action, "comment-sensitive");
+  assert.deepEqual(d.paths, ["core/auth/session.go"]);
+});
+
+test("a rename INTO a protected path is sensitive too", () => {
+  const d = call({ files: [{ filename: "core/auth/session.go", previous_filename: "docs/notes.go" }] });
+  assert.equal(d.action, "comment-sensitive");
+  assert.deepEqual(d.paths, ["core/auth/session.go"]);
+});
+
+test("object and string file entries behave identically", () => {
+  assert.equal(call({ files: [{ filename: "web/src/app.tsx" }] }).action, "approve");
+  assert.equal(call({ files: ["web/src/app.tsx"] }).action, "approve");
+  assert.deepEqual(pathsOf({ filename: "a", previous_filename: "b" }), ["a", "b"]);
+  assert.deepEqual(pathsOf({ filename: "a" }), ["a"]);
+  assert.deepEqual(pathsOf("a"), ["a"]);
+  assert.deepEqual(pathsOf(null), []);
+});
+
+// go.work selects which modules every build actually compiles, so editing it
+// can redirect a dependency without touching any go.mod in the diff.
+test("the Go workspace manifest is protected", () => {
+  for (const f of ["go.work", "go.work.sum"]) {
+    assert.equal(call({ files: [f] }).action, "comment-sensitive", f);
+  }
 });

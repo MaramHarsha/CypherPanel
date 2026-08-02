@@ -67,7 +67,7 @@ not approve*.
 | CI's tested commit **is** the current head | otherwise skip — this is what stops "CI passed, then someone pushed" |
 | Every required check reported for that commit, `completed` + `success` | pending / failure / cancelled / timed_out / **skipped** all block |
 | No blocked label | otherwise skip |
-| No sensitive path touched | otherwise one comment explaining manual review is needed |
+| No sensitive path touched, on **either side** of a rename | otherwise one comment explaining manual review is needed |
 | Author on the trusted list | otherwise skip |
 | Bot has not already approved **this** commit | otherwise skip |
 
@@ -75,6 +75,12 @@ An approval of an *older* commit never counts for the current one — the bot
 will not issue one, and dismisses its own if a commit lands afterwards. Pair it
 with branch protection's stale-review dismissal so this holds even when the
 workflow does not run.
+
+**Renames are judged by both paths.** GitHub reports a rename's destination as
+`filename` and its source as `previous_filename`. Matching only the destination
+would let a pull request move `core/auth/session.go` somewhere unprotected
+*while editing it* and draw no attention — so both paths are matched, and the
+protected one is what gets named in the comment.
 
 **Sensitive paths beat trusted authors.** A Dependabot bump touches `go.sum` or
 `pnpm-lock.yaml`, which are sensitive, so those are not auto-approved — a
@@ -102,8 +108,15 @@ so a skip is anomalous. Add path filters later and you will want to allow them.
   ever interpolated into a shell command.
 - `permissions: {}` at workflow level; the bot token is the only credential and
   it is repository-scoped with pull-request write as its widest grant.
-- Concurrency is keyed on the head SHA, so two runs cannot race into two
-  approvals.
+- Approval and the label guard share **one** concurrency group, keyed on the
+  head SHA, so a blocked label cannot race an in-flight approval. Separate
+  groups let both interleave: the approval read the old label set while the
+  guard found no review yet to dismiss, and the approval landed under the label
+  anyway.
+- The approval decision is re-run against a freshly read pull request in the
+  instant before the review is posted. The shared group closes the wide window;
+  this closes the remaining one between the last read and the write, and also
+  catches a push that landed mid-run.
 - Paginated reads fail closed on truncation: a pull request larger than the
   page cap yields no data rather than a partial list, so a protected file on a
   later page cannot be missed into an approval.

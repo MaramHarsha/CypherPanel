@@ -18,8 +18,12 @@ on:
 permissions: {}
 
 concurrency:
-  # Serialized per head commit so two runs cannot race into two approvals.
-  group: review-approve-${{ github.event.workflow_run.head_sha }}
+  # Deliberately the SAME group as pr-approval-guard.yml, keyed on the head
+  # commit. Separate namespaces let a blocked label race an in-flight approval:
+  # the approval job read the old label set, the guard found no review to
+  # dismiss and exited, and the approval landed anyway. Sharing the key makes
+  # one wait for the other, so whichever runs second sees the other's result.
+  group: review-${{ github.event.workflow_run.head_sha }}
   cancel-in-progress: false
 
 jobs:

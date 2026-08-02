@@ -21,6 +21,7 @@
     "core/store/migrations/**",
     "proto/**", "pkg/proto/**", "**/openapi.yaml",
     "go.mod", "go.sum", "**/go.mod", "**/go.sum",
+    "go.work", "go.work.sum", "**/go.work", "**/go.work.sum",
     "**/package.json", "**/pnpm-lock.yaml",
     "Dockerfile", "**/Dockerfile*", "docker-compose*.yml", "**/docker-compose*.yml",
     "install/**", "deploy/**", "Makefile"
