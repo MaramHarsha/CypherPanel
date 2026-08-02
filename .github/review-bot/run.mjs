@@ -34,16 +34,22 @@ async function api(path, init) {
   return res.status === 204 ? null : res.json();
 }
 
-/** Paginates, and returns null on any failure so callers can fail closed. */
+/**
+ * Paginates, returning null on any failure OR on truncation, so callers fail
+ * closed. Returning the first N pages of an oversized result would have let a
+ * protected file sitting on a later page go unseen, and decide() would then
+ * approve from data it did not know was incomplete.
+ */
+const PAGE_CAP = 10; // 1000 items
 async function all(path) {
   const out = [];
-  for (let page = 1; page <= 10; page++) {
+  for (let page = 1; page <= PAGE_CAP; page++) {
     const batch = await api(`${path}${path.includes("?") ? "&" : "?"}per_page=100&page=${page}`);
     if (!Array.isArray(batch)) return null;
     out.push(...batch);
-    if (batch.length < 100) break;
+    if (batch.length < 100) return out; // short page: the list is complete
   }
-  return out;
+  return null; // hit the cap with a full page — cannot prove we saw everything
 }
 
 const base = `/repos/${owner}/${repo}`;
@@ -103,7 +109,7 @@ try {
       for (const id of d.reviewIds) {
         await api(`${base}/pulls/${prNumber}/reviews/${id}/dismissals`, {
           method: "PUT",
-          body: JSON.stringify({ message: dismissalMessage(d.labels), event: "DISMISS" }),
+          body: JSON.stringify({ message: dismissalMessage(d), event: "DISMISS" }),
         });
         log(`dismissed review ${id} on #${prNumber}`);
       }

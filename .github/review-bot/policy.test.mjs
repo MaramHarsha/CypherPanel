@@ -209,7 +209,7 @@ test("dismisses the bot's approval when a blocked label is added", () => {
   assert.equal(d.action, "dismiss");
   assert.deepEqual(d.reviewIds, [11]);
   assert.deepEqual(d.labels, ["do-not-approve"]);
-  assert.match(dismissalMessage(d.labels), /do-not-approve/);
+  assert.match(dismissalMessage(d), /do-not-approve/);
 });
 
 test("every configured blocked label triggers dismissal", () => {
@@ -240,4 +240,43 @@ test("label handling fails closed on unreadable input", () => {
   assert.equal(decideOnLabels(prOf(), undefined, config).action, "none");
   assert.equal(decideOnLabels(prOf(), [], undefined).action, "none");
   assert.deepEqual(blockedLabelsOf(undefined, config), []);
+});
+
+
+// GitHub keeps an approval when new commits land unless branch protection is
+// configured to dismiss stale reviews. Refusing to create a NEW approval was
+// never enough: the old one kept satisfying the required approval for code it
+// was never given for.
+test("dismisses a bot approval left behind by a new commit", () => {
+  const reviews = [{ id: 7, user: { login: config.botLogin }, state: "APPROVED", commit_id: OLD }];
+  const d = decideOnLabels(prOf(), reviews, config); // head is SHA, approval is OLD
+  assert.equal(d.action, "dismiss");
+  assert.deepEqual(d.reviewIds, [7]);
+  assert.equal(d.why, "stale-commit");
+  assert.match(dismissalMessage(d), /new commit was pushed/);
+});
+
+test("an approval for the current commit is left alone", () => {
+  const reviews = [{ id: 7, user: { login: config.botLogin }, state: "APPROVED", commit_id: SHA }];
+  assert.equal(decideOnLabels(prOf(), reviews, config).action, "none");
+});
+
+test("a blocked label dismisses even when the approval is current", () => {
+  const reviews = [{ id: 7, user: { login: config.botLogin }, state: "APPROVED", commit_id: SHA }];
+  const d = decideOnLabels(prOf({ labels: [{ name: "blocked" }] }), reviews, config);
+  assert.equal(d.why, "blocked-label");
+});
+
+// A root dependency manifest is the file most worth protecting; the leading
+// `**/` used to require a slash, so only nested copies were sensitive.
+test("root-level dependency manifests are sensitive, not just nested ones", () => {
+  for (const f of ["package.json", "pnpm-lock.yaml", "go.mod", "go.sum", "Dockerfile", "CODEOWNERS"]) {
+    assert.equal(call({ files: [f] }).action, "comment-sensitive", f);
+  }
+  for (const f of ["web/package.json", "web/pnpm-lock.yaml", "core/go.sum"]) {
+    assert.equal(call({ files: [f] }).action, "comment-sensitive", f);
+  }
+  // A leading **/ must not turn into "match anything".
+  assert.equal(matchesGlob("**/package.json", "packagexjson"), false);
+  assert.equal(matchesGlob("**/go.sum", "notgo.sum"), false);
 });

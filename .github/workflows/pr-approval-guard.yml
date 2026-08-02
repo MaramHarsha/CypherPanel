@@ -7,11 +7,14 @@
 #
 # Same privilege rules as the other two: no pull-request code is checked out or
 # executed, and every fact comes from the API.
-name: PR label guard
+name: PR approval guard
 
 on:
   pull_request_target:
-    types: [labeled, unlabeled]
+    # synchronize = a new commit was pushed. GitHub keeps an existing approval
+    # across that unless branch protection dismisses stale reviews, so the bot
+    # takes its own back rather than relying on that box being ticked.
+    types: [labeled, unlabeled, synchronize]
 
 permissions: {}
 
@@ -33,11 +36,12 @@ jobs:
         with:
           node-version: "22"
 
-      # Dismiss on `labeled`. Removing a blocked label deliberately does NOT
-      # re-approve here: re-approval must go back through the full CI-verified
-      # path, so push a commit or re-run CI. Silently restoring an approval on
-      # `unlabeled` would approve without re-checking the current head.
-      - name: Dismiss approval if a blocked label is present
+      # Dismisses on two conditions: a blocked label is present, or the
+      # approval was given for a commit that is no longer head. Removing a
+      # label deliberately does NOT re-approve — that must go back through the
+      # CI-verified path, because restoring an approval here would put one back
+      # without re-checking the current head.
+      - name: Dismiss the bot's approval if it is blocked or stale
         env:
           GITHUB_TOKEN: ${{ secrets.CYPHERPANEL_REVIEW_BOT_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}

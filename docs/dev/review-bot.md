@@ -23,8 +23,15 @@ It does not read your code. The approval says so explicitly.
 5. **Add the token** to this repository as the secret
    `CYPHERPANEL_REVIEW_BOT_TOKEN` (Settings → Secrets and variables → Actions).
 6. **Branch protection** on `main`: require pull requests, require **1**
-   approval, require the CI and Integration checks to pass, and **leave
+   approval, require the CI and Integration checks to pass, **tick "Dismiss
+   stale pull request approvals when new commits are pushed"**, and **leave
    auto-merge disabled**.
+
+   That tick box is load-bearing. Without it GitHub keeps an approval when new
+   commits land, so a bot approval of an earlier commit still satisfies the
+   required approval for code it was never given for. The bot dismisses its own
+   stale approvals as a backstop, but branch protection is the guard that holds
+   even if the workflow fails to run.
 
 Until steps 1–5 are done the workflows run and fail on the missing secret; the
 bot is not operational before that.
@@ -37,8 +44,9 @@ bot is not operational before that.
 - **Approve** (`pr-auto-approve.yml`, on `workflow_run` after CI or
   Integration): re-reads the pull request through the API and approves only if
   every rule below holds.
-- **Label guard** (`pr-label-guard.yml`, on `pull_request_target` labeled /
-  unlabeled): **dismisses** the bot's approval when a blocked label appears.
+- **Approval guard** (`pr-approval-guard.yml`, on `pull_request_target`
+  labeled / unlabeled / synchronize): **dismisses** the bot's approval when a
+  blocked label appears, or when a new commit makes it stale.
   Approval is driven by CI finishing, and labelling does not re-run CI — so
   without this a "hands off" label added *after* an approval changed nothing
   and the stale approval kept satisfying the one-approval merge gate.
@@ -63,7 +71,10 @@ not approve*.
 | Author on the trusted list | otherwise skip |
 | Bot has not already approved **this** commit | otherwise skip |
 
-An approval of an *older* commit never counts for the current one.
+An approval of an *older* commit never counts for the current one — the bot
+will not issue one, and dismisses its own if a commit lands afterwards. Pair it
+with branch protection's stale-review dismissal so this holds even when the
+workflow does not run.
 
 **Sensitive paths beat trusted authors.** A Dependabot bump touches `go.sum` or
 `pnpm-lock.yaml`, which are sensitive, so those are not auto-approved — a
@@ -93,6 +104,9 @@ so a skip is anomalous. Add path filters later and you will want to allow them.
   it is repository-scoped with pull-request write as its widest grant.
 - Concurrency is keyed on the head SHA, so two runs cannot race into two
   approvals.
+- Paginated reads fail closed on truncation: a pull request larger than the
+  page cap yields no data rather than a partial list, so a protected file on a
+  later page cannot be missed into an approval.
 
 ## Tests
 
