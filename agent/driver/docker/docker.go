@@ -136,8 +136,18 @@ type Driver struct {
 	router       Router
 	prober       HealthProber
 	drainTimeout time.Duration
-	log          *slog.Logger
+	// reportProxy, when set, receives the outcome of every EnsureProxy attempt
+	// so the agent's heartbeat can report DEGRADED while routing is broken.
+	// The driver stays ignorant of the heartbeat package — it just hands the
+	// result to whoever asked (ENGINEERING: consumer-defined interfaces).
+	reportProxy func(error)
+	log         *slog.Logger
 }
+
+// OnProxyHealth registers a sink for Proxy reconciliation outcomes. Passing nil
+// (or never calling it) leaves the driver silent, which is what the unit tests
+// and builder-role agents want.
+func (d *Driver) OnProxyHealth(fn func(error)) { d.reportProxy = fn }
 
 // New wires the driver with its collaborators.
 func New(client Client, router Router, prober HealthProber, log *slog.Logger) *Driver {
@@ -169,8 +179,14 @@ func (d *Driver) Reconcile(ctx context.Context, desired []*agentv1.AppSpec) ([]*
 	// convergence is best-effort: a Proxy hiccup must not stop container
 	// convergence (fragments persist and Traefik picks them up once it
 	// recovers), so failures are logged, not returned.
-	if err := d.router.EnsureProxy(ctx); err != nil {
-		d.log.Warn("ensuring proxy", "error", err)
+	proxyErr := d.router.EnsureProxy(ctx)
+	if proxyErr != nil {
+		d.log.Warn("ensuring proxy", "error", proxyErr)
+	}
+	if d.reportProxy != nil {
+		// Reported on success too: this is what clears a degraded server once
+		// the operator frees the port.
+		d.reportProxy(proxyErr)
 	}
 
 	byApp := make(map[string][]Container)

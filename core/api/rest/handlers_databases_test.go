@@ -28,6 +28,7 @@ func assertPublicDatabaseFields(t *testing.T, db map[string]any) {
 		"require_password":     true,
 		"status":               true,
 		"status_detail":        true,
+		"desired_state":        true, // intent, distinct from observed status
 		"desired_revision_id":  true,
 		"observed_revision_id": true,
 		"created_at":           true,

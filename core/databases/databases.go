@@ -351,7 +351,12 @@ func (s *Service) Start(ctx context.Context, id string) error {
 		return fmt.Errorf("databases: getting database: %w", err)
 	}
 	if d.DesiredState == domain.DbDesiredRunning {
-		return invalid("database is not stopped")
+		// Say which state is in the way. "not stopped" reads as a contradiction
+		// to an operator looking at a database whose observed status is
+		// anything but running — the guard is on intent, not observation, and
+		// the message has to make that difference visible.
+		return invalid("database is already set to run; it is " + d.Status +
+			" because the agent has not finished reconciling it")
 	}
 	if _, err := s.store.SetDatabaseDesiredState(ctx, id, domain.DbDesiredRunning); err != nil {
 		return err

@@ -165,6 +165,13 @@ type createApplicationRequest struct {
 		DeployKeyID *string `json:"deploy_key_id"`
 	} `json:"source"`
 	Build struct {
+		// AppBuild.kind is required by the OpenAPI schema, so every generated
+		// client sends it. decodeJSON runs with DisallowUnknownFields, so
+		// omitting it here rejected the documented request shape outright with
+		// "invalid request body" — creating an application through the contract
+		// was impossible. The service defaults an empty kind to "dockerfile"
+		// and rejects anything else (applications.go validateAndDefault).
+		Kind           string `json:"kind"`
 		DockerfilePath string `json:"dockerfile_path"`
 		Context        string `json:"context"`
 	} `json:"build"`
@@ -214,7 +221,7 @@ func (r createApplicationRequest) toInput() applications.CreateInput {
 	return applications.CreateInput{
 		Name:    r.Name,
 		Source:  domain.AppSource{Kind: r.Source.Kind, Repo: r.Source.Repo, Branch: r.Source.Branch, DeployKeyID: r.Source.DeployKeyID},
-		Build:   domain.AppBuild{DockerfilePath: r.Build.DockerfilePath, Context: r.Build.Context},
+		Build:   domain.AppBuild{Kind: r.Build.Kind, DockerfilePath: r.Build.DockerfilePath, Context: r.Build.Context},
 		Runtime: domain.AppRuntime{ServerID: r.Runtime.ServerID, Port: r.Runtime.Port, Replicas: r.Runtime.Replicas, CPULimit: r.Runtime.CPULimit, MemoryLimitMB: r.Runtime.MemoryLimitMB},
 		Route:   domain.AppRoute{Domain: r.Route.Domain, HTTPS: https, PathPrefix: r.Route.PathPrefix},
 		Health:  domain.AppHealth{Kind: r.Health.Kind, Path: r.Health.Path, IntervalSeconds: r.Health.IntervalSeconds, TimeoutSeconds: r.Health.TimeoutSeconds, Retries: r.Health.Retries},
@@ -333,6 +340,9 @@ type patchApplicationRequest struct {
 		DeployKeyID *string `json:"deploy_key_id"`
 	} `json:"source"`
 	Build *struct {
+		// Same contract mismatch as createApplicationRequest.Build — a client
+		// echoing back the application it just read could not PATCH it.
+		Kind           string `json:"kind"`
 		DockerfilePath string `json:"dockerfile_path"`
 		Context        string `json:"context"`
 	} `json:"build"`
@@ -377,7 +387,7 @@ func (a *API) handlePatchApplication(w http.ResponseWriter, r *http.Request) {
 		in.Source = &domain.AppSource{Kind: req.Source.Kind, Repo: req.Source.Repo, Branch: req.Source.Branch, DeployKeyID: req.Source.DeployKeyID}
 	}
 	if req.Build != nil {
-		in.Build = &domain.AppBuild{DockerfilePath: req.Build.DockerfilePath, Context: req.Build.Context}
+		in.Build = &domain.AppBuild{Kind: req.Build.Kind, DockerfilePath: req.Build.DockerfilePath, Context: req.Build.Context}
 	}
 	if req.Runtime != nil {
 		in.Port = req.Runtime.Port // nil = unchanged; explicit 0 is rejected by validation

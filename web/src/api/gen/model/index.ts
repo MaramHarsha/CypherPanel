@@ -65,6 +65,7 @@ export * from './databaseBackup';
 export * from './databaseBackupLastRunAt';
 export * from './databaseCpuLimit';
 export * from './databaseDesiredRevisionId';
+export * from './databaseDesiredState';
 export * from './databaseEngine';
 export * from './databaseExposePort';
 export * from './databaseMemoryLimitMb';

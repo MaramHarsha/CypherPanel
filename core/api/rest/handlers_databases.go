@@ -31,6 +31,11 @@ type databaseDTO struct {
 	RequirePassword    bool      `json:"require_password"`
 	Status             string    `json:"status"`
 	StatusDetail       string    `json:"status_detail,omitempty"`
+	// What the operator asked for, as distinct from Status (what the agent
+	// observes). Clients need both: gating a Start button on the observed
+	// status offers the action whenever reality lags intent, and the call then
+	// fails because Start is guarded on the desired state.
+	DesiredState       string    `json:"desired_state"`
 	DesiredRevisionID  *string   `json:"desired_revision_id,omitempty"`
 	ObservedRevisionID string    `json:"observed_revision_id,omitempty"`
 	CreatedAt          time.Time `json:"created_at"`
@@ -54,6 +59,7 @@ func toDatabaseDTO(d domain.Database) databaseDTO {
 		RootPassword:       "[sealed]", // never expose — rule 20
 		RequirePassword:    d.RequirePassword,
 		Status:             d.Status,
+		DesiredState:       d.DesiredState,
 		StatusDetail:       d.StatusDetail,
 		DesiredRevisionID:  d.DesiredRevisionID,
 		ObservedRevisionID: d.ObservedRevisionID,
