@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -161,6 +162,14 @@ func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.Rou
 	b, err := yaml.Marshal(doc)
 	if err != nil {
 		return fmt.Errorf("marshaling route: %w", err)
+	}
+
+	// Skip an identical write: the reconciler now calls this every cycle, and
+	// rewriting the file would make Traefik reload its config on a timer for no
+	// reason.
+	cleanAppsDirCmp := filepath.Clean(t.appsDir)
+	if existing, readErr := os.ReadFile(filepath.Clean(filepath.Join(cleanAppsDirCmp, appID+".yml"))); readErr == nil && bytes.Equal(existing, b) {
+		return nil
 	}
 
 	cleanAppsDir := filepath.Clean(t.appsDir)

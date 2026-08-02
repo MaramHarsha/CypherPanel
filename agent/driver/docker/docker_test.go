@@ -182,6 +182,7 @@ type fakeRouter struct {
 	// deliberately kept out of `mutations` — the converge-twice invariant is
 	// about container/route changes, which these are not.
 	proxyEnsured  int
+	setCalls      int
 	proxyErr      error
 	networksBound []string
 }
@@ -195,9 +196,18 @@ func (r *fakeRouter) AttachNetwork(_ context.Context, network string) error {
 	return nil
 }
 
+// The reconciler calls SetRoute every cycle so that a change to the fragment's
+// shape reaches a stable app, and the real implementation compares the rendered
+// bytes and skips an identical write. The fake models that contract: a call
+// that changes nothing is not a mutation, which is what the converge-twice
+// invariant actually asserts.
 func (r *fakeRouter) SetRoute(_ context.Context, appID string, _ *agentv1.RouteSpec, upstream string) error {
 	if r.setErr != nil {
 		return r.setErr
+	}
+	r.setCalls++
+	if cur, ok := r.routes[appID]; ok && cur == upstream {
+		return nil
 	}
 	r.mutations++
 	r.routes[appID] = upstream
@@ -215,9 +225,13 @@ func (r *fakeRouter) Route(_ context.Context, appID string) (string, bool, error
 	return up, ok, nil
 }
 
-type fakeProber struct{ fail bool }
+type fakeProber struct {
+	fail  bool
+	calls int
+}
 
 func (p *fakeProber) Probe(_ context.Context, _ string, _ *agentv1.HealthCheck) error {
+	p.calls++
 	if p.fail {
 		return errors.New("not healthy")
 	}
@@ -755,5 +769,35 @@ func TestReconcileReportsProxyHealth(t *testing.T) {
 	}
 	if len(reported) != 2 || reported[1] != nil {
 		t.Fatalf("recovery not reported as healthy: %v", reported)
+	}
+}
+
+// A change to the fragment's shape — a middleware added to the template, say —
+// must reach an app whose upstream never moves. The reconciler used to call
+// SetRoute only when the upstream changed, so a stable app kept a stale
+// fragment indefinitely and the change appeared only after something unrelated
+// restarted its container.
+func TestReconcileRewritesRouteWhenOnlyTheTemplateChanged(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+	specs := []*agentv1.AppSpec{spec("app1", "rev1", "img:rev1")}
+
+	if _, err := d.Reconcile(context.Background(), specs); err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+	before := r.setCalls
+
+	// Nothing about the app changed, so no probe should be needed...
+	probesBefore := p.calls
+	if _, err := d.Reconcile(context.Background(), specs); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	// ...but SetRoute is still offered the current desired route, so the
+	// renderer can notice its own output has changed.
+	if r.setCalls <= before {
+		t.Errorf("SetRoute must be called every cycle, got %d then %d", before, r.setCalls)
+	}
+	if p.calls != probesBefore {
+		t.Errorf("an unchanged upstream must not be re-probed: %d -> %d", probesBefore, p.calls)
 	}
 }
