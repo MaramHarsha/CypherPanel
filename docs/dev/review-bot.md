@@ -76,6 +76,17 @@ will not issue one, and dismisses its own if a commit lands afterwards. Pair it
 with branch protection's stale-review dismissal so this holds even when the
 workflow does not run.
 
+**The authorization boundary is wider than `core/auth/**`.** `core/api/rest/rest.go`
+holds the route table, where each route declares whether it is `a.authed(...)`
+— deleting that one call un-authenticates an endpoint. `core/api/rest/authz.go`
+holds every role check and the resource-to-project resolution they depend on.
+Token issuance, TOTP, and team/user role granting sit in their own handlers, and
+`core/api/grpc/` exchanges a join token for an agent certificate and derives
+caller identity from the mTLS CommonName. All of those are protected; the
+remaining handlers are not, deliberately — a comment that fires on every backend
+pull request is a comment that gets ignored, which is how a real one gets waved
+through.
+
 **Renames are judged by both paths.** GitHub reports a rename's destination as
 `filename` and its source as `previous_filename`. Matching only the destination
 would let a pull request move `core/auth/session.go` somewhere unprotected

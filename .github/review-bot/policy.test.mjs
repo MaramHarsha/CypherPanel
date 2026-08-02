@@ -316,3 +316,47 @@ test("the Go workspace manifest is protected", () => {
     assert.equal(call({ files: [f] }).action, "comment-sensitive", f);
   }
 });
+
+// core/auth/** is not the whole authorization boundary. rest.go carries the
+// route table where each route declares whether it is a.authed(...) — deleting
+// that one call un-authenticates an endpoint — and authz.go carries every role
+// check plus the resource-to-project resolution those checks depend on. Neither
+// lives under core/auth/**, so both were auto-approvable for a trusted author.
+test("the REST and gRPC authorization boundary is protected", () => {
+  for (const f of [
+    "core/api/rest/rest.go",
+    "core/api/rest/authz.go",
+    "core/api/rest/handlers_auth.go",
+    "core/api/rest/handlers_tokens.go",
+    "core/api/rest/handlers_totp.go",
+    "core/api/rest/handlers_teams.go",
+    "core/api/grpc/enrollment.go",
+    "core/api/grpc/relay.go",
+  ]) {
+    assert.equal(call({ files: [f] }).action, "comment-sensitive", f);
+  }
+});
+
+// The tests are covered alongside the code they guard: a pull request that only
+// deletes authorization coverage disarms the check that would catch the next one.
+test("authorization tests are protected with their code", () => {
+  for (const f of ["core/api/rest/authz_test.go", "core/api/rest/rest_test.go"]) {
+    assert.equal(call({ files: [f] }).action, "comment-sensitive", f);
+  }
+});
+
+// The counterweight: protecting the whole package would make every backend pull
+// request sensitive, and a comment that fires on everything gets ignored — which
+// is how a real one gets waved through. Ordinary handlers must stay approvable.
+test("ordinary handlers are not swept into the protected set", () => {
+  for (const f of [
+    "core/api/rest/handlers_applications.go",
+    "core/api/rest/handlers_projects.go",
+    "core/api/rest/handlers_databases.go",
+    "core/api/rest/sse.go",
+    "core/scheduler/scheduler.go",
+    "agent/driver/docker/docker.go",
+  ]) {
+    assert.equal(call({ files: [f] }).action, "approve", f);
+  }
+});
