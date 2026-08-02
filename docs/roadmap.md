@@ -52,9 +52,13 @@ Deliberate **Later** items from the [feature matrix](product/feature-matrix.md),
 
 ## Open decisions (candidate ADRs)
 
-| # | Question | Decide by |
-|---|---|---|
-| ADR-007 | Template format: extend Coolify's compose-YAML + magic envs, Dokploy's remote registry, or a merged schema | Before Phase 4 starts |
+None open.
+
+Decided 2026-08-02: [ADR-007](adrs/ADR-007-template-format.md) — a native
+declarative template schema resolving to ordinary Applications and Managed
+Databases, with Coolify's compose+magic-env library reached through an importer
+rather than adopted as the native format, and the catalog bundled in the
+release rather than fetched at runtime. This unblocks Phase 4's catalog.
 
 Decided 2026-07-18, unblocking Phase 2: [ADR-006](adrs/ADR-006-docker-only-at-launch.md) (standalone `docker` driver only at launch; Swarm fast-follows in V1.x) and [ADR-008](adrs/ADR-008-no-registry-required.md) (no registry required: local image on single-server, mTLS relay for multi-server, external registries optional).
 

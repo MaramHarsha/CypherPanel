@@ -1,0 +1,117 @@
+# Publishes the binaries install.sh and agent.sh download.
+#
+# Neither installer can work without this: install.sh defaults CYPHERD_URL to
+# this workflow's `cypherd-linux-<arch>` asset, and agent.sh needs
+# CYPHER_AGENT_URL pointed at `cypher-agent-linux-<arch>` (ADR-010: the control
+# plane names versions but never stores or relays agent binaries, so the
+# artifacts must live somewhere that is not the plane — here).
+#
+# Tag a release to publish:  git tag v0.1.0 && git push origin v0.1.0
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (must already exist)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  GO_VERSION: "1.25.x"
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: "**/go.sum"
+
+      # The web UI is committed built (core/api/rest/webui/dist) so `go build`
+      # needs no Node toolchain — the same property CI's drift check enforces.
+      # Nothing to do here but confirm it is present, because shipping a
+      # release whose panel is an empty page would be worse than failing.
+      - name: Verify the embedded web UI is present
+        run: |
+          test -f core/api/rest/webui/dist/index.html \
+            || { echo "core/api/rest/webui/dist is missing — run 'make build-web' and commit it"; exit 1; }
+
+      - name: Build binaries
+        run: |
+          set -eu
+          VERSION="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          mkdir -p dist
+          for arch in amd64 arm64; do
+            # Static, no cgo: these land on unknown distros and must not need a
+            # matching libc.
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
+              go build -C core -trimpath -ldflags "-s -w -X main.version=$VERSION" \
+                -o "../dist/cypherd-linux-$arch" ./cmd/cypherd
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
+              go build -C agent -trimpath -ldflags "-s -w -X main.version=$VERSION" \
+                -o "../dist/cypher-agent-linux-$arch" ./cmd/cypher-agent
+          done
+          ls -la dist
+
+      # install.sh and agent.sh both accept a SHA256 and verify it. Publishing
+      # the sums is what makes that check usable by anyone.
+      - name: Checksums
+        run: cd dist && sha256sum ./* > SHA256SUMS && cat SHA256SUMS
+
+      - name: Smoke-test the amd64 build
+        run: |
+          chmod +x dist/cypherd-linux-amd64
+          # No database is configured here, so it must fail on that and not on
+          # something structural like a missing embedded asset.
+          out="$(./dist/cypherd-linux-amd64 2>&1 || true)"
+          echo "$out"
+          case "$out" in
+            *DATABASE_URL*|*database*|*config*) echo "starts and reaches config validation" ;;
+            *) echo "unexpected startup output — refusing to publish"; exit 1 ;;
+          esac
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          VERSION="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          cat > notes.md <<EOF
+          ## Install the control plane
+
+          \`\`\`sh
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install/install.sh | sh
+          \`\`\`
+
+          Then open the panel and create the owner account — that screen appears
+          exactly once, so claim it before anyone else can reach the port.
+
+          ## Join a server
+
+          Use the command the panel shows you, with the agent binary from this
+          release:
+
+          \`\`\`sh
+          CYPHER_AGENT_URL=https://github.com/${{ github.repository }}/releases/download/$VERSION/cypher-agent-linux-{arch}
+          \`\`\`
+
+          Checksums for both binaries are in \`SHA256SUMS\`; \`install.sh\` and
+          \`agent.sh\` verify them when you pass \`CYPHERD_SHA256\` /
+          \`CYPHER_AGENT_SHA256\`.
+          EOF
+          gh release create "$VERSION" dist/* \
+            --title "$VERSION" \
+            --notes-file notes.md \
+            --verify-tag

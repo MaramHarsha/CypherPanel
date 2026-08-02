@@ -30,4 +30,4 @@ Self-hosted PaaS unifying the best of Coolify and Dokploy on a desired-state, ag
 
 ## Open decisions — do not preempt
 
-ADR-007 (template format) — tracked in `docs/roadmap.md`. Work that would force it must surface the decision instead of assuming it. (Decided: ADR-006 docker-only at launch and ADR-008 no registry required, 2026-07-18; ADR-009 Apache-2.0 and ADR-010 agent auto-update, 2026-07-20; ADR-011 in-container scheduled-task commands as declarative desired state, 2026-07-20.)
+None open. (Decided: ADR-007 native template schema + Coolify importer, 2026-08-02; ADR-006 docker-only at launch and ADR-008 no registry required, 2026-07-18; ADR-009 Apache-2.0 and ADR-010 agent auto-update, 2026-07-20; ADR-011 in-container scheduled-task commands as declarative desired state, 2026-07-20.)
