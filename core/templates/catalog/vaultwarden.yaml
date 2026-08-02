@@ -1,0 +1,20 @@
+schema: v1
+slug: vaultwarden
+name: Vaultwarden
+description: Bitwarden-compatible password manager server, tiny footprint.
+category: security
+version: "1.33"
+resources:
+  applications:
+    - name: vaultwarden
+      image: vaultwarden/server:1.33.2
+      port: 80
+      route: true
+      health:
+        kind: http
+        path: /alive
+      volumes:
+        - name: data
+          path: /data
+      env:
+        DOMAIN: "https://{{domain}}"

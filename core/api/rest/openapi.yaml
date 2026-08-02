@@ -522,6 +522,64 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/v1/templates:
+    get:
+      operationId: listTemplates
+      tags: [templates]
+      summary: List the bundled template catalog
+      responses:
+        "200":
+          description: Templates bundled with this release.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Template" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/templates/{slug}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getTemplate
+      tags: [templates]
+      summary: Get one bundled template
+      responses:
+        "200":
+          description: Full declarative template.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Template" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/templates/{slug}/install:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: installTemplate
+      tags: [templates]
+      summary: Resolve a template into ordinary resources and deploy it
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InstallTemplateRequest" }
+      responses:
+        "202":
+          description: Resources created and deployments scheduled.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InstallTemplateResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/projects/{id}:
     parameters:
       - name: id
@@ -2638,6 +2696,89 @@ components:
         user: { type: string }
         password_hint: { type: string, description: Never the password itself. }
         internal_host: { type: string, description: Address on the environment's private network. }
+
+    # ─── Templates ────────────────────────────────────────────────────────────
+    Template:
+      type: object
+      required: [schema, slug, name, description, category, version, resources]
+      properties:
+        schema: { type: string, enum: [v1] }
+        slug: { type: string }
+        name: { type: string }
+        description: { type: string }
+        category: { type: string, enum: [analytics, automation, cms, dev-tools, monitoring, security, storage, other] }
+        version: { type: string }
+        resources:
+          $ref: "#/components/schemas/TemplateResources"
+    TemplateResources:
+      type: object
+      required: [databases, applications]
+      properties:
+        databases:
+          type: array
+          items: { $ref: "#/components/schemas/TemplateDatabase" }
+        applications:
+          type: array
+          items: { $ref: "#/components/schemas/TemplateApplication" }
+    TemplateDatabase:
+      type: object
+      required: [name, engine, version]
+      properties:
+        name: { type: string }
+        engine: { type: string, enum: [postgresql, mysql, mariadb, mongodb, redis, valkey] }
+        version: { type: string }
+    TemplateApplication:
+      type: object
+      required: [name, image, port, route, health, volumes, ports, env]
+      properties:
+        name: { type: string }
+        image: { type: string }
+        port: { type: integer }
+        route: { type: boolean }
+        health:
+          type: object
+          required: [kind, path]
+          properties:
+            kind: { type: string, enum: [http, tcp, none, ""] }
+            path: { type: string }
+        volumes:
+          type: array
+          items:
+            type: object
+            required: [name, path]
+            properties:
+              name: { type: string }
+              path: { type: string }
+        ports:
+          type: array
+          items:
+            type: object
+            required: [host, container, protocol]
+            properties:
+              host: { type: integer }
+              container: { type: integer }
+              protocol: { type: string, enum: [tcp, udp, ""] }
+        env:
+          type: object
+          additionalProperties: { type: string }
+    InstallTemplateRequest:
+      type: object
+      required: [environment_id, server_id]
+      properties:
+        environment_id: { type: string }
+        server_id: { type: string }
+        domain: { type: string }
+        name: { type: string }
+    InstallTemplateResponse:
+      type: object
+      required: [applications, databases]
+      properties:
+        applications:
+          type: array
+          items: { type: string }
+        databases:
+          type: array
+          items: { type: string }
 
     # ─── Backups ──────────────────────────────────────────────────────────────
     BackupTarget:

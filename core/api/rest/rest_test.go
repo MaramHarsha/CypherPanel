@@ -29,6 +29,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/secret"
 	"github.com/MaramHarsha/cypherpanel/core/servers"
 	"github.com/MaramHarsha/cypherpanel/core/store"
+	"github.com/MaramHarsha/cypherpanel/core/templates"
 	"github.com/MaramHarsha/cypherpanel/pkg/subjects"
 )
 
@@ -658,15 +659,22 @@ func newTestServerFull(t *testing.T) (*httptest.Server, *fakeServersStore, *fake
 	dbReconciler := &fakeDbReconciler{}
 	dbSvc := databases.NewService(dbStore, box, dbReconciler)
 
+	appSvc := applications.NewService(newFakeAppsStore(), box)
+	deployer := &fakeDeployer{}
+	templateSvc, err := templates.New(appSvc, dbSvc, deployer, log)
+	if err != nil {
+		t.Fatalf("templates.New: %v", err)
+	}
 	api := New(Deps{
 		Auth:         auth.NewAuthenticator(authStore, fakeBox{}, auth.NewLimiter(100, time.Minute), time.Hour),
 		Servers:      servers.NewService(srvStore, noopAgentBus{}, 15*time.Minute, log),
 		Projects:     projects.NewService(newFakeProjectsStore()),
-		Applications: applications.NewService(newFakeAppsStore(), box),
+		Applications: appSvc,
 		DeployKeys:   deploykeys.NewService(dkStore, box),
 		Databases:    dbSvc,
+		Templates:    templateSvc,
 		Teams:        newFakeTeams(),
-		Scheduler:    &fakeDeployer{},
+		Scheduler:    deployer,
 		Deployments:  fakeDeploymentReader{},
 		Opener:       box,
 		Logs:         logs,
@@ -742,6 +750,9 @@ func TestProtectedRoutesRequireAuth(t *testing.T) {
 		{"POST", "/api/v1/environments/env_x/applications"},
 		{"GET", "/api/v1/environments/env_x/applications"},
 		{"GET", "/api/v1/applications/app_x"},
+		{"GET", "/api/v1/templates"},
+		{"GET", "/api/v1/templates/n8n"},
+		{"POST", "/api/v1/templates/n8n/install"},
 		{"DELETE", "/api/v1/applications/app_x"},
 		{"GET", "/api/v1/applications/app_x/env"},
 		{"PUT", "/api/v1/applications/app_x/env/KEY"},

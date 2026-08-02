@@ -9,6 +9,7 @@ require (
 	github.com/nats-io/nats.go v1.52.0
 	github.com/pressly/goose/v3 v3.27.3
 	github.com/robfig/cron/v3 v3.0.1
+	gopkg.in/yaml.v3 v3.0.1
 	golang.org/x/crypto v0.54.0
 	google.golang.org/grpc v1.82.1
 	google.golang.org/protobuf v1.36.11

@@ -24,6 +24,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/projects"
 	"github.com/MaramHarsha/cypherpanel/core/scheduledtasks"
 	"github.com/MaramHarsha/cypherpanel/core/servers"
+	"github.com/MaramHarsha/cypherpanel/core/templates"
 )
 
 // Pinger is the readiness dependency (the store).
@@ -155,6 +156,7 @@ type Deps struct {
 	Notifiers       NotifierService
 	NotifyDelivery  NotifierDelivery
 	ScheduledTasks  ScheduledTaskService
+	Templates       *templates.Service
 	Teams           TeamService
 	Scheduler       Deployer
 	Deployments     DeploymentReader
@@ -241,6 +243,11 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/projects/{id}", a.authed(a.handleDeleteProject))
 	mux.HandleFunc("GET /api/v1/projects/{id}/environments", a.authed(a.handleListEnvironments))
 	mux.HandleFunc("POST /api/v1/projects/{id}/environments", a.authed(a.handleCreateEnvironment))
+
+	// Phase 4: bundled application and database templates.
+	mux.HandleFunc("GET /api/v1/templates", a.authed(a.handleListTemplates))
+	mux.HandleFunc("GET /api/v1/templates/{slug}", a.authed(a.handleGetTemplate))
+	mux.HandleFunc("POST /api/v1/templates/{slug}/install", a.authed(a.handleInstallTemplate))
 
 	// Applications (created + listed under an environment; addressed by app id).
 	mux.HandleFunc("POST /api/v1/environments/{id}/applications", a.authed(a.handleCreateApplication))

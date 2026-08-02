@@ -1,0 +1,23 @@
+schema: v1
+slug: umami
+name: Umami
+description: Privacy-friendly web analytics, a lightweight Google Analytics alternative.
+category: analytics
+version: "2"
+resources:
+  databases:
+    - name: db
+      engine: postgresql
+      version: "16"
+  applications:
+    - name: umami
+      image: ghcr.io/umami-software/umami:postgresql-latest
+      port: 3000
+      route: true
+      health:
+        kind: http
+        path: /api/heartbeat
+      env:
+        DATABASE_URL: "{{db.db.url}}"
+        DATABASE_TYPE: postgresql
+        APP_SECRET: "{{secret.32}}"

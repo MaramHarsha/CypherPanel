@@ -1,0 +1,30 @@
+schema: v1
+slug: gitea
+name: Gitea
+description: Lightweight self-hosted git service with issues and CI hooks.
+category: dev-tools
+version: "1.23"
+resources:
+  databases:
+    - name: db
+      engine: postgresql
+      version: "16"
+  applications:
+    - name: gitea
+      image: gitea/gitea:1.23
+      port: 3000
+      route: true
+      health:
+        kind: http
+        path: /api/healthz
+      volumes:
+        - name: data
+          path: /data
+      env:
+        GITEA__database__DB_TYPE: postgres
+        GITEA__database__HOST: "{{db.db.host}}:{{db.db.port}}"
+        GITEA__database__NAME: "{{db.db.database}}"
+        GITEA__database__USER: "{{db.db.user}}"
+        GITEA__database__PASSWD: "{{db.db.password}}"
+        GITEA__server__DOMAIN: "{{domain}}"
+        GITEA__server__ROOT_URL: "https://{{domain}}/"

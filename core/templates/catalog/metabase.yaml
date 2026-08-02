@@ -1,0 +1,26 @@
+schema: v1
+slug: metabase
+name: Metabase
+description: Business intelligence and dashboards anyone on the team can use.
+category: analytics
+version: "0.50"
+resources:
+  databases:
+    - name: db
+      engine: postgresql
+      version: "16"
+  applications:
+    - name: metabase
+      image: metabase/metabase:v0.50.26
+      port: 3000
+      route: true
+      health:
+        kind: http
+        path: /api/health
+      env:
+        MB_DB_TYPE: postgres
+        MB_DB_HOST: "{{db.db.host}}"
+        MB_DB_PORT: "{{db.db.port}}"
+        MB_DB_USER: "{{db.db.user}}"
+        MB_DB_PASS: "{{db.db.password}}"
+        MB_DB_DBNAME: "{{db.db.database}}"

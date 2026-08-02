@@ -28,3 +28,6 @@ go.work.sum
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# Harness agent worktrees (scratch, never committed)
+.claude/worktrees/
