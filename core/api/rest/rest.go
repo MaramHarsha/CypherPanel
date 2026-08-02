@@ -412,21 +412,28 @@ func (a *API) sessionOnly(next http.HandlerFunc) http.HandlerFunc {
 	})
 }
 
-// deployRoutes are the paths whose POST triggers a rollout. Kept as an explicit
-// table rather than a pattern match: a new deploy-shaped route must be a
-// deliberate addition here, never something that silently inherits `write`.
+// deployRoutes are the ServeMux patterns whose handler triggers a rollout,
+// matched in full — method and route — not by URL suffix. Suffix matching is
+// unsafe here: `PUT /api/v1/applications/{id}/env/{key}` with a variable named
+// `deploy` ends in the same segment, which would let a deploy-only token write
+// application configuration it has no `write` ability for. An explicit table of
+// whole patterns also means a new deploy-shaped route must be added here
+// deliberately, never inherit an ability by accident.
 var deployRoutes = map[string]bool{
-	"deploy":   true, // POST /applications/{id}/deploy
-	"rollback": true, // POST /deployments/{id}/rollback
+	"POST /api/v1/applications/{id}/deploy":  true,
+	"POST /api/v1/deployments/{id}/rollback": true,
 }
 
 // requiredAbility maps a request to the ability a token must carry for it.
+// r.Pattern is the route ServeMux matched; when it is empty (a handler invoked
+// outside the mux) the safe default applies — a mutation needs `write`, which
+// no deploy-only credential holds.
 func requiredAbility(r *http.Request) domain.Ability {
 	switch r.Method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 		return domain.AbilityRead
 	}
-	if segs := strings.Split(strings.Trim(r.URL.Path, "/"), "/"); len(segs) > 0 && deployRoutes[segs[len(segs)-1]] {
+	if deployRoutes[r.Pattern] {
 		return domain.AbilityDeploy
 	}
 	return domain.AbilityWrite

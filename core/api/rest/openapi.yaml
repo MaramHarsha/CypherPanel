@@ -371,9 +371,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/TOTPVerifyResponse"
         "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          description: Invalid two-factor code.
+          description: >-
+            Invalid two-factor code, or enrollment was never started. Not 401:
+            the session is valid — only the submitted factor is wrong — so a
+            client must not treat this as an expired session.
           content:
             application/json:
               schema:
@@ -398,9 +399,10 @@ paths:
         "204":
           description: Two-factor disabled.
         "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          description: Invalid two-factor code.
+          description: >-
+            Invalid two-factor code, or enrollment was never started. Not 401:
+            the session is valid — only the submitted factor is wrong — so a
+            client must not treat this as an expired session.
           content:
             application/json:
               schema:

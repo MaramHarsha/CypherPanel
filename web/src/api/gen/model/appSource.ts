@@ -16,7 +16,7 @@ export interface AppSource {
   branch?: string;
   deploy_key_id?: AppSourceDeployKeyId;
   /**
-   * OCI image reference (registry/repository[:tag][@digest]); required for kind `image`, empty otherwise. The target agent pulls it — no build stage runs, and deploys go straight to rollout.
+   * OCI image reference (registry/repository[:tag][@digest]); required for kind `image`, empty otherwise. The target agent pulls it — no build stage runs, and deploys go straight to rollout. A digest is immutable and fetched once; a tag is re-fetched on every deploy, so redeploying a moved tag runs the new image rather than a cached one.
    * @maxLength 512
    */
   image?: string;

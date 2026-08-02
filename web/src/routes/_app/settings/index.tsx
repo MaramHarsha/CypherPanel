@@ -142,13 +142,21 @@ function EnrollTotpDialog() {
   });
   const verify = useVerifyTotp({
     mutation: {
-      onSuccess: (res) => {
-        setCodes(res.recovery_codes);
-        void qc.invalidateQueries({ queryKey: getGetTotpStatusQueryKey() });
-      },
+      // Deliberately does NOT refresh the TOTP status here. The refetch would
+      // report enabled:true, swapping this dialog for the disable control and
+      // unmounting the only copy of the recovery codes the operator will ever
+      // see. The status is refreshed on acknowledgement instead.
+      onSuccess: (res) => setCodes(res.recovery_codes),
       onError: (e: unknown) => setError(e instanceof Error ? e.message : "That code was not accepted"),
     },
   });
+
+  // Acknowledging is the single exit from the recovery-code step: it is what
+  // dismisses the dialog and what refreshes the status.
+  const acknowledge = () => {
+    setOpen(false);
+    void qc.invalidateQueries({ queryKey: getGetTotpStatusQueryKey() });
+  };
 
   const reset = () => {
     setCode("");
@@ -161,6 +169,10 @@ function EnrollTotpDialog() {
     <Dialog
       open={open}
       onOpenChange={(next) => {
+        // Once the codes are on screen, 2FA is already enabled and this is the
+        // only time they are shown — so Escape, the close button, and an
+        // outside click must not discard them. Only acknowledgement closes.
+        if (!next && codes) return;
         setOpen(next);
         if (next) {
           reset();
@@ -191,7 +203,7 @@ function EnrollTotpDialog() {
             <CopyField value={codes.join("\n")} />
           </div>
           <div className="mt-4 flex justify-end">
-            <Button variant="primary" onClick={() => setOpen(false)}>
+            <Button variant="primary" onClick={acknowledge}>
               <Check className="h-3.5 w-3.5" /> I saved them
             </Button>
           </div>

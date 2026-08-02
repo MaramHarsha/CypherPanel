@@ -40,7 +40,7 @@ type Store interface {
 	UserForSessionToken(ctx context.Context, tokenHash []byte) (domain.User, error)
 	DeleteSession(ctx context.Context, tokenHash []byte) error
 
-	SessionIDForToken(ctx context.Context, tokenHash []byte) (string, error)
+	SessionForToken(ctx context.Context, tokenHash []byte) (domain.User, string, error)
 	ListSessionsByUser(ctx context.Context, userID string) ([]domain.Session, error)
 	DeleteSessionForUser(ctx context.Context, sessionID, userID string) (bool, error)
 	DeleteOtherSessionsForUser(ctx context.Context, userID string, keepTokenHash []byte) (int64, error)
@@ -192,17 +192,16 @@ func (a *Authenticator) Authenticate(ctx context.Context, rawToken string) (Prin
 	if strings.HasPrefix(rawToken, APITokenPrefix) {
 		return a.authenticateAPIToken(ctx, rawToken)
 	}
-	hash := HashToken(rawToken)
-	user, err := a.store.UserForSessionToken(ctx, hash)
+	// One query resolves both the user and the session id: the join already
+	// selects both rows, and authentication runs on every request, so looking
+	// them up separately would double its cost for nothing.
+	user, sessionID, err := a.store.SessionForToken(ctx, HashToken(rawToken))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return Principal{}, ErrInvalidSession
 		}
 		return Principal{}, fmt.Errorf("auth: resolving session: %w", err)
 	}
-	// The id is presentational (marking "this device" in the session list); a
-	// lookup failure must not fail an otherwise valid request.
-	sessionID, _ := a.store.SessionIDForToken(ctx, hash)
 	return Principal{
 		User:      user,
 		Kind:      KindSession,

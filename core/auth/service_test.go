@@ -64,11 +64,16 @@ func (f *fakeStore) APITokenByHash(_ context.Context, tokenHash []byte) (domain.
 	return u, tok.ID, tok.Abilities, nil
 }
 
-func (f *fakeStore) SessionIDForToken(_ context.Context, tokenHash []byte) (string, error) {
-	if _, ok := f.sessions[string(tokenHash)]; !ok {
-		return "", store.ErrNotFound
+func (f *fakeStore) SessionForToken(_ context.Context, tokenHash []byte) (domain.User, string, error) {
+	userID, ok := f.sessions[string(tokenHash)]
+	if !ok {
+		return domain.User{}, "", store.ErrNotFound
 	}
-	return "sess_" + string(tokenHash), nil
+	u, ok := f.userByID(userID)
+	if !ok {
+		return domain.User{}, "", store.ErrNotFound
+	}
+	return u, "sess_" + string(tokenHash), nil
 }
 
 func (f *fakeStore) ListSessionsByUser(_ context.Context, userID string) ([]domain.Session, error) {

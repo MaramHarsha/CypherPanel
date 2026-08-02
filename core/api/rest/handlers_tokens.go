@@ -16,9 +16,14 @@ import (
 const maxTokenExpiryDays = 3650
 
 type createTokenRequest struct {
-	Name          string   `json:"name"`
-	ExpiresInDays int      `json:"expires_in_days"` // 0 = never expires
-	Abilities     []string `json:"abilities"`       // empty = full access (read, write, deploy)
+	Name          string `json:"name"`
+	ExpiresInDays int    `json:"expires_in_days"` // 0 = never expires
+	// Abilities is a pointer so an omitted field is distinguishable from an
+	// explicit []. Omitted means "full access", preserving the behaviour of
+	// clients written before abilities existed; an explicit empty list is a
+	// request for no authority and is rejected, never silently widened into a
+	// fully privileged credential.
+	Abilities *[]string `json:"abilities"`
 }
 
 type tokenDTO struct {
@@ -79,12 +84,13 @@ func (a *API) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// An omitted ability list means "same authority as before this feature
-	// existed" — full access — so existing clients keep working; an explicit
-	// list is validated against the vocabulary.
+	// existed" — full access — so existing clients keep working. A present
+	// list, including an empty one, is taken literally and validated against
+	// the vocabulary (an empty set is refused by the service).
 	abilities := domain.AllAbilities()
-	if len(req.Abilities) > 0 {
-		abilities = abilities[:0]
-		for _, s := range req.Abilities {
+	if req.Abilities != nil {
+		abilities = make([]domain.Ability, 0, len(*req.Abilities))
+		for _, s := range *req.Abilities {
 			abilities = append(abilities, domain.Ability(s))
 		}
 	}

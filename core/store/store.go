@@ -321,11 +321,20 @@ func (s *Store) CreateSession(ctx context.Context, id, userID string, tokenHash 
 // UserForSessionToken returns the user owning a live (unexpired) session whose
 // token hashes to tokenHash, or ErrNotFound.
 func (s *Store) UserForSessionToken(ctx context.Context, tokenHash []byte) (domain.User, error) {
+	user, _, err := s.SessionForToken(ctx, tokenHash)
+	return user, err
+}
+
+// SessionForToken returns the owning user and the session's id in one query.
+// Authentication needs both — the id marks "this device" in the session list —
+// and the join already selects both rows, so resolving them separately would
+// double the query traffic on every authenticated request for nothing.
+func (s *Store) SessionForToken(ctx context.Context, tokenHash []byte) (domain.User, string, error) {
 	row, err := s.q.GetSessionByTokenHash(ctx, tokenHash)
 	if err != nil {
-		return domain.User{}, wrap("getting session", err)
+		return domain.User{}, "", wrap("getting session", err)
 	}
-	return userFromRow(row.User), nil
+	return userFromRow(row.User), row.Session.ID, nil
 }
 
 func (s *Store) DeleteSession(ctx context.Context, tokenHash []byte) error {
@@ -333,16 +342,6 @@ func (s *Store) DeleteSession(ctx context.Context, tokenHash []byte) error {
 		return fmt.Errorf("store: deleting session: %w", err)
 	}
 	return nil
-}
-
-// SessionIDForToken returns the id of the live session a token hash belongs to,
-// so a session list can mark which entry is the caller's own.
-func (s *Store) SessionIDForToken(ctx context.Context, tokenHash []byte) (string, error) {
-	row, err := s.q.GetSessionByTokenHash(ctx, tokenHash)
-	if err != nil {
-		return "", wrap("getting session", err)
-	}
-	return row.Session.ID, nil
 }
 
 // ListSessionsByUser returns a user's live sessions, newest first.

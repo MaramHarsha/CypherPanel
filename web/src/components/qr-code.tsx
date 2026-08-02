@@ -19,11 +19,16 @@ export function QRCode({ value, size = 176, label }: { value: string; size?: num
     }
   }
 
+  // The QR spec requires a four-module quiet zone; scanners rely on it to find
+  // the symbol. Expressing it in the viewBox keeps it exactly four modules at
+  // any rendered size or QR version — CSS padding would not.
+  const quiet = 4;
+
   return (
     <svg
       width={size}
       height={size}
-      viewBox={`-1 -1 ${count + 2} ${count + 2}`}
+      viewBox={`${-quiet} ${-quiet} ${count + quiet * 2} ${count + quiet * 2}`}
       role="img"
       aria-label={label ?? "QR code"}
       shapeRendering="crispEdges"

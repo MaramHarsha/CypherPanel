@@ -145,11 +145,12 @@ func (f *fakeAuthStore) APITokenByHash(_ context.Context, tokenHash []byte) (dom
 	return f.user, tok.ID, tok.Abilities, nil
 }
 
-func (f *fakeAuthStore) SessionIDForToken(_ context.Context, tokenHash []byte) (string, error) {
-	if _, ok := f.sessions[string(tokenHash)]; !ok {
-		return "", store.ErrNotFound
+func (f *fakeAuthStore) SessionForToken(_ context.Context, tokenHash []byte) (domain.User, string, error) {
+	u, ok := f.sessions[string(tokenHash)]
+	if !ok {
+		return domain.User{}, "", store.ErrNotFound
 	}
-	return "sess_" + string(tokenHash), nil
+	return u, "sess_" + string(tokenHash), nil
 }
 
 func (f *fakeAuthStore) ListSessionsByUser(_ context.Context, userID string) ([]domain.Session, error) {
@@ -1712,6 +1713,44 @@ func TestAPITokenAbilitiesAreEnforced(t *testing.T) {
 		if c.want == "allowed" && forbidden {
 			t.Errorf("%s: got 403, want the ability to permit it (body %s)", c.name, body)
 		}
+	}
+}
+
+// The deploy ability is matched against the whole route, not the last URL
+// segment. `PUT /applications/{id}/env/{key}` ends in the segment "deploy" when
+// the variable happens to be named that — a deploy-only token must still be
+// refused, or it could rewrite application configuration it has no write
+// ability for.
+func TestDeployAbilityMatchesRouteNotSuffix(t *testing.T) {
+	ts, _, _, _ := newTestServerFull(t)
+	session := login(t, ts)
+	deployOnly := createToken(t, ts, session, "deployonly", `["deploy"]`)
+
+	for _, path := range []string{
+		"/api/v1/applications/app_x/env/deploy",
+		"/api/v1/applications/app_x/env/rollback",
+	} {
+		status, _, body := doJSON(t, "PUT", ts.URL+path, deployOnly, `{"value":"x"}`)
+		if status != http.StatusForbidden {
+			t.Errorf("PUT %s with a deploy-only token: status %d, want 403 (body %s)", path, status, body)
+		}
+	}
+}
+
+// An explicitly empty ability list is a request for no authority. Silently
+// turning it into full access would be the opposite of what was asked.
+func TestCreateTokenExplicitEmptyAbilitiesRejected(t *testing.T) {
+	ts, _, _, _ := newTestServerFull(t)
+	session := login(t, ts)
+
+	status, _, body := doJSON(t, "POST", ts.URL+"/api/v1/tokens", session, `{"name":"empty","abilities":[]}`)
+	if status != http.StatusBadRequest {
+		t.Fatalf("explicit empty abilities: status %d, want 400 (body %s)", status, body)
+	}
+	// An omitted list still means full access, so old clients keep working.
+	status, _, body = doJSON(t, "POST", ts.URL+"/api/v1/tokens", session, `{"name":"omitted"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("omitted abilities: status %d, want 201 (body %s)", status, body)
 	}
 }
 
