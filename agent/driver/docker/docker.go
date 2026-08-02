@@ -16,6 +16,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"slices"
 	"strconv"
 	"time"
 
@@ -47,11 +48,7 @@ type Container struct {
 	Name       string
 	AppID      string
 	RevisionID string
-	// SourceImage is the registry reference this container's image was pulled
-	// from, empty for locally-built images. Read back from the container's
-	// label so teardown can reclaim the original reference.
-	SourceImage string
-	Running     bool
+	Running    bool
 }
 
 // ContainerSpec is the create request the driver builds from an AppSpec.
@@ -76,11 +73,20 @@ type PortBinding struct {
 	Protocol      string // "tcp" or "udp"
 }
 
-// Image is a managed image, identified by the labels the build stamped.
+// Image is a managed image as garbage collection sees it. Identity is the
+// image itself, not one of its names, because reclaiming disk means dropping
+// *every* reference the daemon holds — a pulled image keeps its layers for as
+// long as the registry reference it arrived under still exists, however many
+// managed aliases were removed.
 type Image struct {
-	ID         string
-	AppID      string
-	RevisionID string
+	ID string
+	// AppIDs is every application with a managed association to this image:
+	// the label a build stamped, and/or the cypher/<app>:<revision> aliases a
+	// pull was tagged with. More than one when two apps run the same image.
+	AppIDs []string
+	// References is every name the daemon holds for it — managed aliases plus,
+	// for a pulled image, its original registry reference.
+	References []string
 }
 
 // Client is the subset of the Docker Engine API the reconciler needs.
@@ -100,7 +106,8 @@ type Client interface {
 	// ContainerIP returns the container's address on the given network.
 	ContainerIP(ctx context.Context, id, network string) (string, error)
 	StreamLogs(ctx context.Context, id string, out io.Writer) error
-	// ListManagedImages returns every image carrying this driver's managed label.
+	// ListManagedImages returns every image this driver has an association with,
+	// each carrying all of its references so GC can drop them together.
 	ListManagedImages(ctx context.Context) ([]Image, error)
 	RemoveImage(ctx context.Context, id string) error
 	// EnsureImage makes the local daemon hold the bits this reference currently
@@ -298,9 +305,8 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 	// Only in the create branch — the converged fast path never gets here, so
 	// converge-twice stays zero-mutation — and EnsureImage itself is a no-op
 	// when the reference is already local (crash-resume between pull and start).
-	image, sourceImage := spec.GetImage(), ""
+	image := spec.GetImage()
 	if spec.GetPull() {
-		sourceImage = spec.GetImage()
 		if err := d.client.EnsureImage(ctx, image); err != nil {
 			return status(spec.GetAppId(), currentRevision(existing), stateError, "pull: "+err.Error())
 		}
@@ -336,7 +342,7 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 		Env:           spec.GetEnv(),
 		Network:       spec.GetNetwork(),
 		Port:          spec.GetPort(),
-		Labels:        managedLabels(spec, sourceImage),
+		Labels:        managedLabels(spec),
 		CPULimit:      spec.GetCpuLimit(),
 		MemoryLimitMB: spec.GetMemoryLimitMb(),
 		Binds:         binds,
@@ -470,29 +476,15 @@ func (d *Driver) removeApp(ctx context.Context, appID string, containers []Conta
 		d.log.Warn("removing route for absent app", "app_id", appID, "error", err)
 		failed = fmt.Errorf("removing route: %w", err)
 	}
-	sources := map[string]struct{}{}
 	for _, c := range containers {
-		if c.SourceImage != "" {
-			sources[c.SourceImage] = struct{}{}
-		}
 		if err := d.drain(ctx, c.ID); err != nil && failed == nil {
 			failed = err
 		}
 	}
-	// Reclaim the reference the image was pulled under. Dropping only the
-	// managed alias would untag it while the original (`gitea/gitea:1.23`)
-	// still holds every layer, so the disk is never actually freed. Safe by
-	// construction: the daemon refuses to remove an image another container
-	// still uses, and removing a tag from a multi-tagged image only untags it.
-	// Best-effort — a failure here must not make teardown look unconverged, and
-	// the next reconcile tries again.
-	if failed == nil {
-		for ref := range sources {
-			if err := d.client.RemoveImage(ctx, ref); err != nil {
-				d.log.Warn("reclaiming pulled image", "app_id", appID, "image", ref, "error", err)
-			}
-		}
-	}
+	// Images are not reclaimed here: desired-state GC does it from the images
+	// themselves, so a rollout that failed before any container existed still
+	// gets cleaned up, and a single failed attempt is retried next reconcile
+	// rather than lost with the container that recorded it.
 	return failed
 }
 
@@ -504,11 +496,24 @@ func (d *Driver) gcRemovedAppImages(ctx context.Context, desiredApps map[string]
 		return
 	}
 	for _, img := range images {
-		if _, wanted := desiredApps[img.AppID]; wanted {
+		// An image shared by a still-desired app must survive whole: two apps
+		// can run the same pulled image, each under its own managed alias.
+		if slices.ContainsFunc(img.AppIDs, func(appID string) bool {
+			_, wanted := desiredApps[appID]
+			return wanted
+		}) {
 			continue
 		}
-		if err := d.client.RemoveImage(ctx, img.ID); err != nil {
-			d.log.Warn("removing image", "image", img.ID, "app_id", img.AppID, "error", err)
+		// Drop every reference. Removing only the managed alias would untag it
+		// while the registry reference the image arrived under still holds the
+		// layers, so nothing would actually be freed. Discovery comes from the
+		// image, not from a container, so this still works for an image whose
+		// rollout failed before any container existed, and it is retried on
+		// every reconcile until it succeeds.
+		for _, ref := range img.References {
+			if err := d.client.RemoveImage(ctx, ref); err != nil {
+				d.log.Warn("removing image reference", "reference", ref, "app_ids", img.AppIDs, "error", err)
+			}
 		}
 	}
 }
@@ -542,18 +547,12 @@ func (d *Driver) upstreamOf(ctx context.Context, containerID string, spec *agent
 	return net.JoinHostPort(ip, strconv.Itoa(int(spec.GetPort()))), nil
 }
 
-func managedLabels(spec *agentv1.AppSpec, sourceImage string) map[string]string {
-	labels := map[string]string{
+func managedLabels(spec *agentv1.AppSpec) map[string]string {
+	return map[string]string{
 		driver.LabelManaged:    driverName,
 		driver.LabelAppID:      spec.GetAppId(),
 		driver.LabelRevisionID: spec.GetRevisionId(),
 	}
-	// Only registry-sourced apps carry it; a built image has no upstream
-	// reference to reclaim.
-	if sourceImage != "" {
-		labels[driver.LabelSourceImage] = sourceImage
-	}
-	return labels
 }
 
 // networkLabels marks the network as managed without app or revision labels:

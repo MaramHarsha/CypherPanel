@@ -33,13 +33,6 @@ const (
 	LabelAppID = "cypherpanel.app-id"
 	// LabelRevisionID carries the revision the resource was created from.
 	LabelRevisionID = "cypherpanel.revision-id"
-	// LabelSourceImage records the registry reference a container's image was
-	// pulled from, for registry-sourced apps only. A pulled image cannot carry
-	// our labels, and untagging the managed alias alone leaves the original
-	// reference holding every layer — so teardown needs to know what to
-	// reclaim, and a label on the container is the only place that survives a
-	// restart (labels, never memory).
-	LabelSourceImage = "cypherpanel.source-image"
 )
 
 // Reconciler is the driver contract. Implementations: driver/docker (launch),

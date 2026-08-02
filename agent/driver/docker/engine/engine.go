@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -182,12 +183,11 @@ func (c *Client) ListManaged(ctx context.Context) ([]docker.Container, error) {
 			name = strings.TrimPrefix(s.Names[0], "/")
 		}
 		out = append(out, docker.Container{
-			ID:          s.ID,
-			Name:        name,
-			AppID:       s.Labels[driver.LabelAppID],
-			RevisionID:  s.Labels[driver.LabelRevisionID],
-			SourceImage: s.Labels[driver.LabelSourceImage],
-			Running:     s.State == "running",
+			ID:         s.ID,
+			Name:       name,
+			AppID:      s.Labels[driver.LabelAppID],
+			RevisionID: s.Labels[driver.LabelRevisionID],
+			Running:    s.State == "running",
 		})
 	}
 	return out, nil
@@ -325,54 +325,43 @@ type imageSummary struct {
 	RepoTags []string          `json:"RepoTags"`
 }
 
-// ListManagedImages returns every image this driver owns, discovered two ways
-// because managed images arrive by two routes:
+// ListManagedImages returns every image this driver has an association with,
+// each carrying all of its references.
 //
-//   - **Built** images carry our labels, stamped at build time.
-//   - **Pulled** images (registry-sourced apps) cannot: labels are baked into
-//     an image by whoever built it, and we do not rebuild what we pull. They
-//     are instead tagged into our own `cypher/<app>:<revision>` namespace at
-//     rollout, which is the reference the container is created from.
+// Managed images arrive by two routes, and only one of them can carry labels:
 //
-// Without the second route a pulled image is invisible to desired-state GC, so
-// deleting a registry-sourced app would never reclaim its image and every moved
-// tag would strand its predecessor on disk.
+//   - **Built** images are labelled at build time.
+//   - **Pulled** images cannot be — labels are baked in by whoever built the
+//     image — so they are tagged into `cypher/<app>:<revision>` at rollout,
+//     which is also the reference their container runs from.
+//
+// Every reference is returned because reclaiming disk means dropping all of
+// them: a pulled image keeps its layers for as long as the registry reference
+// it arrived under exists, no matter how many managed aliases are removed.
+// Grouping by image (not by name) is also what lets GC keep an image two apps
+// share when only one of them is deleted.
 func (c *Client) ListManagedImages(ctx context.Context) ([]docker.Image, error) {
-	var labelled []imageSummary
-	if err := c.doJSON(ctx, http.MethodGet, "/images/json", labelFilter(), nil, &labelled); err != nil {
-		return nil, err
-	}
-	seen := make(map[string]struct{}, len(labelled))
-	out := make([]docker.Image, 0, len(labelled))
-	for _, s := range labelled {
-		seen[s.ID] = struct{}{}
-		out = append(out, docker.Image{
-			ID:         s.ID,
-			AppID:      s.Labels[driver.LabelAppID],
-			RevisionID: s.Labels[driver.LabelRevisionID],
-		})
-	}
-
 	var all []imageSummary
 	if err := c.doJSON(ctx, http.MethodGet, "/images/json", nil, nil, &all); err != nil {
 		return nil, err
 	}
+	out := make([]docker.Image, 0, len(all))
 	for _, s := range all {
-		if _, dup := seen[s.ID]; dup {
-			continue
+		appIDs := make([]string, 0, 1)
+		if s.Labels[driver.LabelManaged] != "" {
+			if id := s.Labels[driver.LabelAppID]; id != "" {
+				appIDs = append(appIDs, id)
+			}
 		}
 		for _, tag := range s.RepoTags {
-			appID, revID, ok := parseManagedTag(tag)
-			if !ok {
-				continue
+			if appID, _, ok := parseManagedTag(tag); ok && !slices.Contains(appIDs, appID) {
+				appIDs = append(appIDs, appID)
 			}
-			// Remove by the managed reference, not the image id: a pulled image
-			// may still carry its original registry tag, and deleting the id
-			// would fail while that reference exists.
-			out = append(out, docker.Image{ID: tag, AppID: appID, RevisionID: revID})
-			seen[s.ID] = struct{}{}
-			break
 		}
+		if len(appIDs) == 0 {
+			continue // not ours: never touched
+		}
+		out = append(out, docker.Image{ID: s.ID, AppIDs: appIDs, References: s.RepoTags})
 	}
 	return out, nil
 }

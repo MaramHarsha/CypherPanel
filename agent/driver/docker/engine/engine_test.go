@@ -311,7 +311,7 @@ func TestImagesListRemoveAndHas(t *testing.T) {
 	m := newMockDaemon(t, map[string]http.HandlerFunc{
 		"/images/json": func(w http.ResponseWriter, _ *http.Request) {
 			writeJSON(t, w, http.StatusOK, []map[string]any{
-				{"Id": "i1", "Labels": map[string]string{driver.LabelAppID: "app1", driver.LabelRevisionID: "rev1"}},
+				{"Id": "i1", "RepoTags": []string{"cypher/app1:rev1"}, "Labels": map[string]string{driver.LabelManaged: "docker", driver.LabelAppID: "app1", driver.LabelRevisionID: "rev1"}},
 			})
 		},
 		"/images/i1":                    func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(removeCode) },
@@ -321,7 +321,7 @@ func TestImagesListRemoveAndHas(t *testing.T) {
 	ctx := context.Background()
 
 	imgs, err := c.ListManagedImages(ctx)
-	if err != nil || len(imgs) != 1 || imgs[0].AppID != "app1" || imgs[0].RevisionID != "rev1" {
+	if err != nil || len(imgs) != 1 || imgs[0].AppIDs[0] != "app1" {
 		t.Fatalf("ListManagedImages = %+v, %v", imgs, err)
 	}
 

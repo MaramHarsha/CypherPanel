@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -211,7 +212,7 @@ func (f *fakeClient) RemoveImage(_ context.Context, id string) error {
 	f.removedImages[id] = true
 	kept := f.images[:0]
 	for _, img := range f.images {
-		if img.ID != id {
+		if !slices.Contains(img.References, id) && img.ID != id {
 			kept = append(kept, img)
 		}
 	}
@@ -668,14 +669,14 @@ func TestListManagedErrorIsReturned(t *testing.T) {
 func TestGCRemovesImagesOfAbsentApps(t *testing.T) {
 	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
 	c.images = []Image{
-		{ID: "i1", AppID: "keep", RevisionID: "rev1"},
-		{ID: "i2", AppID: "gone", RevisionID: "rev1"},
+		{ID: "i1", AppIDs: []string{"keep"}, References: []string{"cypher/keep:rev1"}},
+		{ID: "i2", AppIDs: []string{"gone"}, References: []string{"cypher/gone:rev1"}},
 	}
 	d := newDriver(c, r, p)
 	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("keep", "rev1", "img:rev1")}); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if len(c.images) != 1 || c.images[0].AppID != "keep" {
+	if len(c.images) != 1 || c.images[0].AppIDs[0] != "keep" {
 		t.Fatalf("GC left images = %+v, want only keep", c.images)
 	}
 }
@@ -1064,50 +1065,46 @@ func TestResolvedDigestOmittedWhenUnavailable(t *testing.T) {
 	}
 }
 
-// Deleting a registry-sourced app must reclaim the reference it pulled, not
-// just the managed alias: untagging the alias alone leaves the original
-// (`ghost:5`) still holding every layer, so nothing is actually freed.
-func TestRemovedAppReclaimsPulledReference(t *testing.T) {
+// Deleting a registry-sourced app reclaims every reference to its image — the
+// managed alias *and* the registry reference it arrived under. Dropping only
+// the alias would untag it while the original still held the layers.
+//
+// Discovery is from the image, not from a container, so this holds even when
+// the rollout failed before any container existed.
+func TestGCReclaimsAllReferencesOfRemovedApp(t *testing.T) {
 	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	c.images = []Image{{
+		ID:         "sha256:img",
+		AppIDs:     []string{"app1"},
+		References: []string{"cypher/app1:rev1", "ghost:5"},
+	}}
 	d := newDriver(c, r, p)
 
-	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}); err != nil {
-		t.Fatalf("rollout: %v", err)
-	}
-	// The container records what it was pulled from, so teardown can find it
-	// again on a driver that never saw the rollout.
-	if got := c.lastCreateSpec.Labels[driver.LabelSourceImage]; got != "ghost:5" {
-		t.Fatalf("source-image label = %q, want the pulled reference", got)
-	}
-	for _, ct := range c.containers {
-		ct.SourceImage = c.lastCreateSpec.Labels[driver.LabelSourceImage]
-	}
-
-	// Desired set is now empty: the app was deleted.
 	if _, err := d.Reconcile(context.Background(), nil); err != nil {
 		t.Fatalf("teardown: %v", err)
 	}
-	if !c.removedImages["ghost:5"] {
-		t.Fatalf("removed images = %v, want the original reference reclaimed", c.removedImages)
+	for _, ref := range []string{"cypher/app1:rev1", "ghost:5"} {
+		if !c.removedImages[ref] {
+			t.Errorf("reference %q not reclaimed (removed = %v)", ref, c.removedImages)
+		}
 	}
 }
 
-// A locally-built image carries no source label, so teardown has no upstream
-// reference to reclaim and must not invent one.
-func TestRemovedBuiltAppReclaimsNothingExtra(t *testing.T) {
+// An image two apps share survives while either is still desired: each app has
+// its own managed alias, but the layers are one image.
+func TestGCKeepsImageSharedWithDesiredApp(t *testing.T) {
 	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	c.images = []Image{{
+		ID:         "sha256:shared",
+		AppIDs:     []string{"gone", "kept"},
+		References: []string{"cypher/gone:rev1", "cypher/kept:rev1", "ghost:5"},
+	}}
 	d := newDriver(c, r, p)
 
-	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "cypher/app1:rev1")}); err != nil {
-		t.Fatalf("rollout: %v", err)
-	}
-	if _, ok := c.lastCreateSpec.Labels[driver.LabelSourceImage]; ok {
-		t.Fatal("a built image must not carry a source-image label")
-	}
-	if _, err := d.Reconcile(context.Background(), nil); err != nil {
-		t.Fatalf("teardown: %v", err)
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("kept", "rev1", "ghost:5")}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
 	}
 	if len(c.removedImages) != 0 {
-		t.Fatalf("removed images = %v, want none for a built image", c.removedImages)
+		t.Fatalf("removed %v — an image a desired app still runs must survive", c.removedImages)
 	}
 }
