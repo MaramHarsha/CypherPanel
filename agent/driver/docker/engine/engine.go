@@ -182,11 +182,12 @@ func (c *Client) ListManaged(ctx context.Context) ([]docker.Container, error) {
 			name = strings.TrimPrefix(s.Names[0], "/")
 		}
 		out = append(out, docker.Container{
-			ID:         s.ID,
-			Name:       name,
-			AppID:      s.Labels[driver.LabelAppID],
-			RevisionID: s.Labels[driver.LabelRevisionID],
-			Running:    s.State == "running",
+			ID:          s.ID,
+			Name:        name,
+			AppID:       s.Labels[driver.LabelAppID],
+			RevisionID:  s.Labels[driver.LabelRevisionID],
+			SourceImage: s.Labels[driver.LabelSourceImage],
+			Running:     s.State == "running",
 		})
 	}
 	return out, nil

@@ -47,7 +47,11 @@ type Container struct {
 	Name       string
 	AppID      string
 	RevisionID string
-	Running    bool
+	// SourceImage is the registry reference this container's image was pulled
+	// from, empty for locally-built images. Read back from the container's
+	// label so teardown can reclaim the original reference.
+	SourceImage string
+	Running     bool
 }
 
 // ContainerSpec is the create request the driver builds from an AppSpec.
@@ -294,8 +298,9 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 	// Only in the create branch — the converged fast path never gets here, so
 	// converge-twice stays zero-mutation — and EnsureImage itself is a no-op
 	// when the reference is already local (crash-resume between pull and start).
-	image := spec.GetImage()
+	image, sourceImage := spec.GetImage(), ""
 	if spec.GetPull() {
+		sourceImage = spec.GetImage()
 		if err := d.client.EnsureImage(ctx, image); err != nil {
 			return status(spec.GetAppId(), currentRevision(existing), stateError, "pull: "+err.Error())
 		}
@@ -331,7 +336,7 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 		Env:           spec.GetEnv(),
 		Network:       spec.GetNetwork(),
 		Port:          spec.GetPort(),
-		Labels:        managedLabels(spec),
+		Labels:        managedLabels(spec, sourceImage),
 		CPULimit:      spec.GetCpuLimit(),
 		MemoryLimitMB: spec.GetMemoryLimitMb(),
 		Binds:         binds,
@@ -465,9 +470,27 @@ func (d *Driver) removeApp(ctx context.Context, appID string, containers []Conta
 		d.log.Warn("removing route for absent app", "app_id", appID, "error", err)
 		failed = fmt.Errorf("removing route: %w", err)
 	}
+	sources := map[string]struct{}{}
 	for _, c := range containers {
+		if c.SourceImage != "" {
+			sources[c.SourceImage] = struct{}{}
+		}
 		if err := d.drain(ctx, c.ID); err != nil && failed == nil {
 			failed = err
+		}
+	}
+	// Reclaim the reference the image was pulled under. Dropping only the
+	// managed alias would untag it while the original (`gitea/gitea:1.23`)
+	// still holds every layer, so the disk is never actually freed. Safe by
+	// construction: the daemon refuses to remove an image another container
+	// still uses, and removing a tag from a multi-tagged image only untags it.
+	// Best-effort — a failure here must not make teardown look unconverged, and
+	// the next reconcile tries again.
+	if failed == nil {
+		for ref := range sources {
+			if err := d.client.RemoveImage(ctx, ref); err != nil {
+				d.log.Warn("reclaiming pulled image", "app_id", appID, "image", ref, "error", err)
+			}
 		}
 	}
 	return failed
@@ -519,12 +542,18 @@ func (d *Driver) upstreamOf(ctx context.Context, containerID string, spec *agent
 	return net.JoinHostPort(ip, strconv.Itoa(int(spec.GetPort()))), nil
 }
 
-func managedLabels(spec *agentv1.AppSpec) map[string]string {
-	return map[string]string{
+func managedLabels(spec *agentv1.AppSpec, sourceImage string) map[string]string {
+	labels := map[string]string{
 		driver.LabelManaged:    driverName,
 		driver.LabelAppID:      spec.GetAppId(),
 		driver.LabelRevisionID: spec.GetRevisionId(),
 	}
+	// Only registry-sourced apps carry it; a built image has no upstream
+	// reference to reclaim.
+	if sourceImage != "" {
+		labels[driver.LabelSourceImage] = sourceImage
+	}
+	return labels
 }
 
 // networkLabels marks the network as managed without app or revision labels:
