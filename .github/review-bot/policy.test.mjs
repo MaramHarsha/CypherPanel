@@ -403,3 +403,24 @@ test("code outside the authorization surface still auto-approves", () => {
     assert.equal(call({ files: [f] }).action, "approve", f);
   }
 });
+
+// The glob compiler once used a NUL byte as its `**` sentinel, which made Git
+// treat this module as binary and hid every later change to the approval logic
+// from review. Plain text now, and the semantics that sentinel protected still
+// hold.
+test("the policy source is plain text and ** still spans separators", () => {
+  const src = readFileSync(new URL("./policy.mjs", import.meta.url), "utf8");
+  assert.equal(src.includes("\u0000"), false, "policy.mjs must contain no NUL byte");
+  assert.equal(matchesGlob("core/**/x.go", "core/a/b/x.go"), true);
+  assert.equal(matchesGlob("core/*/x.go", "core/a/b/x.go"), false, "* must not span /");
+  assert.equal(matchesGlob("**/go.mod", "go.mod"), true);
+  assert.equal(matchesGlob("**/go.mod", "core/go.mod"), true);
+  assert.equal(matchesGlob("a*b", "a-b"), true);
+  assert.equal(matchesGlob("a*b", "a/b"), false);
+});
+
+// The release signer handles the private key on whatever machine signs, so a
+// change making it disclose that key must never be auto-approvable.
+test("the release signer is protected", () => {
+  assert.equal(call({ files: ["core/cmd/release-sign/main.go"] }).action, "comment-sensitive");
+});

@@ -11,12 +11,19 @@ page is a path to remote code execution on every server an operator owns. ADR-01
 §3 is explicit: *artifacts are signed with an offline release key; the agent
 verifies against a public key baked into its binary before swapping*.
 
-## The key is offline
+## The key never reaches CI
 
-The private key is generated on a machine that is not CI and never leaves it in
-plaintext. CI holds it for the duration of one step, from a repository secret,
-and cannot generate one — a missing key fails the release rather than publishing
-unsigned binaries.
+The private key is generated on a machine that is not CI, and CI never sees it.
+An Actions secret is an online key: it is readable by every workflow in the
+repository and by whatever code a compromised tag makes the runner execute, so a
+release key stored there would let anyone who reaches CI sign binaries that a
+whole fleet installs. That is the exact power this design exists to deny, and
+storing the key in Actions would have handed it over while looking like
+compliance.
+
+So the split is: **CI builds and publishes a draft; a human signs and
+publishes.** A draft release is not public, which makes "unsigned" and
+"unreleased" the same state rather than a rule someone has to remember.
 
 Ed25519, raw, over the manifest bytes. `crypto/ed25519` is standard library, so
 the agent verifies with no dependency to compromise and no verification service
@@ -44,9 +51,9 @@ CYPHER_RELEASE_SIGNING_KEY="$(cat cypher-release.key)" \
 
 Then:
 
-1. Add the private key as the repository secret **`CYPHER_RELEASE_SIGNING_KEY`**
-   (base64, no newline). Nothing else in the repository may read it — it is used
-   by exactly one step in `release.yml`.
+1. **Do not** put the private key in GitHub Actions secrets, or anywhere else CI
+   can read. It lives on the signing machine and is exported into the
+   environment only for the length of a signing run.
 2. Record the public key below, and bake it into the agent when ADR-010's
    update mechanism is implemented.
 
@@ -54,19 +61,36 @@ Then:
 RELEASE_PUBKEY = <not yet generated — see "Status" below>
 ```
 
+## Releasing
+
+Tagging builds the binaries and creates a **draft** release. It stays a draft —
+invisible to everyone — until it is signed:
+
+```sh
+export CYPHER_RELEASE_SIGNING_KEY="$(cat cypher-release.key)"
+make release-sign VERSION=v0.1.0
+```
+
+That downloads the draft's artifacts, re-checks every digest against
+`SHA256SUMS`, signs the manifest, verifies the signature it just made, uploads
+`SHA256SUMS.sig`, and only then flips the release out of draft.
+
 ## Verifying a release by hand
 
 ```sh
 gh release download v0.1.0 -p 'SHA256SUMS*' -p 'cypher*'
+go run -C core ./cmd/release-sign -verify \
+  -in SHA256SUMS -sig SHA256SUMS.sig -key "$RELEASE_PUBKEY"
 sha256sum -c SHA256SUMS
 ```
 
-To check the signature, decode `SHA256SUMS.sig` (base64) and verify the raw
-Ed25519 signature over the bytes of `SHA256SUMS` against `RELEASE_PUBKEY`.
+Signature first, digests second. The checksums prove the download arrived
+intact; only the signature says the release is ours.
 
 ## Status
 
-The release pipeline signs, and refuses to publish unsigned. **Agent-side
+The release pipeline builds and drafts; signing is offline and manual, so an
+unsigned release cannot reach anyone. **Agent-side
 verification is not implemented yet** — the two-slot swap, the baked-in public
 key, and the self-rollback described in ADR-010 §4–5 land with the auto-update
 mechanism. Until then the signature protects operators who verify by hand, and

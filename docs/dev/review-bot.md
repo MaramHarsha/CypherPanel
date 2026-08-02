@@ -14,12 +14,28 @@ It does not read your code. The approval says so explicitly.
 2. **Enable two-factor authentication** on it.
 3. **Add it as a collaborator** on this repository with **Write** access.
    Write is required to submit reviews; Read cannot approve.
-4. **Sign in as the bot** and create a **fine-grained personal access token**:
-   - Resource owner: your account · Repository access: **only** CypherPanel
-   - Repository permissions: **Pull requests: Read and write**,
-     **Contents: Read-only**, **Metadata: Read-only**, **Checks: Read-only**
-   - Nothing else. No Actions, no Administration, no Workflows, no org scopes.
-   - Set an expiry and calendar a rotation.
+4. **Sign in as the bot** and create a **classic personal access token** with
+   the single **`repo`** scope. Set an expiry and calendar a rotation.
+
+   Not a fine-grained token, and this is not a preference. A fine-grained token
+   is issued against one *resource owner*, and the bot can only choose itself or
+   an organisation it belongs to — being a collaborator on a repository owned by
+   another personal account does not put that repository on the list. A
+   fine-grained token created by the bot therefore cannot select
+   `MaramHarsha/CypherPanel` at all, and every workflow would fail on a 404 that
+   reads like a missing secret rather than an unusable one.
+
+   The cost is honest: classic `repo` is broader than we want, and it covers
+   every repository the bot account can reach. That is survivable *because* the
+   bot account exists only for this, holds no other collaborations, and has 2FA.
+   Two ways to get a properly narrow token, when either becomes worth the setup:
+
+   - **A GitHub App** installed on this repository, with Pull requests: write
+     and Contents/Metadata/Checks: read. Per-repository permissions, no user
+     account, tokens that expire hourly. The right end state; it needs the
+     workflows to mint an installation token instead of reading a secret.
+   - **Move the repository under an organisation** the bot can be a member of,
+     which makes the organisation selectable as a fine-grained resource owner.
 5. **Add the token** to this repository as the secret
    `CYPHERPANEL_REVIEW_BOT_TOKEN` (Settings → Secrets and variables → Actions).
 6. **Branch protection** on `main`: require pull requests, require **1**

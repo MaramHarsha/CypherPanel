@@ -106,3 +106,21 @@ run-plane: ## Run cypherd from source against local Postgres
 clean: ## Remove build output and local dev state
 	rm -rf bin dist .dev
 	@for m in $(MODULES); do (cd $$m && go clean); done
+
+.PHONY: release-sign
+release-sign: ## Sign a draft release offline and publish it (VERSION=vX.Y.Z)
+	@test -n "$(VERSION)" || { echo "usage: make release-sign VERSION=v0.1.0"; exit 1; }
+	@test -n "$$CYPHER_RELEASE_SIGNING_KEY" \
+	  || { echo "CYPHER_RELEASE_SIGNING_KEY is unset — see docs/dev/release-signing.md"; exit 1; }
+	@# Run this on the machine that holds the offline key, never in CI. The
+	@# release is a draft until the signature is uploaded, so an unsigned
+	@# release is never public.
+	rm -rf dist/sign && mkdir -p dist/sign
+	gh release download "$(VERSION)" -D dist/sign -p 'SHA256SUMS' -p 'cypher*'
+	cd dist/sign && sha256sum -c SHA256SUMS
+	go run -C core ./cmd/release-sign -in ../dist/sign/SHA256SUMS -out ../dist/sign/SHA256SUMS.sig
+	go run -C core ./cmd/release-sign -verify -in ../dist/sign/SHA256SUMS \
+	  -sig ../dist/sign/SHA256SUMS.sig -key "$$(go run -C core ./cmd/release-sign -public)"
+	gh release upload "$(VERSION)" dist/sign/SHA256SUMS.sig --clobber
+	gh release edit "$(VERSION)" --draft=false
+	@echo "$(VERSION) signed and published"

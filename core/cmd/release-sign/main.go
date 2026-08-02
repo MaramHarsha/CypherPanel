@@ -11,13 +11,21 @@
 // standard library, so the agent verifies with no dependency to compromise and
 // no verification service to be offline at the moment a fleet needs patching.
 //
+// This runs on the release manager's machine, never in CI. An Actions secret is
+// an online key by definition — available to every workflow and to whatever code
+// a compromised tag makes the runner execute — so holding the release key there
+// would give an attacker the power to sign fleet binaries, which is the single
+// thing this design exists to deny. CI builds and publishes a DRAFT; signing and
+// publishing are the human step.
+//
 // Usage:
 //
 //	release-sign -in dist/SHA256SUMS -out dist/SHA256SUMS.sig
-//	release-sign -public   # print the public key for the given private key
+//	release-sign -public                                  # print the public key
+//	release-sign -verify -in SHA256SUMS -sig SHA256SUMS.sig -key <base64>
 //
 // The private key arrives base64-encoded in CYPHER_RELEASE_SIGNING_KEY, as
-// either a 32-byte seed or a 64-byte expanded key.
+// either a 32-byte seed or a 64-byte expanded key. -verify needs only -key.
 package main
 
 import (
@@ -30,10 +38,20 @@ import (
 )
 
 func main() {
-	in := flag.String("in", "", "file to sign")
+	in := flag.String("in", "", "file to sign or verify")
 	out := flag.String("out", "", "signature output path")
+	sigPath := flag.String("sig", "", "signature to check, with -verify")
+	pubKey := flag.String("key", "", "base64 public key, with -verify")
+	verify := flag.Bool("verify", false, "check a signature instead of making one")
 	public := flag.Bool("public", false, "print the public key and exit")
 	flag.Parse()
+
+	// Verification needs no private key, so anyone can run it — that is the
+	// point of publishing the signature at all.
+	if *verify {
+		verifyRelease(*in, *sigPath, *pubKey)
+		return
+	}
 
 	key, err := privateKey(os.Getenv("CYPHER_RELEASE_SIGNING_KEY"))
 	if err != nil {
@@ -67,6 +85,35 @@ func main() {
 		die("write %s: %v", *out, err)
 	}
 	fmt.Printf("signed %s (%d bytes) -> %s\n", *in, len(manifest), *out)
+}
+
+// verifyRelease checks a published manifest against the release public key.
+// Exits non-zero on any failure, so it composes into a script without the
+// caller having to parse output.
+func verifyRelease(in, sigPath, pub string) {
+	if in == "" || sigPath == "" || pub == "" {
+		die("-verify needs -in, -sig and -key")
+	}
+	pubBytes, err := base64.StdEncoding.DecodeString(strings.TrimSpace(pub))
+	if err != nil || len(pubBytes) != ed25519.PublicKeySize {
+		die("public key must be %d base64-encoded bytes", ed25519.PublicKeySize)
+	}
+	manifest, err := os.ReadFile(in)
+	if err != nil {
+		die("read %s: %v", in, err)
+	}
+	raw, err := os.ReadFile(sigPath)
+	if err != nil {
+		die("read %s: %v", sigPath, err)
+	}
+	sig, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(raw)))
+	if err != nil {
+		die("signature is not valid base64: %v", err)
+	}
+	if !ed25519.Verify(ed25519.PublicKey(pubBytes), manifest, sig) {
+		die("SIGNATURE DOES NOT VERIFY — do not install these artifacts")
+	}
+	fmt.Printf("signature verifies: %s covers %d bytes\n", sigPath, len(manifest))
 }
 
 // privateKey decodes the signing key, rejecting anything it cannot use rather

@@ -77,27 +77,6 @@ jobs:
       - name: Checksums
         run: cd dist && sha256sum ./* > SHA256SUMS && cat SHA256SUMS
 
-      # ADR-010 §3: agents verify a signature against a public key baked into
-      # their own binary before swapping in fleet-wide code. Checksums alone
-      # cannot carry that — whoever can replace an asset can replace the
-      # SHA256SUMS sitting beside it, so the sums prove integrity in transit and
-      # nothing about origin. Signing the manifest covers every artifact through
-      # it, and the key that makes the signature is offline: CI holds it only for
-      # the length of this step and never generates one.
-      #
-      # No key means no release. Publishing unsigned binaries to the channel that
-      # updates every agent is the outcome this exists to prevent, so failing the
-      # release is the cheaper failure.
-      - name: Sign the release manifest
-        env:
-          CYPHER_RELEASE_SIGNING_KEY: ${{ secrets.CYPHER_RELEASE_SIGNING_KEY }}
-        run: |
-          set -eu
-          go run -C core ./cmd/release-sign \
-            -in ../dist/SHA256SUMS -out ../dist/SHA256SUMS.sig
-          echo "public key for this signature:"
-          go run -C core ./cmd/release-sign -public
-
       - name: Smoke-test the amd64 build
         run: |
           chmod +x dist/cypherd-linux-amd64
@@ -142,19 +121,33 @@ jobs:
 
           \`SHA256SUMS\` lists a digest for every artifact, and
           \`SHA256SUMS.sig\` is that manifest signed with the offline release
-          key (Ed25519, base64). Check the signature first, then the digests —
-          the checksums prove a download arrived intact, the signature is what
-          proves the release is ours:
+          key. Check the signature first, then the digests — the checksums prove
+          a download arrived intact, the signature is what proves the release is
+          ours, and only the second survives someone who can replace assets:
 
           \`\`\`sh
           # RELEASE_PUBKEY is published in docs/dev/release-signing.md
+          go run -C core ./cmd/release-sign -verify \\
+            -in SHA256SUMS -sig SHA256SUMS.sig -key "\$RELEASE_PUBKEY"
           sha256sum -c SHA256SUMS
           \`\`\`
 
           \`install.sh\` and \`agent.sh\` verify a digest when you pass
           \`CYPHERD_SHA256\` / \`CYPHER_AGENT_SHA256\`.
           EOF
+          # --draft is the enforcement, not a convenience. ADR-010 requires an
+          # OFFLINE release key, so this workflow cannot sign: an Actions secret
+          # is available to every workflow and to whatever code a compromised tag
+          # makes the runner execute, and a key CI can read is a key an attacker
+          # who reaches CI can use to sign fleet-wide binaries. Publishing a
+          # draft means an unsigned release is never public — the release
+          # manager signs SHA256SUMS offline, uploads the signature, and only
+          # then publishes. See docs/dev/release-signing.md.
           gh release create "$VERSION" dist/* \
             --title "$VERSION" \
             --notes-file notes.md \
-            --verify-tag
+            --verify-tag \
+            --draft
+          echo
+          echo "Draft release created. It is NOT public until it is signed:"
+          echo "  make release-sign VERSION=$VERSION"
