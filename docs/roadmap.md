@@ -36,7 +36,7 @@ Scope: managed databases (PostgreSQL, MySQL, MariaDB, MongoDB, Redis, Valkey); e
 
 ## Phase 4 — Catalog and polish
 
-Scope: template catalog (port Coolify's 361 compose templates + Dokploy's registry mechanism — see research docs); Compose Stack resources; dashboard; interactive terminal; observability — metrics (port concepts from Dokploy's Go monitoring app), bounded persistent log retention, log drains to external systems, metric threshold alerts; design system documented from the real components (`docs/product/design-system.md` gets written *now*, not before); CLI.
+Scope: template catalog (a native template schema with a Coolify importer, bundled in the release — see [ADR-007](adrs/ADR-007-template-format.md)); Compose Stack resources; dashboard; interactive terminal; observability — metrics (port concepts from Dokploy's Go monitoring app), bounded persistent log retention, log drains to external systems, metric threshold alerts; design system documented from the real components (`docs/product/design-system.md` gets written *now*, not before); CLI.
 
 **Acceptance:** a Coolify or Dokploy user can self-migrate a typical workload without losing a capability they used (checked against the feature matrix).
 
