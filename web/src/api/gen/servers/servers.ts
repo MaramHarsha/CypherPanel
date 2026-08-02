@@ -275,7 +275,7 @@ export const getListServersQueryKey = () => {
     }
 
     
-export const getListServersQueryOptions = <TData = Awaited<ReturnType<typeof listServers>>, TError = UnauthorizedResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServers>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getListServersQueryOptions = <TData = Awaited<ReturnType<typeof listServers>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServers>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -294,10 +294,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type ListServersQueryResult = NonNullable<Awaited<ReturnType<typeof listServers>>>
-export type ListServersQueryError = UnauthorizedResponse
+export type ListServersQueryError = UnauthorizedResponse | ForbiddenResponse
 
 
-export function useListServers<TData = Awaited<ReturnType<typeof listServers>>, TError = UnauthorizedResponse>(
+export function useListServers<TData = Awaited<ReturnType<typeof listServers>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServers>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listServers>>,
@@ -307,7 +307,7 @@ export function useListServers<TData = Awaited<ReturnType<typeof listServers>>, 
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListServers<TData = Awaited<ReturnType<typeof listServers>>, TError = UnauthorizedResponse>(
+export function useListServers<TData = Awaited<ReturnType<typeof listServers>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServers>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listServers>>,
@@ -317,7 +317,7 @@ export function useListServers<TData = Awaited<ReturnType<typeof listServers>>, 
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListServers<TData = Awaited<ReturnType<typeof listServers>>, TError = UnauthorizedResponse>(
+export function useListServers<TData = Awaited<ReturnType<typeof listServers>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServers>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -325,7 +325,7 @@ export function useListServers<TData = Awaited<ReturnType<typeof listServers>>, 
  * @summary List all servers, newest first
  */
 
-export function useListServers<TData = Awaited<ReturnType<typeof listServers>>, TError = UnauthorizedResponse>(
+export function useListServers<TData = Awaited<ReturnType<typeof listServers>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServers>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -446,7 +446,7 @@ export const getGetServerQueryKey = (id?: string,) => {
     }
 
     
-export const getGetServerQueryOptions = <TData = Awaited<ReturnType<typeof getServer>>, TError = UnauthorizedResponse | Error>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getServer>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getGetServerQueryOptions = <TData = Awaited<ReturnType<typeof getServer>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getServer>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -465,10 +465,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetServerQueryResult = NonNullable<Awaited<ReturnType<typeof getServer>>>
-export type GetServerQueryError = UnauthorizedResponse | Error
+export type GetServerQueryError = UnauthorizedResponse | ForbiddenResponse | Error
 
 
-export function useGetServer<TData = Awaited<ReturnType<typeof getServer>>, TError = UnauthorizedResponse | Error>(
+export function useGetServer<TData = Awaited<ReturnType<typeof getServer>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getServer>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getServer>>,
@@ -478,7 +478,7 @@ export function useGetServer<TData = Awaited<ReturnType<typeof getServer>>, TErr
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetServer<TData = Awaited<ReturnType<typeof getServer>>, TError = UnauthorizedResponse | Error>(
+export function useGetServer<TData = Awaited<ReturnType<typeof getServer>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getServer>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getServer>>,
@@ -488,7 +488,7 @@ export function useGetServer<TData = Awaited<ReturnType<typeof getServer>>, TErr
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetServer<TData = Awaited<ReturnType<typeof getServer>>, TError = UnauthorizedResponse | Error>(
+export function useGetServer<TData = Awaited<ReturnType<typeof getServer>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getServer>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -496,7 +496,7 @@ export function useGetServer<TData = Awaited<ReturnType<typeof getServer>>, TErr
  * @summary One server
  */
 
-export function useGetServer<TData = Awaited<ReturnType<typeof getServer>>, TError = UnauthorizedResponse | Error>(
+export function useGetServer<TData = Awaited<ReturnType<typeof getServer>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getServer>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {

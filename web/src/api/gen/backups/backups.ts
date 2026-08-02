@@ -79,7 +79,7 @@ export const getListBackupTargetsQueryKey = () => {
     }
 
     
-export const getListBackupTargetsQueryOptions = <TData = Awaited<ReturnType<typeof listBackupTargets>>, TError = UnauthorizedResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listBackupTargets>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getListBackupTargetsQueryOptions = <TData = Awaited<ReturnType<typeof listBackupTargets>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listBackupTargets>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -98,10 +98,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type ListBackupTargetsQueryResult = NonNullable<Awaited<ReturnType<typeof listBackupTargets>>>
-export type ListBackupTargetsQueryError = UnauthorizedResponse
+export type ListBackupTargetsQueryError = UnauthorizedResponse | ForbiddenResponse
 
 
-export function useListBackupTargets<TData = Awaited<ReturnType<typeof listBackupTargets>>, TError = UnauthorizedResponse>(
+export function useListBackupTargets<TData = Awaited<ReturnType<typeof listBackupTargets>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listBackupTargets>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listBackupTargets>>,
@@ -111,7 +111,7 @@ export function useListBackupTargets<TData = Awaited<ReturnType<typeof listBacku
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListBackupTargets<TData = Awaited<ReturnType<typeof listBackupTargets>>, TError = UnauthorizedResponse>(
+export function useListBackupTargets<TData = Awaited<ReturnType<typeof listBackupTargets>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listBackupTargets>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listBackupTargets>>,
@@ -121,7 +121,7 @@ export function useListBackupTargets<TData = Awaited<ReturnType<typeof listBacku
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListBackupTargets<TData = Awaited<ReturnType<typeof listBackupTargets>>, TError = UnauthorizedResponse>(
+export function useListBackupTargets<TData = Awaited<ReturnType<typeof listBackupTargets>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listBackupTargets>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -129,7 +129,7 @@ export function useListBackupTargets<TData = Awaited<ReturnType<typeof listBacku
  * @summary List S3-compatible backup targets
  */
 
-export function useListBackupTargets<TData = Awaited<ReturnType<typeof listBackupTargets>>, TError = UnauthorizedResponse>(
+export function useListBackupTargets<TData = Awaited<ReturnType<typeof listBackupTargets>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listBackupTargets>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -250,7 +250,7 @@ export const getGetBackupTargetQueryKey = (id?: string,) => {
     }
 
     
-export const getGetBackupTargetQueryOptions = <TData = Awaited<ReturnType<typeof getBackupTarget>>, TError = UnauthorizedResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBackupTarget>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getGetBackupTargetQueryOptions = <TData = Awaited<ReturnType<typeof getBackupTarget>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBackupTarget>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -269,10 +269,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetBackupTargetQueryResult = NonNullable<Awaited<ReturnType<typeof getBackupTarget>>>
-export type GetBackupTargetQueryError = UnauthorizedResponse | NotFoundResponse
+export type GetBackupTargetQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
 
-export function useGetBackupTarget<TData = Awaited<ReturnType<typeof getBackupTarget>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetBackupTarget<TData = Awaited<ReturnType<typeof getBackupTarget>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBackupTarget>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getBackupTarget>>,
@@ -282,7 +282,7 @@ export function useGetBackupTarget<TData = Awaited<ReturnType<typeof getBackupTa
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetBackupTarget<TData = Awaited<ReturnType<typeof getBackupTarget>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetBackupTarget<TData = Awaited<ReturnType<typeof getBackupTarget>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBackupTarget>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getBackupTarget>>,
@@ -292,7 +292,7 @@ export function useGetBackupTarget<TData = Awaited<ReturnType<typeof getBackupTa
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetBackupTarget<TData = Awaited<ReturnType<typeof getBackupTarget>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetBackupTarget<TData = Awaited<ReturnType<typeof getBackupTarget>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBackupTarget>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -300,7 +300,7 @@ export function useGetBackupTarget<TData = Awaited<ReturnType<typeof getBackupTa
  * @summary Get a backup target
  */
 
-export function useGetBackupTarget<TData = Awaited<ReturnType<typeof getBackupTarget>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetBackupTarget<TData = Awaited<ReturnType<typeof getBackupTarget>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBackupTarget>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {

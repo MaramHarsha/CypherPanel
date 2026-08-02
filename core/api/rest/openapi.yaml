@@ -160,6 +160,8 @@ paths:
           description: Session deleted.
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /api/v1/auth/me:
     get:
@@ -175,6 +177,8 @@ paths:
                 $ref: "#/components/schemas/Me"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /api/v1/auth/sessions:
     get:
@@ -465,6 +469,8 @@ paths:
                 type: string
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /api/v1/openapi.yaml:
     get:
@@ -514,6 +520,8 @@ paths:
                   $ref: "#/components/schemas/Server"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     post:
       operationId: createServer
       tags: [servers]
@@ -561,6 +569,8 @@ paths:
                 $ref: "#/components/schemas/Server"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           description: No such server.
           content:
@@ -599,6 +609,8 @@ paths:
                   $ref: "#/components/schemas/Project"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     post:
       operationId: createProject
       tags: [projects]
@@ -637,6 +649,8 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Template" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /api/v1/templates/{slug}:
     parameters:
@@ -655,6 +669,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Template" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
 
   /api/v1/templates/{slug}/install:
@@ -1202,6 +1218,8 @@ paths:
                 $ref: "#/components/schemas/DeployKeysList"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     post:
       operationId: createDeployKey
       tags: [deploy-keys]
@@ -1247,6 +1265,8 @@ paths:
                 $ref: "#/components/schemas/DeployKey"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           description: No such deploy key.
           content:
@@ -1379,6 +1399,8 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Team" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
     post:
       operationId: createTeam
       tags: [teams]
@@ -1666,6 +1688,8 @@ paths:
       responses:
         "200": { description: Targets (credentials never included)., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/BackupTarget" } } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
     post:
       operationId: createBackupTarget
       tags: [backups]
@@ -1688,6 +1712,8 @@ paths:
       responses:
         "200": { description: The target., content: { application/json: { schema: { $ref: "#/components/schemas/BackupTarget" } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
       operationId: deleteBackupTarget

@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -941,61 +940,37 @@ func routePathsFromSource(t *testing.T) []string {
 	return out
 }
 
-// Every route behind a role check or session-only guard can answer 403, and the
-// spec has to say so — a generated client that does not model a response the
-// endpoint actually produces cannot handle it (ENGINEERING rule 19). This
-// catches the whole class rather than one endpoint at a time.
+// EVERY authenticated route can answer 403, and the spec has to say so — a
+// generated client that does not model a response the endpoint actually
+// produces cannot handle it (ENGINEERING rule 19).
+//
+// The reach is wider than role checks: the ability middleware refuses any
+// request outside an API token's abilities, so a plain listing route returns
+// 403 to a write-only token just as a project-scoped mutation does. Scoping
+// this to role-guarded handlers (as an earlier version did) missed exactly
+// those. Deriving the set from the router keeps it honest as routes are added.
 func TestForbiddenResponsesAreDocumented(t *testing.T) {
 	src, err := os.ReadFile("rest.go")
 	if err != nil {
 		t.Fatalf("reading rest.go: %v", err)
 	}
-	guarded := guardedHandlers(t)
 	spec, err := os.ReadFile("openapi.yaml")
 	if err != nil {
 		t.Fatalf("reading openapi.yaml: %v", err)
 	}
 
-	// Operations in the spec, as "method path" → the block of text under it.
-	re := regexp.MustCompile(`mux\.HandleFunc\("(GET|POST|PATCH|PUT|DELETE) ([^"]+)",\s*a\.(authed|sessionOnly)\(a\.(handle\w+)\)\)`)
+	re := regexp.MustCompile(`mux\.HandleFunc\("(GET|POST|PATCH|PUT|DELETE) ([^"]+)",\s*a\.(?:authed|sessionOnly)\(`)
 	checked := 0
 	for _, m := range re.FindAllStringSubmatch(string(src), -1) {
-		method, path, wrapper, handler := m[1], m[2], m[3], m[4]
-		if wrapper != "sessionOnly" && !guarded[handler] {
-			continue
-		}
+		method, path := m[1], m[2]
 		checked++
 		if !operationDocuments(string(spec), path, strings.ToLower(method), "403") {
-			t.Errorf("%s %s can return 403 (%s) but openapi.yaml does not document it", method, path, handler)
+			t.Errorf("%s %s is authenticated and can return 403, but openapi.yaml does not document it", method, path)
 		}
 	}
-	if checked < 40 {
-		t.Fatalf("only %d guarded routes found — the extraction is broken", checked)
+	if checked < 80 {
+		t.Fatalf("only %d authenticated routes found — the extraction is broken", checked)
 	}
-}
-
-// guardedHandlers are the handlers that perform a role check, and so can 403.
-func guardedHandlers(t *testing.T) map[string]bool {
-	t.Helper()
-	entries, err := filepath.Glob("handlers_*.go")
-	if err != nil || len(entries) == 0 {
-		t.Fatalf("globbing handlers: %v", err)
-	}
-	fn := regexp.MustCompile(`(?s)func \(a \*API\) (handle\w+)\(w http\.ResponseWriter, r \*http\.Request\) \{(.*?)\n\}\n`)
-	role := regexp.MustCompile(`authorizeResolved|requireProjectRole|requireTeamRole|requirePanelRole`)
-	out := map[string]bool{}
-	for _, f := range entries {
-		body, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatalf("reading %s: %v", f, err)
-		}
-		for _, m := range fn.FindAllStringSubmatch(string(body), -1) {
-			if role.MatchString(m[2]) {
-				out[m[1]] = true
-			}
-		}
-	}
-	return out
 }
 
 // operationDocuments reports whether the spec's path/method block lists status.

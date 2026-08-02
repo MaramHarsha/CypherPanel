@@ -74,7 +74,7 @@ export const getListTemplatesQueryKey = () => {
     }
 
     
-export const getListTemplatesQueryOptions = <TData = Awaited<ReturnType<typeof listTemplates>>, TError = UnauthorizedResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTemplates>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getListTemplatesQueryOptions = <TData = Awaited<ReturnType<typeof listTemplates>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTemplates>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -93,10 +93,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type ListTemplatesQueryResult = NonNullable<Awaited<ReturnType<typeof listTemplates>>>
-export type ListTemplatesQueryError = UnauthorizedResponse
+export type ListTemplatesQueryError = UnauthorizedResponse | ForbiddenResponse
 
 
-export function useListTemplates<TData = Awaited<ReturnType<typeof listTemplates>>, TError = UnauthorizedResponse>(
+export function useListTemplates<TData = Awaited<ReturnType<typeof listTemplates>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTemplates>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listTemplates>>,
@@ -106,7 +106,7 @@ export function useListTemplates<TData = Awaited<ReturnType<typeof listTemplates
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListTemplates<TData = Awaited<ReturnType<typeof listTemplates>>, TError = UnauthorizedResponse>(
+export function useListTemplates<TData = Awaited<ReturnType<typeof listTemplates>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTemplates>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listTemplates>>,
@@ -116,7 +116,7 @@ export function useListTemplates<TData = Awaited<ReturnType<typeof listTemplates
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListTemplates<TData = Awaited<ReturnType<typeof listTemplates>>, TError = UnauthorizedResponse>(
+export function useListTemplates<TData = Awaited<ReturnType<typeof listTemplates>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTemplates>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -124,7 +124,7 @@ export function useListTemplates<TData = Awaited<ReturnType<typeof listTemplates
  * @summary List the bundled template catalog
  */
 
-export function useListTemplates<TData = Awaited<ReturnType<typeof listTemplates>>, TError = UnauthorizedResponse>(
+export function useListTemplates<TData = Awaited<ReturnType<typeof listTemplates>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTemplates>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -174,7 +174,7 @@ export const getGetTemplateQueryKey = (slug?: string,) => {
     }
 
     
-export const getGetTemplateQueryOptions = <TData = Awaited<ReturnType<typeof getTemplate>>, TError = UnauthorizedResponse | NotFoundResponse>(slug: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTemplate>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getGetTemplateQueryOptions = <TData = Awaited<ReturnType<typeof getTemplate>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(slug: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTemplate>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -193,10 +193,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetTemplateQueryResult = NonNullable<Awaited<ReturnType<typeof getTemplate>>>
-export type GetTemplateQueryError = UnauthorizedResponse | NotFoundResponse
+export type GetTemplateQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
 
-export function useGetTemplate<TData = Awaited<ReturnType<typeof getTemplate>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetTemplate<TData = Awaited<ReturnType<typeof getTemplate>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  slug: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTemplate>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getTemplate>>,
@@ -206,7 +206,7 @@ export function useGetTemplate<TData = Awaited<ReturnType<typeof getTemplate>>, 
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetTemplate<TData = Awaited<ReturnType<typeof getTemplate>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetTemplate<TData = Awaited<ReturnType<typeof getTemplate>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  slug: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTemplate>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getTemplate>>,
@@ -216,7 +216,7 @@ export function useGetTemplate<TData = Awaited<ReturnType<typeof getTemplate>>, 
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetTemplate<TData = Awaited<ReturnType<typeof getTemplate>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetTemplate<TData = Awaited<ReturnType<typeof getTemplate>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  slug: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTemplate>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -224,7 +224,7 @@ export function useGetTemplate<TData = Awaited<ReturnType<typeof getTemplate>>, 
  * @summary Get one bundled template
  */
 
-export function useGetTemplate<TData = Awaited<ReturnType<typeof getTemplate>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetTemplate<TData = Awaited<ReturnType<typeof getTemplate>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  slug: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTemplate>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {

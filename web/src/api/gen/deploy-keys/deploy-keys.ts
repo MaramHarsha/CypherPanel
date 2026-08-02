@@ -75,7 +75,7 @@ export const getListDeployKeysQueryKey = () => {
     }
 
     
-export const getListDeployKeysQueryOptions = <TData = Awaited<ReturnType<typeof listDeployKeys>>, TError = UnauthorizedResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDeployKeys>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getListDeployKeysQueryOptions = <TData = Awaited<ReturnType<typeof listDeployKeys>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDeployKeys>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -94,10 +94,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type ListDeployKeysQueryResult = NonNullable<Awaited<ReturnType<typeof listDeployKeys>>>
-export type ListDeployKeysQueryError = UnauthorizedResponse
+export type ListDeployKeysQueryError = UnauthorizedResponse | ForbiddenResponse
 
 
-export function useListDeployKeys<TData = Awaited<ReturnType<typeof listDeployKeys>>, TError = UnauthorizedResponse>(
+export function useListDeployKeys<TData = Awaited<ReturnType<typeof listDeployKeys>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDeployKeys>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listDeployKeys>>,
@@ -107,7 +107,7 @@ export function useListDeployKeys<TData = Awaited<ReturnType<typeof listDeployKe
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListDeployKeys<TData = Awaited<ReturnType<typeof listDeployKeys>>, TError = UnauthorizedResponse>(
+export function useListDeployKeys<TData = Awaited<ReturnType<typeof listDeployKeys>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDeployKeys>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listDeployKeys>>,
@@ -117,7 +117,7 @@ export function useListDeployKeys<TData = Awaited<ReturnType<typeof listDeployKe
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListDeployKeys<TData = Awaited<ReturnType<typeof listDeployKeys>>, TError = UnauthorizedResponse>(
+export function useListDeployKeys<TData = Awaited<ReturnType<typeof listDeployKeys>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDeployKeys>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -125,7 +125,7 @@ export function useListDeployKeys<TData = Awaited<ReturnType<typeof listDeployKe
  * @summary List all deploy keys (public key only)
  */
 
-export function useListDeployKeys<TData = Awaited<ReturnType<typeof listDeployKeys>>, TError = UnauthorizedResponse>(
+export function useListDeployKeys<TData = Awaited<ReturnType<typeof listDeployKeys>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDeployKeys>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -246,7 +246,7 @@ export const getGetDeployKeyQueryKey = (id?: string,) => {
     }
 
     
-export const getGetDeployKeyQueryOptions = <TData = Awaited<ReturnType<typeof getDeployKey>>, TError = UnauthorizedResponse | Error>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDeployKey>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getGetDeployKeyQueryOptions = <TData = Awaited<ReturnType<typeof getDeployKey>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDeployKey>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -265,10 +265,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetDeployKeyQueryResult = NonNullable<Awaited<ReturnType<typeof getDeployKey>>>
-export type GetDeployKeyQueryError = UnauthorizedResponse | Error
+export type GetDeployKeyQueryError = UnauthorizedResponse | ForbiddenResponse | Error
 
 
-export function useGetDeployKey<TData = Awaited<ReturnType<typeof getDeployKey>>, TError = UnauthorizedResponse | Error>(
+export function useGetDeployKey<TData = Awaited<ReturnType<typeof getDeployKey>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDeployKey>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getDeployKey>>,
@@ -278,7 +278,7 @@ export function useGetDeployKey<TData = Awaited<ReturnType<typeof getDeployKey>>
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetDeployKey<TData = Awaited<ReturnType<typeof getDeployKey>>, TError = UnauthorizedResponse | Error>(
+export function useGetDeployKey<TData = Awaited<ReturnType<typeof getDeployKey>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDeployKey>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getDeployKey>>,
@@ -288,7 +288,7 @@ export function useGetDeployKey<TData = Awaited<ReturnType<typeof getDeployKey>>
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetDeployKey<TData = Awaited<ReturnType<typeof getDeployKey>>, TError = UnauthorizedResponse | Error>(
+export function useGetDeployKey<TData = Awaited<ReturnType<typeof getDeployKey>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDeployKey>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -296,7 +296,7 @@ export function useGetDeployKey<TData = Awaited<ReturnType<typeof getDeployKey>>
  * @summary Get a deploy key by ID
  */
 
-export function useGetDeployKey<TData = Awaited<ReturnType<typeof getDeployKey>>, TError = UnauthorizedResponse | Error>(
+export function useGetDeployKey<TData = Awaited<ReturnType<typeof getDeployKey>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDeployKey>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
