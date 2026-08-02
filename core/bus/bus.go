@@ -604,11 +604,22 @@ func parseListenAddr(addr string) (host string, port int, err error) {
 	// A TCP port is a 16-bit value: parse it as one so an out-of-range port
 	// (e.g. ":99999") is rejected here with a clear error rather than at bind
 	// time, and the width is explicit (ParseUint bit size, not a bare Atoi that
-	// could later be narrowed — go/incorrect-integer-conversion). 0 stays valid
-	// (means "pick a free port", used in tests).
+	// could later be narrowed — go/incorrect-integer-conversion).
 	pn, err := strconv.ParseUint(p, 10, 16)
 	if err != nil {
 		return "", 0, fmt.Errorf("bus: parsing listen port %q: %w", p, err)
+	}
+	// Port 0 is the POSIX "give me any free port", and this used to be passed
+	// to nats-server unchanged on the assumption that it meant the same there.
+	// It does not: nats-server reads 0 as "unset" and falls back to the default
+	// 4222, so ":0" silently bound a fixed, privileged-ish, already-popular
+	// port. Its own sentinel for an ephemeral port is RANDOM_PORT (-1). The
+	// symptom was that every bus test failed whenever a cypherd was running on
+	// the same host — two servers fighting over 4222, neither of which had been
+	// asked for it. Bus.Addr() reports whatever was actually bound, so callers
+	// that need the real port already have it.
+	if pn == 0 {
+		return h, natsserver.RANDOM_PORT, nil
 	}
 	return h, int(pn), nil
 }

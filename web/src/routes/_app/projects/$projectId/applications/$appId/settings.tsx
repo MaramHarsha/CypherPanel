@@ -47,6 +47,9 @@ function SettingsForm({
   const [domain, setDomain] = useState(initial.route.domain ?? "");
   const [dockerfile, setDockerfile] = useState(initial.build.dockerfile_path);
   const [context, setContext] = useState(initial.build.context);
+  const [previewEnabled, setPreviewEnabled] = useState(initial.preview_enabled ?? false);
+  const [previewDomain, setPreviewDomain] = useState(initial.preview_base_domain ?? "");
+  const [previewTTL, setPreviewTTL] = useState(String(initial.preview_ttl_hours ?? 72));
 
   const dirty =
     name !== initial.name ||
@@ -54,7 +57,10 @@ function SettingsForm({
     branch !== initial.source.branch ||
     domain !== (initial.route.domain ?? "") ||
     dockerfile !== initial.build.dockerfile_path ||
-    context !== initial.build.context;
+    context !== initial.build.context ||
+    previewEnabled !== (initial.preview_enabled ?? false) ||
+    previewDomain !== (initial.preview_base_domain ?? "") ||
+    previewTTL !== String(initial.preview_ttl_hours ?? 72);
 
   // Dirty forms warn before navigation discards them (ui-principles §6).
   useEffect(() => {
@@ -81,8 +87,17 @@ function SettingsForm({
     },
   });
 
+  const [error, setError] = useState<string | null>(null);
+
   const submit = (e: FormEvent) => {
     e.preventDefault();
+    // The API rejects this combination too; catching it here keeps the user's
+    // typing instead of bouncing them off a toast (ui-principles §1).
+    if (previewEnabled && previewDomain.trim() === "") {
+      setError("A base domain is required to turn previews on — each PR is published at pr-<number>.<domain>.");
+      return;
+    }
+    setError(null);
     update.mutate({
       id: appId,
       data: {
@@ -90,6 +105,9 @@ function SettingsForm({
         source: { ...initial.source, repo, branch },
         build: { ...initial.build, dockerfile_path: dockerfile, context },
         route: { ...initial.route, domain: domain || undefined },
+        preview_enabled: previewEnabled,
+        preview_base_domain: previewDomain.trim(),
+        preview_ttl_hours: Number(previewTTL) || 72,
       },
     });
   };
@@ -118,6 +136,53 @@ function SettingsForm({
             {(id) => <Input id={id} value={context} onChange={(e) => setContext(e.target.value)} className="mono" />}
           </Field>
         </div>
+        {/* Preview environments were reachable in the API but nowhere in the
+            UI, while the Previews tab told the operator to enable them "in
+            Settings" — a dead end (ui-principles §11). */}
+        <Eyebrow className="pt-4">Preview environments</Eyebrow>
+        <p className="text-[12.5px] leading-relaxed text-text-mid">
+          When on, opening a pull request against this repository builds a throwaway copy of the app at its own
+          subdomain, and closing the PR tears it down.
+        </p>
+        <label className="flex items-start gap-2.5 text-[13px]">
+          <input
+            type="checkbox"
+            checked={previewEnabled}
+            onChange={(e) => setPreviewEnabled(e.target.checked)}
+            className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--accent)]"
+          />
+          <span>Create a preview environment for each pull request</span>
+        </label>
+        {previewEnabled && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Base domain" hint="PR #12 becomes pr-12.<base domain>.">
+              {(id) => (
+                <Input
+                  id={id}
+                  value={previewDomain}
+                  onChange={(e) => setPreviewDomain(e.target.value)}
+                  placeholder="preview.example.com"
+                />
+              )}
+            </Field>
+            <Field label="Tear down after (hours)" hint="Backstop for a PR that never closes.">
+              {(id) => (
+                <Input
+                  id={id}
+                  inputMode="numeric"
+                  value={previewTTL}
+                  onChange={(e) => setPreviewTTL(e.target.value)}
+                />
+              )}
+            </Field>
+          </div>
+        )}
+        {error && (
+          <p role="alert" className="rounded-md border border-danger/35 bg-danger/[0.06] px-3 py-2 text-[13px] text-danger">
+            {error}
+          </p>
+        )}
+
         <div className="flex items-center gap-3">
           <Button type="submit" variant="primary" disabled={!dirty || update.isPending}>
             {update.isPending ? "Saving…" : "Save changes"}

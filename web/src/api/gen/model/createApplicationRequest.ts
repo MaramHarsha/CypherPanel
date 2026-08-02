@@ -30,4 +30,10 @@ export interface CreateApplicationRequest {
   ports?: AppPort[];
   /** Plaintext values; sealed before storage, never returned. */
   env_vars?: CreateApplicationRequestEnvVars;
+  /** Whether pull requests against this app's repository create preview environments (preview-environments.md). Off by default. */
+  preview_enabled?: boolean;
+  /** Base domain previews are published under — a PR gets `pr-<number>.<base>`. Required when preview_enabled is true. */
+  preview_base_domain?: string;
+  /** Backstop lifetime for a preview whose PR never closes; defaults to 72 when unset. */
+  preview_ttl_hours?: number;
 }

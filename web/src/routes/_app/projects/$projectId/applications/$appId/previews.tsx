@@ -1,9 +1,10 @@
 // Application · Previews: environments created from pull requests, each with
 // its TTL. Read-mostly — they're created and destroyed by PR lifecycle events
 // (preview-environments.md); the operator can tear one down early.
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { ExternalLink, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { useGetApplication } from "@/api/gen/applications/applications";
 import { useDeletePreview, useListPreviews } from "@/api/gen/previews/previews";
 import type { Preview } from "@/api/gen/model";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
@@ -18,17 +19,38 @@ export const Route = createFileRoute("/_app/projects/$projectId/applications/$ap
 });
 
 function PreviewsTab() {
-  const { appId } = Route.useParams();
+  const { projectId, appId } = Route.useParams();
   const previews = useListPreviews(appId);
+  const app = useGetApplication(appId);
+
+  // An empty list means two different things and they need different answers:
+  // the feature is off, or it is on and no PR is open. Telling someone who has
+  // already enabled it to "enable it in Settings" is a dead end, and until the
+  // spec carried preview_enabled the UI could not tell the two apart
+  // (ui-principles §11).
+  const enabled = app.data?.preview_enabled ?? false;
 
   return (
     <PageState
       query={previews}
       empty={
-        <EmptyState
-          title="No preview environments"
-          hint="Open a pull request against this app's repository and CypherPanel spins up a throwaway copy at its own domain, then tears it down when the PR closes. Enable previews in Settings."
-        />
+        enabled ? (
+          <EmptyState
+            title="No open pull requests"
+            hint={`Previews are on. Open a pull request against ${app.data?.source.branch ?? "the default branch"} and a throwaway copy appears here at its own subdomain, then disappears when the PR closes.`}
+          />
+        ) : (
+          <EmptyState
+            emphasis
+            title="Previews are off for this app"
+            hint="Turn them on and every pull request gets a live copy of the app at its own subdomain, torn down automatically when the PR closes."
+            action={
+              <Link to="/projects/$projectId/applications/$appId/settings" params={{ projectId, appId }}>
+                <Button variant="primary">Turn on previews</Button>
+              </Link>
+            }
+          />
+        )
       }
     >
       {(list) => (

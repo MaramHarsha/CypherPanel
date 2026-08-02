@@ -2207,6 +2207,21 @@ components:
         observed_revision_id:
           type: string
           description: The revision actually serving per the last report.
+        preview_enabled:
+          type: boolean
+          description: >-
+            Whether pull requests against this app's repository create preview
+            environments (preview-environments.md). Off by default.
+        preview_base_domain:
+          type: string
+          description: >-
+            Base domain previews are published under — a PR gets
+            `pr-<number>.<base>`. Required when preview_enabled is true.
+        preview_ttl_hours:
+          type: integer
+          description: >-
+            Backstop lifetime for a preview whose PR never closes; defaults to
+            72 when unset.
         created_at:
           type: string
           format: date-time
@@ -2241,6 +2256,21 @@ components:
           additionalProperties:
             type: string
           description: Plaintext values; sealed before storage, never returned.
+        preview_enabled:
+          type: boolean
+          description: >-
+            Whether pull requests against this app's repository create preview
+            environments (preview-environments.md). Off by default.
+        preview_base_domain:
+          type: string
+          description: >-
+            Base domain previews are published under — a PR gets
+            `pr-<number>.<base>`. Required when preview_enabled is true.
+        preview_ttl_hours:
+          type: integer
+          description: >-
+            Backstop lifetime for a preview whose PR never closes; defaults to
+            72 when unset.
 
     WebhookInfo:
       type: object
@@ -2310,6 +2340,21 @@ components:
           type: array
           items: { $ref: "#/components/schemas/AppPort" }
           description: Present = replace the port set wholesale.
+        preview_enabled:
+          type: boolean
+          description: >-
+            Whether pull requests against this app's repository create preview
+            environments (preview-environments.md). Off by default.
+        preview_base_domain:
+          type: string
+          description: >-
+            Base domain previews are published under — a PR gets
+            `pr-<number>.<base>`. Required when preview_enabled is true.
+        preview_ttl_hours:
+          type: integer
+          description: >-
+            Backstop lifetime for a preview whose PR never closes; defaults to
+            72 when unset.
 
     DeployRequest:
       type: object
