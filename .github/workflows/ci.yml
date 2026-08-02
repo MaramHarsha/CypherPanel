@@ -38,6 +38,14 @@ jobs:
       - name: shellcheck installers
         run: shellcheck install/agent.sh install/install.sh
 
+      # The review bot's policy is pure and dependency-free, so it rides along
+      # in the existing lint job rather than justifying a workflow of its own.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Review-bot policy tests
+        run: node --test .github/review-bot/policy.test.mjs
+
   test:
     name: Unit tests (-race)
     runs-on: ubuntu-latest

@@ -1,0 +1,43 @@
+# Requests cypherpanel-review-bot as a reviewer on new pull requests.
+#
+# pull_request_target so fork PRs also get a reviewer, which means this runs
+# with repository context — so it MUST NOT check out or execute pull-request
+# code. It checks out this repository's own default branch (the implicit
+# actions/checkout ref under this event is the base), runs one Node script, and
+# talks to the API only.
+name: PR review assign
+
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review]
+
+permissions: {}
+
+concurrency:
+  group: review-assign-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  assign:
+    name: Request the review bot
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Base repository, never the PR head. Explicit so it cannot drift.
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Request review
+        env:
+          # The bot's own token: the default GITHUB_TOKEN cannot request a
+          # review as another account.
+          GITHUB_TOKEN: ${{ secrets.CYPHERPANEL_REVIEW_BOT_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node .github/review-bot/run.mjs assign
