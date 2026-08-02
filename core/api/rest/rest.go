@@ -200,17 +200,26 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/logout", a.authed(a.handleLogout))
 	mux.HandleFunc("GET /api/v1/auth/me", a.authed(a.handleMe))
 
-	// Personal access tokens (scoped API tokens for CI/automation). A token
-	// authenticates as its owning user, inheriting that user's authorization.
-	mux.HandleFunc("POST /api/v1/tokens", a.authed(a.handleCreateToken))
-	mux.HandleFunc("GET /api/v1/tokens", a.authed(a.handleListTokens))
-	mux.HandleFunc("DELETE /api/v1/tokens/{id}", a.authed(a.handleDeleteToken))
+	// Live sessions: see where the account is signed in, and sign it out.
+	// Session-only — an API token must not be able to cut off the operator.
+	mux.HandleFunc("GET /api/v1/auth/sessions", a.sessionOnly(a.handleListSessions))
+	mux.HandleFunc("DELETE /api/v1/auth/sessions/{id}", a.sessionOnly(a.handleRevokeSession))
+	mux.HandleFunc("POST /api/v1/auth/sessions/revoke-others", a.sessionOnly(a.handleRevokeOtherSessions))
 
-	// Two-factor authentication (TOTP + recovery codes).
-	mux.HandleFunc("GET /api/v1/auth/totp", a.authed(a.handleTOTPStatus))
-	mux.HandleFunc("POST /api/v1/auth/totp/enroll", a.authed(a.handleTOTPEnroll))
-	mux.HandleFunc("POST /api/v1/auth/totp/verify", a.authed(a.handleTOTPVerify))
-	mux.HandleFunc("POST /api/v1/auth/totp/disable", a.authed(a.handleTOTPDisable))
+	// Personal access tokens (scoped API tokens for CI/automation). A token
+	// authenticates as its owning user, inheriting that user's authorization
+	// narrowed by its abilities. Managing tokens is session-only: a leaked
+	// token must not be able to mint itself a wider one.
+	mux.HandleFunc("POST /api/v1/tokens", a.sessionOnly(a.handleCreateToken))
+	mux.HandleFunc("GET /api/v1/tokens", a.sessionOnly(a.handleListTokens))
+	mux.HandleFunc("DELETE /api/v1/tokens/{id}", a.sessionOnly(a.handleDeleteToken))
+
+	// Two-factor authentication (TOTP + recovery codes). Session-only for the
+	// same reason: turning 2FA off is the last step of an account takeover.
+	mux.HandleFunc("GET /api/v1/auth/totp", a.sessionOnly(a.handleTOTPStatus))
+	mux.HandleFunc("POST /api/v1/auth/totp/enroll", a.sessionOnly(a.handleTOTPEnroll))
+	mux.HandleFunc("POST /api/v1/auth/totp/verify", a.sessionOnly(a.handleTOTPVerify))
+	mux.HandleFunc("POST /api/v1/auth/totp/disable", a.sessionOnly(a.handleTOTPDisable))
 
 	// Public CA certificate (needed by agents to pin the plane; not secret).
 	mux.HandleFunc("GET /api/v1/ca.pem", a.handleCAPem)
@@ -354,10 +363,17 @@ func (a *API) Handler() http.Handler {
 
 type ctxKey int
 
-const userKey ctxKey = iota
+const (
+	principalKey ctxKey = iota
+	rawTokenKey
+)
 
-// authed wraps a handler so it runs only for an authenticated user, which it
-// places in the request context.
+// authed wraps a handler so it runs only for an authenticated caller, whose
+// principal it places in the request context. For a personal access token the
+// request must also be within the token's abilities (feature-matrix V1):
+// safe methods need `read`, deploy triggers need `deploy`, and every other
+// mutation needs `write`. Sessions hold the full set, so interactive use is
+// unchanged.
 func (a *API) authed(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token, ok := bearerToken(r)
@@ -365,14 +381,55 @@ func (a *API) authed(next http.HandlerFunc) http.HandlerFunc {
 			writeError(w, http.StatusUnauthorized, "authentication required")
 			return
 		}
-		user, err := a.deps.Auth.Authenticate(r.Context(), token)
+		principal, err := a.deps.Auth.Authenticate(r.Context(), token)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "invalid or expired session")
 			return
 		}
-		ctx := context.WithValue(r.Context(), userKey, user)
+		if need := requiredAbility(r); !principal.Can(need) {
+			writeError(w, http.StatusForbidden, "this token lacks the "+string(need)+" ability")
+			return
+		}
+		ctx := context.WithValue(r.Context(), principalKey, principal)
+		ctx = context.WithValue(ctx, rawTokenKey, token)
 		next(w, r.WithContext(ctx))
 	}
+}
+
+// sessionOnly further restricts a route to interactive sessions. Credential
+// management — minting tokens, revoking sessions, turning two-factor off — is
+// exactly how a leaked API token would be escalated into durable account
+// takeover, so a token may never reach these routes no matter what abilities it
+// holds (threat-model §5.8).
+func (a *API) sessionOnly(next http.HandlerFunc) http.HandlerFunc {
+	return a.authed(func(w http.ResponseWriter, r *http.Request) {
+		p, ok := principalFromContext(r.Context())
+		if !ok || p.Kind != auth.KindSession {
+			writeError(w, http.StatusForbidden, "this action requires an interactive session, not an API token")
+			return
+		}
+		next(w, r)
+	})
+}
+
+// deployRoutes are the paths whose POST triggers a rollout. Kept as an explicit
+// table rather than a pattern match: a new deploy-shaped route must be a
+// deliberate addition here, never something that silently inherits `write`.
+var deployRoutes = map[string]bool{
+	"deploy":   true, // POST /applications/{id}/deploy
+	"rollback": true, // POST /deployments/{id}/rollback
+}
+
+// requiredAbility maps a request to the ability a token must carry for it.
+func requiredAbility(r *http.Request) domain.Ability {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return domain.AbilityRead
+	}
+	if segs := strings.Split(strings.Trim(r.URL.Path, "/"), "/"); len(segs) > 0 && deployRoutes[segs[len(segs)-1]] {
+		return domain.AbilityDeploy
+	}
+	return domain.AbilityWrite
 }
 
 func (a *API) logRequests(next http.Handler) http.Handler {
@@ -433,9 +490,25 @@ func (w *statusWriter) Flush() {
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
+// userFromContext returns the authenticated caller's user record. Handlers that
+// only care about identity (the overwhelming majority) use this; those that
+// care how the caller authenticated use principalFromContext.
 func userFromContext(ctx context.Context) (domain.User, bool) {
-	u, ok := ctx.Value(userKey).(domain.User)
-	return u, ok
+	p, ok := ctx.Value(principalKey).(auth.Principal)
+	return p.User, ok
+}
+
+func principalFromContext(ctx context.Context) (auth.Principal, bool) {
+	p, ok := ctx.Value(principalKey).(auth.Principal)
+	return p, ok
+}
+
+// rawTokenFromContext returns the bearer token the caller presented. Only the
+// session-management handlers need it, to identify "this device" without
+// trusting a client-supplied id.
+func rawTokenFromContext(ctx context.Context) string {
+	t, _ := ctx.Value(rawTokenKey).(string)
+	return t
 }
 
 func bearerToken(r *http.Request) (string, bool) {

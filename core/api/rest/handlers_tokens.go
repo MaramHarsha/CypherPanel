@@ -16,13 +16,15 @@ import (
 const maxTokenExpiryDays = 3650
 
 type createTokenRequest struct {
-	Name          string `json:"name"`
-	ExpiresInDays int    `json:"expires_in_days"` // 0 = never expires
+	Name          string   `json:"name"`
+	ExpiresInDays int      `json:"expires_in_days"` // 0 = never expires
+	Abilities     []string `json:"abilities"`       // empty = full access (read, write, deploy)
 }
 
 type tokenDTO struct {
 	ID         string     `json:"id"`
 	Name       string     `json:"name"`
+	Abilities  []string   `json:"abilities"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`
@@ -36,9 +38,14 @@ type createTokenResponse struct {
 }
 
 func toTokenDTO(t domain.APIToken) tokenDTO {
+	abilities := make([]string, 0, len(t.Abilities))
+	for _, a := range t.Abilities {
+		abilities = append(abilities, string(a))
+	}
 	return tokenDTO{
 		ID:         t.ID,
 		Name:       t.Name,
+		Abilities:  abilities,
 		LastUsedAt: t.LastUsedAt,
 		ExpiresAt:  t.ExpiresAt,
 		CreatedAt:  t.CreatedAt,
@@ -71,7 +78,22 @@ func (a *API) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		expiresAt = &t
 	}
 
-	raw, tok, err := a.deps.Auth.CreateToken(r.Context(), user.ID, req.Name, expiresAt)
+	// An omitted ability list means "same authority as before this feature
+	// existed" — full access — so existing clients keep working; an explicit
+	// list is validated against the vocabulary.
+	abilities := domain.AllAbilities()
+	if len(req.Abilities) > 0 {
+		abilities = abilities[:0]
+		for _, s := range req.Abilities {
+			abilities = append(abilities, domain.Ability(s))
+		}
+	}
+
+	raw, tok, err := a.deps.Auth.CreateToken(r.Context(), user.ID, req.Name, abilities, expiresAt)
+	if errors.Is(err, auth.ErrInvalidAbility) {
+		writeError(w, http.StatusBadRequest, "abilities must be a non-empty subset of read, write, deploy")
+		return
+	}
 	if err != nil {
 		a.deps.Log.Error("creating api token", "error", err)
 		writeError(w, http.StatusInternalServerError, "could not create token")

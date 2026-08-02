@@ -16,6 +16,7 @@ type ApiToken struct {
 	LastUsedAt pgtype.Timestamptz
 	ExpiresAt  pgtype.Timestamptz
 	CreatedAt  pgtype.Timestamptz
+	Abilities  []string
 }
 
 type AppEnvVar struct {

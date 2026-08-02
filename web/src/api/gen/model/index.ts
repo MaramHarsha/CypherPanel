@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.3.0
  */
 
+export * from './ability';
 export * from './addMemberRequest';
 export * from './addMemberRequestRole';
 export * from './apiToken';
@@ -112,6 +113,7 @@ export * from './projectDetail';
 export * from './renameTeamRequest';
 export * from './resetPasswordResponse';
 export * from './restoreRequest';
+export * from './revokeOtherSessions200';
 export * from './runBackupResponse';
 export * from './scheduledTask';
 export * from './scheduledTaskRun';
@@ -123,6 +125,7 @@ export * from './serverEnrolledAt';
 export * from './serverLastSeenAt';
 export * from './serverRole';
 export * from './serverStatus';
+export * from './session';
 export * from './setEnvVarRequest';
 export * from './setUserRoleRequest';
 export * from './setUserRoleRequestRole';

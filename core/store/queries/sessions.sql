@@ -15,3 +15,21 @@ DELETE FROM sessions WHERE token_hash = $1;
 
 -- name: DeleteExpiredSessions :exec
 DELETE FROM sessions WHERE expires_at <= now();
+
+-- name: ListSessionsByUser :many
+-- Live sessions only: an expired row is already unusable, so showing it would
+-- invite the operator to "revoke" something that is not a way in.
+SELECT id, user_id, expires_at, created_at
+FROM sessions
+WHERE user_id = $1 AND expires_at > now()
+ORDER BY created_at DESC;
+
+-- name: DeleteSessionForUser :execrows
+-- Scoped by user_id so one account can never revoke another's session; the
+-- affected-row count tells the caller whether the id was theirs.
+DELETE FROM sessions WHERE id = $1 AND user_id = $2;
+
+-- name: DeleteOtherSessionsForUser :execrows
+-- "Sign out everywhere else": every session of this user except the one making
+-- the request, identified by its token hash (never by an id the client sends).
+DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2;

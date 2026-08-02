@@ -176,6 +176,77 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/v1/auth/sessions:
+    get:
+      operationId: listSessions
+      tags: [auth]
+      summary: List the caller's live sessions
+      description: >
+        Every device currently signed in to this account. Requires an
+        interactive session — a personal access token may not manage sessions.
+      responses:
+        "200":
+          description: Live sessions, newest first. No token material is included.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Session"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/auth/sessions/{id}:
+    delete:
+      operationId: revokeSession
+      tags: [auth]
+      summary: Sign one session out
+      description: >
+        Revokes a single session belonging to the caller. A session id that is
+        not the caller's is reported as not found.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Session revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/auth/sessions/revoke-others:
+    post:
+      operationId: revokeOtherSessions
+      tags: [auth]
+      summary: Sign out everywhere except this device
+      description: >
+        Revokes every session of the caller except the one making the request,
+        identified by the presented bearer token.
+      responses:
+        "200":
+          description: How many sessions were revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revoked]
+                properties:
+                  revoked:
+                    type: integer
+                    format: int64
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /api/v1/tokens:
     get:
       operationId: listTokens
@@ -1931,9 +2002,35 @@ components:
         user:
           $ref: "#/components/schemas/User"
 
+    Session:
+      type: object
+      required: [id, current, created_at, expires_at]
+      properties:
+        id:
+          type: string
+          description: sess_… prefixed ID.
+        current:
+          type: boolean
+          description: True for the session making this request.
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+
+    Ability:
+      type: string
+      enum: [read, write, deploy]
+      description: >
+        What a personal access token may do. `read` permits safe methods,
+        `write` permits creating and changing resources, `deploy` permits
+        triggering deploys and rollbacks. A token's authority is the
+        intersection of its owner's role and its abilities.
+
     ApiToken:
       type: object
-      required: [id, name, created_at]
+      required: [id, name, abilities, created_at]
       properties:
         id:
           type: string
@@ -1941,6 +2038,10 @@ components:
         name:
           type: string
           description: Human-readable label.
+        abilities:
+          type: array
+          items:
+            $ref: "#/components/schemas/Ability"
         last_used_at:
           type: string
           format: date-time
@@ -1965,6 +2066,13 @@ components:
           description: Lifetime in days; 0 or omitted means the token never expires.
           minimum: 0
           maximum: 3650
+        abilities:
+          type: array
+          description: >
+            What this token may do. Omitted means full access (read, write,
+            deploy); an explicit empty list is rejected.
+          items:
+            $ref: "#/components/schemas/Ability"
 
     CreateTokenResponse:
       allOf:

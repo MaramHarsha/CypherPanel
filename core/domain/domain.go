@@ -90,13 +90,64 @@ type JoinToken struct {
 }
 
 // APIToken is a personal access token: a credential that authenticates as its
-// owning user, inheriting that user's role and team memberships (the scope).
-// Only the hash is persisted; the raw token is shown exactly once at creation.
+// owning user, inheriting that user's role and team memberships, narrowed
+// further by its abilities. Only the hash is persisted; the raw token is shown
+// exactly once at creation.
 type APIToken struct {
 	ID         string
 	UserID     string
 	Name       string
+	Abilities  []Ability
 	LastUsedAt *time.Time
 	ExpiresAt  *time.Time // nil = never expires
 	CreatedAt  time.Time
+}
+
+// Ability scopes what a personal access token may do (feature-matrix V1). A
+// token's authority is the intersection of its owner's role and these: an
+// ability never grants access to a resource the user cannot already reach.
+type Ability string
+
+const (
+	// AbilityRead permits safe, non-mutating requests (GET/HEAD).
+	AbilityRead Ability = "read"
+	// AbilityWrite permits creating, changing, and deleting resources.
+	AbilityWrite Ability = "write"
+	// AbilityDeploy permits triggering deploys and rollbacks — separated from
+	// write so a CI credential can ship code without also being able to delete
+	// the application it deploys.
+	AbilityDeploy Ability = "deploy"
+)
+
+// ValidAbility reports whether a is a known ability.
+func ValidAbility(a Ability) bool {
+	switch a {
+	case AbilityRead, AbilityWrite, AbilityDeploy:
+		return true
+	}
+	return false
+}
+
+// AllAbilities is the full set — what a session holds, and the default for a
+// token created without an explicit choice.
+func AllAbilities() []Ability { return []Ability{AbilityRead, AbilityWrite, AbilityDeploy} }
+
+// Has reports whether the set contains want.
+func HasAbility(set []Ability, want Ability) bool {
+	for _, a := range set {
+		if a == want {
+			return true
+		}
+	}
+	return false
+}
+
+// Session is one live sign-in. The token hash is deliberately absent: nothing
+// outside the store ever needs it, and a session list must never carry
+// material that could be replayed.
+type Session struct {
+	ID        string
+	UserID    string
+	ExpiresAt time.Time
+	CreatedAt time.Time
 }

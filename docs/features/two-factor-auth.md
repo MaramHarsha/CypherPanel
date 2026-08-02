@@ -74,6 +74,25 @@ unchanged). Then, for a 2FA-enabled account:
   only `used_at IS NULL` and returns the row, so a concurrent reuse cannot
   double-spend).
 
+## 3a. Enrollment UI
+
+Settings → Account carries the whole flow, and it is deliberately linear so
+enrollment cannot be left half-finished: **turn on** → the panel returns a
+pending secret, rendered as a QR code *and* as a copyable key for manual entry
+→ **confirm a code** → the ten recovery codes are shown once, with a copy
+control and an explicit "I saved them" acknowledgement. The server only enables
+2FA after a verified code, so abandoning the dialog at any point leaves the
+account exactly as it was.
+
+The QR is drawn client-side as inline SVG from the `otpauth_uri`
+(`web/src/components/qr-code.tsx`) — an enrollment secret never travels to a
+third-party image service, which is the entire point of self-hosting.
+
+Turning 2FA **off** demands a live factor (an authenticator code or an unused
+recovery code) in the same dialog, and the route — like the rest of credential
+management — is reachable only from an interactive session, never an API token
+([api-tokens.md](api-tokens.md) §1).
+
 ## 4. Security properties (threat-model §5)
 
 - Secret sealed at rest; recovery codes hashed; both shown/entered once.

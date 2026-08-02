@@ -11,24 +11,56 @@
 ## 1. Model
 
 A **personal access token** is an opaque bearer credential that authenticates as
-its **owning user**. It carries no authorization of its own: every request it
-makes is authorized exactly as if that user made it — same panel role, same team
-memberships. That inheritance *is* the token's scope. A member's token can do
-what the member can do; an owner's token can do what the owner can do. This is
-the GitHub-classic-PAT model, and it composes for free with the existing
-teams-and-roles authorization ([teams-and-roles.md](teams-and-roles.md)) —
-handlers already resolve the acting user, and a token simply supplies one.
+its **owning user**, narrowed by its **abilities**. Every request it makes is
+authorized as if that user made it — same panel role, same team memberships —
+and then further checked against what the token itself may do. A token's
+authority is therefore the *intersection*: it can never reach something its
+owner could not. This composes for free with the existing teams-and-roles
+authorization ([teams-and-roles.md](teams-and-roles.md)) — handlers already
+resolve the acting user, and a token simply supplies one.
 
 ```
 APIToken:
   id            tok_… (public identifier; safe to display and to name in URLs)
   user_id       → the owning user (ON DELETE CASCADE — deleting the user revokes)
   name          human label ("ci-deploy", "laptop"), 1–100 chars
+  abilities     TEXT[] ⊆ {read, write, deploy}, non-empty
   token_hash    sha256(raw)   — only the hash is stored, never the raw token
   last_used_at  set on each successful authentication (best-effort)
   expires_at    NULL = never expires
   created_at
 ```
+
+### Abilities
+
+| Ability | Permits |
+|---|---|
+| `read` | Safe methods: `GET`, `HEAD`, `OPTIONS` |
+| `write` | Creating, changing, and deleting resources |
+| `deploy` | Triggering deploys and rollbacks (`POST …/deploy`, `POST …/rollback`) |
+
+Deploy is separated from write so a CI credential can ship code without also
+being able to delete the application it deploys. The required ability is derived
+from the request in one place (`requiredAbility` in `core/api/rest/rest.go`),
+and the deploy-triggering paths are an explicit table rather than a pattern —
+a new deploy-shaped route must be added deliberately, never inherit `write` by
+accident. A token missing the required ability gets `403` naming what it lacks.
+
+An omitted ability list on create means the full set, so clients written before
+this existed keep working; an explicitly empty list is **rejected** rather than
+silently widened — a credential's authority is always a deliberate choice.
+Existing tokens were migrated with the full set (migration `0018`), so no live
+credential changed authority.
+
+### Credential management is session-only
+
+Minting tokens, listing/revoking sessions, and turning two-factor off are
+reachable **only from an interactive session**, never from an API token, no
+matter its abilities. This is the difference between a leaked CI credential
+being a bounded incident and being durable account takeover: a token cannot
+mint itself a wider token, cannot sign the operator out, and cannot remove the
+second factor. Enforced by the `sessionOnly` wrapper, asserted by
+`TestCredentialRoutesRejectAPITokens`.
 
 **Secret discipline.** The raw token is `cyp_<secret>` and is returned exactly
 once, in the create response — never again, by any endpoint. Only its SHA-256 is
@@ -85,13 +117,15 @@ resource is gated. Cross-user administration of tokens is not a v1 need.
 
 ## 5. Out of scope this slice
 
-- **Fine-grained per-token abilities** (read-only vs deploy-only vs full, the
-  "read/write/deploy" ability model in the feature-matrix reference). V1 scope
-  is user-role inheritance; per-token capability narrowing is a follow-on that
-  slots in as an added predicate at the same handler seam as object-level
-  authz — no schema change to the credential itself, just an abilities column.
 - Token rotation endpoints (revoke + create covers it), org/service accounts
   decoupled from a human user, and last-used IP/user-agent metadata.
+- Per-resource token scoping ("this token may deploy *only* app X"). The
+  ability model narrows *what kind* of action, not *which* resource; resource
+  scoping is a follow-on that slots in at the same handler seam as object-level
+  authz.
+
+*(Per-token abilities were listed here as out of scope when this spec was
+written on 2026-07-21; they landed on 2026-08-02 and are specified in §1.)*
 
 ## 6. Acceptance (testable)
 
@@ -102,3 +136,11 @@ resource is gated. Cross-user administration of tokens is not a v1 need.
 4. An expired token is 401 (auth unit test + real-Postgres store test on the
    `expires_at` SQL filter).
 5. Deleting the user cascades to their tokens (real-Postgres store test).
+6. Abilities are enforced per request: a `read` token cannot create, delete, or
+   deploy; a `write` token cannot deploy or rollback; a `deploy` token cannot
+   change configuration (`TestAPITokenAbilitiesAreEnforced`, a method/path
+   matrix). A session is never narrowed (`TestSessionUnaffectedByAbilities`).
+7. An empty or unknown ability set is refused at creation
+   (`TestCreateTokenRejectsBadAbilities`).
+8. No API token, however privileged, can reach token, session, or two-factor
+   management (`TestCredentialRoutesRejectAPITokens`).

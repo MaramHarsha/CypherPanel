@@ -5,18 +5,12 @@
  * Operator-facing control-plane API covering Phases 1–3: authentication and teams/roles, the server lifecycle, projects/environments, applications and the deploy pipeline, managed databases with S3 backups/restore, preview environments, notifications, and scheduled tasks. Authentication is a bearer session token from /api/v1/auth/login; the GitHub webhook authenticates by per-application HMAC instead. Every project-scoped route is authorized by team membership (a non-member sees 404, insufficient rank 403).
  * OpenAPI spec version: 0.3.0
  */
-import type { Ability } from './ability';
 
-export interface CreateTokenRequest {
-  /** Human-readable label (1–100 characters). */
-  name: string;
-  /**
-   * Lifetime in days; 0 or omitted means the token never expires.
-   * @minimum 0
-   * @maximum 3650
-   */
-  expires_in_days?: number;
-  /** What this token may do. Omitted means full access (read, write, deploy); an explicit empty list is rejected.
- */
-  abilities?: Ability[];
+export interface Session {
+  /** sess_… prefixed ID. */
+  id: string;
+  /** True for the session making this request. */
+  current: boolean;
+  created_at: string;
+  expires_at: string;
 }

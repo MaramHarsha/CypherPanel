@@ -120,29 +120,67 @@ func (f *fakeAuthStore) DeleteSession(_ context.Context, tokenHash []byte) error
 	return nil
 }
 
-func (f *fakeAuthStore) CreateAPIToken(_ context.Context, id, userID, name string, tokenHash []byte, expiresAt *time.Time) (domain.APIToken, error) {
+func (f *fakeAuthStore) CreateAPIToken(_ context.Context, id, userID, name string, abilities []domain.Ability, tokenHash []byte, expiresAt *time.Time) (domain.APIToken, error) {
 	if f.tokens == nil {
 		f.tokens, f.byHash = map[string]domain.APIToken{}, map[string]string{}
 	}
-	tok := domain.APIToken{ID: id, UserID: userID, Name: name, ExpiresAt: expiresAt, CreatedAt: time.Now()}
+	tok := domain.APIToken{ID: id, UserID: userID, Name: name, Abilities: abilities, ExpiresAt: expiresAt, CreatedAt: time.Now()}
 	f.tokens[id] = tok
 	f.byHash[string(tokenHash)] = id
 	return tok, nil
 }
 
-func (f *fakeAuthStore) UserForAPIToken(_ context.Context, tokenHash []byte) (domain.User, error) {
+func (f *fakeAuthStore) APITokenByHash(_ context.Context, tokenHash []byte) (domain.User, string, []domain.Ability, error) {
 	id, ok := f.byHash[string(tokenHash)]
 	if !ok {
-		return domain.User{}, store.ErrNotFound
+		return domain.User{}, "", nil, store.ErrNotFound
 	}
 	tok := f.tokens[id]
 	if tok.ExpiresAt != nil && !tok.ExpiresAt.After(time.Now()) {
-		return domain.User{}, store.ErrNotFound
+		return domain.User{}, "", nil, store.ErrNotFound
 	}
 	if tok.UserID != f.user.ID {
-		return domain.User{}, store.ErrNotFound
+		return domain.User{}, "", nil, store.ErrNotFound
 	}
-	return f.user, nil
+	return f.user, tok.ID, tok.Abilities, nil
+}
+
+func (f *fakeAuthStore) SessionIDForToken(_ context.Context, tokenHash []byte) (string, error) {
+	if _, ok := f.sessions[string(tokenHash)]; !ok {
+		return "", store.ErrNotFound
+	}
+	return "sess_" + string(tokenHash), nil
+}
+
+func (f *fakeAuthStore) ListSessionsByUser(_ context.Context, userID string) ([]domain.Session, error) {
+	var out []domain.Session
+	for hash, u := range f.sessions {
+		if u.ID == userID {
+			out = append(out, domain.Session{ID: "sess_" + hash, UserID: u.ID, ExpiresAt: time.Now().Add(time.Hour)})
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeAuthStore) DeleteSessionForUser(_ context.Context, sessionID, userID string) (bool, error) {
+	for hash, u := range f.sessions {
+		if "sess_"+hash == sessionID && u.ID == userID {
+			delete(f.sessions, hash)
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (f *fakeAuthStore) DeleteOtherSessionsForUser(_ context.Context, userID string, keepTokenHash []byte) (int64, error) {
+	var n int64
+	for hash, u := range f.sessions {
+		if u.ID == userID && hash != string(keepTokenHash) {
+			delete(f.sessions, hash)
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (f *fakeAuthStore) TouchAPIToken(_ context.Context, _ []byte) error { return nil }
@@ -1614,4 +1652,146 @@ func TestDeleteProjectRefusesWhileResourcesRemain(t *testing.T) {
 			t.Errorf("refusal should name what remains, got %s", resp)
 		}
 	})
+}
+
+// ─── API token abilities and session-only routes ────────────────────────────
+
+// createToken mints a token with the given abilities via the API and returns
+// its raw secret.
+func createToken(t *testing.T, ts *httptest.Server, session, name, abilitiesJSON string) string {
+	t.Helper()
+	body := `{"name":"` + name + `","abilities":` + abilitiesJSON + `}`
+	status, _, resp := doJSON(t, "POST", ts.URL+"/api/v1/tokens", session, body)
+	if status != http.StatusCreated {
+		t.Fatalf("createToken(%s): status %d body %s", name, status, resp)
+	}
+	var tr struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(resp, &tr); err != nil || tr.Token == "" {
+		t.Fatalf("createToken response %s: %v", resp, err)
+	}
+	return tr.Token
+}
+
+// A token may only do what its abilities allow: read cannot mutate, write
+// cannot trigger a deploy, deploy cannot mutate configuration.
+func TestAPITokenAbilitiesAreEnforced(t *testing.T) {
+	ts, _, _, _ := newTestServerFull(t)
+	session := login(t, ts)
+
+	readOnly := createToken(t, ts, session, "readonly", `["read"]`)
+	writeOnly := createToken(t, ts, session, "writeonly", `["write"]`)
+	deployOnly := createToken(t, ts, session, "deployonly", `["deploy"]`)
+
+	cases := []struct {
+		name   string
+		token  string
+		method string
+		path   string
+		body   string
+		want   string // "allowed" (not 403) or "forbidden"
+	}{
+		{"read token GETs", readOnly, "GET", "/api/v1/projects", "", "allowed"},
+		{"read token cannot create", readOnly, "POST", "/api/v1/projects", `{"name":"x"}`, "forbidden"},
+		{"read token cannot delete", readOnly, "DELETE", "/api/v1/applications/app_x", "", "forbidden"},
+		{"read token cannot deploy", readOnly, "POST", "/api/v1/applications/app_x/deploy", `{}`, "forbidden"},
+		{"write token creates", writeOnly, "POST", "/api/v1/projects", `{"name":"x"}`, "allowed"},
+		{"write token cannot deploy", writeOnly, "POST", "/api/v1/applications/app_x/deploy", `{}`, "forbidden"},
+		{"write token cannot rollback", writeOnly, "POST", "/api/v1/deployments/dep_x/rollback", `{}`, "forbidden"},
+		{"write token cannot read", writeOnly, "GET", "/api/v1/projects", "", "forbidden"},
+		{"deploy token deploys", deployOnly, "POST", "/api/v1/applications/app_x/deploy", `{}`, "allowed"},
+		{"deploy token cannot create", deployOnly, "POST", "/api/v1/projects", `{"name":"x"}`, "forbidden"},
+	}
+	for _, c := range cases {
+		status, _, body := doJSON(t, c.method, ts.URL+c.path, c.token, c.body)
+		forbidden := status == http.StatusForbidden
+		if c.want == "forbidden" && !forbidden {
+			t.Errorf("%s: status %d, want 403 (body %s)", c.name, status, body)
+		}
+		if c.want == "allowed" && forbidden {
+			t.Errorf("%s: got 403, want the ability to permit it (body %s)", c.name, body)
+		}
+	}
+}
+
+// A session is never narrowed: interactive use keeps every ability.
+func TestSessionUnaffectedByAbilities(t *testing.T) {
+	ts, _, _, _ := newTestServerFull(t)
+	session := login(t, ts)
+	for _, c := range []struct{ method, path, body string }{
+		{"GET", "/api/v1/projects", ""},
+		{"POST", "/api/v1/projects", `{"name":"p"}`},
+		{"POST", "/api/v1/applications/app_x/deploy", `{}`},
+	} {
+		if status, _, body := doJSON(t, c.method, ts.URL+c.path, session, c.body); status == http.StatusForbidden {
+			t.Errorf("%s %s: session was refused (%s)", c.method, c.path, body)
+		}
+	}
+}
+
+// Credential management is session-only: a leaked API token must not be able to
+// mint a wider token, cut off the operator's sessions, or disable two-factor.
+func TestCredentialRoutesRejectAPITokens(t *testing.T) {
+	ts, _, _, _ := newTestServerFull(t)
+	session := login(t, ts)
+	full := createToken(t, ts, session, "full", `["read","write","deploy"]`)
+
+	for _, c := range []struct{ method, path, body string }{
+		{"POST", "/api/v1/tokens", `{"name":"escalated"}`},
+		{"GET", "/api/v1/tokens", ""},
+		{"DELETE", "/api/v1/tokens/tok_x", ""},
+		{"GET", "/api/v1/auth/sessions", ""},
+		{"DELETE", "/api/v1/auth/sessions/sess_x", ""},
+		{"POST", "/api/v1/auth/sessions/revoke-others", ""},
+		{"GET", "/api/v1/auth/totp", ""},
+		{"POST", "/api/v1/auth/totp/disable", `{"code":"000000"}`},
+	} {
+		status, _, body := doJSON(t, c.method, ts.URL+c.path, full, c.body)
+		if status != http.StatusForbidden {
+			t.Errorf("%s %s via API token: status %d, want 403 (body %s)", c.method, c.path, status, body)
+		}
+	}
+}
+
+// The session list marks the caller's own entry, and revoke-others leaves it
+// as the only survivor.
+func TestSessionListAndRevokeOthers(t *testing.T) {
+	ts, _, _, _ := newTestServerFull(t)
+	mine := login(t, ts)
+	other := login(t, ts)
+
+	status, _, body := doJSON(t, "GET", ts.URL+"/api/v1/auth/sessions", mine, "")
+	if status != http.StatusOK {
+		t.Fatalf("list sessions: status %d body %s", status, body)
+	}
+	var sessions []struct {
+		ID      string `json:"id"`
+		Current bool   `json:"current"`
+	}
+	if err := json.Unmarshal(body, &sessions); err != nil {
+		t.Fatalf("unmarshal sessions %s: %v", body, err)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("got %d sessions, want 2", len(sessions))
+	}
+	current := 0
+	for _, s := range sessions {
+		if s.Current {
+			current++
+		}
+	}
+	if current != 1 {
+		t.Fatalf("%d sessions marked current, want exactly 1", current)
+	}
+
+	if status, _, body = doJSON(t, "POST", ts.URL+"/api/v1/auth/sessions/revoke-others", mine, ""); status != http.StatusOK {
+		t.Fatalf("revoke-others: status %d body %s", status, body)
+	}
+	if status, _, _ = doJSON(t, "GET", ts.URL+"/api/v1/auth/me", mine, ""); status != http.StatusOK {
+		t.Fatalf("caller's own session was revoked: status %d", status)
+	}
+	if status, _, _ = doJSON(t, "GET", ts.URL+"/api/v1/auth/me", other, ""); status != http.StatusUnauthorized {
+		t.Fatalf("other session survived revoke-others: status %d", status)
+	}
 }

@@ -41,27 +41,65 @@ func (f *fakeStore) userByID(id string) (domain.User, bool) {
 	return domain.User{}, false
 }
 
-func (f *fakeStore) CreateAPIToken(_ context.Context, id, userID, name string, tokenHash []byte, expiresAt *time.Time) (domain.APIToken, error) {
-	tok := domain.APIToken{ID: id, UserID: userID, Name: name, ExpiresAt: expiresAt, CreatedAt: time.Now()}
+func (f *fakeStore) CreateAPIToken(_ context.Context, id, userID, name string, abilities []domain.Ability, tokenHash []byte, expiresAt *time.Time) (domain.APIToken, error) {
+	tok := domain.APIToken{ID: id, UserID: userID, Name: name, Abilities: abilities, ExpiresAt: expiresAt, CreatedAt: time.Now()}
 	f.tokens[id] = tok
 	f.byHash[string(tokenHash)] = id
 	return tok, nil
 }
 
-func (f *fakeStore) UserForAPIToken(_ context.Context, tokenHash []byte) (domain.User, error) {
+func (f *fakeStore) APITokenByHash(_ context.Context, tokenHash []byte) (domain.User, string, []domain.Ability, error) {
 	id, ok := f.byHash[string(tokenHash)]
 	if !ok {
-		return domain.User{}, store.ErrNotFound
+		return domain.User{}, "", nil, store.ErrNotFound
 	}
 	tok := f.tokens[id]
 	if tok.ExpiresAt != nil && !tok.ExpiresAt.After(time.Now()) {
-		return domain.User{}, store.ErrNotFound
+		return domain.User{}, "", nil, store.ErrNotFound
 	}
 	u, ok := f.userByID(tok.UserID)
 	if !ok {
-		return domain.User{}, store.ErrNotFound
+		return domain.User{}, "", nil, store.ErrNotFound
 	}
-	return u, nil
+	return u, tok.ID, tok.Abilities, nil
+}
+
+func (f *fakeStore) SessionIDForToken(_ context.Context, tokenHash []byte) (string, error) {
+	if _, ok := f.sessions[string(tokenHash)]; !ok {
+		return "", store.ErrNotFound
+	}
+	return "sess_" + string(tokenHash), nil
+}
+
+func (f *fakeStore) ListSessionsByUser(_ context.Context, userID string) ([]domain.Session, error) {
+	var out []domain.Session
+	for hash, uid := range f.sessions {
+		if uid == userID {
+			out = append(out, domain.Session{ID: "sess_" + hash, UserID: uid, ExpiresAt: time.Now().Add(time.Hour)})
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) DeleteSessionForUser(_ context.Context, sessionID, userID string) (bool, error) {
+	for hash, uid := range f.sessions {
+		if "sess_"+hash == sessionID && uid == userID {
+			delete(f.sessions, hash)
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (f *fakeStore) DeleteOtherSessionsForUser(_ context.Context, userID string, keepTokenHash []byte) (int64, error) {
+	var n int64
+	for hash, uid := range f.sessions {
+		if uid == userID && hash != string(keepTokenHash) {
+			delete(f.sessions, hash)
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (f *fakeStore) TouchAPIToken(_ context.Context, tokenHash []byte) error {
@@ -223,8 +261,11 @@ func TestLoginSuccessIssuesUsableSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Authenticate: %v", err)
 	}
-	if got.ID != "usr_1" {
-		t.Fatalf("Authenticate resolved wrong user: %q", got.ID)
+	if got.User.ID != "usr_1" {
+		t.Fatalf("Authenticate resolved wrong user: %q", got.User.ID)
+	}
+	if got.Kind != KindSession {
+		t.Fatalf("principal kind = %q, want session", got.Kind)
 	}
 }
 
