@@ -8,6 +8,7 @@ import { useCreateDatabase, useListDatabases } from "@/api/gen/databases/databas
 import { useGetProject, useListEnvironments } from "@/api/gen/projects/projects";
 import { useListServers } from "@/api/gen/servers/servers";
 import type { Application, CreateDatabaseRequest, Database, Environment } from "@/api/gen/model";
+import { CopyField } from "@/components/copy-field";
 import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
 import { PageBody, PageHeader } from "@/components/page-header";
@@ -258,10 +259,16 @@ function NewDatabaseDialog({ envId, primary }: { envId: string; primary?: boolea
   const enrolled = (servers.data ?? []).filter((s) => s.enrolled);
   const chosenServer = serverId || enrolled[0]?.id || "";
 
+  // The root password exists in plaintext exactly once, in the create
+  // response. Navigating straight to the database threw it away, and nothing
+  // can recover it afterwards — the stored copy is sealed. So the dialog stays
+  // open and hands it over first (ui-principles §6: every generated value gets
+  // a copy button).
+  const [created, setCreated] = useState<{ id: string; password: string } | null>(null);
+
   const create = useCreateDatabase({
     mutation: {
-      onSuccess: (res) =>
-        void navigate({ to: "/projects/$projectId/databases/$dbId", params: { projectId, dbId: res.database.id } }),
+      onSuccess: (res) => setCreated({ id: res.database.id, password: res.root_password }),
       onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not create the database"),
     },
   });
@@ -284,12 +291,33 @@ function NewDatabaseDialog({ envId, primary }: { envId: string; primary?: boolea
   };
 
   return (
-    <Dialog>
+    <Dialog onOpenChange={(open) => !open && setCreated(null)}>
       <DialogTrigger asChild>
         <Button variant="primary" size={primary ? "lg" : "md"}>
           <Plus className="h-3.5 w-3.5" /> New database
         </Button>
       </DialogTrigger>
+      {created ? (
+        <DialogContent
+          title="Copy the root password now"
+          description="This is the only time it is shown — the stored copy is sealed and cannot be read back."
+        >
+          <CopyField value={created.password} />
+          <div className="mt-5 flex justify-end">
+            <Button
+              variant="primary"
+              onClick={() =>
+                void navigate({
+                  to: "/projects/$projectId/databases/$dbId",
+                  params: { projectId, dbId: created.id },
+                })
+              }
+            >
+              I've saved it — open the database
+            </Button>
+          </div>
+        </DialogContent>
+      ) : (
       <DialogContent title="Create a database" description="CypherPanel provisions the engine, generates credentials, and can back it up on a schedule.">
         <form onSubmit={submit} className="space-y-4">
           <Field label="Name">
@@ -366,6 +394,7 @@ function NewDatabaseDialog({ envId, primary }: { envId: string; primary?: boolea
           </div>
         </form>
       </DialogContent>
+      )}
     </Dialog>
   );
 }

@@ -97,8 +97,18 @@ func TestMemberCanReadButNotDelete(t *testing.T) {
 func TestAdminCanDeleteProject(t *testing.T) {
 	ts := newAuthzServer(t, domain.RoleMember, domain.RoleAdmin)
 	token := login(t, ts)
-	if status, _, _ := doJSON(t, "DELETE", ts.URL+"/api/v1/projects/prj_test", token, ""); status != http.StatusNoContent {
-		t.Fatalf("admin project DELETE = %d, want 204", status)
+	// This asserts authorization, not cascade semantics: the fixture's project
+	// holds app_x, so an authorized admin is answered 409 ("still contains an
+	// application") rather than 204. What matters here is that it is not 403 —
+	// the member in the test above is. Keeping the distinction explicit means
+	// this test fails loudly if the role check ever regresses into the
+	// resource-state check.
+	status, _, body := doJSON(t, "DELETE", ts.URL+"/api/v1/projects/prj_test", token, "")
+	if status == http.StatusForbidden {
+		t.Fatalf("admin project DELETE = 403, want to be authorized; body %s", body)
+	}
+	if status != http.StatusConflict {
+		t.Fatalf("admin project DELETE = %d, want 409 (project still holds app_x); body %s", status, body)
 	}
 }
 

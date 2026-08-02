@@ -38,7 +38,11 @@ function DatabaseOverview() {
     mutation: {
       onSuccess: (res) => {
         invalidate();
-        setNewPassword((res as { password?: string }).password ?? null);
+        // The field is root_password. This used to read `res.password` through
+        // an `as` cast, which typed the mistake away: the value was always
+        // undefined, so the one-time reveal silently showed nothing and the new
+        // password was unrecoverable.
+        setNewPassword(res.root_password);
       },
       onError: mutErr,
     },
