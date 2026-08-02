@@ -6,6 +6,7 @@ import { useDeleteServer, useGetServer } from "@/api/gen/servers/servers";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
 import { Fact, FactCard } from "@/components/fact-card";
 import { PageBody, PageHeader } from "@/components/page-header";
+import { ResourceGone } from "@/components/resource-gone";
 import { PageState } from "@/components/page-state";
 import { StatusDot } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
@@ -30,6 +31,10 @@ function ServerDetail() {
       onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Could not remove the server"),
     },
   });
+
+  if (server.isError) {
+    return <ResourceGone kind="server" error={server.error} backTo="/servers" backLabel="Back to servers" />;
+  }
 
   const s = server.data;
 

@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -887,6 +888,63 @@ func routePathsFromSource(t *testing.T) []string {
 		t.Fatalf("extracted only %d routes from rest.go — extraction is broken", len(out))
 	}
 	return out
+}
+
+// The request bodies the OpenAPI schema describes must actually be accepted.
+// decodeJSON runs with DisallowUnknownFields, so any property the spec marks
+// required but the request struct omits turns every conforming client's call
+// into a 400 "invalid request body" — which is exactly what happened to
+// AppBuild.kind: the spec required it, the generated TypeScript client sent
+// it, and creating an application through the documented contract was
+// impossible. This asserts the spec-shaped body round-trips on both create and
+// patch.
+func TestApplicationAcceptsSpecShapedBuild(t *testing.T) {
+	ts := newTestServer(t)
+	token := login(t, ts)
+
+	body := `{"name":"specshape","source":{"kind":"github","repo":"acme/web","branch":"main"},` +
+		`"build":{"kind":"dockerfile","dockerfile_path":"./Dockerfile","context":"."},` +
+		`"runtime":{"server_id":"srv_test","port":8080,"replicas":1},` +
+		`"route":{"domain":"spec.example.com","https":true,"path_prefix":"/"}}`
+	status, _, resp := doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, body)
+	if status != http.StatusCreated {
+		t.Fatalf("create with spec-shaped build.kind: status %d body %s", status, resp)
+	}
+	var created struct {
+		Application struct {
+			ID    string `json:"id"`
+			Build struct {
+				Kind           string `json:"kind"`
+				DockerfilePath string `json:"dockerfile_path"`
+			} `json:"build"`
+		} `json:"application"`
+	}
+	if err := json.Unmarshal(resp, &created); err != nil {
+		t.Fatalf("decoding create response: %v", err)
+	}
+	if created.Application.Build.Kind != "dockerfile" {
+		t.Errorf("build.kind = %q, want dockerfile", created.Application.Build.Kind)
+	}
+
+	// A client that reads an application and PATCHes it back must not be
+	// rejected for echoing the kind it was just served.
+	patch := `{"build":{"kind":"dockerfile","dockerfile_path":"./ops/Dockerfile","context":"."}}`
+	status, _, resp = doJSON(t, "PATCH", ts.URL+"/api/v1/applications/"+created.Application.ID, token, patch)
+	if status != http.StatusOK {
+		t.Fatalf("patch with spec-shaped build.kind: status %d body %s", status, resp)
+	}
+
+	// An unsupported kind is still a validation error, not a decode error.
+	bad := `{"name":"nope","source":{"kind":"github","repo":"acme/x"},` +
+		`"build":{"kind":"nixpacks","dockerfile_path":"./Dockerfile","context":"."},` +
+		`"runtime":{"server_id":"srv_test","port":8080},"route":{"domain":"n.example.com"}}`
+	status, _, resp = doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, bad)
+	if status != http.StatusBadRequest {
+		t.Fatalf("create with unsupported build.kind: status %d body %s", status, resp)
+	}
+	if !bytes.Contains(resp, []byte("dockerfile")) {
+		t.Errorf("unsupported kind should name the supported one, got %s", resp)
+	}
 }
 
 func TestApplicationLifecycleOverHTTP(t *testing.T) {

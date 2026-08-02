@@ -5,6 +5,7 @@ import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
 import { useGetDatabase } from "@/api/gen/databases/databases";
 import { useGetProject } from "@/api/gen/projects/projects";
 import { PageBody, PageHeader } from "@/components/page-header";
+import { ResourceGone } from "@/components/resource-gone";
 import { StatusDot } from "@/components/status-badge";
 import { useCrumbs } from "@/lib/crumbs";
 
@@ -29,6 +30,17 @@ function DatabaseLayout() {
     { label: project.data?.project.name ?? projectId, to: `/projects/${projectId}` },
     { label: db.data?.name ?? dbId },
   ]);
+
+  if (db.isError) {
+    return (
+      <ResourceGone
+        kind="managed database"
+        error={db.error}
+        backTo={`/projects/${projectId}`}
+        backLabel="Back to the project"
+      />
+    );
+  }
 
   return (
     <>

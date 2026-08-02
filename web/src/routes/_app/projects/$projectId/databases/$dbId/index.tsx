@@ -47,7 +47,12 @@ function DatabaseOverview() {
   return (
     <PageState query={db} isEmpty={() => false}>
       {(d) => {
-        const running = d.status === "running";
+        // Gate on INTENT, not observation. Start/stop are guarded server-side
+        // on desired_state, so offering Start whenever the observed status
+        // isn't "running" hands the operator a button that 400s every time the
+        // agent is still converging (ADR-005: the two are allowed to differ).
+        const wantsRunning = d.desired_state === "running";
+        const converging = wantsRunning !== (d.status === "running");
         return (
           <div className="max-w-xl space-y-6">
             <dl className="space-y-2 rounded-lg border border-border bg-surface p-4 text-[13px]">
@@ -76,7 +81,7 @@ function DatabaseOverview() {
             <section className="space-y-2">
               <Eyebrow>Lifecycle</Eyebrow>
               <div className="flex flex-wrap items-center gap-2">
-                {running ? (
+                {wantsRunning ? (
                   <Button size="sm" disabled={stop.isPending} onClick={() => stop.mutate({ id: dbId })}>
                     <Square className="h-3.5 w-3.5" /> Stop
                   </Button>
@@ -84,6 +89,13 @@ function DatabaseOverview() {
                   <Button size="sm" variant="primary" disabled={start.isPending} onClick={() => start.mutate({ id: dbId })}>
                     <Play className="h-3.5 w-3.5" /> Start
                   </Button>
+                )}
+                {/* Reality lags intent — say so rather than leaving the
+                    operator to wonder why Stop is showing on a stopped box. */}
+                {converging && (
+                  <span className="font-mono text-[11px] text-text-faint">
+                    {wantsRunning ? "starting…" : "stopping…"} agent is reconciling
+                  </span>
                 )}
                 <ConfirmDestructive
                   trigger={

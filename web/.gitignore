@@ -4,3 +4,8 @@ dist/
 .DS_Store
 tsconfig.tsbuildinfo
 .vite/
+
+# Stray Next.js artifacts. This is a Vite app — these appear only if `next` is
+# run here by accident, and they are large enough to sweep into `git add -A`.
+.next/
+next-env.d.ts

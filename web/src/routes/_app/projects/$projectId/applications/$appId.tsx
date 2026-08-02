@@ -9,6 +9,7 @@ import { useGetApplication } from "@/api/gen/applications/applications";
 import { useDeployApplication, useListDeployments } from "@/api/gen/deployments/deployments";
 import { useGetProject } from "@/api/gen/projects/projects";
 import { PageBody, PageHeader } from "@/components/page-header";
+import { ResourceGone } from "@/components/resource-gone";
 import { StatusDot } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { useCrumbs } from "@/lib/crumbs";
@@ -43,6 +44,19 @@ function ApplicationLayout() {
     { label: project.data?.project.name ?? projectId, to: `/projects/${projectId}` },
     { label: app.data?.name ?? appId },
   ]);
+
+  // Without this the masthead renders "…" forever over a live tab strip, and
+  // the real error hides inside whichever tab is open (ui-principles §1).
+  if (app.isError) {
+    return (
+      <ResourceGone
+        kind="application"
+        error={app.error}
+        backTo={`/projects/${projectId}`}
+        backLabel="Back to the project"
+      />
+    );
+  }
 
   const domain = app.data?.route.domain;
   const https = app.data?.route.https ?? true;

@@ -6,6 +6,7 @@ package heartbeat
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -16,6 +17,40 @@ import (
 	"github.com/MaramHarsha/cypherpanel/pkg/subjects"
 )
 
+// Health is a concurrency-safe holder for "is some subsystem of this agent
+// broken right now". Subsystems that fail in a loop rather than crashing — the
+// Proxy is the one that matters, since it cannot bind :80 if anything else on
+// the host already has it — record their last error here so the heartbeat can
+// carry the fact upward. Without this the plane only ever hears READY, and a
+// server whose Proxy can never start still shows green while every routed
+// deploy silently fails (ui-principles §10).
+//
+// The zero value is healthy and usable.
+type Health struct {
+	mu  sync.RWMutex
+	err error
+}
+
+// Set records the subsystem's latest outcome; nil clears it.
+func (h *Health) Set(err error) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.err = err
+	h.mu.Unlock()
+}
+
+// Err reports the last recorded failure, or nil when healthy.
+func (h *Health) Err() error {
+	if h == nil {
+		return nil
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.err
+}
+
 // Publisher emits heartbeats for one server at a fixed interval.
 type Publisher struct {
 	nc       *nats.Conn
@@ -24,13 +59,18 @@ type Publisher struct {
 	driver   string
 	role     string
 	interval time.Duration
+	health   *Health
 	log      *slog.Logger
 }
 
 // NewPublisher wires the publisher. role is the agent's --role value
 // (builder-role-and-relay.md §1), reported so the plane can route builds.
-func NewPublisher(nc *nats.Conn, serverID, version, driver, role string, interval time.Duration, log *slog.Logger) *Publisher {
-	return &Publisher{nc: nc, serverID: serverID, version: version, driver: driver, role: role, interval: interval, log: log}
+// health may be nil, in which case the agent always reports READY.
+func NewPublisher(nc *nats.Conn, serverID, version, driver, role string, interval time.Duration, health *Health, log *slog.Logger) *Publisher {
+	return &Publisher{
+		nc: nc, serverID: serverID, version: version, driver: driver,
+		role: role, interval: interval, health: health, log: log,
+	}
 }
 
 // Run publishes one heartbeat immediately, then every interval until ctx is
@@ -49,13 +89,24 @@ func (p *Publisher) Run(ctx context.Context) {
 	}
 }
 
+// status reports READY unless a subsystem has recorded a failure. The plane
+// maps DEGRADED straight onto the server's amber status (core/status), which
+// is the whole point: a subsystem stuck in a retry loop is invisible
+// otherwise.
+func (p *Publisher) status() agentv1.AgentStatus {
+	if p.health.Err() != nil {
+		return agentv1.AgentStatus_AGENT_STATUS_DEGRADED
+	}
+	return agentv1.AgentStatus_AGENT_STATUS_READY
+}
+
 func (p *Publisher) publish() {
 	data, err := proto.Marshal(&agentv1.Heartbeat{
 		ServerId:     p.serverID,
 		EmittedAt:    timestamppb.Now(),
 		AgentVersion: p.version,
 		Driver:       p.driver,
-		Status:       agentv1.AgentStatus_AGENT_STATUS_READY,
+		Status:       p.status(),
 		Role:         p.role,
 	})
 	if err != nil {

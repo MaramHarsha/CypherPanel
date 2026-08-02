@@ -182,12 +182,13 @@ type fakeRouter struct {
 	// deliberately kept out of `mutations` — the converge-twice invariant is
 	// about container/route changes, which these are not.
 	proxyEnsured  int
+	proxyErr      error
 	networksBound []string
 }
 
 func newFakeRouter() *fakeRouter { return &fakeRouter{routes: map[string]string{}} }
 
-func (r *fakeRouter) EnsureProxy(context.Context) error { r.proxyEnsured++; return nil }
+func (r *fakeRouter) EnsureProxy(context.Context) error { r.proxyEnsured++; return r.proxyErr }
 
 func (r *fakeRouter) AttachNetwork(_ context.Context, network string) error {
 	r.networksBound = append(r.networksBound, network)
@@ -719,5 +720,40 @@ func TestReconcileRawServiceNoRouteAndPorts(t *testing.T) {
 	}
 	if c.mutations != cm || r.mutations != rm {
 		t.Fatalf("second converge mutated (client %d→%d, router %d→%d)", cm, c.mutations, rm, r.mutations)
+	}
+}
+
+// A Proxy that cannot start is reported upward, not just logged. It fails in a
+// retry loop rather than crashing, so without this the agent kept reporting
+// READY and the server stayed green while no routed deploy could ever work
+// (ui-principles §10). Reconcile must still converge containers — routing
+// convergence is best-effort and must not block the rest.
+func TestReconcileReportsProxyHealth(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	var reported []error
+	d.OnProxyHealth(func(err error) { reported = append(reported, err) })
+
+	r.proxyErr = errors.New("bind :80: address already in use")
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "img:rev1")})
+	if err != nil {
+		t.Fatalf("Reconcile must still converge apps when the Proxy is down: %v", err)
+	}
+	if st := statusOf(got, "app1"); st == nil || st.GetState() != stateRunning {
+		t.Errorf("app should still roll out with a broken Proxy, got %+v", st)
+	}
+	if len(reported) != 1 || reported[0] == nil {
+		t.Fatalf("proxy failure not reported: %v", reported)
+	}
+
+	// Recovery has to clear it, or the server stays amber forever once the
+	// operator frees the port.
+	r.proxyErr = nil
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "img:rev1")}); err != nil {
+		t.Fatalf("Reconcile after recovery: %v", err)
+	}
+	if len(reported) != 2 || reported[1] != nil {
+		t.Fatalf("recovery not reported as healthy: %v", reported)
 	}
 }

@@ -2207,6 +2207,21 @@ components:
         observed_revision_id:
           type: string
           description: The revision actually serving per the last report.
+        preview_enabled:
+          type: boolean
+          description: >-
+            Whether pull requests against this app's repository create preview
+            environments (preview-environments.md). Off by default.
+        preview_base_domain:
+          type: string
+          description: >-
+            Base domain previews are published under — a PR gets
+            `pr-<number>.<base>`. Required when preview_enabled is true.
+        preview_ttl_hours:
+          type: integer
+          description: >-
+            Backstop lifetime for a preview whose PR never closes; defaults to
+            72 when unset.
         created_at:
           type: string
           format: date-time
@@ -2241,6 +2256,21 @@ components:
           additionalProperties:
             type: string
           description: Plaintext values; sealed before storage, never returned.
+        preview_enabled:
+          type: boolean
+          description: >-
+            Whether pull requests against this app's repository create preview
+            environments (preview-environments.md). Off by default.
+        preview_base_domain:
+          type: string
+          description: >-
+            Base domain previews are published under — a PR gets
+            `pr-<number>.<base>`. Required when preview_enabled is true.
+        preview_ttl_hours:
+          type: integer
+          description: >-
+            Backstop lifetime for a preview whose PR never closes; defaults to
+            72 when unset.
 
     WebhookInfo:
       type: object
@@ -2310,6 +2340,21 @@ components:
           type: array
           items: { $ref: "#/components/schemas/AppPort" }
           description: Present = replace the port set wholesale.
+        preview_enabled:
+          type: boolean
+          description: >-
+            Whether pull requests against this app's repository create preview
+            environments (preview-environments.md). Off by default.
+        preview_base_domain:
+          type: string
+          description: >-
+            Base domain previews are published under — a PR gets
+            `pr-<number>.<base>`. Required when preview_enabled is true.
+        preview_ttl_hours:
+          type: integer
+          description: >-
+            Backstop lifetime for a preview whose PR never closes; defaults to
+            72 when unset.
 
     DeployRequest:
       type: object
@@ -2451,7 +2496,7 @@ components:
     # ─── Databases ────────────────────────────────────────────────────────────
     Database:
       type: object
-      required: [id, environment_id, name, engine, version, server_id, volume_name, network, root_user, require_password, status, created_at, updated_at]
+      required: [id, environment_id, name, engine, version, server_id, volume_name, network, root_user, require_password, status, desired_state, created_at, updated_at]
       properties:
         id: { type: string, description: db_… prefixed ID. }
         environment_id: { type: string }
@@ -2469,6 +2514,15 @@ components:
         require_password: { type: boolean }
         status: { type: string, enum: [running, provisioning, stopped, error, unknown] }
         status_detail: { type: string }
+        desired_state:
+          type: string
+          enum: [running, stopped]
+          description: >-
+            What the operator asked for, as distinct from `status` (what the
+            agent last observed). Start/stop are guarded on this, so a client
+            must gate those actions on `desired_state` rather than `status` —
+            otherwise it offers Start whenever reality is still catching up
+            with intent, and the call is rejected.
         desired_revision_id: { type: [string, "null"] }
         observed_revision_id: { type: string }
         created_at: { type: string, format: date-time }

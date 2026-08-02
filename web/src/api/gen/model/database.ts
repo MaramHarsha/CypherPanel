@@ -10,6 +10,7 @@ import type { DatabaseCpuLimit } from './databaseCpuLimit';
 import type { DatabaseMemoryLimitMb } from './databaseMemoryLimitMb';
 import type { DatabaseExposePort } from './databaseExposePort';
 import type { DatabaseStatus } from './databaseStatus';
+import type { DatabaseDesiredState } from './databaseDesiredState';
 import type { DatabaseDesiredRevisionId } from './databaseDesiredRevisionId';
 
 export interface Database {
@@ -34,6 +35,8 @@ export interface Database {
   require_password: boolean;
   status: DatabaseStatus;
   status_detail?: string;
+  /** What the operator asked for, as distinct from `status` (what the agent last observed). Start/stop are guarded on this, so a client must gate those actions on `desired_state` rather than `status` — otherwise it offers Start whenever reality is still catching up with intent, and the call is rejected. */
+  desired_state: DatabaseDesiredState;
   desired_revision_id?: DatabaseDesiredRevisionId;
   observed_revision_id?: string;
   created_at: string;

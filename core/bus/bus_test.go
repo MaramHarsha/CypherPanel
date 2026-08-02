@@ -533,3 +533,26 @@ func TestSubscribeLogsReplaysThenTails(t *testing.T) {
 	case <-time.After(500 * time.Millisecond):
 	}
 }
+
+// ":0" must mean "any free port". nats-server reads Options.Port == 0 as
+// "unset" and falls back to 4222, so passing it through unchanged silently
+// bound a fixed port: two buses could not coexist, and every test here failed
+// whenever a cypherd happened to be running on the same host.
+func TestListenAddrZeroPicksAFreePort(t *testing.T) {
+	// A second bus on the same "address" proves the port is really ephemeral —
+	// if both resolved to 4222 the second would fail to bind.
+	a, _, _ := startTestBus(t)
+	b, _, _ := startTestBus(t)
+
+	pa := a.Addr().(*net.TCPAddr).Port
+	pb := b.Addr().(*net.TCPAddr).Port
+	if pa == 0 || pb == 0 {
+		t.Fatalf("ports not resolved: %d, %d", pa, pb)
+	}
+	if pa == pb {
+		t.Fatalf("both buses bound the same port %d — :0 is not ephemeral", pa)
+	}
+	if pa == 4222 || pb == 4222 {
+		t.Errorf("bound the nats default 4222 (%d, %d); :0 must not mean 4222", pa, pb)
+	}
+}

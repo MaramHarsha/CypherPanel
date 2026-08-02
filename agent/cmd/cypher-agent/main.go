@@ -142,7 +142,11 @@ func runAgent(args []string, log *slog.Logger) error {
 	nc.SetClosedHandler(func(*nats.Conn) { cancel() })
 	log.Info("agent running", "server_id", id.ServerID, "driver", *drvName, "role", *role, "version", version)
 
-	go heartbeat.NewPublisher(nc, id.ServerID, version, *drvName, *role, *interval, log).Run(ctx)
+	// Shared with the docker driver below so a Proxy that cannot bind :80
+	// turns the server amber instead of leaving it green while every routed
+	// deploy fails.
+	health := &heartbeat.Health{}
+	go heartbeat.NewPublisher(nc, id.ServerID, version, *drvName, *role, *interval, health, log).Run(ctx)
 
 	if *drvName == "docker" {
 		eng := engine.New("")
@@ -186,6 +190,7 @@ func runAgent(args []string, log *slog.Logger) error {
 			strm := stream.NewStreamer(nc, eng, id.ServerID)
 			go strm.Start(ctx, 10*time.Second)
 			dockerDrv = docker.New(eng, prx, prb, log)
+			dockerDrv.OnProxyHealth(health.Set)
 			drv = dockerDrv
 		}
 
