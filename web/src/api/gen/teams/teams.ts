@@ -81,7 +81,7 @@ export const getListTeamsQueryKey = () => {
     }
 
     
-export const getListTeamsQueryOptions = <TData = Awaited<ReturnType<typeof listTeams>>, TError = UnauthorizedResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTeams>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getListTeamsQueryOptions = <TData = Awaited<ReturnType<typeof listTeams>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTeams>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -100,10 +100,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type ListTeamsQueryResult = NonNullable<Awaited<ReturnType<typeof listTeams>>>
-export type ListTeamsQueryError = UnauthorizedResponse
+export type ListTeamsQueryError = UnauthorizedResponse | ForbiddenResponse
 
 
-export function useListTeams<TData = Awaited<ReturnType<typeof listTeams>>, TError = UnauthorizedResponse>(
+export function useListTeams<TData = Awaited<ReturnType<typeof listTeams>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTeams>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listTeams>>,
@@ -113,7 +113,7 @@ export function useListTeams<TData = Awaited<ReturnType<typeof listTeams>>, TErr
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListTeams<TData = Awaited<ReturnType<typeof listTeams>>, TError = UnauthorizedResponse>(
+export function useListTeams<TData = Awaited<ReturnType<typeof listTeams>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTeams>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listTeams>>,
@@ -123,7 +123,7 @@ export function useListTeams<TData = Awaited<ReturnType<typeof listTeams>>, TErr
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListTeams<TData = Awaited<ReturnType<typeof listTeams>>, TError = UnauthorizedResponse>(
+export function useListTeams<TData = Awaited<ReturnType<typeof listTeams>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTeams>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -131,7 +131,7 @@ export function useListTeams<TData = Awaited<ReturnType<typeof listTeams>>, TErr
  * @summary List the caller's teams (all teams for a panel owner)
  */
 
-export function useListTeams<TData = Awaited<ReturnType<typeof listTeams>>, TError = UnauthorizedResponse>(
+export function useListTeams<TData = Awaited<ReturnType<typeof listTeams>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTeams>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -252,7 +252,7 @@ export const getGetTeamQueryKey = (id?: string,) => {
     }
 
     
-export const getGetTeamQueryOptions = <TData = Awaited<ReturnType<typeof getTeam>>, TError = UnauthorizedResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTeam>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getGetTeamQueryOptions = <TData = Awaited<ReturnType<typeof getTeam>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTeam>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -271,10 +271,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetTeamQueryResult = NonNullable<Awaited<ReturnType<typeof getTeam>>>
-export type GetTeamQueryError = UnauthorizedResponse | NotFoundResponse
+export type GetTeamQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
 
-export function useGetTeam<TData = Awaited<ReturnType<typeof getTeam>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetTeam<TData = Awaited<ReturnType<typeof getTeam>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTeam>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getTeam>>,
@@ -284,7 +284,7 @@ export function useGetTeam<TData = Awaited<ReturnType<typeof getTeam>>, TError =
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetTeam<TData = Awaited<ReturnType<typeof getTeam>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetTeam<TData = Awaited<ReturnType<typeof getTeam>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTeam>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getTeam>>,
@@ -294,7 +294,7 @@ export function useGetTeam<TData = Awaited<ReturnType<typeof getTeam>>, TError =
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetTeam<TData = Awaited<ReturnType<typeof getTeam>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetTeam<TData = Awaited<ReturnType<typeof getTeam>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTeam>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -302,7 +302,7 @@ export function useGetTeam<TData = Awaited<ReturnType<typeof getTeam>>, TError =
  * @summary Get a team (member+)
  */
 
-export function useGetTeam<TData = Awaited<ReturnType<typeof getTeam>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetTeam<TData = Awaited<ReturnType<typeof getTeam>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTeam>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -494,7 +494,7 @@ export const getListTeamMembersQueryKey = (id?: string,) => {
     }
 
     
-export const getListTeamMembersQueryOptions = <TData = Awaited<ReturnType<typeof listTeamMembers>>, TError = UnauthorizedResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTeamMembers>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getListTeamMembersQueryOptions = <TData = Awaited<ReturnType<typeof listTeamMembers>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTeamMembers>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -513,10 +513,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type ListTeamMembersQueryResult = NonNullable<Awaited<ReturnType<typeof listTeamMembers>>>
-export type ListTeamMembersQueryError = UnauthorizedResponse | NotFoundResponse
+export type ListTeamMembersQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
 
-export function useListTeamMembers<TData = Awaited<ReturnType<typeof listTeamMembers>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useListTeamMembers<TData = Awaited<ReturnType<typeof listTeamMembers>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTeamMembers>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listTeamMembers>>,
@@ -526,7 +526,7 @@ export function useListTeamMembers<TData = Awaited<ReturnType<typeof listTeamMem
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListTeamMembers<TData = Awaited<ReturnType<typeof listTeamMembers>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useListTeamMembers<TData = Awaited<ReturnType<typeof listTeamMembers>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTeamMembers>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listTeamMembers>>,
@@ -536,7 +536,7 @@ export function useListTeamMembers<TData = Awaited<ReturnType<typeof listTeamMem
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListTeamMembers<TData = Awaited<ReturnType<typeof listTeamMembers>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useListTeamMembers<TData = Awaited<ReturnType<typeof listTeamMembers>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTeamMembers>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -544,7 +544,7 @@ export function useListTeamMembers<TData = Awaited<ReturnType<typeof listTeamMem
  * @summary List team members (member+)
  */
 
-export function useListTeamMembers<TData = Awaited<ReturnType<typeof listTeamMembers>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useListTeamMembers<TData = Awaited<ReturnType<typeof listTeamMembers>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTeamMembers>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {

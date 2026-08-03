@@ -569,6 +569,40 @@ func TestDeployStartsBuild(t *testing.T) {
 	}
 }
 
+// An image-source application (deploy from container image, feature-matrix V1)
+// skips build and distribute entirely: Deploy records the reference as an
+// already-built revision and goes straight to rollout with a pull-marked spec —
+// the same path rollback takes.
+func TestDeployImageSourceGoesStraightToRollout(t *testing.T) {
+	fs, fb := newFakeStore(), &fakeBus{}
+	app := fs.addApp("app_1", "srv_1")
+	app.Source = domain.AppSource{Kind: "image", Image: "ghost:5"}
+	fs.apps["app_1"] = app
+	s := newScheduler(fs, fb)
+
+	dep, err := s.Deploy(context.Background(), "app_1", "manual", "")
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	if dep.Status != domain.DeployRollingOut {
+		t.Fatalf("status = %s, want rolling_out (no build stage)", dep.Status)
+	}
+	p, ok := fb.last()
+	if !ok || p.subject != subjects.Rollout("srv_1") {
+		t.Fatalf("work = %+v, want rollout on srv_1", p)
+	}
+	var rw agentv1.RolloutWork
+	if err := proto.Unmarshal(p.data, &rw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if rw.GetSpec().GetImage() != "ghost:5" || !rw.GetSpec().GetPull() {
+		t.Fatalf("spec = %+v, want image ghost:5 with pull set", rw.GetSpec())
+	}
+	if rev := fs.revisions[dep.RevisionID]; rev.Image != "ghost:5" || rev.SourceCommit != "ghost:5" {
+		t.Fatalf("revision = %+v, want the reference recorded up front", rev)
+	}
+}
+
 // An application referencing a deploy key gets the unsealed PEM in its
 // BuildWork — decrypted only at spec-build time, carried only on the mTLS
 // bus (deploy-key-private-repos.md §4).
@@ -1119,4 +1153,87 @@ func TestFailedDeployClearsDeployingStatus(t *testing.T) {
 			t.Errorf("detail should say the old revision still serves, got %q", app.StatusDetail)
 		}
 	})
+}
+
+// The agent observes which image a registry-sourced revision actually runs; the
+// plane pins the revision to that digest. Without this, rolling back to a
+// revision created from a mutable tag would re-pull the tag and start whatever
+// it points at now while reporting the old revision restored.
+func TestObservedDigestPinsRevision(t *testing.T) {
+	fs, fb := newFakeStore(), &fakeBus{}
+	app := fs.addApp("app_1", "srv_1")
+	app.Source = domain.AppSource{Kind: "image", Image: "ghost:5"}
+	fs.apps["app_1"] = app
+	s := newScheduler(fs, fb)
+
+	dep, err := s.Deploy(context.Background(), "app_1", "manual", "")
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	if got := fs.revisions[dep.RevisionID].Image; got != "ghost:5" {
+		t.Fatalf("revision image = %q, want the configured tag before observation", got)
+	}
+
+	s.HandleAppStatus(context.Background(), "srv_1", &agentv1.AppStatus{
+		AppId:         "app_1",
+		RevisionId:    dep.RevisionID,
+		State:         domain.AppRunning,
+		ResolvedImage: "ghost@sha256:deadbeef",
+	})
+
+	if got := fs.revisions[dep.RevisionID].Image; got != "ghost@sha256:deadbeef" {
+		t.Fatalf("revision image = %q, want it pinned to the observed digest", got)
+	}
+}
+
+// An agent that reports no digest (a built image, or a lookup failure) leaves
+// the revision exactly as it was.
+func TestNoDigestLeavesRevisionUnchanged(t *testing.T) {
+	fs, fb := newFakeStore(), &fakeBus{}
+	app := fs.addApp("app_1", "srv_1")
+	app.Source = domain.AppSource{Kind: "image", Image: "ghost:5"}
+	fs.apps["app_1"] = app
+	s := newScheduler(fs, fb)
+
+	dep, err := s.Deploy(context.Background(), "app_1", "manual", "")
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	s.HandleAppStatus(context.Background(), "srv_1", &agentv1.AppStatus{
+		AppId: "app_1", RevisionId: dep.RevisionID, State: domain.AppRunning,
+	})
+	if got := fs.revisions[dep.RevisionID].Image; got != "ghost:5" {
+		t.Fatalf("revision image = %q, want it untouched", got)
+	}
+}
+
+// A compromised agent must not be able to pin a revision belonging to another
+// application: it could otherwise substitute an attacker-chosen image that a
+// later rollback would pull and run — on a different server.
+func TestDigestPinRejectsForeignRevision(t *testing.T) {
+	fs, fb := newFakeStore(), &fakeBus{}
+	victim := fs.addApp("app_victim", "srv_2")
+	victim.Source = domain.AppSource{Kind: "image", Image: "trusted:1"}
+	fs.apps["app_victim"] = victim
+	attacker := fs.addApp("app_attacker", "srv_1")
+	attacker.Source = domain.AppSource{Kind: "image", Image: "ghost:5"}
+	fs.apps["app_attacker"] = attacker
+	s := newScheduler(fs, fb)
+
+	victimDep, err := s.Deploy(context.Background(), "app_victim", "manual", "")
+	if err != nil {
+		t.Fatalf("victim Deploy: %v", err)
+	}
+
+	// srv_1 legitimately owns app_attacker, but names the victim's revision.
+	s.HandleAppStatus(context.Background(), "srv_1", &agentv1.AppStatus{
+		AppId:         "app_attacker",
+		RevisionId:    victimDep.RevisionID,
+		State:         domain.AppRunning,
+		ResolvedImage: "evil@sha256:beef",
+	})
+
+	if got := fs.revisions[victimDep.RevisionID].Image; got != "trusted:1" {
+		t.Fatalf("victim revision image = %q — a foreign agent overwrote it", got)
+	}
 }

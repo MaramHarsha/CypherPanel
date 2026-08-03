@@ -189,10 +189,7 @@ func (c *Client) EnsureContainer(ctx context.Context, cfg RunConfig) error {
 // JSON-lines pull progress; this reads it to completion and surfaces a stream
 // error (auth failure, missing tag) as the returned error.
 func (c *Client) PullImage(ctx context.Context, ref string) error {
-	name, tag := ref, "latest"
-	if i := strings.LastIndex(ref, ":"); i > strings.LastIndex(ref, "/") {
-		name, tag = ref[:i], ref[i+1:]
-	}
+	name, tag := splitRef(ref)
 	q := url.Values{}
 	q.Set("fromImage", name)
 	q.Set("tag", tag)
@@ -217,6 +214,85 @@ func (c *Client) PullImage(ctx context.Context, ref string) error {
 			return fmt.Errorf("engine: pull failed: %s", strings.TrimSpace(line.Error))
 		}
 	}
+}
+
+// splitRef separates an OCI reference into the name and the tag-or-digest the
+// daemon's /images/create expects. A digest reference (`repo@sha256:…`) splits
+// on '@' — splitting it on the last colon instead would send
+// `fromImage=repo@sha256&tag=…`, which names no image the registry can serve.
+// A tagless reference defaults to `latest`, as the CLI does.
+//
+// The digest belongs in `tag`, not in `fromImage`: this is what Docker's own
+// client does (moby `getAPITagFromNamedRef` returns the digest string as the
+// tag), and it is verified against a real daemon — pulling
+// `busybox@sha256:73aaf0…` this way succeeds and lands as a digest reference.
+// Passing the whole `repo@sha256:…` as `fromImage` also works, so the two are
+// equivalent; this form is kept because it matches the reference client.
+func splitRef(ref string) (name, tag string) {
+	if i := strings.LastIndex(ref, "@"); i >= 0 {
+		return ref[:i], ref[i+1:]
+	}
+	if i := strings.LastIndex(ref, ":"); i > strings.LastIndex(ref, "/") {
+		return ref[:i], ref[i+1:]
+	}
+	return ref, "latest"
+}
+
+// EnsureImage makes the local daemon hold the bits ref currently designates
+// (docker.Client contract) — which is not the same as "some image with that
+// name exists here".
+//
+// A **digest** reference is immutable: if it is already local, those are
+// provably the right bits, so the pull is skipped. A **tag** is mutable —
+// `acme/web:latest` can point at something new since the last deploy — so it is
+// always pulled. Skipping that would let a redeploy start a container from the
+// stale cached image and then report success, which is precisely the
+// stale-container failure ADR-005 exists to make impossible.
+//
+// This does not weaken the reconciler invariants: only the create branch calls
+// EnsureImage, and a converged app never enters it (the desired revision is
+// already running), so converge-twice still makes zero calls.
+func (c *Client) EnsureImage(ctx context.Context, ref string) error {
+	if strings.Contains(ref, "@") {
+		var ignored struct{}
+		err := c.doJSON(ctx, http.MethodGet, "/images/"+url.PathEscape(ref)+"/json", nil, nil, &ignored)
+		if err == nil {
+			return nil // immutable and already local
+		}
+		var se *StatusError
+		if !asStatus(err, &se) || se.Code != http.StatusNotFound {
+			return fmt.Errorf("engine: inspecting image %s: %w", ref, err)
+		}
+	}
+	return c.PullImage(ctx, ref)
+}
+
+// ImageDigest returns the immutable digest reference (repo@sha256:…) of a local
+// image, or "" when the image carries none — a locally-built image that was
+// never pushed has no repo digest, and that is not an error.
+func (c *Client) ImageDigest(ctx context.Context, ref string) (string, error) {
+	var img struct {
+		RepoDigests []string `json:"RepoDigests"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/images/"+url.PathEscape(ref)+"/json", nil, nil, &img); err != nil {
+		var se *StatusError
+		if asStatus(err, &se) && se.Code == http.StatusNotFound {
+			return "", nil
+		}
+		return "", fmt.Errorf("engine: inspecting image %s: %w", ref, err)
+	}
+	// Prefer the digest for the repository we were asked about; a widely-mirrored
+	// image can carry several.
+	name, _ := splitRef(ref)
+	for _, d := range img.RepoDigests {
+		if strings.HasPrefix(d, name+"@") {
+			return d, nil
+		}
+	}
+	if len(img.RepoDigests) > 0 {
+		return img.RepoDigests[0], nil
+	}
+	return "", nil
 }
 
 // ConnectNetwork attaches container to network. Idempotent: a container

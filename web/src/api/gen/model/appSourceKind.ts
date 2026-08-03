@@ -13,4 +13,5 @@ export type AppSourceKind = typeof AppSourceKind[keyof typeof AppSourceKind];
 export const AppSourceKind = {
   github: 'github',
   git_url: 'git_url',
+  image: 'image',
 } as const;

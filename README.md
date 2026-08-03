@@ -101,7 +101,7 @@ Also shipped in Phase 2: deploy-key private repos, bounded runtime-log retention
 - ✅ **Scheduled tasks** (cron-in-container) — declarative desired state, run by the agent inside the app's own unprivileged container ([ADR-011](docs/adrs/ADR-011-in-container-scheduled-tasks.md)); **live-verified firing into a running container**.
 - ✅ **Teams + roles** — teams own projects; ranked roles (member < admin < owner) enforced on every project-scoped route (non-member → 404, low rank → 403), plus panel roles gating shared infrastructure.
 
-**Not yet built** (tracked in [docs/roadmap.md](docs/roadmap.md)): template catalog, Compose stacks, dashboard, metrics, real web UI (Phase 4) · TOTP 2FA, granular RBAC, backup-cron auto-scheduling + S3-object pruning (V1.x) · agent auto-update implementation ([ADR-010](docs/adrs/ADR-010-agent-auto-update.md), lands with the release pipeline).
+**Not yet built** (tracked in [docs/roadmap.md](docs/roadmap.md)): template catalog, Compose stacks, metrics/observability, interactive terminal, CLI (Phase 4) · granular RBAC (V1.x) · agent auto-update implementation ([ADR-010](docs/adrs/ADR-010-agent-auto-update.md), lands with the release pipeline). Since Phase 3 closed, TOTP 2FA (with recovery codes), backup-cron auto-scheduling with S3 retention pruning, and the web UI (slices 1–4 of [docs/product/web-ui-design.md](docs/product/web-ui-design.md)) have all landed.
 
 ## Install
 

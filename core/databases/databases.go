@@ -98,7 +98,13 @@ func (s *Service) Create(ctx context.Context, envID string, in CreateInput) (db 
 		}
 		return domain.Database{}, "", fmt.Errorf("databases: getting environment: %w", err)
 	}
-	if _, err := s.store.GetServer(ctx, in.ServerID); err != nil {
+	srv, err := s.store.GetServer(ctx, in.ServerID)
+	if err == nil && !srv.Runs() {
+		// A builder-only agent has no driver for workloads and rejects rollout
+		// work, so the database would be created and then never provisioned.
+		return domain.Database{}, "", &ValidationError{Msg: "that server has the builder role and does not run databases"}
+	}
+	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return domain.Database{}, "", ErrServerNotFound
 		}

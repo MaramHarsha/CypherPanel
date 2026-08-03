@@ -1,0 +1,4 @@
+interface:
+  display_name: "Adding a template"
+  short_description: "Add and validate a bundled catalog template"
+  default_prompt: "Add a new CypherPanel catalog template and validate it."

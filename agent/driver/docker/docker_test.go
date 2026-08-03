@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,12 +28,21 @@ type fakeClient struct {
 	removeErrForID    map[string]error
 	listErr           error
 
-	lastCreateSpec ContainerSpec // the most recent CreateContainer argument
-	ensuredVolumes []string      // names passed to EnsureVolume
-	execCalls      []execCall    // recorded ExecAndWait invocations
-	execExit       int           // injected exit code
-	execOut        []byte        // injected output
-	execErr        error         // injected error
+	lastCreateSpec ContainerSpec     // the most recent CreateContainer argument
+	ensuredVolumes []string          // names passed to EnsureVolume
+	pulledImages   []string          // refs EnsureImage actually fetched
+	localImages    map[string]bool   // refs EnsureImage treats as already present
+	pullErr        error             // injected EnsureImage failure
+	digests        map[string]string // explicit ref → digest overrides
+	digestErr      error             // injected ImageDigest failure
+	tagged         []string          // "source -> target" per TagImage call
+	removedImages  map[string]bool   // refs passed to RemoveImage
+	removeImageErr map[string]error  // injected RemoveImage failures by ref
+	tagErr         error             // injected TagImage failure
+	execCalls      []execCall        // recorded ExecAndWait invocations
+	execExit       int               // injected exit code
+	execOut        []byte            // injected output
+	execErr        error             // injected error
 
 	mutations int // count of state-changing calls
 }
@@ -137,15 +148,79 @@ func (f *fakeClient) ContainerIP(_ context.Context, id, _ string) (string, error
 	return f.ipByID[id], nil
 }
 
+// EnsureImage models the real engine's contract: a digest is immutable, so a
+// local copy is accepted; a tag is mutable and always re-fetched.
+func (f *fakeClient) EnsureImage(_ context.Context, ref string) error {
+	if f.pullErr != nil {
+		return f.pullErr
+	}
+	if strings.Contains(ref, "@") && f.localImages[ref] {
+		return nil
+	}
+	f.mutations++
+	f.pulledImages = append(f.pulledImages, ref)
+	if f.localImages == nil {
+		f.localImages = map[string]bool{}
+	}
+	f.localImages[ref] = true
+	return nil
+}
+
+func (f *fakeClient) HasImage(_ context.Context, ref string) (bool, error) {
+	return f.localImages[ref], nil
+}
+
+func (f *fakeClient) TagImage(_ context.Context, source, target string) error {
+	if f.tagErr != nil {
+		return f.tagErr
+	}
+	f.mutations++
+	f.tagged = append(f.tagged, source+" -> "+target)
+	if f.localImages == nil {
+		f.localImages = map[string]bool{}
+	}
+	f.localImages[target] = true
+	return nil
+}
+
+// ImageDigest models the engine: a pulled reference resolves to an immutable
+// digest; a locally-built image has none.
+func (f *fakeClient) ImageDigest(_ context.Context, ref string) (string, error) {
+	if f.digestErr != nil {
+		return "", f.digestErr
+	}
+	if d, ok := f.digests[ref]; ok {
+		return d, nil
+	}
+	if strings.Contains(ref, "@") {
+		return ref, nil // already a digest reference
+	}
+	if !f.localImages[ref] {
+		return "", nil // never pulled here
+	}
+	name, _ := ref, ""
+	if i := strings.LastIndex(ref, ":"); i > strings.LastIndex(ref, "/") {
+		name = ref[:i]
+	}
+	return name + "@sha256:" + strings.Repeat("a", 8), nil
+}
+
 func (f *fakeClient) ListManagedImages(_ context.Context) ([]Image, error) {
 	return f.images, nil
 }
 
 func (f *fakeClient) RemoveImage(_ context.Context, id string) error {
+	if err := f.removeImageErr[id]; err != nil {
+		return err
+	}
 	f.mutations++
+	if f.removedImages == nil {
+		f.removedImages = map[string]bool{}
+	}
+	f.removedImages[id] = true
 	kept := f.images[:0]
 	for _, img := range f.images {
-		if img.ID != id {
+		if !slices.Contains(img.References, id) && img.ID != id {
 			kept = append(kept, img)
 		}
 	}
@@ -602,14 +677,14 @@ func TestListManagedErrorIsReturned(t *testing.T) {
 func TestGCRemovesImagesOfAbsentApps(t *testing.T) {
 	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
 	c.images = []Image{
-		{ID: "i1", AppID: "keep", RevisionID: "rev1"},
-		{ID: "i2", AppID: "gone", RevisionID: "rev1"},
+		{ID: "i1", AppIDs: []string{"keep"}, References: []string{"cypher/keep:rev1"}},
+		{ID: "i2", AppIDs: []string{"gone"}, References: []string{"cypher/gone:rev1"}},
 	}
 	d := newDriver(c, r, p)
 	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("keep", "rev1", "img:rev1")}); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if len(c.images) != 1 || c.images[0].AppID != "keep" {
+	if len(c.images) != 1 || c.images[0].AppIDs[0] != "keep" {
 		t.Fatalf("GC left images = %+v, want only keep", c.images)
 	}
 }
@@ -799,5 +874,366 @@ func TestReconcileRewritesRouteWhenOnlyTheTemplateChanged(t *testing.T) {
 	}
 	if p.calls != probesBefore {
 		t.Errorf("an unchanged upstream must not be re-probed: %d -> %d", probesBefore, p.calls)
+	}
+}
+
+// ── deploy-from-image (AppSpec.pull) ────────────────────────────────────────
+
+func pullSpec(appID, revID, image string) *agentv1.AppSpec {
+	s := spec(appID, revID, image)
+	s.Pull = true
+	return s
+}
+
+func TestPullSpecFetchesImageAndRollsOut(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	st := statusOf(got, "app1")
+	if st == nil || st.GetState() != stateRunning || st.GetRevisionId() != "rev1" {
+		t.Fatalf("status = %+v, want running rev1", st)
+	}
+	if len(c.pulledImages) != 1 || c.pulledImages[0] != "ghost:5" {
+		t.Fatalf("pulled = %v, want [ghost:5]", c.pulledImages)
+	}
+}
+
+func TestPullSpecConvergeTwicePullsOnce(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+	specs := []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}
+
+	if _, err := d.Reconcile(context.Background(), specs); err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+	baseline := c.mutations + r.mutations
+
+	if _, err := d.Reconcile(context.Background(), specs); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	if after := c.mutations + r.mutations; after != baseline {
+		t.Fatalf("second converge mutated state: %d calls (want 0)", after-baseline)
+	}
+	if len(c.pulledImages) != 1 {
+		t.Fatalf("pull count = %d, want exactly 1 across both converges", len(c.pulledImages))
+	}
+}
+
+// A mutable tag must be re-fetched for every new revision. Skipping the pull
+// because `ghost:5` happens to be cached would start the new container from
+// the stale image and then report success — the stale-container failure
+// ADR-005 exists to make impossible.
+func TestNewRevisionRepullsMutableTag(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}); err != nil {
+		t.Fatalf("rev1: %v", err)
+	}
+	// Same reference, new revision — the operator moved the tag and redeployed.
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev2", "ghost:5")}); err != nil {
+		t.Fatalf("rev2: %v", err)
+	}
+	if len(c.pulledImages) != 2 {
+		t.Fatalf("pulled %v, want the tag re-fetched for the new revision", c.pulledImages)
+	}
+}
+
+// A digest is immutable: once local, those are provably the right bits, so a
+// new revision on the same digest needs no registry round trip.
+func TestNewRevisionSkipsPullForLocalDigest(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+	const ref = "ghcr.io/acme/web@sha256:abc"
+
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", ref)}); err != nil {
+		t.Fatalf("rev1: %v", err)
+	}
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev2", ref)}); err != nil {
+		t.Fatalf("rev2: %v", err)
+	}
+	if len(c.pulledImages) != 1 {
+		t.Fatalf("pulled %v, want one fetch for an immutable digest", c.pulledImages)
+	}
+}
+
+func TestPullFailureLeavesOldServing(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	// rev1 (a pulled image) healthy and serving.
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5.0")}); err != nil {
+		t.Fatalf("rev1 rollout: %v", err)
+	}
+	rev1Route := r.routes["app1"]
+
+	// rev2's registry fetch fails (missing tag, registry down).
+	c.pullErr = errors.New("pull failed: manifest unknown")
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev2", "ghost:9.9")})
+	if err != nil {
+		t.Fatalf("rev2 rollout: %v", err)
+	}
+	st := statusOf(got, "app1")
+	if st.GetState() != stateError || st.GetRevisionId() != "rev1" {
+		t.Fatalf("status = %+v, want error with rev1 still serving", st)
+	}
+	if !strings.Contains(st.GetDetail(), "pull:") {
+		t.Fatalf("detail = %q, want the pull failure surfaced", st.GetDetail())
+	}
+	if r.routes["app1"] != rev1Route {
+		t.Fatal("route moved despite failed pull")
+	}
+	if len(runningRev(c, "app1", "rev1")) != 1 {
+		t.Fatal("rev1 stopped serving despite rev2's failed pull")
+	}
+}
+
+func TestNonPullSpecNeverPulls(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "img:rev1")}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(c.pulledImages) != 0 {
+		t.Fatalf("pulled = %v, want none for a locally-built image (ADR-008)", c.pulledImages)
+	}
+}
+
+// A pulled image is tagged into the managed namespace and the container is
+// created from that reference — the only way a registry image becomes visible
+// to desired-state GC, since labels are baked in by whoever built it.
+func TestPulledImageIsTaggedManagedAndUsed(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	want := "ghost:5 -> cypher/app1:rev1"
+	if len(c.tagged) != 1 || c.tagged[0] != want {
+		t.Fatalf("tagged = %v, want [%s]", c.tagged, want)
+	}
+	if got := c.lastCreateSpec.Image; got != "cypher/app1:rev1" {
+		t.Fatalf("container created from %q, want the managed reference", got)
+	}
+}
+
+// A locally-built image already lives in the managed namespace and carries our
+// labels, so it is neither pulled nor re-tagged (ADR-008).
+func TestBuiltImageIsNotTagged(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "cypher/app1:rev1")}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(c.tagged) != 0 || len(c.pulledImages) != 0 {
+		t.Fatalf("built image was tagged/pulled: tagged=%v pulled=%v", c.tagged, c.pulledImages)
+	}
+}
+
+// The digest actually running is reported back, so the plane can pin the
+// revision to the artifact rather than to a tag that can move.
+func TestPullSpecReportsResolvedDigest(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	c.digests = map[string]string{"cypher/app1:rev1": "ghost@sha256:deadbeef"}
+	d := newDriver(c, r, p)
+
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if st := statusOf(got, "app1"); st.GetResolvedImage() != "ghost@sha256:deadbeef" {
+		t.Fatalf("resolved_image = %q, want the observed digest", st.GetResolvedImage())
+	}
+}
+
+// A built image has no registry digest, and an unresolvable one must not turn a
+// healthy rollout into a failure.
+func TestResolvedDigestOmittedWhenUnavailable(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	c.digestErr = errors.New("daemon hiccup")
+	d := newDriver(c, r, p)
+
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	st := statusOf(got, "app1")
+	if st.GetState() != stateRunning {
+		t.Fatalf("state = %q, want running despite the digest lookup failing", st.GetState())
+	}
+	if st.GetResolvedImage() != "" {
+		t.Fatalf("resolved_image = %q, want empty", st.GetResolvedImage())
+	}
+}
+
+// Deleting a registry-sourced app reclaims every reference to its image — the
+// managed alias *and* the registry reference it arrived under. Dropping only
+// the alias would untag it while the original still held the layers.
+//
+// Discovery is from the image, not from a container, so this holds even when
+// the rollout failed before any container existed.
+func TestGCReclaimsAllReferencesOfRemovedApp(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	c.images = []Image{{
+		ID:         "sha256:img",
+		AppIDs:     []string{"app1"},
+		References: []string{"cypher/app1:rev1", "ghost:5"},
+	}}
+	d := newDriver(c, r, p)
+
+	if _, err := d.Reconcile(context.Background(), nil); err != nil {
+		t.Fatalf("teardown: %v", err)
+	}
+	for _, ref := range []string{"cypher/app1:rev1", "ghost:5"} {
+		if !c.removedImages[ref] {
+			t.Errorf("reference %q not reclaimed (removed = %v)", ref, c.removedImages)
+		}
+	}
+}
+
+// An image two apps share survives while either is still desired: each app has
+// its own managed alias, but the layers are one image.
+func TestGCKeepsImageSharedWithDesiredApp(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	c.localImages = map[string]bool{"ghost:5": true} // operator's reference; the rollout leaves it
+	c.images = []Image{{
+		ID:         "sha256:shared",
+		AppIDs:     []string{"gone", "kept"},
+		References: []string{"cypher/gone:rev1", "cypher/kept:rev1"},
+	}}
+	d := newDriver(c, r, p)
+
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("kept", "rev1", "ghost:5")}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(c.removedImages) != 0 {
+		t.Fatalf("removed %v — an image a desired app still runs must survive whole", c.removedImages)
+	}
+}
+
+// The reference our own pull created is dropped once the managed alias holds
+// the image: leaving it would keep every layer alive after the app is deleted,
+// because GC only reclaims references CypherPanel created.
+func TestPullDropsTheReferenceItCreated(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if !c.removedImages["ghost:5"] {
+		t.Fatalf("removed = %v, want the floating reference our pull created", c.removedImages)
+	}
+}
+
+// A reference that already existed belongs to the operator — running an app
+// from it must never untag it.
+func TestPullKeepsAPreexistingReference(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	c.localImages = map[string]bool{"ghost:5": true} // the operator pulled it
+	d := newDriver(c, r, p)
+
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if c.removedImages["ghost:5"] {
+		t.Fatal("untagged a reference CypherPanel did not create")
+	}
+}
+
+// GC reclaims only managed aliases. An unrelated tag on the same image — an
+// operator's, or another tool's — must survive the app's deletion.
+func TestGCLeavesUnownedReferences(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	c.images = []Image{{
+		ID:         "sha256:img",
+		AppIDs:     []string{"app1"},
+		References: []string{"cypher/app1:rev1"}, // engine filters unmanaged tags out
+	}}
+	d := newDriver(c, r, p)
+
+	if _, err := d.Reconcile(context.Background(), nil); err != nil {
+		t.Fatalf("teardown: %v", err)
+	}
+	if !c.removedImages["cypher/app1:rev1"] {
+		t.Fatal("the managed alias was not reclaimed")
+	}
+	if c.removedImages["ghost:5"] {
+		t.Fatal("an unowned reference was removed")
+	}
+}
+
+// The digest is resolved from the alias this rollout pinned, not the source
+// tag — which another app can repoint, making it name an image we never ran.
+func TestDigestResolvedFromManagedAlias(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	c.digests = map[string]string{
+		"cypher/app1:rev1": "ghost@sha256:whatweran",
+		"ghost:5":          "ghost@sha256:somethingelse",
+	}
+	d := newDriver(c, r, p)
+
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if st := statusOf(got, "app1"); st.GetResolvedImage() != "ghost@sha256:whatweran" {
+		t.Fatalf("resolved_image = %q, want the digest behind the managed alias", st.GetResolvedImage())
+	}
+}
+
+// Ownership of a pull-created reference is only knowable at pull time, so a
+// removal that fails then must not be forgotten: it is recorded on the
+// container and retried, rather than leaking the layers behind one transient
+// daemon error.
+func TestFailedReferenceCleanupIsRecordedAndRetried(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	c.removeImageErr = map[string]error{"ghost:5": errors.New("daemon busy")}
+	d := newDriver(c, r, p)
+
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}); err != nil {
+		t.Fatalf("rollout: %v", err)
+	}
+	if got := c.lastCreateSpec.Labels[driver.LabelPullCreatedRef]; got != "ghost:5" {
+		t.Fatalf("pending reference label = %q, want it recorded for retry", got)
+	}
+	// Carry the label onto the observed container, as the daemon would.
+	for _, ct := range c.containers {
+		ct.PullCreatedRef = "ghost:5"
+	}
+
+	// The daemon recovers; the next converge finishes the job.
+	c.removeImageErr = nil
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}); err != nil {
+		t.Fatalf("second converge: %v", err)
+	}
+	if !c.removedImages["ghost:5"] {
+		t.Fatalf("removed = %v, want the pending reference reclaimed on retry", c.removedImages)
+	}
+}
+
+// A converged app with nothing pending still makes zero mutating calls — the
+// retry is guarded by a read, so it cannot break converge-twice.
+func TestConvergeTwiceUnaffectedByReferenceRetry(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+	specs := []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}
+
+	if _, err := d.Reconcile(context.Background(), specs); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	baseline := c.mutations + r.mutations
+	if _, err := d.Reconcile(context.Background(), specs); err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if after := c.mutations + r.mutations; after != baseline {
+		t.Fatalf("second converge mutated state: %d calls (want 0)", after-baseline)
 	}
 }

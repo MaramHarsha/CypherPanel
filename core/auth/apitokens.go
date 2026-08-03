@@ -22,14 +22,34 @@ const APITokenPrefix = "cyp_"
 // the caller (the two are indistinguishable to the caller by design).
 var ErrTokenNotFound = errors.New("auth: token not found")
 
+// ErrInvalidAbility is returned when a token is requested with an unknown or
+// empty ability set.
+var ErrInvalidAbility = errors.New("auth: abilities must be a non-empty subset of read, write, deploy")
+
 // CreateToken issues a personal access token for userID. The raw token is
 // returned exactly once (never stored — only its hash is); name is a
 // human-readable label; expiresAt nil means the token never expires. The token
 // authenticates as its owning user, inheriting that user's role and team
-// memberships — that is its scope.
-func (a *Authenticator) CreateToken(ctx context.Context, userID, name string, expiresAt *time.Time) (raw string, tok domain.APIToken, err error) {
+// memberships, narrowed further by abilities — a token can never do something
+// its owner could not. An empty ability set is rejected rather than silently
+// widened: a credential's authority is always an explicit choice.
+func (a *Authenticator) CreateToken(ctx context.Context, userID, name string, abilities []domain.Ability, expiresAt *time.Time) (raw string, tok domain.APIToken, err error) {
+	if len(abilities) == 0 {
+		return "", domain.APIToken{}, ErrInvalidAbility
+	}
+	seen := map[domain.Ability]bool{}
+	deduped := make([]domain.Ability, 0, len(abilities))
+	for _, ab := range abilities {
+		if !domain.ValidAbility(ab) {
+			return "", domain.APIToken{}, ErrInvalidAbility
+		}
+		if !seen[ab] {
+			seen[ab] = true
+			deduped = append(deduped, ab)
+		}
+	}
 	raw = APITokenPrefix + ids.Secret()
-	tok, err = a.store.CreateAPIToken(ctx, ids.New(ids.PrefixAPIToken), userID, name, HashToken(raw), expiresAt)
+	tok, err = a.store.CreateAPIToken(ctx, ids.New(ids.PrefixAPIToken), userID, name, deduped, HashToken(raw), expiresAt)
 	if err != nil {
 		return "", domain.APIToken{}, fmt.Errorf("auth: creating api token: %w", err)
 	}
@@ -61,20 +81,21 @@ func (a *Authenticator) DeleteToken(ctx context.Context, userID, tokenID string)
 	return nil
 }
 
-// authenticateAPIToken resolves a raw API token to its owning user and records
-// the use. The last-used update is best-effort — it must never fail a request.
-func (a *Authenticator) authenticateAPIToken(ctx context.Context, rawToken string) (domain.User, error) {
+// authenticateAPIToken resolves a raw API token to its principal — owning user
+// plus the abilities the token was issued with — and records the use. The
+// last-used update is best-effort; it must never fail a request.
+func (a *Authenticator) authenticateAPIToken(ctx context.Context, rawToken string) (Principal, error) {
 	if strings.TrimPrefix(rawToken, APITokenPrefix) == "" {
-		return domain.User{}, ErrInvalidSession
+		return Principal{}, ErrInvalidSession
 	}
 	hash := HashToken(rawToken)
-	user, err := a.store.UserForAPIToken(ctx, hash)
+	user, tokenID, abilities, err := a.store.APITokenByHash(ctx, hash)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return domain.User{}, ErrInvalidSession
+			return Principal{}, ErrInvalidSession
 		}
-		return domain.User{}, fmt.Errorf("auth: resolving api token: %w", err)
+		return Principal{}, fmt.Errorf("auth: resolving api token: %w", err)
 	}
 	_ = a.store.TouchAPIToken(ctx, hash) // best-effort; never blocks the request
-	return user, nil
+	return Principal{User: user, Kind: KindAPIToken, Abilities: abilities, TokenID: tokenID}, nil
 }

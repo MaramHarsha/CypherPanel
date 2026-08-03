@@ -174,11 +174,18 @@ func (s *Service) Create(ctx context.Context, envID string, in CreateInput) (app
 	if err != nil {
 		return domain.Application{}, "", err
 	}
-	if _, err := s.store.GetServer(ctx, in.Runtime.ServerID); err != nil {
+	srv, err := s.store.GetServer(ctx, in.Runtime.ServerID)
+	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return domain.Application{}, "", ErrServerNotFound
 		}
 		return domain.Application{}, "", fmt.Errorf("applications: getting server: %w", err)
+	}
+	// A builder-only agent has no application driver and rejects rollout work,
+	// so placing an app there would create the row and then leave every deploy
+	// failing. Refuse at creation rather than at the first deployment.
+	if !srv.Runs() {
+		return domain.Application{}, "", invalid("that server has the builder role and does not run applications")
 	}
 
 	webhookSecret = ids.Secret()
@@ -415,6 +422,22 @@ func (s *Service) DeleteEnvVar(ctx context.Context, appID, key string) error {
 	return nil
 }
 
+// validImageRef bounds an OCI image reference to its legal alphabet
+// (registry/repository[:tag][@digest]). The engine's own reference parser is
+// the real gate at pull time; this keeps junk (whitespace, shell metacharacters)
+// out of the database and off the wire.
+func validImageRef(ref string) bool {
+	for _, r := range ref {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '.', r == '_', r == '-', r == '/', r == ':', r == '@':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func validateAndDefault(in CreateInput) (CreateInput, error) {
 	in.Name = strings.TrimSpace(in.Name)
 	if in.Name == "" || len(in.Name) > 100 {
@@ -423,14 +446,37 @@ func validateAndDefault(in CreateInput) (CreateInput, error) {
 
 	switch in.Source.Kind {
 	case "github", "git_url":
+		if strings.TrimSpace(in.Source.Repo) == "" {
+			return in, invalid("source.repo is required")
+		}
+		if in.Source.Branch == "" {
+			in.Source.Branch = "main"
+		}
+		in.Source.Image = ""
+	case "image":
+		// Deploy from a prebuilt OCI image (feature-matrix V1): no repo, no
+		// branch, no deploy key, and the pipeline skips build + distribute —
+		// the target agent pulls the reference itself (work.proto AppSpec.pull).
+		in.Source.Image = strings.TrimSpace(in.Source.Image)
+		if in.Source.Image == "" {
+			return in, invalid(`source.image is required when source.kind is "image"`)
+		}
+		if len(in.Source.Image) > 512 || !validImageRef(in.Source.Image) {
+			return in, invalid("source.image must be a single OCI image reference")
+		}
+		if in.Source.DeployKeyID != nil {
+			return in, invalid("source.deploy_key_id does not apply to image sources")
+		}
+		// Previews are driven by pull_request webhooks matched against the
+		// app's branch, which an image source does not have. Accepting the
+		// combination would report previews as enabled while no PR could ever
+		// create one — refuse it instead of failing silently.
+		if in.PreviewEnabled {
+			return in, invalid("preview environments need a git source; they cannot be enabled for an image source")
+		}
+		in.Source.Repo, in.Source.Branch = "", ""
 	default:
-		return in, invalid(`source.kind must be "github" or "git_url"`)
-	}
-	if strings.TrimSpace(in.Source.Repo) == "" {
-		return in, invalid("source.repo is required")
-	}
-	if in.Source.Branch == "" {
-		in.Source.Branch = "main"
+		return in, invalid(`source.kind must be "github", "git_url", or "image"`)
 	}
 
 	if in.Build.Kind == "" {

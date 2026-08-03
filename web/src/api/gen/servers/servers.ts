@@ -29,6 +29,7 @@ import type {
   CreateServerRequest,
   CreateServerResponse,
   Error,
+  ForbiddenResponse,
   Server,
   UnauthorizedResponse
 } from '.././model';
@@ -274,7 +275,7 @@ export const getListServersQueryKey = () => {
     }
 
     
-export const getListServersQueryOptions = <TData = Awaited<ReturnType<typeof listServers>>, TError = UnauthorizedResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServers>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getListServersQueryOptions = <TData = Awaited<ReturnType<typeof listServers>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServers>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -293,10 +294,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type ListServersQueryResult = NonNullable<Awaited<ReturnType<typeof listServers>>>
-export type ListServersQueryError = UnauthorizedResponse
+export type ListServersQueryError = UnauthorizedResponse | ForbiddenResponse
 
 
-export function useListServers<TData = Awaited<ReturnType<typeof listServers>>, TError = UnauthorizedResponse>(
+export function useListServers<TData = Awaited<ReturnType<typeof listServers>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServers>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listServers>>,
@@ -306,7 +307,7 @@ export function useListServers<TData = Awaited<ReturnType<typeof listServers>>, 
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListServers<TData = Awaited<ReturnType<typeof listServers>>, TError = UnauthorizedResponse>(
+export function useListServers<TData = Awaited<ReturnType<typeof listServers>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServers>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listServers>>,
@@ -316,7 +317,7 @@ export function useListServers<TData = Awaited<ReturnType<typeof listServers>>, 
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListServers<TData = Awaited<ReturnType<typeof listServers>>, TError = UnauthorizedResponse>(
+export function useListServers<TData = Awaited<ReturnType<typeof listServers>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServers>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -324,7 +325,7 @@ export function useListServers<TData = Awaited<ReturnType<typeof listServers>>, 
  * @summary List all servers, newest first
  */
 
-export function useListServers<TData = Awaited<ReturnType<typeof listServers>>, TError = UnauthorizedResponse>(
+export function useListServers<TData = Awaited<ReturnType<typeof listServers>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServers>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -367,7 +368,7 @@ export const createServer = async (createServerRequest: CreateServerRequest, opt
 
 
 
-export const getCreateServerMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse,
+export const getCreateServerMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createServer>>, TError,{data: CreateServerRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof createServer>>, TError,{data: CreateServerRequest}, TContext> => {
 
@@ -394,12 +395,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type CreateServerMutationResult = NonNullable<Awaited<ReturnType<typeof createServer>>>
     export type CreateServerMutationBody = CreateServerRequest
-    export type CreateServerMutationError = BadRequestResponse | UnauthorizedResponse
+    export type CreateServerMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
 
     /**
  * @summary Register a server and issue its single-use join token
  */
-export const useCreateServer = <TError = BadRequestResponse | UnauthorizedResponse,
+export const useCreateServer = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createServer>>, TError,{data: CreateServerRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof createServer>>,
@@ -445,7 +446,7 @@ export const getGetServerQueryKey = (id?: string,) => {
     }
 
     
-export const getGetServerQueryOptions = <TData = Awaited<ReturnType<typeof getServer>>, TError = UnauthorizedResponse | Error>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getServer>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getGetServerQueryOptions = <TData = Awaited<ReturnType<typeof getServer>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getServer>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -464,10 +465,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetServerQueryResult = NonNullable<Awaited<ReturnType<typeof getServer>>>
-export type GetServerQueryError = UnauthorizedResponse | Error
+export type GetServerQueryError = UnauthorizedResponse | ForbiddenResponse | Error
 
 
-export function useGetServer<TData = Awaited<ReturnType<typeof getServer>>, TError = UnauthorizedResponse | Error>(
+export function useGetServer<TData = Awaited<ReturnType<typeof getServer>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getServer>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getServer>>,
@@ -477,7 +478,7 @@ export function useGetServer<TData = Awaited<ReturnType<typeof getServer>>, TErr
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetServer<TData = Awaited<ReturnType<typeof getServer>>, TError = UnauthorizedResponse | Error>(
+export function useGetServer<TData = Awaited<ReturnType<typeof getServer>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getServer>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getServer>>,
@@ -487,7 +488,7 @@ export function useGetServer<TData = Awaited<ReturnType<typeof getServer>>, TErr
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetServer<TData = Awaited<ReturnType<typeof getServer>>, TError = UnauthorizedResponse | Error>(
+export function useGetServer<TData = Awaited<ReturnType<typeof getServer>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getServer>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -495,7 +496,7 @@ export function useGetServer<TData = Awaited<ReturnType<typeof getServer>>, TErr
  * @summary One server
  */
 
-export function useGetServer<TData = Awaited<ReturnType<typeof getServer>>, TError = UnauthorizedResponse | Error>(
+export function useGetServer<TData = Awaited<ReturnType<typeof getServer>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getServer>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -538,7 +539,7 @@ export const deleteServer = async (id: string, options?: RequestInit): Promise<v
 
 
 
-export const getDeleteServerMutationOptions = <TError = UnauthorizedResponse,
+export const getDeleteServerMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteServer>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof deleteServer>>, TError,{id: string}, TContext> => {
 
@@ -565,12 +566,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type DeleteServerMutationResult = NonNullable<Awaited<ReturnType<typeof deleteServer>>>
     
-    export type DeleteServerMutationError = UnauthorizedResponse
+    export type DeleteServerMutationError = UnauthorizedResponse | ForbiddenResponse
 
     /**
  * @summary Delete a server, revoking its agent
  */
-export const useDeleteServer = <TError = UnauthorizedResponse,
+export const useDeleteServer = <TError = UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteServer>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof deleteServer>>,

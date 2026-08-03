@@ -51,6 +51,25 @@ func (q *Queries) DeleteExpiredSessions(ctx context.Context) error {
 	return err
 }
 
+const deleteOtherSessionsForUser = `-- name: DeleteOtherSessionsForUser :execrows
+DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2
+`
+
+type DeleteOtherSessionsForUserParams struct {
+	UserID    string
+	TokenHash []byte
+}
+
+// "Sign out everywhere else": every session of this user except the one making
+// the request, identified by its token hash (never by an id the client sends).
+func (q *Queries) DeleteOtherSessionsForUser(ctx context.Context, arg DeleteOtherSessionsForUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteOtherSessionsForUser, arg.UserID, arg.TokenHash)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteSession = `-- name: DeleteSession :exec
 DELETE FROM sessions WHERE token_hash = $1
 `
@@ -58,6 +77,25 @@ DELETE FROM sessions WHERE token_hash = $1
 func (q *Queries) DeleteSession(ctx context.Context, tokenHash []byte) error {
 	_, err := q.db.Exec(ctx, deleteSession, tokenHash)
 	return err
+}
+
+const deleteSessionForUser = `-- name: DeleteSessionForUser :execrows
+DELETE FROM sessions WHERE id = $1 AND user_id = $2
+`
+
+type DeleteSessionForUserParams struct {
+	ID     string
+	UserID string
+}
+
+// Scoped by user_id so one account can never revoke another's session; the
+// affected-row count tells the caller whether the id was theirs.
+func (q *Queries) DeleteSessionForUser(ctx context.Context, arg DeleteSessionForUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteSessionForUser, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getSessionByTokenHash = `-- name: GetSessionByTokenHash :one
@@ -93,4 +131,45 @@ func (q *Queries) GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (
 		&i.User.TotpEnabled,
 	)
 	return i, err
+}
+
+const listSessionsByUser = `-- name: ListSessionsByUser :many
+SELECT id, user_id, expires_at, created_at
+FROM sessions
+WHERE user_id = $1 AND expires_at > now()
+ORDER BY created_at DESC
+`
+
+type ListSessionsByUserRow struct {
+	ID        string
+	UserID    string
+	ExpiresAt pgtype.Timestamptz
+	CreatedAt pgtype.Timestamptz
+}
+
+// Live sessions only: an expired row is already unusable, so showing it would
+// invite the operator to "revoke" something that is not a way in.
+func (q *Queries) ListSessionsByUser(ctx context.Context, userID string) ([]ListSessionsByUserRow, error) {
+	rows, err := q.db.Query(ctx, listSessionsByUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSessionsByUserRow{}
+	for rows.Next() {
+		var i ListSessionsByUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.ExpiresAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

@@ -215,6 +215,7 @@ func appParams(a domain.Application) db.CreateApplicationParams {
 		SourceRepo:            a.Source.Repo,
 		SourceBranch:          a.Source.Branch,
 		SourceDeployKeyID:     textFromPtr(a.Source.DeployKeyID),
+		SourceImage:           a.Source.Image,
 		BuildKind:             a.Build.Kind,
 		BuildDockerfilePath:   a.Build.DockerfilePath,
 		BuildContext:          a.Build.Context,
@@ -330,6 +331,7 @@ func (s *Store) UpdateApplicationConfig(ctx context.Context, a domain.Applicatio
 		SourceRepo:            a.Source.Repo,
 		SourceBranch:          a.Source.Branch,
 		SourceDeployKeyID:     textFromPtr(a.Source.DeployKeyID),
+		SourceImage:           a.Source.Image,
 		BuildKind:             a.Build.Kind,
 		BuildDockerfilePath:   a.Build.DockerfilePath,
 		BuildContext:          a.Build.Context,
@@ -615,6 +617,7 @@ func applicationFromRow(r db.Application) domain.Application {
 			Repo:        r.SourceRepo,
 			Branch:      r.SourceBranch,
 			DeployKeyID: ptrFromText(r.SourceDeployKeyID),
+			Image:       r.SourceImage,
 		},
 		Build: domain.AppBuild{
 			Kind:           r.BuildKind,
