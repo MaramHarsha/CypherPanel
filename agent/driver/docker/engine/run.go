@@ -221,6 +221,13 @@ func (c *Client) PullImage(ctx context.Context, ref string) error {
 // on '@' — splitting it on the last colon instead would send
 // `fromImage=repo@sha256&tag=…`, which names no image the registry can serve.
 // A tagless reference defaults to `latest`, as the CLI does.
+//
+// The digest belongs in `tag`, not in `fromImage`: this is what Docker's own
+// client does (moby `getAPITagFromNamedRef` returns the digest string as the
+// tag), and it is verified against a real daemon — pulling
+// `busybox@sha256:73aaf0…` this way succeeds and lands as a digest reference.
+// Passing the whole `repo@sha256:…` as `fromImage` also works, so the two are
+// equivalent; this form is kept because it matches the reference client.
 func splitRef(ref string) (name, tag string) {
 	if i := strings.LastIndex(ref, "@"); i >= 0 {
 		return ref[:i], ref[i+1:]
