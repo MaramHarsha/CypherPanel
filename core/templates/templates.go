@@ -145,8 +145,14 @@ func (t Template) needsDomain() bool {
 			return true
 		}
 		for _, v := range a.Env {
-			if strings.Contains(v, "{{domain}}") {
-				return true
+			// Match with the tokenizer, not a literal: the grammar accepts
+			// whitespace inside a placeholder, so `{{ domain }}` is valid and a
+			// substring check would miss it — letting a template install with
+			// no domain and then resolve one into an empty string.
+			for _, m := range tokenRe.FindAllStringSubmatch(v, -1) {
+				if m[1] == "domain" {
+					return true
+				}
 			}
 		}
 	}
@@ -266,6 +272,16 @@ func (s *Service) Install(ctx context.Context, slug string, in InstallInput) (In
 			route = domain.AppRoute{Domain: in.Domain, HTTPS: true}
 		}
 		health := domain.AppHealth{Kind: a.Health.Kind, Path: a.Health.Path}
+		// Database provisioning is asynchronous: Create returns once the work is
+		// published, not once the engine is accepting connections. The default
+		// gate (10s x 3) can therefore expire while the database is still
+		// starting, failing the very first deploy of an otherwise correct
+		// install. Templates never specify timings — the schema has no field for
+		// them — so widening the budget here is unambiguous. It only makes the
+		// gate more patient; an app that never becomes healthy still fails.
+		if len(tpl.Resources.Databases) > 0 {
+			health.IntervalSeconds, health.TimeoutSeconds, health.Retries = 10, 5, 18
+		}
 		var vols []domain.VolumeMount
 		for _, v := range a.Volumes {
 			vols = append(vols, domain.VolumeMount{Name: v.Name, Path: v.Path})

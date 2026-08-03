@@ -110,6 +110,21 @@ straight to rollout). Resource names are `<name>-<resource>` where `name`
 defaults to the slug; a name collision in the environment fails validation
 before anything is created.
 
+**Ordering, and its current limit.** Databases are created before the
+applications that reference them, but `Create` returns once provisioning work
+is *published*, not once the engine accepts connections — so a dependent app
+can start while its database is still coming up. Its first health gate is
+therefore given a deliberately patient budget (10 s × 18 ≈ 3 minutes) whenever
+the template declares a database, which covers ordinary provisioning on modest
+hardware.
+
+That is a mitigation, not an ordering guarantee. Making the deploy genuinely
+wait belongs in the scheduler as desired state — "this revision is deployable
+once these databases report running" — rather than as a sleep in the install
+path, which would not survive a plane restart. Recorded as follow-up; until
+then a database that takes longer than the gate leaves a failed first
+deployment that redeploys cleanly once it is up.
+
 **Failure:** install is not transactional across resources. On a mid-install
 error the service best-effort deletes what it created in this call (reverse
 order), then reports the underlying error; a deletion that itself fails is

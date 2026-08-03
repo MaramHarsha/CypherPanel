@@ -465,3 +465,49 @@ func TestBundledImagesArePinnedToAnExactVersion(t *testing.T) {
 		}
 	}
 }
+
+// The placeholder grammar allows whitespace, so `{{ domain }}` is a valid
+// spelling — a literal substring check would miss it and let the template
+// install with no domain, resolving one into an empty string.
+func TestNeedsDomainMatchesWhitespaceSpelling(t *testing.T) {
+	y := strings.Replace(minimalYAML(""), "      route: true", "      route: false", 1)
+	y = strings.Replace(y, `KEY: "{{db.db.password}}"`, `KEY: "https://{{ domain }}/hook"`, 1)
+	tpl, err := Parse([]byte(y))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if !tpl.needsDomain() {
+		t.Fatal("{{ domain }} not recognised — the template would install without one")
+	}
+}
+
+// An app that must wait on a freshly-provisioned database gets a more patient
+// first health gate: provisioning is asynchronous, and the default budget can
+// expire while the engine is still starting.
+func TestDatabaseBackedAppsGetAPatientHealthGate(t *testing.T) {
+	apps := &fakeApps{}
+	s := newTestService(t, apps, &fakeDbs{}, &fakeDeployer{})
+
+	if _, err := s.Install(context.Background(), "n8n", InstallInput{
+		EnvironmentID: "env_1", ServerID: "srv_1", Domain: "n8n.example.com",
+	}); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	h := apps.created[0].Health
+	if h.Retries*h.IntervalSeconds < 120 {
+		t.Fatalf("health budget = %ds, too tight for a database that is still provisioning", h.Retries*h.IntervalSeconds)
+	}
+
+	// A template with no database keeps the ordinary defaults (zero here, filled
+	// in by the applications service).
+	apps2 := &fakeApps{}
+	s2 := newTestService(t, apps2, &fakeDbs{}, &fakeDeployer{})
+	if _, err := s2.Install(context.Background(), "uptime-kuma", InstallInput{
+		EnvironmentID: "env_1", ServerID: "srv_1", Domain: "up.example.com",
+	}); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if apps2.created[0].Health.Retries != 0 {
+		t.Fatalf("a database-free template should not widen the gate, got %+v", apps2.created[0].Health)
+	}
+}

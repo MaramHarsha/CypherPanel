@@ -145,7 +145,9 @@ function InstallDialog({ template }: { template: Template }) {
   // Mirrors the server's Template.needsDomain: a routed app, or any value that
   // interpolates {{domain}}, makes the domain mandatory.
   const needsDomain = template.resources.applications.some(
-    (app) => app.route || Object.values(app.env ?? {}).some((v) => v.includes("{{domain}}")),
+    // Whitespace is legal inside a placeholder ({{ domain }}), so match the
+    // grammar rather than a literal — the server does the same.
+    (app) => app.route || Object.values(app.env ?? {}).some((v) => /\{\{\s*domain\s*\}\}/.test(v)),
   );
 
   const submit = (e: FormEvent) => {
