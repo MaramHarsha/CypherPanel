@@ -54,9 +54,11 @@ const PullMarkerPrefix = "cypher-pull/"
 const maxReferenceName = 255
 
 // refEncoding renders an arbitrary registry reference as a legal repository
-// path component. Base32 lowercased is [a-z2-7], the alphabet a repository
-// name allows; base64 and hex-with-punctuation are not, and a readable
-// escaping cannot survive the uppercase a *tag* may contain.
+// path component. Base32 lowercased is [a-z2-7], which a repository name
+// accepts as a single component; base64's +/= are not legal there, and a
+// readable escaping cannot survive the uppercase a *tag* may contain. Hex
+// would also be legal but spends a third more of the 255-character name
+// budget, which is what bounds the references this can record at all.
 var refEncoding = base32.StdEncoding.WithPadding(base32.NoPadding)
 
 // PullMarkerRef is the marker reference recording that appID's pull created
