@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -304,6 +305,50 @@ func TestContainerIP(t *testing.T) {
 }
 
 // ── images ──────────────────────────────────────────────────────────────────
+
+// A pull marker is what tells GC that a registry reference is ours to remove.
+// It has to come back as the reference it records — and an image carrying only
+// a marker still has to be discoverable, because a rollout can die between
+// recording the reference and tagging the managed alias.
+func TestListManagedImagesReportsPullMarkers(t *testing.T) {
+	marker, ok := driver.PullMarkerRef("app2", "ghost:5")
+	if !ok {
+		t.Fatal("PullMarkerRef refused an ordinary reference")
+	}
+	m := newMockDaemon(t, map[string]http.HandlerFunc{
+		"/images/json": func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(t, w, http.StatusOK, []map[string]any{
+				{"Id": "i1", "RepoTags": []string{"cypher/app1:rev1", "ghost:5", "gitea/gitea:1.23.8"}},
+				{"Id": "i2", "RepoTags": []string{marker}},
+			})
+		},
+	})
+
+	imgs, err := m.client().ListManagedImages(context.Background())
+	if err != nil {
+		t.Fatalf("ListManagedImages: %v", err)
+	}
+	if len(imgs) != 2 {
+		t.Fatalf("images = %+v, want the aliased one and the marker-only one", imgs)
+	}
+	// An alias without a marker claims nothing: the registry references beside
+	// it may be the operator's, and untagging those is not ours to do.
+	if got := imgs[0]; len(got.Pending) != 0 || !slices.Equal(got.References, []string{"cypher/app1:rev1"}) {
+		t.Fatalf("aliased image = %+v, want only the managed alias and nothing pending", got)
+	}
+	got := imgs[1]
+	if !slices.Equal(got.AppIDs, []string{"app2"}) {
+		t.Fatalf("marker-only image app ids = %v, want it attributed to app2", got.AppIDs)
+	}
+	if len(got.Pending) != 1 || got.Pending[0].Source != "ghost:5" || got.Pending[0].Marker != marker {
+		t.Fatalf("pending = %+v, want ghost:5 recorded by %s", got.Pending, marker)
+	}
+	// The marker is not a managed alias: it is removed only after the reference
+	// it names, so it must never arrive in the list GC drops freely.
+	if len(got.References) != 0 {
+		t.Fatalf("references = %v, want the marker kept out of them", got.References)
+	}
+}
 
 func TestImagesListRemoveAndHas(t *testing.T) {
 	removeCode := http.StatusOK

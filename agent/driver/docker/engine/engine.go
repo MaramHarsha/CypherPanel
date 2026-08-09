@@ -183,12 +183,11 @@ func (c *Client) ListManaged(ctx context.Context) ([]docker.Container, error) {
 			name = strings.TrimPrefix(s.Names[0], "/")
 		}
 		out = append(out, docker.Container{
-			ID:             s.ID,
-			Name:           name,
-			AppID:          s.Labels[driver.LabelAppID],
-			RevisionID:     s.Labels[driver.LabelRevisionID],
-			PullCreatedRef: s.Labels[driver.LabelPullCreatedRef],
-			Running:        s.State == "running",
+			ID:         s.ID,
+			Name:       name,
+			AppID:      s.Labels[driver.LabelAppID],
+			RevisionID: s.Labels[driver.LabelRevisionID],
+			Running:    s.State == "running",
 		})
 	}
 	return out, nil
@@ -341,6 +340,13 @@ type imageSummary struct {
 // it arrived under exists, no matter how many managed aliases are removed.
 // Grouping by image (not by name) is also what lets GC keep an image two apps
 // share when only one of them is deleted.
+//
+// The registry reference a pull arrived under is reported separately, as
+// Pending, and only when a marker reference proves our own pull created it
+// (driver.PullMarkerRef). That distinction is the whole reason the marker
+// exists: an image can equally carry a tag the operator made, and untagging
+// one of those on an app's deletion would be the driver reaching outside its
+// own managed set.
 func (c *Client) ListManagedImages(ctx context.Context) ([]docker.Image, error) {
 	var all []imageSummary
 	if err := c.doJSON(ctx, http.MethodGet, "/images/json", nil, nil, &all); err != nil {
@@ -355,7 +361,14 @@ func (c *Client) ListManagedImages(ctx context.Context) ([]docker.Image, error) 
 			}
 		}
 		for _, tag := range s.RepoTags {
-			if appID, _, ok := parseManagedTag(tag); ok && !slices.Contains(appIDs, appID) {
+			appID, _, ok := parseManagedTag(tag)
+			if !ok {
+				// A marker alone is enough to own an image: a rollout can die
+				// between recording the reference and tagging the alias, and
+				// that image must still be reclaimable.
+				appID, _, ok = driver.ParsePullMarker(tag)
+			}
+			if ok && !slices.Contains(appIDs, appID) {
 				appIDs = append(appIDs, appID)
 			}
 		}
@@ -365,15 +378,19 @@ func (c *Client) ListManagedImages(ctx context.Context) ([]docker.Image, error) 
 		// Only references CypherPanel created are reclaimable. An image can
 		// also carry tags an operator or another tool made — deleting an app
 		// must never untag those (reconciler contract: never touch what is not
-		// ours). The floating reference a pull arrives under is dropped at
-		// rollout instead, and only when we were the ones who created it.
+		// ours).
 		managed := make([]string, 0, len(s.RepoTags))
+		var pending []docker.PendingRef
 		for _, tag := range s.RepoTags {
+			if _, source, ok := driver.ParsePullMarker(tag); ok {
+				pending = append(pending, docker.PendingRef{Source: source, Marker: tag})
+				continue
+			}
 			if _, _, ok := parseManagedTag(tag); ok {
 				managed = append(managed, tag)
 			}
 		}
-		out = append(out, docker.Image{ID: s.ID, AppIDs: appIDs, References: managed})
+		out = append(out, docker.Image{ID: s.ID, AppIDs: appIDs, References: managed, Pending: pending})
 	}
 	return out, nil
 }

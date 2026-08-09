@@ -17,6 +17,8 @@ package driver
 
 import (
 	"context"
+	"encoding/base32"
+	"strings"
 
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
 )
@@ -33,13 +35,67 @@ const (
 	LabelAppID = "cypherpanel.app-id"
 	// LabelRevisionID carries the revision the resource was created from.
 	LabelRevisionID = "cypherpanel.revision-id"
-	// LabelPullCreatedRef carries a registry reference this agent's own pull
-	// created and then failed to tidy away. Ownership of that reference is only
-	// knowable at pull time — afterwards nothing distinguishes it from a tag the
-	// operator made — so it is recorded here and retried on later reconciles.
-	// Absent in the normal case, where the reference is dropped immediately.
-	LabelPullCreatedRef = "cypherpanel.pull-created-ref"
 )
+
+// PullMarkerPrefix is the repository namespace of the marker reference that
+// records "our own pull created this registry reference".
+//
+// A pulled image cannot carry our labels — those are baked in by whoever built
+// it — so a *reference* is the only thing a driver can attach to one. That is
+// what this namespace is for: ownership of the floating reference a pull
+// creates is knowable only at pull time (afterwards nothing distinguishes it
+// from a tag the operator made), and it has to survive everything that can
+// happen next — a container that is never created, a rollout discarded at the
+// health gate, an agent restart, the application's own deletion. The image
+// survives all of them, so the record lives on the image.
+const PullMarkerPrefix = "cypher-pull/"
+
+// maxReferenceName is Docker's limit on a repository name, tag excluded.
+const maxReferenceName = 255
+
+// refEncoding renders an arbitrary registry reference as a legal repository
+// path component. Base32 lowercased is [a-z2-7], the alphabet a repository
+// name allows; base64 and hex-with-punctuation are not, and a readable
+// escaping cannot survive the uppercase a *tag* may contain.
+var refEncoding = base32.StdEncoding.WithPadding(base32.NoPadding)
+
+// PullMarkerRef is the marker reference recording that appID's pull created
+// source. The reference itself is encoded into the repository path so the
+// exact string to drop is recoverable from the daemon alone — with no spec to
+// consult and no container to read a label off — which is what lets garbage
+// collection finish the job for an application that no longer exists.
+//
+// ok is false for a reference too long to encode within Docker's name limit
+// (~151 bytes of reference); the caller drops it immediately and, failing
+// that, leaves it, exactly as it would leave one the operator made.
+func PullMarkerRef(appID, source string) (ref string, ok bool) {
+	if appID == "" || source == "" || strings.ContainsAny(appID, ":/") {
+		return "", false
+	}
+	name := PullMarkerPrefix + strings.ToLower(refEncoding.EncodeToString([]byte(source)))
+	if len(name) > maxReferenceName {
+		return "", false
+	}
+	return name + ":" + appID, true
+}
+
+// ParsePullMarker recovers the application and the registry reference a marker
+// records. Anything that is not one of ours returns ok=false and is left alone.
+func ParsePullMarker(ref string) (appID, source string, ok bool) {
+	rest, found := strings.CutPrefix(ref, PullMarkerPrefix)
+	if !found {
+		return "", "", false
+	}
+	encoded, appID, found := strings.Cut(rest, ":")
+	if !found || encoded == "" || appID == "" || strings.Contains(encoded, "/") {
+		return "", "", false
+	}
+	raw, err := refEncoding.DecodeString(strings.ToUpper(encoded))
+	if err != nil || len(raw) == 0 {
+		return "", "", false
+	}
+	return appID, string(raw), true
+}
 
 // Reconciler is the driver contract. Implementations: driver/docker (launch),
 // driver/swarm (V1.x, ADR-006), k8s (post-v1).

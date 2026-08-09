@@ -1014,9 +1014,15 @@ func TestPulledImageIsTaggedManagedAndUsed(t *testing.T) {
 	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	want := "ghost:5 -> cypher/app1:rev1"
-	if len(c.tagged) != 1 || c.tagged[0] != want {
-		t.Fatalf("tagged = %v, want [%s]", c.tagged, want)
+	// Ownership is recorded first, then the alias — the marker has to be on the
+	// image before any step that could fail while the reference is already
+	// there, and the alias tag is the first of those.
+	want := []string{
+		"ghost:5 -> " + pullMarker(t, "app1", "ghost:5"),
+		"ghost:5 -> cypher/app1:rev1",
+	}
+	if !slices.Equal(c.tagged, want) {
+		t.Fatalf("tagged = %v, want %v", c.tagged, want)
 	}
 	if got := c.lastCreateSpec.Image; got != "cypher/app1:rev1" {
 		t.Fatalf("container created from %q, want the managed reference", got)
@@ -1131,6 +1137,12 @@ func TestPullDropsTheReferenceItCreated(t *testing.T) {
 	if !c.removedImages["ghost:5"] {
 		t.Fatalf("removed = %v, want the floating reference our pull created", c.removedImages)
 	}
+	// The marker exists only to make a *failed* drop retryable, so a successful
+	// one takes it away again: a marker left behind names a reference that is
+	// already gone, and GC would go on retrying it forever.
+	if marker := pullMarker(t, "app1", "ghost:5"); !c.removedImages[marker] {
+		t.Fatalf("removed = %v, want the spent marker cleaned up", c.removedImages)
+	}
 }
 
 // A reference that already existed belongs to the operator — running an app
@@ -1145,6 +1157,11 @@ func TestPullKeepsAPreexistingReference(t *testing.T) {
 	}
 	if c.removedImages["ghost:5"] {
 		t.Fatal("untagged a reference CypherPanel did not create")
+	}
+	// And nothing claims it as ours: a marker is a licence for GC to remove the
+	// reference later, so recording one here would only defer the same mistake.
+	if marker := pullMarker(t, "app1", "ghost:5"); c.localImages[marker] {
+		t.Fatal("claimed ownership of a reference the operator already had")
 	}
 }
 
@@ -1189,38 +1206,129 @@ func TestDigestResolvedFromManagedAlias(t *testing.T) {
 	}
 }
 
-// Ownership of a pull-created reference is only knowable at pull time, so a
-// removal that fails then must not be forgotten: it is recorded on the
-// container and retried, rather than leaking the layers behind one transient
-// daemon error.
-func TestFailedReferenceCleanupIsRecordedAndRetried(t *testing.T) {
+// pullMarker is the marker reference the driver records ownership with. Built
+// through the shared helper, so the test cannot drift from what the engine
+// decodes on the way back.
+func pullMarker(t *testing.T, appID, source string) string {
+	t.Helper()
+	ref, ok := driver.PullMarkerRef(appID, source)
+	if !ok {
+		t.Fatalf("PullMarkerRef(%q, %q) refused", appID, source)
+	}
+	return ref
+}
+
+// Ownership of a pull-created reference is only knowable at pull time, so it is
+// recorded before anything that could lose it — and the record goes on the
+// image, not on the container, because every step from here to a serving
+// revision can fail and take the container with it.
+//
+// This is the case that made a container label the wrong home: the rollout dies
+// at create, so there is no container to carry anything, and on the next
+// reconcile the leaked reference is indistinguishable from one the operator
+// made. The marker is on the image, which outlived the failure.
+func TestPullOwnershipSurvivesARolloutThatNeverCreatesAContainer(t *testing.T) {
 	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
 	c.removeImageErr = map[string]error{"ghost:5": errors.New("daemon busy")}
+	c.createErrForImage["cypher/app1:rev1"] = errors.New("no such network")
 	d := newDriver(c, r, p)
 
-	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}); err != nil {
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")})
+	if err != nil {
 		t.Fatalf("rollout: %v", err)
 	}
-	if got := c.lastCreateSpec.Labels[driver.LabelPullCreatedRef]; got != "ghost:5" {
-		t.Fatalf("pending reference label = %q, want it recorded for retry", got)
+	if st := statusOf(got, "app1"); st.GetState() != stateError {
+		t.Fatalf("state = %q, want the failed create reported", st.GetState())
 	}
-	// Carry the label onto the observed container, as the daemon would.
-	for _, ct := range c.containers {
-		ct.PullCreatedRef = "ghost:5"
+	if len(c.containers) != 0 {
+		t.Fatalf("containers = %v, want none — the create failed", c.containers)
+	}
+	marker := pullMarker(t, "app1", "ghost:5")
+	if !slices.Contains(c.tagged, "ghost:5 -> "+marker) {
+		t.Fatalf("tagged = %v, want the reference recorded as ours before the create", c.tagged)
+	}
+	if !c.localImages[marker] {
+		t.Fatal("the marker did not survive the failed rollout")
 	}
 
-	// The daemon recovers; the next converge finishes the job.
+	// Next reconcile: the daemon recovers and GC finishes the job from the
+	// marker alone — no container to read, no memory of the rollout.
 	c.removeImageErr = nil
+	c.images = []Image{{
+		ID:      "sha256:img",
+		AppIDs:  []string{"app1"},
+		Pending: []PendingRef{{Source: "ghost:5", Marker: marker}},
+	}}
 	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}); err != nil {
 		t.Fatalf("second converge: %v", err)
 	}
 	if !c.removedImages["ghost:5"] {
-		t.Fatalf("removed = %v, want the pending reference reclaimed on retry", c.removedImages)
+		t.Fatalf("removed = %v, want the leaked reference reclaimed", c.removedImages)
+	}
+	if !c.removedImages[marker] {
+		t.Fatalf("removed = %v, want the spent marker cleaned up too", c.removedImages)
 	}
 }
 
-// A converged app with nothing pending still makes zero mutating calls — the
-// retry is guarded by a read, so it cannot break converge-twice.
+// The retry belongs to the image, not to the application's lifecycle: it must
+// run for an app that is still desired (the usual case — the rollout succeeded
+// and only the tidy-up failed) and for one already deleted.
+func TestPendingReferenceIsRetriedForADesiredApp(t *testing.T) {
+	marker, _ := driver.PullMarkerRef("app1", "ghost:5")
+	for _, tc := range []struct {
+		name    string
+		desired []*agentv1.AppSpec
+	}{
+		{"still desired", []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}},
+		{"deleted", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+			c.images = []Image{{
+				ID:         "sha256:img",
+				AppIDs:     []string{"app1"},
+				References: []string{"cypher/app1:rev1"},
+				Pending:    []PendingRef{{Source: "ghost:5", Marker: marker}},
+			}}
+			d := newDriver(c, r, p)
+
+			if _, err := d.Reconcile(context.Background(), tc.desired); err != nil {
+				t.Fatalf("Reconcile: %v", err)
+			}
+			if !c.removedImages["ghost:5"] || !c.removedImages[marker] {
+				t.Fatalf("removed = %v, want the pending reference and its marker gone", c.removedImages)
+			}
+			if _, wanted := c.removedImages["cypher/app1:rev1"]; wanted == (len(tc.desired) > 0) {
+				t.Fatalf("managed alias removal = %v for a %s app", c.removedImages, tc.name)
+			}
+		})
+	}
+}
+
+// A marker must outlive the reference it names. Removing it first would leave
+// a reference nothing can prove is ours — which is to say one GC may never
+// touch again, so the leak becomes permanent rather than deferred.
+func TestMarkerOutlivesAReferenceItCannotYetRemove(t *testing.T) {
+	marker, _ := driver.PullMarkerRef("app1", "ghost:5")
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	c.removeImageErr = map[string]error{"ghost:5": errors.New("still busy")}
+	c.images = []Image{{
+		ID:      "sha256:img",
+		AppIDs:  []string{"app1"},
+		Pending: []PendingRef{{Source: "ghost:5", Marker: marker}},
+	}}
+	d := newDriver(c, r, p)
+
+	if _, err := d.Reconcile(context.Background(), nil); err != nil {
+		t.Fatalf("teardown: %v", err)
+	}
+	if c.removedImages[marker] {
+		t.Fatal("the marker was removed while the reference it records is still there")
+	}
+}
+
+// A converged app with nothing pending still makes zero mutating calls: no
+// marker means no work, so the retry cannot break converge-twice.
 func TestConvergeTwiceUnaffectedByReferenceRetry(t *testing.T) {
 	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
 	d := newDriver(c, r, p)

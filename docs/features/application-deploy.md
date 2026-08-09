@@ -153,6 +153,28 @@ success, which is exactly the stale-container failure ADR-005 exists to make
 impossible. A pull that fails leaves the old revision serving and reports
 `error`; it never silently falls back to the cached image.
 
+**Reclaiming what a pull created.** A pulled image cannot carry our labels —
+those are baked in by whoever built it — so it is tagged into the managed
+`cypher/<app>:<revision>` namespace at rollout and the container runs from that
+alias. The floating registry reference the pull arrived under is then dropped;
+leaving it would keep every layer alive after the app was deleted.
+
+Only a reference **our own pull created** may be dropped: one that already
+existed is the operator's, and untagging it would be the driver reaching
+outside its managed set. That is knowable only at pull time, so it is recorded
+immediately — on the **image**, as a marker reference (`cypher-pull/<encoded
+reference>:<app_id>`), before anything that could lose it. A container label was
+the wrong home for it: everything after the pull (tagging, create, start, the
+health gate, the route flip) can fail, and the last four discard the container,
+so the record would vanish in exactly the cases it exists for. The image
+survives all of them, and GC retries the removal from the marker alone — no
+spec to consult, no container to read, so it still converges for a rollout that
+never created one and for an app deleted before the retry succeeded. The marker
+always outlives the reference it names, and is removed once that reference is
+gone. Residual: a crash in the instant between the pull and the marker leaves an
+unrecorded reference, which is then treated exactly like the operator's — never
+reclaimed, and never wrongly removed.
+
 ### Persistent volumes (feature-matrix V1)
 
 An Application may declare volume mounts (`volumes: [{name, path}]`), stored as a

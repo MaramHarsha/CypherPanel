@@ -48,10 +48,7 @@ type Container struct {
 	Name       string
 	AppID      string
 	RevisionID string
-	// PullCreatedRef is a registry reference this agent created and could not
-	// remove at rollout; convergence retries it. Empty in the normal case.
-	PullCreatedRef string
-	Running        bool
+	Running    bool
 }
 
 // ContainerSpec is the create request the driver builds from an AppSpec.
@@ -87,9 +84,25 @@ type Image struct {
 	// the label a build stamped, and/or the cypher/<app>:<revision> aliases a
 	// pull was tagged with. More than one when two apps run the same image.
 	AppIDs []string
-	// References is every name the daemon holds for it — managed aliases plus,
-	// for a pulled image, its original registry reference.
+	// References is every managed name the daemon holds for it. Only ours: an
+	// image can also carry tags an operator or another tool made, and deleting
+	// an application must never untag those.
 	References []string
+	// Pending is the tidy-up an earlier rollout could not finish — a registry
+	// reference our own pull created and failed to drop.
+	Pending []PendingRef
+}
+
+// PendingRef pairs a registry reference this driver's pull created with the
+// marker reference recording it as ours (driver.PullMarkerRef).
+//
+// The pair is what makes the removal retryable. Drop the marker first and the
+// reference becomes indistinguishable from one the operator made — which is to
+// say permanently unreclaimable, since GC may never touch what is not ours.
+// So the marker always outlives the reference it names.
+type PendingRef struct {
+	Source string
+	Marker string
 }
 
 // Client is the subset of the Docker Engine API the reconciler needs.
@@ -312,7 +325,7 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 	// Only in the create branch — the converged fast path never gets here, so
 	// converge-twice stays zero-mutation — and EnsureImage itself is a no-op
 	// when the reference is already local (crash-resume between pull and start).
-	image, pendingRef := spec.GetImage(), ""
+	image := spec.GetImage()
 	if spec.GetPull() {
 		// Learn whether this reference is ours *before* the pull creates it.
 		hadSource, hasErr := d.client.HasImage(ctx, image)
@@ -324,6 +337,23 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 		if err := d.client.EnsureImage(ctx, image); err != nil {
 			return status(spec.GetAppId(), currentRevision(existing), stateError, "pull: "+err.Error())
 		}
+		// Record that the reference is ours before anything else can fail.
+		// Ownership is knowable only here, and every step after this one —
+		// tagging, create, start, the health gate, the route flip — can fail,
+		// with the last four discarding the container. A record kept on the
+		// container is therefore lost in exactly the cases it exists for. The
+		// marker rides on the image, which outlives all of them, so GC can
+		// finish the job from the daemon alone.
+		pending := PendingRef{Source: image}
+		if !hadSource {
+			if ref, ok := driver.PullMarkerRef(spec.GetAppId(), image); !ok {
+				d.log.Warn("reference too long to record for cleanup", "image", image)
+			} else if err := d.client.TagImage(ctx, image, ref); err != nil {
+				d.log.Warn("recording the reference our pull created", "image", image, "error", err)
+			} else {
+				pending.Marker = ref
+			}
+		}
 		// Give the pulled image a managed reference and run the container from
 		// that. A pulled image cannot carry our labels — they are baked in by
 		// whoever built it — so without this it is invisible to desired-state
@@ -334,21 +364,13 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 		if err := d.client.TagImage(ctx, image, managed); err != nil {
 			return status(spec.GetAppId(), currentRevision(existing), stateError, "tag: "+err.Error())
 		}
-		// If the pull created the source reference, drop it: the managed alias
-		// now holds the image, and leaving the floating tag behind would keep
-		// every layer alive after the app is deleted (GC only removes
-		// references we created, so it could never reclaim this one). A
-		// reference that already existed belongs to the operator and is left
-		// untouched. Best-effort — failing to tidy must not fail a rollout.
+		// The managed alias now holds the image, so drop the floating reference
+		// the pull created: leaving it keeps every layer alive after the app is
+		// deleted. A reference that already existed belongs to the operator and
+		// is never touched. Best-effort — tidying disk must not fail a rollout —
+		// and whatever is left behind is retried by GC on the next reconcile.
 		if !hadSource {
-			if err := d.client.RemoveImage(ctx, spec.GetImage()); err != nil {
-				// Ownership is only knowable here; afterwards nothing tells our
-				// reference apart from one the operator made. Record it on the
-				// container so a later reconcile can finish the job instead of
-				// leaking the layers forever behind one transient error.
-				pendingRef = spec.GetImage()
-				d.log.Warn("dropping the reference our pull created", "image", spec.GetImage(), "error", err)
-			}
+			d.dropPullCreated(ctx, pending)
 		}
 		image = managed
 	}
@@ -372,7 +394,7 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 		Env:           spec.GetEnv(),
 		Network:       spec.GetNetwork(),
 		Port:          spec.GetPort(),
-		Labels:        managedLabels(spec, pendingRef),
+		Labels:        managedLabels(spec),
 		CPULimit:      spec.GetCpuLimit(),
 		MemoryLimitMB: spec.GetMemoryLimitMb(),
 		Binds:         binds,
@@ -424,16 +446,6 @@ func (d *Driver) applyDesiredRoute(ctx context.Context, spec *agentv1.AppSpec, u
 // between flip and drain leaves the old revision running unrouted). When
 // reality fully matches desired, this makes zero mutating calls.
 func (d *Driver) convergedApp(ctx context.Context, spec *agentv1.AppSpec, current *Container, leftovers []Container) *agentv1.AppStatus {
-	// Finish a reference tidy-up an earlier rollout could not complete. Guarded
-	// by a read so a converged app with nothing pending still makes zero
-	// mutating calls, and idempotent once the reference is gone.
-	if current.PullCreatedRef != "" {
-		if present, err := d.client.HasImage(ctx, current.PullCreatedRef); err == nil && present {
-			if err := d.client.RemoveImage(ctx, current.PullCreatedRef); err != nil {
-				d.log.Warn("retrying removal of the reference our pull created", "image", current.PullCreatedRef, "error", err)
-			}
-		}
-	}
 	upstream, err := d.upstreamOf(ctx, current.ID, spec)
 	if err != nil {
 		return status(spec.GetAppId(), spec.GetRevisionId(), stateError, "address: "+err.Error())
@@ -533,7 +545,28 @@ func (d *Driver) removeApp(ctx context.Context, appID string, containers []Conta
 	return failed
 }
 
-// gcRemovedAppImages removes images belonging to apps absent from desired.
+// dropPullCreated removes a registry reference this driver's own pull created,
+// then the marker that recorded it as ours.
+//
+// The order is the whole point: the marker is what makes a failed removal
+// retryable, so it must outlive the reference it names. Best-effort in both
+// directions — whatever fails is simply found again on the next reconcile,
+// because the record is on the image rather than in this process.
+func (d *Driver) dropPullCreated(ctx context.Context, ref PendingRef) {
+	if err := d.client.RemoveImage(ctx, ref.Source); err != nil {
+		d.log.Warn("dropping the reference our pull created", "image", ref.Source, "error", err)
+		return
+	}
+	if ref.Marker == "" {
+		return
+	}
+	if err := d.client.RemoveImage(ctx, ref.Marker); err != nil {
+		d.log.Warn("removing a spent pull marker", "marker", ref.Marker, "error", err)
+	}
+}
+
+// gcRemovedAppImages removes images belonging to apps absent from desired, and
+// finishes any pull-reference tidy-up an earlier rollout could not complete.
 func (d *Driver) gcRemovedAppImages(ctx context.Context, desiredApps map[string]struct{}) {
 	images, err := d.client.ListManagedImages(ctx)
 	if err != nil {
@@ -541,6 +574,14 @@ func (d *Driver) gcRemovedAppImages(ctx context.Context, desiredApps map[string]
 		return
 	}
 	for _, img := range images {
+		// Retried for desired and removed apps alike: the marker names both the
+		// reference and the fact that it is ours, so this needs no spec, no
+		// container, and no memory of the rollout that created it. That is what
+		// makes it survive a rollout which failed before any container existed —
+		// and the app being deleted before the retry ever succeeded.
+		for _, p := range img.Pending {
+			d.dropPullCreated(ctx, p)
+		}
 		// An image shared by a still-desired app must survive whole: two apps
 		// can run the same pulled image, each under its own managed alias.
 		if slices.ContainsFunc(img.AppIDs, func(appID string) bool {
@@ -549,12 +590,10 @@ func (d *Driver) gcRemovedAppImages(ctx context.Context, desiredApps map[string]
 		}) {
 			continue
 		}
-		// Drop every reference. Removing only the managed alias would untag it
-		// while the registry reference the image arrived under still holds the
-		// layers, so nothing would actually be freed. Discovery comes from the
-		// image, not from a container, so this still works for an image whose
-		// rollout failed before any container existed, and it is retried on
-		// every reconcile until it succeeds.
+		// Drop every managed alias. Together with the pending references above
+		// that is every name we ever put on this image, which is what actually
+		// frees the layers — untagging the alias alone leaves the registry
+		// reference the image arrived under still holding them.
 		for _, ref := range img.References {
 			if err := d.client.RemoveImage(ctx, ref); err != nil {
 				d.log.Warn("removing image reference", "reference", ref, "app_ids", img.AppIDs, "error", err)
@@ -592,16 +631,12 @@ func (d *Driver) upstreamOf(ctx context.Context, containerID string, spec *agent
 	return net.JoinHostPort(ip, strconv.Itoa(int(spec.GetPort()))), nil
 }
 
-func managedLabels(spec *agentv1.AppSpec, pendingRef string) map[string]string {
-	labels := map[string]string{
+func managedLabels(spec *agentv1.AppSpec) map[string]string {
+	return map[string]string{
 		driver.LabelManaged:    driverName,
 		driver.LabelAppID:      spec.GetAppId(),
 		driver.LabelRevisionID: spec.GetRevisionId(),
 	}
-	if pendingRef != "" {
-		labels[driver.LabelPullCreatedRef] = pendingRef
-	}
-	return labels
 }
 
 // networkLabels marks the network as managed without app or revision labels:
