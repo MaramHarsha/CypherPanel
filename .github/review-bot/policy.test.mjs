@@ -6,9 +6,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  decide, approvalBody, sensitiveBody, alreadyCommented, shouldRequestReview, matchesGlob,
+  decide, approvalBody, sensitiveBody, resolvedBody, findMarkedComment, shouldRequestReview, matchesGlob,
   decideOnLabels,
   pathsOf, dismissalMessage, blockedLabelsOf,
+  parseCommand, authorizeCommand, recordedAuthorization, manualApprovalFor, authorizationBody,
 } from "./policy.mjs";
 
 const config = JSON.parse(readFileSync(new URL("./config.json", import.meta.url)));
@@ -164,14 +165,35 @@ test("re-running on an already-approved commit is a no-op, not a second approval
   assert.equal(call({ reviews }).action, "skip");
 });
 
-test("the sensitive comment is posted once", () => {
+test("the standing comment is found by its marker, whatever it currently says", () => {
   const marker = config.commentMarker;
-  const body = sensitiveBody([".github/workflows/ci.yml"], marker);
+  const bot = config.botLogin;
+  const body = sensitiveBody([".github/workflows/ci.yml"], marker, SHA, config);
   assert.ok(body.includes(marker));
-  assert.equal(alreadyCommented([], config.botLogin, marker), false);
-  assert.equal(alreadyCommented([{ user: { login: config.botLogin }, body }], config.botLogin, marker), true);
-  // Unreadable comments must not cause a duplicate post.
-  assert.equal(alreadyCommented(undefined, config.botLogin, marker), true);
+  // Not posted yet.
+  assert.equal(findMarkedComment([], bot, marker), null);
+  // Posted — and still found after being rewritten into a different verdict,
+  // which is what lets a later commit turn it back into one.
+  const posted = [{ id: 7, user: { login: bot }, body }];
+  assert.equal(findMarkedComment(posted, bot, marker)?.id, 7);
+  const resolved = [{ id: 7, user: { login: bot }, body: resolvedBody(marker, SHA) }];
+  assert.equal(findMarkedComment(resolved, bot, marker)?.id, 7);
+  // Somebody else quoting the marker is not the bot's comment.
+  assert.equal(findMarkedComment([{ id: 8, user: { login: "mallory" }, body }], bot, marker), null);
+  // Unreadable comments are neither "absent" nor "present": the caller must be
+  // able to tell, or it would post a second copy of what is already there.
+  assert.equal(findMarkedComment(undefined, bot, marker), undefined);
+});
+
+test("the standing comment names the commit it judged, and how to answer it", () => {
+  const body = sensitiveBody(["core/auth/service.go"], config.commentMarker, SHA, config);
+  assert.match(body, /abcdef1/);
+  assert.match(body, /core\/auth\/service\.go/);
+  assert.match(body, /@MaramHarsha/);
+  assert.match(body, /@cypherpanel-review-bot approve/);
+  // Rewritten per commit, so the same paths at a new head produce a different
+  // body — that difference is what triggers the edit.
+  assert.notEqual(body, sensitiveBody(["core/auth/service.go"], config.commentMarker, OLD, config));
 });
 
 test("reviewer assignment skips drafts, self, duplicates, and unreadable state", () => {
@@ -425,4 +447,151 @@ test("the release signer is protected", () => {
   for (const f of ["core/cmd/release-sign/main.go", "scripts/release-sign.sh"]) {
     assert.equal(call({ files: [f] }).action, "comment-sensitive", f);
   }
+});
+
+// ── the owner's approve command ─────────────────────────────────────────────
+
+const OWNER = config.commandApprovers[0];
+const commentBy = (o = {}) => ({
+  id: 1, user: { login: OWNER }, author_association: "OWNER",
+  body: `@${config.botLogin} approve`, ...o,
+});
+
+test("the command is recognised when addressed to the bot", () => {
+  const bot = config.botLogin;
+  assert.deepEqual(parseCommand(`@${bot} approve`, bot), { verb: "approve" });
+  assert.deepEqual(parseCommand(`looks good to me\n\n@${bot} approve`, bot), { verb: "approve" });
+  assert.deepEqual(parseCommand(`@${bot}  APPROVE  please`, bot), { verb: "approve" });
+  // Addressed to somebody else, or nobody.
+  assert.equal(parseCommand("approve", bot), null);
+  assert.equal(parseCommand("@codex approve", bot), null);
+  assert.equal(parseCommand(`@${bot}`, bot), null);
+  // Understood as an address but not a command it knows: never guessed at.
+  assert.deepEqual(parseCommand(`@${bot} merge`, bot), { verb: "merge", unknown: true });
+});
+
+// Discussing the command must not be the same as issuing it — otherwise the
+// documentation for this feature, quoted into a review thread, approves things.
+test("a quoted, fenced, inlined or hidden command is not a command", () => {
+  const bot = config.botLogin;
+  assert.equal(parseCommand(`> @${bot} approve`, bot), null);
+  assert.equal(parseCommand("  >  as they said: @" + bot + " approve", bot), null);
+  assert.equal(parseCommand("```\n@" + bot + " approve\n```", bot), null);
+  assert.equal(parseCommand("type `@" + bot + " approve` to approve", bot), null);
+  assert.equal(parseCommand("<!-- @" + bot + " approve -->", bot), null);
+  // Non-string / missing input is not a command either.
+  assert.equal(parseCommand(undefined, bot), null);
+  assert.equal(parseCommand("@" + bot + " approve", ""), null);
+});
+
+// This repository is public: anybody at all can type the command.
+test("only the configured owner may command the bot", () => {
+  assert.deepEqual(authorizeCommand(commentBy(), config), { ok: true, actor: OWNER });
+  // Case is not identity in GitHub logins, so it must not be here either.
+  assert.equal(authorizeCommand(commentBy({ user: { login: OWNER.toLowerCase() } }), config).ok, true);
+
+  for (const comment of [
+    commentBy({ user: { login: "mallory" }, author_association: "NONE" }),
+    commentBy({ user: { login: "mallory" }, author_association: "OWNER" }), // a claim, but not on the list
+    commentBy({ author_association: "CONTRIBUTOR" }), // the name, without GitHub agreeing
+    commentBy({ author_association: "COLLABORATOR" }),
+    commentBy({ author_association: undefined }),
+    commentBy({ user: {} }),
+    undefined,
+  ]) {
+    assert.equal(authorizeCommand(comment, config).ok, false, JSON.stringify(comment));
+  }
+  assert.equal(authorizeCommand(commentBy(), undefined).ok, false);
+});
+
+test("an authorization approves protected changes that would otherwise wait", () => {
+  const files = ["core/auth/service.go", "web/pnpm-lock.yaml"];
+  assert.equal(call({ files }).action, "comment-sensitive");
+
+  const d = decide({
+    pr: prOf(), checks: green(), reviews: [], files, triggerSha: SHA, config,
+    manualApproval: { sha: SHA, actor: OWNER },
+  });
+  assert.equal(d.action, "approve");
+  assert.equal(d.actor, OWNER);
+});
+
+// It answers the "has a person looked at this" question, and nothing else.
+test("an authorization does not override CI, labels, drafts or the head commit", () => {
+  const authorized = (o = {}) => decide({
+    pr: prOf(o.pr), checks: o.checks ?? green(), reviews: o.reviews ?? [],
+    files: o.files ?? ["core/auth/service.go"], triggerSha: o.triggerSha ?? SHA, config,
+    manualApproval: { sha: SHA, actor: OWNER },
+  });
+  const red = green();
+  red[0] = { ...red[0], conclusion: "failure" };
+  assert.equal(authorized({ checks: red }).action, "skip");
+  assert.equal(authorized({ pr: { labels: [{ name: "do-not-approve" }] } }).action, "skip");
+  assert.equal(authorized({ pr: { draft: true } }).action, "skip");
+  assert.equal(authorized({ pr: { mergeable: false } }).action, "skip");
+  assert.match(authorized({ triggerSha: OLD }).reason, /newer commit/);
+  // And it is still not a second approval of the same commit.
+  const reviews = [{ user: { login: config.botLogin }, state: "APPROVED", commit_id: SHA }];
+  assert.equal(authorized({ reviews }).action, "skip");
+});
+
+// An authorization is given for the diff its author read. Anything pushed
+// afterwards is unreviewed by definition.
+test("an authorization expires when a new commit lands", () => {
+  assert.deepEqual(manualApprovalFor({ sha: SHA, actor: OWNER }, SHA), { actor: OWNER });
+  assert.equal(manualApprovalFor({ sha: OLD, actor: OWNER }, SHA), null);
+  assert.equal(manualApprovalFor({ sha: SHA }, SHA), null);
+  assert.equal(manualApprovalFor({ actor: OWNER }, SHA), null);
+  assert.equal(manualApprovalFor(null, SHA), null);
+  assert.equal(manualApprovalFor({ sha: SHA, actor: OWNER }, undefined), null);
+
+  const files = ["core/auth/service.go"];
+  const d = decide({
+    pr: prOf(), checks: green(), reviews: [], files, triggerSha: SHA, config,
+    manualApproval: { sha: OLD, actor: OWNER },
+  });
+  assert.equal(d.action, "comment-sensitive");
+});
+
+// The record is a comment the bot wrote. Anyone who cannot post as the bot
+// cannot forge one, which is what keeps the deferred path as safe as the
+// immediate one.
+test("only the bot's own record counts as an authorization", () => {
+  const body = authorizationBody(config, SHA, OWNER, "a required check is still running");
+  assert.deepEqual(recordedAuthorization([{ user: { login: config.botLogin }, body }], config), {
+    sha: SHA, actor: OWNER,
+  });
+  // The same text from anyone else — including the owner — is just text.
+  assert.equal(recordedAuthorization([{ user: { login: OWNER }, body }], config), null);
+  assert.equal(recordedAuthorization([{ user: { login: "mallory" }, body }], config), null);
+  assert.equal(recordedAuthorization([], config), null);
+  assert.equal(recordedAuthorization(undefined, config), null);
+  // A later record supersedes an earlier one, so re-commanding after a push
+  // does not have to fight the stale entry above it.
+  const older = authorizationBody(config, OLD, OWNER, "waiting");
+  const both = [
+    { user: { login: config.botLogin }, body: older },
+    { user: { login: config.botLogin }, body },
+  ];
+  assert.equal(recordedAuthorization(both, config).sha, SHA);
+});
+
+test("the approval says who asked for it and what it did not check", () => {
+  const body = approvalBody(SHA, OWNER);
+  assert.match(body, new RegExp(`@${OWNER}`));
+  assert.match(body, /abcdef1/);
+  assert.match(body, /does not merge/i);
+  assert.match(body, /not a semantic review/i);
+  // The unattended approval must not claim a person looked at it.
+  assert.doesNotMatch(approvalBody(SHA), new RegExp(`@${OWNER}`));
+});
+
+// The IO layer distinguishes "already done" from "refused" — one acknowledges
+// the command, the other records it for later. Matching on the prose would make
+// rewording a message a behaviour change.
+test("the already-approved skip carries a code, and nothing else does", () => {
+  const reviews = [{ user: { login: config.botLogin }, state: "APPROVED", commit_id: SHA }];
+  assert.equal(call({ reviews }).code, "already-approved");
+  assert.equal(call({ pr: { draft: true } }).code, undefined);
+  assert.equal(call({ pr: { labels: [{ name: "blocked" }] } }).code, undefined);
 });

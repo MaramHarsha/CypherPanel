@@ -1,6 +1,8 @@
 {
   "botLogin": "cypherpanel-review-bot",
   "trustedAuthors": ["MaramHarsha", "dependabot[bot]", "renovate[bot]"],
+  "commandApprovers": ["MaramHarsha"],
+  "commandAssociations": ["OWNER"],
   "blockedLabels": [
     "do-not-approve", "needs-manual-review", "security-review-required",
     "breaking-change", "work-in-progress", "blocked"
@@ -35,5 +37,6 @@
     "Dockerfile", "**/Dockerfile*", "docker-compose*.yml", "**/docker-compose*.yml",
     "install/**", "deploy/**", "Makefile"
   ],
-  "commentMarker": "<!-- cypherpanel-review-bot:sensitive -->"
+  "commentMarker": "<!-- cypherpanel-review-bot:sensitive -->",
+  "authorizationMarker": "cypherpanel-review-bot:authorized"
 }

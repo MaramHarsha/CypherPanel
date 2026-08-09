@@ -70,6 +70,62 @@ bot is not operational before that.
   Removing the label deliberately does **not** restore the approval: that must
   go back through the CI-verified path, so push a commit or re-run CI.
   Re-approving on `unlabeled` would approve without re-checking the head.
+- **Command** (`pr-command.yml`, on `issue_comment`): acts on
+  `@cypherpanel-review-bot approve` from the repository owner. See below.
+
+## The standing comment
+
+When a pull request touches protected paths the bot posts **one** comment and
+then keeps it current: on every later commit it is **edited in place** to name
+the commit it was computed from and the paths that commit actually touches.
+
+Both halves matter. Posting again per commit would leave a wall of near
+identical comments on any branch that takes more than an afternoon, which is
+how a comment stops being read. Posting once and then falling silent — what it
+used to do — left a verdict that looked live but described a commit from days
+earlier, listing files the pull request might no longer touch; the log said
+`sensitive-change comment already present` and nothing else ever appeared.
+
+The body is the whole state, so the write is idempotent by content: CI and
+Integration both finishing produce two runs that compute the same body, and the
+second one changes nothing. When the protected paths go away, or the owner
+reviews them, the same comment is rewritten to say so rather than deleted — the
+marker in it is what lets a later commit turn it back into a verdict.
+
+## Approving protected changes: `@cypherpanel-review-bot approve`
+
+The bot refuses to approve protected changes by itself, and that refusal needed
+an answer. Without one the only ways past it were to merge around your own
+required approval or to approve as yourself — neither of which leaves the trail
+the bot's approval does, and the first of which erodes the branch protection
+that makes the rest of this worth having.
+
+Comment `@cypherpanel-review-bot approve` on the pull request:
+
+- **Only the repository owner.** Two independent facts must agree: the login is
+  on `commandApprovers` in the config, *and* GitHub's own `author_association`
+  for the comment is `OWNER`. The second is computed by GitHub from the
+  account's real relationship to this repository, so a commenter cannot set it —
+  which is what stops a recycled or lookalike login from inheriting the
+  authority the list grants to a name. This repository is public: everyone else
+  who types the command is **ignored in silence**, deliberately, because
+  replying would turn the command into a way to make the bot post on demand.
+- **It substitutes for the protected-path check and for nothing else.** Every
+  required check must still be green **on the current head**, the tested commit
+  must still be the current one, and a blocked label still wins. The approval
+  body says so, and names who asked for it.
+- **It is for one commit.** The authorization is recorded against the head sha
+  at the time of the command; push anything and it expires (and the guard
+  dismisses the approval it produced). That is the point — an authorization is
+  given for the diff its author read.
+- **It works before CI is green.** If the checks are still running the bot
+  records the authorization in a comment of its own and approves as soon as
+  they pass. The record is a comment *the bot* wrote, so nobody who cannot post
+  as the bot can forge one; deleting that comment withdraws it, and a blocked
+  label overrides it.
+- The command is ignored inside code spans, fenced blocks, HTML comments and
+  quoted lines — otherwise pasting this paragraph into a review thread would
+  approve something.
 
 ## The rules, in order
 
@@ -82,9 +138,9 @@ not approve*.
 | `mergeable == true` (a `null` "still computing" is not good enough) | otherwise skip |
 | CI's tested commit **is** the current head | otherwise skip — this is what stops "CI passed, then someone pushed" |
 | Every required check reported for that commit, `completed` + `success` | pending / failure / cancelled / timed_out / **skipped** all block |
-| No blocked label | otherwise skip |
-| No sensitive path touched, on **either side** of a rename | otherwise one comment explaining manual review is needed |
-| Author on the trusted list | otherwise skip |
+| No blocked label | otherwise skip — an owner authorization does **not** override this |
+| No sensitive path touched, on **either side** of a rename | otherwise the standing comment explains why manual review is needed — unless the owner has authorized this commit |
+| Author on the trusted list | otherwise skip — unless the owner has authorized this commit |
 | Bot has not already approved **this** commit | otherwise skip |
 
 An approval of an *older* commit never counts for the current one — the bot
@@ -128,7 +184,12 @@ glance is worth most.
 ## Configuring it
 
 Everything tunable is in `.github/review-bot/config.json`: `trustedAuthors`,
-`blockedLabels`, `requiredChecks`, `sensitivePaths`. `requiredChecks` must match
+`blockedLabels`, `requiredChecks`, `sensitivePaths`, and — for the command —
+`commandApprovers` (logins) and `commandAssociations` (the `author_association`
+values GitHub must independently agree with; `["OWNER"]` here). Widening
+`commandApprovers` alone changes nothing unless the added account genuinely
+holds one of those associations, which is the intent: the config states policy,
+GitHub states fact, and both have to say yes. `requiredChecks` must match
 the job **names** in `ci.yml` and `integration.yml` — if you rename a job,
 rename it here, or the bot will refuse to approve because the check "did not
 report".
@@ -140,10 +201,17 @@ so a skip is anomalous. Add path filters later and you will want to allow them.
 
 - Approval runs on `workflow_run`, so the workflow definition comes from the
   default branch and a fork cannot alter what executes.
-- Neither workflow checks out or executes pull-request code — both pin
+- No workflow checks out or executes pull-request code — all four pin
   `ref: default_branch`, with `persist-credentials: false`.
 - All pull-request data arrives through the API. No PR-controlled string is
   ever interpolated into a shell command.
+- The command workflow never handles the comment body: it passes the script a
+  comment **id**, and the script reads the body back from the API. A comment is
+  the one input a stranger writes directly, so it never touches the workflow
+  file, where `${{ }}` is substituted into the shell.
+- The command's `if:` is a pre-filter, not the authorization — it keeps a public
+  repository's comment traffic from starting runners. Authorization is decided
+  in `policy.mjs`, against the comment as the API reports it, and tested there.
 - `permissions: {}` at workflow level; the bot token is the only credential and
   it is repository-scoped with pull-request write as its widest grant.
 - Approval and the label guard share **one** concurrency group, keyed on the
@@ -165,5 +233,5 @@ so a skip is anomalous. Add path filters later and you will want to allow them.
 node --test .github/review-bot/policy.test.mjs
 ```
 
-26 cases, no token and no network — the policy is a pure function over
+56 cases, no token and no network — the policy is a pure function over
 fixtures. They run in CI inside the existing "Format & lint" job.
