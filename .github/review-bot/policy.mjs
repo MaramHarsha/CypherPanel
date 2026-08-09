@@ -16,8 +16,6 @@
  * slash, and a root dependency manifest — exactly the file most worth
  * protecting — was not sensitive while `web/package.json` was.
  */
-const escapeRegExp = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
 export function matchesGlob(pattern, path) {
   if (pattern.startsWith("**/")) {
     const rest = pattern.slice(3);
@@ -187,7 +185,11 @@ export function parseCommand(body, botLogin) {
     .split("\n")
     .filter((line) => !/^\s*>/.test(line))
     .join("\n");
-  const m = new RegExp(`@${escapeRegExp(botLogin)}\\s+([A-Za-z][A-Za-z-]*)`).exec(text);
+  // Case-insensitive, because a GitHub mention is: @CypherPanel-Review-Bot
+  // notifies the same account and would otherwise be typed in good faith and
+  // silently ignored. The whitespace is what keeps it from matching a longer
+  // login that merely starts with this one.
+  const m = new RegExp(`@${escapeRegExp(botLogin)}\\s+([A-Za-z][A-Za-z-]*)`, "i").exec(text);
   if (!m) return null;
   const verb = m[1].toLowerCase();
   return COMMANDS.has(verb) ? { verb } : { verb, unknown: true };
@@ -425,6 +427,7 @@ export function shouldRequestReview(pr, existingRequests, botLogin) {
   return !existingRequests.some((u) => u?.login === botLogin);
 }
 
+const escapeRegExp = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const short = (s) => (typeof s === "string" ? s.slice(0, 7) : "unknown");
 const skip = (reason) => ({ action: "skip", reason });
 const none = (reason) => ({ action: "none", reason });

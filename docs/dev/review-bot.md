@@ -233,5 +233,5 @@ so a skip is anomalous. Add path filters later and you will want to allow them.
 node --test .github/review-bot/policy.test.mjs
 ```
 
-56 cases, no token and no network — the policy is a pure function over
+57 cases, no token and no network — the policy is a pure function over
 fixtures. They run in CI inside the existing "Format & lint" job.

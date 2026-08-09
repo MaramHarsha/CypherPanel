@@ -595,3 +595,13 @@ test("the already-approved skip carries a code, and nothing else does", () => {
   assert.equal(call({ pr: { draft: true } }).code, undefined);
   assert.equal(call({ pr: { labels: [{ name: "blocked" }] } }).code, undefined);
 });
+
+// A mention is case-insensitive on GitHub, so a command typed as one must be
+// too — otherwise it notifies the bot and is silently ignored.
+test("the mention is matched however it is capitalised", () => {
+  const bot = config.botLogin;
+  assert.deepEqual(parseCommand(`@${bot.toUpperCase()} approve`, bot), { verb: "approve" });
+  // But a longer login that merely starts with the bot's is a different account.
+  assert.equal(parseCommand(`@${bot}-staging approve`, bot), null);
+  assert.equal(parseCommand(`@${bot}2 approve`, bot), null);
+});
