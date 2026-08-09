@@ -27,6 +27,7 @@ import type {
 import type {
   BadRequestResponse,
   CreateNotifierRequest,
+  ForbiddenResponse,
   NotFoundResponse,
   Notifier,
   PatchNotifierRequest,
@@ -73,7 +74,7 @@ export const getListNotifiersQueryKey = (id?: string,) => {
     }
 
     
-export const getListNotifiersQueryOptions = <TData = Awaited<ReturnType<typeof listNotifiers>>, TError = UnauthorizedResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listNotifiers>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getListNotifiersQueryOptions = <TData = Awaited<ReturnType<typeof listNotifiers>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listNotifiers>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -92,10 +93,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type ListNotifiersQueryResult = NonNullable<Awaited<ReturnType<typeof listNotifiers>>>
-export type ListNotifiersQueryError = UnauthorizedResponse | NotFoundResponse
+export type ListNotifiersQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
 
-export function useListNotifiers<TData = Awaited<ReturnType<typeof listNotifiers>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useListNotifiers<TData = Awaited<ReturnType<typeof listNotifiers>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listNotifiers>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listNotifiers>>,
@@ -105,7 +106,7 @@ export function useListNotifiers<TData = Awaited<ReturnType<typeof listNotifiers
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListNotifiers<TData = Awaited<ReturnType<typeof listNotifiers>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useListNotifiers<TData = Awaited<ReturnType<typeof listNotifiers>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listNotifiers>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listNotifiers>>,
@@ -115,7 +116,7 @@ export function useListNotifiers<TData = Awaited<ReturnType<typeof listNotifiers
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListNotifiers<TData = Awaited<ReturnType<typeof listNotifiers>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useListNotifiers<TData = Awaited<ReturnType<typeof listNotifiers>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listNotifiers>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -123,7 +124,7 @@ export function useListNotifiers<TData = Awaited<ReturnType<typeof listNotifiers
  * @summary List a project's notifiers
  */
 
-export function useListNotifiers<TData = Awaited<ReturnType<typeof listNotifiers>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useListNotifiers<TData = Awaited<ReturnType<typeof listNotifiers>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listNotifiers>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -167,7 +168,7 @@ export const createNotifier = async (id: string,
 
 
 
-export const getCreateNotifierMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse,
+export const getCreateNotifierMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createNotifier>>, TError,{id: string;data: CreateNotifierRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof createNotifier>>, TError,{id: string;data: CreateNotifierRequest}, TContext> => {
 
@@ -194,12 +195,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type CreateNotifierMutationResult = NonNullable<Awaited<ReturnType<typeof createNotifier>>>
     export type CreateNotifierMutationBody = CreateNotifierRequest
-    export type CreateNotifierMutationError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse
+    export type CreateNotifierMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
     /**
  * @summary Create a notifier
  */
-export const useCreateNotifier = <TError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse,
+export const useCreateNotifier = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createNotifier>>, TError,{id: string;data: CreateNotifierRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof createNotifier>>,
@@ -245,7 +246,7 @@ export const getGetNotifierQueryKey = (id?: string,) => {
     }
 
     
-export const getGetNotifierQueryOptions = <TData = Awaited<ReturnType<typeof getNotifier>>, TError = UnauthorizedResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getNotifier>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getGetNotifierQueryOptions = <TData = Awaited<ReturnType<typeof getNotifier>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getNotifier>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -264,10 +265,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetNotifierQueryResult = NonNullable<Awaited<ReturnType<typeof getNotifier>>>
-export type GetNotifierQueryError = UnauthorizedResponse | NotFoundResponse
+export type GetNotifierQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
 
-export function useGetNotifier<TData = Awaited<ReturnType<typeof getNotifier>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetNotifier<TData = Awaited<ReturnType<typeof getNotifier>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getNotifier>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getNotifier>>,
@@ -277,7 +278,7 @@ export function useGetNotifier<TData = Awaited<ReturnType<typeof getNotifier>>, 
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetNotifier<TData = Awaited<ReturnType<typeof getNotifier>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetNotifier<TData = Awaited<ReturnType<typeof getNotifier>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getNotifier>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getNotifier>>,
@@ -287,7 +288,7 @@ export function useGetNotifier<TData = Awaited<ReturnType<typeof getNotifier>>, 
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetNotifier<TData = Awaited<ReturnType<typeof getNotifier>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetNotifier<TData = Awaited<ReturnType<typeof getNotifier>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getNotifier>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -295,7 +296,7 @@ export function useGetNotifier<TData = Awaited<ReturnType<typeof getNotifier>>, 
  * @summary Get a notifier
  */
 
-export function useGetNotifier<TData = Awaited<ReturnType<typeof getNotifier>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetNotifier<TData = Awaited<ReturnType<typeof getNotifier>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getNotifier>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -339,7 +340,7 @@ export const updateNotifier = async (id: string,
 
 
 
-export const getUpdateNotifierMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse,
+export const getUpdateNotifierMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateNotifier>>, TError,{id: string;data: PatchNotifierRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof updateNotifier>>, TError,{id: string;data: PatchNotifierRequest}, TContext> => {
 
@@ -366,12 +367,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type UpdateNotifierMutationResult = NonNullable<Awaited<ReturnType<typeof updateNotifier>>>
     export type UpdateNotifierMutationBody = PatchNotifierRequest
-    export type UpdateNotifierMutationError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse
+    export type UpdateNotifierMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
     /**
  * @summary Update a notifier (omit config to keep the sealed value)
  */
-export const useUpdateNotifier = <TError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse,
+export const useUpdateNotifier = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateNotifier>>, TError,{id: string;data: PatchNotifierRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof updateNotifier>>,
@@ -409,7 +410,7 @@ export const deleteNotifier = async (id: string, options?: RequestInit): Promise
 
 
 
-export const getDeleteNotifierMutationOptions = <TError = UnauthorizedResponse | NotFoundResponse,
+export const getDeleteNotifierMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteNotifier>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof deleteNotifier>>, TError,{id: string}, TContext> => {
 
@@ -436,12 +437,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type DeleteNotifierMutationResult = NonNullable<Awaited<ReturnType<typeof deleteNotifier>>>
     
-    export type DeleteNotifierMutationError = UnauthorizedResponse | NotFoundResponse
+    export type DeleteNotifierMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
     /**
  * @summary Delete a notifier
  */
-export const useDeleteNotifier = <TError = UnauthorizedResponse | NotFoundResponse,
+export const useDeleteNotifier = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteNotifier>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof deleteNotifier>>,
@@ -479,7 +480,7 @@ export const testNotifier = async (id: string, options?: RequestInit): Promise<v
 
 
 
-export const getTestNotifierMutationOptions = <TError = UnauthorizedResponse | NotFoundResponse,
+export const getTestNotifierMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof testNotifier>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof testNotifier>>, TError,{id: string}, TContext> => {
 
@@ -506,12 +507,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type TestNotifierMutationResult = NonNullable<Awaited<ReturnType<typeof testNotifier>>>
     
-    export type TestNotifierMutationError = UnauthorizedResponse | NotFoundResponse
+    export type TestNotifierMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
     /**
  * @summary Send a synthetic test notification through this notifier
  */
-export const useTestNotifier = <TError = UnauthorizedResponse | NotFoundResponse,
+export const useTestNotifier = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof testNotifier>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof testNotifier>>,

@@ -45,9 +45,16 @@ func TestTOTPVerifyRejectsBadCode(t *testing.T) {
 	session := login(t, ts)
 	doJSON(t, "POST", ts.URL+"/api/v1/auth/totp/enroll", session, "")
 
+	// 400, not 401: the session is valid and only the factor is wrong. A 401
+	// is indistinguishable from an expired session, and clients that sign the
+	// operator out on 401 would log them out for a typo mid-enrollment.
 	status, _, _ := doJSON(t, "POST", ts.URL+"/api/v1/auth/totp/verify", session, `{"code":"000000"}`)
-	if status != http.StatusUnauthorized {
-		t.Fatalf("verify bad code: %d, want 401", status)
+	if status != http.StatusBadRequest {
+		t.Fatalf("verify bad code: %d, want 400", status)
+	}
+	// The session must still work afterwards — that is the property that broke.
+	if s, _, _ := doJSON(t, "GET", ts.URL+"/api/v1/auth/me", session, ""); s != http.StatusOK {
+		t.Fatalf("session invalidated by a wrong factor: /auth/me returned %d", s)
 	}
 }
 

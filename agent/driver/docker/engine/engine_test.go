@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -305,13 +306,57 @@ func TestContainerIP(t *testing.T) {
 
 // ── images ──────────────────────────────────────────────────────────────────
 
+// A pull marker is what tells GC that a registry reference is ours to remove.
+// It has to come back as the reference it records — and an image carrying only
+// a marker still has to be discoverable, because a rollout can die between
+// recording the reference and tagging the managed alias.
+func TestListManagedImagesReportsPullMarkers(t *testing.T) {
+	marker, ok := driver.PullMarkerRef("app2", "ghost:5")
+	if !ok {
+		t.Fatal("PullMarkerRef refused an ordinary reference")
+	}
+	m := newMockDaemon(t, map[string]http.HandlerFunc{
+		"/images/json": func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(t, w, http.StatusOK, []map[string]any{
+				{"Id": "i1", "RepoTags": []string{"cypher/app1:rev1", "ghost:5", "gitea/gitea:1.23.8"}},
+				{"Id": "i2", "RepoTags": []string{marker}},
+			})
+		},
+	})
+
+	imgs, err := m.client().ListManagedImages(context.Background())
+	if err != nil {
+		t.Fatalf("ListManagedImages: %v", err)
+	}
+	if len(imgs) != 2 {
+		t.Fatalf("images = %+v, want the aliased one and the marker-only one", imgs)
+	}
+	// An alias without a marker claims nothing: the registry references beside
+	// it may be the operator's, and untagging those is not ours to do.
+	if got := imgs[0]; len(got.Pending) != 0 || !slices.Equal(got.References, []string{"cypher/app1:rev1"}) {
+		t.Fatalf("aliased image = %+v, want only the managed alias and nothing pending", got)
+	}
+	got := imgs[1]
+	if !slices.Equal(got.AppIDs, []string{"app2"}) {
+		t.Fatalf("marker-only image app ids = %v, want it attributed to app2", got.AppIDs)
+	}
+	if len(got.Pending) != 1 || got.Pending[0].Source != "ghost:5" || got.Pending[0].Marker != marker {
+		t.Fatalf("pending = %+v, want ghost:5 recorded by %s", got.Pending, marker)
+	}
+	// The marker is not a managed alias: it is removed only after the reference
+	// it names, so it must never arrive in the list GC drops freely.
+	if len(got.References) != 0 {
+		t.Fatalf("references = %v, want the marker kept out of them", got.References)
+	}
+}
+
 func TestImagesListRemoveAndHas(t *testing.T) {
 	removeCode := http.StatusOK
 	hasCode := http.StatusOK
 	m := newMockDaemon(t, map[string]http.HandlerFunc{
 		"/images/json": func(w http.ResponseWriter, _ *http.Request) {
 			writeJSON(t, w, http.StatusOK, []map[string]any{
-				{"Id": "i1", "Labels": map[string]string{driver.LabelAppID: "app1", driver.LabelRevisionID: "rev1"}},
+				{"Id": "i1", "RepoTags": []string{"cypher/app1:rev1"}, "Labels": map[string]string{driver.LabelManaged: "docker", driver.LabelAppID: "app1", driver.LabelRevisionID: "rev1"}},
 			})
 		},
 		"/images/i1":                    func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(removeCode) },
@@ -321,7 +366,7 @@ func TestImagesListRemoveAndHas(t *testing.T) {
 	ctx := context.Background()
 
 	imgs, err := c.ListManagedImages(ctx)
-	if err != nil || len(imgs) != 1 || imgs[0].AppID != "app1" || imgs[0].RevisionID != "rev1" {
+	if err != nil || len(imgs) != 1 || imgs[0].AppIDs[0] != "app1" {
 		t.Fatalf("ListManagedImages = %+v, %v", imgs, err)
 	}
 
@@ -575,5 +620,36 @@ func TestEnsureContainerRefusesUnmanagedNameCollision(t *testing.T) {
 	err := m.client().EnsureContainer(context.Background(), RunConfig{Name: "cypher-proxy", Image: "traefik:v3"})
 	if err == nil || !strings.Contains(err.Error(), "not agent-managed") {
 		t.Fatalf("err = %v, want a refusal to replace an unmanaged container", err)
+	}
+}
+
+// ── image references ────────────────────────────────────────────────────────
+
+// The daemon's /images/create takes the name and the tag-or-digest separately.
+// A digest reference must split on '@': splitting on the last colon would ask
+// for `fromImage=repo@sha256`, which names no image any registry can serve.
+func TestPullImageSplitsReferences(t *testing.T) {
+	cases := []struct{ ref, name, tag string }{
+		{"ghost:5", "ghost", "5"},
+		{"ghost", "ghost", "latest"},
+		{"ghcr.io/acme/web:1.2", "ghcr.io/acme/web", "1.2"},
+		{"registry:5000/acme/web", "registry:5000/acme/web", "latest"},
+		{"ghcr.io/acme/web@sha256:abc123", "ghcr.io/acme/web", "sha256:abc123"},
+		{"acme/web:1.2@sha256:abc123", "acme/web:1.2", "sha256:abc123"},
+	}
+	for _, c := range cases {
+		m := newMockDaemon(t, map[string]http.HandlerFunc{
+			"/images/create": func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("{}\n")) },
+		})
+		if err := m.client().PullImage(context.Background(), c.ref); err != nil {
+			t.Fatalf("%s: PullImage: %v", c.ref, err)
+		}
+		q := m.lastTo(t, "/images/create").query
+		if got := q.Get("fromImage"); got != c.name {
+			t.Errorf("%s: fromImage = %q, want %q", c.ref, got, c.name)
+		}
+		if got := q.Get("tag"); got != c.tag {
+			t.Errorf("%s: tag = %q, want %q", c.ref, got, c.tag)
+		}
 	}
 }

@@ -1,0 +1,33 @@
+schema: v1
+slug: n8n
+name: n8n
+description: Workflow automation with a visual editor and 400+ integrations.
+category: automation
+version: "1.94"
+resources:
+  databases:
+    - name: db
+      engine: postgresql
+      version: "16"
+  applications:
+    - name: n8n
+      image: n8nio/n8n:1.94.1
+      port: 5678
+      route: true
+      health:
+        kind: http
+        path: /healthz
+      volumes:
+        - name: data
+          path: /home/node/.n8n
+      env:
+        DB_TYPE: postgresdb
+        DB_POSTGRESDB_HOST: "{{db.db.host}}"
+        DB_POSTGRESDB_PORT: "{{db.db.port}}"
+        DB_POSTGRESDB_USER: "{{db.db.user}}"
+        DB_POSTGRESDB_PASSWORD: "{{db.db.password}}"
+        DB_POSTGRESDB_DATABASE: "{{db.db.database}}"
+        N8N_ENCRYPTION_KEY: "{{secret.32}}"
+        N8N_HOST: "{{domain}}"
+        N8N_PROTOCOL: https
+        WEBHOOK_URL: "https://{{domain}}/"

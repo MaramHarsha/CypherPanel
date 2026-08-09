@@ -31,6 +31,7 @@ import type {
   CreateProjectResponse,
   Environment,
   Error,
+  ForbiddenResponse,
   Project,
   ProjectDetail,
   UnauthorizedResponse
@@ -76,7 +77,7 @@ export const getListProjectsQueryKey = () => {
     }
 
     
-export const getListProjectsQueryOptions = <TData = Awaited<ReturnType<typeof listProjects>>, TError = UnauthorizedResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listProjects>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getListProjectsQueryOptions = <TData = Awaited<ReturnType<typeof listProjects>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listProjects>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -95,10 +96,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type ListProjectsQueryResult = NonNullable<Awaited<ReturnType<typeof listProjects>>>
-export type ListProjectsQueryError = UnauthorizedResponse
+export type ListProjectsQueryError = UnauthorizedResponse | ForbiddenResponse
 
 
-export function useListProjects<TData = Awaited<ReturnType<typeof listProjects>>, TError = UnauthorizedResponse>(
+export function useListProjects<TData = Awaited<ReturnType<typeof listProjects>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listProjects>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listProjects>>,
@@ -108,7 +109,7 @@ export function useListProjects<TData = Awaited<ReturnType<typeof listProjects>>
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListProjects<TData = Awaited<ReturnType<typeof listProjects>>, TError = UnauthorizedResponse>(
+export function useListProjects<TData = Awaited<ReturnType<typeof listProjects>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listProjects>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listProjects>>,
@@ -118,7 +119,7 @@ export function useListProjects<TData = Awaited<ReturnType<typeof listProjects>>
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListProjects<TData = Awaited<ReturnType<typeof listProjects>>, TError = UnauthorizedResponse>(
+export function useListProjects<TData = Awaited<ReturnType<typeof listProjects>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listProjects>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -126,7 +127,7 @@ export function useListProjects<TData = Awaited<ReturnType<typeof listProjects>>
  * @summary List all projects, newest first
  */
 
-export function useListProjects<TData = Awaited<ReturnType<typeof listProjects>>, TError = UnauthorizedResponse>(
+export function useListProjects<TData = Awaited<ReturnType<typeof listProjects>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listProjects>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -169,7 +170,7 @@ export const createProject = async (createProjectRequest: CreateProjectRequest, 
 
 
 
-export const getCreateProjectMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse,
+export const getCreateProjectMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createProject>>, TError,{data: CreateProjectRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof createProject>>, TError,{data: CreateProjectRequest}, TContext> => {
 
@@ -196,12 +197,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type CreateProjectMutationResult = NonNullable<Awaited<ReturnType<typeof createProject>>>
     export type CreateProjectMutationBody = CreateProjectRequest
-    export type CreateProjectMutationError = BadRequestResponse | UnauthorizedResponse
+    export type CreateProjectMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
 
     /**
  * @summary Create a project and its default production environment
  */
-export const useCreateProject = <TError = BadRequestResponse | UnauthorizedResponse,
+export const useCreateProject = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createProject>>, TError,{data: CreateProjectRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof createProject>>,
@@ -247,7 +248,7 @@ export const getGetProjectQueryKey = (id?: string,) => {
     }
 
     
-export const getGetProjectQueryOptions = <TData = Awaited<ReturnType<typeof getProject>>, TError = UnauthorizedResponse | Error>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProject>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getGetProjectQueryOptions = <TData = Awaited<ReturnType<typeof getProject>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProject>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -266,10 +267,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetProjectQueryResult = NonNullable<Awaited<ReturnType<typeof getProject>>>
-export type GetProjectQueryError = UnauthorizedResponse | Error
+export type GetProjectQueryError = UnauthorizedResponse | ForbiddenResponse | Error
 
 
-export function useGetProject<TData = Awaited<ReturnType<typeof getProject>>, TError = UnauthorizedResponse | Error>(
+export function useGetProject<TData = Awaited<ReturnType<typeof getProject>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProject>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getProject>>,
@@ -279,7 +280,7 @@ export function useGetProject<TData = Awaited<ReturnType<typeof getProject>>, TE
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetProject<TData = Awaited<ReturnType<typeof getProject>>, TError = UnauthorizedResponse | Error>(
+export function useGetProject<TData = Awaited<ReturnType<typeof getProject>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProject>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getProject>>,
@@ -289,7 +290,7 @@ export function useGetProject<TData = Awaited<ReturnType<typeof getProject>>, TE
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetProject<TData = Awaited<ReturnType<typeof getProject>>, TError = UnauthorizedResponse | Error>(
+export function useGetProject<TData = Awaited<ReturnType<typeof getProject>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProject>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -297,7 +298,7 @@ export function useGetProject<TData = Awaited<ReturnType<typeof getProject>>, TE
  * @summary One project with its environments
  */
 
-export function useGetProject<TData = Awaited<ReturnType<typeof getProject>>, TError = UnauthorizedResponse | Error>(
+export function useGetProject<TData = Awaited<ReturnType<typeof getProject>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProject>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -340,7 +341,7 @@ export const deleteProject = async (id: string, options?: RequestInit): Promise<
 
 
 
-export const getDeleteProjectMutationOptions = <TError = UnauthorizedResponse,
+export const getDeleteProjectMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteProject>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof deleteProject>>, TError,{id: string}, TContext> => {
 
@@ -367,12 +368,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type DeleteProjectMutationResult = NonNullable<Awaited<ReturnType<typeof deleteProject>>>
     
-    export type DeleteProjectMutationError = UnauthorizedResponse
+    export type DeleteProjectMutationError = UnauthorizedResponse | ForbiddenResponse
 
     /**
  * @summary Delete a project and everything in it
  */
-export const useDeleteProject = <TError = UnauthorizedResponse,
+export const useDeleteProject = <TError = UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteProject>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof deleteProject>>,
@@ -418,7 +419,7 @@ export const getListEnvironmentsQueryKey = (id?: string,) => {
     }
 
     
-export const getListEnvironmentsQueryOptions = <TData = Awaited<ReturnType<typeof listEnvironments>>, TError = UnauthorizedResponse | Error>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEnvironments>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getListEnvironmentsQueryOptions = <TData = Awaited<ReturnType<typeof listEnvironments>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEnvironments>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -437,10 +438,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type ListEnvironmentsQueryResult = NonNullable<Awaited<ReturnType<typeof listEnvironments>>>
-export type ListEnvironmentsQueryError = UnauthorizedResponse | Error
+export type ListEnvironmentsQueryError = UnauthorizedResponse | ForbiddenResponse | Error
 
 
-export function useListEnvironments<TData = Awaited<ReturnType<typeof listEnvironments>>, TError = UnauthorizedResponse | Error>(
+export function useListEnvironments<TData = Awaited<ReturnType<typeof listEnvironments>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEnvironments>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listEnvironments>>,
@@ -450,7 +451,7 @@ export function useListEnvironments<TData = Awaited<ReturnType<typeof listEnviro
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListEnvironments<TData = Awaited<ReturnType<typeof listEnvironments>>, TError = UnauthorizedResponse | Error>(
+export function useListEnvironments<TData = Awaited<ReturnType<typeof listEnvironments>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEnvironments>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listEnvironments>>,
@@ -460,7 +461,7 @@ export function useListEnvironments<TData = Awaited<ReturnType<typeof listEnviro
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListEnvironments<TData = Awaited<ReturnType<typeof listEnvironments>>, TError = UnauthorizedResponse | Error>(
+export function useListEnvironments<TData = Awaited<ReturnType<typeof listEnvironments>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEnvironments>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -468,7 +469,7 @@ export function useListEnvironments<TData = Awaited<ReturnType<typeof listEnviro
  * @summary List a project's environments
  */
 
-export function useListEnvironments<TData = Awaited<ReturnType<typeof listEnvironments>>, TError = UnauthorizedResponse | Error>(
+export function useListEnvironments<TData = Awaited<ReturnType<typeof listEnvironments>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEnvironments>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -512,7 +513,7 @@ export const createEnvironment = async (id: string,
 
 
 
-export const getCreateEnvironmentMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | Error,
+export const getCreateEnvironmentMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createEnvironment>>, TError,{id: string;data: CreateEnvironmentRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof createEnvironment>>, TError,{id: string;data: CreateEnvironmentRequest}, TContext> => {
 
@@ -539,12 +540,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type CreateEnvironmentMutationResult = NonNullable<Awaited<ReturnType<typeof createEnvironment>>>
     export type CreateEnvironmentMutationBody = CreateEnvironmentRequest
-    export type CreateEnvironmentMutationError = BadRequestResponse | UnauthorizedResponse | Error
+    export type CreateEnvironmentMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error
 
     /**
  * @summary Add an environment to a project
  */
-export const useCreateEnvironment = <TError = BadRequestResponse | UnauthorizedResponse | Error,
+export const useCreateEnvironment = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createEnvironment>>, TError,{id: string;data: CreateEnvironmentRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof createEnvironment>>,

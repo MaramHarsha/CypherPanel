@@ -11,10 +11,45 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const aPITokenByHash = `-- name: APITokenByHash :one
+SELECT u.id, u.email, u.password_hash, u.role, u.totp_secret_enc, u.totp_secret_nonce, u.created_at, u.updated_at, u.totp_enabled, t.id AS token_id, t.abilities
+FROM api_tokens t
+JOIN users u ON u.id = t.user_id
+WHERE t.token_hash = $1
+  AND (t.expires_at IS NULL OR t.expires_at > now())
+`
+
+type APITokenByHashRow struct {
+	User      User
+	TokenID   string
+	Abilities []string
+}
+
+// Resolves a presented token to its owner AND its abilities in one round trip:
+// the middleware needs both to authorize the request.
+func (q *Queries) APITokenByHash(ctx context.Context, tokenHash []byte) (APITokenByHashRow, error) {
+	row := q.db.QueryRow(ctx, aPITokenByHash, tokenHash)
+	var i APITokenByHashRow
+	err := row.Scan(
+		&i.User.ID,
+		&i.User.Email,
+		&i.User.PasswordHash,
+		&i.User.Role,
+		&i.User.TotpSecretEnc,
+		&i.User.TotpSecretNonce,
+		&i.User.CreatedAt,
+		&i.User.UpdatedAt,
+		&i.User.TotpEnabled,
+		&i.TokenID,
+		&i.Abilities,
+	)
+	return i, err
+}
+
 const createAPIToken = `-- name: CreateAPIToken :one
-INSERT INTO api_tokens (id, user_id, name, token_hash, expires_at)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, user_id, name, token_hash, last_used_at, expires_at, created_at
+INSERT INTO api_tokens (id, user_id, name, token_hash, expires_at, abilities)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, user_id, name, token_hash, last_used_at, expires_at, created_at, abilities
 `
 
 type CreateAPITokenParams struct {
@@ -23,6 +58,7 @@ type CreateAPITokenParams struct {
 	Name      string
 	TokenHash []byte
 	ExpiresAt pgtype.Timestamptz
+	Abilities []string
 }
 
 func (q *Queries) CreateAPIToken(ctx context.Context, arg CreateAPITokenParams) (ApiToken, error) {
@@ -32,6 +68,7 @@ func (q *Queries) CreateAPIToken(ctx context.Context, arg CreateAPITokenParams) 
 		arg.Name,
 		arg.TokenHash,
 		arg.ExpiresAt,
+		arg.Abilities,
 	)
 	var i ApiToken
 	err := row.Scan(
@@ -42,6 +79,7 @@ func (q *Queries) CreateAPIToken(ctx context.Context, arg CreateAPITokenParams) 
 		&i.LastUsedAt,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.Abilities,
 	)
 	return i, err
 }
@@ -56,7 +94,7 @@ func (q *Queries) DeleteAPIToken(ctx context.Context, id string) error {
 }
 
 const getAPIToken = `-- name: GetAPIToken :one
-SELECT id, user_id, name, last_used_at, expires_at, created_at
+SELECT id, user_id, name, last_used_at, expires_at, created_at, abilities
 FROM api_tokens WHERE id = $1
 `
 
@@ -67,6 +105,7 @@ type GetAPITokenRow struct {
 	LastUsedAt pgtype.Timestamptz
 	ExpiresAt  pgtype.Timestamptz
 	CreatedAt  pgtype.Timestamptz
+	Abilities  []string
 }
 
 func (q *Queries) GetAPIToken(ctx context.Context, id string) (GetAPITokenRow, error) {
@@ -79,12 +118,13 @@ func (q *Queries) GetAPIToken(ctx context.Context, id string) (GetAPITokenRow, e
 		&i.LastUsedAt,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.Abilities,
 	)
 	return i, err
 }
 
 const listAPITokensByUser = `-- name: ListAPITokensByUser :many
-SELECT id, user_id, name, last_used_at, expires_at, created_at
+SELECT id, user_id, name, last_used_at, expires_at, created_at, abilities
 FROM api_tokens WHERE user_id = $1 ORDER BY created_at DESC
 `
 
@@ -95,6 +135,7 @@ type ListAPITokensByUserRow struct {
 	LastUsedAt pgtype.Timestamptz
 	ExpiresAt  pgtype.Timestamptz
 	CreatedAt  pgtype.Timestamptz
+	Abilities  []string
 }
 
 func (q *Queries) ListAPITokensByUser(ctx context.Context, userID string) ([]ListAPITokensByUserRow, error) {
@@ -113,6 +154,7 @@ func (q *Queries) ListAPITokensByUser(ctx context.Context, userID string) ([]Lis
 			&i.LastUsedAt,
 			&i.ExpiresAt,
 			&i.CreatedAt,
+			&i.Abilities,
 		); err != nil {
 			return nil, err
 		}
@@ -131,28 +173,4 @@ UPDATE api_tokens SET last_used_at = now() WHERE token_hash = $1
 func (q *Queries) TouchAPIToken(ctx context.Context, tokenHash []byte) error {
 	_, err := q.db.Exec(ctx, touchAPIToken, tokenHash)
 	return err
-}
-
-const userForAPIToken = `-- name: UserForAPIToken :one
-SELECT u.id, u.email, u.password_hash, u.role, u.totp_secret_enc, u.totp_secret_nonce, u.created_at, u.updated_at, u.totp_enabled FROM api_tokens t
-JOIN users u ON u.id = t.user_id
-WHERE t.token_hash = $1
-  AND (t.expires_at IS NULL OR t.expires_at > now())
-`
-
-func (q *Queries) UserForAPIToken(ctx context.Context, tokenHash []byte) (User, error) {
-	row := q.db.QueryRow(ctx, userForAPIToken, tokenHash)
-	var i User
-	err := row.Scan(
-		&i.ID,
-		&i.Email,
-		&i.PasswordHash,
-		&i.Role,
-		&i.TotpSecretEnc,
-		&i.TotpSecretNonce,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.TotpEnabled,
-	)
-	return i, err
 }

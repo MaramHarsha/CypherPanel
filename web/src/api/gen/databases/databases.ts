@@ -31,6 +31,7 @@ import type {
   CreateDatabaseResponse,
   Database,
   Error,
+  ForbiddenResponse,
   NotFoundResponse,
   PatchDatabaseRequest,
   ResetPasswordResponse,
@@ -77,7 +78,7 @@ export const getListDatabasesQueryKey = (id?: string,) => {
     }
 
     
-export const getListDatabasesQueryOptions = <TData = Awaited<ReturnType<typeof listDatabases>>, TError = UnauthorizedResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDatabases>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getListDatabasesQueryOptions = <TData = Awaited<ReturnType<typeof listDatabases>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDatabases>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -96,10 +97,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type ListDatabasesQueryResult = NonNullable<Awaited<ReturnType<typeof listDatabases>>>
-export type ListDatabasesQueryError = UnauthorizedResponse | NotFoundResponse
+export type ListDatabasesQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
 
-export function useListDatabases<TData = Awaited<ReturnType<typeof listDatabases>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useListDatabases<TData = Awaited<ReturnType<typeof listDatabases>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDatabases>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listDatabases>>,
@@ -109,7 +110,7 @@ export function useListDatabases<TData = Awaited<ReturnType<typeof listDatabases
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListDatabases<TData = Awaited<ReturnType<typeof listDatabases>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useListDatabases<TData = Awaited<ReturnType<typeof listDatabases>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDatabases>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listDatabases>>,
@@ -119,7 +120,7 @@ export function useListDatabases<TData = Awaited<ReturnType<typeof listDatabases
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListDatabases<TData = Awaited<ReturnType<typeof listDatabases>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useListDatabases<TData = Awaited<ReturnType<typeof listDatabases>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDatabases>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -127,7 +128,7 @@ export function useListDatabases<TData = Awaited<ReturnType<typeof listDatabases
  * @summary List databases in an environment
  */
 
-export function useListDatabases<TData = Awaited<ReturnType<typeof listDatabases>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useListDatabases<TData = Awaited<ReturnType<typeof listDatabases>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDatabases>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -171,7 +172,7 @@ export const createDatabase = async (id: string,
 
 
 
-export const getCreateDatabaseMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse,
+export const getCreateDatabaseMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createDatabase>>, TError,{id: string;data: CreateDatabaseRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof createDatabase>>, TError,{id: string;data: CreateDatabaseRequest}, TContext> => {
 
@@ -198,12 +199,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type CreateDatabaseMutationResult = NonNullable<Awaited<ReturnType<typeof createDatabase>>>
     export type CreateDatabaseMutationBody = CreateDatabaseRequest
-    export type CreateDatabaseMutationError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse
+    export type CreateDatabaseMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
     /**
  * @summary Create a managed database
  */
-export const useCreateDatabase = <TError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse,
+export const useCreateDatabase = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createDatabase>>, TError,{id: string;data: CreateDatabaseRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof createDatabase>>,
@@ -249,7 +250,7 @@ export const getGetDatabaseQueryKey = (id?: string,) => {
     }
 
     
-export const getGetDatabaseQueryOptions = <TData = Awaited<ReturnType<typeof getDatabase>>, TError = UnauthorizedResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDatabase>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getGetDatabaseQueryOptions = <TData = Awaited<ReturnType<typeof getDatabase>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDatabase>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -268,10 +269,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetDatabaseQueryResult = NonNullable<Awaited<ReturnType<typeof getDatabase>>>
-export type GetDatabaseQueryError = UnauthorizedResponse | NotFoundResponse
+export type GetDatabaseQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
 
-export function useGetDatabase<TData = Awaited<ReturnType<typeof getDatabase>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetDatabase<TData = Awaited<ReturnType<typeof getDatabase>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDatabase>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getDatabase>>,
@@ -281,7 +282,7 @@ export function useGetDatabase<TData = Awaited<ReturnType<typeof getDatabase>>, 
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetDatabase<TData = Awaited<ReturnType<typeof getDatabase>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetDatabase<TData = Awaited<ReturnType<typeof getDatabase>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDatabase>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getDatabase>>,
@@ -291,7 +292,7 @@ export function useGetDatabase<TData = Awaited<ReturnType<typeof getDatabase>>, 
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetDatabase<TData = Awaited<ReturnType<typeof getDatabase>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetDatabase<TData = Awaited<ReturnType<typeof getDatabase>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDatabase>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -299,7 +300,7 @@ export function useGetDatabase<TData = Awaited<ReturnType<typeof getDatabase>>, 
  * @summary Get a database
  */
 
-export function useGetDatabase<TData = Awaited<ReturnType<typeof getDatabase>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetDatabase<TData = Awaited<ReturnType<typeof getDatabase>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDatabase>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -343,7 +344,7 @@ export const updateDatabase = async (id: string,
 
 
 
-export const getUpdateDatabaseMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse,
+export const getUpdateDatabaseMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateDatabase>>, TError,{id: string;data: PatchDatabaseRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof updateDatabase>>, TError,{id: string;data: PatchDatabaseRequest}, TContext> => {
 
@@ -370,12 +371,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type UpdateDatabaseMutationResult = NonNullable<Awaited<ReturnType<typeof updateDatabase>>>
     export type UpdateDatabaseMutationBody = PatchDatabaseRequest
-    export type UpdateDatabaseMutationError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse
+    export type UpdateDatabaseMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
     /**
  * @summary Update a database's config (creates a new revision if changed)
  */
-export const useUpdateDatabase = <TError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse,
+export const useUpdateDatabase = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateDatabase>>, TError,{id: string;data: PatchDatabaseRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof updateDatabase>>,
@@ -413,7 +414,7 @@ export const deleteDatabase = async (id: string, options?: RequestInit): Promise
 
 
 
-export const getDeleteDatabaseMutationOptions = <TError = UnauthorizedResponse | NotFoundResponse,
+export const getDeleteDatabaseMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteDatabase>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof deleteDatabase>>, TError,{id: string}, TContext> => {
 
@@ -440,12 +441,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type DeleteDatabaseMutationResult = NonNullable<Awaited<ReturnType<typeof deleteDatabase>>>
     
-    export type DeleteDatabaseMutationError = UnauthorizedResponse | NotFoundResponse
+    export type DeleteDatabaseMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
     /**
  * @summary Delete a database
  */
-export const useDeleteDatabase = <TError = UnauthorizedResponse | NotFoundResponse,
+export const useDeleteDatabase = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteDatabase>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof deleteDatabase>>,
@@ -483,7 +484,7 @@ export const stopDatabase = async (id: string, options?: RequestInit): Promise<v
 
 
 
-export const getStopDatabaseMutationOptions = <TError = UnauthorizedResponse | NotFoundResponse,
+export const getStopDatabaseMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof stopDatabase>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof stopDatabase>>, TError,{id: string}, TContext> => {
 
@@ -510,12 +511,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type StopDatabaseMutationResult = NonNullable<Awaited<ReturnType<typeof stopDatabase>>>
     
-    export type StopDatabaseMutationError = UnauthorizedResponse | NotFoundResponse
+    export type StopDatabaseMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
     /**
  * @summary Stop a database
  */
-export const useStopDatabase = <TError = UnauthorizedResponse | NotFoundResponse,
+export const useStopDatabase = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof stopDatabase>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof stopDatabase>>,
@@ -553,7 +554,7 @@ export const startDatabase = async (id: string, options?: RequestInit): Promise<
 
 
 
-export const getStartDatabaseMutationOptions = <TError = UnauthorizedResponse | NotFoundResponse,
+export const getStartDatabaseMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startDatabase>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof startDatabase>>, TError,{id: string}, TContext> => {
 
@@ -580,12 +581,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type StartDatabaseMutationResult = NonNullable<Awaited<ReturnType<typeof startDatabase>>>
     
-    export type StartDatabaseMutationError = UnauthorizedResponse | NotFoundResponse
+    export type StartDatabaseMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
     /**
  * @summary Start a database
  */
-export const useStartDatabase = <TError = UnauthorizedResponse | NotFoundResponse,
+export const useStartDatabase = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startDatabase>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof startDatabase>>,
@@ -623,7 +624,7 @@ export const resetDatabasePassword = async (id: string, options?: RequestInit): 
 
 
 
-export const getResetDatabasePasswordMutationOptions = <TError = UnauthorizedResponse | NotFoundResponse | Error,
+export const getResetDatabasePasswordMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resetDatabasePassword>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof resetDatabasePassword>>, TError,{id: string}, TContext> => {
 
@@ -650,12 +651,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type ResetDatabasePasswordMutationResult = NonNullable<Awaited<ReturnType<typeof resetDatabasePassword>>>
     
-    export type ResetDatabasePasswordMutationError = UnauthorizedResponse | NotFoundResponse | Error
+    export type ResetDatabasePasswordMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error
 
     /**
  * @summary Reset the root password (returned once)
  */
-export const useResetDatabasePassword = <TError = UnauthorizedResponse | NotFoundResponse | Error,
+export const useResetDatabasePassword = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resetDatabasePassword>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof resetDatabasePassword>>,
@@ -701,7 +702,7 @@ export const getGetDatabaseConnectionInfoQueryKey = (id?: string,) => {
     }
 
     
-export const getGetDatabaseConnectionInfoQueryOptions = <TData = Awaited<ReturnType<typeof getDatabaseConnectionInfo>>, TError = UnauthorizedResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDatabaseConnectionInfo>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getGetDatabaseConnectionInfoQueryOptions = <TData = Awaited<ReturnType<typeof getDatabaseConnectionInfo>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDatabaseConnectionInfo>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -720,10 +721,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetDatabaseConnectionInfoQueryResult = NonNullable<Awaited<ReturnType<typeof getDatabaseConnectionInfo>>>
-export type GetDatabaseConnectionInfoQueryError = UnauthorizedResponse | NotFoundResponse
+export type GetDatabaseConnectionInfoQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
 
-export function useGetDatabaseConnectionInfo<TData = Awaited<ReturnType<typeof getDatabaseConnectionInfo>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetDatabaseConnectionInfo<TData = Awaited<ReturnType<typeof getDatabaseConnectionInfo>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDatabaseConnectionInfo>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getDatabaseConnectionInfo>>,
@@ -733,7 +734,7 @@ export function useGetDatabaseConnectionInfo<TData = Awaited<ReturnType<typeof g
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetDatabaseConnectionInfo<TData = Awaited<ReturnType<typeof getDatabaseConnectionInfo>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetDatabaseConnectionInfo<TData = Awaited<ReturnType<typeof getDatabaseConnectionInfo>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDatabaseConnectionInfo>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getDatabaseConnectionInfo>>,
@@ -743,7 +744,7 @@ export function useGetDatabaseConnectionInfo<TData = Awaited<ReturnType<typeof g
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetDatabaseConnectionInfo<TData = Awaited<ReturnType<typeof getDatabaseConnectionInfo>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetDatabaseConnectionInfo<TData = Awaited<ReturnType<typeof getDatabaseConnectionInfo>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDatabaseConnectionInfo>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -751,7 +752,7 @@ export function useGetDatabaseConnectionInfo<TData = Awaited<ReturnType<typeof g
  * @summary Connection details (password masked)
  */
 
-export function useGetDatabaseConnectionInfo<TData = Awaited<ReturnType<typeof getDatabaseConnectionInfo>>, TError = UnauthorizedResponse | NotFoundResponse>(
+export function useGetDatabaseConnectionInfo<TData = Awaited<ReturnType<typeof getDatabaseConnectionInfo>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDatabaseConnectionInfo>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {

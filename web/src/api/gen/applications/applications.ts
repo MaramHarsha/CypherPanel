@@ -32,6 +32,7 @@ import type {
   DomainCheck,
   EnvVarKeys,
   Error,
+  ForbiddenResponse,
   PatchApplicationRequest,
   SetEnvVarRequest,
   UnauthorizedResponse
@@ -77,7 +78,7 @@ export const getListApplicationsQueryKey = (id?: string,) => {
     }
 
     
-export const getListApplicationsQueryOptions = <TData = Awaited<ReturnType<typeof listApplications>>, TError = UnauthorizedResponse | Error>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listApplications>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getListApplicationsQueryOptions = <TData = Awaited<ReturnType<typeof listApplications>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listApplications>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -96,10 +97,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type ListApplicationsQueryResult = NonNullable<Awaited<ReturnType<typeof listApplications>>>
-export type ListApplicationsQueryError = UnauthorizedResponse | Error
+export type ListApplicationsQueryError = UnauthorizedResponse | ForbiddenResponse | Error
 
 
-export function useListApplications<TData = Awaited<ReturnType<typeof listApplications>>, TError = UnauthorizedResponse | Error>(
+export function useListApplications<TData = Awaited<ReturnType<typeof listApplications>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listApplications>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listApplications>>,
@@ -109,7 +110,7 @@ export function useListApplications<TData = Awaited<ReturnType<typeof listApplic
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListApplications<TData = Awaited<ReturnType<typeof listApplications>>, TError = UnauthorizedResponse | Error>(
+export function useListApplications<TData = Awaited<ReturnType<typeof listApplications>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listApplications>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listApplications>>,
@@ -119,7 +120,7 @@ export function useListApplications<TData = Awaited<ReturnType<typeof listApplic
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListApplications<TData = Awaited<ReturnType<typeof listApplications>>, TError = UnauthorizedResponse | Error>(
+export function useListApplications<TData = Awaited<ReturnType<typeof listApplications>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listApplications>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -127,7 +128,7 @@ export function useListApplications<TData = Awaited<ReturnType<typeof listApplic
  * @summary List applications in an environment
  */
 
-export function useListApplications<TData = Awaited<ReturnType<typeof listApplications>>, TError = UnauthorizedResponse | Error>(
+export function useListApplications<TData = Awaited<ReturnType<typeof listApplications>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listApplications>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -171,7 +172,7 @@ export const createApplication = async (id: string,
 
 
 
-export const getCreateApplicationMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | Error,
+export const getCreateApplicationMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createApplication>>, TError,{id: string;data: CreateApplicationRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof createApplication>>, TError,{id: string;data: CreateApplicationRequest}, TContext> => {
 
@@ -198,12 +199,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type CreateApplicationMutationResult = NonNullable<Awaited<ReturnType<typeof createApplication>>>
     export type CreateApplicationMutationBody = CreateApplicationRequest
-    export type CreateApplicationMutationError = BadRequestResponse | UnauthorizedResponse | Error
+    export type CreateApplicationMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error
 
     /**
  * @summary Create an application
  */
-export const useCreateApplication = <TError = BadRequestResponse | UnauthorizedResponse | Error,
+export const useCreateApplication = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createApplication>>, TError,{id: string;data: CreateApplicationRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof createApplication>>,
@@ -249,7 +250,7 @@ export const getGetApplicationQueryKey = (id?: string,) => {
     }
 
     
-export const getGetApplicationQueryOptions = <TData = Awaited<ReturnType<typeof getApplication>>, TError = UnauthorizedResponse | Error>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplication>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getGetApplicationQueryOptions = <TData = Awaited<ReturnType<typeof getApplication>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplication>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -268,10 +269,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetApplicationQueryResult = NonNullable<Awaited<ReturnType<typeof getApplication>>>
-export type GetApplicationQueryError = UnauthorizedResponse | Error
+export type GetApplicationQueryError = UnauthorizedResponse | ForbiddenResponse | Error
 
 
-export function useGetApplication<TData = Awaited<ReturnType<typeof getApplication>>, TError = UnauthorizedResponse | Error>(
+export function useGetApplication<TData = Awaited<ReturnType<typeof getApplication>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplication>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getApplication>>,
@@ -281,7 +282,7 @@ export function useGetApplication<TData = Awaited<ReturnType<typeof getApplicati
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetApplication<TData = Awaited<ReturnType<typeof getApplication>>, TError = UnauthorizedResponse | Error>(
+export function useGetApplication<TData = Awaited<ReturnType<typeof getApplication>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplication>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getApplication>>,
@@ -291,7 +292,7 @@ export function useGetApplication<TData = Awaited<ReturnType<typeof getApplicati
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetApplication<TData = Awaited<ReturnType<typeof getApplication>>, TError = UnauthorizedResponse | Error>(
+export function useGetApplication<TData = Awaited<ReturnType<typeof getApplication>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplication>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -299,7 +300,7 @@ export function useGetApplication<TData = Awaited<ReturnType<typeof getApplicati
  * @summary One application (secrets masked)
  */
 
-export function useGetApplication<TData = Awaited<ReturnType<typeof getApplication>>, TError = UnauthorizedResponse | Error>(
+export function useGetApplication<TData = Awaited<ReturnType<typeof getApplication>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplication>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -343,7 +344,7 @@ export const updateApplication = async (id: string,
 
 
 
-export const getUpdateApplicationMutationOptions = <TError = Error | UnauthorizedResponse,
+export const getUpdateApplicationMutationOptions = <TError = Error | UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateApplication>>, TError,{id: string;data: PatchApplicationRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof updateApplication>>, TError,{id: string;data: PatchApplicationRequest}, TContext> => {
 
@@ -370,12 +371,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type UpdateApplicationMutationResult = NonNullable<Awaited<ReturnType<typeof updateApplication>>>
     export type UpdateApplicationMutationBody = PatchApplicationRequest
-    export type UpdateApplicationMutationError = Error | UnauthorizedResponse
+    export type UpdateApplicationMutationError = Error | UnauthorizedResponse | ForbiddenResponse
 
     /**
  * @summary Update configuration (shapes the next revision; running revision unchanged until deploy)
  */
-export const useUpdateApplication = <TError = Error | UnauthorizedResponse,
+export const useUpdateApplication = <TError = Error | UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateApplication>>, TError,{id: string;data: PatchApplicationRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof updateApplication>>,
@@ -413,7 +414,7 @@ export const deleteApplication = async (id: string, options?: RequestInit): Prom
 
 
 
-export const getDeleteApplicationMutationOptions = <TError = UnauthorizedResponse,
+export const getDeleteApplicationMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteApplication>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof deleteApplication>>, TError,{id: string}, TContext> => {
 
@@ -440,12 +441,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type DeleteApplicationMutationResult = NonNullable<Awaited<ReturnType<typeof deleteApplication>>>
     
-    export type DeleteApplicationMutationError = UnauthorizedResponse
+    export type DeleteApplicationMutationError = UnauthorizedResponse | ForbiddenResponse
 
     /**
  * @summary Delete an application and its env vars
  */
-export const useDeleteApplication = <TError = UnauthorizedResponse,
+export const useDeleteApplication = <TError = UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteApplication>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof deleteApplication>>,
@@ -492,7 +493,7 @@ export const getCheckApplicationDomainQueryKey = (id?: string,) => {
     }
 
     
-export const getCheckApplicationDomainQueryOptions = <TData = Awaited<ReturnType<typeof checkApplicationDomain>>, TError = UnauthorizedResponse | Error>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof checkApplicationDomain>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getCheckApplicationDomainQueryOptions = <TData = Awaited<ReturnType<typeof checkApplicationDomain>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof checkApplicationDomain>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -511,10 +512,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type CheckApplicationDomainQueryResult = NonNullable<Awaited<ReturnType<typeof checkApplicationDomain>>>
-export type CheckApplicationDomainQueryError = UnauthorizedResponse | Error
+export type CheckApplicationDomainQueryError = UnauthorizedResponse | ForbiddenResponse | Error
 
 
-export function useCheckApplicationDomain<TData = Awaited<ReturnType<typeof checkApplicationDomain>>, TError = UnauthorizedResponse | Error>(
+export function useCheckApplicationDomain<TData = Awaited<ReturnType<typeof checkApplicationDomain>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof checkApplicationDomain>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof checkApplicationDomain>>,
@@ -524,7 +525,7 @@ export function useCheckApplicationDomain<TData = Awaited<ReturnType<typeof chec
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useCheckApplicationDomain<TData = Awaited<ReturnType<typeof checkApplicationDomain>>, TError = UnauthorizedResponse | Error>(
+export function useCheckApplicationDomain<TData = Awaited<ReturnType<typeof checkApplicationDomain>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof checkApplicationDomain>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof checkApplicationDomain>>,
@@ -534,7 +535,7 @@ export function useCheckApplicationDomain<TData = Awaited<ReturnType<typeof chec
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useCheckApplicationDomain<TData = Awaited<ReturnType<typeof checkApplicationDomain>>, TError = UnauthorizedResponse | Error>(
+export function useCheckApplicationDomain<TData = Awaited<ReturnType<typeof checkApplicationDomain>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof checkApplicationDomain>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -542,7 +543,7 @@ export function useCheckApplicationDomain<TData = Awaited<ReturnType<typeof chec
  * @summary Check whether this app's domain actually reaches it
  */
 
-export function useCheckApplicationDomain<TData = Awaited<ReturnType<typeof checkApplicationDomain>>, TError = UnauthorizedResponse | Error>(
+export function useCheckApplicationDomain<TData = Awaited<ReturnType<typeof checkApplicationDomain>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof checkApplicationDomain>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -592,7 +593,7 @@ export const getStreamApplicationLogsQueryKey = (id?: string,) => {
     }
 
     
-export const getStreamApplicationLogsQueryOptions = <TData = Awaited<ReturnType<typeof streamApplicationLogs>>, TError = UnauthorizedResponse | Error>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamApplicationLogs>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getStreamApplicationLogsQueryOptions = <TData = Awaited<ReturnType<typeof streamApplicationLogs>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamApplicationLogs>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -611,10 +612,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type StreamApplicationLogsQueryResult = NonNullable<Awaited<ReturnType<typeof streamApplicationLogs>>>
-export type StreamApplicationLogsQueryError = UnauthorizedResponse | Error
+export type StreamApplicationLogsQueryError = UnauthorizedResponse | ForbiddenResponse | Error
 
 
-export function useStreamApplicationLogs<TData = Awaited<ReturnType<typeof streamApplicationLogs>>, TError = UnauthorizedResponse | Error>(
+export function useStreamApplicationLogs<TData = Awaited<ReturnType<typeof streamApplicationLogs>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamApplicationLogs>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof streamApplicationLogs>>,
@@ -624,7 +625,7 @@ export function useStreamApplicationLogs<TData = Awaited<ReturnType<typeof strea
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useStreamApplicationLogs<TData = Awaited<ReturnType<typeof streamApplicationLogs>>, TError = UnauthorizedResponse | Error>(
+export function useStreamApplicationLogs<TData = Awaited<ReturnType<typeof streamApplicationLogs>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamApplicationLogs>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof streamApplicationLogs>>,
@@ -634,7 +635,7 @@ export function useStreamApplicationLogs<TData = Awaited<ReturnType<typeof strea
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useStreamApplicationLogs<TData = Awaited<ReturnType<typeof streamApplicationLogs>>, TError = UnauthorizedResponse | Error>(
+export function useStreamApplicationLogs<TData = Awaited<ReturnType<typeof streamApplicationLogs>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamApplicationLogs>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -642,7 +643,7 @@ export function useStreamApplicationLogs<TData = Awaited<ReturnType<typeof strea
  * @summary Stream runtime logs (Server-Sent Events)
  */
 
-export function useStreamApplicationLogs<TData = Awaited<ReturnType<typeof streamApplicationLogs>>, TError = UnauthorizedResponse | Error>(
+export function useStreamApplicationLogs<TData = Awaited<ReturnType<typeof streamApplicationLogs>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamApplicationLogs>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -692,7 +693,7 @@ export const getListEnvVarKeysQueryKey = (id?: string,) => {
     }
 
     
-export const getListEnvVarKeysQueryOptions = <TData = Awaited<ReturnType<typeof listEnvVarKeys>>, TError = UnauthorizedResponse | Error>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEnvVarKeys>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getListEnvVarKeysQueryOptions = <TData = Awaited<ReturnType<typeof listEnvVarKeys>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEnvVarKeys>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -711,10 +712,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type ListEnvVarKeysQueryResult = NonNullable<Awaited<ReturnType<typeof listEnvVarKeys>>>
-export type ListEnvVarKeysQueryError = UnauthorizedResponse | Error
+export type ListEnvVarKeysQueryError = UnauthorizedResponse | ForbiddenResponse | Error
 
 
-export function useListEnvVarKeys<TData = Awaited<ReturnType<typeof listEnvVarKeys>>, TError = UnauthorizedResponse | Error>(
+export function useListEnvVarKeys<TData = Awaited<ReturnType<typeof listEnvVarKeys>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEnvVarKeys>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listEnvVarKeys>>,
@@ -724,7 +725,7 @@ export function useListEnvVarKeys<TData = Awaited<ReturnType<typeof listEnvVarKe
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListEnvVarKeys<TData = Awaited<ReturnType<typeof listEnvVarKeys>>, TError = UnauthorizedResponse | Error>(
+export function useListEnvVarKeys<TData = Awaited<ReturnType<typeof listEnvVarKeys>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEnvVarKeys>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listEnvVarKeys>>,
@@ -734,7 +735,7 @@ export function useListEnvVarKeys<TData = Awaited<ReturnType<typeof listEnvVarKe
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListEnvVarKeys<TData = Awaited<ReturnType<typeof listEnvVarKeys>>, TError = UnauthorizedResponse | Error>(
+export function useListEnvVarKeys<TData = Awaited<ReturnType<typeof listEnvVarKeys>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEnvVarKeys>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -742,7 +743,7 @@ export function useListEnvVarKeys<TData = Awaited<ReturnType<typeof listEnvVarKe
  * @summary List environment-variable keys (values are write-only)
  */
 
-export function useListEnvVarKeys<TData = Awaited<ReturnType<typeof listEnvVarKeys>>, TError = UnauthorizedResponse | Error>(
+export function useListEnvVarKeys<TData = Awaited<ReturnType<typeof listEnvVarKeys>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEnvVarKeys>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -788,7 +789,7 @@ export const setEnvVar = async (id: string,
 
 
 
-export const getSetEnvVarMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | Error,
+export const getSetEnvVarMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setEnvVar>>, TError,{id: string;key: string;data: SetEnvVarRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof setEnvVar>>, TError,{id: string;key: string;data: SetEnvVarRequest}, TContext> => {
 
@@ -815,12 +816,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type SetEnvVarMutationResult = NonNullable<Awaited<ReturnType<typeof setEnvVar>>>
     export type SetEnvVarMutationBody = SetEnvVarRequest
-    export type SetEnvVarMutationError = BadRequestResponse | UnauthorizedResponse | Error
+    export type SetEnvVarMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error
 
     /**
  * @summary Set (create or replace) an environment variable
  */
-export const useSetEnvVar = <TError = BadRequestResponse | UnauthorizedResponse | Error,
+export const useSetEnvVar = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setEnvVar>>, TError,{id: string;key: string;data: SetEnvVarRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof setEnvVar>>,
@@ -860,7 +861,7 @@ export const deleteEnvVar = async (id: string,
 
 
 
-export const getDeleteEnvVarMutationOptions = <TError = UnauthorizedResponse | Error,
+export const getDeleteEnvVarMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | Error,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteEnvVar>>, TError,{id: string;key: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof deleteEnvVar>>, TError,{id: string;key: string}, TContext> => {
 
@@ -887,12 +888,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type DeleteEnvVarMutationResult = NonNullable<Awaited<ReturnType<typeof deleteEnvVar>>>
     
-    export type DeleteEnvVarMutationError = UnauthorizedResponse | Error
+    export type DeleteEnvVarMutationError = UnauthorizedResponse | ForbiddenResponse | Error
 
     /**
  * @summary Delete an environment variable
  */
-export const useDeleteEnvVar = <TError = UnauthorizedResponse | Error,
+export const useDeleteEnvVar = <TError = UnauthorizedResponse | ForbiddenResponse | Error,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteEnvVar>>, TError,{id: string;key: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof deleteEnvVar>>,

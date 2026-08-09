@@ -30,10 +30,13 @@ import type {
   CreateTokenRequest,
   CreateTokenResponse,
   Error,
+  ForbiddenResponse,
   LoginRequest,
   LoginResponse,
   Me,
   NotFoundResponse,
+  RevokeOtherSessions200,
+  Session,
   SetupRequest,
   SetupStatus,
   TOTPCodeRequest,
@@ -319,7 +322,7 @@ export const logout = async ( options?: RequestInit): Promise<void> => {
 
 
 
-export const getLogoutMutationOptions = <TError = UnauthorizedResponse,
+export const getLogoutMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof logout>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof logout>>, TError,void, TContext> => {
 
@@ -346,12 +349,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type LogoutMutationResult = NonNullable<Awaited<ReturnType<typeof logout>>>
     
-    export type LogoutMutationError = UnauthorizedResponse
+    export type LogoutMutationError = UnauthorizedResponse | ForbiddenResponse
 
     /**
  * @summary Invalidate the current session
  */
-export const useLogout = <TError = UnauthorizedResponse,
+export const useLogout = <TError = UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof logout>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof logout>>,
@@ -397,7 +400,7 @@ export const getGetMeQueryKey = () => {
     }
 
     
-export const getGetMeQueryOptions = <TData = Awaited<ReturnType<typeof getMe>>, TError = UnauthorizedResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMe>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getGetMeQueryOptions = <TData = Awaited<ReturnType<typeof getMe>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMe>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -416,10 +419,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetMeQueryResult = NonNullable<Awaited<ReturnType<typeof getMe>>>
-export type GetMeQueryError = UnauthorizedResponse
+export type GetMeQueryError = UnauthorizedResponse | ForbiddenResponse
 
 
-export function useGetMe<TData = Awaited<ReturnType<typeof getMe>>, TError = UnauthorizedResponse>(
+export function useGetMe<TData = Awaited<ReturnType<typeof getMe>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMe>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getMe>>,
@@ -429,7 +432,7 @@ export function useGetMe<TData = Awaited<ReturnType<typeof getMe>>, TError = Una
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetMe<TData = Awaited<ReturnType<typeof getMe>>, TError = UnauthorizedResponse>(
+export function useGetMe<TData = Awaited<ReturnType<typeof getMe>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMe>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getMe>>,
@@ -439,7 +442,7 @@ export function useGetMe<TData = Awaited<ReturnType<typeof getMe>>, TError = Una
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetMe<TData = Awaited<ReturnType<typeof getMe>>, TError = UnauthorizedResponse>(
+export function useGetMe<TData = Awaited<ReturnType<typeof getMe>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMe>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -447,7 +450,7 @@ export function useGetMe<TData = Awaited<ReturnType<typeof getMe>>, TError = Una
  * @summary The authenticated account and its teams
  */
 
-export function useGetMe<TData = Awaited<ReturnType<typeof getMe>>, TError = UnauthorizedResponse>(
+export function useGetMe<TData = Awaited<ReturnType<typeof getMe>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMe>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -465,6 +468,254 @@ export function useGetMe<TData = Awaited<ReturnType<typeof getMe>>, TError = Una
 
 
 /**
+ * Every device currently signed in to this account. Requires an interactive session — a personal access token may not manage sessions.
+
+ * @summary List the caller's live sessions
+ */
+export const getListSessionsUrl = () => {
+
+
+  
+
+  return `/api/v1/auth/sessions`
+}
+
+export const listSessions = async ( options?: RequestInit): Promise<Session[]> => {
+  
+  return apiFetch<Session[]>(getListSessionsUrl(),
+  {      
+    ...options,
+    method: 'GET'
+    
+    
+  }
+);}
+
+
+
+
+
+export const getListSessionsQueryKey = () => {
+    return [
+    `/api/v1/auth/sessions`
+    ] as const;
+    }
+
+    
+export const getListSessionsQueryOptions = <TData = Awaited<ReturnType<typeof listSessions>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSessions>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListSessionsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listSessions>>> = ({ signal }) => listSessions({ signal, ...requestOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listSessions>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListSessionsQueryResult = NonNullable<Awaited<ReturnType<typeof listSessions>>>
+export type ListSessionsQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useListSessions<TData = Awaited<ReturnType<typeof listSessions>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSessions>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listSessions>>,
+          TError,
+          Awaited<ReturnType<typeof listSessions>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListSessions<TData = Awaited<ReturnType<typeof listSessions>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSessions>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listSessions>>,
+          TError,
+          Awaited<ReturnType<typeof listSessions>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListSessions<TData = Awaited<ReturnType<typeof listSessions>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSessions>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List the caller's live sessions
+ */
+
+export function useListSessions<TData = Awaited<ReturnType<typeof listSessions>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSessions>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListSessionsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+/**
+ * Revokes a single session belonging to the caller. A session id that is not the caller's is reported as not found.
+
+ * @summary Sign one session out
+ */
+export const getRevokeSessionUrl = (id: string,) => {
+
+
+  
+
+  return `/api/v1/auth/sessions/${id}`
+}
+
+export const revokeSession = async (id: string, options?: RequestInit): Promise<void> => {
+  
+  return apiFetch<void>(getRevokeSessionUrl(id),
+  {      
+    ...options,
+    method: 'DELETE'
+    
+    
+  }
+);}
+
+
+
+
+export const getRevokeSessionMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revokeSession>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof revokeSession>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['revokeSession'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof revokeSession>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  revokeSession(id,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RevokeSessionMutationResult = NonNullable<Awaited<ReturnType<typeof revokeSession>>>
+    
+    export type RevokeSessionMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Sign one session out
+ */
+export const useRevokeSession = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revokeSession>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof revokeSession>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+
+      const mutationOptions = getRevokeSessionMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    /**
+ * Revokes every session of the caller except the one making the request, identified by the presented bearer token.
+
+ * @summary Sign out everywhere except this device
+ */
+export const getRevokeOtherSessionsUrl = () => {
+
+
+  
+
+  return `/api/v1/auth/sessions/revoke-others`
+}
+
+export const revokeOtherSessions = async ( options?: RequestInit): Promise<RevokeOtherSessions200> => {
+  
+  return apiFetch<RevokeOtherSessions200>(getRevokeOtherSessionsUrl(),
+  {      
+    ...options,
+    method: 'POST'
+    
+    
+  }
+);}
+
+
+
+
+export const getRevokeOtherSessionsMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revokeOtherSessions>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof revokeOtherSessions>>, TError,void, TContext> => {
+
+const mutationKey = ['revokeOtherSessions'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof revokeOtherSessions>>, void> = () => {
+          
+
+          return  revokeOtherSessions(requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RevokeOtherSessionsMutationResult = NonNullable<Awaited<ReturnType<typeof revokeOtherSessions>>>
+    
+    export type RevokeOtherSessionsMutationError = UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary Sign out everywhere except this device
+ */
+export const useRevokeOtherSessions = <TError = UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revokeOtherSessions>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof revokeOtherSessions>>,
+        TError,
+        void,
+        TContext
+      > => {
+
+      const mutationOptions = getRevokeOtherSessionsMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    /**
+ * Requires an interactive session. Credential management is unreachable from a personal access token, whatever its abilities, so that a leaked token cannot mint itself a wider one.
+
  * @summary List the caller's personal access tokens (metadata only)
  */
 export const getListTokensUrl = () => {
@@ -497,7 +748,7 @@ export const getListTokensQueryKey = () => {
     }
 
     
-export const getListTokensQueryOptions = <TData = Awaited<ReturnType<typeof listTokens>>, TError = UnauthorizedResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTokens>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getListTokensQueryOptions = <TData = Awaited<ReturnType<typeof listTokens>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTokens>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -516,10 +767,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type ListTokensQueryResult = NonNullable<Awaited<ReturnType<typeof listTokens>>>
-export type ListTokensQueryError = UnauthorizedResponse
+export type ListTokensQueryError = UnauthorizedResponse | ForbiddenResponse
 
 
-export function useListTokens<TData = Awaited<ReturnType<typeof listTokens>>, TError = UnauthorizedResponse>(
+export function useListTokens<TData = Awaited<ReturnType<typeof listTokens>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTokens>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listTokens>>,
@@ -529,7 +780,7 @@ export function useListTokens<TData = Awaited<ReturnType<typeof listTokens>>, TE
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListTokens<TData = Awaited<ReturnType<typeof listTokens>>, TError = UnauthorizedResponse>(
+export function useListTokens<TData = Awaited<ReturnType<typeof listTokens>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTokens>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listTokens>>,
@@ -539,7 +790,7 @@ export function useListTokens<TData = Awaited<ReturnType<typeof listTokens>>, TE
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useListTokens<TData = Awaited<ReturnType<typeof listTokens>>, TError = UnauthorizedResponse>(
+export function useListTokens<TData = Awaited<ReturnType<typeof listTokens>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTokens>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -547,7 +798,7 @@ export function useListTokens<TData = Awaited<ReturnType<typeof listTokens>>, TE
  * @summary List the caller's personal access tokens (metadata only)
  */
 
-export function useListTokens<TData = Awaited<ReturnType<typeof listTokens>>, TError = UnauthorizedResponse>(
+export function useListTokens<TData = Awaited<ReturnType<typeof listTokens>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTokens>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -592,7 +843,7 @@ export const createToken = async (createTokenRequest: CreateTokenRequest, option
 
 
 
-export const getCreateTokenMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse,
+export const getCreateTokenMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createToken>>, TError,{data: CreateTokenRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof createToken>>, TError,{data: CreateTokenRequest}, TContext> => {
 
@@ -619,12 +870,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type CreateTokenMutationResult = NonNullable<Awaited<ReturnType<typeof createToken>>>
     export type CreateTokenMutationBody = CreateTokenRequest
-    export type CreateTokenMutationError = BadRequestResponse | UnauthorizedResponse
+    export type CreateTokenMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
 
     /**
  * @summary Create a personal access token
  */
-export const useCreateToken = <TError = BadRequestResponse | UnauthorizedResponse,
+export const useCreateToken = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createToken>>, TError,{data: CreateTokenRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof createToken>>,
@@ -662,7 +913,7 @@ export const deleteToken = async (id: string, options?: RequestInit): Promise<vo
 
 
 
-export const getDeleteTokenMutationOptions = <TError = UnauthorizedResponse | NotFoundResponse,
+export const getDeleteTokenMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteToken>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof deleteToken>>, TError,{id: string}, TContext> => {
 
@@ -689,12 +940,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type DeleteTokenMutationResult = NonNullable<Awaited<ReturnType<typeof deleteToken>>>
     
-    export type DeleteTokenMutationError = UnauthorizedResponse | NotFoundResponse
+    export type DeleteTokenMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
     /**
  * @summary Revoke a personal access token
  */
-export const useDeleteToken = <TError = UnauthorizedResponse | NotFoundResponse,
+export const useDeleteToken = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteToken>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof deleteToken>>,
@@ -740,7 +991,7 @@ export const getGetTotpStatusQueryKey = () => {
     }
 
     
-export const getGetTotpStatusQueryOptions = <TData = Awaited<ReturnType<typeof getTotpStatus>>, TError = UnauthorizedResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTotpStatus>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getGetTotpStatusQueryOptions = <TData = Awaited<ReturnType<typeof getTotpStatus>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTotpStatus>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -759,10 +1010,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetTotpStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getTotpStatus>>>
-export type GetTotpStatusQueryError = UnauthorizedResponse
+export type GetTotpStatusQueryError = UnauthorizedResponse | ForbiddenResponse
 
 
-export function useGetTotpStatus<TData = Awaited<ReturnType<typeof getTotpStatus>>, TError = UnauthorizedResponse>(
+export function useGetTotpStatus<TData = Awaited<ReturnType<typeof getTotpStatus>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTotpStatus>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getTotpStatus>>,
@@ -772,7 +1023,7 @@ export function useGetTotpStatus<TData = Awaited<ReturnType<typeof getTotpStatus
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetTotpStatus<TData = Awaited<ReturnType<typeof getTotpStatus>>, TError = UnauthorizedResponse>(
+export function useGetTotpStatus<TData = Awaited<ReturnType<typeof getTotpStatus>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTotpStatus>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getTotpStatus>>,
@@ -782,7 +1033,7 @@ export function useGetTotpStatus<TData = Awaited<ReturnType<typeof getTotpStatus
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetTotpStatus<TData = Awaited<ReturnType<typeof getTotpStatus>>, TError = UnauthorizedResponse>(
+export function useGetTotpStatus<TData = Awaited<ReturnType<typeof getTotpStatus>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTotpStatus>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -790,7 +1041,7 @@ export function useGetTotpStatus<TData = Awaited<ReturnType<typeof getTotpStatus
  * @summary Two-factor authentication status for the current account
  */
 
-export function useGetTotpStatus<TData = Awaited<ReturnType<typeof getTotpStatus>>, TError = UnauthorizedResponse>(
+export function useGetTotpStatus<TData = Awaited<ReturnType<typeof getTotpStatus>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTotpStatus>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -834,7 +1085,7 @@ export const enrollTotp = async ( options?: RequestInit): Promise<TOTPEnrollResp
 
 
 
-export const getEnrollTotpMutationOptions = <TError = UnauthorizedResponse | Error,
+export const getEnrollTotpMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | Error,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof enrollTotp>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof enrollTotp>>, TError,void, TContext> => {
 
@@ -861,12 +1112,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type EnrollTotpMutationResult = NonNullable<Awaited<ReturnType<typeof enrollTotp>>>
     
-    export type EnrollTotpMutationError = UnauthorizedResponse | Error
+    export type EnrollTotpMutationError = UnauthorizedResponse | ForbiddenResponse | Error
 
     /**
  * @summary Begin two-factor enrollment
  */
-export const useEnrollTotp = <TError = UnauthorizedResponse | Error,
+export const useEnrollTotp = <TError = UnauthorizedResponse | ForbiddenResponse | Error,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof enrollTotp>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof enrollTotp>>,
@@ -907,7 +1158,7 @@ export const verifyTotp = async (tOTPCodeRequest: TOTPCodeRequest, options?: Req
 
 
 
-export const getVerifyTotpMutationOptions = <TError = BadRequestResponse | Error,
+export const getVerifyTotpMutationOptions = <TError = Error | UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyTotp>>, TError,{data: TOTPCodeRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof verifyTotp>>, TError,{data: TOTPCodeRequest}, TContext> => {
 
@@ -934,12 +1185,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type VerifyTotpMutationResult = NonNullable<Awaited<ReturnType<typeof verifyTotp>>>
     export type VerifyTotpMutationBody = TOTPCodeRequest
-    export type VerifyTotpMutationError = BadRequestResponse | Error
+    export type VerifyTotpMutationError = Error | UnauthorizedResponse | ForbiddenResponse
 
     /**
  * @summary Confirm a code and activate two-factor
  */
-export const useVerifyTotp = <TError = BadRequestResponse | Error,
+export const useVerifyTotp = <TError = Error | UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyTotp>>, TError,{data: TOTPCodeRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof verifyTotp>>,
@@ -980,7 +1231,7 @@ export const disableTotp = async (tOTPCodeRequest: TOTPCodeRequest, options?: Re
 
 
 
-export const getDisableTotpMutationOptions = <TError = BadRequestResponse | Error,
+export const getDisableTotpMutationOptions = <TError = Error | UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof disableTotp>>, TError,{data: TOTPCodeRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof disableTotp>>, TError,{data: TOTPCodeRequest}, TContext> => {
 
@@ -1007,12 +1258,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type DisableTotpMutationResult = NonNullable<Awaited<ReturnType<typeof disableTotp>>>
     export type DisableTotpMutationBody = TOTPCodeRequest
-    export type DisableTotpMutationError = BadRequestResponse | Error
+    export type DisableTotpMutationError = Error | UnauthorizedResponse | ForbiddenResponse
 
     /**
  * @summary Disable two-factor
  */
-export const useDisableTotp = <TError = BadRequestResponse | Error,
+export const useDisableTotp = <TError = Error | UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof disableTotp>>, TError,{data: TOTPCodeRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof disableTotp>>,

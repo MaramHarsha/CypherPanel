@@ -76,7 +76,11 @@ func (a *API) handleTOTPVerify(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "start enrollment before verifying")
 		return
 	case errors.Is(err, auth.ErrInvalidTOTPCode):
-		writeError(w, http.StatusUnauthorized, "invalid two-factor code")
+		// 400, not 401: the session is valid — only the submitted factor is
+		// wrong. A 401 here would be indistinguishable from an expired session,
+		// and clients that sign the operator out on 401 would log them out for
+		// a typo mid-enrollment.
+		writeError(w, http.StatusBadRequest, "invalid two-factor code")
 		return
 	case err != nil:
 		a.deps.Log.Error("totp verify", "error", err)
@@ -103,7 +107,11 @@ func (a *API) handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "two-factor is not enabled")
 		return
 	case errors.Is(err, auth.ErrInvalidTOTPCode):
-		writeError(w, http.StatusUnauthorized, "invalid two-factor code")
+		// 400, not 401: the session is valid — only the submitted factor is
+		// wrong. A 401 here would be indistinguishable from an expired session,
+		// and clients that sign the operator out on 401 would log them out for
+		// a typo mid-enrollment.
+		writeError(w, http.StatusBadRequest, "invalid two-factor code")
 		return
 	case err != nil:
 		a.deps.Log.Error("totp disable", "error", err)

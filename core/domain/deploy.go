@@ -26,12 +26,15 @@ type Environment struct {
 	UpdatedAt time.Time
 }
 
-// AppSource is where an Application's code comes from.
+// AppSource is where an Application's code comes from. Kind "image" deploys a
+// prebuilt OCI image reference directly (feature-matrix V1: deploy from
+// container image) — no build stage; the target agent pulls the image itself.
 type AppSource struct {
-	Kind        string // "github" | "git_url"
+	Kind        string // "github" | "git_url" | "image"
 	Repo        string
 	Branch      string
 	DeployKeyID *string
+	Image       string // OCI reference; set iff Kind == "image"
 }
 
 // AppBuild is how the image is produced (Phase 2: dockerfile only).

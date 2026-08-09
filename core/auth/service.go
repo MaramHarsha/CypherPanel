@@ -40,8 +40,13 @@ type Store interface {
 	UserForSessionToken(ctx context.Context, tokenHash []byte) (domain.User, error)
 	DeleteSession(ctx context.Context, tokenHash []byte) error
 
-	CreateAPIToken(ctx context.Context, id, userID, name string, tokenHash []byte, expiresAt *time.Time) (domain.APIToken, error)
-	UserForAPIToken(ctx context.Context, tokenHash []byte) (domain.User, error)
+	SessionForToken(ctx context.Context, tokenHash []byte) (domain.User, string, error)
+	ListSessionsByUser(ctx context.Context, userID string) ([]domain.Session, error)
+	DeleteSessionForUser(ctx context.Context, sessionID, userID string) (bool, error)
+	DeleteOtherSessionsForUser(ctx context.Context, userID string, keepTokenHash []byte) (int64, error)
+
+	CreateAPIToken(ctx context.Context, id, userID, name string, abilities []domain.Ability, tokenHash []byte, expiresAt *time.Time) (domain.APIToken, error)
+	APITokenByHash(ctx context.Context, tokenHash []byte) (domain.User, string, []domain.Ability, error)
 	TouchAPIToken(ctx context.Context, tokenHash []byte) error
 	ListAPITokensByUser(ctx context.Context, userID string) ([]domain.APIToken, error)
 	GetAPIToken(ctx context.Context, id string) (domain.APIToken, error)
@@ -150,23 +155,59 @@ func (a *Authenticator) StartSession(ctx context.Context, userID string) (rawTok
 	return rawToken, nil
 }
 
-// Authenticate resolves a raw bearer token to its user, or ErrInvalidSession.
-// A token carrying the API-token prefix is resolved as a personal access token
-// (authenticating as its owning user); anything else is a session. Session
-// secrets are uppercase base32 (ids.Secret) and never carry the prefix, so the
-// two spaces cannot collide.
-func (a *Authenticator) Authenticate(ctx context.Context, rawToken string) (domain.User, error) {
+// PrincipalKind distinguishes how a caller proved who they are. It matters for
+// authorization: a personal access token must never be able to escalate itself
+// by minting more tokens, revoking sessions, or turning off two-factor auth —
+// only an interactive session can manage credentials (threat-model §5.8).
+type PrincipalKind string
+
+const (
+	KindSession  PrincipalKind = "session"
+	KindAPIToken PrincipalKind = "api_token"
+)
+
+// Principal is an authenticated caller: the user, how they authenticated, and
+// what that credential is allowed to do. A session carries the full ability
+// set; a token carries only the abilities it was issued with.
+type Principal struct {
+	User      domain.User
+	Kind      PrincipalKind
+	Abilities []domain.Ability
+	// SessionID is set for session principals so a session list can mark the
+	// caller's own entry. Empty for tokens.
+	SessionID string
+	// TokenID is set for API-token principals (audit/debug). Empty for sessions.
+	TokenID string
+}
+
+// Can reports whether this principal's credential carries an ability.
+func (p Principal) Can(a domain.Ability) bool { return domain.HasAbility(p.Abilities, a) }
+
+// Authenticate resolves a raw bearer token to its principal, or
+// ErrInvalidSession. A token carrying the API-token prefix is resolved as a
+// personal access token (authenticating as its owning user, narrowed by its
+// abilities); anything else is a session. Session secrets are uppercase base32
+// (ids.Secret) and never carry the prefix, so the two spaces cannot collide.
+func (a *Authenticator) Authenticate(ctx context.Context, rawToken string) (Principal, error) {
 	if strings.HasPrefix(rawToken, APITokenPrefix) {
 		return a.authenticateAPIToken(ctx, rawToken)
 	}
-	user, err := a.store.UserForSessionToken(ctx, HashToken(rawToken))
+	// One query resolves both the user and the session id: the join already
+	// selects both rows, and authentication runs on every request, so looking
+	// them up separately would double its cost for nothing.
+	user, sessionID, err := a.store.SessionForToken(ctx, HashToken(rawToken))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return domain.User{}, ErrInvalidSession
+			return Principal{}, ErrInvalidSession
 		}
-		return domain.User{}, fmt.Errorf("auth: resolving session: %w", err)
+		return Principal{}, fmt.Errorf("auth: resolving session: %w", err)
 	}
-	return user, nil
+	return Principal{
+		User:      user,
+		Kind:      KindSession,
+		Abilities: domain.AllAbilities(),
+		SessionID: sessionID,
+	}, nil
 }
 
 // Logout revokes the session behind a raw bearer token. Revoking an unknown

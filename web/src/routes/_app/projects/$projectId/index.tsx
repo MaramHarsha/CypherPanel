@@ -256,7 +256,9 @@ function NewDatabaseDialog({ envId, primary }: { envId: string; primary?: boolea
   const [serverId, setServerId] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const enrolled = (servers.data ?? []).filter((s) => s.enrolled);
+  // A builder-only agent is built without a workload driver and rejects rollout
+  // work, so offering it would create the resource and then fail every deploy.
+  const enrolled = (servers.data ?? []).filter((s) => s.enrolled && s.role !== "builder");
   const chosenServer = serverId || enrolled[0]?.id || "";
 
   // The root password exists in plaintext exactly once, in the create
@@ -406,7 +408,9 @@ function NewAppDialog({ envId, primary, eyebrow }: { envId: string; primary?: bo
   const { projectId } = Route.useParams();
   const servers = useListServers();
   const [name, setName] = useState("");
+  const [sourceKind, setSourceKind] = useState<"github" | "image">("github");
   const [repo, setRepo] = useState("");
+  const [image, setImage] = useState("");
   const [branch, setBranch] = useState("main");
   const [domain, setDomain] = useState("");
   const [serverId, setServerId] = useState("");
@@ -416,7 +420,9 @@ function NewAppDialog({ envId, primary, eyebrow }: { envId: string; primary?: bo
   const [context, setContext] = useState(".");
   const [error, setError] = useState<string | null>(null);
 
-  const enrolled = (servers.data ?? []).filter((s) => s.enrolled);
+  // A builder-only agent is built without a workload driver and rejects rollout
+  // work, so offering it would create the resource and then fail every deploy.
+  const enrolled = (servers.data ?? []).filter((s) => s.enrolled && s.role !== "builder");
   const chosenServer = serverId || enrolled[0]?.id || "";
 
   const create = useCreateApplication({
@@ -437,7 +443,7 @@ function NewAppDialog({ envId, primary, eyebrow }: { envId: string; primary?: bo
       id: envId,
       data: {
         name,
-        source: { kind: "github", repo, branch },
+        source: sourceKind === "image" ? { kind: "image", image } : { kind: "github", repo, branch },
         build: { kind: buildKind, dockerfile_path: dockerfile, context },
         runtime: { server_id: chosenServer, port: Number(port), replicas: 1 },
         route: { domain: domain || undefined, https: true, path_prefix: "" },
@@ -479,24 +485,47 @@ function NewAppDialog({ envId, primary, eyebrow }: { envId: string; primary?: bo
         size="form"
         eyebrow={eyebrow}
         title="Deploy an application"
-        description="CypherPanel clones the repository, builds it, and keeps it running at your domain."
+        description="CypherPanel builds it (or pulls the image) and keeps it running at your domain."
       >
         <form onSubmit={submit} className="space-y-4">
-          {/* Repository first: it is the one thing only the operator knows.
+          {/* Source first: it is the one thing only the operator knows.
               Everything with a working default folds into Advanced below
               (ui-principles §6, design 5w). */}
-          <Field label="Repository" hint="Public, or private with a deploy key (Settings → Deploy keys).">
+          <Field label="Deploy from">
             {(id) => (
-              <Input
-                id={id}
-                required
-                autoFocus
-                value={repo}
-                onChange={(e) => setRepo(e.target.value)}
-                placeholder="github.com/acme/web"
-              />
+              <Select id={id} value={sourceKind} onChange={(e) => setSourceKind(e.target.value as typeof sourceKind)}>
+                <option value="github">Git repository — built from source</option>
+                <option value="image">Container image — prebuilt, no build step</option>
+              </Select>
             )}
           </Field>
+          {sourceKind === "github" ? (
+            <Field label="Repository" hint="Public, or private with a deploy key (Settings → Deploy keys).">
+              {(id) => (
+                <Input
+                  id={id}
+                  required
+                  autoFocus
+                  value={repo}
+                  onChange={(e) => setRepo(e.target.value)}
+                  placeholder="github.com/acme/web"
+                />
+              )}
+            </Field>
+          ) : (
+            <Field label="Image" hint="Any public registry reference; the server pulls it directly.">
+              {(id) => (
+                <Input
+                  id={id}
+                  required
+                  autoFocus
+                  value={image}
+                  onChange={(e) => setImage(e.target.value)}
+                  placeholder="ghcr.io/acme/web:1.2"
+                />
+              )}
+            </Field>
+          )}
 
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Name">
@@ -528,33 +557,39 @@ function NewAppDialog({ envId, primary, eyebrow }: { envId: string; primary?: bo
           </Field>
 
           <AdvancedSection note="defaults work">
-            <Field label="How to build it" hint="Detect picks a Dockerfile if there is one, otherwise serves the repo as a static site.">
-              {(id) => (
-                <Select id={id} value={buildKind} onChange={(e) => setBuildKind(e.target.value as typeof buildKind)}>
-                  <option value="auto">Detect automatically</option>
-                  <option value="dockerfile">Dockerfile</option>
-                  <option value="static">Static site (HTML, CSS, JS)</option>
-                </Select>
-              )}
-            </Field>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Branch">
-                {(id) => <Input id={id} required value={branch} onChange={(e) => setBranch(e.target.value)} />}
+            {sourceKind === "github" && (
+              <Field label="How to build it" hint="Detect picks a Dockerfile if there is one, otherwise serves the repo as a static site.">
+                {(id) => (
+                  <Select id={id} value={buildKind} onChange={(e) => setBuildKind(e.target.value as typeof buildKind)}>
+                    <option value="auto">Detect automatically</option>
+                    <option value="dockerfile">Dockerfile</option>
+                    <option value="static">Static site (HTML, CSS, JS)</option>
+                  </Select>
+                )}
               </Field>
+            )}
+            <div className="grid gap-3 sm:grid-cols-2">
+              {sourceKind === "github" && (
+                <Field label="Branch">
+                  {(id) => <Input id={id} required value={branch} onChange={(e) => setBranch(e.target.value)} />}
+                </Field>
+              )}
               <Field label="Port" hint="The port your app listens on.">
                 {(id) => <Input id={id} required inputMode="numeric" value={port} onChange={(e) => setPort(e.target.value)} />}
               </Field>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {buildKind !== "static" && (
-                <Field label="Dockerfile path">
-                  {(id) => <Input id={id} value={dockerfile} onChange={(e) => setDockerfile(e.target.value)} />}
+            {sourceKind === "github" && (
+              <div className="grid gap-3 sm:grid-cols-2">
+                {buildKind !== "static" && (
+                  <Field label="Dockerfile path">
+                    {(id) => <Input id={id} value={dockerfile} onChange={(e) => setDockerfile(e.target.value)} />}
+                  </Field>
+                )}
+                <Field label="Build context" hint="The directory to build from.">
+                  {(id) => <Input id={id} value={context} onChange={(e) => setContext(e.target.value)} />}
                 </Field>
-              )}
-              <Field label="Build context" hint="The directory to build from.">
-                {(id) => <Input id={id} value={context} onChange={(e) => setContext(e.target.value)} />}
-              </Field>
-            </div>
+              </div>
+            )}
           </AdvancedSection>
 
           {error && (
@@ -563,7 +598,12 @@ function NewAppDialog({ envId, primary, eyebrow }: { envId: string; primary?: bo
             </p>
           )}
           <div className="flex items-center gap-2 pt-1">
-            <Button type="submit" variant="accent" size="lg" disabled={create.isPending || repo.trim() === ""}>
+            <Button
+              type="submit"
+              variant="accent"
+              size="lg"
+              disabled={create.isPending || (sourceKind === "github" ? repo.trim() === "" : image.trim() === "")}
+            >
               {create.isPending ? "Deploying…" : "Deploy →"}
             </Button>
             <DialogClose asChild>

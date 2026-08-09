@@ -321,11 +321,20 @@ func (s *Store) CreateSession(ctx context.Context, id, userID string, tokenHash 
 // UserForSessionToken returns the user owning a live (unexpired) session whose
 // token hashes to tokenHash, or ErrNotFound.
 func (s *Store) UserForSessionToken(ctx context.Context, tokenHash []byte) (domain.User, error) {
+	user, _, err := s.SessionForToken(ctx, tokenHash)
+	return user, err
+}
+
+// SessionForToken returns the owning user and the session's id in one query.
+// Authentication needs both — the id marks "this device" in the session list —
+// and the join already selects both rows, so resolving them separately would
+// double the query traffic on every authenticated request for nothing.
+func (s *Store) SessionForToken(ctx context.Context, tokenHash []byte) (domain.User, string, error) {
 	row, err := s.q.GetSessionByTokenHash(ctx, tokenHash)
 	if err != nil {
-		return domain.User{}, wrap("getting session", err)
+		return domain.User{}, "", wrap("getting session", err)
 	}
-	return userFromRow(row.User), nil
+	return userFromRow(row.User), row.Session.ID, nil
 }
 
 func (s *Store) DeleteSession(ctx context.Context, tokenHash []byte) error {
@@ -335,17 +344,59 @@ func (s *Store) DeleteSession(ctx context.Context, tokenHash []byte) error {
 	return nil
 }
 
+// ListSessionsByUser returns a user's live sessions, newest first.
+func (s *Store) ListSessionsByUser(ctx context.Context, userID string) ([]domain.Session, error) {
+	rows, err := s.q.ListSessionsByUser(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing sessions: %w", err)
+	}
+	out := make([]domain.Session, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, domain.Session{
+			ID:        r.ID,
+			UserID:    r.UserID,
+			ExpiresAt: r.ExpiresAt.Time,
+			CreatedAt: r.CreatedAt.Time,
+		})
+	}
+	return out, nil
+}
+
+// DeleteSessionForUser revokes one session, but only if it belongs to userID.
+// Reports whether a row was actually removed — a foreign or unknown id removes
+// nothing and is indistinguishable to the caller.
+func (s *Store) DeleteSessionForUser(ctx context.Context, sessionID, userID string) (bool, error) {
+	n, err := s.q.DeleteSessionForUser(ctx, db.DeleteSessionForUserParams{ID: sessionID, UserID: userID})
+	if err != nil {
+		return false, fmt.Errorf("store: deleting session: %w", err)
+	}
+	return n > 0, nil
+}
+
+// DeleteOtherSessionsForUser revokes every session of a user except the one
+// presenting keepTokenHash, returning how many were removed.
+func (s *Store) DeleteOtherSessionsForUser(ctx context.Context, userID string, keepTokenHash []byte) (int64, error) {
+	n, err := s.q.DeleteOtherSessionsForUser(ctx, db.DeleteOtherSessionsForUserParams{
+		UserID: userID, TokenHash: keepTokenHash,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("store: revoking other sessions: %w", err)
+	}
+	return n, nil
+}
+
 // ─── API tokens ─────────────────────────────────────────────────────────────
 
 // CreateAPIToken persists a personal access token (only its hash) and returns
 // the stored record.
-func (s *Store) CreateAPIToken(ctx context.Context, id, userID, name string, tokenHash []byte, expiresAt *time.Time) (domain.APIToken, error) {
+func (s *Store) CreateAPIToken(ctx context.Context, id, userID, name string, abilities []domain.Ability, tokenHash []byte, expiresAt *time.Time) (domain.APIToken, error) {
 	row, err := s.q.CreateAPIToken(ctx, db.CreateAPITokenParams{
 		ID:        id,
 		UserID:    userID,
 		Name:      name,
 		TokenHash: tokenHash,
 		ExpiresAt: tsFromPtr(expiresAt),
+		Abilities: abilityStrings(abilities),
 	})
 	if err != nil {
 		return domain.APIToken{}, wrapCreate("creating api token", err)
@@ -353,14 +404,36 @@ func (s *Store) CreateAPIToken(ctx context.Context, id, userID, name string, tok
 	return apiTokenFromRow(row), nil
 }
 
-// UserForAPIToken returns the user owning a live (unexpired) token whose secret
-// hashes to tokenHash, or ErrNotFound.
-func (s *Store) UserForAPIToken(ctx context.Context, tokenHash []byte) (domain.User, error) {
-	row, err := s.q.UserForAPIToken(ctx, tokenHash)
+// APITokenByHash returns the user owning a live (unexpired) token whose secret
+// hashes to tokenHash, together with the token's id and abilities, or
+// ErrNotFound.
+func (s *Store) APITokenByHash(ctx context.Context, tokenHash []byte) (domain.User, string, []domain.Ability, error) {
+	row, err := s.q.APITokenByHash(ctx, tokenHash)
 	if err != nil {
-		return domain.User{}, wrap("getting api token", err)
+		return domain.User{}, "", nil, wrap("getting api token", err)
 	}
-	return userFromRow(row), nil
+	return userFromRow(row.User), row.TokenID, abilitiesFromStrings(row.Abilities), nil
+}
+
+// abilityStrings and abilitiesFromStrings convert between the domain vocabulary
+// and the text[] column. Unknown stored values are dropped rather than trusted:
+// authority must come from the vocabulary this binary knows.
+func abilityStrings(in []domain.Ability) []string {
+	out := make([]string, 0, len(in))
+	for _, a := range in {
+		out = append(out, string(a))
+	}
+	return out
+}
+
+func abilitiesFromStrings(in []string) []domain.Ability {
+	out := make([]domain.Ability, 0, len(in))
+	for _, s := range in {
+		if a := domain.Ability(s); domain.ValidAbility(a) {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // TouchAPIToken records that a token was just used (best-effort last_used_at).
@@ -383,6 +456,7 @@ func (s *Store) ListAPITokensByUser(ctx context.Context, userID string) ([]domai
 			ID:         r.ID,
 			UserID:     r.UserID,
 			Name:       r.Name,
+			Abilities:  abilitiesFromStrings(r.Abilities),
 			LastUsedAt: ptrTime(r.LastUsedAt),
 			ExpiresAt:  ptrTime(r.ExpiresAt),
 			CreatedAt:  r.CreatedAt.Time,
@@ -401,6 +475,7 @@ func (s *Store) GetAPIToken(ctx context.Context, id string) (domain.APIToken, er
 		ID:         r.ID,
 		UserID:     r.UserID,
 		Name:       r.Name,
+		Abilities:  abilitiesFromStrings(r.Abilities),
 		LastUsedAt: ptrTime(r.LastUsedAt),
 		ExpiresAt:  ptrTime(r.ExpiresAt),
 		CreatedAt:  r.CreatedAt.Time,
@@ -581,6 +656,7 @@ func apiTokenFromRow(r db.ApiToken) domain.APIToken {
 		ID:         r.ID,
 		UserID:     r.UserID,
 		Name:       r.Name,
+		Abilities:  abilitiesFromStrings(r.Abilities),
 		LastUsedAt: ptrTime(r.LastUsedAt),
 		ExpiresAt:  ptrTime(r.ExpiresAt),
 		CreatedAt:  r.CreatedAt.Time,

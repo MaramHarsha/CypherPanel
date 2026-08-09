@@ -61,6 +61,14 @@ message AppSpec {
   // host port on tcp or udp — for services reached directly, not through the
   // HTTP proxy (databases-as-apps, game servers, brokers). Independent of route.
   repeated PortMapping ports = 14;
+  // pull marks image as a registry reference the reconciler fetches itself
+  // (source.kind=image apps — deploy-from-container-image, feature-matrix V1).
+  // False keeps the ADR-008 contract: the image is already in the local daemon
+  // via local build or completed relay. The fetch happens only in the create
+  // branch and only when the image is absent locally, so converge-twice stays
+  // zero-mutation. Carried per revision (config snapshot), so rollback of an
+  // image revision pulls correctly even after the app's source changed kind.
+  bool pull = 15;
 }
 
 // PortMapping publishes a container port to a host port on one protocol. The
@@ -212,6 +220,15 @@ message AppStatus {
   // Human-readable detail for error/degraded (never contains secrets).
   string detail = 4;
   google.protobuf.Timestamp observed_at = 5;
+  // resolved_image is the immutable digest reference of the image this
+  // revision is actually running (repo@sha256:…), reported for registry-sourced
+  // apps once they converge. A revision created from a mutable tag records the
+  // tag, which no longer identifies the artifact after that tag moves — so
+  // rolling back to it would re-pull and start something newer while claiming
+  // to restore the old revision. The plane pins the revision to this observed
+  // digest, which is the only way it can know it (ADR-001: the control plane
+  // never talks to a registry; ADR-005: status is observation).
+  string resolved_image = 6;
 }
 
 // DeployEvent reports a work item's terminal outcome for a deployment,

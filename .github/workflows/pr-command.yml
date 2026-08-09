@@ -1,0 +1,67 @@
+# Commands addressed to the bot in a pull-request comment.
+#
+# Today there is one: `@cypherpanel-review-bot approve`, which records that the
+# repository owner has done the manual review the bot asks for on protected
+# changes. Without it the bot's "needs manual review" verdict had no way to be
+# answered — the owner could only merge past their own required approval, or
+# approve as themselves, neither of which leaves the policy trail the bot's
+# approval does.
+#
+# It approves nothing on its own. The command substitutes for the
+# protected-path check and for nothing else: every required check must still be
+# green on the current head, and a blocked label still wins.
+#
+# `issue_comment` always runs from the default branch with repository context,
+# which is safe here for the same reason the other three are — no pull-request
+# code is checked out or executed, and every fact comes from the API. The
+# comment body is never passed through this file: the job hands the script a
+# comment *id* and the script reads the body back from the API, so no string a
+# stranger wrote is ever interpolated anywhere.
+name: PR command
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+concurrency:
+  # Keyed on the pull request rather than the head commit, which an
+  # issue_comment payload does not carry. The decision is re-run against a
+  # freshly read pull request immediately before the review is posted, which is
+  # what closes the window this cannot.
+  group: review-command-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  command:
+    name: Run an authorized command
+    runs-on: ubuntu-latest
+    # A pre-filter, not the authorization — that is enforced in policy.mjs
+    # against the comment as the API reports it, and tested there. This only
+    # keeps a public repository's comment traffic from starting a runner:
+    # `author_association` is computed by GitHub, so it cannot be set by the
+    # commenter.
+    if: >-
+      github.event.issue.pull_request &&
+      github.event.issue.state == 'open' &&
+      github.event.comment.author_association == 'OWNER' &&
+      contains(github.event.comment.body, '@cypherpanel-review-bot')
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Base repository, never the PR head. Explicit so it cannot drift.
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Act on the command
+        env:
+          GITHUB_TOKEN: ${{ secrets.CYPHERPANEL_REVIEW_BOT_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+        run: node .github/review-bot/run.mjs command

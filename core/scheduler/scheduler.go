@@ -142,7 +142,12 @@ func (s *Scheduler) SetNotifier(n Notifier) { s.notify = n }
 type configSnapshot struct {
 	Port    int    `json:"port"`
 	Network string `json:"network"`
-	Route   struct {
+	// Pull marks the revision's image as a registry reference the target agent
+	// fetches itself (source.kind=image). In the snapshot — not derived from the
+	// app's current source — so rolling back to an image revision still pulls
+	// after the app was re-pointed at a git source, and vice versa.
+	Pull  bool `json:"pull,omitempty"`
+	Route struct {
 		Domain     string `json:"domain"`
 		HTTPS      bool   `json:"https"`
 		PathPrefix string `json:"path_prefix"`
@@ -160,6 +165,7 @@ func snapshotOf(app domain.Application) ([]byte, error) {
 	var cs configSnapshot
 	cs.Port = app.Runtime.Port
 	cs.Network = "cypher-" + app.EnvironmentID
+	cs.Pull = app.Source.Kind == "image"
 	cs.Route.Domain = app.Route.Domain
 	cs.Route.HTTPS = app.Route.HTTPS
 	cs.Route.PathPrefix = app.Route.PathPrefix
@@ -197,12 +203,24 @@ func (s *Scheduler) Deploy(ctx context.Context, appID, trigger, ref string) (dom
 	if err != nil {
 		return domain.Deployment{}, err
 	}
-	if ref == "" {
+	imageSource := app.Source.Kind == "image"
+	if imageSource {
+		// An image app has no commit to name: the revision's source identity is
+		// the configured reference, and the image is known up front — start()
+		// sees a built revision and goes straight to rollout, the same path
+		// rollback takes. ref (a git commit override) does not apply.
+		ref = app.Source.Image
+	} else if ref == "" {
 		ref = app.Source.Branch
 	}
 	rev, err := s.store.CreateRevision(ctx, ids.New(ids.PrefixRevision), app.ID, ref, snapshot)
 	if err != nil {
 		return domain.Deployment{}, fmt.Errorf("scheduler: creating revision: %w", err)
+	}
+	if imageSource {
+		if rev, err = s.store.SetRevisionImage(ctx, rev.ID, app.Source.Image); err != nil {
+			return domain.Deployment{}, fmt.Errorf("scheduler: recording image revision: %w", err)
+		}
 	}
 	dep, err := s.store.CreateDeployment(ctx, ids.New(ids.PrefixDeployment), app.ID, rev.ID, trigger)
 	if err != nil {
@@ -499,6 +517,7 @@ func (s *Scheduler) buildSpec(ctx context.Context, app domain.Application, rev d
 			PathPrefix: cs.Route.PathPrefix,
 		},
 		ScheduledTasks: tasks,
+		Pull:           cs.Pull,
 		// Resource limits are current app state (not per-revision snapshot),
 		// applied at rollout like env vars; nil = 0 = no limit on the wire.
 		CpuLimit:      cpuLimitValue(app.Runtime.CPULimit),
@@ -731,6 +750,7 @@ func (s *Scheduler) HandleAppStatus(ctx context.Context, serverID string, st *ag
 	if st.GetState() != domain.AppRunning {
 		return
 	}
+	s.pinRevisionImage(ctx, st)
 	active, err := s.store.ListActiveDeploymentsByApplication(ctx, st.GetAppId())
 	if err != nil {
 		s.log.Error("app status: listing active deployments", "app_id", st.GetAppId(), "error", err)
@@ -751,6 +771,43 @@ func (s *Scheduler) HandleAppStatus(ctx context.Context, serverID string, st *ag
 			return
 		}
 	}
+}
+
+// pinRevisionImage records the immutable digest the agent observed running, so
+// the revision names the artifact it actually shipped rather than a tag that
+// can move underneath it. Without this, rolling back to a revision created from
+// `acme/web:latest` would re-pull that tag and start whatever it points at now
+// while reporting the old revision restored.
+//
+// The plane cannot resolve a digest itself — it never talks to a registry
+// (ADR-001) — so this is only knowable as an observation (ADR-005). Best
+// effort: a failure here leaves the revision as it was and never affects the
+// deployment's outcome.
+func (s *Scheduler) pinRevisionImage(ctx context.Context, st *agentv1.AppStatus) {
+	digest := st.GetResolvedImage()
+	if digest == "" {
+		return
+	}
+	rev, err := s.store.GetRevision(ctx, st.GetRevisionId())
+	if err != nil || rev.Image == digest {
+		return
+	}
+	// The reporting server owns this app (checked above), but that does not make
+	// the revision id it supplied one of the app's. Without this check a
+	// compromised agent could report its own app alongside another
+	// application's revision and an attacker-chosen digest, overwriting that
+	// revision's image — and a later rollback would then pull and run it on a
+	// different server. An agent may only pin revisions of the app it reported.
+	if rev.ApplicationID != st.GetAppId() {
+		s.log.Warn("app status: revision does not belong to the reported application",
+			"app_id", st.GetAppId(), "revision_id", rev.ID, "revision_app_id", rev.ApplicationID)
+		return
+	}
+	if _, err := s.store.SetRevisionImage(ctx, rev.ID, digest); err != nil {
+		s.log.Warn("pinning revision to observed digest", "revision_id", rev.ID, "error", err)
+		return
+	}
+	s.log.Info("revision pinned to observed digest", "revision_id", rev.ID, "was", rev.Image, "now", digest)
 }
 
 // fail terminates a deployment and promotes the next queued one. The

@@ -45,6 +45,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/status"
 	"github.com/MaramHarsha/cypherpanel/core/store"
 	"github.com/MaramHarsha/cypherpanel/core/teams"
+	"github.com/MaramHarsha/cypherpanel/core/templates"
 	"github.com/MaramHarsha/cypherpanel/pkg/pki"
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
 )
@@ -188,6 +189,10 @@ func run(log *slog.Logger) error {
 	dbSvc := databases.NewService(st, box, sched)
 	backupTargetSvc := databases.NewBackupTargetService(st, box)
 	backupScheduleSvc := databases.NewBackupScheduleService(st)
+	templateSvc, err := templates.New(appSvc, dbSvc, sched, log.With("component", "templates"))
+	if err != nil {
+		return err
+	}
 
 	// Preview environments: PR events (via the app webhook) spawn/destroy
 	// templated child environments; a sweeper reclaims any past their TTL
@@ -346,6 +351,7 @@ func run(log *slog.Logger) error {
 		Notifiers:       notifySvc,
 		NotifyDelivery:  notifyMgr,
 		ScheduledTasks:  scheduledTaskSvc,
+		Templates:       templateSvc,
 		Teams:           teamSvc,
 		Scheduler:       sched,
 		Deployments:     st,

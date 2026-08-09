@@ -109,12 +109,71 @@ because each defaults to today's behavior:
   is reached only through its published ports. The reconciler writes no fragment
   for a routeless app and removes a stale one if a domain is cleared, all while
   preserving the converge-twice invariant.
+**Known limitation — host ports and redeploys.** The zero-downtime sequence
+starts the new revision *alongside* the old one, and both carry the same fixed
+`PortBindings`, so the second bind fails with address-in-use: an app that
+publishes host ports cannot currently be redeployed or rolled back. The health
+gate never passes, the new container is discarded, and the old revision keeps
+serving — no outage and no data loss, but the update does not land. Fixing it
+means accepting a brief handover gap for this class of app (a fixed host port
+cannot be held by two containers at once), which changes the zero-downtime
+invariant for them and therefore needs its own decision rather than a quiet
+behaviour change. Recorded here because it constrains what the bundled catalog
+can ship: no template declares host ports until it is resolved.
+
 - **`health.kind`** selects the rollout gate: `http` (default — GET `health.path`,
   today's behavior), `tcp` (dial the container port), or `none` (liveness-only,
   for raw UDP services with no readiness signal). **The health probe is always
   internal** (agent → container), independent of any public route — which is why
   routing and health decompose cleanly rather than entangling. The zero-downtime
   sequence (start new → gate → flip/settle → drain old) holds for `tcp` too.
+
+### Deploy from a container image (feature-matrix V1)
+
+`source.kind = image` runs a prebuilt OCI reference with **no build stage**:
+`Deploy` records the reference as an already-built revision and goes straight
+to rollout — the same path a rollback takes. No builder is selected and nothing
+is distributed. The reference is stored in its own `source_image` column rather
+than overloading `source_repo`, because a git remote and an OCI reference are
+different vocabularies; git fields are cleared and deploy keys are rejected for
+image sources.
+
+The spec carries `pull` (per revision, in the config snapshot — so rolling back
+to an image revision still pulls correctly after the app was re-pointed at a
+git source). The reconciler resolves it **only in the create branch**, so a
+converged app never touches the registry and converge-twice stays
+zero-mutation.
+
+**Mutable vs immutable references.** A **digest** (`repo@sha256:…`) is
+immutable: if it is already local, those are provably the right bits and the
+pull is skipped. A **tag** is mutable — `acme/web:latest` can point somewhere
+new since the last deploy — so every new revision re-fetches it. Skipping that
+would start the new container from the stale cached image and then report
+success, which is exactly the stale-container failure ADR-005 exists to make
+impossible. A pull that fails leaves the old revision serving and reports
+`error`; it never silently falls back to the cached image.
+
+**Reclaiming what a pull created.** A pulled image cannot carry our labels —
+those are baked in by whoever built it — so it is tagged into the managed
+`cypher/<app>:<revision>` namespace at rollout and the container runs from that
+alias. The floating registry reference the pull arrived under is then dropped;
+leaving it would keep every layer alive after the app was deleted.
+
+Only a reference **our own pull created** may be dropped: one that already
+existed is the operator's, and untagging it would be the driver reaching
+outside its managed set. That is knowable only at pull time, so it is recorded
+immediately — on the **image**, as a marker reference (`cypher-pull/<encoded
+reference>:<app_id>`), before anything that could lose it. A container label was
+the wrong home for it: everything after the pull (tagging, create, start, the
+health gate, the route flip) can fail, and the last four discard the container,
+so the record would vanish in exactly the cases it exists for. The image
+survives all of them, and GC retries the removal from the marker alone — no
+spec to consult, no container to read, so it still converges for a rollout that
+never created one and for an app deleted before the retry succeeded. The marker
+always outlives the reference it names, and is removed once that reference is
+gone. Residual: a crash in the instant between the pull and the marker leaves an
+unrecorded reference, which is then treated exactly like the operator's — never
+reclaimed, and never wrongly removed.
 
 ### Persistent volumes (feature-matrix V1)
 

@@ -21,6 +21,7 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  ForbiddenResponse,
   Health,
   UnauthorizedResponse,
   UnavailableResponse
@@ -267,7 +268,7 @@ export const getStreamEventsQueryKey = () => {
     }
 
     
-export const getStreamEventsQueryOptions = <TData = Awaited<ReturnType<typeof streamEvents>>, TError = UnauthorizedResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamEvents>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getStreamEventsQueryOptions = <TData = Awaited<ReturnType<typeof streamEvents>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamEvents>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -286,10 +287,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type StreamEventsQueryResult = NonNullable<Awaited<ReturnType<typeof streamEvents>>>
-export type StreamEventsQueryError = UnauthorizedResponse
+export type StreamEventsQueryError = UnauthorizedResponse | ForbiddenResponse
 
 
-export function useStreamEvents<TData = Awaited<ReturnType<typeof streamEvents>>, TError = UnauthorizedResponse>(
+export function useStreamEvents<TData = Awaited<ReturnType<typeof streamEvents>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamEvents>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof streamEvents>>,
@@ -299,7 +300,7 @@ export function useStreamEvents<TData = Awaited<ReturnType<typeof streamEvents>>
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useStreamEvents<TData = Awaited<ReturnType<typeof streamEvents>>, TError = UnauthorizedResponse>(
+export function useStreamEvents<TData = Awaited<ReturnType<typeof streamEvents>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamEvents>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof streamEvents>>,
@@ -309,7 +310,7 @@ export function useStreamEvents<TData = Awaited<ReturnType<typeof streamEvents>>
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useStreamEvents<TData = Awaited<ReturnType<typeof streamEvents>>, TError = UnauthorizedResponse>(
+export function useStreamEvents<TData = Awaited<ReturnType<typeof streamEvents>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamEvents>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -317,7 +318,7 @@ export function useStreamEvents<TData = Awaited<ReturnType<typeof streamEvents>>
  * @summary Live resource-change stream (Server-Sent Events)
  */
 
-export function useStreamEvents<TData = Awaited<ReturnType<typeof streamEvents>>, TError = UnauthorizedResponse>(
+export function useStreamEvents<TData = Awaited<ReturnType<typeof streamEvents>>, TError = UnauthorizedResponse | ForbiddenResponse>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamEvents>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {

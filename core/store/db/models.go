@@ -16,6 +16,7 @@ type ApiToken struct {
 	LastUsedAt pgtype.Timestamptz
 	ExpiresAt  pgtype.Timestamptz
 	CreatedAt  pgtype.Timestamptz
+	Abilities  []string
 }
 
 type AppEnvVar struct {
@@ -64,6 +65,7 @@ type Application struct {
 	Volumes               []byte
 	Ports                 []byte
 	HealthKind            string
+	SourceImage           string
 }
 
 type BackupRecord struct {
