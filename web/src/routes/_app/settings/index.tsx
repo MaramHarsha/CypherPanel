@@ -113,7 +113,12 @@ function TwoFactorSection() {
         {enabled ? (
           <>
             <p className="flex items-center gap-2 text-text">
-              <ShieldCheck className="h-4 w-4 text-success" aria-hidden /> Enabled — a code is required at every sign-in.
+              {/* `text-success` was not a token — it emitted no rule at all, so
+                  this shield had been rendering in ink rather than green since
+                  the screen landed. The status vocabulary calls this colour
+                  `status-running` (ui-principles §5). */}
+              <ShieldCheck className="h-4 w-4 text-status-running" aria-hidden /> Enabled — a code is required at
+              every sign-in.
             </p>
             <p className="mono mt-1 text-xs text-text-faint">
               {left} recovery {left === 1 ? "code" : "codes"} remaining

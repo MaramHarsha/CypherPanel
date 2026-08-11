@@ -1,0 +1,1 @@
+import{j as a,c as r}from"./index-Cdr6G3-B.js";function n({className:e}){return a.jsx("div",{className:r("animate-pulse rounded bg-raised",e),"aria-hidden":!0})}export{n as S};
