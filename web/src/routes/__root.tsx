@@ -1,5 +1,6 @@
 import { createRootRoute, Outlet } from "@tanstack/react-router";
 import { Toaster } from "sonner";
+import { NotFoundPage } from "@/components/error-page";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useTheme } from "@/lib/theme";
 
@@ -56,4 +57,11 @@ function Root() {
   );
 }
 
-export const Route = createRootRoute({ component: Root });
+// A URL matching no route at all resolves against the *root* route, so the
+// 404 has to be declared here — the router's `defaultNotFoundComponent` only
+// covers `notFound()` thrown from a loader, and without this an unknown path
+// fell through to the router's built-in bare "Not Found" text.
+export const Route = createRootRoute({
+  component: Root,
+  notFoundComponent: () => <NotFoundPage />,
+});

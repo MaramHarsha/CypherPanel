@@ -1,0 +1,1 @@
+import{K as r,j as t}from"./index-DkdbYttD.js";import{i as m}from"./applications-D1jiHkpy.js";import{L as s}from"./log-viewer-B5tS52nY.js";import"./useMutation-7iH0wfzF.js";import"./sse-banner-CaSVSzT6.js";import"./createLucideIcon-BbTXnft8.js";function u(){const{appId:o}=r.useParams();return t.jsx(s,{url:m(o),className:"h-[calc(100dvh-16rem)]"})}export{u as component};
