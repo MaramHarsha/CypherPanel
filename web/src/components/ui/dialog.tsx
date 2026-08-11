@@ -12,8 +12,18 @@ interface DialogContentProps extends ComponentPropsWithoutRef<typeof DialogPrimi
   description?: string;
   /** Mono breadcrumb above the title — where this dialog is acting. */
   eyebrow?: ReactNode;
-  /** `form` is the 560px create surface from the design; `md` is a prompt. */
-  size?: "md" | "form";
+  /**
+   * `form` is the 560px create surface from the design; `md` is a prompt;
+   * `alert` is the 420–430px confirm/progress card (canvas 9g/9h/10d) with the
+   * heavier 17px title those screens use.
+   */
+  size?: "md" | "form" | "alert";
+  /**
+   * Drops the ✕. For operations that genuinely cannot be dismissed into a
+   * sensible state (canvas 10d) — a close control that does not stop the work
+   * is a lie, and a lie is worse than no control.
+   */
+  hideClose?: boolean;
   children: ReactNode;
 }
 
@@ -22,6 +32,7 @@ export function DialogContent({
   description,
   eyebrow,
   size = "md",
+  hideClose,
   children,
   className,
   ...props
@@ -40,23 +51,37 @@ export function DialogContent({
           "fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)]",
           "-translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-border",
           "bg-overlay shadow-2xl focus:outline-none",
-          size === "form" ? "max-w-[560px]" : "max-w-md",
+          size === "form" ? "max-w-[560px]" : size === "alert" ? "max-w-[430px]" : "max-w-md",
           className,
         )}
         {...props}
       >
-        <div className={cn("shrink-0", size === "form" ? "px-7 pb-4 pt-6" : "p-5 pb-3")}>
+        <div
+          className={cn(
+            "shrink-0",
+            size === "form" ? "px-7 pb-4 pt-6" : size === "alert" ? "px-[26px] pb-3 pt-6" : "p-5 pb-3",
+          )}
+        >
           {eyebrow && <div className="eyebrow mb-2">{eyebrow}</div>}
           <DialogPrimitive.Title
             className={cn(
               "tracking-tight text-text",
-              size === "form" ? "text-[22px] font-bold leading-tight" : "text-[15px] font-bold",
+              size === "form"
+                ? "text-[22px] font-bold leading-tight"
+                : size === "alert"
+                  ? "text-[17px] font-bold tracking-[-0.02em]"
+                  : "text-[15px] font-bold",
             )}
           >
             {title}
           </DialogPrimitive.Title>
           {description ? (
-            <DialogPrimitive.Description className="mt-1.5 text-[13px] leading-relaxed text-text-mid">
+            <DialogPrimitive.Description
+              className={cn(
+                "mt-1.5 leading-relaxed text-text-mid",
+                size === "alert" ? "text-[12.5px]" : "text-[13px]",
+              )}
+            >
               {description}
             </DialogPrimitive.Description>
           ) : (
@@ -64,16 +89,23 @@ export function DialogContent({
           )}
         </div>
 
-        <div className={cn("min-h-0 flex-1 overflow-y-auto", size === "form" ? "px-7 pb-7" : "px-5 pb-5")}>
+        <div
+          className={cn(
+            "min-h-0 flex-1 overflow-y-auto",
+            size === "form" ? "px-7 pb-7" : size === "alert" ? "px-[26px] pb-6" : "px-5 pb-5",
+          )}
+        >
           {children}
         </div>
 
-        <DialogPrimitive.Close
-          aria-label="Close"
-          className="absolute right-3.5 top-3.5 rounded p-1 text-text-faint hover:bg-raised hover:text-text"
-        >
-          <X className="h-4 w-4" />
-        </DialogPrimitive.Close>
+        {!hideClose && (
+          <DialogPrimitive.Close
+            aria-label="Close"
+            className="absolute right-3.5 top-3.5 rounded p-1 text-text-faint hover:bg-raised hover:text-text"
+          >
+            <X className="h-4 w-4" />
+          </DialogPrimitive.Close>
+        )}
       </DialogPrimitive.Content>
     </DialogPrimitive.Portal>
   );
