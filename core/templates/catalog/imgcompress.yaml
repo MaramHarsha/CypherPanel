@@ -1,0 +1,19 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: imgcompress
+name: Imgcompress
+description: Offline image compression, conversion, and AI background removal for Docker homelabs.
+category: other
+version: 0.6.0
+resources:
+  applications:
+    - name: imgcompress
+      image: karimz1/imgcompress@sha256:3805e4b244a55f0187d01ddd32fdb927cfb19379a54d40b6f618f4d48cfaae6a
+      port: 5000
+      route: true
+      health:
+        kind: tcp
+      env:
+        DISABLE_LOGO: "false"
+        DISABLE_STORAGE_MANAGEMENT: "false"

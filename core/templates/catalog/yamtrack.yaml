@@ -1,0 +1,28 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: yamtrack
+name: Yamtrack
+description: Yamtrack is a self hosted media tracker for movies, tv shows, anime, manga, video games and books.
+category: other
+resources:
+  databases:
+    - name: cache
+      engine: redis
+      version: "7"
+  applications:
+    - name: yamtrack
+      image: ghcr.io/fuzzygrim/yamtrack@sha256:2c4c8ef6b73ba00aeb3e7cda5a34751f01448034a23d2fbcc98e48e44d377bb8
+      port: 8000
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: yamtrack-data
+          path: /yamtrack/db
+      env:
+        REDIS_URL: redis://:{{db.cache.password}}@{{db.cache.host}}:6379
+        REGISTRATION: "true"
+        SECRET: '{{secret.16}}'
+        TZ: Europe/Berlin
+        URLS: https://{{domain}}

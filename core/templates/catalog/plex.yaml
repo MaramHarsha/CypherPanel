@@ -1,0 +1,28 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: plex
+name: Plex
+description: Plex organizes video, music and photos from personal media libraries and streams them to smart TVs, streaming boxes and mobile devices.
+category: other
+resources:
+  applications:
+    - name: plex
+      image: lscr.io/linuxserver/plex@sha256:d2d85229429f2a8b84a6f5523f7cd69470d9b705a1aba9046887eb73d395101f
+      port: 32400
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: plex-config
+          path: /config
+        - name: plex-tv
+          path: /tv
+        - name: plex-movies
+          path: /movies
+      env:
+        _APP_URL: https://{{domain}}
+        PGID: "1000"
+        PLEX_CLAIM: ""
+        PUID: "1000"
+        TZ: America/Toronto

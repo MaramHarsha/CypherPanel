@@ -1,0 +1,19 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: open-webui
+name: Open Webui
+description: User-friendly AI Interface (Supports Ollama, OpenAI API, ...)
+category: other
+version: main
+resources:
+  applications:
+    - name: open-webui
+      image: ghcr.io/open-webui/open-webui@sha256:6a773e5c3a246b65cbe74ce942b294292c0e5f81c138f703d111bc162f7d7c3d
+      port: 8080
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: open-webui
+          path: /app/backend/data

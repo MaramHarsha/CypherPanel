@@ -1,0 +1,18 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: wordpress-without-database
+name: Wordpress Without Database
+description: WordPress is open source software you can use to create a beautiful website, blog, or app.
+category: cms
+resources:
+  applications:
+    - name: wordpress
+      image: wordpress@sha256:b427cec767f5de2aa649390cb8805aa1fe320e1e0d57fc1f467754edb6cc0a49
+      port: 80
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: wordpress-files
+          path: /var/www/html

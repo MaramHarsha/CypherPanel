@@ -1,0 +1,36 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: redmine
+name: Redmine
+description: Redmine is a flexible project management web application.
+category: other
+version: 6.1.3-alpine3.24
+resources:
+  databases:
+    - name: db
+      engine: postgresql
+      version: "17"
+  applications:
+    - name: redmine
+      image: redmine@sha256:2b1ef839a7c65f656de0b581efd1322ee5611c59f36b0acbf9e76f7f6c2a2428
+      port: 3000
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: redmine-config
+          path: /usr/src/redmine/config
+        - name: redmine-files
+          path: /usr/src/redmine/files
+        - name: redmine-themes
+          path: /usr/src/redmine/themes
+        - name: redmine-plugins
+          path: /usr/src/redmine/plugins
+      env:
+        REDMINE_DB_DATABASE: redmine-db
+        REDMINE_DB_PASSWORD: '{{db.db.password}}'
+        REDMINE_DB_PORT: "5432"
+        REDMINE_DB_POSTGRES: '{{db.db.host}}'
+        REDMINE_DB_USERNAME: '{{db.db.user}}'
+        SECRET_KEY_BASE: '{{secret.32}}'

@@ -1,0 +1,23 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: grocy
+name: Grocy
+description: Grocy is a web-based household management and grocery list application.
+category: other
+version: 4.6.0
+resources:
+  applications:
+    - name: grocy
+      image: lscr.io/linuxserver/grocy@sha256:0a59bdad2a45f5b7aef1549d80dca8e8296facb66b6fdb38868818ba5b93c20b
+      port: 80
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: grocy-config
+          path: /config
+      env:
+        PGID: "1000"
+        PUID: "1000"
+        TZ: Europe/Madrid

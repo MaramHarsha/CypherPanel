@@ -1,0 +1,23 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: sessy
+name: Sessy
+description: Email observability platform for monitoring and analyzing email systems.
+category: monitoring
+version: main
+resources:
+  applications:
+    - name: sessy
+      image: ghcr.io/marckohlbrugge/sessy@sha256:8520f85c0d2467c9c60da7c79f463e3936a0b7985673db49d30604786690e108
+      port: 80
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: sessy-data
+          path: /rails/storage
+      env:
+        HTTP_AUTH_PASSWORD: '{{secret.16}}'
+        HTTP_AUTH_USERNAME: '{{secret.16}}'
+        SECRET_KEY_BASE: '{{secret.32}}'

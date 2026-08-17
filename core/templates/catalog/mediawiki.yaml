@@ -1,0 +1,21 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: mediawiki
+name: Mediawiki
+description: MediaWiki is a collaboration and documentation platform brought to you by a vibrant community.
+category: cms
+version: 1.46.0
+resources:
+  applications:
+    - name: mediawiki
+      image: mediawiki@sha256:3165f25ca3a94eacf49eb6f8bc1844b66235bcbffdb374854beec8aae150858f
+      port: 80
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: mediawiki-images
+          path: /var/www/html/images
+        - name: mediawiki-sqlite
+          path: /var/www/html/data

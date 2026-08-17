@@ -1,0 +1,32 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: vikunja-with-postgresql
+name: Vikunja With Postgresql
+description: The open-source, self-hostable to-do app. Organize everything, on all platforms.
+category: other
+version: 2.5.0
+resources:
+  databases:
+    - name: db
+      engine: postgresql
+      version: "16"
+  applications:
+    - name: vikunja
+      image: vikunja/vikunja@sha256:22df4c1bc8843c28d383bc5f52b59e7b601bf5f6560b36b29c0a500833c77fa3
+      port: 3456
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: vikunja-data
+          path: /app/vikunja/
+      env:
+        VIKUNJA_DATABASE_DATABASE: '{{db.db.database}}'
+        VIKUNJA_DATABASE_HOST: '{{db.db.host}}'
+        VIKUNJA_DATABASE_PASSWORD: '{{db.db.password}}'
+        VIKUNJA_DATABASE_TYPE: postgres
+        VIKUNJA_DATABASE_USER: '{{db.db.user}}'
+        VIKUNJA_SERVICE_ENABLEREGISTRATION: "true"
+        VIKUNJA_SERVICE_JWTSECRET: '{{secret.16}}'
+        VIKUNJA_SERVICE_PUBLICURL: https://{{domain}}

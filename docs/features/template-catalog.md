@@ -148,30 +148,32 @@ page (today an empty state) becomes: category-grouped catalog with search →
 detail pane (what it creates, env keys, volumes) → install dialog
 (environment, server, domain) → navigate to the created application.
 
-## 6. The Coolify importer — *planned, not yet built*
-
-> **Status: not implemented.** The catalog above is hand-written. This section
-> specifies the importer so it can be built against a settled design; nothing
-> in the shipped code depends on it, and the bundled templates do not come
-> from it. It is the mechanism for widening the catalog beyond what one person
-> can curate, not a launch requirement.
+## 6. The Coolify importer
 
 `core/cmd/coolify-import` — a **build-time tool**, not a runtime code path
-(ADR-007 §Decision 2): reads one Coolify compose template
-(`coolify/templates/compose/*.yaml`, read-only reference), emits a native
-template YAML, or **rejects loudly** with every reason listed. Mapping:
+(ADR-007 §Decision 2): reads Coolify compose templates
+(`coolify/templates/compose/*.yaml`, read-only reference), emits native
+template YAML, or **rejects loudly** with every reason listed. Its output and
+its refusals are documented in [dev/template-import.md](../dev/template-import.md).
+Mapping:
 
 - one compose service with an `image` → an application; `SERVICE_FQDN_<name>`
   → `route: true` + `{{domain}}` references; `SERVICE_PASSWORD_<name>` /
-  `SERVICE_BASE64_*` → `{{secret.32}}`; volumes → named volumes (host-path
-  mounts rejected); `environment` literals carried as-is.
+  `SERVICE_BASE64_*` → `{{secret.N}}` of matching length; volumes → named
+  volumes (host-path mounts rejected); `environment` literals carried as-is
+  after compose's `${VAR:-default}` interpolation is resolved.
 - a service whose image matches a managed engine (postgres/mysql/mariadb/
   mongo/redis/valkey families) → a managed database, its consumers rewired to
-  `{{db.<name>.*}}` references.
+  `{{db.<name>.*}}` references — including the DSN's host and, for PostgreSQL,
+  its database segment. Cache URLs gain the credentials the managed engine
+  requires, since template databases always demand a password.
 - rejected (with reasons): `build:`, `command:`/`entrypoint:` overrides,
   host-path or file mounts, `cap_add`/`privileged`/`devices`, custom
   networks, `depends_on` graphs deeper than app→db, more than one
-  FQDN-routed service, engines outside the matrix.
+  FQDN-routed service, engines outside the matrix, one-shot job containers,
+  a generated value used twice (`{{secret.N}}` resolves per occurrence, so
+  the copies would differ), and any application addressed by hostname —
+  application containers are named per revision and have no stable address.
 
 Imported files are reviewed and committed like hand-written ones — the
 importer widens the funnel; the catalog test is the gate. Per-directory

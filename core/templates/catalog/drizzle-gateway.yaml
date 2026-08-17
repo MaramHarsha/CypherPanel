@@ -1,0 +1,21 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: drizzle-gateway
+name: Drizzle Gateway
+description: Free self-hosted Drizzle Studio on steroids
+category: dev-tools
+resources:
+  applications:
+    - name: drizzle-gateway
+      image: ghcr.io/drizzle-team/gateway@sha256:547b89d55127deb6c5b21ba9ed2397be07affc300da9d0ec6d7ed1290687b4dc
+      port: 4983
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: drizzle-gateway-data
+          path: /app
+      env:
+        MASTERPASS: '{{secret.16}}'
+        STORE_PATH: /app

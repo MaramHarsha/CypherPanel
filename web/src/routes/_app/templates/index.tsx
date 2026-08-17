@@ -21,31 +21,58 @@ function count(n: number, singular: string, plural = `${singular}s`) {
   return `${n} ${n === 1 ? singular : plural}`;
 }
 
+const ALL = "all";
+
 function TemplatesPage() {
   useCrumbs([{ label: "templates" }]);
   const templates = useListTemplates();
   const [search, setSearch] = useState("");
+  const [category, setCategory] = useState<string>(ALL);
+
+  // The catalog is bundled static content that arrives in one response, so
+  // narrowing it happens here rather than server-side (ui-principles §7's
+  // pagination rule is about live tables, not a shipped list).
+  const categories = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const t of templates.data ?? []) counts.set(t.category, (counts.get(t.category) ?? 0) + 1);
+    return [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [templates.data]);
+
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return (templates.data ?? []).filter(
-      (t) => !needle || `${t.name} ${t.description} ${t.category}`.toLowerCase().includes(needle),
+      (t) =>
+        (category === ALL || t.category === category) &&
+        (!needle || `${t.name} ${t.slug} ${t.description} ${t.category}`.toLowerCase().includes(needle)),
     );
-  }, [search, templates.data]);
+  }, [search, category, templates.data]);
 
   return (
     <>
       <PageHeader title="Templates" />
       <PageBody>
-        <div className="relative mb-5 max-w-md">
+        <div className="relative mb-4 max-w-md">
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-text-faint" aria-hidden />
           <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search templates…" className="pl-9" />
         </div>
+        {categories.length > 1 && (
+          <div className="mb-5 flex flex-wrap gap-1.5" role="group" aria-label="Filter by category">
+            <CategoryChip label="All" count={(templates.data ?? []).length} active={category === ALL} onSelect={() => setCategory(ALL)} />
+            {categories.map(([name, n]) => (
+              <CategoryChip key={name} label={name} count={n} active={category === name} onSelect={() => setCategory(name)} />
+            ))}
+          </div>
+        )}
         <PageState
           query={templates}
           empty={<EmptyState title="No templates in this release" hint="The catalog is bundled with the control plane." />}
         >
           {() => filtered.length === 0 ? (
-            <EmptyState title="No matching templates" hint="Try a name, category, or a broader search." />
+            <EmptyState
+              title="No matching templates"
+              hint="Try a name, a category, or a broader search."
+              action={<Button variant="ghost" onClick={() => { setSearch(""); setCategory(ALL); }}>Clear filters</Button>}
+            />
           ) : (
             <ul className="grid gap-3.5 md:grid-cols-2 xl:grid-cols-3">
               {filtered.map((template) => <TemplateCard key={template.slug} template={template} />)}
@@ -57,6 +84,23 @@ function TemplatesPage() {
   );
 }
 
+function CategoryChip({ label, count, active, onSelect }: { label: string; count: number; active: boolean; onSelect: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onSelect}
+      className={`rounded-full border px-3 py-1 font-mono text-[11px] uppercase tracking-wide transition-colors ${
+        active
+          ? "border-accent bg-accent/10 text-accent"
+          : "border-border bg-surface text-text-mid hover:border-text-faint"
+      }`}
+    >
+      {label} <span className="text-text-faint">{count}</span>
+    </button>
+  );
+}
+
 function TemplateCard({ template }: { template: Template }) {
   return (
     <li className="flex flex-col rounded-lg border border-border bg-surface p-5">
@@ -64,7 +108,14 @@ function TemplateCard({ template }: { template: Template }) {
         <span className="rounded-md bg-raised p-2 text-accent"><Package className="h-4 w-4" /></span>
         <div className="min-w-0">
           <p className="text-[17px] font-semibold">{template.name}</p>
-          <p className="font-mono text-[10px] uppercase tracking-wide text-text-faint">{template.category} · {template.version}</p>
+          {/* Version is optional in the schema: an imported template whose
+              upstream image ships only a moving tag is pinned by digest and
+              has no version to name. Show the category alone rather than a
+              dangling separator. */}
+          <p className="font-mono text-[10px] uppercase tracking-wide text-text-faint">
+            {template.category}
+            {template.version ? ` · ${template.version}` : ""}
+          </p>
         </div>
       </div>
       <p className="mt-3 flex-1 text-[13px] leading-relaxed text-text-mid">{template.description}</p>

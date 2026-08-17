@@ -1,0 +1,24 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: ryot
+name: Ryot
+description: Roll your own tracker! Ryot is a self-hosted platform for tracking various aspects of life such as media consumption, fitness activities, and more.
+category: other
+version: 10.3.0
+resources:
+  databases:
+    - name: db
+      engine: postgresql
+      version: "16"
+  applications:
+    - name: ryot
+      image: ignisda/ryot@sha256:34bcc49105e04be414b9c99025de2a357442c5455cdcc1736ca866f0cc9bcf71
+      port: 8000
+      route: true
+      health:
+        kind: tcp
+      env:
+        DATABASE_URL: postgres://{{db.db.user}}:{{db.db.password}}@{{db.db.host}}:5432/{{db.db.database}}
+        SERVER_ADMIN_ACCESS_TOKEN: '{{secret.32}}'
+        TZ: Europe/Amsterdam

@@ -1,0 +1,43 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: pocket-id-with-postgresql
+name: Pocket ID With Postgresql
+description: A simple and secure OIDC provider with passkey authentication
+category: security
+version: v1.13
+resources:
+  databases:
+    - name: db
+      engine: postgresql
+      version: "16"
+  applications:
+    - name: pocket-id
+      image: ghcr.io/pocket-id/pocket-id@sha256:d4c4c5355cc5ce25dfb34ed59f61c7d258ad39fb6345de452d11941b7209ddd4
+      port: 1411
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: pocket-id-data
+          path: /app/data
+      env:
+        APP_URL: https://{{domain}}
+        DB_CONNECTION_STRING: postgresql://{{db.db.user}}:{{db.db.password}}@{{db.db.host}}:5432/{{db.db.database}}
+        DB_PROVIDER: postgres
+        EMAIL_API_KEY_EXPIRATION_ENABLED: "false"
+        EMAIL_LOGIN_NOTIFICATION_ENABLED: "false"
+        EMAIL_ONE_TIME_ACCESS_AS_ADMIN_ENABLED: "false"
+        ENCRYPTION_KEY: '{{secret.32}}'
+        KEYS_STORAGE: database
+        MAXMIND_LICENSE_KEY: ""
+        PGID: "1000"
+        PUID: "1000"
+        SMTP_FROM: ""
+        SMTP_HOST: ""
+        SMTP_PASSWORD: ""
+        SMTP_PORT: "587"
+        SMTP_SKIP_CERT_VERIFY: "false"
+        SMTP_TLS: starttls
+        SMTP_USER: ""
+        TRUST_PROXY: "true"

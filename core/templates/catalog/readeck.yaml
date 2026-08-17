@@ -1,0 +1,20 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: readeck
+name: Readeck
+description: Simple web application that lets you save the precious readable content of web pages you like and want to keep forever.
+category: other
+resources:
+  applications:
+    - name: readeck
+      image: codeberg.org/readeck/readeck@sha256:d1dde9c0a7292fffe4170ec410aeffb03d67693b41f954918aad8dc3dd70786b
+      port: 8000
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: readeck-data
+          path: /readeck
+      env:
+        READECK_USE_X_FORWARDED: "true"

@@ -1,0 +1,27 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: audiobookshelf
+name: Audiobookshelf
+description: Self-hosted audiobook, ebook, and podcast server
+category: other
+version: 2.34.0
+resources:
+  applications:
+    - name: audiobookshelf
+      image: ghcr.io/advplyr/audiobookshelf@sha256:4143292c530f6ac6700afd13360c04f477e4f1a81c1c97c4224b1c7e4330c5c4
+      port: 80
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: audiobookshelf-audiobooks
+          path: /audiobooks
+        - name: audiobookshelf-podcasts
+          path: /podcasts
+        - name: audiobookshelf-config
+          path: /config
+        - name: audiobookshelf-metadata
+          path: /metadata
+      env:
+        TZ: America/Toronto

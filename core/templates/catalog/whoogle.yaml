@@ -1,0 +1,15 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: whoogle
+name: Whoogle
+description: Whoogle is a self-hosted, privacy-focused search engine front-end for accessing Google search results without tracking and data collection.
+category: analytics
+resources:
+  applications:
+    - name: whoogle
+      image: benbusby/whoogle-search@sha256:5795c303615bbe5c5558d353f32b656da4d1d5f21568b9869276d1f51415d6e8
+      port: 5000
+      route: true
+      health:
+        kind: tcp

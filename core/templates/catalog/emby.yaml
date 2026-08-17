@@ -1,0 +1,26 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: emby
+name: Emby
+description: A media server software that allows you to organize, stream, and access your multimedia content effortlessly.
+category: other
+resources:
+  applications:
+    - name: emby
+      image: lscr.io/linuxserver/emby@sha256:5f1c19ce11055ddc0c53c1c4185214cd824572b49c1b97d401d96d60f8d42147
+      port: 8096
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: emby-config
+          path: /config
+        - name: emby-tvshows
+          path: /tvshows
+        - name: emby-movies
+          path: /movies
+      env:
+        PGID: "1000"
+        PUID: "1000"
+        TZ: Europe/Madrid

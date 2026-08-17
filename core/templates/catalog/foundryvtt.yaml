@@ -1,0 +1,34 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: foundryvtt
+name: Foundryvtt
+description: Foundry Virtual Tabletop is a self-hosted & modern roleplaying platform
+category: other
+version: 14.365.0
+resources:
+  applications:
+    - name: foundryvtt
+      image: felddy/foundryvtt@sha256:bb8402d7098d0dcc136bf47c8932c0a1de5e405e021ca1710691cdd0ebdff730
+      port: 30000
+      route: true
+      health:
+        kind: tcp
+      env:
+        CONTAINER_CACHE: /data/container_cache
+        FOUNDRY_ADMIN_KEY: atropos
+        FOUNDRY_AWS_CONFIG: ""
+        FOUNDRY_CSS_THEME: foundry
+        FOUNDRY_HOSTNAME: ""
+        FOUNDRY_LANGUAGE: en.core
+        FOUNDRY_LICENSE_KEY: ""
+        FOUNDRY_MINIFY_STATIC_FILES: "true"
+        FOUNDRY_PASSWORD: ""
+        FOUNDRY_PROXY_PORT: "80"
+        FOUNDRY_PROXY_SSL: "true"
+        FOUNDRY_RELEASE_URL: ""
+        FOUNDRY_ROUTE_PREFIX: ""
+        FOUNDRY_TELEMETRY: "false"
+        FOUNDRY_USERNAME: ""
+        FOUNDRY_WORLD: ""
+        TIMEZONE: UTC

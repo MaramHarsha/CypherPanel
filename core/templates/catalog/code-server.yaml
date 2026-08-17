@@ -1,0 +1,25 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: code-server
+name: Code Server
+description: Code-Server is a web-based code editor that enables remote coding and collaboration from any device, anywhere.
+category: dev-tools
+resources:
+  applications:
+    - name: code-server
+      image: lscr.io/linuxserver/code-server@sha256:0dc7d8d440cadbd73982a02a3362bbdd3533ec90d1c9dfd02fff9d0f14442885
+      port: 8443
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: code-server-config
+          path: /config
+      env:
+        DEFAULT_WORKSPACE: /config/workspace
+        PASSWORD: '{{secret.32}}'
+        PGID: "1000"
+        PUID: "1000"
+        SUDO_PASSWORD: '{{secret.16}}'
+        TZ: Europe/Madrid

@@ -1,0 +1,24 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: electricsql
+name: Electricsql
+description: Sync shape-based subsets of your Postgres data over HTTP.
+category: dev-tools
+version: 1.4.2
+resources:
+  applications:
+    - name: electric
+      image: electricsql/electric@sha256:e8d17a55edbfbdb5ae4f296290f945606e990607742abef98ecba2a1f7d90da8
+      port: 3000
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: electric-data
+          path: /app/persistent
+      env:
+        DATABASE_URL: ""
+        ELECTRIC_SECRET: '{{secret.32}}'
+        ELECTRIC_STORAGE_DIR: /app/persistent
+        ELECTRIC_USAGE_REPORTING: "false"

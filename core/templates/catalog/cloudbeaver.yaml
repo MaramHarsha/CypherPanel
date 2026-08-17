@@ -1,0 +1,19 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: cloudbeaver
+name: Cloudbeaver
+description: CloudBeaver is a lightweight web application designed for comprehensive data management.
+category: dev-tools
+version: 24.3.5
+resources:
+  applications:
+    - name: cloudbeaver
+      image: dbeaver/cloudbeaver@sha256:28f7abeeae9835c797246a4bcbb756b9eaf7275a6691d583b4a40a736fa420c1
+      port: 8978
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: cloudbeaver-data
+          path: /opt/cloudbeaver/workspace

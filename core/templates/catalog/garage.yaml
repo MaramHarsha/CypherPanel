@@ -1,0 +1,30 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: garage
+name: Garage
+description: Garage is an S3-compatible distributed object storage service designed for self-hosting.
+category: storage
+version: 2.1.0
+resources:
+  applications:
+    - name: garage
+      image: dxflrs/garage@sha256:4c9b34c113e61358466e83fd6e7d66e6d18657ede14b776eb78a93ee8da7cf6a
+      port: 3900
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: garage-meta
+          path: /var/lib/garage/meta
+        - name: garage-data
+          path: /var/lib/garage/data
+      env:
+        GARAGE_ADMIN_TOKEN: '{{secret.16}}'
+        GARAGE_ADMIN_URL: ""
+        GARAGE_ALLOW_WORLD_READABLE_SECRETS: "true"
+        GARAGE_METRICS_TOKEN: '{{secret.16}}'
+        GARAGE_RPC_SECRET: '{{secret.32}}'
+        GARAGE_S3_API_URL: ""
+        GARAGE_WEB_URL: ""
+        RUST_LOG: garage=info

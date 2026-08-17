@@ -1,0 +1,21 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: proxyscotch
+name: Proxyscotch
+description: A simple proxy server created for https://hoppscotch.io - CORS proxy
+category: other
+version: 0.1.4
+resources:
+  applications:
+    - name: proxyscotch
+      image: hoppscotch/proxyscotch@sha256:36e727ab01b97a68d9c712333cc81431342f581cf4b012833d6612d71b00bcb8
+      port: 9159
+      route: true
+      health:
+        kind: tcp
+      env:
+        PROXYSCOTCH_ALLOWED_ORIGINS: '*'
+        PROXYSCOTCH_BANNED_DESTS: ""
+        PROXYSCOTCH_BANNED_OUTPUTS: ""
+        PROXYSCOTCH_TOKEN: '{{secret.16}}'

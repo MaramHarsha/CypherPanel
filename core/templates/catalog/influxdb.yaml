@@ -1,0 +1,30 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: influxdb
+name: InfluxDB
+description: Open source time series database for metrics, events, and analytics.
+category: storage
+version: 2.7.12-alpine
+resources:
+  applications:
+    - name: influxdb
+      image: influxdb@sha256:991673dc2d237bd79b15d6627410d72de111387e7dac673dbb92cf3333ffcc8c
+      port: 8086
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: influxdb-data
+          path: /var/lib/influxdb2
+        - name: influxdb-config
+          path: /etc/influxdb2
+      env:
+        INFLUXDB_HTTP_BIND_ADDRESS: :8086
+        INFLUXDB_INIT_ADMIN_TOKEN: '{{secret.16}}'
+        INFLUXDB_INIT_BUCKET: ""
+        INFLUXDB_INIT_MODE: setup
+        INFLUXDB_INIT_ORG: ""
+        INFLUXDB_INIT_PASSWORD: '{{secret.16}}'
+        INFLUXDB_INIT_RETENTION: "0"
+        INFLUXDB_INIT_USERNAME: '{{secret.16}}'

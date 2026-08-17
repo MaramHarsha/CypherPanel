@@ -1,0 +1,23 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: overseerr
+name: Overseerr
+description: Overseerr is a request management and media discovery tool built to work with your existing Plex ecosystem.
+category: other
+version: 1.35.0
+resources:
+  applications:
+    - name: overseerr
+      image: sctx/overseerr@sha256:6197516c9d7b58ccf113455e32aafb94df5d91995fe50e8c2cae6ba6c7c7b7de
+      port: 5055
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: overseerr-config
+          path: /app/config
+      env:
+        PGID: "1000"
+        PUID: "1000"
+        TZ: America/Toronto

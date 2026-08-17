@@ -1,0 +1,27 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: once-campfire
+name: Once Campfire
+description: Super simple group chat, without a subscription.
+category: other
+version: main
+resources:
+  applications:
+    - name: campfire
+      image: ghcr.io/basecamp/once-campfire@sha256:3c7412f90632aa06c4d12ed7b6db20bae83372a15e6bda96b5fb02560858cdf1
+      port: 80
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: campfire-storage
+          path: /rails/storage
+      env:
+        DISABLE_SSL: "true"
+        SECRET_KEY_BASE: '{{secret.32}}'
+        SENTRY_DSN: ""
+        SKIP_TELEMETRY: "true"
+        SSL_DOMAIN: "false"
+        VAPID_PRIVATE_KEY: ""
+        VAPID_PUBLIC_KEY: ""

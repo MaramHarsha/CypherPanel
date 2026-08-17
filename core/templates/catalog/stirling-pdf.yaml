@@ -1,0 +1,27 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: stirling-pdf
+name: Stirling PDF
+description: Stirling is a powerful web based PDF manipulation tool
+category: other
+version: 2.14.3
+resources:
+  applications:
+    - name: stirling-pdf
+      image: stirlingtools/stirling-pdf@sha256:3b3670fce70b396ec56ba380a3cc7858e0abf83fe13f31c88f7737847763a396
+      port: 8080
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: stirling-training-data
+          path: /usr/share/tesseract-ocr/5/tessdata
+        - name: stirling-configs
+          path: /configs
+        - name: stirling-custom-files
+          path: /customFiles/
+        - name: stirling-logs
+          path: /logs/
+      env:
+        DOCKER_ENABLE_SECURITY: "false"

@@ -1,0 +1,22 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: supertokens-with-postgresql
+name: Supertokens With Postgresql
+description: An open-source authentication solution that simplifies the implementation of secure user authentication and session management for web and mobile applications.
+category: security
+resources:
+  databases:
+    - name: db
+      engine: postgresql
+      version: "16"
+  applications:
+    - name: supertokens
+      image: registry.supertokens.io/supertokens/supertokens-postgresql@sha256:b318fc292466ca960c88c6fd80bb85183510bd5d7a7bfea9da785219ad76ec9e
+      port: 3567
+      route: true
+      health:
+        kind: tcp
+      env:
+        API_KEYS: ""
+        POSTGRESQL_CONNECTION_URI: '"postgresql://{{db.db.user}}:{{db.db.password}}@{{db.db.host}}:5432/{{db.db.database}}"'

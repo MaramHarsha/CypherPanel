@@ -1,0 +1,18 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: statusnook
+name: Statusnook
+description: Effortlessly deploy a status page and start monitoring endpoints in minutes
+category: monitoring
+resources:
+  applications:
+    - name: statusnook
+      image: goksan/statusnook@sha256:9b2c87213312b1856d52d576d7512aeae71190437b502739f352feba0bcc12e0
+      port: 8000
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: statusnook-data
+          path: /app/statusnook-data

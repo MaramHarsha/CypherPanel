@@ -1,0 +1,27 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: nitropage-with-postgresql
+name: Nitropage With Postgresql
+description: Nitropage is an extensible, visual website builder, offering a growing library of versatile building blocks, focal-point image cropping and sovereign font management.
+category: cms
+version: 0.70.3
+resources:
+  databases:
+    - name: db
+      engine: postgresql
+      version: "16"
+  applications:
+    - name: nitropage
+      image: nitropage/nitropage@sha256:fe479b95d86851d790913c46a248cc19dca5c2a246e2509d95f46ee193df75b1
+      port: 3000
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: nitropage-data
+          path: /app/.data
+      env:
+        DATABASE_URL: postgresql://{{db.db.user}}:{{db.db.password}}@{{db.db.host}}:5432/{{db.db.database}}
+        NP_AUTH_PASSWORD: '{{secret.32}}'
+        NP_AUTH_SALT: '{{secret.16}}'

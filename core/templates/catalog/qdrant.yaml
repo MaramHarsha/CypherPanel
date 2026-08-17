@@ -1,0 +1,21 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: qdrant
+name: Qdrant
+description: Qdrant is a vector similarity search engine that provides a production-ready service with a convenient API to store, search, and manage points (i.e. vectors) with an additional payload.
+category: storage
+version: 1.19.0
+resources:
+  applications:
+    - name: qdrant
+      image: qdrant/qdrant@sha256:057ee3a8da769fe7310dd3537b4dc7583bf87a95ce8ac43c0af5a46bc580d1fc
+      port: 6333
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: qdrant-storage
+          path: /qdrant/storage
+      env:
+        QDRANT__SERVICE__API_KEY: '{{secret.16}}'

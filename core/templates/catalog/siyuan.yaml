@@ -1,0 +1,24 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: siyuan
+name: Siyuan
+description: A privacy-first, self-hosted, fully open source personal knowledge management software, written in typescript and golang.
+category: cms
+version: 3.3.5
+resources:
+  applications:
+    - name: siyuan
+      image: b3log/siyuan@sha256:ac4ef17209bd831565f25ea9a787315ad129dd8f40c115edbf32c629fe9679ae
+      port: 6806
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: siyuan-workspace
+          path: /siyuan/workspace
+      env:
+        PGID: "1000"
+        PUID: "1000"
+        SIYUAN_ACCESS_AUTH_CODE: '{{secret.16}}'
+        TZ: UTC

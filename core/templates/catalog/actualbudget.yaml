@@ -1,0 +1,21 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: actualbudget
+name: Actualbudget
+description: A local-first personal finance app.
+category: other
+version: 26.8.1
+resources:
+  applications:
+    - name: actual-server
+      image: actualbudget/actual-server@sha256:6478d9ddfc0924479c09e6699c205e354c6f2216dfe7de3c0fb7b590d6edcdc5
+      port: 5006
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: actual-data
+          path: /data
+      env:
+        ACTUAL_LOGIN_METHOD: password

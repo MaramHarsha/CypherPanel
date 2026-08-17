@@ -1,0 +1,23 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: radarr
+name: Radarr
+description: Radarr⁠ - A fork of Sonarr to work with movies à la Couchpotato.
+category: other
+resources:
+  applications:
+    - name: radarr
+      image: lscr.io/linuxserver/radarr@sha256:a45b5ab0f850f39edb4cc9c95bbd967b52ddc3d4574a4dfb45561177db6c88f4
+      port: 7878
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: radarr-config
+          path: /config
+      env:
+        _APP_URL: https://{{domain}}
+        PGID: "1000"
+        PUID: "1000"
+        TZ: America/Toronto

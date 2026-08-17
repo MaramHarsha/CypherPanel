@@ -1,0 +1,16 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: filebrowser
+name: Filebrowser
+description: FileBrowser is a web-based file manager and file explorer with a user-friendly interface.
+category: storage
+version: 2.63.23
+resources:
+  applications:
+    - name: filebrowser
+      image: filebrowser/filebrowser@sha256:a469ea076d4a1b4b1d86a41d130f2f536cd9da996a2b1fb39c0d7635f9d89b9a
+      port: 80
+      route: true
+      health:
+        kind: tcp

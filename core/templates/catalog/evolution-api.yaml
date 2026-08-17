@@ -1,0 +1,146 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: evolution-api
+name: Evolution API
+description: Multi-platform messaging (whatsapp and more) integration API
+category: dev-tools
+version: 2.3.7
+resources:
+  databases:
+    - name: cache
+      engine: redis
+      version: "7"
+    - name: db
+      engine: postgresql
+      version: "16"
+  applications:
+    - name: api
+      image: evoapicloud/evolution-api@sha256:1bd8afc4a6cf48822e6cf02469aeae7bd35a12a6b616eacd1291926307f4d339
+      port: 8080
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: evolution-instances
+          path: /evolution/instances
+      env:
+        AUTHENTICATION_API_KEY: '{{secret.16}}'
+        AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES: "true"
+        CACHE_LOCAL_ENABLED: "false"
+        CACHE_REDIS_ENABLED: "true"
+        CACHE_REDIS_PREFIX_KEY: evolution_v2
+        CACHE_REDIS_SAVE_INSTANCES: "false"
+        CACHE_REDIS_URI: redis://:{{db.cache.password}}@{{db.cache.host}}:6379/6
+        CHATWOOT_ENABLED: "true"
+        CHATWOOT_IMPORT_DATABASE_CONNECTION_URI: postgresql://{{db.db.user}}:{{db.db.password}}@{{db.db.host}}:5432/{{db.db.database}}
+        CHATWOOT_IMPORT_PLACEHOLDER_MEDIA_MESSAGE: "true"
+        CHATWOOT_MESSAGE_DELETE: "true"
+        CHATWOOT_MESSAGE_READ: "true"
+        CONFIG_SESSION_PHONE_CLIENT: Evolution API V2
+        CONFIG_SESSION_PHONE_NAME: Chrome
+        DATABASE_CONNECTION_CLIENT_NAME: evolution_v2
+        DATABASE_CONNECTION_URI: postgresql://{{db.db.user}}:{{db.db.password}}@{{db.db.host}}:5432/{{db.db.host}}
+        DATABASE_PROVIDER: postgresql
+        DATABASE_SAVE_DATA_CHATS: "true"
+        DATABASE_SAVE_DATA_CONTACTS: "true"
+        DATABASE_SAVE_DATA_HISTORIC: "true"
+        DATABASE_SAVE_DATA_INSTANCE: "true"
+        DATABASE_SAVE_DATA_LABELS: "true"
+        DATABASE_SAVE_DATA_NEW_MESSAGE: "true"
+        DATABASE_SAVE_MESSAGE_UPDATE: "true"
+        DATABASE_URL: postgresql://{{db.db.user}}:{{db.db.password}}@{{db.db.host}}:5432/{{db.db.host}}
+        DB_POSTGRESDB_DATABASE: '{{db.db.host}}'
+        DB_POSTGRESDB_HOST: '{{db.db.host}}'
+        DB_POSTGRESDB_PASSWORD: '{{db.db.password}}'
+        DB_POSTGRESDB_PORT: "5432"
+        DB_POSTGRESDB_USER: '{{db.db.user}}'
+        DB_TYPE: postgresdb
+        DEL_INSTANCE: "false"
+        DIFY_ENABLED: "true"
+        FLOWISE_ENABLED: "true"
+        LANGUAGE: en
+        N8N_ENABLED: "true"
+        OPENAI_ENABLED: "true"
+        QRCODE_LIMIT: "30"
+        RABBITMQ_ENABLED: "false"
+        RABBITMQ_EVENTS_APPLICATION_STARTUP: "false"
+        RABBITMQ_EVENTS_CALL: "false"
+        RABBITMQ_EVENTS_CHATS_DELETE: "false"
+        RABBITMQ_EVENTS_CHATS_SET: "false"
+        RABBITMQ_EVENTS_CHATS_UPDATE: "false"
+        RABBITMQ_EVENTS_CHATS_UPSERT: "false"
+        RABBITMQ_EVENTS_CONNECTION_UPDATE: "true"
+        RABBITMQ_EVENTS_CONTACTS_SET: "false"
+        RABBITMQ_EVENTS_CONTACTS_UPDATE: "false"
+        RABBITMQ_EVENTS_CONTACTS_UPSERT: "false"
+        RABBITMQ_EVENTS_GROUP_PARTICIPANTS_UPDATE: "false"
+        RABBITMQ_EVENTS_GROUP_UPDATE: "false"
+        RABBITMQ_EVENTS_GROUPS_UPSERT: "false"
+        RABBITMQ_EVENTS_INSTANCE_CREATE: "false"
+        RABBITMQ_EVENTS_INSTANCE_DELETE: "false"
+        RABBITMQ_EVENTS_MESSAGES_DELETE: "false"
+        RABBITMQ_EVENTS_MESSAGES_EDITED: "false"
+        RABBITMQ_EVENTS_MESSAGES_SET: "false"
+        RABBITMQ_EVENTS_MESSAGES_UPDATE: "false"
+        RABBITMQ_EVENTS_MESSAGES_UPSERT: "true"
+        RABBITMQ_EVENTS_PRESENCE_UPDATE: "false"
+        RABBITMQ_EVENTS_QRCODE_UPDATED: "false"
+        RABBITMQ_EVENTS_SEND_MESSAGE: "false"
+        RABBITMQ_EVENTS_TYPEBOT_CHANGE_STATUS: "false"
+        RABBITMQ_EVENTS_TYPEBOT_START: "false"
+        RABBITMQ_EXCHANGE_NAME: evolution_v2
+        RABBITMQ_GLOBAL_ENABLED: "false"
+        RABBITMQ_URI: amqp://admin:admin@rabbitmq:5672/default
+        S3_ACCESS_KEY: ""
+        S3_BUCKET: evolution
+        S3_ENABLED: "false"
+        S3_ENDPOINT: files.site.com
+        S3_PORT: "443"
+        S3_REGION: us-east-1
+        S3_SECRET_KEY: ""
+        S3_USE_SSL: "true"
+        SERVER_URL: https://{{domain}}
+        SQS_ACCESS_KEY_ID: ""
+        SQS_ACCOUNT_ID: ""
+        SQS_ENABLED: "false"
+        SQS_REGION: ""
+        SQS_SECRET_ACCESS_KEY: ""
+        TYPEBOT_API_VERSION: latest
+        TYPEBOT_ENABLED: "true"
+        WA_BUSINESS_LANGUAGE: pt_BR
+        WA_BUSINESS_TOKEN_WEBHOOK: evolution
+        WA_BUSINESS_URL: https://graph.facebook.com
+        WA_BUSINESS_VERSION: v20.0
+        WEBHOOK_EVENTS_APPLICATION_STARTUP: "false"
+        WEBHOOK_EVENTS_CALL: "true"
+        WEBHOOK_EVENTS_CHATS_DELETE: "true"
+        WEBHOOK_EVENTS_CHATS_SET: "true"
+        WEBHOOK_EVENTS_CHATS_UPDATE: "true"
+        WEBHOOK_EVENTS_CHATS_UPSERT: "true"
+        WEBHOOK_EVENTS_CONNECTION_UPDATE: "true"
+        WEBHOOK_EVENTS_CONTACTS_SET: "true"
+        WEBHOOK_EVENTS_CONTACTS_UPDATE: "true"
+        WEBHOOK_EVENTS_CONTACTS_UPSERT: "true"
+        WEBHOOK_EVENTS_ERRORS: "false"
+        WEBHOOK_EVENTS_ERRORS_WEBHOOK: ""
+        WEBHOOK_EVENTS_GROUP_PARTICIPANTS_UPDATE: "true"
+        WEBHOOK_EVENTS_GROUPS_UPDATE: "true"
+        WEBHOOK_EVENTS_GROUPS_UPSERT: "true"
+        WEBHOOK_EVENTS_LABELS_ASSOCIATION: "true"
+        WEBHOOK_EVENTS_LABELS_EDIT: "true"
+        WEBHOOK_EVENTS_MESSAGES_DELETE: "true"
+        WEBHOOK_EVENTS_MESSAGES_EDITED: "true"
+        WEBHOOK_EVENTS_MESSAGES_SET: "true"
+        WEBHOOK_EVENTS_MESSAGES_UPDATE: "true"
+        WEBHOOK_EVENTS_MESSAGES_UPSERT: "true"
+        WEBHOOK_EVENTS_PRESENCE_UPDATE: "true"
+        WEBHOOK_EVENTS_QRCODE_UPDATED: "true"
+        WEBHOOK_EVENTS_SEND_MESSAGE: "true"
+        WEBHOOK_EVENTS_TYPEBOT_CHANGE_STATUS: "false"
+        WEBHOOK_EVENTS_TYPEBOT_START: "false"
+        WEBHOOK_GLOBAL_ENABLED: "false"
+        WEBHOOK_GLOBAL_URL: ''''''
+        WEBHOOK_GLOBAL_WEBHOOK_BY_EVENTS: "false"
+        WEBSOCKET_ENABLED: "false"
+        WEBSOCKET_GLOBAL_EVENTS: "false"

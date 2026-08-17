@@ -1,0 +1,28 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: homebox
+name: Homebox
+description: Homebox is the inventory and organization system built for the Home User.
+category: other
+resources:
+  applications:
+    - name: homebox
+      image: ghcr.io/sysadminsmedia/homebox@sha256:b1ad7e3c63f732a5f6daa466e8116be4f545b3b120383a64dcb62beb00a660cc
+      port: 7745
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: homebox-data
+          path: /data
+      env:
+        HBOX_LOG_FORMAT: text
+        HBOX_LOG_LEVEL: info
+        HBOX_MAILER_FROM: ""
+        HBOX_MAILER_HOST: ""
+        HBOX_MAILER_PASSWORD: ""
+        HBOX_MAILER_PORT: "587"
+        HBOX_MAILER_USERNAME: ""
+        HBOX_OPTIONS_ALLOW_REGISTRATION: "false"
+        HBOX_WEB_MAX_UPLOAD_SIZE: "10"

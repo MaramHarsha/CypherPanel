@@ -1,0 +1,22 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: linkding
+name: Linkding
+description: A self-hosted bookmark manager designed to be minimal, fast, and easy to set up.
+category: other
+version: 1.46.1
+resources:
+  applications:
+    - name: linkding
+      image: sissbruecker/linkding@sha256:45ab921bb772ea24cb05f36d35853f78c7141d932cdc5b30a39b626830908e27
+      port: 9090
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: linkding-data
+          path: /etc/linkding/data
+      env:
+        LD_SUPERUSER_NAME: '{{secret.16}}'
+        LD_SUPERUSER_PASSWORD: '{{secret.16}}'

@@ -1,0 +1,26 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: redis-insight
+name: Redis Insight
+description: Redis Insight lets you do both GUI- and CLI-based interactions in a fully-featured desktop GUI client.
+category: storage
+version: 2.70.1
+resources:
+  applications:
+    - name: redisinsight
+      image: redis/redisinsight@sha256:b7aa18e73329ebb2e3d9e949b8d35193bf5415ef35c16fd9a50e6f832922b296
+      port: 5540
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: redis-insight-data
+          path: /data
+      env:
+        RI_APP_HOST: 0.0.0.0
+        RI_APP_PORT: "5540"
+        RI_ENCRYPTION_KEY: '{{secret.16}}'
+        RI_FILES_LOGGER: "true"
+        RI_LOG_LEVEL: info
+        RI_STDOUT_LOGGER: "true"

@@ -1,0 +1,20 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: pairdrop
+name: Pairdrop
+description: Pairdrop is a self-hosted file sharing and collaboration platform, offering secure file sharing and collaboration capabilities for efficient teamwork.
+category: other
+resources:
+  applications:
+    - name: pairdrop
+      image: lscr.io/linuxserver/pairdrop@sha256:3279d2d986c01a223f76e306e222a742508baf75b8eca03b097f25d9344584f6
+      port: 3000
+      route: true
+      health:
+        kind: tcp
+      env:
+        DEBUG_MODE: "false"
+        PGID: "1000"
+        PUID: "1000"
+        TZ: Europe/Madrid

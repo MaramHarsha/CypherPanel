@@ -1,0 +1,25 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: openobserve
+name: Openobserve
+description: Cloud-native observability platform for logs, metrics, traces, RUM, errors and session replays — a 140x cheaper alternative to Elasticsearch, Splunk and Datadog.
+category: monitoring
+version: 0.90.0
+resources:
+  applications:
+    - name: openobserve
+      image: public.ecr.aws/zinclabs/openobserve@sha256:06acdd7deb53e534ca4383bf94c16b88f07a7f46f43d11ba15bb9442edcacd57
+      port: 5080
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: openobserve-data
+          path: /data
+      env:
+        ZO_COOKIE_SECURE_ONLY: "true"
+        ZO_DATA_DIR: /data
+        ZO_ROOT_USER_EMAIL: root@example.com
+        ZO_ROOT_USER_PASSWORD: '{{secret.16}}'
+        ZO_TELEMETRY: "false"

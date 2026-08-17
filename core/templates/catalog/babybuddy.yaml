@@ -1,0 +1,23 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: babybuddy
+name: Babybuddy
+description: It helps parents track their baby's daily activities, growth, and health with ease.
+category: other
+resources:
+  applications:
+    - name: babybuddy
+      image: lscr.io/linuxserver/babybuddy@sha256:b6ebdcf8f3d6e0a7baf7edcfe79cd30a32e5cead070d80e216ff5b3e6c61c6a7
+      port: 80
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: babybuddy-config
+          path: /config
+      env:
+        CSRF_TRUSTED_ORIGINS: https://{{domain}}
+        PGID: "1000"
+        PUID: "1000"
+        TZ: Europe/Madrid

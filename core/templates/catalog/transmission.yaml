@@ -1,0 +1,27 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: transmission
+name: Transmission
+description: Fast, easy, and free BitTorrent client.
+category: other
+resources:
+  applications:
+    - name: transmission
+      image: lscr.io/linuxserver/transmission@sha256:81787bc706d3833d252e6d8b94545fea46bf2156f616320991a395619a477d2c
+      port: 9091
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: transmission-config
+          path: /config
+        - name: transmission-downloads
+          path: /downloads
+        - name: transmission-watch
+          path: /watch
+      env:
+        PASS: '{{secret.16}}'
+        PGID: "1000"
+        PUID: "1000"
+        USER: '{{secret.16}}'

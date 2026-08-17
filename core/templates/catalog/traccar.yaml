@@ -1,0 +1,24 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: traccar
+name: Traccar
+description: Traccar is a free and open source modern GPS tracking system.
+category: monitoring
+version: 6.14.5-alpine
+resources:
+  databases:
+    - name: db
+      engine: postgresql
+      version: "16"
+  applications:
+    - name: traccar
+      image: traccar/traccar@sha256:b7a19c3aa641dd775897173ac21ba6ca410a72047736d065fe63ab344f62eaac
+      port: 5159
+      route: true
+      health:
+        kind: tcp
+      env:
+        CONFIG_USE_ENVIRONMENT_VARIABLES: "true"
+        DATABASE_PASSWORD: '{{db.db.password}}'
+        DATABASE_USER: '{{db.db.user}}'

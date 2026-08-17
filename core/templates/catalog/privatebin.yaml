@@ -1,0 +1,18 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: privatebin
+name: Privatebin
+description: PrivateBin is a minimalist, open source online pastebin where the server has zero knowledge of pasted data.
+category: security
+resources:
+  applications:
+    - name: privatebin
+      image: privatebin/nginx-fpm-alpine@sha256:e2758b4efe2965250347c801fffc234670ecdc646788c55fa2869f13a0a6c19c
+      port: 8080
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: privatebin-data
+          path: /srv/data

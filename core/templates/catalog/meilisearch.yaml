@@ -1,0 +1,23 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: meilisearch
+name: Meilisearch
+description: MeiliSearch is a powerful, fast, easy to use and deploy search engine.
+category: analytics
+version: 1.53.1
+resources:
+  applications:
+    - name: meilisearch
+      image: getmeili/meilisearch@sha256:8d6643d86d71fad6ad3cba92cde7ccfce9e4d6c384bda67598eb553571c32431
+      port: 7700
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: meilisearch-data
+          path: /meili_data
+      env:
+        MEILI_ENV: production
+        MEILI_MASTER_KEY: '{{secret.16}}'
+        MEILI_NO_ANALYTICS: "true"

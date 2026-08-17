@@ -1,0 +1,23 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: sonarr
+name: Sonarr
+description: Sonarr⁠ (formerly NZBdrone) is a PVR for usenet and bittorrent users. It can monitor multiple RSS feeds for new episodes of your favorite shows and will grab, sort and rename them. It can also…
+category: other
+resources:
+  applications:
+    - name: sonarr
+      image: lscr.io/linuxserver/sonarr@sha256:373159ba768e23a3a1c497d9f2b936addf8fd5b1fdce7dd6a14080ac928bfda0
+      port: 8989
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: sonarr-config
+          path: /config
+      env:
+        _APP_URL: https://{{domain}}
+        PGID: "1000"
+        PUID: "1000"
+        TZ: America/Toronto

@@ -1,0 +1,16 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: web-check
+name: Web Check
+description: All-in-one OSINT tool for analysing any website
+category: monitoring
+version: 2.2.3
+resources:
+  applications:
+    - name: web-check
+      image: lissy93/web-check@sha256:7ca557beb271b8711aa5b82bc185ccad04b3120b0b3b995f82866957361d76f5
+      port: 3000
+      route: true
+      health:
+        kind: tcp

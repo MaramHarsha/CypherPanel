@@ -40,6 +40,18 @@ Scope: template catalog (a native template schema with a Coolify importer, bundl
 
 **Acceptance:** a Coolify or Dokploy user can self-migrate a typical workload without losing a capability they used (checked against the feature matrix).
 
+**Progress.** The template catalog and its Coolify importer have landed
+([template-catalog.md](features/template-catalog.md),
+[dev/template-import.md](dev/template-import.md)): 137 bundled templates — 7
+hand-curated plus 130 machine-translated from Coolify's compose library, every
+image pinned to a digest. The importer refuses 235 of the 365 upstream
+templates and records why for each ([the report](dev/template-import-report.md)).
+Two blockers there are ours to remove and are the highest-leverage catalog work
+left: a **named application database** on Managed Databases (43 templates,
+including the WordPress/Ghost/Nextcloud class) and **Compose Stack resources**,
+already in this phase's scope, for the ~130 that need a command override, a
+host mount, or privileged access.
+
 ## Post-v1 directions (recorded, not scheduled)
 
 Deliberate **Later** items from the [feature matrix](product/feature-matrix.md), captured so v1 work doesn't preempt or accidentally foreclose them:

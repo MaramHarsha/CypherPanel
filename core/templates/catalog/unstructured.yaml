@@ -1,0 +1,17 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: unstructured
+name: Unstructured
+description: Unstructured provides a platform and tools to ingest and process unstructured documents for Retrieval Augmented Generation (RAG) and model fine-tuning.
+category: other
+resources:
+  applications:
+    - name: unstructured
+      image: downloads.unstructured.io/unstructured-io/unstructured-api@sha256:0df934a22e4e893cf15e7aeaf35c463ecc75937758a83099aefdc13041619a1d
+      port: 8000
+      route: true
+      health:
+        kind: tcp
+      env:
+        UNSTRUCTURED_API_KEY: '{{secret.16}}'
