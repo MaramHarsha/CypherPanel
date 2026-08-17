@@ -215,17 +215,6 @@ func TestConvertRefusals(t *testing.T) {
     expose: ["9000"]`,
 		want: "dials the sibling service",
 	}, {
-		name: "mysql needs a named database",
-		body: `services:
-  web:
-    image: acme/web:1
-    environment:
-      - SERVICE_URL_WEB_3000
-      - DB=$SERVICE_PASSWORD_MYSQL
-  mysql:
-    image: mysql:8.0`,
-		want: "named application database",
-	}, {
 		name: "one-shot job container",
 		body: `services:
   web:
@@ -411,13 +400,104 @@ func TestCategoryAndDescription(t *testing.T) {
 
 func TestDisplayName(t *testing.T) {
 	cases := map[string]string{
-		"uptime-kuma": "Uptime Kuma",
-		"n8n":         "n8n",
-		"my-api-tool": "My API Tool",
+		"uptime-kuma":            "Uptime Kuma",
+		"n8n":                    "n8n",
+		"my-api-tool":            "My API Tool",
+		"wordpress-with-mysql":   "WordPress with MySQL",
+		"freshrss-with-postgres": "FreshRSS with PostgreSQL",
 	}
 	for slug, want := range cases {
 		if got := displayName(slug); got != want {
 			t.Errorf("displayName(%q) = %q, want %q", slug, got, want)
+		}
+	}
+}
+
+// MySQL and MariaDB stacks were refused wholesale until managed databases
+// could create a named application database. They convert now, and their DSN
+// resolves through the placeholder exactly as PostgreSQL's does.
+func TestConvertMySQLBackedStack(t *testing.T) {
+	tpl, reasons := convert("example", []byte(composeHeader+`services:
+  web:
+    image: acme/web:1.2.3
+    environment:
+      - SERVICE_URL_WEB_3000
+      - DATABASE_URL=mysql://root:$SERVICE_PASSWORD_MYSQL@mysql:3306/${MYSQL_DATABASE:-appdb}
+  mysql:
+    image: mysql:8.4
+    environment:
+      - MYSQL_ROOT_PASSWORD=$SERVICE_PASSWORD_MYSQL
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-appdb}
+`), nil)
+	if len(reasons) > 0 {
+		t.Fatalf("refused: %v", reasons)
+	}
+	if len(tpl.Resources.Databases) != 1 || tpl.Resources.Databases[0].Engine != "mysql" {
+		t.Fatalf("databases = %+v, want one mysql", tpl.Resources.Databases)
+	}
+	want := "mysql://root:{{db.db.password}}@{{db.db.host}}:3306/{{db.db.database}}"
+	if got := tpl.Resources.Applications[0].Env["DATABASE_URL"]; got != want {
+		t.Fatalf("DATABASE_URL = %q, want %q", got, want)
+	}
+}
+
+// A cache's path segment is a database *number*, not a name — rewriting it
+// would point the application at something the protocol cannot address.
+func TestConvertLeavesCacheDatabaseNumberAlone(t *testing.T) {
+	tpl, reasons := convert("example", []byte(composeHeader+`services:
+  web:
+    image: acme/web:1.2.3
+    environment:
+      - SERVICE_URL_WEB_3000
+      - REDIS_URL=redis://redis:6379/0
+      - PW=$SERVICE_PASSWORD_REDIS
+  redis:
+    image: redis:7-alpine
+`), nil)
+	if len(reasons) > 0 {
+		t.Fatalf("refused: %v", reasons)
+	}
+	if got := tpl.Resources.Applications[0].Env["REDIS_URL"]; !strings.HasSuffix(got, ":6379/0") {
+		t.Fatalf("REDIS_URL = %q, want the database number intact", got)
+	}
+}
+
+// Coolify's MySQL templates give the application a scoped database user named
+// after the app — `MYSQL_USER=$SERVICE_USER_WORDPRESS`. A managed database
+// creates no such user, so those references have to resolve to the root
+// credentials it does have, and the literal database name has to resolve
+// through the placeholder.
+func TestConvertMapsScopedDatabaseUserToRoot(t *testing.T) {
+	tpl, reasons := convert("example", []byte(composeHeader+`services:
+  web:
+    image: acme/web:1.2.3
+    environment:
+      - SERVICE_URL_WEB_3000
+      - DB_HOST=mysql
+      - DB_USER=$SERVICE_USER_MYAPP
+      - DB_PASSWORD=$SERVICE_PASSWORD_MYAPP
+      - DB_NAME=myapp
+  mysql:
+    image: mysql:8
+    environment:
+      - MYSQL_ROOT_PASSWORD=$SERVICE_PASSWORD_ROOT
+      - MYSQL_DATABASE=myapp
+      - MYSQL_USER=$SERVICE_USER_MYAPP
+      - MYSQL_PASSWORD=$SERVICE_PASSWORD_MYAPP
+`), nil)
+	if len(reasons) > 0 {
+		t.Fatalf("refused: %v", reasons)
+	}
+	env := tpl.Resources.Applications[0].Env
+	want := map[string]string{
+		"DB_HOST":     "{{db.db.host}}",
+		"DB_USER":     "{{db.db.user}}",
+		"DB_PASSWORD": "{{db.db.password}}",
+		"DB_NAME":     "{{db.db.database}}",
+	}
+	for k, v := range want {
+		if env[k] != v {
+			t.Errorf("%s = %q, want %q", k, env[k], v)
 		}
 	}
 }

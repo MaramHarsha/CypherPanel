@@ -2,7 +2,7 @@
 # Reviewed and committed like a hand-written template; the catalog test is the gate.
 schema: v1
 slug: nitropage-with-postgresql
-name: Nitropage With Postgresql
+name: Nitropage with PostgreSQL
 description: Nitropage is an extensible, visual website builder, offering a growing library of versatile building blocks, focal-point image cropping and sovereign font management.
 category: cms
 version: 0.70.3

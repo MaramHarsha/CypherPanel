@@ -1237,3 +1237,141 @@ func TestDigestPinRejectsForeignRevision(t *testing.T) {
 		t.Fatalf("victim revision image = %q — a foreign agent overwrote it", got)
 	}
 }
+
+// ─── managed database specs ─────────────────────────────────────────────────
+
+func addDatabase(fs *fakeStore, id string, engine domain.DbEngine, initialDB string) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	revID := id + "_rev1"
+	fs.dbRevs[revID] = domain.DatabaseRevision{ID: revID, DatabaseID: id}
+	fs.dbs[id] = domain.Database{
+		ID:                id,
+		EnvironmentID:     "env_1",
+		Name:              id,
+		Engine:            engine,
+		Version:           "16",
+		ServerID:          "srv_1",
+		VolumeName:        "cypher-db-" + id,
+		DataPath:          "/data",
+		Network:           "cypher-env_1",
+		RootUser:          "root",
+		RequirePassword:   true,
+		RootPasswordCT:    []byte("ct"),
+		RootPasswordNonce: []byte("nonce"),
+		InitialDatabase:   initialDB,
+		DesiredRevisionID: &revID,
+		DesiredState:      domain.DbDesiredRunning,
+		Status:            domain.DbStopped,
+	}
+}
+
+func provisionSpec(t *testing.T, fb *fakeBus) *agentv1.DbSpec {
+	t.Helper()
+	p, ok := fb.last()
+	if !ok {
+		t.Fatal("no work published")
+	}
+	var pw agentv1.DbProvisionWork
+	if err := proto.Unmarshal(p.data, &pw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	return pw.GetSpec()
+}
+
+// The engine image creates the application database from this variable while
+// initializing an empty data directory (managed-databases.md §2). Each engine
+// reads a different one, and Redis/Valkey read none.
+func TestDbSpecCarriesTheInitialDatabase(t *testing.T) {
+	cases := []struct {
+		engine domain.DbEngine
+		key    string
+	}{
+		{domain.EnginePostgreSQL, "POSTGRES_DB"},
+		{domain.EngineMySQL, "MYSQL_DATABASE"},
+		{domain.EngineMariaDB, "MARIADB_DATABASE"},
+		{domain.EngineMongoDB, "MONGO_INITDB_DATABASE"},
+	}
+	for _, c := range cases {
+		t.Run(string(c.engine), func(t *testing.T) {
+			fs, fb := newFakeStore(), &fakeBus{}
+			addDatabase(fs, "db_1", c.engine, "appdb")
+			s := newScheduler(fs, fb)
+
+			if err := s.ReconcileDatabase(context.Background(), "db_1"); err != nil {
+				t.Fatalf("ReconcileDatabase: %v", err)
+			}
+			if got := provisionSpec(t, fb).GetEnv()[c.key]; got != "appdb" {
+				t.Fatalf("%s = %q, want appdb", c.key, got)
+			}
+		})
+	}
+
+	// Redis has numbered databases, so there is no variable to set even if a
+	// row somehow carried a name.
+	fs, fb := newFakeStore(), &fakeBus{}
+	addDatabase(fs, "db_2", domain.EngineRedis, "appdb")
+	s := newScheduler(fs, fb)
+	if err := s.ReconcileDatabase(context.Background(), "db_2"); err != nil {
+		t.Fatalf("ReconcileDatabase: %v", err)
+	}
+	for k := range provisionSpec(t, fb).GetEnv() {
+		if strings.Contains(k, "DATABASE") || strings.Contains(k, "_DB") {
+			t.Fatalf("redis spec carries %q, want no database variable", k)
+		}
+	}
+}
+
+// A database created before the field existed keeps behaving exactly as it
+// did: no variable, so the engine's own default applies and the container is
+// not seen as drifted.
+func TestDbSpecOmitsAnEmptyInitialDatabase(t *testing.T) {
+	fs, fb := newFakeStore(), &fakeBus{}
+	addDatabase(fs, "db_1", domain.EnginePostgreSQL, "")
+	s := newScheduler(fs, fb)
+
+	if err := s.ReconcileDatabase(context.Background(), "db_1"); err != nil {
+		t.Fatalf("ReconcileDatabase: %v", err)
+	}
+	if _, present := provisionSpec(t, fb).GetEnv()["POSTGRES_DB"]; present {
+		t.Fatal("POSTGRES_DB set for a database that asked for none")
+	}
+}
+
+// The agent measures drift by comparing the spec it was told to converge to
+// against the one the desired-state sync advertises. If the two were built
+// separately, a field added to one and forgotten in the other would read as
+// permanent drift and re-provision the container on every sync — so they are
+// asserted byte-identical here, for every engine.
+func TestProvisionWorkAndDesiredStateAgree(t *testing.T) {
+	for _, engine := range []domain.DbEngine{
+		domain.EnginePostgreSQL, domain.EngineMySQL, domain.EngineMariaDB,
+		domain.EngineMongoDB, domain.EngineRedis, domain.EngineValkey,
+	} {
+		t.Run(string(engine), func(t *testing.T) {
+			fs, fb := newFakeStore(), &fakeBus{}
+			addDatabase(fs, "db_1", engine, "appdb")
+			s := newScheduler(fs, fb)
+
+			if err := s.ReconcileDatabase(context.Background(), "db_1"); err != nil {
+				t.Fatalf("ReconcileDatabase: %v", err)
+			}
+			fromWork := provisionSpec(t, fb)
+
+			data, err := s.DesiredStateFor(context.Background(), "srv_1")
+			if err != nil {
+				t.Fatalf("DesiredStateFor: %v", err)
+			}
+			var ds agentv1.DesiredState
+			if err := proto.Unmarshal(data, &ds); err != nil {
+				t.Fatalf("unmarshal desired state: %v", err)
+			}
+			if len(ds.GetDbSpecs()) != 1 {
+				t.Fatalf("db specs = %d, want 1", len(ds.GetDbSpecs()))
+			}
+			if !proto.Equal(fromWork, ds.GetDbSpecs()[0]) {
+				t.Fatalf("work spec and desired state disagree:\n work = %v\n sync = %v", fromWork, ds.GetDbSpecs()[0])
+			}
+		})
+	}
+}

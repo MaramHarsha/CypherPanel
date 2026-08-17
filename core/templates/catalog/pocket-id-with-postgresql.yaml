@@ -2,7 +2,7 @@
 # Reviewed and committed like a hand-written template; the catalog test is the gate.
 schema: v1
 slug: pocket-id-with-postgresql
-name: Pocket ID With Postgresql
+name: Pocket ID with PostgreSQL
 description: A simple and secure OIDC provider with passkey authentication
 category: security
 version: v1.13

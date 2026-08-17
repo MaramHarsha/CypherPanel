@@ -86,11 +86,6 @@ func convert(slug string, src []byte, ports portOracle) (templates.Template, []s
 		}
 		apps = append(apps, appService{svc: s})
 	}
-	for _, d := range dbs {
-		if d.engine == domain.EngineMySQL || d.engine == domain.EngineMariaDB {
-			r.add("%s backing store needs a named application database; managed databases expose only the root database (template-catalog.md §3)", d.engine)
-		}
-	}
 	if len(apps) == 0 && !r.any() {
 		r.add("no application services — every service maps to a managed database")
 	}
@@ -815,8 +810,9 @@ var displayNames = map[string]string{
 	"gitea": "Gitea", "gitlab": "GitLab", "github": "GitHub", "jellyfin": "Jellyfin",
 	"paperless-ngx": "Paperless-ngx", "vaultwarden": "Vaultwarden", "wireguard": "WireGuard",
 	"nginx": "nginx", "traefik": "Traefik", "haproxy": "HAProxy", "openvpn": "OpenVPN",
-	"pgadmin": "pgAdmin", "webtop": "Webtop", "n8n-with-postgresql": "n8n with PostgreSQL",
-	"ollama-with-open-webui": "Ollama with Open WebUI", "youtrack": "YouTrack",
+	"pgadmin": "pgAdmin", "webtop": "Webtop", "youtrack": "YouTrack",
+	"postgres": "PostgreSQL", "mariadb": "MariaDB", "sqlite": "SQLite",
+	"s3": "S3", "webui": "WebUI", "ngx": "ngx", "ollama": "Ollama",
 	"emby": "Emby", "plex": "Plex", "sonarr": "Sonarr", "radarr": "Radarr",
 	"invoiceninja": "Invoice Ninja", "listmonk": "Listmonk", "umami": "Umami",
 	"uptime-kuma": "Uptime Kuma", "metabase": "Metabase", "appsmith": "Appsmith",
@@ -828,20 +824,31 @@ var acronyms = map[string]string{
 	"pdf": "PDF", "rss": "RSS", "sql": "SQL", "ssh": "SSH", "ui": "UI", "url": "URL",
 }
 
+// joiners stay lowercase in the middle of a name: Coolify's library is full of
+// `x-with-postgresql` variants, and "Wordpress With Postgresql" reads like a
+// machine wrote it — which is exactly the impression a generated catalog must
+// avoid.
+var joiners = map[string]bool{"with": true, "and": true, "for": true, "to": true, "on": true}
+
 func displayName(slug string) string {
 	if n, ok := displayNames[slug]; ok {
 		return n
 	}
 	parts := strings.Split(slug, "-")
 	for i, p := range parts {
-		if a, ok := acronyms[p]; ok {
-			parts[i] = a
-			continue
+		switch {
+		case p == "":
+		case displayNames[p] != "":
+			// The product-name table also spells the individual words, so a
+			// `-with-` variant inherits the right casing on both sides.
+			parts[i] = displayNames[p]
+		case acronyms[p] != "":
+			parts[i] = acronyms[p]
+		case i > 0 && joiners[p]:
+			parts[i] = p
+		default:
+			parts[i] = strings.ToUpper(p[:1]) + p[1:]
 		}
-		if p == "" {
-			continue
-		}
-		parts[i] = strings.ToUpper(p[:1]) + p[1:]
 	}
 	return strings.Join(parts, " ")
 }

@@ -2,7 +2,7 @@
 # Reviewed and committed like a hand-written template; the catalog test is the gate.
 schema: v1
 slug: superset-with-postgresql
-name: Superset With Postgresql
+name: Superset with PostgreSQL
 description: Modern data exploration and visualization platform (unofficial community docker image)
 category: analytics
 version: 6.0.0
@@ -23,7 +23,7 @@ resources:
         kind: tcp
       env:
         MAPBOX_API_KEY: ""
-        POSTGRES_DB: superset-db
+        POSTGRES_DB: '{{db.db.database}}'
         POSTGRES_PASSWORD: '{{db.db.password}}'
         POSTGRES_USER: '{{db.db.user}}'
         REDIS_PASSWORD: '{{db.cache.password}}'

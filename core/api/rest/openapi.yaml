@@ -2913,6 +2913,13 @@ components:
         root_user: { type: string }
         root_password: { type: string, description: Present only on create / reset; shown once. }
         require_password: { type: boolean }
+        initial_database:
+          type: string
+          description: >-
+            The application database the engine created on first boot. Empty
+            means the engine's own default — the `postgres` maintenance
+            database for PostgreSQL, and nothing at all for MySQL, MariaDB and
+            MongoDB.
         status: { type: string, enum: [running, provisioning, stopped, error, unknown] }
         status_detail: { type: string }
         desired_state:
@@ -2940,6 +2947,14 @@ components:
         memory_limit_mb: { type: integer }
         expose_port: { type: integer, description: 0 or omitted = private only. }
         require_password: { type: boolean }
+        initial_database:
+          type: string
+          description: >-
+            An application database for the engine to create on first boot; a
+            plain SQL identifier, at most 63 characters. Creation-only: the
+            engine images read it while initializing an empty data directory
+            and ignore it on every later start, so PATCH has no counterpart.
+            Rejected for Redis and Valkey, whose databases are numbered.
     CreateDatabaseResponse:
       type: object
       required: [database, root_password]

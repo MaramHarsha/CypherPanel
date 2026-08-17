@@ -4,13 +4,13 @@ INSERT INTO databases (
     server_id, cpu_limit, memory_limit_mb,
     volume_name, data_path, expose_port, network,
     root_user, root_password_ct, root_password_nonce, require_password,
-    status, status_detail
+    status, status_detail, initial_database
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8,
     $9, $10, $11, $12,
     $13, $14, $15, $16,
-    $17, $18
+    $17, $18, $19
 )
 RETURNING *;
 

@@ -33,6 +33,8 @@ export interface Database {
   /** Present only on create / reset; shown once. */
   root_password?: string;
   require_password: boolean;
+  /** The application database the engine created on first boot. Empty means the engine's own default — the `postgres` maintenance database for PostgreSQL, and nothing at all for MySQL, MariaDB and MongoDB. */
+  initial_database?: string;
   status: DatabaseStatus;
   status_detail?: string;
   /** What the operator asked for, as distinct from `status` (what the agent last observed). Start/stop are guarded on this, so a client must gate those actions on `desired_state` rather than `status` — otherwise it offers Start whenever reality is still catching up with intent, and the call is rejected. */

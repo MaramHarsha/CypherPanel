@@ -2,7 +2,7 @@
 # Reviewed and committed like a hand-written template; the catalog test is the gate.
 schema: v1
 slug: drupal-with-postgresql
-name: Drupal With Postgresql
+name: Drupal with PostgreSQL
 description: Drupal is a free and open-source web content management system written in PHP and distributed under the GNU General Public License.
 category: cms
 version: 10.6.15-php8.4-apache-trixie
@@ -19,7 +19,7 @@ resources:
       health:
         kind: tcp
       env:
-        DB_HOST: '{{db.db.host}}'
-        DB_NAME: '{{db.db.host}}'
+        DB_HOST: '{{db.db.database}}'
+        DB_NAME: '{{db.db.database}}'
         DB_PASSWORD: '{{db.db.password}}'
-        DB_USER: '{{db.db.host}}'
+        DB_USER: '{{db.db.database}}'

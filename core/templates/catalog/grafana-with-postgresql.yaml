@@ -2,7 +2,7 @@
 # Reviewed and committed like a hand-written template; the catalog test is the gate.
 schema: v1
 slug: grafana-with-postgresql
-name: Grafana With Postgresql
+name: Grafana with PostgreSQL
 description: Grafana is the open source analytics & monitoring solution for every database.
 category: monitoring
 version: 13.0.2

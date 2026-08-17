@@ -28,7 +28,7 @@ resources:
           path: /app/cache
       env:
         DEFAULT_FROM_EMAIL: admin@example.com
-        POSTGRES_DATABASE: weblate
+        POSTGRES_DATABASE: '{{db.db.database}}'
         POSTGRES_HOST: '{{db.db.host}}'
         POSTGRES_PASSWORD: '{{db.db.password}}'
         POSTGRES_PORT: "5432"

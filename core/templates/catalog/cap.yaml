@@ -1,0 +1,34 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: cap
+name: Cap
+description: Cap is the open source alternative to Loom. Lightweight, powerful, and cross-platform. Record and share in seconds.
+category: other
+resources:
+  databases:
+    - name: db
+      engine: mysql
+      version: "8.0"
+  applications:
+    - name: cap-web
+      image: ghcr.io/capsoftware/cap-web@sha256:a15efd82c37442d01fa95c4d94954baa1a84b20b8289b758d293fc51b1eb5d54
+      port: 3000
+      route: true
+      health:
+        kind: tcp
+      env:
+        CAP_AWS_ACCESS_KEY: ""
+        CAP_AWS_BUCKET: ""
+        CAP_AWS_ENDPOINT: ""
+        CAP_AWS_REGION: ""
+        CAP_AWS_SECRET_KEY: ""
+        DATABASE_ENCRYPTION_KEY: '{{secret.32}}'
+        DATABASE_URL: mysql://{{db.db.user}}:{{db.db.password}}@{{db.db.host}}:3306/{{db.db.database}}
+        NEXT_RUNTIME: nodejs
+        NEXTAUTH_SECRET: '{{secret.32}}'
+        NEXTAUTH_URL: https://{{domain}}
+        S3_INTERNAL_ENDPOINT: ""
+        S3_PATH_STYLE: "true"
+        S3_PUBLIC_ENDPOINT: ""
+        WEB_URL: https://{{domain}}

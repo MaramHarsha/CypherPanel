@@ -122,6 +122,7 @@ type Database struct {
 	DeleteVolume       bool
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
+	InitialDatabase    string
 }
 
 type DatabaseBackup struct {

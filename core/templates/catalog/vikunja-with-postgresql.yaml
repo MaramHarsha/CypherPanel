@@ -2,7 +2,7 @@
 # Reviewed and committed like a hand-written template; the catalog test is the gate.
 schema: v1
 slug: vikunja-with-postgresql
-name: Vikunja With Postgresql
+name: Vikunja with PostgreSQL
 description: The open-source, self-hostable to-do app. Organize everything, on all platforms.
 category: other
 version: 2.5.0

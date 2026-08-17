@@ -155,6 +155,20 @@ var dbNameVars = map[string]bool{
 	"MYSQL_DATABASE": true, "MARIADB_DATABASE": true, "MONGO_INITDB_DATABASE": true,
 }
 
+// dbCredentialVars are the engine variables whose value is a credential. A
+// magic name appearing in one of them names *this* database, however the
+// template spelled it.
+var dbCredentialVars = map[string]bool{
+	"POSTGRES_USER": true, "POSTGRES_PASSWORD": true,
+	"MYSQL_USER": true, "MYSQL_PASSWORD": true, "MYSQL_ROOT_PASSWORD": true,
+	"MARIADB_USER": true, "MARIADB_PASSWORD": true, "MARIADB_ROOT_PASSWORD": true,
+	"MONGO_INITDB_ROOT_USERNAME": true, "MONGO_INITDB_ROOT_PASSWORD": true,
+	"REDIS_PASSWORD": true, "VALKEY_PASSWORD": true,
+}
+
+// magicRefRe finds a SERVICE_* reference inside a value, in either spelling.
+var magicRefRe = regexp.MustCompile(`\$\{?(SERVICE_[A-Z0-9_]+)\}?`)
+
 // envResolver holds everything an environment value may need to resolve
 // against: compose's project-wide defaults and the databases this template
 // created out of engine services.
@@ -249,9 +263,12 @@ func newEnvResolver(svcs []service, dbs []dbService, dbNames map[string]string) 
 			re:   hostnameRefRe(d.svc.name),
 			repl: "${1}{{db." + name + ".host}}${2}",
 		})
-		if d.engine == domain.EnginePostgreSQL {
-			// In a PostgreSQL DSN the path segment *is* the database, so it
-			// resolves through the placeholder whatever upstream named it.
+		// In a DSN for an engine with named databases the path segment *is*
+		// the database, so it resolves through the placeholder whatever
+		// upstream called it. Redis and Valkey are excluded deliberately:
+		// their path is a database *number*, and rewriting it would point the
+		// application at a name their protocol has no way to use.
+		if domain.EngineDefaults(d.engine, "").DatabaseEnv != "" {
 			e.dsnPaths = append(e.dsnPaths, regexp.MustCompile(
 				`(\{\{db\.`+regexp.QuoteMeta(name)+`\.host\}\}(?::[0-9]+)?/)[A-Za-z0-9_.-]+`))
 		}
@@ -267,12 +284,31 @@ func newEnvResolver(svcs []service, dbs []dbService, dbNames map[string]string) 
 			if i < 0 {
 				continue
 			}
-			if !dbNameVars[kv[:i]] {
+			key, value := kv[:i], kv[i+1:]
+			if dbNameVars[key] {
+				if declared := walk(value, func(_, def string, hasDef bool) string { return def }); declared != "" {
+					e.literals[declared] = name
+				}
 				continue
 			}
-			declared := walk(kv[i+1:], func(_, def string, hasDef bool) string { return def })
-			if declared != "" {
-				e.literals[declared] = name
+			// A magic name used as this engine's credential belongs to this
+			// database, whatever it is called. Coolify's MySQL templates
+			// habitually name it after the application —
+			// `MYSQL_USER=$SERVICE_USER_WORDPRESS` — so without this the
+			// application's own reference to that name resolves to an
+			// unrelated random secret and it authenticates as nobody.
+			//
+			// It resolves to the *root* credentials, because a scoped
+			// application user is not something a managed database creates;
+			// every other converted template already connects as root, so this
+			// is the same posture, not a new one.
+			if !dbCredentialVars[key] {
+				continue
+			}
+			for _, m := range magicRefRe.FindAllStringSubmatch(value, -1) {
+				if parsed, ok := parseMagic(m[1]); ok && parsed.kind == magicGenerated {
+					claim(strings.ToUpper(parsed.name), name)
+				}
 			}
 		}
 	}
@@ -396,6 +432,13 @@ func translate(e *envResolver, kv string, svcName string, secretUses map[string]
 	// it would install a truncated URL or DSN that looks configured and is not.
 	if empties > 0 && strings.TrimSpace(out) != "" {
 		r.add("%s interpolates a variable with no default into %q; the installed value would be malformed", key, raw)
+	}
+	// A value that *is* an application database name has to resolve through the
+	// placeholder: templates write `WORDPRESS_DB_NAME=wordpress` as a literal,
+	// and the managed database is not called that. Whole-value equality only —
+	// the same word inside a path or a URL is not a database reference.
+	if db, ok := e.literals[strings.TrimSpace(out)]; ok {
+		return key, "{{db." + db + ".database}}", true
 	}
 	return key, e.rewriteAddresses(out), true
 }

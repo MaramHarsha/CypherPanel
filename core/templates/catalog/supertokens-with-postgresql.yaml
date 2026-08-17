@@ -2,7 +2,7 @@
 # Reviewed and committed like a hand-written template; the catalog test is the gate.
 schema: v1
 slug: supertokens-with-postgresql
-name: Supertokens With Postgresql
+name: Supertokens with PostgreSQL
 description: An open-source authentication solution that simplifies the implementation of secure user authentication and session management for web and mobile applications.
 category: security
 resources:

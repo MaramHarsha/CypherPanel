@@ -1,0 +1,28 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: joomla-with-mariadb
+name: Joomla with MariaDB
+description: Joomla! is the mobile-ready and user-friendly way to build your website. Choose from thousands of features and designs. Joomla! is free and open source.
+category: cms
+version: 6.1.2-php8.4-apache
+resources:
+  databases:
+    - name: db
+      engine: mariadb
+      version: "11"
+  applications:
+    - name: joomla
+      image: joomla@sha256:b2cb982ac6806572b6601323ec836371d583a44510ac03f45a729ecae1f14269
+      port: 80
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: joomla-data
+          path: /var/www/html
+      env:
+        JOOMLA_DB_HOST: '{{db.db.host}}'
+        JOOMLA_DB_NAME: '{{db.db.database}}'
+        JOOMLA_DB_PASSWORD: '{{db.db.password}}'
+        JOOMLA_DB_USER: '{{db.db.user}}'

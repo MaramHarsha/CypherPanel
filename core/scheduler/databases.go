@@ -80,41 +80,9 @@ func (s *Scheduler) reconcileDatabaseLocked(ctx context.Context, dbID string) er
 		return fmt.Errorf("scheduler: loading revision: %w", err)
 	}
 
-	defaults := domain.EngineDefaults(db.Engine, db.Version)
-	env := make(map[string]string)
-
-	// Decrypt sealed password if it exists and engine requires/uses it.
-	if db.RequirePassword && len(db.RootPasswordCT) > 0 {
-		pwd, err := s.opener.Open(db.RootPasswordCT, db.RootPasswordNonce)
-		if err != nil {
-			return fmt.Errorf("scheduler: decrypting root password: %w", err)
-		}
-		if defaults.PasswordEnv != "" {
-			env[defaults.PasswordEnv] = string(pwd)
-		}
-	}
-
-	spec := &agentv1.DbSpec{
-		DbId:          db.ID,
-		EnvironmentId: db.EnvironmentID,
-		RevisionId:    rev.ID,
-		Engine:        string(db.Engine),
-		Image:         defaults.Image,
-		VolumeName:    db.VolumeName,
-		DataPath:      db.DataPath,
-		Network:       db.Network,
-		Env:           env,
-		HealthCmd:     defaults.HealthCmd,
-	}
-
-	if db.ExposePort != nil {
-		spec.ExposePort = uint32(*db.ExposePort)
-	}
-	if db.CPULimit != nil {
-		spec.CpuLimit = *db.CPULimit
-	}
-	if db.MemoryLimitMB != nil {
-		spec.MemoryLimitMb = uint32(*db.MemoryLimitMB)
+	spec, err := s.dbSpec(db, rev)
+	if err != nil {
+		return err
 	}
 
 	work := &agentv1.DbProvisionWork{
@@ -167,4 +135,56 @@ func (s *Scheduler) HandleDbStatus(ctx context.Context, serverID string, st *age
 			s.log.Error("db status: deleting row after confirmation", "db_id", db.ID, "error", err)
 		}
 	}
+}
+
+// dbSpec builds the container spec for one database revision. Both the work
+// item and the desired-state sync go through it: the agent compares what it is
+// told to converge to against what the sync advertises, so if the two were
+// assembled separately every field added to one and forgotten in the other
+// would read as permanent drift and re-provision the container forever.
+func (s *Scheduler) dbSpec(db domain.Database, rev domain.DatabaseRevision) (*agentv1.DbSpec, error) {
+	defaults := domain.EngineDefaults(db.Engine, db.Version)
+	env := make(map[string]string)
+
+	// Decrypt sealed password if it exists and the engine requires/uses it.
+	if db.RequirePassword && len(db.RootPasswordCT) > 0 {
+		pwd, err := s.opener.Open(db.RootPasswordCT, db.RootPasswordNonce)
+		if err != nil {
+			return nil, fmt.Errorf("scheduler: decrypting root password: %w", err)
+		}
+		if defaults.PasswordEnv != "" {
+			env[defaults.PasswordEnv] = string(pwd)
+		}
+	}
+	// The engine image creates this database while initializing an empty data
+	// directory and ignores the variable on every later start
+	// (managed-databases.md §2). Sending it unconditionally is still correct:
+	// it is part of the spec the agent converges to, and an already-initialized
+	// container simply pays it no attention.
+	if db.InitialDatabase != "" && defaults.DatabaseEnv != "" {
+		env[defaults.DatabaseEnv] = db.InitialDatabase
+	}
+
+	spec := &agentv1.DbSpec{
+		DbId:          db.ID,
+		EnvironmentId: db.EnvironmentID,
+		RevisionId:    rev.ID,
+		Engine:        string(db.Engine),
+		Image:         defaults.Image,
+		VolumeName:    db.VolumeName,
+		DataPath:      db.DataPath,
+		Network:       db.Network,
+		Env:           env,
+		HealthCmd:     defaults.HealthCmd,
+	}
+	if db.ExposePort != nil {
+		spec.ExposePort = uint32(*db.ExposePort)
+	}
+	if db.CPULimit != nil {
+		spec.CpuLimit = *db.CPULimit
+	}
+	if db.MemoryLimitMB != nil {
+		spec.MemoryLimitMb = uint32(*db.MemoryLimitMB)
+	}
+	return spec, nil
 }

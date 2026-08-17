@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"regexp"
 	"strings"
 
 	"github.com/MaramHarsha/cypherpanel/core/domain"
@@ -36,6 +37,13 @@ type ValidationError struct{ Msg string }
 func (e *ValidationError) Error() string { return "databases: " + e.Msg }
 
 func invalid(msg string) error { return &ValidationError{Msg: msg} }
+
+// initialDatabaseRe bounds an initial database name to a plain SQL identifier.
+// The value is read by the engine image's own entrypoint, not by SQL we write —
+// the restriction exists so a name cannot depend on that entrypoint's quoting,
+// and so one that is legal on PostgreSQL is legal on MySQL too. 63 characters
+// is the tightest of the engines' limits (managed-databases.md §2).
+var initialDatabaseRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,62}$`)
 
 // Store is the persistence the service needs (consumer-defined, rule 6).
 type Store interface {
@@ -86,6 +94,10 @@ type CreateInput struct {
 	MemoryLimitMB   *int
 	ExposePort      *int
 	RequirePassword bool // Redis/Valkey: opt-in to password auth
+	// InitialDatabase names an application database the engine creates on
+	// first boot (managed-databases.md §2). Optional; empty means the engine's
+	// own default, which for MySQL, MariaDB and MongoDB is none at all.
+	InitialDatabase string
 }
 
 // Create validates and creates a managed database under envID, returning it
@@ -135,6 +147,7 @@ func (s *Service) Create(ctx context.Context, envID string, in CreateInput) (db 
 		Network:         "cypher-" + envID,
 		RootUser:        defaults.RootUser,
 		RequirePassword: in.RequirePassword,
+		InitialDatabase: in.InitialDatabase,
 		Status:          domain.DbStopped,
 	}
 
@@ -407,6 +420,9 @@ func configSnapshot(d domain.Database) ([]byte, error) {
 		"root_user":        d.RootUser,
 		"require_password": d.RequirePassword,
 	}
+	if d.InitialDatabase != "" {
+		snap["initial_database"] = d.InitialDatabase
+	}
 	if d.CPULimit != nil {
 		snap["cpu_limit"] = *d.CPULimit
 	}
@@ -450,6 +466,16 @@ func validateAndDefault(in CreateInput) (CreateInput, error) {
 	}
 	if err := validateLimits(in.CPULimit, in.MemoryLimitMB, in.ExposePort); err != nil {
 		return in, err
+	}
+	in.InitialDatabase = strings.TrimSpace(in.InitialDatabase)
+	if in.InitialDatabase != "" {
+		defaults := domain.EngineDefaults(engine, "")
+		if defaults.DatabaseEnv == "" {
+			return in, invalid(fmt.Sprintf("%s has numbered databases, not named ones — leave initial_database empty", engine))
+		}
+		if !initialDatabaseRe.MatchString(in.InitialDatabase) {
+			return in, invalid("initial_database must start with a letter or underscore and contain only letters, digits and underscores, at most 63 characters")
+		}
 	}
 	// Default version from engine matrix if not specified.
 	if strings.TrimSpace(in.Version) == "" {

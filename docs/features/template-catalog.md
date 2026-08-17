@@ -70,7 +70,7 @@ The only dynamic values, resolved once at install time by a strict tokenizer
 | `{{db.<name>.port}}` | the engine's canonical port |
 | `{{db.<name>.user}}` | the engine's root user |
 | `{{db.<name>.password}}` | the generated root password (sealed once it lands in the app's env) |
-| `{{db.<name>.database}}` | the engine's default database (`postgres` for PostgreSQL; empty for engines without one) |
+| `{{db.<name>.database}}` | the application database the install asked the engine to create (managed-databases.md §2); the engine default when it asked for none |
 | `{{db.<name>.url}}` | engine URL (`postgres://user:pass@host:port/db`, `redis://:pass@host:port`, …) |
 | `{{secret.N}}` | a fresh random secret of N bytes hex-encoded (16 ≤ N ≤ 64), generated per install |
 | `{{domain}}` | the domain the operator entered at install (empty when none) |
@@ -89,21 +89,25 @@ follow-up once a real template demands one, not speculative surface.
 Templates live in `core/templates/catalog/*.yaml` and are embedded
 (`go:embed`) — versioned with the binary, no runtime fetch, no network
 dependency (ADR-007 §Decision 3). A unit test parses and validates **every**
-bundled file; an invalid template cannot ship. The launch catalog is a
-curated subset (feature-matrix: "V1 (subset) → full in Phase 4") biased to
-what the schema expresses today: single-container tools and
-PostgreSQL/Redis-family-backed stacks. Named-database support for
-MySQL/MariaDB-backed stacks (WordPress, Ghost) rides on a Managed-Database
-"initial database name" field — recorded follow-up, not in this slice.
+bundled file; an invalid template cannot ship.
+
+The catalog is a hand-curated core plus everything §6's importer converts:
+single-container tools and stacks backed by any of the managed engines.
+MySQL- and MariaDB-backed stacks (WordPress, Ghost) arrived with the
+Managed-Database initial-database field
+([managed-databases.md](managed-databases.md) §2), which every install now
+uses so that `{{db.<name>.database}}` names a database that exists.
 
 ## 4. Install semantics
 
 `POST /api/v1/templates/{slug}/install` `{environment_id, server_id, domain?,
 name?}` → `202 {applications: [ids], databases: [ids]}`.
 
-Order: databases first (their `Create` returns the root password exactly once
-— captured only to resolve placeholders, then discarded; the sealed copy in
-the app's env vars is the durable one), then applications
+Order: databases first — each created with an application database of its own,
+derived from the install name, which is what makes `{{db.<name>.database}}`
+resolve to something that exists (their `Create` returns the root password
+exactly once — captured only to resolve placeholders, then discarded; the
+sealed copy in the app's env vars is the durable one) — then applications
 (source.kind=`image`, env vars sealed by the applications service), then one
 deploy per application through the ordinary scheduler (image deploys go
 straight to rollout). Resource names are `<name>-<resource>` where `name`

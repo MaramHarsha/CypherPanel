@@ -39,6 +39,7 @@ func (s *Store) CreateDatabaseWithRevision(ctx context.Context, d domain.Databas
 		RootPasswordCt:    d.RootPasswordCT,
 		RootPasswordNonce: d.RootPasswordNonce,
 		RequirePassword:   d.RequirePassword,
+		InitialDatabase:   d.InitialDatabase,
 		Status:            d.Status,
 		StatusDetail:      d.StatusDetail,
 	})
@@ -268,6 +269,7 @@ func databaseFromRow(r db.Database) domain.Database {
 		RootPasswordCT:     r.RootPasswordCt,
 		RootPasswordNonce:  r.RootPasswordNonce,
 		RequirePassword:    r.RequirePassword,
+		InitialDatabase:    r.InitialDatabase,
 		DesiredRevisionID:  ptrFromText(r.DesiredRevisionID),
 		DesiredState:       r.DesiredState,
 		Status:             r.Status,

@@ -50,8 +50,8 @@ resources:
         DATABASE_SAVE_DATA_NEW_MESSAGE: "true"
         DATABASE_SAVE_MESSAGE_UPDATE: "true"
         DATABASE_URL: postgresql://{{db.db.user}}:{{db.db.password}}@{{db.db.host}}:5432/{{db.db.host}}
-        DB_POSTGRESDB_DATABASE: '{{db.db.host}}'
-        DB_POSTGRESDB_HOST: '{{db.db.host}}'
+        DB_POSTGRESDB_DATABASE: '{{db.db.database}}'
+        DB_POSTGRESDB_HOST: '{{db.db.database}}'
         DB_POSTGRESDB_PASSWORD: '{{db.db.password}}'
         DB_POSTGRESDB_PORT: "5432"
         DB_POSTGRESDB_USER: '{{db.db.user}}'

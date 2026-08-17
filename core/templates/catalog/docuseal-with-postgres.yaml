@@ -2,7 +2,7 @@
 # Reviewed and committed like a hand-written template; the catalog test is the gate.
 schema: v1
 slug: docuseal-with-postgres
-name: Docuseal With Postgres
+name: Docuseal with PostgreSQL
 description: Document Signing for Everyone free forever for individuals, extensible for businesses and developers. Open Source Alternative to DocuSign, PandaDoc and more.
 category: other
 version: 3.2.1

@@ -71,13 +71,13 @@ then read the diff.
 | `$SERVICE_PASSWORD_<name>`, `$SERVICE_BASE64_*`, `$SERVICE_HEX_*` | `{{secret.N}}` of matching length |
 | the same, where `<name>` is an engine | `{{db.<n>.password}}` / `{{db.<n>.user}}` |
 | a database service's name used as a host | `{{db.<n>.host}}` |
-| a PostgreSQL DSN's path segment | `{{db.<n>.database}}` |
+| a DSN's database path segment | `{{db.<n>.database}}` (never for a cache — that path is a database *number*) |
 | `${VAR:-default}` | the default, resolved project-wide |
 | `${VAR}` with no default anywhere | an empty value the operator fills in after install |
 | `healthcheck:` | dropped; the application gets a TCP probe of its own port |
 | `restart:`, `container_name:`, `logging:`, `labels:` | dropped; the panel owns all four |
 
-Three of those deserve their reasoning stated, because they are where a
+Four of those deserve their reasoning stated, because they are where a
 faithful-looking translation would still be wrong:
 
 **Health checks become TCP, not HTTP.** A compose healthcheck is a shell
@@ -93,12 +93,20 @@ to carry `{{db.<n>.password}}`. A template with nowhere to put the password —
 one that configures a cache host and port but no credential — is refused
 instead, because it would install and then fail to authenticate.
 
-**PostgreSQL database names are rewritten, not carried.** Upstream creates the
-application's database through the engine container's `POSTGRES_DB`; a managed
-database has only the engine default. Carrying the literal would point the
-application at a database nothing creates, so every reference resolves through
-`{{db.<n>.database}}` — and a name that survives translation anywhere is a
-refusal, not a warning.
+**Database names are rewritten, not carried.** Upstream creates the
+application's database through the engine container's `POSTGRES_DB` or
+`MYSQL_DATABASE`; a template install creates its own
+([managed-databases.md](../features/managed-databases.md) §2). Carrying the
+literal would point the application at a database nobody creates, so every
+reference resolves through `{{db.<n>.database}}` — and a name that survives
+translation anywhere is a refusal, not a warning.
+
+**A scoped database user becomes the root one.** Coolify's MySQL templates
+habitually give the application its own user
+(`MYSQL_USER=$SERVICE_USER_WORDPRESS`). A managed database creates no such
+user, so those references resolve to the root credentials it does have. That is
+the same posture every other converted template already has — all of them
+connect as `root` or `postgres` — not a new one.
 
 ## What it refuses, and why
 
@@ -121,11 +129,6 @@ resource, which is [a separate Phase 4 feature](../features/template-catalog.md#
 
 **Unsupported by the resource model:**
 
-- **MySQL and MariaDB backing stores.** A managed database exposes only the
-  root database; these stacks need a named application database. This is the
-  recorded "initial database name" follow-up in
-  [template-catalog.md](../features/template-catalog.md) §3, and it is the
-  single largest blocker by template count.
 - **Applications addressed by hostname.** Application containers are named per
   revision, so there is no stable DNS name and no placeholder for one. A
   two-application template survives only if the halves do not talk to each

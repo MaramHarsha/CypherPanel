@@ -28,7 +28,7 @@ resources:
         - name: redmine-plugins
           path: /usr/src/redmine/plugins
       env:
-        REDMINE_DB_DATABASE: redmine-db
+        REDMINE_DB_DATABASE: '{{db.db.database}}'
         REDMINE_DB_PASSWORD: '{{db.db.password}}'
         REDMINE_DB_PORT: "5432"
         REDMINE_DB_POSTGRES: '{{db.db.host}}'

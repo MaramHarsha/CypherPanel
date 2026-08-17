@@ -2,7 +2,7 @@
 # Reviewed and committed like a hand-written template; the catalog test is the gate.
 schema: v1
 slug: unleash-with-postgresql
-name: Unleash With Postgresql
+name: Unleash with PostgreSQL
 description: Open source feature flag management for enterprises.
 category: dev-tools
 version: 8.1.0

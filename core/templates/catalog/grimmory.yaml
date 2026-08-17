@@ -1,0 +1,35 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: grimmory
+name: Grimmory
+description: Grimmory is a self-hosted application for managing your entire book collection in one place. Organize, read, annotate, sync across devices, and share without relying on third-party services.
+category: other
+version: nightly-20260403-3a371f7
+resources:
+  databases:
+    - name: db
+      engine: mariadb
+      version: "12"
+  applications:
+    - name: grimmory
+      image: grimmory/grimmory@sha256:bee0fc136811cc9788aa0cc53bb15f648e838a66cdf42faaf5fee58bfe9b7f97
+      port: 80
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: grimmory-data
+          path: /app/data
+        - name: grimmory-books
+          path: /books
+        - name: grimmory-bookdrop
+          path: /bookdrop
+      env:
+        BOOKLORE_PORT: "80"
+        DATABASE_PASSWORD: '{{db.db.password}}'
+        DATABASE_URL: jdbc:mariadb://{{db.db.host}}:3306/{{db.db.database}}
+        DATABASE_USERNAME: '{{db.db.user}}'
+        GROUP_ID: "0"
+        TZ: UTC
+        USER_ID: "0"

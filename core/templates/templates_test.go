@@ -511,3 +511,47 @@ func TestDatabaseBackedAppsGetAPatientHealthGate(t *testing.T) {
 		t.Fatalf("a database-free template should not widen the gate, got %+v", apps2.created[0].Health)
 	}
 }
+
+// A template install always asks for an application database of its own. That
+// is what makes {{db.<name>.database}} name something that exists: MySQL,
+// MariaDB and MongoDB ship none at all, and PostgreSQL ships only its
+// maintenance database (managed-databases.md §2).
+func TestInstallRequestsAnInitialDatabase(t *testing.T) {
+	dbs := &fakeDbs{}
+	s := newTestService(t, &fakeApps{}, dbs, &fakeDeployer{})
+
+	if _, err := s.Install(context.Background(), "n8n", InstallInput{
+		EnvironmentID: "env_1", ServerID: "srv_1", Domain: "n8n.example.com", Name: "my-flows",
+	}); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if len(dbs.created) != 1 {
+		t.Fatalf("databases created = %d, want 1", len(dbs.created))
+	}
+	got := dbs.created[0].InitialDatabase
+	if got != "my_flows_db" {
+		t.Fatalf("InitialDatabase = %q, want my_flows_db", got)
+	}
+}
+
+// The name is fed to the engine image's entrypoint, so whatever the operator
+// called the install it has to come out a plain SQL identifier.
+func TestInitialDatabaseNameIsAnIdentifier(t *testing.T) {
+	cases := map[string]string{
+		"n8n|db":                       "n8n_db",
+		"my-flows|db":                  "my_flows_db",
+		"9lives|db":                    "app_9lives_db",
+		"a|" + strings.Repeat("b", 80): "a_" + strings.Repeat("b", 61),
+	}
+	valid := regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,62}$`)
+	for input, want := range cases {
+		base, name, _ := strings.Cut(input, "|")
+		got := initialDatabaseName(base, name)
+		if got != want {
+			t.Errorf("initialDatabaseName(%q, %q) = %q, want %q", base, name, got, want)
+		}
+		if !valid.MatchString(got) {
+			t.Errorf("initialDatabaseName(%q, %q) = %q, which the databases service would reject", base, name, got)
+		}
+	}
+}

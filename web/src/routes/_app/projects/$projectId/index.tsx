@@ -254,7 +254,12 @@ function NewDatabaseDialog({ envId, primary }: { envId: string; primary?: boolea
   const [engine, setEngine] = useState<keyof typeof ENGINE_VERSIONS>("postgresql");
   const [version, setVersion] = useState(ENGINE_VERSIONS.postgresql![0]!);
   const [serverId, setServerId] = useState("");
+  const [initialDatabase, setInitialDatabase] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  // Redis and Valkey number their databases rather than naming them, so there
+  // is nothing to ask for.
+  const namesDatabases = engine !== "redis" && engine !== "valkey";
 
   // A builder-only agent is built without a workload driver and rejects rollout
   // work, so offering it would create the resource and then fail every deploy.
@@ -288,7 +293,15 @@ function NewDatabaseDialog({ envId, primary }: { envId: string; primary?: boolea
     setError(null);
     create.mutate({
       id: envId,
-      data: { name, engine: engine as CreateDatabaseRequest["engine"], version, server_id: chosenServer },
+      data: {
+        name,
+        engine: engine as CreateDatabaseRequest["engine"],
+        version,
+        server_id: chosenServer,
+        ...(namesDatabases && initialDatabase.trim() !== ""
+          ? { initial_database: initialDatabase.trim() }
+          : {}),
+      },
     });
   };
 
@@ -363,6 +376,24 @@ function NewDatabaseDialog({ envId, primary }: { envId: string; primary?: boolea
               )}
             </Field>
           </div>
+          {namesDatabases && (
+            <Field
+              label="Application database"
+              hint="Optional — a database created inside the engine for your app to use. Cannot be changed later."
+            >
+              {(id) => (
+                <Input
+                  id={id}
+                  value={initialDatabase}
+                  onChange={(e) => setInitialDatabase(e.target.value)}
+                  placeholder={engine === "postgresql" ? "postgres" : "appdb"}
+                  pattern="[A-Za-z_][A-Za-z0-9_]*"
+                  maxLength={63}
+                  title="Letters, digits and underscores; must not start with a digit."
+                />
+              )}
+            </Field>
+          )}
           {enrolled.length > 1 && (
             <Field label="Server">
               {(id) => (

@@ -29,8 +29,11 @@ type databaseDTO struct {
 	RootUser        string   `json:"root_user"`
 	RootPassword    string   `json:"root_password,omitempty"` // only on create / reset
 	RequirePassword bool     `json:"require_password"`
-	Status          string   `json:"status"`
-	StatusDetail    string   `json:"status_detail,omitempty"`
+	// InitialDatabase is the application database the engine created on first
+	// boot; empty means the engine's own default (managed-databases.md §2).
+	InitialDatabase string `json:"initial_database,omitempty"`
+	Status          string `json:"status"`
+	StatusDetail    string `json:"status_detail,omitempty"`
 	// What the operator asked for, as distinct from Status (what the agent
 	// observes). Clients need both: gating a Start button on the observed
 	// status offers the action whenever reality lags intent, and the call then
@@ -58,6 +61,7 @@ func toDatabaseDTO(d domain.Database) databaseDTO {
 		RootUser:           d.RootUser,
 		RootPassword:       "[sealed]", // never expose — rule 20
 		RequirePassword:    d.RequirePassword,
+		InitialDatabase:    d.InitialDatabase,
 		Status:             d.Status,
 		DesiredState:       d.DesiredState,
 		StatusDetail:       d.StatusDetail,
@@ -79,6 +83,10 @@ type createDatabaseRequest struct {
 	MemoryLimitMB   *int     `json:"memory_limit_mb,omitempty"`
 	ExposePort      *int     `json:"expose_port,omitempty"`
 	RequirePassword bool     `json:"require_password"`
+	// InitialDatabase is creation-only by design: the engine images read it
+	// while initializing an empty data directory and ignore it on every later
+	// start, so PATCH deliberately has no counterpart (managed-databases.md §2).
+	InitialDatabase string `json:"initial_database,omitempty"`
 }
 
 type createDatabaseResponse struct {
@@ -131,6 +139,7 @@ func (a *API) handleCreateDatabase(w http.ResponseWriter, r *http.Request) {
 		MemoryLimitMB:   req.MemoryLimitMB,
 		ExposePort:      req.ExposePort,
 		RequirePassword: req.RequirePassword,
+		InitialDatabase: req.InitialDatabase,
 	})
 	if err != nil {
 		handleDatabaseError(a, w, err, "creating database")
