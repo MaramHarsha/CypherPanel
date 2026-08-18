@@ -4,7 +4,7 @@ schema: v1
 slug: usesend
 name: Usesend
 description: Usesend is an open-source alternative to Resend, Sendgrid, Mailgun and Postmark etc.
-category: other
+category: communication
 version: 1.9.6
 resources:
   databases:

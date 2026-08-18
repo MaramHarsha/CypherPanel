@@ -4,7 +4,7 @@ schema: v1
 slug: readeck
 name: Readeck
 description: Simple web application that lets you save the precious readable content of web pages you like and want to keep forever.
-category: other
+category: productivity
 resources:
   applications:
     - name: readeck

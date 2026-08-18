@@ -4,7 +4,7 @@ schema: v1
 slug: bento-pdf
 name: Bento PDF
 description: Process PDFs entirely in your browser. No uploads. No servers. Complete privacy.
-category: other
+category: productivity
 version: 1.16.1
 resources:
   applications:

@@ -4,7 +4,7 @@ schema: v1
 slug: linkding
 name: Linkding
 description: A self-hosted bookmark manager designed to be minimal, fast, and easy to set up.
-category: other
+category: productivity
 version: 1.46.1
 resources:
   applications:

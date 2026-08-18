@@ -4,7 +4,7 @@ schema: v1
 slug: freshrss-with-mysql
 name: FreshRSS with MySQL
 description: A free, self-hostable feed aggregator.
-category: other
+category: productivity
 version: 1.29.1
 resources:
   databases:

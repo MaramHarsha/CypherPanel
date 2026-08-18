@@ -4,7 +4,7 @@ schema: v1
 slug: pairdrop
 name: Pairdrop
 description: Pairdrop is a self-hosted file sharing and collaboration platform, offering secure file sharing and collaboration capabilities for efficient teamwork.
-category: other
+category: productivity
 resources:
   applications:
     - name: pairdrop

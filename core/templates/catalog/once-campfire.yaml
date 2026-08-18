@@ -4,7 +4,7 @@ schema: v1
 slug: once-campfire
 name: Once Campfire
 description: Super simple group chat, without a subscription.
-category: other
+category: communication
 version: main
 resources:
   applications:

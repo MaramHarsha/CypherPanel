@@ -4,7 +4,7 @@ schema: v1
 slug: fileflows
 name: Fileflows
 description: FileFlows can drastically reduce your files, up to 90%, saving you space and money. No need to buy more hard drives, just shrink your files and start saving.
-category: other
+category: media
 resources:
   applications:
     - name: fileflows

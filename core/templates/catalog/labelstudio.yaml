@@ -4,7 +4,7 @@ schema: v1
 slug: labelstudio
 name: Labelstudio
 description: Label Studio is a multi-type data labeling and annotation tool with standardized output format
-category: other
+category: ai
 resources:
   databases:
     - name: db

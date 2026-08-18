@@ -2993,7 +2993,7 @@ components:
         slug: { type: string }
         name: { type: string }
         description: { type: string }
-        category: { type: string, enum: [analytics, automation, cms, dev-tools, monitoring, security, storage, other] }
+        category: { type: string, enum: [ai, analytics, automation, cms, communication, dev-tools, finance, media, monitoring, productivity, security, storage, other] }
         version: { type: string }
         resources:
           $ref: "#/components/schemas/TemplateResources"

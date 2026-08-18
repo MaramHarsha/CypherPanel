@@ -4,7 +4,7 @@ schema: v1
 slug: jellyfin
 name: Jellyfin
 description: Jellyfin is a media server for hosting and streaming your media collection.
-category: other
+category: media
 version: 10.11.8
 resources:
   applications:

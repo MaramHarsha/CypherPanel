@@ -4,7 +4,7 @@ schema: v1
 slug: sonarr
 name: Sonarr
 description: Sonarr⁠ (formerly NZBdrone) is a PVR for usenet and bittorrent users. It can monitor multiple RSS feeds for new episodes of your favorite shows and will grab, sort and rename them. It can also…
-category: other
+category: media
 resources:
   applications:
     - name: sonarr

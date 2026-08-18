@@ -4,7 +4,7 @@ schema: v1
 slug: snapdrop
 name: Snapdrop
 description: A self-hosted file-sharing service for secure and convenient file transfers, whether on a local network or the internet.
-category: other
+category: productivity
 version: version-b8b78cc2
 resources:
   applications:

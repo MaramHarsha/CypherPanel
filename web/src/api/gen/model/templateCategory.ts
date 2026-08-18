@@ -11,11 +11,16 @@ export type TemplateCategory = typeof TemplateCategory[keyof typeof TemplateCate
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const TemplateCategory = {
+  ai: 'ai',
   analytics: 'analytics',
   automation: 'automation',
   cms: 'cms',
+  communication: 'communication',
   'dev-tools': 'dev-tools',
+  finance: 'finance',
+  media: 'media',
   monitoring: 'monitoring',
+  productivity: 'productivity',
   security: 'security',
   storage: 'storage',
   other: 'other',

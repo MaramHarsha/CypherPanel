@@ -4,7 +4,7 @@ schema: v1
 slug: babybuddy
 name: Babybuddy
 description: It helps parents track their baby's daily activities, growth, and health with ease.
-category: other
+category: productivity
 resources:
   applications:
     - name: babybuddy

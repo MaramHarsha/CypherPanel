@@ -4,7 +4,7 @@ schema: v1
 slug: unstructured
 name: Unstructured
 description: Unstructured provides a platform and tools to ingest and process unstructured documents for Retrieval Augmented Generation (RAG) and model fine-tuning.
-category: other
+category: ai
 resources:
   applications:
     - name: unstructured

@@ -4,7 +4,7 @@ schema: v1
 slug: overseerr
 name: Overseerr
 description: Overseerr is a request management and media discovery tool built to work with your existing Plex ecosystem.
-category: other
+category: media
 version: 1.35.0
 resources:
   applications:

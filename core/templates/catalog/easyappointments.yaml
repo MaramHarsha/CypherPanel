@@ -4,7 +4,7 @@ schema: v1
 slug: easyappointments
 name: Easyappointments
 description: Schedule Anything. Let's start with easy! Get the best free online appointment scheduler on your server, today.
-category: other
+category: productivity
 resources:
   databases:
     - name: db

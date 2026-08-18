@@ -4,7 +4,7 @@ schema: v1
 slug: vikunja-with-postgresql
 name: Vikunja with PostgreSQL
 description: The open-source, self-hostable to-do app. Organize everything, on all platforms.
-category: other
+category: productivity
 version: 2.5.0
 resources:
   databases:

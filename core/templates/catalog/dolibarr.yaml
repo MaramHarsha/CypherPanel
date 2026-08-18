@@ -4,7 +4,7 @@ schema: v1
 slug: dolibarr
 name: Dolibarr
 description: Dolibarr is a modern software package to manage your organization's activity (contacts, quotes, invoices, orders, stocks, agenda, hr, expense reports, accountancy, ecm, manufacturing, ...).
-category: other
+category: productivity
 version: 23.0.2-php8.2
 resources:
   databases:

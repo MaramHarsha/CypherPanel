@@ -4,7 +4,7 @@ schema: v1
 slug: glpi
 name: Glpi
 description: GLPI (Gestionnaire Libre de Parc Informatique) is a free, open-source IT Service Management (ITSM) platform used for IT asset management, helpdesk, and service desk operations.
-category: other
+category: communication
 version: 11.0.8
 resources:
   databases:

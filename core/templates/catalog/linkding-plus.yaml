@@ -4,7 +4,7 @@ schema: v1
 slug: linkding-plus
 name: Linkding Plus
 description: A self-hosted bookmark manager designed to be minimal, fast, and easy to set up. (Includes feature for archiving websites as HTML snapshots)
-category: other
+category: productivity
 version: 1.46.1-plus
 resources:
   applications:

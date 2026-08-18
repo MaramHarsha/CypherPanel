@@ -4,7 +4,7 @@ schema: v1
 slug: budge
 name: Budge
 description: A budgeting personal finance app.
-category: other
+category: finance
 resources:
   applications:
     - name: budge

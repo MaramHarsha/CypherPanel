@@ -4,7 +4,7 @@ schema: v1
 slug: libretranslate
 name: Libretranslate
 description: Free and open-source machine translation API, entirely self-hosted.
-category: other
+category: ai
 resources:
   applications:
     - name: libretranslate

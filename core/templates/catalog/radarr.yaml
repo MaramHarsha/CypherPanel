@@ -4,7 +4,7 @@ schema: v1
 slug: radarr
 name: Radarr
 description: Radarr⁠ - A fork of Sonarr to work with movies à la Couchpotato.
-category: other
+category: media
 resources:
   applications:
     - name: radarr

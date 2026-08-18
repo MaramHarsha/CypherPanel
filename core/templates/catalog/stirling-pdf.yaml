@@ -4,7 +4,7 @@ schema: v1
 slug: stirling-pdf
 name: Stirling PDF
 description: Stirling is a powerful web based PDF manipulation tool
-category: other
+category: productivity
 version: 2.14.3
 resources:
   applications:

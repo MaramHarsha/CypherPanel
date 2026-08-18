@@ -4,7 +4,7 @@ schema: v1
 slug: langflow
 name: Langflow
 description: Langflow is an open-source, Python-based, customizable framework for building AI applications.
-category: other
+category: ai
 version: 1.7.2
 resources:
   databases:

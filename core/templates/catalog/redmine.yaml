@@ -4,7 +4,7 @@ schema: v1
 slug: redmine
 name: Redmine
 description: Redmine is a flexible project management web application.
-category: other
+category: productivity
 version: 6.1.3-alpine3.24
 resources:
   databases:

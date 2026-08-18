@@ -4,7 +4,7 @@ schema: v1
 slug: lobe-chat
 name: Lobe Chat
 description: An open-source, modern-design AI chat framework.
-category: other
+category: ai
 version: 1.135.5
 resources:
   applications:

@@ -4,7 +4,7 @@ schema: v1
 slug: slash
 name: Slash
 description: An open source, self-hosted links shortener and sharing platform.
-category: other
+category: productivity
 resources:
   applications:
     - name: slash

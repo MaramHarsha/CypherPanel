@@ -4,7 +4,7 @@ schema: v1
 slug: appsmith
 name: Appsmith
 description: A low-code application platform for building internal tools.
-category: other
+category: productivity
 resources:
   applications:
     - name: appsmith

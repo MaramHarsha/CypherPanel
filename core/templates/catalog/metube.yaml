@@ -4,7 +4,7 @@ schema: v1
 slug: metube
 name: Metube
 description: A web GUI for youtube-dl with playlist support. It enables you to effortlessly download videos from YouTube and dozens of other sites.
-category: other
+category: media
 resources:
   applications:
     - name: metube

@@ -4,7 +4,7 @@ schema: v1
 slug: chroma
 name: Chroma
 description: Chroma is the open-source search and retrieval database for AI applications.
-category: other
+category: ai
 version: 1.0.15
 resources:
   applications:

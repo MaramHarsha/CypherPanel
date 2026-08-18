@@ -4,7 +4,7 @@ schema: v1
 slug: docmost
 name: Docmost
 description: Open-source collaborative wiki and documentation software
-category: other
+category: productivity
 version: 0.95.0
 resources:
   databases:

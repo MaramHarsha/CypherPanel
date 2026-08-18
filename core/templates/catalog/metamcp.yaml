@@ -4,7 +4,7 @@ schema: v1
 slug: metamcp
 name: Metamcp
 description: MCP Aggregator, Orchestrator, Middleware, Gateway in one app
-category: dev-tools
+category: ai
 version: "2.4"
 resources:
   databases:

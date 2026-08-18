@@ -4,7 +4,7 @@ schema: v1
 slug: freescout
 name: Freescout
 description: FreeScout is the super lightweight and powerful free open source help desk and shared inbox written in PHP (Laravel framework).
-category: other
+category: communication
 resources:
   databases:
     - name: db

@@ -4,7 +4,7 @@ schema: v1
 slug: audiobookshelf
 name: Audiobookshelf
 description: Self-hosted audiobook, ebook, and podcast server
-category: other
+category: media
 version: 2.34.0
 resources:
   applications:

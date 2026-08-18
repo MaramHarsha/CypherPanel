@@ -4,7 +4,7 @@ schema: v1
 slug: transmission
 name: Transmission
 description: Fast, easy, and free BitTorrent client.
-category: other
+category: media
 resources:
   applications:
     - name: transmission

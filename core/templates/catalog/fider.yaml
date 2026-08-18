@@ -4,7 +4,7 @@ schema: v1
 slug: fider
 name: Fider
 description: Fider is a feedback platform for collecting and managing user feedback.
-category: other
+category: productivity
 version: stable
 resources:
   databases:

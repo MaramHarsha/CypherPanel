@@ -759,15 +759,25 @@ func parseHeader(src []byte) map[string]string {
 }
 
 // categories maps Coolify's free-form category vocabulary onto the schema's
-// eight. Anything unrecognized lands in "other" rather than failing an import
-// over a label.
+// own. Anything unrecognized lands in "other" rather than failing an import
+// over a label — but the mapping is kept wide on purpose: a catalog where
+// "other" is the largest bucket has a category filter that filters nothing.
 var categories = map[string]string{
+	"ai": "ai", "mcp": "ai",
 	"analytics": "analytics", "search": "analytics",
 	"automation": "automation",
 	"cms":        "cms", "documentation": "cms",
+	"communication": "communication", "messaging": "communication",
+	"email": "communication", "mail": "communication", "helpdesk": "communication",
 	"devtools": "dev-tools", "developer-tools": "dev-tools", "development": "dev-tools",
-	"git": "dev-tools", "ci": "dev-tools", "api": "dev-tools", "backend": "dev-tools", "mcp": "dev-tools",
+	"git": "dev-tools", "ci": "dev-tools", "api": "dev-tools", "backend": "dev-tools",
+	"finance":    "finance",
+	"media":      "media",
 	"monitoring": "monitoring", "observability": "monitoring",
+	// Reading and note-taking tools are what someone reaches for under
+	// "productivity"; RSS readers and bookmark managers belong with them
+	// rather than in a category of their own.
+	"productivity": "productivity", "rss": "productivity",
 	"security": "security", "auth": "security", "vpn": "security",
 	"storage": "storage", "database": "storage", "databases": "storage",
 }

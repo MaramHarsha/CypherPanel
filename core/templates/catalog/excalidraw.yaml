@@ -4,7 +4,7 @@ schema: v1
 slug: excalidraw
 name: Excalidraw
 description: Virtual whiteboard for sketching hand-drawn like diagrams
-category: other
+category: productivity
 resources:
   applications:
     - name: excalidraw

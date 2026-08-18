@@ -4,7 +4,7 @@ schema: v1
 slug: memos
 name: Memos
 description: An open-source, lightweight note-taking solution. The pain-less way to create your meaningful notes. Your Notes, Your Way.
-category: other
+category: productivity
 version: 0.30.0
 resources:
   applications:

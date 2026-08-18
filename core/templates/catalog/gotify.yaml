@@ -4,7 +4,7 @@ schema: v1
 slug: gotify
 name: Gotify
 description: Gotify is an open-source self-hosted notification server.
-category: other
+category: communication
 version: 2.7.3
 resources:
   applications:

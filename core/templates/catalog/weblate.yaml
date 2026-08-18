@@ -4,7 +4,7 @@ schema: v1
 slug: weblate
 name: Weblate
 description: Weblate is a libre software web-based continuous localization system.
-category: other
+category: productivity
 version: 2026.8.1.0
 resources:
   databases:

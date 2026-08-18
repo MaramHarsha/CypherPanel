@@ -4,7 +4,7 @@ schema: v1
 slug: miniflux
 name: Miniflux
 description: Miniflux is a minimalist and opinionated feed reader.
-category: other
+category: productivity
 resources:
   databases:
     - name: db

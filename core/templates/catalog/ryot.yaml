@@ -4,7 +4,7 @@ schema: v1
 slug: ryot
 name: Ryot
 description: Roll your own tracker! Ryot is a self-hosted platform for tracking various aspects of life such as media consumption, fitness activities, and more.
-category: other
+category: productivity
 version: 10.3.0
 resources:
   databases:

@@ -4,7 +4,7 @@ schema: v1
 slug: odoo
 name: Odoo
 description: Odoo is a suite of open-source business apps that cover all your company needs.
-category: other
+category: productivity
 version: "18"
 resources:
   databases:

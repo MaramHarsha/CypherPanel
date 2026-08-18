@@ -379,8 +379,20 @@ func TestNamedVolume(t *testing.T) {
 }
 
 func TestCategoryAndDescription(t *testing.T) {
-	if got := category("productivity"); got != "other" {
-		t.Errorf("category(productivity) = %q, want other", got)
+	// The vocabulary is wide on purpose: "other" being the largest bucket is a
+	// filter that filters nothing.
+	for raw, want := range map[string]string{
+		"productivity": "productivity",
+		"rss":          "productivity",
+		"media":        "media",
+		"ai":           "ai",
+		"messaging":    "communication",
+		"auth":         "security",
+		"games":        "other",
+	} {
+		if got := category(raw); got != want {
+			t.Errorf("category(%q) = %q, want %q", raw, got, want)
+		}
 	}
 	if got := category("devtools, git"); got != "dev-tools" {
 		t.Errorf("category(devtools) = %q, want dev-tools", got)

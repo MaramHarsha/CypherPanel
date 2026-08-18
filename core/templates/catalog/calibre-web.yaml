@@ -4,7 +4,7 @@ schema: v1
 slug: calibre-web
 name: Calibre Web
 description: Calibre-web is a web app providing a clean interface for browsing, reading and downloading eBooks.
-category: other
+category: media
 resources:
   applications:
     - name: calibre-web

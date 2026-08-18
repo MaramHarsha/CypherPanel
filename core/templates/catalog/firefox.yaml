@@ -4,7 +4,7 @@ schema: v1
 slug: firefox
 name: Firefox
 description: Fast, private, and self-hosted secure browser for browsing without limits.
-category: other
+category: productivity
 version: 26.08.2
 resources:
   applications:

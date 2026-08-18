@@ -4,7 +4,7 @@ schema: v1
 slug: fizzy
 name: Fizzy
 description: Kanban tracking tool for issues and ideas by 37signals
-category: other
+category: productivity
 version: main
 resources:
   applications:

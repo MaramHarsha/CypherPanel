@@ -4,7 +4,7 @@ schema: v1
 slug: imgcompress
 name: Imgcompress
 description: Offline image compression, conversion, and AI background removal for Docker homelabs.
-category: other
+category: media
 version: 0.6.0
 resources:
   applications:

@@ -4,7 +4,7 @@ schema: v1
 slug: silverbullet
 name: Silverbullet
 description: SilverBullet is a tool to develop, organize, and structure your personal knowledge and to make it universally accessible across all your devices.
-category: other
+category: productivity
 version: v2
 resources:
   applications:

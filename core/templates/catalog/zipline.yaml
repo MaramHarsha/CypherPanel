@@ -4,7 +4,7 @@ schema: v1
 slug: zipline
 name: Zipline
 description: A ShareX/file upload server that is easy to use, packed with features, and with an easy setup!
-category: other
+category: media
 resources:
   databases:
     - name: db

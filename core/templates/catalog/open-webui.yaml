@@ -4,7 +4,7 @@ schema: v1
 slug: open-webui
 name: Open WebUI
 description: User-friendly AI Interface (Supports Ollama, OpenAI API, ...)
-category: other
+category: ai
 version: main
 resources:
   applications:

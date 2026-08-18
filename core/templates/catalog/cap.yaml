@@ -4,7 +4,7 @@ schema: v1
 slug: cap
 name: Cap
 description: Cap is the open source alternative to Loom. Lightweight, powerful, and cross-platform. Record and share in seconds.
-category: other
+category: media
 resources:
   databases:
     - name: db

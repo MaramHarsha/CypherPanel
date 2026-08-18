@@ -30,8 +30,10 @@ schema: v1                    # literal; unknown values rejected
 slug: n8n                     # [a-z0-9-], unique in the catalog, ≤40 chars
 name: n8n
 description: Workflow automation with a visual editor.   # ≤200 chars
-category: automation          # one of: analytics · automation · cms · dev-tools
-                              #   · monitoring · security · storage · other
+category: automation          # one of: ai · analytics · automation · cms
+                              #   · communication · dev-tools · finance · media
+                              #   · monitoring · productivity · security
+                              #   · storage · other
 version: "1.94"               # the packaged upstream version (display only)
 resources:
   databases:                  # optional, ≤3

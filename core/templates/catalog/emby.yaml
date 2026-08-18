@@ -4,7 +4,7 @@ schema: v1
 slug: emby
 name: Emby
 description: A media server software that allows you to organize, stream, and access your multimedia content effortlessly.
-category: other
+category: media
 resources:
   applications:
     - name: emby

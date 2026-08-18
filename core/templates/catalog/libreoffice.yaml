@@ -4,7 +4,7 @@ schema: v1
 slug: libreoffice
 name: Libreoffice
 description: LibreOffice is a free and powerful office suite.
-category: other
+category: productivity
 resources:
   applications:
     - name: libreoffice

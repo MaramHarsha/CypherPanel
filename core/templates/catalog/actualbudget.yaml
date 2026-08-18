@@ -4,7 +4,7 @@ schema: v1
 slug: actualbudget
 name: Actualbudget
 description: A local-first personal finance app.
-category: other
+category: finance
 version: 26.8.1
 resources:
   applications:

@@ -4,7 +4,7 @@ schema: v1
 slug: organizr
 name: Organizr
 description: Homelab Services Organizer
-category: other
+category: productivity
 resources:
   applications:
     - name: organizr
