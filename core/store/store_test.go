@@ -562,7 +562,11 @@ func TestStoreDatabaseLifecycle(t *testing.T) {
 		ExposePort:    nil,
 		Network:       "cypher-" + env.ID,
 		RootUser:      "postgres",
-		Status:        domain.DbStopped,
+		// Round-trips like every other column, and is what makes a templated
+		// application's {{db.<name>.database}} name a database that exists
+		// (managed-databases.md §2).
+		InitialDatabase: "appdb",
+		Status:          domain.DbStopped,
 	}
 
 	revID := ids.New(ids.PrefixDatabaseRevision)
@@ -585,6 +589,9 @@ func TestStoreDatabaseLifecycle(t *testing.T) {
 	fetched, err := s.GetDatabase(ctx, dbID)
 	if err != nil {
 		t.Fatalf("GetDatabase: %v", err)
+	}
+	if fetched.InitialDatabase != "appdb" {
+		t.Fatalf("initial database = %q, want appdb", fetched.InitialDatabase)
 	}
 	if fetched.ID != dbID || fetched.DesiredRevisionID == nil || *fetched.DesiredRevisionID != revID {
 		t.Fatalf("unexpected fetched database: %+v", fetched)

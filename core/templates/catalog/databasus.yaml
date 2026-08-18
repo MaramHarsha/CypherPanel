@@ -1,0 +1,19 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: databasus
+name: Databasus
+description: Databasus is a free, open source and self-hosted tool to backup PostgreSQL, MySQL, and MongoDB.
+category: dev-tools
+version: 3.16.2
+resources:
+  applications:
+    - name: databasus
+      image: databasus/databasus@sha256:e7104e2353c3f7dd40b436c14a8d29b3bbb01ee1f5450d9ef636cb4eac638fbf
+      port: 4005
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: databasus-data
+          path: /databasus-data

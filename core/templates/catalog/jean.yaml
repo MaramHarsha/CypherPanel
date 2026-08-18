@@ -1,0 +1,28 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: jean
+name: Jean
+description: Open-source desktop and server client for orchestrating AI coding agents.
+category: dev-tools
+resources:
+  applications:
+    - name: jean
+      image: ghcr.io/coollabsio/jean-server@sha256:442668d0604e2063826dc3588d161bf29c75fcf684384ed48c8a7355dbd8a3b5
+      port: 3456
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: jean-data
+          path: /home/jean/.local/share/com.jean.desktop
+      env:
+        JEAN_ALLOW_NATIVE_OPEN: "0"
+        JEAN_ALLOW_UNSAFE_NO_TOKEN: "0"
+        JEAN_ALLOWED_ORIGINS: ""
+        JEAN_DATA_DIR: /home/jean/.local/share/com.jean.desktop
+        JEAN_HEADLESS: "1"
+        JEAN_HOST: 0.0.0.0
+        JEAN_NO_TOKEN: "0"
+        JEAN_PORT: "3456"
+        JEAN_TOKEN: '{{secret.32}}'

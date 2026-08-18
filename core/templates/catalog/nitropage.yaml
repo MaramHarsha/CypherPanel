@@ -1,0 +1,23 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: nitropage
+name: Nitropage
+description: Nitropage is an extensible, visual website builder, offering a growing library of versatile building blocks, focal-point image cropping and sovereign font management.
+category: cms
+version: 0.70.3-sqlite
+resources:
+  applications:
+    - name: nitropage
+      image: nitropage/nitropage@sha256:7c6d25af39c2c05a74fd095d0cdca060c75103a9c8fca4b71736c8b0ba78cf1c
+      port: 3000
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: nitropage-data
+          path: /app/.data
+      env:
+        DATABASE_URL: file:../.data/dev.db
+        NP_AUTH_PASSWORD: '{{secret.32}}'
+        NP_AUTH_SALT: '{{secret.16}}'

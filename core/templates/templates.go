@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -242,6 +243,12 @@ func (s *Service) Install(ctx context.Context, slug string, in InstallInput) (In
 			Version:         d.Version,
 			ServerID:        in.ServerID,
 			RequirePassword: true,
+			// Every template database is created with an application database
+			// of its own, which is what makes {{db.<name>.database}} name
+			// something that exists. Without it MySQL, MariaDB and MongoDB
+			// offer nothing to connect to, and PostgreSQL offers only its
+			// maintenance database (managed-databases.md §2).
+			InitialDatabase: initialDatabaseName(base, d.Name),
 		})
 		// The row can be persisted and the call still fail (reconciliation is
 		// triggered inside Create), so record any id we were handed *before*
@@ -392,7 +399,10 @@ func infoFor(d domain.Database, rootPwd string) dbInfo {
 		user:     d.RootUser,
 		password: rootPwd,
 		port:     enginePort(d.Engine),
-		database: engineDefaultDB(d.Engine),
+		database: d.InitialDatabase,
+	}
+	if info.database == "" {
+		info.database = domain.EngineDefaults(d.Engine, d.Version).DefaultDatabase
 	}
 	info.url = engineURL(d.Engine, info)
 	return info
@@ -413,12 +423,24 @@ func enginePort(e domain.DbEngine) int {
 	return 0
 }
 
-func engineDefaultDB(e domain.DbEngine) string {
-	if e == domain.EnginePostgreSQL {
-		return "postgres"
+// initialDatabaseName derives the application database a template install
+// asks for. It is a plain SQL identifier built from names the operator already
+// chose, so the database an operator finds inside the engine is recognisably
+// the one this install created — and nothing references it by that literal
+// anyway, since every template reaches it through {{db.<name>.database}}.
+func initialDatabaseName(base, dbName string) string {
+	name := nonIdentifierRe.ReplaceAllString(base+"_"+dbName, "_")
+	name = strings.Trim(name, "_")
+	if name == "" || (name[0] >= '0' && name[0] <= '9') {
+		name = "app_" + name
 	}
-	return ""
+	if len(name) > 63 {
+		name = strings.TrimRight(name[:63], "_")
+	}
+	return name
 }
+
+var nonIdentifierRe = regexp.MustCompile(`[^A-Za-z0-9_]+`)
 
 func engineURL(e domain.DbEngine, i dbInfo) string {
 	hostport := fmt.Sprintf("%s:%d", i.host, i.port)

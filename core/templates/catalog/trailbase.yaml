@@ -1,0 +1,19 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: trailbase
+name: Trailbase
+description: A blazingly fast Rust/SQLite/Wasmtime app server with type-safe APIs
+category: dev-tools
+version: 0.22.6
+resources:
+  applications:
+    - name: trailbase
+      image: trailbase/trailbase@sha256:1b9a47863a6864f05bde4f34fcef94f92ee972ef1fe46be9fb04b4d520782bd1
+      port: 4000
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: trailbase-data
+          path: /app/traildepot

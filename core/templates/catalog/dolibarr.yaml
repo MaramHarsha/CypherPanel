@@ -1,0 +1,37 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: dolibarr
+name: Dolibarr
+description: Dolibarr is a modern software package to manage your organization's activity (contacts, quotes, invoices, orders, stocks, agenda, hr, expense reports, accountancy, ecm, manufacturing, ...).
+category: productivity
+version: 23.0.2-php8.2
+resources:
+  databases:
+    - name: db
+      engine: mariadb
+  applications:
+    - name: dolibarr
+      image: dolibarr/dolibarr@sha256:9dbf09ca8fac0ee50d9abffcddcc920b9fab9e4ff2805e3a248ba1ce9f5be5f5
+      port: 80
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: dolibarr-docs
+          path: /var/www/documents
+        - name: dolibarr-custom
+          path: /var/www/html/custom
+      env:
+        DOLI_ADMIN_LOGIN: '{{secret.16}}'
+        DOLI_ADMIN_PASSWORD: '{{secret.16}}'
+        DOLI_COMPANY_NAME: MyBigCompany
+        DOLI_CRON: "0"
+        DOLI_DB_HOST: '{{db.db.host}}'
+        DOLI_DB_NAME: '{{db.db.database}}'
+        DOLI_DB_PASSWORD: '{{db.db.password}}'
+        DOLI_DB_USER: '{{db.db.user}}'
+        DOLI_INIT_DEMO: "0"
+        DOLI_URL_ROOT: https://{{domain}}
+        WWW_GROUP_ID: "1000"
+        WWW_USER_ID: "1000"

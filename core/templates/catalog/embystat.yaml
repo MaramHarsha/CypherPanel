@@ -1,0 +1,22 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: embystat
+name: Embystat
+description: EmbyStat is a web analytics tool, designed to provide insight into website traffic and user behavior.
+category: analytics
+resources:
+  applications:
+    - name: embystat
+      image: lscr.io/linuxserver/embystat@sha256:adc479353fc0b810c21935a8fe3c2d20d9f7027edc9574477d702ec2ad414754
+      port: 6555
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: embystat-config
+          path: /config
+      env:
+        PGID: "1000"
+        PUID: "1000"
+        TZ: Europe/Madrid

@@ -31,3 +31,6 @@ go.work.sum
 
 # Harness agent worktrees (scratch, never committed)
 .claude/worktrees/
+
+# Build-tool scratch (coolify-import registry answers — regenerable)
+/.cache/

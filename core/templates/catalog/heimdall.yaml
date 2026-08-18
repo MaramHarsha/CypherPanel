@@ -1,0 +1,22 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: heimdall
+name: Heimdall
+description: Heimdall is a dashboard for managing and organizing your server applications.
+category: productivity
+resources:
+  applications:
+    - name: heimdall
+      image: lscr.io/linuxserver/heimdall@sha256:3572daf882deca941fad00baecfa6755faedfb83ade4b6a6af761ad4e41b9244
+      port: 80
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: heimdall-config
+          path: /config
+      env:
+        PGID: "1000"
+        PUID: "1000"
+        TZ: Europe/Madrid

@@ -1,0 +1,33 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: freescout
+name: Freescout
+description: FreeScout is the super lightweight and powerful free open source help desk and shared inbox written in PHP (Laravel framework).
+category: communication
+resources:
+  databases:
+    - name: db
+      engine: mariadb
+  applications:
+    - name: freescout
+      image: tiredofit/freescout@sha256:07734b3730a6858009ccbc03f71bb6655747a64001c67e888ad19efd051afad9
+      port: 80
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: freescout-data
+          path: /data
+        - name: freescout-logs
+          path: /www/logs
+      env:
+        ADMIN_EMAIL: admin@example.com
+        ADMIN_PASS: '{{secret.16}}'
+        DB_HOST: '{{db.db.host}}'
+        DB_NAME: '{{db.db.database}}'
+        DB_PASS: '{{db.db.password}}'
+        DB_USER: '{{db.db.user}}'
+        DISPLAY_ERRORS: "FALSE"
+        SITE_URL: https://{{domain}}
+        TIMEZONE: UTC

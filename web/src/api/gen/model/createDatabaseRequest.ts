@@ -19,4 +19,6 @@ export interface CreateDatabaseRequest {
   /** 0 or omitted = private only. */
   expose_port?: number;
   require_password?: boolean;
+  /** An application database for the engine to create on first boot; a plain SQL identifier, at most 63 characters. Creation-only: the engine images read it while initializing an empty data directory and ignore it on every later start, so PATCH has no counterpart. Rejected for Redis and Valkey, whose databases are numbered. */
+  initial_database?: string;
 }

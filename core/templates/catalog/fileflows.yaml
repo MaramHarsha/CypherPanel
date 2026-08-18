@@ -1,0 +1,29 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: fileflows
+name: Fileflows
+description: FileFlows can drastically reduce your files, up to 90%, saving you space and money. No need to buy more hard drives, just shrink your files and start saving.
+category: media
+resources:
+  applications:
+    - name: fileflows
+      image: revenz/fileflows@sha256:a9ce79d8ad21a37ff1579f59cfa8844aded4026fd094e5a893ff476ffe0eaf93
+      port: 5000
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: fileflows-temp
+          path: /temp
+        - name: fileflows-configs
+          path: /app/Data
+        - name: fileflows-logs
+          path: /app/Logs
+        - name: fileflows-common
+          path: /app/common
+      env:
+        _APP_URL: https://{{domain}}
+        PGID: "1000"
+        PUID: "1000"
+        TZ: America/Toronto

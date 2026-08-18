@@ -46,6 +46,19 @@ build-web: ## Build the web UI and sync it into the Go embed path (webui)
 generate-web: ## Regenerate the web API client from openapi.yaml (orval)
 	cd web && pnpm generate:api
 
+# Not part of `generate`: this reaches the network to pin every image, takes
+# the better part of an hour against anonymous registry quotas, and its output
+# is reviewed by a human before it ships (docs/dev/template-import.md). Run it
+# deliberately, when refreshing the catalog against upstream.
+.PHONY: templates-import
+templates-import: ## Re-import the bundled catalog from ../coolify (network, slow)
+	@test -d ../coolify/templates/compose || { echo "needs ../coolify checked out"; exit 1; }
+	cd core && go run ./cmd/coolify-import -pin \
+		-cache ../.cache/coolify-import-images.json \
+		-out templates/catalog -report ../docs/dev/template-import-report.md \
+		../../coolify/templates/compose/*.yaml
+	cd core && go test ./templates/...
+
 .PHONY: build-crosscheck
 build-crosscheck: ## Cross-compile the binaries for linux/arm64 (catch ARM breakage in CI)
 	cd core  && GOOS=linux GOARCH=arm64 go build -o /dev/null ./cmd/cypherd

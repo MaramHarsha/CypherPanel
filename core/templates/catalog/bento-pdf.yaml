@@ -1,0 +1,16 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: bento-pdf
+name: Bento PDF
+description: Process PDFs entirely in your browser. No uploads. No servers. Complete privacy.
+category: productivity
+version: 1.16.1
+resources:
+  applications:
+    - name: bento-pdf
+      image: ghcr.io/alam00000/bentopdf@sha256:d98223eb82661a9f6624a813ed7fc44ad4f80e761e24116a721e1cd891ac8c3f
+      port: 8080
+      route: true
+      health:
+        kind: tcp

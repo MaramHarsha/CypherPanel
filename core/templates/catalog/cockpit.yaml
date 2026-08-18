@@ -1,0 +1,23 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: cockpit
+name: Cockpit
+description: Cockpit is a headless content platform that is lightweight, fast and ready for takeoff.
+category: cms
+version: core-latest
+resources:
+  applications:
+    - name: cockpit
+      image: cockpithq/cockpit@sha256:380a036bfd77666daf851d816f8795f32b61ef06f561594ccc8be2512a9dacaf
+      port: 80
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: cockpit-config
+          path: /var/www/html/config
+        - name: cockpit-spaces
+          path: /var/www/html/.spaces
+        - name: cockpit-storage
+          path: /var/www/html/storage

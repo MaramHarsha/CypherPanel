@@ -119,9 +119,15 @@ var (
 	tokenRe = regexp.MustCompile(`\{\{\s*([a-z0-9._-]+)\s*\}\}`)
 )
 
+// categories is the catalog's whole vocabulary. It was sized for a curated set
+// of seven templates; the importer's breadth made "other" the largest bucket by
+// three times, which is a filter that filters nothing. Widening it is additive
+// (rule 17): every previously valid value still validates.
 var categories = map[string]bool{
-	"analytics": true, "automation": true, "cms": true, "dev-tools": true,
-	"monitoring": true, "security": true, "storage": true, "other": true,
+	"ai": true, "analytics": true, "automation": true, "cms": true,
+	"communication": true, "dev-tools": true, "finance": true, "media": true,
+	"monitoring": true, "productivity": true, "security": true, "storage": true,
+	"other": true,
 }
 
 func invalid(format string, args ...any) error {

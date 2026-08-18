@@ -5,6 +5,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Rocket, Undo2 } from "lucide-react";
 import { toast } from "sonner";
+import { ConfirmRollback } from "@/components/confirm-rollback";
 import {
   getStreamDeploymentLogsUrl,
   useDeployApplication,
@@ -12,6 +13,7 @@ import {
   useListDeployments,
   useRollbackDeployment,
 } from "@/api/gen/deployments/deployments";
+import { useGetApplication } from "@/api/gen/applications/applications";
 import type { Deployment } from "@/api/gen/model";
 import { EmptyState } from "@/components/empty-state";
 import { LogViewer } from "@/components/log-viewer";
@@ -61,6 +63,9 @@ function DeploymentsTab() {
   const { dep } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const deployments = useListDeployments(appId);
+  // Only for the rollback confirm's title — the layout above already has this
+  // cached, so this is a cache read rather than a second request.
+  const appName = useGetApplication(appId).data?.name ?? "this application";
 
   const deploy = useDeployApplication({
     mutation: {
@@ -106,6 +111,8 @@ function DeploymentsTab() {
                 deployment={d}
                 first={i === 0}
                 isNewest={d.id === newestSucceeded}
+                appName={appName}
+                serving={list.find((x) => x.id === newestSucceeded)}
                 onOpen={() => void navigate({ search: { dep: d.id } })}
               />
             ))}
@@ -122,11 +129,16 @@ function DeploymentRow({
   deployment: d,
   first,
   isNewest,
+  appName,
+  serving,
   onOpen,
 }: {
   deployment: Deployment;
   first: boolean;
   isNewest: boolean;
+  /** For the rollback confirm's title and its NOW row (canvas 9g). */
+  appName: string;
+  serving?: Deployment;
   onOpen: () => void;
 }) {
   const rollback = useRollbackDeployment({
@@ -170,15 +182,21 @@ function DeploymentRow({
           {outcome(d, isNewest)}
         </span>
         {d.status === "succeeded" && !isNewest && (
-          <Button
-            size="sm"
-            variant="ghost"
-            aria-label={`Roll back to ${shortRev(d.revision_id)}`}
-            disabled={rollback.isPending}
-            onClick={() => rollback.mutate({ id: d.id })}
-          >
-            <Undo2 className="h-3.5 w-3.5" /> Roll back
-          </Button>
+          // Canvas 9g/13ae: never straight from the row. The confirm is where
+          // the two revisions are put side by side and where "env vars don't
+          // rewind" is said — both of which are unavailable from a button.
+          <ConfirmRollback
+            trigger={
+              <Button size="sm" variant="ghost" aria-label={`Roll back to ${shortRev(d.revision_id)}`}>
+                <Undo2 className="h-3.5 w-3.5" /> Roll back
+              </Button>
+            }
+            appName={appName}
+            now={{ rev: shortRev(serving?.revision_id ?? ""), detail: serving?.detail ?? undefined }}
+            target={{ rev: shortRev(d.revision_id), detail: d.detail ?? undefined }}
+            pending={rollback.isPending}
+            onConfirm={() => rollback.mutate({ id: d.id })}
+          />
         )}
       </span>
     </li>

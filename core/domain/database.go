@@ -48,6 +48,13 @@ type EngineSpec struct {
 	// root password (e.g. "POSTGRES_PASSWORD"). Empty for engines that don't
 	// require one.
 	PasswordEnv string
+	// DatabaseEnv is the environment variable the entrypoint reads to create an
+	// application database while initializing an empty data directory (e.g.
+	// "POSTGRES_DB"). Empty for engines with no named databases.
+	DatabaseEnv string
+	// DefaultDatabase is what a client connects to when no initial database was
+	// requested. Only PostgreSQL ships one.
+	DefaultDatabase string
 }
 
 // EngineDefaults returns the default container configuration for an engine and
@@ -61,6 +68,10 @@ func EngineDefaults(engine DbEngine, version string) EngineSpec {
 			HealthCmd:   "pg_isready -U postgres",
 			RootUser:    "postgres",
 			PasswordEnv: "POSTGRES_PASSWORD",
+			DatabaseEnv: "POSTGRES_DB",
+			// PostgreSQL is the only engine that ships a database to connect
+			// to when none was requested.
+			DefaultDatabase: "postgres",
 		}
 	case EngineMySQL:
 		return EngineSpec{
@@ -69,6 +80,7 @@ func EngineDefaults(engine DbEngine, version string) EngineSpec {
 			HealthCmd:   "mysqladmin ping -u root --silent",
 			RootUser:    "root",
 			PasswordEnv: "MYSQL_ROOT_PASSWORD",
+			DatabaseEnv: "MYSQL_DATABASE",
 		}
 	case EngineMariaDB:
 		return EngineSpec{
@@ -77,6 +89,7 @@ func EngineDefaults(engine DbEngine, version string) EngineSpec {
 			HealthCmd:   "mariadb-admin ping -u root --silent",
 			RootUser:    "root",
 			PasswordEnv: "MARIADB_ROOT_PASSWORD",
+			DatabaseEnv: "MARIADB_DATABASE",
 		}
 	case EngineMongoDB:
 		return EngineSpec{
@@ -85,6 +98,7 @@ func EngineDefaults(engine DbEngine, version string) EngineSpec {
 			HealthCmd:   `mongosh --eval "db.adminCommand('ping')" --quiet`,
 			RootUser:    "root",
 			PasswordEnv: "MONGO_INITDB_ROOT_PASSWORD",
+			DatabaseEnv: "MONGO_INITDB_DATABASE",
 		}
 	case EngineRedis:
 		return EngineSpec{
@@ -140,6 +154,13 @@ type Database struct {
 	// Resource limits (noisy-neighbor control). nil = no limit.
 	CPULimit      *float64 // fractional cores
 	MemoryLimitMB *int     // MiB
+
+	// InitialDatabase is an application database the engine creates while
+	// initializing an empty data directory (managed-databases.md §2). Empty
+	// means "whatever the engine ships with". Set once at creation: the engine
+	// images ignore the variable on every start after the first, so changing it
+	// later could only lie or require an imperative CREATE DATABASE.
+	InitialDatabase string
 
 	// Persistence.
 	VolumeName string // deterministic: cypher-db-<id>

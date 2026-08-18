@@ -1,0 +1,23 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: lowcoder
+name: Lowcoder
+description: Lowcoder (forked from OpenBlocks) is a self-hosted, open-source, low-code platform for building internal tools.
+category: productivity
+version: 2.7.6
+resources:
+  applications:
+    - name: lowcoder
+      image: lowcoderorg/lowcoder-ce@sha256:4a8b800a9454108546808cc88ed3305cc2533fb25b89326c26139848254dbd61
+      port: 3000
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: lowcoder-data
+          path: /lowcoder-stacks
+      env:
+        LOWCODER_DB_ENCRYPTION_PASSWORD: '{{secret.16}}'
+        LOWCODER_DB_ENCRYPTION_SALT: '{{secret.16}}'
+        LOWCODER_EMAIL_SIGNUP_ENABLED: "true"

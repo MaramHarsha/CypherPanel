@@ -1,0 +1,29 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: flowise
+name: Flowise
+description: Flowise is an open source low-code tool for developers to build customized LLM orchestration flows & AI agents.
+category: ai
+resources:
+  applications:
+    - name: flowise
+      image: flowiseai/flowise@sha256:cf880b17b1290fbaebebc76c33954bde67b3775aff95feec72a1d060cc81e43d
+      port: 3001
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: flowise-data
+          path: /root/.flowise
+      env:
+        APIKEY_PATH: /root/.flowise
+        BLOB_STORAGE_PATH: /root/.flowise/storage
+        DATABASE_PATH: /root/.flowise
+        DEBUG: "false"
+        DISABLE_FLOWISE_TELEMETRY: "true"
+        FLOWISE_PASSWORD: '{{secret.16}}'
+        FLOWISE_USERNAME: '{{secret.16}}'
+        LOG_PATH: /root/.flowise/logs
+        PORT: "3001"
+        SECRETKEY_PATH: /root/.flowise

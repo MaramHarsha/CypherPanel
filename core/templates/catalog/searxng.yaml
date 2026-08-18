@@ -1,0 +1,27 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: searxng
+name: Searxng
+description: SearXNG is a free internet metasearch engine which aggregates results from more than 70 search services.
+category: analytics
+version: 2026.8.17-374939b88
+resources:
+  databases:
+    - name: cache
+      engine: redis
+      version: "7"
+  applications:
+    - name: searxng
+      image: searxng/searxng@sha256:3aed6b4bfb4e6a2b3b94c890dafb3f35cb2588493b83818434aa260e8bdeb4d4
+      port: 8080
+      route: true
+      health:
+        kind: tcp
+      env:
+        BASE_URL: https://{{domain}}
+        INSTANCE_NAME: coolify
+        SEARXNG_BIND_ADDRESS: 0.0.0.0
+        SEARXNG_REDIS_URL: redis://:{{db.cache.password}}@{{db.cache.host}}:6379/0
+        SEARXNG_SECRET: '{{secret.16}}'
+        SEARXNG_URL: https://{{domain}}

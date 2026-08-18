@@ -1036,43 +1036,13 @@ func (s *Scheduler) DesiredStateFor(ctx context.Context, serverID string) ([]byt
 			continue
 		}
 
-		defaults := domain.EngineDefaults(db.Engine, db.Version)
-		env := make(map[string]string)
-
-		if db.RequirePassword && len(db.RootPasswordCT) > 0 {
-			pwd, err := s.opener.Open(db.RootPasswordCT, db.RootPasswordNonce)
-			if err != nil {
-				s.log.Error("desired state: decrypting db root password", "db_id", db.ID, "error", err)
-				continue
-			}
-			if defaults.PasswordEnv != "" {
-				env[defaults.PasswordEnv] = string(pwd)
-			}
+		// Same builder the work item uses: the agent measures drift by
+		// comparing the two, so they must not be able to disagree.
+		spec, err := s.dbSpec(db, rev)
+		if err != nil {
+			s.log.Error("desired state: building db spec", "db_id", db.ID, "error", err)
+			continue
 		}
-
-		spec := &agentv1.DbSpec{
-			DbId:          db.ID,
-			EnvironmentId: db.EnvironmentID,
-			RevisionId:    rev.ID,
-			Engine:        string(db.Engine),
-			Image:         defaults.Image,
-			VolumeName:    db.VolumeName,
-			DataPath:      db.DataPath,
-			Network:       db.Network,
-			Env:           env,
-			HealthCmd:     defaults.HealthCmd,
-		}
-
-		if db.ExposePort != nil {
-			spec.ExposePort = uint32(*db.ExposePort)
-		}
-		if db.CPULimit != nil {
-			spec.CpuLimit = *db.CPULimit
-		}
-		if db.MemoryLimitMB != nil {
-			spec.MemoryLimitMb = uint32(*db.MemoryLimitMB)
-		}
-
 		ds.DbSpecs = append(ds.DbSpecs, spec)
 	}
 

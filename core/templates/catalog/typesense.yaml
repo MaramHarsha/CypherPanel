@@ -1,0 +1,23 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: typesense
+name: Typesense
+description: Cutting-edge, in-memory search engine for mere mortals. Knowledge of rocket science optional.
+category: analytics
+version: "28.0"
+resources:
+  applications:
+    - name: typesense
+      image: typesense/typesense@sha256:6955c02616216b3464880b5324e4ca4f0a43ac228d1494ba33e8b79cc6d79ad3
+      port: 8108
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: typesense-data
+          path: /data
+      env:
+        TYPESENSE_API_KEY: ""
+        TYPESENSE_DATA_DIR: /data
+        TYPESENSE_ENABLE_CORS: "true"

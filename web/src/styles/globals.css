@@ -53,11 +53,22 @@
   --danger-hover: #9c2708;
   --focus: #1b62c4;
 
+  /* the ramp bottoms out here: a control you cannot press, still legible */
+  --text-disabled: #b9b2a4;
+
   /* log and terminal panes are ink in BOTH themes — they are already ink */
   --pane: #0d0b08;
   --pane-text: #b8b2a6;
   --pane-faint: #5d5850;
   --pane-border: #3a3630;
+
+  /* Toasts are ink in BOTH themes too (canvas 10c). They sit above the page
+     rather than in it, so they keep one identity instead of inverting with the
+     surface underneath — the same argument the log panes win on. */
+  --toast: #16130e;
+  --toast-text: #e9e5dc;
+  --toast-faint: #8a8375;
+  --toast-dismiss: #5d5850;
 
   --font-sans: "Instrument Sans Variable", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Fragment Mono", ui-monospace, "Cascadia Mono", monospace;
@@ -93,6 +104,11 @@
   --danger: #ff6a5e;
   --danger-hover: #ff8a80;
   --focus: #5f9fe8;
+
+  /* Disabled sits above the faint text here, not below it: on ink, going
+     darker to say "unavailable" would drop it out of sight entirely. */
+  --text-disabled: #5d5850;
+  /* --toast-* are deliberately NOT overridden — see the light block. */
 }
 
 /* ── Map semantic tokens into Tailwind utilities. ────────────────────────── */
@@ -115,10 +131,15 @@
   --color-danger: var(--danger);
   --color-danger-hover: var(--danger-hover);
   --color-focus: var(--focus);
+  --color-text-disabled: var(--text-disabled);
   --color-pane: var(--pane);
   --color-pane-text: var(--pane-text);
   --color-pane-faint: var(--pane-faint);
   --color-pane-border: var(--pane-border);
+  --color-toast: var(--toast);
+  --color-toast-text: var(--toast-text);
+  --color-toast-faint: var(--toast-faint);
+  --color-toast-dismiss: var(--toast-dismiss);
   --color-status-running: var(--status-running);
   --color-status-deploying: var(--status-deploying);
   --color-status-stopped: var(--status-stopped);

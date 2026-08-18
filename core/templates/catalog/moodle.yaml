@@ -1,0 +1,36 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: moodle
+name: Moodle
+description: Moodle is the world’s most customisable and trusted eLearning solution that empowers educators to improve our world.
+category: cms
+version: "4.3"
+resources:
+  databases:
+    - name: db
+      engine: mariadb
+      version: "11.1"
+  applications:
+    - name: moodle
+      image: bitnamilegacy/moodle@sha256:b90ca32bcc1e4cdff45caa8f2aa4fafde3ef11fab966bb063104389196e89733
+      port: 8080
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: moodle-data
+          path: /bitnami/moodle
+        - name: moodledata-data
+          path: /bitnami/moodledata
+      env:
+        ALLOW_EMPTY_PASSWORD: "no"
+        MOODLE_DATABASE_HOST: '{{db.db.host}}'
+        MOODLE_DATABASE_NAME: '{{db.db.database}}'
+        MOODLE_DATABASE_PASSWORD: '{{db.db.password}}'
+        MOODLE_DATABASE_PORT_NUMBER: "3306"
+        MOODLE_DATABASE_USER: '{{db.db.user}}'
+        MOODLE_EMAIL: user@example.com
+        MOODLE_PASSWORD: '{{secret.16}}'
+        MOODLE_SITE_NAME: New Site
+        MOODLE_USERNAME: user

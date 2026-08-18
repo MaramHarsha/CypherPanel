@@ -1,0 +1,18 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: classicpress-without-database
+name: Classicpress Without Database
+description: A lightweight, stable, instantly familiar free open-source content management system, based on WordPress without the block editor (Gutenberg).
+category: cms
+resources:
+  applications:
+    - name: classicpress
+      image: classicpress/classicpress@sha256:910e853858ae5bf6392a970681fc117c63dcec757f9db46a6f4d7379b1eb4bc2
+      port: 80
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: classicpress-files
+          path: /var/www/html

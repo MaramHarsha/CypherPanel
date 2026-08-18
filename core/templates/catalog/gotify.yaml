@@ -1,0 +1,29 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: gotify
+name: Gotify
+description: Gotify is an open-source self-hosted notification server.
+category: communication
+version: 2.7.3
+resources:
+  applications:
+    - name: gotify
+      image: gotify/server@sha256:2ae0e4e689f183137c8247884382fcb174d5a72253ce1897e7e5267090093fc8
+      port: 80
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: gotify-data
+          path: /app/data
+      env:
+        GOTIFY_DATABASE_CONNECTION: data/gotify.db
+        GOTIFY_DATABASE_DIALECT: sqlite3
+        GOTIFY_DEFAULTUSER_NAME: admin
+        GOTIFY_DEFAULTUSER_PASS: '{{secret.16}}'
+        GOTIFY_PASSSTRENGTH: "10"
+        GOTIFY_PLUGINSDIR: data/plugins
+        GOTIFY_REGISTRATION: "false"
+        GOTIFY_SERVER_PORT: "80"
+        GOTIFY_UPLOADEDIMAGESDIR: data/images

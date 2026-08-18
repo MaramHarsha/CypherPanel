@@ -1,0 +1,23 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: cap-captcha
+name: Cap Captcha
+description: The self-hosted CAPTCHA for the modern web.
+category: security
+version: 3.0.4
+resources:
+  databases:
+    - name: cache
+      engine: valkey
+      version: "9"
+  applications:
+    - name: cap
+      image: tiago2/cap@sha256:f2b2cb7dc86e9bd7d46ba6daeab685a2478e51570b7cf81bcb7acf917192af2d
+      port: 3000
+      route: true
+      health:
+        kind: tcp
+      env:
+        ADMIN_KEY: '{{secret.16}}'
+        REDIS_URL: redis://:{{db.cache.password}}@{{db.cache.host}}:6379

@@ -38,7 +38,8 @@ type fakeClient struct {
 	tagged         []string          // "source -> target" per TagImage call
 	removedImages  map[string]bool   // refs passed to RemoveImage
 	removeImageErr map[string]error  // injected RemoveImage failures by ref
-	tagErr         error             // injected TagImage failure
+	tagErr         error             // injected TagImage failure (any target)
+	tagErrByTarget map[string]error  // injected TagImage failure for one target
 	execCalls      []execCall        // recorded ExecAndWait invocations
 	execExit       int               // injected exit code
 	execOut        []byte            // injected output
@@ -173,6 +174,9 @@ func (f *fakeClient) HasImage(_ context.Context, ref string) (bool, error) {
 func (f *fakeClient) TagImage(_ context.Context, source, target string) error {
 	if f.tagErr != nil {
 		return f.tagErr
+	}
+	if err := f.tagErrByTarget[target]; err != nil {
+		return err
 	}
 	f.mutations++
 	f.tagged = append(f.tagged, source+" -> "+target)
@@ -1267,6 +1271,72 @@ func TestPullOwnershipSurvivesARolloutThatNeverCreatesAContainer(t *testing.T) {
 	}
 	if !c.removedImages[marker] {
 		t.Fatalf("removed = %v, want the spent marker cleaned up too", c.removedImages)
+	}
+}
+
+// Tagging the managed alias is itself a step that can fail, and it fails
+// *after* the pull has already created the reference. Recording ownership
+// before it — rather than after, or on the way past — is what keeps that
+// failure from erasing the only proof the reference is ours: the next attempt
+// would see it present, call it the operator's, and leave the layers forever.
+func TestPullOwnershipSurvivesAFailedManagedTag(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	c.tagErrByTarget = map[string]error{"cypher/app1:rev1": errors.New("daemon busy")}
+	d := newDriver(c, r, p)
+
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")})
+	if err != nil {
+		t.Fatalf("rollout: %v", err)
+	}
+	if st := statusOf(got, "app1"); st.GetState() != stateError {
+		t.Fatalf("state = %q, want the failed tag reported", st.GetState())
+	}
+	marker := pullMarker(t, "app1", "ghost:5")
+	if !c.localImages[marker] {
+		t.Fatal("ownership was lost with the failed alias tag")
+	}
+	// And GC finishes it, exactly as it would for any other pending reference.
+	c.images = []Image{{
+		ID:      "sha256:img",
+		AppIDs:  []string{"app1"},
+		Pending: []PendingRef{{Source: "ghost:5", Marker: marker}},
+	}}
+	if _, err := d.Reconcile(context.Background(), nil); err != nil {
+		t.Fatalf("teardown: %v", err)
+	}
+	if !c.removedImages["ghost:5"] || !c.removedImages[marker] {
+		t.Fatalf("removed = %v, want the reference and its marker reclaimed", c.removedImages)
+	}
+}
+
+// A marker is a licence to remove a reference, so it must not outlive the
+// removal it authorized. Left behind, it would fire again the next time that
+// same reference exists — by then the operator's — and untag something we do
+// not own. The old container label had exactly that shape: baked in on first
+// failure and never cleared by the retry that succeeded.
+func TestMarkerDoesNotAuthorizeASecondRemoval(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}); err != nil {
+		t.Fatalf("rollout: %v", err)
+	}
+	marker := pullMarker(t, "app1", "ghost:5")
+	if !c.removedImages[marker] {
+		t.Fatalf("removed = %v, want the marker cleared once its reference was gone", c.removedImages)
+	}
+
+	// The operator now pulls that same reference for their own use. Nothing
+	// claims it, so nothing touches it however many times we reconcile.
+	c.removedImages = map[string]bool{}
+	c.localImages["ghost:5"] = true
+	for i := range 2 {
+		if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}); err != nil {
+			t.Fatalf("reconcile %d: %v", i, err)
+		}
+	}
+	if c.removedImages["ghost:5"] {
+		t.Fatal("untagged a reference the operator owns — a spent marker fired again")
 	}
 }
 

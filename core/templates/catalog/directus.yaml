@@ -1,0 +1,38 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: directus
+name: Directus
+description: Directus wraps databases with a dynamic API, and provides an intuitive app for managing its content.
+category: cms
+version: 11.17.4
+resources:
+  applications:
+    - name: directus
+      image: directus/directus@sha256:eb326f679ae847c0a776f93b972761dc2ebe84980e0b9d274a6bc31cd62809f7
+      port: 8055
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: directus-database
+          path: /directus/database
+        - name: directus-uploads
+          path: /directus/uploads
+        - name: directus-extensions
+          path: /directus/extensions
+        - name: directus-templates
+          path: /directus/templates
+      env:
+        ADMIN_EMAIL: admin@example.com
+        ADMIN_PASSWORD: '{{secret.16}}'
+        CORS_ALLOWED_HEADERS: Content-Type,Authorization
+        CORS_CREDENTIALS: "true"
+        CORS_ENABLED: "true"
+        CORS_METHODS: GET,POST,PATCH,DELETE,OPTIONS
+        CORS_ORIGIN: ""
+        DB_CLIENT: sqlite3
+        DB_FILENAME: /directus/database/data.db
+        KEY: '{{secret.32}}'
+        SECRET: '{{secret.32}}'
+        WEBSOCKETS_ENABLED: "true"

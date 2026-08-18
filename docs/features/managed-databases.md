@@ -115,6 +115,46 @@ container receives `--requirepass $pass`. Otherwise, no auth.
 The `root_user` is engine-determined and not operator-configurable at v1
 (always `postgres` / `root` / empty).
 
+### Initial database *(added 2026-08-17)*
+
+`initial_database` names an application database the engine creates on first
+boot. It is optional, immutable after creation, and empty by default.
+
+Without it a managed database offers only what the engine ships with: for
+PostgreSQL the `postgres` maintenance database, and for MySQL, MariaDB and
+MongoDB nothing at all. That is enough for an application that creates its own
+schema inside a database somebody else made, and not enough for the common
+case — most self-hosted software expects to be handed a database that already
+exists. It is the single largest blocker in the template catalog
+([the import report](../dev/template-import-report.md) counts 43 upstream
+templates refused for exactly this), and the reason
+[template-catalog.md](template-catalog.md) §3 recorded it as a follow-up.
+
+It is a **creation-time** field because the engine images only honour it on an
+empty data directory: `POSTGRES_DB` and friends are read by the entrypoint's
+first-boot initialization and ignored on every subsequent start. Accepting a
+change later would mean either lying (the setting silently does nothing) or
+running `CREATE DATABASE` ourselves — an imperative poke at a running server,
+which is exactly what ADR-005 forbids. So `PATCH` rejects it, and the field is
+carried in the revision snapshot like every other part of the spec.
+
+| Engine | Environment variable | Notes |
+|---|---|---|
+| postgresql | `POSTGRES_DB` | Without it the engine default `postgres` applies |
+| mysql | `MYSQL_DATABASE` | Nothing exists without it |
+| mariadb | `MARIADB_DATABASE` | Nothing exists without it |
+| mongodb | `MONGO_INITDB_DATABASE` | Advisory: Mongo creates a database on first write regardless |
+| redis · valkey | *(none)* | Numbered, not named — the field is rejected |
+
+The value must be a plain SQL identifier — `[A-Za-z_][A-Za-z0-9_]*`, ≤63
+characters, the tightest of the engines' own limits. It is interpolated into no
+SQL we write; the engine's entrypoint uses it. The restriction exists so that
+neither can it become quoting-dependent inside the engine's own init script,
+nor can a name valid on one engine break on another.
+
+Template installs always request one (`template-catalog.md` §4), which is what
+makes `{{db.<name>.database}}` resolve to a database that exists.
+
 ## 3. Lifecycle
 
 A Database goes through a lifecycle that parallels Applications but is

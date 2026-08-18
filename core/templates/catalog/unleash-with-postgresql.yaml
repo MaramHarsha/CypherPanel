@@ -1,0 +1,28 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: unleash-with-postgresql
+name: Unleash with PostgreSQL
+description: Open source feature flag management for enterprises.
+category: dev-tools
+version: 8.1.0
+resources:
+  databases:
+    - name: db
+      engine: postgresql
+      version: "15"
+  applications:
+    - name: unleash
+      image: unleashorg/unleash-server@sha256:16f3ffb914880e7d0f23629a0c1b77aebea3aa619b0305f76eb50b3fb75998a9
+      port: 4242
+      route: true
+      health:
+        kind: tcp
+      env:
+        DATABASE_SSL: "false"
+        DATABASE_URL: postgres://{{db.db.user}}:{{db.db.password}}@{{db.db.host}}/{{db.db.database}}
+        INIT_CLIENT_API_TOKENS: default:development.unleash-insecure-api-token
+        INIT_FRONTEND_API_TOKENS: default:default:development.unleash-insecure-frontend-api-token
+        LOG_LEVEL: warn
+        UNLEASH_DEFAULT_ADMIN_PASSWORD: '{{secret.16}}'
+        UNLEASH_URL: https://{{domain}}

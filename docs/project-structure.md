@@ -15,6 +15,9 @@ cypherpanel/
 │
 ├── core/                        # ── control plane (single binary: cypherd) ──
 │   ├── cmd/cypherd/             # main: wiring + run loop, serves API + embedded NATS
+│   ├── cmd/coolify-import/      # build-time only: Coolify compose templates → catalog
+│   │                            #   YAML, refusing what the schema cannot express
+│   │                            #   (dev/template-import.md). Never a runtime path.
 │   ├── api/
 │   │   ├── rest/                # HTTP handlers, middleware, OpenAPI spec, SSE log streams
 │   │   │   └── console/         # interim Phase 1 console (replaced by web/ in Phase 4)

@@ -1,0 +1,25 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: drupal-with-postgresql
+name: Drupal with PostgreSQL
+description: Drupal is a free and open-source web content management system written in PHP and distributed under the GNU General Public License.
+category: cms
+version: 10.6.15-php8.4-apache-trixie
+resources:
+  databases:
+    - name: db
+      engine: postgresql
+      version: "16"
+  applications:
+    - name: drupal
+      image: drupal@sha256:db899be6bfe1b443961e2c4a3d4d5231ebe840fc0ae60d3d593521c64155d147
+      port: 80
+      route: true
+      health:
+        kind: tcp
+      env:
+        DB_HOST: '{{db.db.database}}'
+        DB_NAME: '{{db.db.database}}'
+        DB_PASSWORD: '{{db.db.password}}'
+        DB_USER: '{{db.db.database}}'

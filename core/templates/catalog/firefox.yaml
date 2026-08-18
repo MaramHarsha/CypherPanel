@@ -1,0 +1,19 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: firefox
+name: Firefox
+description: Fast, private, and self-hosted secure browser for browsing without limits.
+category: productivity
+version: 26.08.2
+resources:
+  applications:
+    - name: firefox
+      image: jlesage/firefox@sha256:88c4c3d00d2483c80fcd00f9ae025832b22ad3ebecb3857fb19346a3ab8d2dd6
+      port: 5800
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: firefox-config
+          path: /config

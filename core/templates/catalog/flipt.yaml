@@ -1,0 +1,18 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: flipt
+name: Flipt
+description: Flipt is a fully managed feature flag solution that enables you to keep your feature flags and remote config next to your code in Git.
+category: dev-tools
+resources:
+  applications:
+    - name: flipt
+      image: docker.flipt.io/flipt/flipt@sha256:5ca2de7f408fb8435380c6fe26eb9a3faff0064a9ee9a5c67fe44a83d652a987
+      port: 8080
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: flipt-data
+          path: /var/opt/flipt

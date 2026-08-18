@@ -1,0 +1,22 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: libreoffice
+name: Libreoffice
+description: LibreOffice is a free and powerful office suite.
+category: productivity
+resources:
+  applications:
+    - name: libreoffice
+      image: lscr.io/linuxserver/libreoffice@sha256:1e906b58446409a9f3d3139f5b516e9834b46e6eeed8714b4c8a0f6e3acfd68c
+      port: 3000
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: libreoffice-config
+          path: /config
+      env:
+        PGID: "1000"
+        PUID: "1000"
+        TZ: Etc/UTC

@@ -1,0 +1,26 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: duplicati
+name: Duplicati
+description: Duplicati is a backup solution, allowing you to make scheduled backups with encryption.
+category: storage
+resources:
+  applications:
+    - name: duplicati
+      image: lscr.io/linuxserver/duplicati@sha256:9166c91eeef6965acf1b80f694ab03738fc143d1ff4e7be0c1d6a1bc89a24ed3
+      port: 8200
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: duplicati-config
+          path: /config
+        - name: duplicati-backups
+          path: /backups
+      env:
+        DUPLICATI__WEBSERVICE_PASSWORD: '{{secret.16}}'
+        PGID: "1000"
+        PUID: "1000"
+        SETTINGS_ENCRYPTION_KEY: '{{secret.16}}'
+        TZ: Europe/London

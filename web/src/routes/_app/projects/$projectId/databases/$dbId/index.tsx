@@ -77,6 +77,13 @@ function DatabaseOverview() {
               <Row label="Password required">
                 <span className="mono">{d.require_password ? "yes" : "no"}</span>
               </Row>
+              {/* Only shown when one was requested: an empty value means "the
+                  engine's own default", which is a sentence, not a field. */}
+              {d.initial_database && (
+                <Row label="Application database">
+                  <span className="mono">{d.initial_database}</span>
+                </Row>
+              )}
               <Row label="Created">
                 <span title={absoluteTime(d.created_at)}>{relativeTime(d.created_at)}</span>
               </Row>

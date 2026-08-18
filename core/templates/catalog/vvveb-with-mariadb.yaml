@@ -1,0 +1,28 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: vvveb-with-mariadb
+name: Vvveb with MariaDB
+description: Powerful and easy to use cms to build websites, blogs or ecommerce stores.
+category: cms
+resources:
+  databases:
+    - name: db
+      engine: mariadb
+      version: "11"
+  applications:
+    - name: vvveb
+      image: vvveb/vvvebcms@sha256:ba2fff03f58b5914c81c9eb9924e1ab8e095f788244c2d4fb563c288ff096b8a
+      port: 80
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: vvveb-data
+          path: /var/www/html
+      env:
+        DB_ENGINE: mysqli
+        DB_HOST: '{{db.db.host}}'
+        DB_NAME: '{{db.db.database}}'
+        DB_PASSWORD: '{{db.db.password}}'
+        DB_USER: '{{db.db.user}}'

@@ -1,0 +1,27 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: wikijs
+name: Wikijs
+description: The most powerful and extensible open source Wiki software.
+category: cms
+version: "2"
+resources:
+  databases:
+    - name: db
+      engine: postgresql
+      version: "16"
+  applications:
+    - name: wikijs
+      image: ghcr.io/requarks/wiki@sha256:68f0d1848261ae76492ba358e30a96a76fed5d97a3fff381656082bf90f70d7e
+      port: 3000
+      route: true
+      health:
+        kind: tcp
+      env:
+        DB_HOST: '{{db.db.host}}'
+        DB_NAME: '{{db.db.database}}'
+        DB_PASS: '{{db.db.password}}'
+        DB_PORT: "5432"
+        DB_TYPE: '{{db.db.host}}'
+        DB_USER: '{{db.db.user}}'

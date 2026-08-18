@@ -1,0 +1,24 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: nextcloud
+name: Nextcloud
+description: NextCloud is a self-hosted, open-source platform that provides file storage, collaboration, and communication tools for seamless data management.
+category: storage
+resources:
+  applications:
+    - name: nextcloud
+      image: lscr.io/linuxserver/nextcloud@sha256:84995ab93bde4250b8e3e3ec1ff95ce3c0526ba5cb01185de8f692d8518801ed
+      port: 80
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: nextcloud-config
+          path: /config
+        - name: nextcloud-data
+          path: /data
+      env:
+        PGID: "1000"
+        PUID: "1000"
+        TZ: Europe/Madrid

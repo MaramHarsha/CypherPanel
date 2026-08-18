@@ -30,8 +30,10 @@ schema: v1                    # literal; unknown values rejected
 slug: n8n                     # [a-z0-9-], unique in the catalog, ≤40 chars
 name: n8n
 description: Workflow automation with a visual editor.   # ≤200 chars
-category: automation          # one of: analytics · automation · cms · dev-tools
-                              #   · monitoring · security · storage · other
+category: automation          # one of: ai · analytics · automation · cms
+                              #   · communication · dev-tools · finance · media
+                              #   · monitoring · productivity · security
+                              #   · storage · other
 version: "1.94"               # the packaged upstream version (display only)
 resources:
   databases:                  # optional, ≤3
@@ -70,7 +72,7 @@ The only dynamic values, resolved once at install time by a strict tokenizer
 | `{{db.<name>.port}}` | the engine's canonical port |
 | `{{db.<name>.user}}` | the engine's root user |
 | `{{db.<name>.password}}` | the generated root password (sealed once it lands in the app's env) |
-| `{{db.<name>.database}}` | the engine's default database (`postgres` for PostgreSQL; empty for engines without one) |
+| `{{db.<name>.database}}` | the application database the install asked the engine to create (managed-databases.md §2); the engine default when it asked for none |
 | `{{db.<name>.url}}` | engine URL (`postgres://user:pass@host:port/db`, `redis://:pass@host:port`, …) |
 | `{{secret.N}}` | a fresh random secret of N bytes hex-encoded (16 ≤ N ≤ 64), generated per install |
 | `{{domain}}` | the domain the operator entered at install (empty when none) |
@@ -89,21 +91,25 @@ follow-up once a real template demands one, not speculative surface.
 Templates live in `core/templates/catalog/*.yaml` and are embedded
 (`go:embed`) — versioned with the binary, no runtime fetch, no network
 dependency (ADR-007 §Decision 3). A unit test parses and validates **every**
-bundled file; an invalid template cannot ship. The launch catalog is a
-curated subset (feature-matrix: "V1 (subset) → full in Phase 4") biased to
-what the schema expresses today: single-container tools and
-PostgreSQL/Redis-family-backed stacks. Named-database support for
-MySQL/MariaDB-backed stacks (WordPress, Ghost) rides on a Managed-Database
-"initial database name" field — recorded follow-up, not in this slice.
+bundled file; an invalid template cannot ship.
+
+The catalog is a hand-curated core plus everything §6's importer converts:
+single-container tools and stacks backed by any of the managed engines.
+MySQL- and MariaDB-backed stacks (WordPress, Ghost) arrived with the
+Managed-Database initial-database field
+([managed-databases.md](managed-databases.md) §2), which every install now
+uses so that `{{db.<name>.database}}` names a database that exists.
 
 ## 4. Install semantics
 
 `POST /api/v1/templates/{slug}/install` `{environment_id, server_id, domain?,
 name?}` → `202 {applications: [ids], databases: [ids]}`.
 
-Order: databases first (their `Create` returns the root password exactly once
-— captured only to resolve placeholders, then discarded; the sealed copy in
-the app's env vars is the durable one), then applications
+Order: databases first — each created with an application database of its own,
+derived from the install name, which is what makes `{{db.<name>.database}}`
+resolve to something that exists (their `Create` returns the root password
+exactly once — captured only to resolve placeholders, then discarded; the
+sealed copy in the app's env vars is the durable one) — then applications
 (source.kind=`image`, env vars sealed by the applications service), then one
 deploy per application through the ordinary scheduler (image deploys go
 straight to rollout). Resource names are `<name>-<resource>` where `name`
@@ -148,30 +154,32 @@ page (today an empty state) becomes: category-grouped catalog with search →
 detail pane (what it creates, env keys, volumes) → install dialog
 (environment, server, domain) → navigate to the created application.
 
-## 6. The Coolify importer — *planned, not yet built*
-
-> **Status: not implemented.** The catalog above is hand-written. This section
-> specifies the importer so it can be built against a settled design; nothing
-> in the shipped code depends on it, and the bundled templates do not come
-> from it. It is the mechanism for widening the catalog beyond what one person
-> can curate, not a launch requirement.
+## 6. The Coolify importer
 
 `core/cmd/coolify-import` — a **build-time tool**, not a runtime code path
-(ADR-007 §Decision 2): reads one Coolify compose template
-(`coolify/templates/compose/*.yaml`, read-only reference), emits a native
-template YAML, or **rejects loudly** with every reason listed. Mapping:
+(ADR-007 §Decision 2): reads Coolify compose templates
+(`coolify/templates/compose/*.yaml`, read-only reference), emits native
+template YAML, or **rejects loudly** with every reason listed. Its output and
+its refusals are documented in [dev/template-import.md](../dev/template-import.md).
+Mapping:
 
 - one compose service with an `image` → an application; `SERVICE_FQDN_<name>`
   → `route: true` + `{{domain}}` references; `SERVICE_PASSWORD_<name>` /
-  `SERVICE_BASE64_*` → `{{secret.32}}`; volumes → named volumes (host-path
-  mounts rejected); `environment` literals carried as-is.
+  `SERVICE_BASE64_*` → `{{secret.N}}` of matching length; volumes → named
+  volumes (host-path mounts rejected); `environment` literals carried as-is
+  after compose's `${VAR:-default}` interpolation is resolved.
 - a service whose image matches a managed engine (postgres/mysql/mariadb/
   mongo/redis/valkey families) → a managed database, its consumers rewired to
-  `{{db.<name>.*}}` references.
+  `{{db.<name>.*}}` references — including the DSN's host and, for PostgreSQL,
+  its database segment. Cache URLs gain the credentials the managed engine
+  requires, since template databases always demand a password.
 - rejected (with reasons): `build:`, `command:`/`entrypoint:` overrides,
   host-path or file mounts, `cap_add`/`privileged`/`devices`, custom
   networks, `depends_on` graphs deeper than app→db, more than one
-  FQDN-routed service, engines outside the matrix.
+  FQDN-routed service, engines outside the matrix, one-shot job containers,
+  a generated value used twice (`{{secret.N}}` resolves per occurrence, so
+  the copies would differ), and any application addressed by hostname —
+  application containers are named per revision and have no stable address.
 
 Imported files are reviewed and committed like hand-written ones — the
 importer widens the funnel; the catalog test is the gate. Per-directory

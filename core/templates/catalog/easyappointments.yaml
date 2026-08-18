@@ -1,0 +1,25 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: easyappointments
+name: Easyappointments
+description: Schedule Anything. Let's start with easy! Get the best free online appointment scheduler on your server, today.
+category: productivity
+resources:
+  databases:
+    - name: db
+      engine: mysql
+      version: "8"
+  applications:
+    - name: easyappointments
+      image: alextselegidis/easyappointments@sha256:4faa30476ad7687334875bd674162b98f07f8e09b922787a8a81f8cc83e0859c
+      port: 80
+      route: true
+      health:
+        kind: tcp
+      env:
+        BASE_URL: https://{{domain}}
+        DB_HOST: '{{db.db.host}}'
+        DB_NAME: '{{db.db.database}}'
+        DB_PASSWORD: '{{db.db.password}}'
+        DB_USERNAME: root

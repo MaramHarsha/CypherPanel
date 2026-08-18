@@ -1,0 +1,25 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: calibre-web
+name: Calibre Web
+description: Calibre-web is a web app providing a clean interface for browsing, reading and downloading eBooks.
+category: media
+resources:
+  applications:
+    - name: calibre-web
+      image: lscr.io/linuxserver/calibre-web@sha256:70f7dcade3e4d07f7e7cb10c6ee3290a4b5496b7cd0c6a27cde97c4c2bb4e2bf
+      port: 8083
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: calibre-web-data
+          path: /config
+        - name: calibre-library
+          path: /books
+      env:
+        DOCKER_MODS: linuxserver/mods:universal-calibre
+        PGID: "1000"
+        PUID: "1000"
+        TZ: Etc/UTC

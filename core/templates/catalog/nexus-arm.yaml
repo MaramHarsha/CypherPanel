@@ -1,0 +1,22 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: nexus-arm
+name: Nexus Arm
+description: 'Open source Universal Repository Manager (ARM version, community edition), default credentials: admin/admin123'
+category: dev-tools
+version: 3.77.2-java17
+resources:
+  applications:
+    - name: nexus
+      image: sonatypecommunity/nexus3@sha256:b5750d65108b79754297221a29af0a5e68e40debcae29d6b3e477b2f0acea6d8
+      port: 8081
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: nexus-data
+          path: /nexus-data
+      env:
+        INSTALL4J_ADD_VM_PARAMS: -Xms2703m -Xmx2703m -XX:MaxDirectMemorySize=2703m -Djava.util.prefs.userRoot=/nexus-data/javaprefs
+        NEXUS_SECURITY_RANDOMPASSWORD: "false"

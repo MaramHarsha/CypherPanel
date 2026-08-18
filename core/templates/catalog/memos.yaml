@@ -1,0 +1,19 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: memos
+name: Memos
+description: An open-source, lightweight note-taking solution. The pain-less way to create your meaningful notes. Your Notes, Your Way.
+category: productivity
+version: 0.30.0
+resources:
+  applications:
+    - name: memos
+      image: neosmemo/memos@sha256:71a5b4738d1bed96e92112004054f0888e92791b64eb78afd79077c96e6f9327
+      port: 5230
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: memos
+          path: /var/opt/memos

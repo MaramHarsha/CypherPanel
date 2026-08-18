@@ -1,0 +1,31 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: freshrss-with-postgresql
+name: FreshRSS with PostgreSQL
+description: A free, self-hostable feed aggregator.
+category: productivity
+version: 1.29.1
+resources:
+  databases:
+    - name: db
+      engine: postgresql
+      version: "16"
+  applications:
+    - name: freshrss
+      image: freshrss/freshrss@sha256:ab6b363102ccdbc39f6a62db926f567c61a5289bf25ba460f1c34423d8cc1a4d
+      port: 80
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: freshrss-data
+          path: /var/www/FreshRSS/data
+        - name: freshrss-extensions
+          path: /var/www/FreshRSS/extensions
+      env:
+        CRON_MIN: 1,31
+        POSTGRES_DB: '{{db.db.database}}'
+        POSTGRES_HOST: '{{db.db.host}}'
+        POSTGRES_PASSWORD: '{{db.db.password}}'
+        POSTGRES_USER: '{{db.db.user}}'

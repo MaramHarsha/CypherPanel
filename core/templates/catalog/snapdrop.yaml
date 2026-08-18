@@ -1,0 +1,23 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: snapdrop
+name: Snapdrop
+description: A self-hosted file-sharing service for secure and convenient file transfers, whether on a local network or the internet.
+category: productivity
+version: version-b8b78cc2
+resources:
+  applications:
+    - name: snapdrop
+      image: linuxserver/snapdrop@sha256:3e0af233372e6ae7ac711397d40cbe2797cefe13220d65e5e284a64252cc0c2c
+      port: 80
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: snapdrop-config
+          path: /config
+      env:
+        PGID: "1000"
+        PUID: "1000"
+        TZ: Europe/Madrid

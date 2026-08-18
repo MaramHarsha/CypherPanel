@@ -1,0 +1,29 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: newapi
+name: Newapi
+description: The next-generation LLM gateway and AI asset management system supports multiple languages.
+category: dev-tools
+version: 0.9.2.0
+resources:
+  databases:
+    - name: db
+      engine: postgresql
+      version: "16"
+    - name: cache
+      engine: redis
+      version: "7"
+  applications:
+    - name: new-api
+      image: calciumion/new-api@sha256:669d66baa9384e36ce8b71ef93d587b5dc5c8a08dacc3e0a5e29d8841980282a
+      port: 3000
+      route: true
+      health:
+        kind: tcp
+      env:
+        ERROR_LOG_ENABLED: "true"
+        REDIS_CONN_STRING: redis://:{{db.cache.password}}@{{db.cache.host}}:6379
+        SESSION_SECRET: '{{secret.32}}'
+        SQL_DSN: postgres://{{db.db.user}}:{{db.db.password}}@{{db.db.host}}:5432/{{db.db.database}}?sslmode=disable&TimeZone=Asia/Shanghai
+        TZ: Asia/Shanghai

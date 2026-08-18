@@ -1,0 +1,28 @@
+# Converted from Coolify's compose template library by core/cmd/coolify-import.
+# Reviewed and committed like a hand-written template; the catalog test is the gate.
+schema: v1
+slug: jellyfin
+name: Jellyfin
+description: Jellyfin is a media server for hosting and streaming your media collection.
+category: media
+version: 10.11.8
+resources:
+  applications:
+    - name: jellyfin
+      image: lscr.io/linuxserver/jellyfin@sha256:e622a48adf7193c7d626c2325a40f9b01c932c8e7bf3f50ffa40e7e9b6ce1d39
+      port: 8096
+      route: true
+      health:
+        kind: tcp
+      volumes:
+        - name: jellyfin-config
+          path: /config
+        - name: jellyfin-tvshows
+          path: /data/tvshows
+        - name: jellyfin-movies
+          path: /data/movies
+      env:
+        JELLYFIN_PublishedServerUrl: https://{{domain}}
+        PGID: "1000"
+        PUID: "1000"
+        TZ: Europe/Madrid
