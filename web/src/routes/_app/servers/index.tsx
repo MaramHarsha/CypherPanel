@@ -13,7 +13,7 @@ import { HeaderStat, PageBody, PageHeader } from "@/components/page-header";
 import { PageState } from "@/components/page-state";
 import { StatusDot } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { useCrumbs } from "@/lib/crumbs";
@@ -28,14 +28,25 @@ function ServersPage() {
   const list = servers.data ?? [];
   const online = list.filter((s) => s.enrolled && s.status === "running").length;
 
+  // One dialog for the whole page, deliberately. It used to be rendered inside
+  // the empty state and inside the join card — both of which this page's own
+  // poll can unmount. Creating the first server made `list` non-empty, the
+  // empty state disappeared on the next 5-second refetch, and the open dialog
+  // went with it: the join command vanished seconds after being shown, right
+  // as the operator was copying it.
+  const [joinOpen, setJoinOpen] = useState(false);
+
   return (
     <>
+      <JoinServerDialog open={joinOpen} onOpenChange={setJoinOpen} />
       <PageHeader
         title="Servers"
         actions={
           <>
             {list.length > 0 && <HeaderStat value={`${online}/${list.length}`} label="online" />}
-            <JoinServerDialog />
+            <Button variant="primary" size="md" onClick={() => setJoinOpen(true)}>
+              <Plus className="h-3.5 w-3.5" /> Join a server
+            </Button>
           </>
         }
       />
@@ -47,7 +58,11 @@ function ServersPage() {
               emphasis
               title="Join your first server"
               hint="A server is any Linux host that runs your apps. Joining installs the CypherPanel agent with one copy-paste command — it dials home over mTLS, so there are no SSH keys to store and no ports to open."
-              action={<JoinServerDialog primary />}
+              action={
+                <Button variant="primary" size="lg" onClick={() => setJoinOpen(true)}>
+                  <Plus className="h-3.5 w-3.5" /> Join a server
+                </Button>
+              }
             />
           }
         >
@@ -57,7 +72,7 @@ function ServersPage() {
                 <ServerCard key={s.id} server={s} />
               ))}
               <li>
-                <JoinCard />
+                <JoinCard onJoin={() => setJoinOpen(true)} />
               </li>
             </ul>
           )}
@@ -99,7 +114,7 @@ function ServerCard({ server: s }: { server: Server }) {
 }
 
 /** The dashed cell that explains the join model and starts the flow. */
-function JoinCard() {
+function JoinCard({ onJoin }: { onJoin: () => void }) {
   return (
     <div className="flex h-full flex-col rounded-lg border-[1.5px] border-dashed border-border-strong/50 p-5">
       <p className="text-[15px] font-semibold">Join a new server</p>
@@ -108,13 +123,15 @@ function JoinCard() {
         never opens a port on your server.
       </p>
       <div className="mt-auto pt-4">
-        <JoinServerDialog primary />
+        <Button variant="primary" size="lg" onClick={onJoin}>
+          <Plus className="h-3.5 w-3.5" /> Join a server
+        </Button>
       </div>
     </div>
   );
 }
 
-function JoinServerDialog({ primary }: { primary?: boolean }) {
+function JoinServerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const [name, setName] = useState("");
   const [join, setJoin] = useState<{ serverId: string; instructions: JoinInstructions } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -134,18 +151,16 @@ function JoinServerDialog({ primary }: { primary?: boolean }) {
 
   return (
     <Dialog
-      onOpenChange={(open) => {
-        if (!open) {
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) {
           setJoin(null);
           setName("");
+          setError(null);
         }
+        onOpenChange(next);
       }}
     >
-      <DialogTrigger asChild>
-        <Button variant="primary" size={primary ? "lg" : "md"}>
-          <Plus className="h-3.5 w-3.5" /> Join a server
-        </Button>
-      </DialogTrigger>
       {join === null ? (
         <DialogContent
           title="Join a server"

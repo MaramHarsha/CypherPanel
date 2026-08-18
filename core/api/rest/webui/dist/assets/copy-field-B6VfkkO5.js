@@ -1,6 +1,0 @@
-import{r as n,j as e,c as a}from"./index-Cdr6G3-B.js";import{C as i}from"./check-JccJX7_M.js";import{c}from"./createLucideIcon-t_EkUFa1.js";/**
- * @license lucide-react v0.475.0 - ISC
- *
- * This source code is licensed under the ISC license.
- * See the LICENSE file in the root directory of this source tree.
- */const d=[["rect",{width:"14",height:"14",x:"8",y:"8",rx:"2",ry:"2",key:"17jyea"}],["path",{d:"M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2",key:"zix9uf"}]],p=c("Copy",d);function x({value:t,label:o}){const[r,s]=n.useState(!1);return e.jsx("button",{type:"button","aria-label":r?"Copied":o,onClick:()=>{navigator.clipboard.writeText(t).then(()=>{s(!0),setTimeout(()=>s(!1),1500)})},className:"rounded p-1 text-text-faint hover:bg-raised hover:text-text",children:r?e.jsx(i,{className:"h-3.5 w-3.5 text-status-running"}):e.jsx(p,{className:"h-3.5 w-3.5"})})}function h({value:t,className:o,mono:r=!0}){return e.jsxs("div",{className:a("flex min-w-0 items-center justify-between gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5",o),children:[e.jsx("span",{className:a("truncate text-[13px]",r&&"mono"),title:t,children:t}),e.jsx(x,{value:t,label:"Copy"})]})}export{x as C,h as a};

@@ -817,7 +817,7 @@ var displayNames = map[string]string{
 	"minio": "MinIO", "mongodb": "MongoDB", "mysql": "MySQL", "postgresql": "PostgreSQL",
 	"grafana": "Grafana", "influxdb": "InfluxDB", "clickhouse": "ClickHouse",
 	"rabbitmq": "RabbitMQ", "meilisearch": "Meilisearch", "typesense": "Typesense",
-	"gitea": "Gitea", "gitlab": "GitLab", "github": "GitHub", "jellyfin": "Jellyfin",
+	"gitea": "Gitea", "gitlab": "GitLab", "classicpress": "ClassicPress", "github": "GitHub", "jellyfin": "Jellyfin",
 	"paperless-ngx": "Paperless-ngx", "vaultwarden": "Vaultwarden", "wireguard": "WireGuard",
 	"nginx": "nginx", "traefik": "Traefik", "haproxy": "HAProxy", "openvpn": "OpenVPN",
 	"pgadmin": "pgAdmin", "webtop": "Webtop", "youtrack": "YouTrack",
@@ -838,7 +838,9 @@ var acronyms = map[string]string{
 // `x-with-postgresql` variants, and "Wordpress With Postgresql" reads like a
 // machine wrote it — which is exactly the impression a generated catalog must
 // avoid.
-var joiners = map[string]bool{"with": true, "and": true, "for": true, "to": true, "on": true}
+var joiners = map[string]bool{
+	"with": true, "without": true, "and": true, "for": true, "to": true, "on": true,
+}
 
 func displayName(slug string) string {
 	if n, ok := displayNames[slug]; ok {

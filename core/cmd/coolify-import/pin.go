@@ -171,7 +171,10 @@ func applyPins(ctx context.Context, r *outcome, reg *registry) {
 			// import pinned from is still the most specific true thing we can
 			// say, and a card reading "monitoring · 2" beats a bare category.
 			// "latest" is the one tag that says nothing at all.
-			if _, _, tag, _ := splitReference(a.Image); tag != "latest" {
+			// A tag with no digit in it — `core-latest`, `stable`, `main` — is
+			// a channel name, not a version. Showing it on a catalog card
+			// claims a precision the tag does not have.
+			if _, _, tag, _ := splitReference(a.Image); tag != "latest" && strings.ContainsAny(tag, "0123456789") {
 				version = tag
 			}
 		}

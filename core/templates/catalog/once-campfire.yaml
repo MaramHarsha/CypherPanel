@@ -5,7 +5,6 @@ slug: once-campfire
 name: Once Campfire
 description: Super simple group chat, without a subscription.
 category: communication
-version: main
 resources:
   applications:
     - name: campfire

@@ -148,7 +148,20 @@ if [ -n "${CYPHER_AGENT_URL:-}" ]; then
 elif [ -x "$BIN" ]; then
     say "reusing installed $BIN ($("$BIN" version 2>/dev/null || echo 'unknown version'))"
 else
-    fail "no agent binary found. Set CYPHER_AGENT_URL to the cypher-agent binary for linux/$ARCH (ADR-010: the plane does not host binaries — point it at your release asset or file server)"
+    fail "no agent binary found at $BIN.
+
+  The plane deliberately does not host binaries (ADR-010), so the installer
+  needs one of these:
+
+    * a release asset — re-run with
+        CYPHER_AGENT_URL=https://.../cypher-agent-linux-$ARCH
+      (add CYPHER_AGENT_SHA256=<sum> to have it verified), or
+
+    * a binary already on this host — build or copy one into place and re-run
+      the same command:
+        install -m 0755 ./cypher-agent $BIN
+
+  Building from a source checkout: cd agent && go build -o $BIN ./cmd/cypher-agent"
 fi
 
 # ── plane CA (pinned for all future traffic — threat-model §5.1) ─────────────

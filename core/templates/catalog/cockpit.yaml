@@ -5,7 +5,6 @@ slug: cockpit
 name: Cockpit
 description: Cockpit is a headless content platform that is lightweight, fast and ready for takeoff.
 category: cms
-version: core-latest
 resources:
   applications:
     - name: cockpit
