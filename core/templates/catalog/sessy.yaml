@@ -5,7 +5,6 @@ slug: sessy
 name: Sessy
 description: Email observability platform for monitoring and analyzing email systems.
 category: monitoring
-version: main
 resources:
   applications:
     - name: sessy

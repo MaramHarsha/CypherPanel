@@ -2,7 +2,7 @@
 # Reviewed and committed like a hand-written template; the catalog test is the gate.
 schema: v1
 slug: wordpress-without-database
-name: WordPress Without Database
+name: WordPress without Database
 description: WordPress is open source software you can use to create a beautiful website, blog, or app.
 category: cms
 resources:
