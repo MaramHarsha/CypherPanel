@@ -115,7 +115,16 @@ function DatabaseOverview() {
                     </Button>
                   }
                   title="Reset the root password?"
-                  blastRadius="Generates a new root password and restarts the database. Anything using the current password — apps, backups, external clients — must be updated. The new password is shown once."
+                  // The default lead announces a permanent removal, and a
+                  // password reset removes nothing — so it states its own
+                  // consequence instead, over the three things that follow
+                  // from it.
+                  lead="Resetting the password:"
+                  blastRadius={[
+                    "the current password stops working immediately",
+                    "apps, backups and external clients using it must be updated by hand",
+                    "the new password is shown once and then sealed",
+                  ]}
                   actionLabel="Reset password"
                   pending={reset.isPending}
                   onConfirm={() => reset.mutate({ id: dbId })}

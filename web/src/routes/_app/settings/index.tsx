@@ -2,8 +2,14 @@
 // and API tokens (shown once at creation). Everything here is credential
 // management, so every route it calls is session-only server-side — an API
 // token cannot reach this page's actions.
+//
+// The security surfaces share one shape (canvas 13a/13i): a bordered list whose
+// rows carry a bold label, an optional tinted status chip, a faint sub-line,
+// and a plain text action on the right. Rows are read far more often than they
+// are acted on, so the action stays a word rather than a glyph — "Revoke" and
+// "Turn off" mean different things, and two bins do not.
 import { createFileRoute } from "@tanstack/react-router";
-import { Check, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { Check, Plus } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import {
@@ -22,21 +28,29 @@ import {
   useVerifyTotp,
 } from "@/api/gen/auth/auth";
 import { Ability } from "@/api/gen/model";
-import { CopyField } from "@/components/copy-field";
+import { CopyButton, CopyField } from "@/components/copy-field";
 import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
 import { PageState } from "@/components/page-state";
 import { QRCode } from "@/components/qr-code";
+import { StatusPill } from "@/components/status-badge";
+import { ActionButton } from "@/components/ui/action-button";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import { relativeTime } from "@/lib/time";
+import { Input, Select } from "@/components/ui/input";
+import { useCrumbs } from "@/lib/crumbs";
+import { relativeTime, timeUntil } from "@/lib/time";
+import { cn } from "@/lib/utils";
 import { useQueryClient } from "@tanstack/react-query";
 
 export const Route = createFileRoute("/_app/settings/")({ component: AccountTab });
 
+/** The plain word-action that ends a security row (canvas 13a/13i). */
+const rowAction = "shrink-0 text-[12px] font-medium hover:underline disabled:no-underline disabled:opacity-50";
+
 function AccountTab() {
+  useCrumbs([{ label: "settings", to: "/settings" }, { label: "account" }]);
   const me = useGetMe();
   const tokens = useListTokens();
 
@@ -58,7 +72,7 @@ function AccountTab() {
           <Eyebrow>API tokens</Eyebrow>
           <CreateTokenDialog />
         </div>
-        <p className="text-[13px] text-text-mid">
+        <p className="text-[12.5px] leading-[1.5] text-text-mid">
           A token lets scripts and CI call the CypherPanel API as you, limited to the abilities you give it. The value
           is shown once at creation.
         </p>
@@ -73,7 +87,7 @@ function AccountTab() {
           }
         >
           {(list) => (
-            <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-surface">
+            <ul className="divide-y divide-border-subtle overflow-hidden rounded-lg border border-border bg-surface">
               {list.map((t) => (
                 <TokenRow
                   key={t.id}
@@ -81,6 +95,7 @@ function AccountTab() {
                   name={t.name}
                   abilities={t.abilities}
                   lastUsed={t.last_used_at}
+                  expires={t.expires_at}
                   created={t.created_at}
                 />
               ))}
@@ -95,41 +110,44 @@ function AccountTab() {
 // ─── two-factor ─────────────────────────────────────────────────────────────
 
 // Panel compromise is fleet control (threat-model), so 2FA gets a first-class
-// section rather than hiding behind a toggle. The flow is deliberately linear:
+// row rather than hiding behind a toggle. The flow is deliberately linear:
 // scan → confirm a code → save recovery codes, with no way to leave enrollment
 // half-finished (the server only enables after a verified code).
 function TwoFactorSection() {
   const status = useGetTotpStatus();
   const enabled = status.data?.enabled ?? false;
   const left = status.data?.recovery_codes_left ?? 0;
+  const spent = enabled && left === 0;
 
   return (
     <section className="space-y-2">
-      <div className="flex items-center justify-between">
-        <Eyebrow>Two-factor authentication</Eyebrow>
-        {enabled ? <DisableTotpDialog /> : <EnrollTotpDialog />}
-      </div>
-      <div className="rounded-lg border border-border bg-surface p-4 text-[13px]">
-        {enabled ? (
-          <>
-            <p className="flex items-center gap-2 text-text">
-              {/* `text-success` was not a token — it emitted no rule at all, so
-                  this shield had been rendering in ink rather than green since
-                  the screen landed. The status vocabulary calls this colour
-                  `status-running` (ui-principles §5). */}
-              <ShieldCheck className="h-4 w-4 text-status-running" aria-hidden /> Enabled — a code is required at
-              every sign-in.
+      <Eyebrow>Security</Eyebrow>
+      {/* The lead states the account's own posture, not a generic warning: once
+          2FA is on, telling the operator their password alone holds the fleet
+          is simply false. */}
+      <p className="text-[12.5px] leading-[1.5] text-text-mid">
+        {enabled
+          ? "A code from your authenticator is required at every sign-in."
+          : "Your password alone controls every server this panel manages — an authenticator app closes that gap."}
+      </p>
+      <div className="overflow-hidden rounded-lg border border-border bg-surface">
+        <div className="flex items-center gap-3 px-4 py-3">
+          <div className="min-w-0 flex-1">
+            <span className="text-[13px] font-semibold text-text">Two-factor</span>{" "}
+            <StatusPill status={enabled ? "running" : "stopped"}>{enabled ? "on" : "off"}</StatusPill>
+            {/* One sentence, one colour: when the last recovery code is gone the
+                whole line goes amber rather than splitting mid-clause. */}
+            <p className={cn("mt-0.5 text-[11.5px]", spent ? "text-status-degraded-text" : "text-text-faint")}>
+              {enabled
+                ? `TOTP · ${left} recovery ${left === 1 ? "code" : "codes"} left` +
+                  // Enrolling while enabled is refused (409, two-factor-auth.md
+                  // §2), so the only real path to a fresh set is off then on.
+                  (spent ? " · turn two-factor off and on again to get a fresh set" : "")
+                : "A code is not required at sign-in."}
             </p>
-            <p className="mono mt-1 text-xs text-text-faint">
-              {left} recovery {left === 1 ? "code" : "codes"} remaining
-              {left === 0 ? " · re-enroll to get a fresh set" : ""}
-            </p>
-          </>
-        ) : (
-          <p className="text-text-mid">
-            Off. Your password alone controls every server this panel manages — an authenticator app closes that gap.
-          </p>
-        )}
+          </div>
+          {enabled ? <DisableTotpDialog /> : <EnrollTotpDialog />}
+        </div>
       </div>
     </section>
   );
@@ -139,11 +157,18 @@ function EnrollTotpDialog() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [code, setCode] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  // Two failures, two places: enrollment never started (the QR is missing and
+  // the form cannot be completed at all) is a different problem from a code
+  // the server rejected, and painting both in the same slot left the dialog
+  // with a grey sentence and a submit disabled for no stated reason.
+  const [enrollError, setEnrollError] = useState<string | null>(null);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
   const [codes, setCodes] = useState<string[] | null>(null);
 
   const enroll = useEnrollTotp({
-    mutation: { onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not start enrollment") },
+    mutation: {
+      onError: (e: unknown) => setEnrollError(e instanceof Error ? e.message : "Could not start enrollment"),
+    },
   });
   const verify = useVerifyTotp({
     mutation: {
@@ -152,7 +177,7 @@ function EnrollTotpDialog() {
       // unmounting the only copy of the recovery codes the operator will ever
       // see. The status is refreshed on acknowledgement instead.
       onSuccess: (res) => setCodes(res.recovery_codes),
-      onError: (e: unknown) => setError(e instanceof Error ? e.message : "That code was not accepted"),
+      onError: (e: unknown) => setVerifyError(e instanceof Error ? e.message : "That code was not accepted"),
     },
   });
 
@@ -165,9 +190,15 @@ function EnrollTotpDialog() {
 
   const reset = () => {
     setCode("");
-    setError(null);
+    setEnrollError(null);
+    setVerifyError(null);
     setCodes(null);
     enroll.reset();
+  };
+
+  const retryEnroll = () => {
+    setEnrollError(null);
+    enroll.mutate();
   };
 
   return (
@@ -193,15 +224,22 @@ function EnrollTotpDialog() {
       }}
     >
       <DialogTrigger asChild>
-        <Button variant="primary" size="md">
-          <ShieldCheck className="h-3.5 w-3.5" /> Turn on
-        </Button>
+        <button type="button" className={cn(rowAction, "text-text-dim")}>
+          Turn on
+        </button>
       </DialogTrigger>
       {codes ? (
         <DialogContent
           title="Save your recovery codes"
           description="Each code works once, if you lose your authenticator. This is the only time they are shown."
         >
+          {/* The codes are already legible in the grid below; the control here
+              copies the set. Rendering them a second time inside a one-line
+              field only produced a clipped smear of run-together codes. */}
+          <div className="mb-1.5 flex items-center justify-between">
+            <span className="text-xs font-semibold text-text">{codes.length} codes</span>
+            <CopyButton value={codes.join("\n")} label={`Copy all ${codes.length} codes`} />
+          </div>
           <ul className="grid grid-cols-2 gap-1.5 rounded-md border border-border bg-raised p-3">
             {codes.map((c) => (
               <li key={c} className="mono text-[13px] tracking-wide text-text">
@@ -209,9 +247,6 @@ function EnrollTotpDialog() {
               </li>
             ))}
           </ul>
-          <div className="mt-3">
-            <CopyField value={codes.join("\n")} />
-          </div>
           <div className="mt-4 flex justify-end">
             <Button variant="primary" onClick={acknowledge}>
               <Check className="h-3.5 w-3.5" /> I saved them
@@ -226,7 +261,7 @@ function EnrollTotpDialog() {
           <form
             onSubmit={(e: FormEvent) => {
               e.preventDefault();
-              setError(null);
+              setVerifyError(null);
               verify.mutate({ data: { code } });
             }}
             className="space-y-4"
@@ -242,11 +277,23 @@ function EnrollTotpDialog() {
                   </div>
                 </details>
               </div>
+            ) : enrollError ? (
+              <div className="space-y-2">
+                <p
+                  role="alert"
+                  className="rounded-md border border-danger/35 bg-danger/[0.06] px-3 py-2 text-[13px] text-danger"
+                >
+                  {enrollError}
+                </p>
+                <Button variant="ghost" size="sm" onClick={retryEnroll}>
+                  Try again
+                </Button>
+              </div>
             ) : (
-              <p className="text-[13px] text-text-mid">{enroll.isPending ? "Preparing…" : (error ?? "")}</p>
+              <p className="text-[13px] text-text-mid">Preparing…</p>
             )}
 
-            <Field label="Code from your app" error={error ?? undefined}>
+            <Field label="Code from your app" error={verifyError ?? undefined}>
               {(id) => (
                 <Input
                   id={id}
@@ -264,9 +311,16 @@ function EnrollTotpDialog() {
               <DialogClose asChild>
                 <Button variant="ghost">Cancel</Button>
               </DialogClose>
-              <Button type="submit" variant="primary" disabled={verify.isPending || !enroll.data || code.trim() === ""}>
-                {verify.isPending ? "Confirming…" : "Confirm and enable"}
-              </Button>
+              <ActionButton
+                type="submit"
+                variant="primary"
+                state={verify.isPending ? "busy" : "idle"}
+                busyLabel="Confirming…"
+                disabled={code.trim() === "" || !enroll.data}
+                disabledReason={enrollError ? "Enrollment could not start — try again above" : undefined}
+              >
+                Confirm and enable
+              </ActionButton>
             </div>
           </form>
         </DialogContent>
@@ -292,9 +346,10 @@ function DisableTotpDialog() {
   return (
     <Dialog onOpenChange={() => { setCode(""); setError(null); }}>
       <DialogTrigger asChild>
-        <Button variant="ghost" size="md">
+        {/* Danger, like "Revoke": this row's action removes a protection. */}
+        <button type="button" className={cn(rowAction, "text-danger")}>
           Turn off
-        </Button>
+        </button>
       </DialogTrigger>
       <DialogContent
         title="Turn off two-factor authentication"
@@ -324,9 +379,15 @@ function DisableTotpDialog() {
             <DialogClose asChild>
               <Button variant="ghost">Cancel</Button>
             </DialogClose>
-            <Button type="submit" variant="danger" disabled={disable.isPending || code.trim() === ""}>
-              {disable.isPending ? "Turning off…" : "Turn off"}
-            </Button>
+            <ActionButton
+              type="submit"
+              variant="danger"
+              state={disable.isPending ? "busy" : "idle"}
+              busyLabel="Turning off…"
+              disabled={code.trim() === ""}
+            >
+              Turn off
+            </ActionButton>
           </div>
         </form>
       </DialogContent>
@@ -355,32 +416,43 @@ function SessionsSection() {
 
   return (
     <section className="space-y-2">
-      <div className="flex items-center justify-between">
-        <Eyebrow>Sessions</Eyebrow>
-        <Button
-          variant="ghost"
-          size="md"
-          disabled={others === 0 || revokeOthers.isPending}
-          onClick={() => revokeOthers.mutate()}
-        >
-          Sign out everywhere else
-        </Button>
-      </div>
-      <p className="text-[13px] text-text-mid">Every device currently signed in to this account.</p>
+      <Eyebrow>Sessions</Eyebrow>
+      <p className="text-[12.5px] leading-[1.5] text-text-mid">
+        Every live sign-in on this account. Sits right under two-factor — sign the others out if anything looks
+        unfamiliar.
+      </p>
       <PageState query={sessions} empty={<EmptyState title="No active sessions" hint="Sign in to create one." />}>
         {(list) => (
-          <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-surface">
-            {list.map((s) => (
-              <SessionRow
-                key={s.id}
-                id={s.id}
-                current={s.current}
-                created={s.created_at}
-                expires={s.expires_at}
-                onRevoked={invalidate}
-              />
-            ))}
-          </ul>
+          <>
+            <ul className="divide-y divide-border-subtle overflow-hidden rounded-lg border border-border bg-surface">
+              {list.map((s) => (
+                <SessionRow
+                  key={s.id}
+                  id={s.id}
+                  current={s.current}
+                  created={s.created_at}
+                  expires={s.expires_at}
+                  onRevoked={invalidate}
+                />
+              ))}
+            </ul>
+            {/* The bulk action sits under the list it acts on, with the count
+                of what it will take beside it — a pill labelled "everywhere
+                else" is otherwise a number you cannot see before clicking. */}
+            <div className="mt-3.5 flex items-center gap-3">
+              <Button
+                variant="secondary"
+                size="md"
+                disabled={others === 0 || revokeOthers.isPending}
+                onClick={() => revokeOthers.mutate()}
+              >
+                Sign out everywhere else
+              </Button>
+              <span className="text-[11.5px] text-text-faint">
+                {others === 0 ? "no other sessions" : `revokes ${others} session${others === 1 ? "" : "s"}`}
+              </span>
+            </div>
+          </>
         )}
       </PageState>
     </section>
@@ -410,25 +482,38 @@ function SessionRow({
     },
   });
   return (
-    <li className="flex items-center justify-between gap-3 px-4 py-2.5">
-      <span className="flex min-w-0 flex-col">
-        <span className="truncate text-[13px] text-text">
-          {current ? "This device" : "Signed-in device"}
-          {current && <span className="ml-2 rounded bg-accent/15 px-1.5 py-0.5 text-[10px] uppercase text-accent">current</span>}
-        </span>
-        <span className="mono text-xs text-text-faint">
-          started {relativeTime(created)} · expires {relativeTime(expires)}
+    // The current row is the one you must not revoke by accident, so it is the
+    // one lifted onto the highlight surface — and it carries no action at all.
+    <li className={cn("flex items-center gap-3 px-4 py-3", current && "bg-raised")}>
+      <span className="min-w-0 flex-1">
+        {current ? (
+          <>
+            <span className="text-[13px] font-semibold text-text">This device</span>{" "}
+            <StatusPill status="running">current</StatusPill>
+          </>
+        ) : (
+          // No IP, no user-agent (two-factor-auth.md's sibling spec keeps them
+          // out); the truncated session id is the only handle there is, and an
+          // operator deciding what to sign out needs to see it.
+          <span className="mono text-[12.5px] font-medium text-text" title={id}>
+            {id.length > 9 ? `${id.slice(0, 9)}…` : id}
+          </span>
+        )}
+        <span className="mono mt-0.5 block text-[11.5px] text-text-faint">
+          signed in {relativeTime(created)} · expires {timeUntil(expires)}
         </span>
       </span>
-      <Button
-        size="sm"
-        variant="ghost"
-        aria-label="Sign this session out"
-        disabled={revoke.isPending}
-        onClick={() => revoke.mutate({ id })}
-      >
-        <Trash2 className="h-3.5 w-3.5 text-danger" />
-      </Button>
+      {!current && (
+        <button
+          type="button"
+          aria-label={`Revoke session ${id}`}
+          disabled={revoke.isPending}
+          onClick={() => revoke.mutate({ id })}
+          className={cn(rowAction, "text-danger")}
+        >
+          {revoke.isPending ? "Revoking…" : "Revoke"}
+        </button>
+      )}
     </li>
   );
 }
@@ -440,12 +525,14 @@ function TokenRow({
   name,
   abilities,
   lastUsed,
+  expires,
   created,
 }: {
   id: string;
   name: string;
   abilities: string[];
   lastUsed?: string;
+  expires?: string;
   created: string;
 }) {
   const del = useDeleteToken({
@@ -455,24 +542,31 @@ function TokenRow({
     },
   });
   return (
-    <li className="flex items-center justify-between gap-3 px-4 py-2.5">
-      <span className="flex min-w-0 flex-col">
+    <li className="flex items-center gap-3 px-4 py-3">
+      <span className="flex min-w-0 flex-1 flex-col">
         <span className="flex items-center gap-2">
-          <span className="truncate text-[13px] text-text">{name}</span>
+          <span className="truncate text-[13px] font-semibold text-text">{name}</span>
           {abilities.map((a) => (
-            <span key={a} className="mono rounded bg-raised px-1.5 py-0.5 text-[10px] uppercase text-text-faint">
+            <span key={a} className="mono rounded bg-raised px-1.5 py-0.5 text-[10.5px] uppercase text-text-faint">
               {a}
             </span>
           ))}
         </span>
-        <span className="mono text-xs text-text-faint">
+        <span className="mono mt-0.5 text-[11.5px] text-text-faint">
           created {relativeTime(created)}
           {lastUsed ? ` · last used ${relativeTime(lastUsed)}` : " · never used"}
+          {expires ? ` · expires ${timeUntil(expires)}` : " · never expires"}
         </span>
       </span>
-      <Button size="sm" variant="ghost" aria-label={`Revoke ${name}`} disabled={del.isPending} onClick={() => del.mutate({ id })}>
-        <Trash2 className="h-3.5 w-3.5 text-danger" />
-      </Button>
+      <button
+        type="button"
+        aria-label={`Revoke ${name}`}
+        disabled={del.isPending}
+        onClick={() => del.mutate({ id })}
+        className={cn(rowAction, "text-danger")}
+      >
+        {del.isPending ? "Revoking…" : "Revoke"}
+      </button>
     </li>
   );
 }
@@ -483,9 +577,19 @@ const ABILITY_HELP: Record<Ability, string> = {
   [Ability.deploy]: "Trigger deploys and rollbacks",
 };
 
+/** Canvas 13ac offers a lifetime, not a checkbox — 90 days is its default. */
+const EXPIRY_CHOICES = [
+  { days: 7, label: "7 days" },
+  { days: 30, label: "30 days" },
+  { days: 90, label: "90 days" },
+  { days: 365, label: "1 year" },
+  { days: 0, label: "Never" },
+];
+
 function CreateTokenDialog({ primary }: { primary?: boolean }) {
   const [name, setName] = useState("");
   const [abilities, setAbilities] = useState<Ability[]>([Ability.read, Ability.deploy]);
+  const [expiryDays, setExpiryDays] = useState(90);
   const [minted, setMinted] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -502,8 +606,14 @@ function CreateTokenDialog({ primary }: { primary?: boolean }) {
   const submit = (e: FormEvent) => {
     e.preventDefault();
     setError(null);
-    create.mutate({ data: { name, abilities } });
+    create.mutate({ data: { name, abilities, expires_in_days: expiryDays } });
   };
+
+  // The plain-language line stays on the page rather than in a tooltip
+  // (ui-principles §11) — it just follows the selection instead of repeating
+  // itself under every chip.
+  const chosen = (Object.keys(ABILITY_HELP) as Ability[]).filter((a) => abilities.includes(a));
+  const abilityHelp = chosen.length === 0 ? "Pick at least one." : chosen.map((a) => ABILITY_HELP[a]).join(" · ");
 
   return (
     <Dialog
@@ -511,7 +621,8 @@ function CreateTokenDialog({ primary }: { primary?: boolean }) {
         if (!open) {
           setMinted(null);
           setName("");
-          setAbilities(["read", "deploy"]);
+          setAbilities([Ability.read, Ability.deploy]);
+          setExpiryDays(90);
           setError(null);
         }
       }}
@@ -522,37 +633,88 @@ function CreateTokenDialog({ primary }: { primary?: boolean }) {
         </Button>
       </DialogTrigger>
       {minted === null ? (
-        <DialogContent title="Create an API token" description="Name it after what will use it — 'ci', 'deploy script'.">
+        <DialogContent title="New API token">
           <form onSubmit={submit} className="space-y-4">
-            <Field label="Name" error={error ?? undefined}>
-              {(id) => <Input id={id} required autoFocus value={name} onChange={(e) => setName(e.target.value)} />}
+            {error && (
+              <p
+                role="alert"
+                className="rounded-md border border-danger/35 bg-danger/[0.06] px-3 py-2 text-[13px] text-danger"
+              >
+                {error}
+              </p>
+            )}
+            <Field label="Name" qualifier="· what will use it">
+              {(id) => (
+                <Input
+                  id={id}
+                  required
+                  autoFocus
+                  className="font-sans"
+                  placeholder="github-actions-deploy"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                />
+              )}
             </Field>
             {/* Least privilege is the default: a CI credential usually needs to
                 read and deploy, not to delete the application it deploys. */}
             <fieldset className="space-y-1.5">
-              <legend className="text-[13px] text-text">What it may do</legend>
-              {(Object.keys(ABILITY_HELP) as Ability[]).map((ability) => (
-                <label key={ability} className="flex items-start gap-2.5 text-[13px]">
-                  <input
-                    type="checkbox"
-                    className="mt-0.5"
-                    checked={abilities.includes(ability)}
-                    onChange={() => toggle(ability)}
-                  />
-                  <span>
-                    <span className="mono uppercase text-text">{ability}</span>
-                    <span className="ml-2 text-text-faint">{ABILITY_HELP[ability]}</span>
-                  </span>
-                </label>
-              ))}
+              <legend className="text-[12px] font-semibold text-text">Abilities</legend>
+              <div className="flex flex-wrap gap-[7px]">
+                {(Object.keys(ABILITY_HELP) as Ability[]).map((ability) => {
+                  const on = abilities.includes(ability);
+                  return (
+                    <button
+                      key={ability}
+                      type="button"
+                      aria-pressed={on}
+                      onClick={() => toggle(ability)}
+                      className={cn(
+                        "rounded-full px-3 py-1 text-[12px] transition-colors",
+                        on
+                          ? "border-[1.5px] border-border-strong bg-surface font-semibold text-text"
+                          : "border border-border-input bg-surface text-text-mid hover:border-border-strong hover:text-text",
+                      )}
+                    >
+                      {ability}
+                      {on ? " ✓" : ""}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[12px] leading-relaxed text-text-mid">{abilityHelp}</p>
             </fieldset>
-            <div className="flex justify-end gap-2">
-              <DialogClose asChild>
-                <Button variant="ghost">Cancel</Button>
-              </DialogClose>
-              <Button type="submit" variant="primary" disabled={create.isPending || name.trim() === "" || abilities.length === 0}>
-                {create.isPending ? "Creating…" : "Create token"}
-              </Button>
+            {/* Half-width, as in 13ac — the canvas pairs it with a per-project
+                scope the API has no field for, so that cell stays empty. */}
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Expires">
+                {(id) => (
+                  <Select
+                    id={id}
+                    className="font-sans"
+                    value={String(expiryDays)}
+                    onChange={(e) => setExpiryDays(Number(e.target.value))}
+                  >
+                    {EXPIRY_CHOICES.map((c) => (
+                      <option key={c.days} value={c.days}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+            </div>
+            <div className="flex items-center justify-end gap-2.5">
+              <span className="mr-auto text-[11.5px] text-text-faint">value shown once, then sealed</span>
+              <ActionButton
+                type="submit"
+                variant="primary"
+                state={create.isPending ? "busy" : "idle"}
+                busyLabel="Creating…"
+                disabled={name.trim() === "" || abilities.length === 0}
+              >
+                Create token
+              </ActionButton>
             </div>
           </form>
         </DialogContent>

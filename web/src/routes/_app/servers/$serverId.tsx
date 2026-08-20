@@ -8,7 +8,7 @@ import { Fact, FactCard } from "@/components/fact-card";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { ResourceGone } from "@/components/resource-gone";
 import { PageState } from "@/components/page-state";
-import { StatusDot } from "@/components/status-badge";
+import { StatusBadge, StatusDot } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { useCrumbs } from "@/lib/crumbs";
 import { absoluteTime, relativeTime } from "@/lib/time";
@@ -43,12 +43,21 @@ function ServerDetail() {
       <PageHeader
         title={s?.name ?? "…"}
         badge={
-          <span className="flex items-center gap-2">
-            <StatusDot status={s ? (s.enrolled ? s.status : "unknown") : undefined} />
-            <span className="font-mono text-[11px] font-medium uppercase tracking-wide text-text-mid">
-              {s ? (s.enrolled ? s.status : "not joined") : "…"}
+          // The state word takes the status colour so an errored host doesn't
+          // read like a healthy one. A host that never joined has no observed
+          // status to colour at all — it keeps the hollow marker, but says the
+          // truer "not joined" rather than the system's generic "unknown".
+          s &&
+          (s.enrolled ? (
+            <StatusBadge status={s.status} />
+          ) : (
+            <span className="flex items-center gap-2">
+              <StatusDot status="unknown" />
+              <span className="font-mono text-[11px] font-medium uppercase tracking-wide text-status-unknown">
+                not joined
+              </span>
             </span>
-          </span>
+          ))
         }
       />
       <PageBody>
@@ -88,7 +97,11 @@ function ServerDetail() {
                   <ConfirmDestructive
                     trigger={<Button variant="danger">Remove</Button>}
                     title={`Remove ${srv.name}?`}
-                    blastRadius="Revokes the agent's certificate and disconnects it immediately. Apps still placed here block removal until they are moved or deleted."
+                    lead="Removing this server:"
+                    blastRadius={[
+                      "revokes its agent certificate immediately — the agent is disconnected",
+                      "is refused while any app is still placed here — move or delete them first",
+                    ]}
                     confirmName={srv.name}
                     actionLabel="Remove server"
                     pending={del.isPending}

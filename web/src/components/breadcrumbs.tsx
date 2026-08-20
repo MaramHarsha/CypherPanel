@@ -15,7 +15,10 @@ export function Breadcrumbs({ crumbs, className }: { crumbs: Crumb[]; className?
   if (crumbs.length === 0) return null;
   return (
     <nav aria-label="Breadcrumb" className={cn("min-w-0", className)}>
-      <ol className="eyebrow flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
+      {/* The canvas sets the trail as one text run — `MERIDIAN-STUDIO /
+          ATLAS-CRM` — so the gap either side of the slash is a tracked mono
+          space, ~8px at this size, not a layout gutter. */}
+      <ol className="eyebrow flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
         {crumbs.map((c, i) => {
           const last = i === crumbs.length - 1;
           return (
@@ -23,7 +26,7 @@ export function Breadcrumbs({ crumbs, className }: { crumbs: Crumb[]; className?
               {i > 0 && <li aria-hidden>/</li>}
               <li className="min-w-0 truncate">
                 {c.to && !last ? (
-                  <Link to={c.to} className="hover:text-text">
+                  <Link to={c.to} className="transition-colors hover:text-text">
                     {c.label}
                   </Link>
                 ) : (

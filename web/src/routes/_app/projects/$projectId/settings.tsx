@@ -44,8 +44,10 @@ function ProjectSettings() {
   const project = useGetProject(projectId);
   const notifiers = useListNotifiers(projectId);
 
+  // Canvas 12c datelines this page from the project, not from the projects
+  // list: the trail names where you are inside the project, and PROJECTS is
+  // already one click away in the top bar.
   useCrumbs([
-    { label: "projects", to: "/projects" },
     { label: project.data?.project.name ?? projectId, to: `/projects/${projectId}` },
     { label: "settings" },
   ]);
@@ -110,12 +112,14 @@ function DangerZone({ projectId, name }: { projectId: string; name: string }) {
   });
 
   return (
-    <section className="mt-8 rounded-lg border border-danger/35 p-4.5">
-      <h2 className="eyebrow text-danger">Danger zone</h2>
-      <div className="mt-3.5 flex flex-wrap items-center justify-between gap-3">
+    // 12c draws this as one plain white card behind a heavy red rule — no
+    // eyebrow: "Delete this project" already says which zone this is, and a
+    // second heading only pushes the sentence that matters further down.
+    <section className="mt-8 rounded-lg border-[1.5px] border-status-error/40 bg-surface px-4 py-3.5">
+      <div className="flex flex-wrap items-center justify-between gap-3.5">
         <div className="min-w-0">
-          <p className="text-[13px] font-semibold text-text">Delete this project</p>
-          <p className="mt-0.5 text-[12.5px] leading-relaxed text-text-mid">
+          <p className="text-[13.5px] font-semibold text-text">Delete this project</p>
+          <p className="mt-[3px] text-xs leading-relaxed text-text-mid">
             Removes the project and its environments. Delete its applications and databases first.
           </p>
         </div>

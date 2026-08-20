@@ -21,12 +21,14 @@ import { PageState } from "@/components/page-state";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
+import { Input, Select } from "@/components/ui/input";
+import { useCrumbs } from "@/lib/crumbs";
 import { atLeast, type Role } from "@/lib/roles";
 
 export const Route = createFileRoute("/_app/settings/users")({ component: UsersTab });
 
 function UsersTab() {
+  useCrumbs([{ label: "settings", to: "/settings" }, { label: "users" }]);
   const me = useGetMe();
   const canManage = atLeast(me.data?.role as Role | undefined, "admin");
   const users = useListUsers({ query: { enabled: canManage } });
@@ -46,7 +48,7 @@ function UsersTab() {
         <Eyebrow>Users</Eyebrow>
         <CreateUserDialog />
       </div>
-      <p className="text-[13px] text-text-mid">
+      <p className="text-[12.5px] leading-[1.5] text-text-mid">
         Accounts that can sign in to this panel. The panel role is the account's baseline rank; team roles scope access per team.
       </p>
       <PageState
@@ -83,17 +85,20 @@ function UserRow({ user, isSelf }: { user: User; isSelf: boolean }) {
         <span className="truncate text-[13px] text-text">{user.email}</span>
         {isSelf && <span className="mono text-[11px] text-text-faint">you</span>}
       </span>
-      <select
+      {/* A role is a word, not a machine value, so it drops the mono the
+          shared control defaults to (canvas 12c/13av set this class of
+          dropdown in sans). */}
+      <Select
         value={user.role}
         disabled={isSelf || update.isPending}
         onChange={(e) => update.mutate({ id: user.id, data: { role: e.target.value as "member" | "admin" | "owner" } })}
         aria-label={`Role for ${user.email}`}
-        className="h-7 rounded-lg border border-border bg-surface px-2 text-xs text-text disabled:opacity-50"
+        className="w-auto shrink-0 font-sans"
       >
         <option value="member">member</option>
         <option value="admin">admin</option>
         <option value="owner">owner</option>
-      </select>
+      </Select>
     </li>
   );
 }
@@ -160,13 +165,16 @@ function CreateUserDialog({ primary }: { primary?: boolean }) {
             <Field label="Temporary password" hint="They can change it after their first sign-in.">
               {(id) => <Input id={id} type="text" required value={password} onChange={(e) => setPassword(e.target.value)} className="mono" autoComplete="off" />}
             </Field>
-            <Field label="Panel role">
+            <Field
+              label="Panel role"
+              hint="Members work in the teams they belong to; admins also manage servers, deploy keys, backup targets and accounts; owners can change panel roles and delete users."
+            >
               {(id) => (
-                <select id={id} value={role} onChange={(e) => setRole(e.target.value)} className="h-8 w-full rounded-lg border border-border bg-surface px-2 text-sm text-text">
+                <Select id={id} className="font-sans" value={role} onChange={(e) => setRole(e.target.value)}>
                   <option value="member">member</option>
                   <option value="admin">admin</option>
                   <option value="owner">owner</option>
-                </select>
+                </Select>
               )}
             </Field>
             <div className="flex justify-end gap-2">

@@ -17,6 +17,7 @@ import {
   useRunBackupNow,
 } from "@/api/gen/backups/backups";
 import { useListBackupTargets } from "@/api/gen/backups/backups";
+import { useGetDatabase } from "@/api/gen/databases/databases";
 import type { BackupRecord, DatabaseBackup } from "@/api/gen/model";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
 import { EmptyState } from "@/components/empty-state";
@@ -39,8 +40,13 @@ function BackupsTab() {
   const { dbId } = Route.useParams();
   const schedules = useListDatabaseBackups(dbId);
   const targets = useListBackupTargets();
+  // Restore is a typed-name confirm, and the name it asks for is the
+  // database's own — so the history rows need it. The layout above already
+  // holds this query, so reading it here costs a cache hit, not a request.
+  const db = useGetDatabase(dbId);
 
   const hasTargets = (targets.data ?? []).length > 0;
+  const dbName = db.data?.name ?? "";
 
   return (
     <div className="space-y-4">
@@ -69,7 +75,7 @@ function BackupsTab() {
         {(list) => (
           <div className="space-y-4">
             {list.map((s) => (
-              <ScheduleCard key={s.id} dbId={dbId} schedule={s} />
+              <ScheduleCard key={s.id} dbId={dbId} dbName={dbName} schedule={s} />
             ))}
           </div>
         )}
@@ -78,7 +84,7 @@ function BackupsTab() {
   );
 }
 
-function ScheduleCard({ dbId, schedule }: { dbId: string; schedule: DatabaseBackup }) {
+function ScheduleCard({ dbId, dbName, schedule }: { dbId: string; dbName: string; schedule: DatabaseBackup }) {
   const qc = useQueryClient();
   const [showHistory, setShowHistory] = useState(false);
 
@@ -147,12 +153,12 @@ function ScheduleCard({ dbId, schedule }: { dbId: string; schedule: DatabaseBack
           />
         </div>
       </div>
-      {showHistory && <HistoryList dbId={dbId} bakId={schedule.id} />}
+      {showHistory && <HistoryList dbId={dbId} dbName={dbName} bakId={schedule.id} />}
     </div>
   );
 }
 
-function HistoryList({ dbId, bakId }: { dbId: string; bakId: string }) {
+function HistoryList({ dbId, dbName, bakId }: { dbId: string; dbName: string; bakId: string }) {
   const history = useListBackupHistory(dbId, bakId);
   return (
     <div className="border-t border-border">
@@ -164,7 +170,7 @@ function HistoryList({ dbId, bakId }: { dbId: string; bakId: string }) {
         {(records) => (
           <ul className="divide-y divide-border">
             {records.map((r) => (
-              <RecordRow key={r.id} dbId={dbId} record={r} />
+              <RecordRow key={r.id} dbId={dbId} dbName={dbName} record={r} />
             ))}
           </ul>
         )}
@@ -173,10 +179,17 @@ function HistoryList({ dbId, bakId }: { dbId: string; bakId: string }) {
   );
 }
 
-function RecordRow({ dbId, record: r }: { dbId: string; record: BackupRecord }) {
+function RecordRow({ dbId, dbName, record: r }: { dbId: string; dbName: string; record: BackupRecord }) {
   const restore = useRestoreDatabase({
     mutation: {
-      onSuccess: () => toast.success("Restore started — the database is being replaced from this backup"),
+      // The panel gets no progress from a restore — the agent reports one
+      // terminal event to the control plane and nothing to the browser — so
+      // the toast has to carry the whole consequence up front: the database
+      // is down while the dump applies, and nobody can call it back.
+      onSuccess: () =>
+        toast.success(`Restoring ${dbName}…`, {
+          description: "The database is offline while the dump is applied, and the restore can't be stopped.",
+        }),
       onError: mutErr,
     },
   });
@@ -191,7 +204,10 @@ function RecordRow({ dbId, record: r }: { dbId: string; record: BackupRecord }) 
           {r.detail ? ` · ${r.detail}` : ""}
         </span>
       </span>
-      {succeeded && (
+      {/* Held back until the database's name is in hand: the typed-name
+          confirm is what makes the operator's fingers name the target, and a
+          confirm with nothing to type arms itself on open. */}
+      {succeeded && dbName !== "" && (
         <ConfirmDestructive
           trigger={
             <Button size="sm" variant="ghost">
@@ -199,8 +215,13 @@ function RecordRow({ dbId, record: r }: { dbId: string; record: BackupRecord }) 
             </Button>
           }
           title="Restore from this backup?"
-          blastRadius="Replaces the entire current database with the contents of this backup. Everything written since the backup was taken is permanently lost. The database restarts during the restore."
-          confirmName="restore"
+          lead="Restoring replaces this database:"
+          blastRadius={[
+            "every row written since this backup — permanently lost",
+            "the database restarts and is offline during the restore",
+            "the backup file in S3 is not modified",
+          ]}
+          confirmName={dbName}
           actionLabel="Restore database"
           pending={restore.isPending}
           onConfirm={() => restore.mutate({ id: dbId, data: { backup_record_id: r.id, confirm: true } })}

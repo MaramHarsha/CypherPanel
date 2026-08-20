@@ -109,9 +109,10 @@ export function ConfirmDestructive({
           <DialogClose asChild>
             <Button variant="ghost">Cancel</Button>
           </DialogClose>
-          {/* Filled red at .45 opacity until armed — the canvas keeps the
-              button present and readable rather than hiding it, so the shape
-              of the decision is visible while it is still refused. */}
+          {/* Filled red at .45 opacity until armed. This is the one place the
+              system's grey disabled pill is overridden: 13af keeps the button
+              red so the shape of the decision stays visible while it is still
+              refused, rather than swapping in a different-looking object. */}
           <Button
             variant="primary"
             disabled={!armed || pending}
@@ -121,7 +122,7 @@ export function ConfirmDestructive({
             }}
             className={cn(
               "bg-status-error text-white hover:bg-danger-hover",
-              (!armed || pending) && "opacity-45",
+              "disabled:bg-status-error disabled:text-white disabled:opacity-45",
             )}
           >
             {pending ? "Working…" : actionLabel}

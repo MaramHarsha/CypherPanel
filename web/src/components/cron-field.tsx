@@ -3,7 +3,6 @@
 // what they typed before they save.
 import { useMemo } from "react";
 import { Input } from "@/components/ui/input";
-import { absoluteTime } from "@/lib/time";
 import { cn } from "@/lib/utils";
 
 interface CronFieldProps {
@@ -24,14 +23,33 @@ export function CronField({ value, onChange }: CronFieldProps) {
         autoComplete="off"
       />
       {parsed.ok ? (
-        <p className="text-xs text-text-faint">
-          Next: {parsed.runs.map((r) => absoluteTime(r.toISOString())).join(" · ")}
+        // The preview is the one green thing in the modal: it is the proof that
+        // what was typed parses, so it reads like a result rather than a hint.
+        <p className="font-mono text-[11px] text-status-running">
+          next: {parsed.runs.map(formatRun).join(" · ")}
         </p>
       ) : (
         <p className="text-xs text-danger">{parsed.error}</p>
       )}
     </div>
   );
+}
+
+// `Aug 11 03:00` — the canvas line, and short enough that three of them stay on
+// one row. Local time, deliberately: nextRuns matches against local calendar
+// fields, so printing them in any other zone would name an hour it never matched.
+const RUN_FORMAT = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+function formatRun(d: Date): string {
+  const p: Record<string, string> = {};
+  for (const part of RUN_FORMAT.formatToParts(d)) p[part.type] = part.value;
+  return `${p.month} ${p.day} ${p.hour}:${p.minute}`;
 }
 
 interface CronParts {

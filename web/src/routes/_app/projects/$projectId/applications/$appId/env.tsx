@@ -1,7 +1,7 @@
 // Application · Env vars: write-only values (ui-principles §6) — keys listed,
 // values never returned. Changes apply on the next deploy.
 import { useQueryClient } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Plus, Trash2 } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { toast } from "sonner";
@@ -11,24 +11,47 @@ import {
   useListEnvVarKeys,
   useSetEnvVar,
 } from "@/api/gen/applications/applications";
+import { useDeployApplication } from "@/api/gen/deployments/deployments";
 import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
 import { PageState } from "@/components/page-state";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { toastSuccess } from "@/lib/toast";
 
 export const Route = createFileRoute("/_app/projects/$projectId/applications/$appId/env")({
   component: EnvTab,
 });
 
 function EnvTab() {
-  const { appId } = Route.useParams();
+  const { projectId, appId } = Route.useParams();
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const keys = useListEnvVarKeys(appId);
   const [newKey, setNewKey] = useState("");
   const [newValue, setNewValue] = useState("");
 
   const invalidate = () => void qc.invalidateQueries({ queryKey: getListEnvVarKeysQueryKey(appId) });
+
+  const deploy = useDeployApplication({
+    mutation: {
+      onSuccess: (d) =>
+        void navigate({
+          to: "/projects/$projectId/applications/$appId/deployments",
+          params: { projectId, appId },
+          search: { dep: d.id },
+        }),
+      onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Deploy failed to start"),
+    },
+  });
+
+  // A saved variable changes nothing until the container is replaced, so the
+  // toast carries the verb that makes it true rather than leaving the operator
+  // to find it (canvas 10c).
+  const applied = {
+    detail: "Applies on the next deploy",
+    actions: [{ label: "Deploy now", onClick: () => deploy.mutate({ id: appId, data: {} }) }],
+  };
 
   const setVar = useSetEnvVar({
     mutation: {
@@ -36,7 +59,7 @@ function EnvTab() {
         invalidate();
         setNewKey("");
         setNewValue("");
-        toast.success("Saved — applies on the next deploy");
+        toastSuccess({ title: "Env var saved", ...applied });
       },
       onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Could not save the variable"),
     },
@@ -45,7 +68,7 @@ function EnvTab() {
     mutation: {
       onSuccess: () => {
         invalidate();
-        toast.success("Removed — applies on the next deploy");
+        toastSuccess({ title: "Env var removed", ...applied });
       },
       onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Could not remove the variable"),
     },

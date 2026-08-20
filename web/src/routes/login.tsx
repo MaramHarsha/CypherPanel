@@ -33,23 +33,26 @@ function EntryPage() {
 
   return (
     <main className="flex min-h-dvh bg-bg">
-      {/* The ink half — masthead, not chrome. Folded away below `md`. */}
-      <aside className="hidden w-[380px] shrink-0 flex-col bg-[#16130e] px-8 py-9 text-[#e9e5dc] md:flex">
+      {/* The ink half — masthead, not chrome. Folded away below `md`.
+          It reaches for the toast palette rather than the theme surface: like a
+          toast or a log pane, this panel is ink in both themes, so it keeps one
+          identity instead of inverting with the page beside it. */}
+      <aside className="hidden w-[360px] shrink-0 flex-col bg-toast px-8 py-[34px] text-toast-text md:flex">
         <span className="text-[17px] font-bold tracking-tight text-[#faf8f4]">
           Cypher<span className="text-[#ff6a33]">Panel</span>
         </span>
-        <ul className="mt-auto space-y-1.5 font-mono text-[12.5px] text-[#8a8375]">
+        <ul className="mt-auto space-y-1.5 font-mono text-[12.5px] text-toast-faint">
           {PROMISES.map((p) => (
             <li key={p}>
-              <span className="text-[#5cbf7f]">✓</span> {p}
+              <span className="text-pane-ok">✓</span> {p}
             </li>
           ))}
         </ul>
-        <p className="mt-7 font-mono text-[11px] text-[#5d5850]">your servers · your data</p>
+        <p className="mt-[26px] font-mono text-[11px] text-toast-dismiss">your servers · your data</p>
       </aside>
 
       <div className="flex min-w-0 flex-1 items-center justify-center px-5 py-10">
-        <div className="w-full max-w-[320px]">
+        <div className="w-full max-w-[300px]">
           {/* The wordmark rides along on narrow screens, where the ink half is gone. */}
           <span className="mb-8 block text-[17px] font-bold tracking-tight md:hidden">
             Cypher<span className="text-accent">Panel</span>
@@ -211,10 +214,13 @@ function LoginForm() {
     login.mutate({ data: { email, password, ...(totp ? { totp_code: totp } : {}) } });
   };
 
+  // 1e sets this column by hand rather than on a rhythm: 24px under the title,
+  // 16px between the two fields, then 22px of air before the pill so the one
+  // orange thing on the screen is not crowded by the field above it.
   return (
-    <form onSubmit={submit} className="space-y-4">
-      <h1 className="text-[24px] font-bold leading-none tracking-tight text-text">Sign in</h1>
-      <Field label="Email">
+    <form onSubmit={submit}>
+      <h1 className="mb-6 text-[24px] font-bold leading-none tracking-tight text-text">Sign in</h1>
+      <Field label="Email" className="mb-4">
         {(id) => (
           <Input
             id={id}
@@ -227,7 +233,7 @@ function LoginForm() {
           />
         )}
       </Field>
-      <Field label="Password">
+      <Field label="Password" className={needsTotp ? "mb-4" : "mb-[22px]"}>
         {(id) => (
           <Input
             id={id}
@@ -240,7 +246,11 @@ function LoginForm() {
         )}
       </Field>
       {needsTotp && (
-        <Field label="Authenticator code" hint="The 6-digit code from your authenticator app, or a recovery code.">
+        <Field
+          label="Authenticator code"
+          hint="The 6-digit code from your authenticator app, or a recovery code."
+          className="mb-[22px]"
+        >
           {(id) => (
             <Input
               id={id}
@@ -253,7 +263,11 @@ function LoginForm() {
           )}
         </Field>
       )}
-      {error && <FormError message={error} />}
+      {error && (
+        <div className="mb-4">
+          <FormError message={error} />
+        </div>
+      )}
       <Button type="submit" variant="accent" size="lg" className="w-full" disabled={login.isPending}>
         {login.isPending ? "Signing in…" : "Sign in →"}
       </Button>

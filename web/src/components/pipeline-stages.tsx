@@ -49,7 +49,14 @@ export function PipelineStages({
   const ink = tone === "ink";
 
   return (
-    <ol className={cn("flex flex-wrap items-center gap-y-1", className)} aria-label="Deploy pipeline">
+    // In the drawer the rail spans the panel — the connectors stretch and the
+    // row never wraps, because the whole point is one continuous line from
+    // BUILD to SERVING (canvas 1c, and 14c on a 300px sheet). Inline in a
+    // deployment row it stays a compact badge strip instead.
+    <ol
+      className={cn("flex items-center", ink ? "gap-y-0" : "flex-wrap gap-y-1", className)}
+      aria-label="Deploy pipeline"
+    >
       {STAGES.map((stage, i) => {
         const done = !failed && active > i;
         const current = !failed && active === i && status !== "succeeded";
@@ -62,11 +69,12 @@ export function PipelineStages({
               <span
                 aria-hidden
                 className={cn(
-                  "mx-2 h-px w-4 sm:w-6",
+                  "h-px",
+                  ink ? "mx-[7px] flex-1" : "mx-2 w-4 sm:w-6",
                   ink
                     ? reached
-                      ? "bg-[#5cbf7f]"
-                      : "bg-[#3a3630]"
+                      ? "bg-pane-ok"
+                      : "bg-pane-border"
                     : reached
                       ? "bg-border-strong"
                       : "bg-border",
@@ -75,15 +83,22 @@ export function PipelineStages({
             )}
             <li
               className={cn(
-                "inline-flex items-center gap-1.5 font-mono text-[10.5px] uppercase tracking-wider",
+                "inline-flex items-center gap-1.5 font-mono uppercase tracking-wider",
+                ink ? "shrink-0 text-[10px]" : "text-[10.5px]",
+                // The drawer is ink in both themes, so the rail takes the
+                // terminal palette rather than the surface --status-* ramp:
+                // the lifted dark greens would be a step off the log beneath.
+                // A pending stage is #6f695e (1c), one step brighter than
+                // --pane-faint: that darker grey belongs to the timestamp
+                // column, and a 10px label wearing it falls under 3:1.
                 ink
                   ? cn(
-                      serving && "text-[#5cbf7f]",
-                      done && "text-[#5cbf7f]",
+                      serving && "text-pane-ok",
+                      done && "text-pane-ok",
                       current &&
-                        "rounded border border-[#5f9fe8]/40 bg-[#5f9fe8]/12 px-1.5 py-0.5 text-[#5f9fe8]",
-                      failedHere && "text-[#ff6a5e]",
-                      !done && !current && !failedHere && !serving && "text-[#6f695e]",
+                        "rounded border border-pane-info/40 bg-pane-info/12 px-1.5 py-0.5 text-pane-info",
+                      failedHere && "text-pane-error",
+                      !done && !current && !failedHere && !serving && "text-pane-dim",
                     )
                   : cn(
                       serving && "text-status-running",
@@ -104,7 +119,9 @@ export function PipelineStages({
                   aria-hidden
                   className={cn(
                     "h-1.5 w-1.5 rounded-full",
-                    current ? "bg-status-deploying animate-status-pulse" : "border border-current",
+                    current
+                      ? cn("animate-status-pulse", ink ? "bg-pane-info" : "bg-status-deploying")
+                      : "border border-current",
                   )}
                 />
               )}

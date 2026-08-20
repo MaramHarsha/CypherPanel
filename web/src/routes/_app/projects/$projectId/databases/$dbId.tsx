@@ -6,7 +6,7 @@ import { useGetDatabase } from "@/api/gen/databases/databases";
 import { useGetProject } from "@/api/gen/projects/projects";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { ResourceGone } from "@/components/resource-gone";
-import { StatusDot } from "@/components/status-badge";
+import { StatusBadge } from "@/components/status-badge";
 import { useCrumbs } from "@/lib/crumbs";
 
 export const Route = createFileRoute("/_app/projects/$projectId/databases/$dbId")({
@@ -48,11 +48,13 @@ function DatabaseLayout() {
         size="sm"
         title={db.data?.name ?? "…"}
         badge={
+          // The state word is carried in the status colour, not just the dot
+          // beside it: a stopped or errored database has to read as one from
+          // across the room, and a neutral word next to a red dot argues with
+          // itself. StatusBadge also speaks the shared vocabulary, so a
+          // provisioning database says "deploying" like everything else.
           <span className="flex items-center gap-2">
-            <StatusDot status={db.data?.status} />
-            <span className="font-mono text-[11px] font-medium uppercase tracking-wide text-text-mid">
-              {db.data?.status ?? "unknown"}
-            </span>
+            <StatusBadge status={db.data?.status} />
             {db.data && (
               <span className="ml-1.5 font-mono text-[12px] text-text-faint">
                 {db.data.engine} {db.data.version}

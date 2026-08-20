@@ -12,7 +12,7 @@ import { EmptyState } from "@/components/empty-state";
 import { PageState } from "@/components/page-state";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
-import { relativeTime, absoluteTime } from "@/lib/time";
+import { absoluteTime, timeUntil } from "@/lib/time";
 
 export const Route = createFileRoute("/_app/projects/$projectId/applications/$appId/previews")({
   component: PreviewsTab,
@@ -36,12 +36,14 @@ function PreviewsTab() {
       empty={
         enabled ? (
           <EmptyState
-            title="No open pull requests"
-            hint={`Previews are on. Open a pull request against ${app.data?.source.branch ?? "the default branch"} and a throwaway copy appears here at its own subdomain, then disappears when the PR closes.`}
+            glyph="⎇"
+            title="No preview environments"
+            hint="Open a pull request and one appears here with its own URL — torn down when the PR closes."
           />
         ) : (
           <EmptyState
             emphasis
+            glyph="⎇"
             title="Previews are off for this app"
             hint="Turn them on and every pull request gets a live copy of the app at its own subdomain, torn down automatically when the PR closes."
             action={
@@ -91,7 +93,7 @@ function PreviewRow({ preview: p }: { preview: Preview }) {
       <span className="flex shrink-0 items-center gap-3">
         {p.expires_at && (
           <span className="mono hidden text-xs text-text-faint sm:inline" title={absoluteTime(p.expires_at)}>
-            expires {relativeTime(p.expires_at)}
+            expires {timeUntil(p.expires_at)}
           </span>
         )}
         <StatusBadge status={p.status} />
@@ -102,7 +104,19 @@ function PreviewRow({ preview: p }: { preview: Preview }) {
             </Button>
           }
           title={`Tear down the PR #${p.pr_number} preview?`}
-          blastRadius="Removes this preview environment and its containers now. It will be recreated if the pull request is updated."
+          // One entry per consequence, not a paragraph (canvas 13af): the last
+          // one is why this confirm is not "Delete forever" — a teardown is a
+          // pause, and the operator should read that before they hesitate.
+          // For the same reason there is no typed-name gate: ui-principles §2
+          // reserves that for what cannot be undone, and the next push to the
+          // PR rebuilds this. The red rule and the enumerated consequences are
+          // the right weight for an action the copy calls reversible.
+          lead="Tearing this preview down:"
+          blastRadius={[
+            "stops its containers and frees the server now",
+            `${p.domain} stops resolving`,
+            "the next push to the pull request builds it again",
+          ]}
           actionLabel="Tear down"
           pending={del.isPending}
           onConfirm={() => del.mutate({ id: p.id })}

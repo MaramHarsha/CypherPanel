@@ -238,17 +238,27 @@ function SettingsForm({
 
       <section className="space-y-2">
         <Eyebrow className="text-danger">Danger zone</Eyebrow>
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-danger/35 p-4">
+        <div className="flex items-center justify-between gap-3 rounded-lg border-[1.5px] border-status-error/40 bg-surface px-4 py-3.5">
           <div>
-            <p className="text-[13px] font-medium text-text">Delete this application</p>
-            <p className="text-xs text-text-mid">Stops the container, removes its route, and deletes its deploy history.</p>
+            <p className="text-[13.5px] font-semibold text-text">Delete this application</p>
+            <p className="mt-[3px] text-xs text-text-mid">Stops the container, removes its route, and deletes its deploy history.</p>
           </div>
           <ConfirmDestructive
             trigger={<Button variant="danger">Delete</Button>}
             title={`Delete ${initial.name}?`}
-            blastRadius="Deletes this application, stops its running container, removes its domain route, and erases its deployments. This cannot be undone."
+            // One entry per class of thing, each carrying its own consequence:
+            // 13af's box is meant to be scanned, and a single sentence with a
+            // red square in front of it is not.
+            blastRadius={[
+              "this application + the container serving it",
+              initial.route.domain
+                ? `its route at ${initial.route.domain} & the TLS cert`
+                : "its domain route & TLS cert",
+              ...(initial.preview_enabled ? ["every preview environment open for it"] : []),
+              "its whole deployment history — this cannot be undone",
+            ]}
             confirmName={initial.name}
-            actionLabel="Delete application"
+            actionLabel="Delete forever"
             pending={del.isPending}
             onConfirm={() => del.mutate({ id: appId })}
           />

@@ -44,11 +44,15 @@ function DatabaseSettings() {
             <ConfirmDestructive
               trigger={<Button variant="danger">Delete</Button>}
               title={`Delete ${d.name}?`}
-              blastRadius={
-                `Stops and removes the database and permanently deletes its data volume` +
-                (scheduleCount > 0 ? ` and ${scheduleCount} backup schedule${scheduleCount > 1 ? "s" : ""}` : "") +
-                `. Backup files already uploaded to S3 are not touched. This cannot be undone.`
-              }
+              // One entry per class of thing, each carrying its own
+              // consequence: a run-on sentence about a deletion is the one
+              // paragraph an operator skims (canvas 13af).
+              blastRadius={[
+                `the ${d.engine} container and its data volume — permanently (backup files already in S3 survive)`,
+                ...(scheduleCount > 0
+                  ? [`${scheduleCount} backup schedule${scheduleCount > 1 ? "s" : ""} — nothing further is uploaded`]
+                  : []),
+              ]}
               confirmName={d.name}
               actionLabel="Delete database"
               pending={del.isPending}

@@ -20,13 +20,17 @@ import { Eyebrow } from "@/components/eyebrow";
 import { PageState } from "@/components/page-state";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
+import { ActionButton } from "@/components/ui/action-button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { useCrumbs } from "@/lib/crumbs";
 import { relativeTime } from "@/lib/time";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_app/settings/teams")({ component: TeamsTab });
 
 function TeamsTab() {
+  useCrumbs([{ label: "settings", to: "/settings" }, { label: "teams" }]);
   const teams = useListTeams();
   const [openId, setOpenId] = useState<string | null>(null);
 
@@ -66,12 +70,13 @@ function TeamCard({ team, open, onToggle }: { team: Team; open: boolean; onToggl
         </span>
         <span className="mono text-xs text-text-faint">created {relativeTime(team.created_at)}</span>
       </button>
-      {open && <MembersList teamId={team.id} />}
+      {open && <MembersList team={team} />}
     </li>
   );
 }
 
-function MembersList({ teamId }: { teamId: string }) {
+function MembersList({ team }: { team: Team }) {
+  const teamId = team.id;
   const qc = useQueryClient();
   const members = useListTeamMembers(teamId);
   const remove = useRemoveTeamMember({
@@ -88,7 +93,7 @@ function MembersList({ teamId }: { teamId: string }) {
     <div className="space-y-2 border-t border-border p-3">
       <div className="flex items-center justify-between">
         <span className="eyebrow">Members</span>
-        <AddMemberDialog teamId={teamId} />
+        <AddMemberDialog team={team} />
       </div>
       <PageState query={members} loading={<div className="text-xs text-text-faint">Loading…</div>}>
         {(list) => (
@@ -162,7 +167,73 @@ function CreateTeamDialog({ primary }: { primary?: boolean }) {
   );
 }
 
-function AddMemberDialog({ teamId }: { teamId: string }) {
+// A role is a choice you make once and live with, so the three options are laid
+// out with their consequences beside them rather than folded into a closed
+// dropdown under one sentence that describes all three (canvas 9d/13ab).
+const TEAM_ROLES = [
+  { value: "member", label: "Member", help: "operate everything the team owns — deploy, roll back, env vars, logs" },
+  { value: "admin", label: "Admin", help: "member, plus creating projects and managing everyone below owner" },
+  { value: "owner", label: "Owner", help: "everything, including renaming the team and promoting other owners" },
+] as const;
+
+function RoleCards({
+  name,
+  value,
+  onChange,
+  options,
+}: {
+  name: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: ReadonlyArray<{ value: string; label: string; help: string }>;
+}) {
+  return (
+    <div className="flex flex-col gap-[7px]">
+      {options.map((o) => {
+        const on = o.value === value;
+        return (
+          <label
+            key={o.value}
+            className={cn(
+              // The painted card has to carry the focus ring itself: the radio
+              // that actually holds focus is clipped to a 1px box, so the ring
+              // the browser draws on it lands nowhere the eye can find.
+              "flex cursor-pointer items-baseline gap-2.5 rounded-lg bg-surface px-[13px] py-2.5",
+              "has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-[3px] has-[input:focus-visible]:outline-focus",
+              on ? "border-[1.5px] border-border-strong" : "border border-border hover:border-border-strong",
+            )}
+          >
+            {/* The real radio stays in the DOM, unpainted: it carries the
+                keyboard behaviour and the accessible name that a div would
+                have to re-invent badly. */}
+            <input
+              type="radio"
+              name={name}
+              value={o.value}
+              checked={on}
+              onChange={() => onChange(o.value)}
+              className="sr-only"
+            />
+            <span
+              className={cn(
+                "h-2 w-2 shrink-0 self-center rounded-full",
+                on ? "bg-primary" : "border-[1.5px] border-border-input",
+              )}
+              aria-hidden
+            />
+            <span className={cn("w-[84px] shrink-0 text-[13px] font-semibold", on ? "text-text" : "text-text-mid")}>
+              {o.label}
+            </span>
+            <span className={cn("text-[12px] leading-[1.45]", on ? "text-text-mid" : "text-text-faint")}>{o.help}</span>
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+
+function AddMemberDialog({ team }: { team: Team }) {
+  const teamId = team.id;
   const qc = useQueryClient();
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("member");
@@ -189,27 +260,28 @@ function AddMemberDialog({ teamId }: { teamId: string }) {
           <Plus className="h-3.5 w-3.5" /> Add
         </Button>
       </DialogTrigger>
-      <DialogContent title="Add a member" description="They must already have an account (Settings → Users).">
+      {/* Naming the team in the title is the whole answer to "add them where?" —
+          this dialog opens from a row in a list of teams. */}
+      <DialogContent title={`Add to ${team.name}`}>
         <form onSubmit={submit} className="space-y-4">
           <Field label="Email" error={error ?? undefined}>
             {(id) => <Input id={id} type="email" required autoFocus value={email} onChange={(e) => setEmail(e.target.value)} />}
           </Field>
-          <Field label="Role" hint="Members deploy; admins manage the team; owners can add and remove other owners.">
-            {(id) => (
-              <select id={id} value={role} onChange={(e) => setRole(e.target.value)} className="h-8 w-full rounded-lg border border-border bg-surface px-2 text-sm text-text">
-                <option value="member">member</option>
-                <option value="admin">admin</option>
-                <option value="owner">owner</option>
-              </select>
-            )}
-          </Field>
-          <div className="flex justify-end gap-2">
-            <DialogClose asChild>
-              <Button variant="ghost">Cancel</Button>
-            </DialogClose>
-            <Button type="submit" variant="primary" disabled={add.isPending}>
-              Add member
-            </Button>
+          <fieldset>
+            <legend className="mb-[7px] text-[12px] font-semibold text-text">Role</legend>
+            <RoleCards name="team-role" value={role} onChange={setRole} options={TEAM_ROLES} />
+          </fieldset>
+          <div className="flex items-center justify-end gap-2.5">
+            <span className="mr-auto text-[11.5px] text-text-faint">they must already have an account (Settings → Users)</span>
+            <ActionButton
+              type="submit"
+              variant="accent"
+              state={add.isPending ? "busy" : "idle"}
+              busyLabel="Adding…"
+              disabled={email.trim() === ""}
+            >
+              Add member →
+            </ActionButton>
           </div>
         </form>
       </DialogContent>

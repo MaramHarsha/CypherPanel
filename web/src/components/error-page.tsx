@@ -11,6 +11,7 @@
 // explanatory line, and actions that are never a dead end (ui-principles §11).
 import { Link } from "@tanstack/react-router";
 import { type ReactNode } from "react";
+import { openCommandPalette } from "@/components/command-palette";
 import { cn } from "@/lib/utils";
 
 function Frame({ children }: { children: ReactNode }) {
@@ -79,14 +80,9 @@ export function NotFoundPage({
         <Link to="/projects" className={solid}>
           ← Projects
         </Link>
-        {/* ⌘K is the palette the panel already ships; this is the same door. */}
-        <button
-          type="button"
-          className={outline}
-          onClick={() =>
-            window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }))
-          }
-        >
+        {/* ⌘K is the palette the panel already ships; this is the same door,
+            opened by asking for it rather than by faking the keystroke. */}
+        <button type="button" className={outline} onClick={openCommandPalette}>
           ⌘K Search
         </button>
         {/* The third action the canvas draws. It is what makes "deleted by a
@@ -195,7 +191,7 @@ export function ServerFaultPage({ traceId, onReport }: { traceId?: string; onRep
         This request failed inside cypherd. It's logged — attach the trace id if you file an issue.
       </Explain>
       {traceId && (
-        <div className="mono mt-[18px] flex items-center gap-2.5 rounded-md bg-pane px-3.5 py-[9px] text-[12px] text-pane-text">
+        <div className="mono mt-[18px] flex items-center gap-2.5 rounded-md bg-toast px-3.5 py-[9px] text-[12px] text-toast-text">
           {traceId}
           <button
             type="button"

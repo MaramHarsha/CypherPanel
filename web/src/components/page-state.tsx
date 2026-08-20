@@ -6,7 +6,7 @@ import { RotateCw } from "lucide-react";
 import { type ReactNode } from "react";
 import { ApiError } from "@/api/client";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
+import { SkeletonRows, useSkeletonDelay } from "@/components/ui/skeleton";
 
 interface PageStateProps<T, E> {
   // E stays generic: the generated client's error type is the API's `Error`
@@ -15,21 +15,48 @@ interface PageStateProps<T, E> {
   /** Rendered when data resolves but `isEmpty(data)` (default: empty array). */
   empty?: ReactNode;
   isEmpty?: (data: T) => boolean;
-  /** Skeleton matching the final layout; default is three quiet rows. */
+  /**
+   * Replaces the row skeleton outright, and — because the route asked for this
+   * exact placeholder — is painted immediately rather than behind the 200 ms
+   * gate. Use it where the region is a fixed-height control strip and holding
+   * the space matters more than staying silent.
+   */
   loading?: ReactNode;
+  /**
+   * Grid template for the default skeleton — mirror the real table's columns.
+   * Unset, the placeholder is a single column of bars: a card grid or a
+   * single-resource page that got the project list's three columns would paint
+   * a shape it is about to replace, and reflow twice instead of none.
+   */
+  skeletonColumns?: string;
+  skeletonRows?: number;
+  /** Rows lead with a neutral status dot when the real list has one. */
+  skeletonDot?: boolean;
   children: (data: T) => ReactNode;
 }
 
-export function PageState<T, E = unknown>({ query, empty, isEmpty, loading, children }: PageStateProps<T, E>) {
+export function PageState<T, E = unknown>({
+  query,
+  empty,
+  isEmpty,
+  loading,
+  skeletonColumns = "1fr",
+  skeletonRows = 3,
+  skeletonDot = false,
+  children,
+}: PageStateProps<T, E>) {
+  // Canvas 10e: a page never spins, it shows the shape of what is coming — and
+  // only past 200 ms, because a placeholder that appears and vanishes inside
+  // one blink reads as a fault rather than as a load.
+  const showSkeleton = useSkeletonDelay(query.isPending);
+
   if (query.isPending) {
+    if (loading !== undefined) return <>{loading}</>;
+    if (!showSkeleton) return null;
     return (
-      loading ?? (
-        <div className="space-y-2" aria-busy>
-          <Skeleton className="h-10" />
-          <Skeleton className="h-10" />
-          <Skeleton className="h-10" />
-        </div>
-      )
+      <div aria-busy>
+        <SkeletonRows columns={skeletonColumns} rows={skeletonRows} dot={skeletonDot} />
+      </div>
     );
   }
 

@@ -53,9 +53,9 @@ export function ActionButton({
   // rather than tinting it — a green "Deployed" pill is not a primary action.
   const stateClass =
     state === "success"
-      ? "border-[1.5px] border-status-running bg-status-running/10 text-status-running hover:bg-status-running/10"
+      ? "border-[1.5px] border-status-running bg-status-running/10 font-semibold text-status-running hover:bg-status-running/10 hover:shadow-none"
       : state === "failed"
-        ? "border-[1.5px] border-status-error bg-status-error/[0.08] text-danger hover:bg-status-error/[0.08]"
+        ? "border-[1.5px] border-status-error bg-status-error/[0.08] font-semibold text-danger hover:bg-status-error/[0.08] hover:shadow-none"
         : undefined;
 
   const button = (
@@ -67,9 +67,9 @@ export function ActionButton({
       className={cn(
         "grid place-items-center",
         state === "busy" && "opacity-75",
-        // A disabled button still has to be readable enough to be recognised
-        // as the thing you cannot press, per `10b`.
-        disabledReason && "disabled:bg-raised disabled:text-text-disabled disabled:opacity-100",
+        // The disabled pill itself lives in Button now (canvas 10b: a filled
+        // paper-grey pill, not a faded live one), so there is nothing to
+        // override here — only the reason, which the Tooltip below carries.
         stateClass,
         className,
       )}
