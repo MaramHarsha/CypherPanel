@@ -487,7 +487,14 @@ func (f *fakeAppsStore) GetEnvironment(_ context.Context, id string) (domain.Env
 	if !f.envs[id] {
 		return domain.Environment{}, store.ErrNotFound
 	}
-	return domain.Environment{ID: id}, nil
+	return domain.Environment{ID: id, ProjectID: "prj_test", Name: "production"}, nil
+}
+
+// ListSharedVariableKeysInScope backs the write-time {{shared.KEY}} check
+// (shared-variables.md §3). Empty: no shared variable resolves in these tests,
+// so any reference an env-var write carries is a 400.
+func (f *fakeAppsStore) ListSharedVariableKeysInScope(_ context.Context, _, _ string) ([]string, error) {
+	return nil, nil
 }
 
 func (f *fakeAppsStore) GetServer(_ context.Context, id string) (domain.Server, error) {

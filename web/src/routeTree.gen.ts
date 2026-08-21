@@ -28,6 +28,7 @@ import { Route as AppProjectsProjectIdSettingsRouteImport } from './routes/_app/
 import { Route as AppProjectsProjectIdApplicationsAppIdRouteImport } from './routes/_app/projects/$projectId/applications/$appId'
 import { Route as AppProjectsProjectIdDatabasesDbIdRouteImport } from './routes/_app/projects/$projectId/databases/$dbId'
 import { Route as AppProjectsProjectIdSettingsIndexRouteImport } from './routes/_app/projects/$projectId/settings/index'
+import { Route as AppProjectsProjectIdSettingsSharedVariablesRouteImport } from './routes/_app/projects/$projectId/settings/shared-variables'
 import { Route as AppProjectsProjectIdSettingsWebhooksRouteImport } from './routes/_app/projects/$projectId/settings/webhooks'
 import { Route as AppProjectsProjectIdApplicationsAppIdIndexRouteImport } from './routes/_app/projects/$projectId/applications/$appId/index'
 import { Route as AppProjectsProjectIdApplicationsAppIdDeploymentsRouteImport } from './routes/_app/projects/$projectId/applications/$appId/deployments'
@@ -141,6 +142,12 @@ const AppProjectsProjectIdSettingsIndexRoute =
     path: '/',
     getParentRoute: () => AppProjectsProjectIdSettingsRoute,
   } as any)
+const AppProjectsProjectIdSettingsSharedVariablesRoute =
+  AppProjectsProjectIdSettingsSharedVariablesRouteImport.update({
+    id: '/shared-variables',
+    path: '/shared-variables',
+    getParentRoute: () => AppProjectsProjectIdSettingsRoute,
+  } as any)
 const AppProjectsProjectIdSettingsWebhooksRoute =
   AppProjectsProjectIdSettingsWebhooksRouteImport.update({
     id: '/webhooks',
@@ -232,6 +239,7 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/': typeof AppProjectsProjectIdIndexRoute
   '/projects/$projectId/applications/$appId': typeof AppProjectsProjectIdApplicationsAppIdRouteWithChildren
   '/projects/$projectId/databases/$dbId': typeof AppProjectsProjectIdDatabasesDbIdRouteWithChildren
+  '/projects/$projectId/settings/shared-variables': typeof AppProjectsProjectIdSettingsSharedVariablesRoute
   '/projects/$projectId/settings/webhooks': typeof AppProjectsProjectIdSettingsWebhooksRoute
   '/projects/$projectId/settings/': typeof AppProjectsProjectIdSettingsIndexRoute
   '/projects/$projectId/applications/$appId/deployments': typeof AppProjectsProjectIdApplicationsAppIdDeploymentsRoute
@@ -260,6 +268,7 @@ export interface FileRoutesByTo {
   '/settings': typeof AppSettingsIndexRoute
   '/templates': typeof AppTemplatesIndexRoute
   '/projects/$projectId': typeof AppProjectsProjectIdIndexRoute
+  '/projects/$projectId/settings/shared-variables': typeof AppProjectsProjectIdSettingsSharedVariablesRoute
   '/projects/$projectId/settings/webhooks': typeof AppProjectsProjectIdSettingsWebhooksRoute
   '/projects/$projectId/settings': typeof AppProjectsProjectIdSettingsIndexRoute
   '/projects/$projectId/applications/$appId/deployments': typeof AppProjectsProjectIdApplicationsAppIdDeploymentsRoute
@@ -294,6 +303,7 @@ export interface FileRoutesById {
   '/_app/projects/$projectId/': typeof AppProjectsProjectIdIndexRoute
   '/_app/projects/$projectId/applications/$appId': typeof AppProjectsProjectIdApplicationsAppIdRouteWithChildren
   '/_app/projects/$projectId/databases/$dbId': typeof AppProjectsProjectIdDatabasesDbIdRouteWithChildren
+  '/_app/projects/$projectId/settings/shared-variables': typeof AppProjectsProjectIdSettingsSharedVariablesRoute
   '/_app/projects/$projectId/settings/webhooks': typeof AppProjectsProjectIdSettingsWebhooksRoute
   '/_app/projects/$projectId/settings/': typeof AppProjectsProjectIdSettingsIndexRoute
   '/_app/projects/$projectId/applications/$appId/deployments': typeof AppProjectsProjectIdApplicationsAppIdDeploymentsRoute
@@ -328,6 +338,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/'
     | '/projects/$projectId/applications/$appId'
     | '/projects/$projectId/databases/$dbId'
+    | '/projects/$projectId/settings/shared-variables'
     | '/projects/$projectId/settings/webhooks'
     | '/projects/$projectId/settings/'
     | '/projects/$projectId/applications/$appId/deployments'
@@ -356,6 +367,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/templates'
     | '/projects/$projectId'
+    | '/projects/$projectId/settings/shared-variables'
     | '/projects/$projectId/settings/webhooks'
     | '/projects/$projectId/settings'
     | '/projects/$projectId/applications/$appId/deployments'
@@ -389,6 +401,7 @@ export interface FileRouteTypes {
     | '/_app/projects/$projectId/'
     | '/_app/projects/$projectId/applications/$appId'
     | '/_app/projects/$projectId/databases/$dbId'
+    | '/_app/projects/$projectId/settings/shared-variables'
     | '/_app/projects/$projectId/settings/webhooks'
     | '/_app/projects/$projectId/settings/'
     | '/_app/projects/$projectId/applications/$appId/deployments'
@@ -544,6 +557,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppProjectsProjectIdSettingsIndexRouteImport
       parentRoute: typeof AppProjectsProjectIdSettingsRoute
     }
+    '/_app/projects/$projectId/settings/shared-variables': {
+      id: '/_app/projects/$projectId/settings/shared-variables'
+      path: '/shared-variables'
+      fullPath: '/projects/$projectId/settings/shared-variables'
+      preLoaderRoute: typeof AppProjectsProjectIdSettingsSharedVariablesRouteImport
+      parentRoute: typeof AppProjectsProjectIdSettingsRoute
+    }
     '/_app/projects/$projectId/settings/webhooks': {
       id: '/_app/projects/$projectId/settings/webhooks'
       path: '/webhooks'
@@ -654,12 +674,15 @@ const AppSettingsRouteWithChildren = AppSettingsRoute._addFileChildren(
 )
 
 interface AppProjectsProjectIdSettingsRouteChildren {
+  AppProjectsProjectIdSettingsSharedVariablesRoute: typeof AppProjectsProjectIdSettingsSharedVariablesRoute
   AppProjectsProjectIdSettingsWebhooksRoute: typeof AppProjectsProjectIdSettingsWebhooksRoute
   AppProjectsProjectIdSettingsIndexRoute: typeof AppProjectsProjectIdSettingsIndexRoute
 }
 
 const AppProjectsProjectIdSettingsRouteChildren: AppProjectsProjectIdSettingsRouteChildren =
   {
+    AppProjectsProjectIdSettingsSharedVariablesRoute:
+      AppProjectsProjectIdSettingsSharedVariablesRoute,
     AppProjectsProjectIdSettingsWebhooksRoute:
       AppProjectsProjectIdSettingsWebhooksRoute,
     AppProjectsProjectIdSettingsIndexRoute:

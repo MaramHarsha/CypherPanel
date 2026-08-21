@@ -24,6 +24,7 @@ type AppEnvVar struct {
 	Key           string
 	ValueCt       []byte
 	ValueNonce    []byte
+	SharedRefs    []string
 }
 
 type Application struct {
@@ -66,6 +67,7 @@ type Application struct {
 	Ports                 []byte
 	HealthKind            string
 	SourceImage           string
+	EnvAppliedAt          pgtype.Timestamptz
 }
 
 type BackupRecord struct {
@@ -166,6 +168,7 @@ type Deployment struct {
 	UpdatedAt       pgtype.Timestamptz
 	FinishedAt      pgtype.Timestamptz
 	BuilderServerID pgtype.Text
+	EnvResolvedAt   pgtype.Timestamptz
 }
 
 type Environment struct {
@@ -305,6 +308,17 @@ type Session struct {
 	TokenHash []byte
 	ExpiresAt pgtype.Timestamptz
 	CreatedAt pgtype.Timestamptz
+}
+
+type SharedVariable struct {
+	ID            string
+	ProjectID     string
+	EnvironmentID pgtype.Text
+	Key           string
+	ValueCt       []byte
+	ValueNonce    []byte
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
 }
 
 type Team struct {

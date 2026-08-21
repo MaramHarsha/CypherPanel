@@ -43,6 +43,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/scheduler"
 	"github.com/MaramHarsha/cypherpanel/core/secret"
 	"github.com/MaramHarsha/cypherpanel/core/servers"
+	"github.com/MaramHarsha/cypherpanel/core/sharedvars"
 	"github.com/MaramHarsha/cypherpanel/core/status"
 	"github.com/MaramHarsha/cypherpanel/core/store"
 	"github.com/MaramHarsha/cypherpanel/core/teams"
@@ -198,6 +199,13 @@ func run(log *slog.Logger) error {
 	webhookMgr := webhooks.New(st, box, log)
 	webhookSvc := webhooks.NewService(st, box, webhookMgr)
 	sched.AddSink(webhookMgr)
+
+	// Project shared variables: one sealed value defined once per project (or
+	// per environment), referenced from any application's env vars as
+	// {{shared.KEY}} (shared-variables.md). It adds no path to the agent — the
+	// expansion happens inside the scheduler's existing sealed-env assembly —
+	// so this service is CRUD plus the used-by and drift read models.
+	sharedVarSvc := sharedvars.NewService(st, box)
 
 	// Scheduled tasks: cron declared on an app, run by the agent in the app's
 	// own container (scheduled-tasks.md, ADR-011). CRUD converges via the
@@ -381,6 +389,7 @@ func run(log *slog.Logger) error {
 
 		WebhookEndpoints: webhookSvc,
 		Inbox:            inboxSvc,
+		SharedVariables:  sharedVarSvc,
 		Templates:        templateSvc,
 		Teams:            teamSvc,
 		Scheduler:        sched,

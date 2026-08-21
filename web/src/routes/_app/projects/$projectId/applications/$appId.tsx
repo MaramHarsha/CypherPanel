@@ -15,6 +15,7 @@ import {
 } from "@/api/gen/deployments/deployments";
 import { useGetProject, useListEnvironments } from "@/api/gen/projects/projects";
 import { PageBody, PageHeader } from "@/components/page-header";
+import { RedeployPending } from "@/components/redeploy-pending";
 import { ResourceGone } from "@/components/resource-gone";
 import { StatusBadge } from "@/components/status-badge";
 import { ActionButton, useAction } from "@/components/ui/action-button";
@@ -105,6 +106,11 @@ function ApplicationLayout() {
         badge={
           <span className="flex items-center gap-2.5">
             <StatusBadge status={status} />
+            {/* Beside the status, never instead of it: the status vocabulary is
+                closed and this is not an observed state (shared-variables.md
+                §8). "Deploy now" is already the masthead's primary action, so
+                the badge needs no affordance of its own. */}
+            {app.data?.redeploy_pending && <RedeployPending />}
             {/* The canvas title row is name · dot · state word and nothing
                 else, so the one-click route to the running app stays but drops
                 out of the accent: orange is the Deploy pill's here. */}

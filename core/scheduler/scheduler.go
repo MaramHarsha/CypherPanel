@@ -27,6 +27,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/MaramHarsha/cypherpanel/core/domain"
+	"github.com/MaramHarsha/cypherpanel/core/sharedvars"
 	"github.com/MaramHarsha/cypherpanel/core/store"
 	"github.com/MaramHarsha/cypherpanel/pkg/ids"
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
@@ -45,6 +46,7 @@ type Store interface {
 	SetApplicationStatus(ctx context.Context, appID, status, detail string) error
 	SetApplicationObservedStatus(ctx context.Context, appID, status, detail, observedRevisionID string, observedAt time.Time) error
 	ListEnvVars(ctx context.Context, appID string) ([]domain.EnvVar, error)
+	GetEnvironment(ctx context.Context, id string) (domain.Environment, error)
 
 	CreateRevision(ctx context.Context, id, appID, sourceCommit string, configSnapshot []byte) (domain.Revision, error)
 	GetRevision(ctx context.Context, id string) (domain.Revision, error)
@@ -87,6 +89,13 @@ type Store interface {
 	GetScheduledTask(ctx context.Context, id string) (domain.ScheduledTask, error)
 	CreateTaskRun(ctx context.Context, r domain.ScheduledTaskRun) (domain.ScheduledTaskRun, error)
 	DeleteOldTaskRuns(ctx context.Context, taskID string, keep int32) error
+
+	// Phase 4: project shared variables (shared-variables.md §4, §5). The
+	// resolution read and the two stamps that make "redeploy to apply"
+	// derivable — no crypto on either stamp path.
+	ListSharedVariablesInScope(ctx context.Context, projectID, environmentID string) ([]domain.SharedVariable, error)
+	SetDeploymentEnvResolved(ctx context.Context, id string) error
+	ApplyDeploymentEnvStamp(ctx context.Context, deploymentID string) error
 }
 
 // Bus is the work-publication side of core/bus (consumer-defined).
@@ -331,6 +340,21 @@ func (s *Scheduler) start(ctx context.Context, dep domain.Deployment) error {
 	if err := s.store.SetApplicationStatus(ctx, app.ID, domain.AppDeploying, ""); err != nil {
 		return err
 	}
+	// Fail fast on an unresolvable {{shared.KEY}} (shared-variables.md §4).
+	// Deliberately BEFORE the rev.Image branch, so a build-first deploy and a
+	// rollout-first one (rollback, image-source app) fail identically — and
+	// before a builder is selected or any work item is published, so no build
+	// minutes are spent and nothing reaches work.*. The running container is
+	// untouched.
+	if _, err := s.resolveEnv(ctx, app, envStrict); err != nil {
+		var unresolved *UnresolvedReferenceError
+		if errors.As(err, &unresolved) {
+			s.fail(ctx, dep, unresolved.Error())
+		} else {
+			s.fail(ctx, dep, "could not resolve this application's environment")
+		}
+		return err
+	}
 	if rev.Image != "" {
 		// Already built (rollback): straight to rollout.
 		return s.startRollout(ctx, dep, app, rev)
@@ -470,9 +494,18 @@ func (s *Scheduler) startRollout(ctx context.Context, dep domain.Deployment, app
 	if _, err := s.store.SetApplicationDesiredRevision(ctx, app.ID, rev.ID); err != nil {
 		return err
 	}
-	spec, err := s.buildSpec(ctx, app, rev)
+	spec, err := s.buildSpec(ctx, app, rev, envStrict)
 	if err != nil {
 		return err
+	}
+	// The instant this rollout's environment was frozen onto the wire. It moves
+	// onto the application only when the rollout is OBSERVED running, which is
+	// what makes "redeploy to apply" derivable and un-fakeable
+	// (shared-variables.md §5). Best-effort: a stamp failure must not abort a
+	// rollout that is otherwise ready to publish — it only leaves the marker
+	// showing pending, which is the safe direction.
+	if err := s.store.SetDeploymentEnvResolved(ctx, dep.ID); err != nil {
+		s.log.Error("stamping resolved environment", "deployment_id", dep.ID, "error", err)
 	}
 	work := &agentv1.RolloutWork{DeploymentId: dep.ID, Spec: spec}
 	data, err := proto.Marshal(work)
@@ -485,17 +518,90 @@ func (s *Scheduler) startRollout(ctx context.Context, dep domain.Deployment, app
 	return nil
 }
 
-// buildSpec assembles the wire AppSpec from the revision's immutable config
-// snapshot, the built image, and the app's current (decrypted) env vars.
-func (s *Scheduler) buildSpec(ctx context.Context, app domain.Application, rev domain.Revision) (*agentv1.AppSpec, error) {
-	var cs configSnapshot
-	if err := json.Unmarshal(rev.ConfigSnapshot, &cs); err != nil {
-		return nil, fmt.Errorf("scheduler: parsing config snapshot of %s: %w", rev.ID, err)
-	}
+// envPolicy decides what an unresolvable {{shared.KEY}} does while an
+// application's environment is assembled (shared-variables.md §4).
+type envPolicy int
+
+const (
+	// envStrict fails the caller. A deploy or a converge push must never ship a
+	// half-resolved environment, and failing before anything reaches work.* is
+	// what makes the mistake cost nothing.
+	envStrict envPolicy = iota
+	// envOmitMissing drops the offending key and keeps the application. A sync
+	// reply is the complete desired set and absence means REMOVE (ADR-005), so
+	// a data-entry mistake must never read as "tear this container down".
+	// Omitting the key is safe: container identity is the revision id, so the
+	// running container is untouched, and a later recreate leaves the variable
+	// UNSET rather than empty — which fails loudly inside the workload instead
+	// of silently.
+	envOmitMissing
+)
+
+// UnresolvedReferenceError is a deployment-visible failure: an environment
+// variable references a shared variable that is not defined in the application's
+// scope (shared-variables.md §4). Its message is the deployment's `detail`, so
+// it reads as a sentence and names the missing KEY — never the value.
+type UnresolvedReferenceError struct {
+	// EnvKey is the application's own environment variable holding the reference.
+	EnvKey string
+	// SharedKey is the shared variable that did not resolve.
+	SharedKey string
+	// Environment is the name of the environment resolution was attempted in.
+	Environment string
+}
+
+func (e *UnresolvedReferenceError) Error() string {
+	return fmt.Sprintf(
+		"environment variable %s references {{shared.%s}}, which is not defined in this project or in environment %q",
+		e.EnvKey, e.SharedKey, e.Environment)
+}
+
+// resolveEnv assembles an application's environment for the wire: its own
+// sealed variables, unsealed, with every {{shared.KEY}} expanded against the
+// shared variables in force for its environment (shared-variables.md §4).
+//
+// This is the single resolution point. Both plaintext maps live only in this
+// stack frame, nothing is logged, and every error names a KEY rather than a
+// value (ENGINEERING rule 20). The shared table is read only when some variable
+// actually carries a reference, so an application that uses none costs exactly
+// what it did before this feature existed.
+func (s *Scheduler) resolveEnv(ctx context.Context, app domain.Application, pol envPolicy) (map[string]string, error) {
 	sealed, err := s.store.ListEnvVars(ctx, app.ID)
 	if err != nil {
 		return nil, fmt.Errorf("scheduler: listing env vars: %w", err)
 	}
+	referencing := false
+	for _, v := range sealed {
+		if len(v.SharedRefs) > 0 {
+			referencing = true
+			break
+		}
+	}
+
+	var (
+		shared  map[string]string
+		envName string
+	)
+	if referencing {
+		environment, err := s.store.GetEnvironment(ctx, app.EnvironmentID)
+		if err != nil {
+			return nil, fmt.Errorf("scheduler: getting environment of %s: %w", app.ID, err)
+		}
+		envName = environment.Name
+		rows, err := s.store.ListSharedVariablesInScope(ctx, environment.ProjectID, environment.ID)
+		if err != nil {
+			return nil, fmt.Errorf("scheduler: listing shared variables for %s: %w", app.ID, err)
+		}
+		shared = make(map[string]string, len(rows))
+		for _, sv := range rows {
+			plain, err := s.opener.Open(sv.ValueCT, sv.ValueNonce)
+			if err != nil {
+				return nil, fmt.Errorf("scheduler: unsealing shared variable %s: %w", sv.Key, err)
+			}
+			shared[sv.Key] = string(plain)
+		}
+	}
+
 	env := make(map[string]string, len(sealed))
 	for _, v := range sealed {
 		plain, err := s.opener.Open(v.ValueCT, v.ValueNonce)
@@ -503,7 +609,40 @@ func (s *Scheduler) buildSpec(ctx context.Context, app domain.Application, rev d
 			// Never include the key's value context in the error (rule 20).
 			return nil, fmt.Errorf("scheduler: unsealing env var %s: %w", v.Key, err)
 		}
-		env[v.Key] = string(plain)
+		if len(v.SharedRefs) == 0 {
+			env[v.Key] = string(plain)
+			continue
+		}
+		expanded, err := sharedvars.Expand(string(plain), shared)
+		if err != nil {
+			var missing *sharedvars.MissingReferenceError
+			if errors.As(err, &missing) {
+				unresolved := &UnresolvedReferenceError{EnvKey: v.Key, SharedKey: missing.Key, Environment: envName}
+				if pol == envStrict {
+					return nil, unresolved
+				}
+				s.log.Warn("desired state: omitting an environment variable with an unresolvable shared reference",
+					"app_id", app.ID, "env_key", v.Key, "shared_key", missing.Key)
+				continue
+			}
+			return nil, fmt.Errorf("scheduler: expanding env var %s of %s: %w", v.Key, app.ID, err)
+		}
+		env[v.Key] = expanded
+	}
+	return env, nil
+}
+
+// buildSpec assembles the wire AppSpec from the revision's immutable config
+// snapshot, the built image, and the app's current (decrypted, shared-expanded)
+// env vars.
+func (s *Scheduler) buildSpec(ctx context.Context, app domain.Application, rev domain.Revision, pol envPolicy) (*agentv1.AppSpec, error) {
+	var cs configSnapshot
+	if err := json.Unmarshal(rev.ConfigSnapshot, &cs); err != nil {
+		return nil, fmt.Errorf("scheduler: parsing config snapshot of %s: %w", rev.ID, err)
+	}
+	env, err := s.resolveEnv(ctx, app, pol)
+	if err != nil {
+		return nil, err
 	}
 	image := rev.Image
 	if image == "" {
@@ -783,6 +922,14 @@ func (s *Scheduler) HandleAppStatus(ctx context.Context, serverID string, st *ag
 				s.log.Error("app status: completing deployment", "deployment_id", dep.ID, "error", err)
 				return
 			}
+			// The environment this rollout froze is now the one actually
+			// running, so the "redeploy to apply" marker clears. Only this
+			// path — an observation of the revision serving — moves the stamp,
+			// which is why a failed deploy can never mark an app clean
+			// (shared-variables.md §5).
+			if err := s.store.ApplyDeploymentEnvStamp(ctx, dep.ID); err != nil {
+				s.log.Error("app status: applying resolved environment stamp", "deployment_id", dep.ID, "error", err)
+			}
 			s.log.Info("deployment succeeded", "deployment_id", dep.ID, "app_id", dep.ApplicationID, "revision_id", dep.RevisionID, "server_id", serverID)
 			s.emitDeploy(ctx, app, done)
 			s.promoteNext(ctx, dep.ApplicationID)
@@ -930,7 +1077,11 @@ func (s *Scheduler) ConvergeApp(ctx context.Context, appID string) error {
 	if rev.Image == "" {
 		return nil
 	}
-	spec, err := s.buildSpec(ctx, app, rev)
+	// Strict: a converge push that silently dropped a variable would leave the
+	// container running an environment nobody declared. Propagating the error
+	// and publishing nothing loses nothing — the container is already running
+	// the environment it was deployed with (shared-variables.md §4).
+	spec, err := s.buildSpec(ctx, app, rev, envStrict)
 	if err != nil {
 		return err
 	}
@@ -1022,7 +1173,11 @@ func (s *Scheduler) DesiredStateFor(ctx context.Context, serverID string) ([]byt
 		if rev.Image == "" {
 			continue
 		}
-		spec, err := s.buildSpec(ctx, app, rev)
+		// envOmitMissing: the sync reply is the complete desired set, so
+		// omitting the APPLICATION over a data-entry mistake would read as
+		// "remove this container" (ADR-005). The offending key is dropped and
+		// logged instead (shared-variables.md §4).
+		spec, err := s.buildSpec(ctx, app, rev, envOmitMissing)
 		if err != nil {
 			s.log.Error("desired state: building spec", "app_id", app.ID, "error", err)
 			continue

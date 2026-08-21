@@ -31,6 +31,7 @@ tags:
   - name: notifiers
   - name: webhooks
   - name: inbox
+  - name: shared-variables
   - name: scheduled-tasks
 
 paths:
@@ -2105,6 +2106,103 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { description: The endpoint is disabled. }
 
+  # ─── Project shared variables (shared-variables.md §7) ────────────────
+  #
+  # One sealed value defined once for a whole project — or narrowed to a single
+  # environment of it — referenced from any application's env vars as
+  # {{shared.KEY}}. An environment-scoped variable shadows a project-scoped one
+  # of the same key, so scope is a property of the VARIABLE, not of the
+  # reference: promoting a value needs no edit in any referencing application.
+  #
+  # Values are write-only and carry no masked hint: a shared variable is already
+  # identified by its key, so a hint would be gratuitous partial disclosure.
+  # `key` and `environment_id` are immutable after create, and DELETE is guarded
+  # with no force override — changing or removing either silently re-points or
+  # orphans every referencing application.
+  #
+  # Changing a value does NOT redeploy anything. Every referencing application
+  # reports `redeploy_pending: true` until it is deployed again; one edit
+  # silently redeploying production is not a thing this API does.
+  /api/v1/projects/{id}/shared-variables:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Project ID. }
+    get:
+      operationId: listSharedVariables
+      tags: [shared-variables]
+      summary: List a project's shared variables (both scopes)
+      responses:
+        "200": { description: "Shared variables, each with its scope-accurate used-by count. Values are never included.", content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/SharedVariable" } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: createSharedVariable
+      tags: [shared-variables]
+      summary: Create a shared variable (project scope, or scoped to one environment)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateSharedVariableRequest" } } }
+      responses:
+        "201": { description: "Created. The value is sealed at rest and never returned.", content: { application/json: { schema: { $ref: "#/components/schemas/SharedVariable" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: A shared variable with that key already exists in this scope. }
+  /api/v1/shared-variables/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Shared variable ID (sv_… prefix). }
+    get:
+      operationId: getSharedVariable
+      tags: [shared-variables]
+      summary: Get a shared variable
+      responses:
+        "200": { description: The shared variable., content: { application/json: { schema: { $ref: "#/components/schemas/SharedVariable" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateSharedVariable
+      tags: [shared-variables]
+      summary: Replace the value (key and scope are immutable)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PatchSharedVariableRequest" } } }
+      responses:
+        "200": { description: "Updated. Every referencing application now reports redeploy_pending until it is deployed again.", content: { application/json: { schema: { $ref: "#/components/schemas/SharedVariable" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: deleteSharedVariable
+      tags: [shared-variables]
+      summary: Delete a shared variable (refused while anything references it)
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: "Still referenced. The message names the applications; remove the references first — there is no force override." }
+  /api/v1/shared-variables/{id}/used-by:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Shared variable ID. }
+    get:
+      operationId: listSharedVariableUsage
+      tags: [shared-variables]
+      summary: List the applications that reference this variable
+      responses:
+        "200": { description: "Scope-accurate usage: an application whose own environment shadows the key is absent, because it does not use this variable.", content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/SharedVariableUsage" } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404": { $ref: "#/components/responses/NotFound" }
+
   # ─── Notification inbox (notification-inbox.md §6) ────────────────────────
   #
   # The panel's own record of what happened to what you own: the same observed
@@ -2933,6 +3031,14 @@ components:
           description: >-
             Backstop lifetime for a preview whose PR never closes; defaults to
             72 when unset.
+        redeploy_pending:
+          type: boolean
+          description: >-
+            Derived, never stored (shared-variables.md §5): a shared variable
+            this application references changed after the environment it is
+            running was frozen onto the wire. It is NOT a status word — the
+            status vocabulary is closed — so render it as a badge beside the
+            status, never in place of one.
         created_at:
           type: string
           format: date-time
@@ -3010,6 +3116,17 @@ components:
           type: array
           items:
             type: string
+        shared_refs:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+          description: >-
+            Per env-var key, the shared variables its value references as
+            {{shared.KEY}} (shared-variables.md §7). Key names only — values
+            stay write-only, so the Env vars tab can show the wiring without a
+            reveal.
 
     SetEnvVarRequest:
       type: object
@@ -3682,6 +3799,66 @@ components:
           type: array
           items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed] }
           description: The complete muted set; this replaces the previous one. A kind outside available_kinds is a 400.
+
+    # ─── Project shared variables (shared-variables.md §7) ────────────────
+    SharedVariable:
+      type: object
+      required: [id, project_id, environment_id, environment_name, key, used_by_count, created_at, updated_at]
+      properties:
+        id: { type: string, description: sv_… prefixed ID. }
+        project_id: { type: string }
+        environment_id:
+          type: [string, "null"]
+          description: null at project scope; otherwise the environment this variable is narrowed to.
+        environment_name:
+          type: string
+          description: Empty at project scope. Present so a list needs no second lookup to render the scope.
+        key: { type: string, description: "Matches [A-Za-z_][A-Za-z0-9_]* — the same charset as an application's own env keys." }
+        used_by_count:
+          type: integer
+          description: >-
+            How many applications reference this variable. Scope-accurate: an
+            application whose own environment defines a shadowing row of the
+            same key is not counted, because it does not use this one.
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    SharedVariableUsage:
+      type: object
+      required: [application_id, application_name, environment_name, redeploy_pending]
+      properties:
+        application_id: { type: string }
+        application_name: { type: string }
+        environment_name: { type: string }
+        redeploy_pending:
+          type: boolean
+          description: This variable changed after the environment the application is running was frozen onto the wire.
+    CreateSharedVariableRequest:
+      type: object
+      required: [key, value]
+      properties:
+        key: { type: string, description: "[A-Za-z_][A-Za-z0-9_]*" }
+        environment_id:
+          type: [string, "null"]
+          description: >-
+            Omit or send null for project scope. An environment of another
+            project is a 400 — the foreign key alone cannot express that.
+        value:
+          type: string
+          maxLength: 32768
+          description: >-
+            The value, sealed at rest and never returned. It is stored verbatim:
+            a nested shared reference inside it is rejected — there is no nesting.
+    PatchSharedVariableRequest:
+      type: object
+      required: [value]
+      properties:
+        value:
+          type: string
+          maxLength: 32768
+          description: >-
+            Replaces the sealed value. Always bumps updated_at, even when the
+            plaintext is unchanged, which marks every referencing application
+            "redeploy to apply".
 
     # ─── Scheduled tasks ──────────────────────────────────────────────────────
     ScheduledTask:

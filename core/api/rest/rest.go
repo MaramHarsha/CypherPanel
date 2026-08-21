@@ -25,6 +25,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/projects"
 	"github.com/MaramHarsha/cypherpanel/core/scheduledtasks"
 	"github.com/MaramHarsha/cypherpanel/core/servers"
+	"github.com/MaramHarsha/cypherpanel/core/sharedvars"
 	"github.com/MaramHarsha/cypherpanel/core/templates"
 	"github.com/MaramHarsha/cypherpanel/core/webhooks"
 )
@@ -105,6 +106,25 @@ type WebhookEndpointService interface {
 	Deliveries(ctx context.Context, endpointID string, limit int, before string) (webhooks.Page, error)
 	GetDelivery(ctx context.Context, id string) (domain.WebhookDelivery, error)
 	Redeliver(ctx context.Context, deliveryID string) (domain.WebhookDelivery, error)
+}
+
+// SharedVariableService is the project shared-variable surface — CRUD, the
+// used-by read model, and the derived "redeploy to apply" marker
+// (consumer-defined; *sharedvars.Service satisfies it — shared-variables.md
+// §7). Get is what the authorization resolver walks, so it stays a plain
+// lookup; every other read returns a View, which structurally cannot carry a
+// value.
+type SharedVariableService interface {
+	Create(ctx context.Context, projectID string, in sharedvars.CreateInput) (sharedvars.View, error)
+	Get(ctx context.Context, id string) (domain.SharedVariable, error)
+	View(ctx context.Context, id string) (sharedvars.View, error)
+	ListViews(ctx context.Context, projectID string) ([]sharedvars.View, error)
+	SetValue(ctx context.Context, id, value string) (sharedvars.View, error)
+	Delete(ctx context.Context, id string) error
+	UsedBy(ctx context.Context, id string) ([]domain.SharedVariableUsage, error)
+
+	RedeployPending(ctx context.Context, appID string) (bool, error)
+	PendingInEnvironment(ctx context.Context, envID string) (map[string]bool, error)
 }
 
 // InboxService is the notification inbox (consumer-defined; *inbox.Service
@@ -191,6 +211,7 @@ type Deps struct {
 	NotifyDelivery   NotifierDelivery
 	WebhookEndpoints WebhookEndpointService
 	Inbox            InboxService
+	SharedVariables  SharedVariableService
 	ScheduledTasks   ScheduledTaskService
 	Templates        *templates.Service
 	Teams            TeamService
@@ -382,6 +403,19 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/inbox/{id}/read", a.authed(a.handleMarkInboxItemRead))
 	mux.HandleFunc("GET /api/v1/inbox/preferences", a.authed(a.handleGetInboxPreferences))
 	mux.HandleFunc("PUT /api/v1/inbox/preferences", a.authed(a.handlePutInboxPreferences))
+
+	// Phase 4: project shared variables (shared-variables.md §7). The
+	// collection hangs off the project because that is the scope that owns
+	// them; an environment-scoped variable is the same row with
+	// environment_id set, not a second collection. Nothing here triggers a
+	// deploy — a change is made VISIBLE as "redeploy to apply" rather than
+	// auto-applied (§5) — so deployRoutes is untouched.
+	mux.HandleFunc("POST /api/v1/projects/{id}/shared-variables", a.authed(a.handleCreateSharedVariable))
+	mux.HandleFunc("GET /api/v1/projects/{id}/shared-variables", a.authed(a.handleListSharedVariables))
+	mux.HandleFunc("GET /api/v1/shared-variables/{id}", a.authed(a.handleGetSharedVariable))
+	mux.HandleFunc("PATCH /api/v1/shared-variables/{id}", a.authed(a.handlePatchSharedVariable))
+	mux.HandleFunc("DELETE /api/v1/shared-variables/{id}", a.authed(a.handleDeleteSharedVariable))
+	mux.HandleFunc("GET /api/v1/shared-variables/{id}/used-by", a.authed(a.handleListSharedVariableUsage))
 
 	// Phase 3: scheduled tasks (scheduled-tasks.md §7).
 	mux.HandleFunc("POST /api/v1/applications/{id}/scheduled-tasks", a.authed(a.handleCreateScheduledTask))

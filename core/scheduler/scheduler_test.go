@@ -37,6 +37,36 @@ type fakeStore struct {
 	taskRuns       []domain.ScheduledTaskRun
 	servers        []domain.Server
 	seq            int
+
+	// Phase 4: shared variables (shared-variables.md). sharedVars is keyed by
+	// "<projectID>|<environmentID>" so a test can model project scope and
+	// environment scope separately; envApplied and envResolved are the two
+	// drift stamps.
+	environments map[string]domain.Environment
+	sharedVars   map[string][]domain.SharedVariable
+	envResolved  map[string]time.Time
+	envApplied   map[string]time.Time
+	// scopeReads counts ListSharedVariablesInScope calls, so a test can prove
+	// an application with no references never touches the shared table.
+	scopeReads int
+}
+
+// latestDeployment returns the most recently created deployment for an app —
+// what a test needs after driving one through the pipeline.
+func (f *fakeStore) latestDeployment(appID string) (domain.Deployment, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out domain.Deployment
+	found := false
+	for _, d := range f.deployments {
+		if d.ApplicationID != appID {
+			continue
+		}
+		if !found || d.CreatedAt.After(out.CreatedAt) {
+			out, found = d, true
+		}
+	}
+	return out, found
 }
 
 func newFakeStore() *fakeStore {
@@ -52,6 +82,10 @@ func newFakeStore() *fakeStore {
 		schedules:      map[string]domain.DatabaseBackup{},
 		records:        map[string]domain.BackupRecord{},
 		scheduledTasks: map[string]domain.ScheduledTask{},
+		environments:   map[string]domain.Environment{"env_1": {ID: "env_1", ProjectID: "prj_1", Name: "production"}},
+		sharedVars:     map[string][]domain.SharedVariable{},
+		envResolved:    map[string]time.Time{},
+		envApplied:     map[string]time.Time{},
 	}
 }
 
@@ -131,6 +165,58 @@ func (f *fakeStore) ListEnvVars(_ context.Context, appID string) ([]domain.EnvVa
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.envVars[appID], nil
+}
+
+func (f *fakeStore) GetEnvironment(_ context.Context, id string) (domain.Environment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	env, ok := f.environments[id]
+	if !ok {
+		return domain.Environment{}, store.ErrNotFound
+	}
+	return env, nil
+}
+
+func (f *fakeStore) ListSharedVariablesInScope(_ context.Context, projectID, envID string) ([]domain.SharedVariable, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.scopeReads++
+	// Shadowing, as the SQL does it: the environment-scoped row wins.
+	byKey := map[string]domain.SharedVariable{}
+	for _, v := range f.sharedVars[projectID+"|"] {
+		byKey[v.Key] = v
+	}
+	for _, v := range f.sharedVars[projectID+"|"+envID] {
+		byKey[v.Key] = v
+	}
+	out := make([]domain.SharedVariable, 0, len(byKey))
+	for _, v := range byKey {
+		out = append(out, v)
+	}
+	return out, nil
+}
+
+func (f *fakeStore) SetDeploymentEnvResolved(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.seq++
+	f.envResolved[id] = time.Unix(0, 0).Add(time.Duration(f.seq) * time.Second)
+	return nil
+}
+
+func (f *fakeStore) ApplyDeploymentEnvStamp(_ context.Context, deploymentID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	at, ok := f.envResolved[deploymentID]
+	if !ok {
+		return nil
+	}
+	dep, ok := f.deployments[deploymentID]
+	if !ok {
+		return nil
+	}
+	f.envApplied[dep.ApplicationID] = at
+	return nil
 }
 
 func (f *fakeStore) CreateRevision(_ context.Context, id, appID, sourceCommit string, snapshot []byte) (domain.Revision, error) {

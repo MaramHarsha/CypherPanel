@@ -169,6 +169,22 @@ func (a *API) projectIDForWebhookDelivery(ctx context.Context, deliveryID string
 	return a.projectIDForWebhookEndpoint(ctx, d.EndpointID)
 }
 
+// projectIDForSharedVariable resolves straight to the owning project: a shared
+// variable is project-scoped even when narrowed to one environment, and read
+// and write both need domain.RoleMember — the rank an application's own env
+// vars already require, since they are the same class of secret
+// (shared-variables.md §6).
+func (a *API) projectIDForSharedVariable(ctx context.Context, id string) (string, error) {
+	if a.deps.SharedVariables == nil {
+		return "", store.ErrNotFound
+	}
+	v, err := a.deps.SharedVariables.Get(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	return v.ProjectID, nil
+}
+
 func (a *API) projectIDForScheduledTask(ctx context.Context, taskID string) (string, error) {
 	if a.deps.ScheduledTasks == nil {
 		return "", store.ErrNotFound

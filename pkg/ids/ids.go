@@ -57,6 +57,12 @@ const (
 	// One id per RECIPIENT, not per event: an item is a per-user row, and two
 	// members of a team hold two rows for the same observed outcome.
 	PrefixInboxItem = "inb"
+
+	// Phase 4: project shared variables (docs/features/shared-variables.md).
+	// One id per variable regardless of scope — project scope and environment
+	// scope are the same row shape, which is what lets a value be promoted
+	// between them without touching any referencing application (§3).
+	PrefixSharedVariable = "sv"
 )
 
 // New returns a prefixed, URL-safe, collision-resistant identifier such as

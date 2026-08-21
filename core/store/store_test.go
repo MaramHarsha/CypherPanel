@@ -1400,3 +1400,199 @@ func findByDedupe(t *testing.T, s *Store, userID, dedupeKey string) domain.Inbox
 	t.Fatalf("no item with dedupe key %q in %d rows", dedupeKey, len(rows))
 	return domain.InboxItem{}
 }
+
+// TestStoreSharedVariableRoundtrip is acceptance §9.8 plus the two read models
+// the feature is really about: a scope-accurate used-by count and the derived
+// "redeploy to apply" marker (shared-variables.md §5, §7). It exercises
+// NULLS NOT DISTINCT, which cannot be tested anywhere but a real PostgreSQL.
+func TestStoreSharedVariableRoundtrip(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	_, proj, prod, app := seedApp(t, s)
+
+	staging, err := s.CreateEnvironment(ctx, ids.New(ids.PrefixEnvironment), proj.ID, "staging")
+	if err != nil {
+		t.Fatalf("CreateEnvironment: %v", err)
+	}
+
+	// Project scope and environment scope, same key: both must persist.
+	projectVar, err := s.CreateSharedVariable(ctx, domain.SharedVariable{
+		ID:         ids.New(ids.PrefixSharedVariable),
+		ProjectID:  proj.ID,
+		Key:        "SMTP_HOST",
+		ValueCT:    []byte("ct-project"),
+		ValueNonce: []byte("n1"),
+	})
+	if err != nil {
+		t.Fatalf("CreateSharedVariable (project scope): %v", err)
+	}
+	if projectVar.EnvironmentID != nil {
+		t.Fatalf("environment_id = %v, want nil at project scope", projectVar.EnvironmentID)
+	}
+	prodID := prod.ID
+	scopedVar, err := s.CreateSharedVariable(ctx, domain.SharedVariable{
+		ID:            ids.New(ids.PrefixSharedVariable),
+		ProjectID:     proj.ID,
+		EnvironmentID: &prodID,
+		Key:           "SMTP_HOST",
+		ValueCT:       []byte("ct-production"),
+		ValueNonce:    []byte("n2"),
+	})
+	if err != nil {
+		t.Fatalf("CreateSharedVariable (environment scope): %v", err)
+	}
+
+	// A duplicate of either is a conflict. The project-scope case is the one
+	// NULLS NOT DISTINCT exists for: under default semantics NULL <> NULL, so
+	// this insert would succeed and resolution would become order-dependent.
+	if _, err := s.CreateSharedVariable(ctx, domain.SharedVariable{
+		ID: ids.New(ids.PrefixSharedVariable), ProjectID: proj.ID, Key: "SMTP_HOST",
+		ValueCT: []byte("x"), ValueNonce: []byte("x"),
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate project-scoped row = %v, want ErrConflict", err)
+	}
+	if _, err := s.CreateSharedVariable(ctx, domain.SharedVariable{
+		ID: ids.New(ids.PrefixSharedVariable), ProjectID: proj.ID, EnvironmentID: &prodID, Key: "SMTP_HOST",
+		ValueCT: []byte("x"), ValueNonce: []byte("x"),
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate environment-scoped row = %v, want ErrConflict", err)
+	}
+
+	// Resolution: the environment row shadows the project row in production,
+	// and staging (which has no row of its own) sees the project row.
+	inProd, err := s.ListSharedVariablesInScope(ctx, proj.ID, prod.ID)
+	if err != nil {
+		t.Fatalf("ListSharedVariablesInScope: %v", err)
+	}
+	if len(inProd) != 1 || string(inProd[0].ValueCT) != "ct-production" {
+		t.Fatalf("production scope = %+v, want only the shadowing row", inProd)
+	}
+	inStaging, err := s.ListSharedVariablesInScope(ctx, proj.ID, staging.ID)
+	if err != nil {
+		t.Fatalf("ListSharedVariablesInScope: %v", err)
+	}
+	if len(inStaging) != 1 || string(inStaging[0].ValueCT) != "ct-project" {
+		t.Fatalf("staging scope = %+v, want the project-scoped row", inStaging)
+	}
+	keys, err := s.ListSharedVariableKeysInScope(ctx, proj.ID, staging.ID)
+	if err != nil {
+		t.Fatalf("ListSharedVariableKeysInScope: %v", err)
+	}
+	if len(keys) != 1 || keys[0] != "SMTP_HOST" {
+		t.Fatalf("keys in scope = %v, want [SMTP_HOST]", keys)
+	}
+
+	// Usage: seedApp's application lives in production, so a reference from it
+	// counts against the SHADOWING row and not against the project-scoped one.
+	if err := s.UpsertEnvVar(ctx, app.ID, domain.EnvVar{
+		Key: "SMTP_HOST", ValueCT: []byte("ct"), ValueNonce: []byte("n"), SharedRefs: []string{"SMTP_HOST"},
+	}); err != nil {
+		t.Fatalf("UpsertEnvVar: %v", err)
+	}
+	if n, err := s.CountSharedVariableUsage(ctx, scopedVar.ID); err != nil || n != 1 {
+		t.Fatalf("environment-scoped usage = %d, %v; want 1", n, err)
+	}
+	if n, err := s.CountSharedVariableUsage(ctx, projectVar.ID); err != nil || n != 0 {
+		t.Fatalf("project-scoped usage = %d, %v; want 0 (the app's environment shadows the key)", n, err)
+	}
+	counts, err := s.CountSharedVariableUsageByProject(ctx, proj.ID)
+	if err != nil {
+		t.Fatalf("CountSharedVariableUsageByProject: %v", err)
+	}
+	if counts[scopedVar.ID] != 1 || counts[projectVar.ID] != 0 {
+		t.Fatalf("counts = %v, want the shadowing row credited with the use", counts)
+	}
+	usage, err := s.ListSharedVariableUsage(ctx, scopedVar.ID)
+	if err != nil {
+		t.Fatalf("ListSharedVariableUsage: %v", err)
+	}
+	if len(usage) != 1 || usage[0].ApplicationID != app.ID || usage[0].EnvironmentName != "production" {
+		t.Fatalf("usage = %+v, want the one application in production", usage)
+	}
+	if !usage[0].RedeployPending {
+		t.Fatal("an application that never applied a resolved environment must read as pending")
+	}
+
+	// The env-var round trip carries the cleartext ref list back.
+	vars, err := s.ListEnvVars(ctx, app.ID)
+	if err != nil {
+		t.Fatalf("ListEnvVars: %v", err)
+	}
+	found := false
+	for _, v := range vars {
+		if v.Key == "SMTP_HOST" {
+			found = true
+			if len(v.SharedRefs) != 1 || v.SharedRefs[0] != "SMTP_HOST" {
+				t.Fatalf("shared_refs = %v, want [SMTP_HOST]", v.SharedRefs)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("the referencing env var did not round-trip")
+	}
+
+	// Drift: the marker clears only when a deployment's resolved-environment
+	// stamp is copied onto the application, and only for a stamped deployment.
+	if pending, err := s.ApplicationRedeployPending(ctx, app.ID); err != nil || !pending {
+		t.Fatalf("redeploy pending = %v, %v; want true before anything was applied", pending, err)
+	}
+	rev, err := s.CreateRevision(ctx, ids.New(ids.PrefixRevision), app.ID, "abc", []byte("{}"))
+	if err != nil {
+		t.Fatalf("CreateRevision: %v", err)
+	}
+	dep, err := s.CreateDeployment(ctx, ids.New(ids.PrefixDeployment), app.ID, rev.ID, "manual")
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	// An unstamped deployment must not be able to mark the app clean.
+	if err := s.ApplyDeploymentEnvStamp(ctx, dep.ID); err != nil {
+		t.Fatalf("ApplyDeploymentEnvStamp (unstamped): %v", err)
+	}
+	if pending, err := s.ApplicationRedeployPending(ctx, app.ID); err != nil || !pending {
+		t.Fatalf("redeploy pending = %v, %v; an unstamped deployment must not clear it", pending, err)
+	}
+	if err := s.SetDeploymentEnvResolved(ctx, dep.ID); err != nil {
+		t.Fatalf("SetDeploymentEnvResolved: %v", err)
+	}
+	if err := s.ApplyDeploymentEnvStamp(ctx, dep.ID); err != nil {
+		t.Fatalf("ApplyDeploymentEnvStamp: %v", err)
+	}
+	if pending, err := s.ApplicationRedeployPending(ctx, app.ID); err != nil || pending {
+		t.Fatalf("redeploy pending = %v, %v; want false once the environment was applied", pending, err)
+	}
+	if pendingIDs, err := s.ListRedeployPendingApplications(ctx, prod.ID); err != nil || len(pendingIDs) != 0 {
+		t.Fatalf("pending in production = %v, %v; want none", pendingIDs, err)
+	}
+
+	// A write moves updated_at past the applied stamp, so every referencing
+	// application goes pending again — even when the plaintext is unchanged.
+	if _, err := s.UpdateSharedVariableValue(ctx, scopedVar.ID, []byte("ct-production-2"), []byte("n3")); err != nil {
+		t.Fatalf("UpdateSharedVariableValue: %v", err)
+	}
+	if pending, err := s.ApplicationRedeployPending(ctx, app.ID); err != nil || !pending {
+		t.Fatalf("redeploy pending = %v, %v; want true after the variable changed", pending, err)
+	}
+	pendingIDs, err := s.ListRedeployPendingApplications(ctx, prod.ID)
+	if err != nil || len(pendingIDs) != 1 || pendingIDs[0] != app.ID {
+		t.Fatalf("pending in production = %v, %v; want [%s]", pendingIDs, err, app.ID)
+	}
+
+	// Delete cascades: dropping the environment removes only its scoped row.
+	if err := s.DeleteEnvironment(ctx, prod.ID); err != nil {
+		t.Fatalf("DeleteEnvironment: %v", err)
+	}
+	if _, err := s.GetSharedVariable(ctx, scopedVar.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("environment-scoped row after env delete = %v, want ErrNotFound", err)
+	}
+	if _, err := s.GetSharedVariable(ctx, projectVar.ID); err != nil {
+		t.Fatalf("project-scoped row must survive its sibling environment's deletion: %v", err)
+	}
+
+	// Dropping the project removes what is left.
+	if err := s.DeleteProject(ctx, proj.ID); err != nil {
+		t.Fatalf("DeleteProject: %v", err)
+	}
+	if _, err := s.GetSharedVariable(ctx, projectVar.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("project-scoped row after project delete = %v, want ErrNotFound", err)
+	}
+}

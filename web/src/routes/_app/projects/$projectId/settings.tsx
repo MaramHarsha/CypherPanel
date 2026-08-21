@@ -1,8 +1,10 @@
-// Project settings: who hears about this project's events, and the project's
-// own danger zone. Two tabs because the two audiences want opposite things —
-// Notifiers reach people in prose, Webhooks reach machines as a signed JSON
-// contract (outbound-webhooks.md §7). The board datelines the second screen
-// ATLAS-CRM / SETTINGS / WEBHOOKS, which is a route, not an anchor.
+// Project settings: who hears about this project's events, what its
+// applications share, and the project's own danger zone. Three tabs because
+// each answers a different question — Notifiers reach people in prose, Webhooks
+// reach machines as a signed JSON contract (outbound-webhooks.md §7), and
+// Shared variables are the values every app in the project reads
+// (shared-variables.md §8). The board datelines each screen
+// ATLAS-CRM / SETTINGS / <TAB>, which is a route, not an anchor.
 import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
 import { PageBody, PageHeader } from "@/components/page-header";
 
@@ -13,6 +15,7 @@ export const Route = createFileRoute("/_app/projects/$projectId/settings")({
 const TABS = [
   { to: ".", label: "Notifiers", exact: true },
   { to: "webhooks", label: "Webhooks", exact: false },
+  { to: "shared-variables", label: "Shared variables", exact: false },
 ] as const;
 
 function ProjectSettingsLayout() {
