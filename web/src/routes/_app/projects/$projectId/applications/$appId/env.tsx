@@ -11,7 +11,7 @@ import {
   useListEnvVarKeys,
   useSetEnvVar,
 } from "@/api/gen/applications/applications";
-import { useDeployApplication } from "@/api/gen/deployments/deployments";
+import { getListDeploymentsQueryKey, useDeployApplication } from "@/api/gen/deployments/deployments";
 import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
 import { PageState } from "@/components/page-state";
@@ -35,12 +35,17 @@ function EnvTab() {
 
   const deploy = useDeployApplication({
     mutation: {
-      onSuccess: (d) =>
+      onSuccess: (d) => {
+        // The deployments tab renders its list from cache, and the deploy we
+        // just started is not in it — so drop the list before we send the
+        // operator there to watch it.
+        void qc.invalidateQueries({ queryKey: getListDeploymentsQueryKey(appId) });
         void navigate({
           to: "/projects/$projectId/applications/$appId/deployments",
           params: { projectId, appId },
           search: { dep: d.id },
-        }),
+        });
+      },
       onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Deploy failed to start"),
     },
   });

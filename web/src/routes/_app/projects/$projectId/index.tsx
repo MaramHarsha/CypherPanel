@@ -1,11 +1,21 @@
 // Project home: environment switcher (tabs, not routes) + this environment's
 // resources. Empty states chain the golden path (ui-principles §11).
+import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { Database as DatabaseIcon, Plus, Settings as SettingsIcon, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { useListApplications, useCreateApplication } from "@/api/gen/applications/applications";
+import {
+  getListApplicationsQueryKey,
+  useListApplications,
+  useCreateApplication,
+} from "@/api/gen/applications/applications";
 import { useGetMe } from "@/api/gen/auth/auth";
-import { useCreateDatabase, useGetDatabase, useListDatabases } from "@/api/gen/databases/databases";
+import {
+  getListDatabasesQueryKey,
+  useCreateDatabase,
+  useGetDatabase,
+  useListDatabases,
+} from "@/api/gen/databases/databases";
 import { useGetProject, useListEnvironments } from "@/api/gen/projects/projects";
 import { useListServers } from "@/api/gen/servers/servers";
 import type { Application, Database, Environment } from "@/api/gen/model";
@@ -414,6 +424,7 @@ function NewDatabaseDialog({
   primary?: boolean;
 }) {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const { projectId } = Route.useParams();
   const servers = useListServers();
   const [name, setName] = useState("");
@@ -443,8 +454,13 @@ function NewDatabaseDialog({
 
   const create = useCreateDatabase({
     mutation: {
-      onSuccess: (res) =>
-        setCreated({ id: res.database.id, name: res.database.name, password: res.root_password }),
+      onSuccess: (res) => {
+        // The board behind this popup is drawn from the cached list, so a
+        // database created here is invisible there until the list is asked for
+        // again — including the rollup chip, which counts the same two lists.
+        void qc.invalidateQueries({ queryKey: getListDatabasesQueryKey(envId) });
+        setCreated({ id: res.database.id, name: res.database.name, password: res.root_password });
+      },
       onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not create the database"),
     },
   });
@@ -855,6 +871,7 @@ function CreatePanel({
 // only what a first-timer must answer; every working default is visible.
 function NewAppDialog({ envId, primary, eyebrow }: { envId: string; primary?: boolean; eyebrow?: string }) {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const { projectId } = Route.useParams();
   const servers = useListServers();
   const [name, setName] = useState("");
@@ -877,11 +894,16 @@ function NewAppDialog({ envId, primary, eyebrow }: { envId: string; primary?: bo
 
   const create = useCreateApplication({
     mutation: {
-      onSuccess: (res) =>
+      onSuccess: (res) => {
+        // Coming back from the application will render the board from cache,
+        // so the list is refreshed on the way out rather than leaving the
+        // operator to wonder where their new application went.
+        void qc.invalidateQueries({ queryKey: getListApplicationsQueryKey(envId) });
         void navigate({
           to: "/projects/$projectId/applications/$appId",
           params: { projectId, appId: res.application.id },
-        }),
+        });
+      },
       onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not create the application"),
     },
   });

@@ -196,6 +196,7 @@ function DeploymentsTab() {
                 <DeploymentRow
                   key={d.id}
                   deployment={d}
+                  appId={appId}
                   first={i === 0}
                   isNewest={d.id === serving?.id}
                   appName={appName}
@@ -262,6 +263,7 @@ function DeploymentsTab() {
 
 function DeploymentRow({
   deployment: d,
+  appId,
   first,
   isNewest,
   appName,
@@ -270,6 +272,8 @@ function DeploymentRow({
   onOpen,
 }: {
   deployment: Deployment;
+  /** The list a rollback's new deployment lands in. */
+  appId: string;
   first: boolean;
   isNewest: boolean;
   /** For the rollback confirm's title and its NOW row (canvas 9g). */
@@ -279,9 +283,16 @@ function DeploymentRow({
   serving?: Deployment;
   onOpen: () => void;
 }) {
+  const qc = useQueryClient();
   const rollback = useRollbackDeployment({
     mutation: {
-      onSuccess: () => toast.success("Rollback started — the previous revision is coming back"),
+      onSuccess: () => {
+        // A rollback is a deploy: it adds a row and moves which revision is
+        // serving, and the list holding both was fetched before either was
+        // true. Same reasoning as the deploy button above.
+        void qc.invalidateQueries({ queryKey: getListDeploymentsQueryKey(appId) });
+        toast.success("Rollback started — the previous revision is coming back");
+      },
       onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Rollback failed to start"),
     },
   });

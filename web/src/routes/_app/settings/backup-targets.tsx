@@ -11,6 +11,7 @@ import { Plus } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import {
+  getListBackupTargetsQueryKey,
   useCreateBackupTarget,
   useDeleteBackupTarget,
   useListBackupTargets,
@@ -27,6 +28,7 @@ import { Input } from "@/components/ui/input";
 import { useCrumbs } from "@/lib/crumbs";
 import { relativeTime } from "@/lib/time";
 import { cn } from "@/lib/utils";
+import { useQueryClient } from "@tanstack/react-query";
 
 export const Route = createFileRoute("/_app/settings/backup-targets")({ component: BackupTargetsTab });
 
@@ -97,11 +99,16 @@ function TargetRow({ t }: { t: BackupTarget }) {
 // CypherPanel has for them — which is what makes the existing backups
 // unreachable from this panel (ui-principles §2).
 function DeleteTargetDialog({ t }: { t: BackupTarget }) {
+  const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const del = useDeleteBackupTarget({
     mutation: {
+      // Backup targets are not on the live stream, so the deleted row would
+      // stay on screen — offering credentials the panel no longer holds —
+      // until something else reloaded the page.
       onSuccess: () => {
         toast.success(`Deleted ${t.name}`);
+        void qc.invalidateQueries({ queryKey: getListBackupTargetsQueryKey() });
         setOpen(false);
       },
       onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Could not delete the target"),
@@ -143,6 +150,7 @@ function DeleteTargetDialog({ t }: { t: BackupTarget }) {
 const BLANK = { name: "", endpoint: "", bucket: "", region: "", path_prefix: "", access_key: "", secret_key: "" };
 
 function CreateTargetDialog({ primary }: { primary?: boolean }) {
+  const qc = useQueryClient();
   const [form, setForm] = useState(BLANK);
   const [error, setError] = useState<string | null>(null);
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
@@ -152,6 +160,7 @@ function CreateTargetDialog({ primary }: { primary?: boolean }) {
     mutation: {
       onSuccess: () => {
         toast.success(`${form.name} is ready — schedule a backup on any database`);
+        void qc.invalidateQueries({ queryKey: getListBackupTargetsQueryKey() });
         setForm(BLANK);
       },
       onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not add the target"),

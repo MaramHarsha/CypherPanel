@@ -1,9 +1,10 @@
 // Database · Settings: danger zone (typed-name delete, ui-principles §2). The
 // backup count is stated in the blast radius so nobody deletes it blind.
+import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { useListDatabaseBackups } from "@/api/gen/backups/backups";
-import { useDeleteDatabase, useGetDatabase } from "@/api/gen/databases/databases";
+import { getListDatabasesQueryKey, useDeleteDatabase, useGetDatabase } from "@/api/gen/databases/databases";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
 import { Eyebrow } from "@/components/eyebrow";
 import { PageState } from "@/components/page-state";
@@ -16,12 +17,20 @@ export const Route = createFileRoute("/_app/projects/$projectId/databases/$dbId/
 function DatabaseSettings() {
   const { projectId, dbId } = Route.useParams();
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const db = useGetDatabase(dbId);
   const schedules = useListDatabaseBackups(dbId);
 
   const del = useDeleteDatabase({
     mutation: {
       onSuccess: () => {
+        // The project board we land on draws its rows from the cached
+        // environment list, so a database deleted here would sit there looking
+        // alive until something else asked for that list. The invalidation has
+        // to happen before the navigation, not after it: the destination
+        // renders from cache the moment it mounts.
+        const envId = db.data?.environment_id;
+        if (envId) void qc.invalidateQueries({ queryKey: getListDatabasesQueryKey(envId) });
         toast.success(`Deleted ${db.data?.name ?? "database"}`);
         void navigate({ to: "/projects/$projectId", params: { projectId } });
       },

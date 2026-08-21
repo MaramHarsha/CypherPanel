@@ -15,6 +15,7 @@ import { toast } from "sonner";
 import {
   getGetTotpStatusQueryKey,
   getListSessionsQueryKey,
+  getListTokensQueryKey,
   useCreateToken,
   useDeleteToken,
   useDisableTotp,
@@ -535,9 +536,15 @@ function TokenRow({
   expires?: string;
   created: string;
 }) {
+  const qc = useQueryClient();
   const del = useDeleteToken({
     mutation: {
-      onSuccess: () => toast.success(`Revoked ${name}`),
+      // Nothing pushes token changes down the live stream, so the revoked row
+      // sits there looking usable until the list is asked for again.
+      onSuccess: () => {
+        toast.success(`Revoked ${name}`);
+        void qc.invalidateQueries({ queryKey: getListTokensQueryKey() });
+      },
       onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Could not revoke the token"),
     },
   });
@@ -587,6 +594,7 @@ const EXPIRY_CHOICES = [
 ];
 
 function CreateTokenDialog({ primary }: { primary?: boolean }) {
+  const qc = useQueryClient();
   const [name, setName] = useState("");
   const [abilities, setAbilities] = useState<Ability[]>([Ability.read, Ability.deploy]);
   const [expiryDays, setExpiryDays] = useState(90);
@@ -595,7 +603,13 @@ function CreateTokenDialog({ primary }: { primary?: boolean }) {
 
   const create = useCreateToken({
     mutation: {
-      onSuccess: (res) => setMinted((res as { token?: string }).token ?? null),
+      // The dialog stays open on the one-time value; the list behind it has to
+      // gain the row all the same, or closing reveals a page missing the token
+      // that was just made.
+      onSuccess: (res) => {
+        setMinted((res as { token?: string }).token ?? null);
+        void qc.invalidateQueries({ queryKey: getListTokensQueryKey() });
+      },
       onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not create the token"),
     },
   });

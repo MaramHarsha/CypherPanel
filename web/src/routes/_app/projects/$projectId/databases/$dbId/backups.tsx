@@ -17,7 +17,7 @@ import {
   useRunBackupNow,
 } from "@/api/gen/backups/backups";
 import { useListBackupTargets } from "@/api/gen/backups/backups";
-import { useGetDatabase } from "@/api/gen/databases/databases";
+import { getGetDatabaseQueryKey, useGetDatabase } from "@/api/gen/databases/databases";
 import type { BackupRecord, DatabaseBackup } from "@/api/gen/model";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
 import { EmptyState } from "@/components/empty-state";
@@ -180,16 +180,24 @@ function HistoryList({ dbId, dbName, bakId }: { dbId: string; dbName: string; ba
 }
 
 function RecordRow({ dbId, dbName, record: r }: { dbId: string; dbName: string; record: BackupRecord }) {
+  const qc = useQueryClient();
   const restore = useRestoreDatabase({
     mutation: {
       // The panel gets no progress from a restore — the agent reports one
       // terminal event to the control plane and nothing to the browser — so
       // the toast has to carry the whole consequence up front: the database
       // is down while the dump applies, and nobody can call it back.
-      onSuccess: () =>
+      onSuccess: () => {
+        // The container restarts under the dump, so the status the overview is
+        // holding is stale the instant this returns. Ask for it again rather
+        // than trusting the event stream to say so — it may be reconnecting,
+        // and a database shown as running while it is offline is exactly the
+        // state we must not display.
+        void qc.invalidateQueries({ queryKey: getGetDatabaseQueryKey(dbId) });
         toast.success(`Restoring ${dbName}…`, {
           description: "The database is offline while the dump is applied, and the restore can't be stopped.",
-        }),
+        });
+      },
       onError: mutErr,
     },
   });

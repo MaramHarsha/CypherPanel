@@ -13,7 +13,12 @@ import {
   useListNotifiers,
   useTestNotifier,
 } from "@/api/gen/notifiers/notifiers";
-import { useDeleteProject, useGetProject } from "@/api/gen/projects/projects";
+import {
+  getGetProjectQueryKey,
+  getListProjectsQueryKey,
+  useDeleteProject,
+  useGetProject,
+} from "@/api/gen/projects/projects";
 import type { Notifier } from "@/api/gen/model";
 import { ApiError } from "@/api/client";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
@@ -93,11 +98,18 @@ function ProjectSettings() {
  *  instruction, not a notification. */
 function DangerZone({ projectId, name }: { projectId: string; name: string }) {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const [blocked, setBlocked] = useState<string | null>(null);
 
   const del = useDeleteProject({
     mutation: {
       onSuccess: () => {
+        // /projects renders from cache, and nothing streams project changes
+        // in — so the row we just deleted would still be sitting there when we
+        // land. Drop both the list and this project's own entry first, then
+        // navigate, so the page we arrive at is one we can vouch for.
+        void qc.invalidateQueries({ queryKey: getListProjectsQueryKey() });
+        void qc.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
         toast.success(`Deleted ${name}`);
         void navigate({ to: "/projects" });
       },

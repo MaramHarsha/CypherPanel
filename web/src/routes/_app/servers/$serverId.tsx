@@ -1,8 +1,9 @@
 // Server detail: the facts a host is judged on, and the danger zone —
 // revoking a server is a typed-name delete (ui-principles §2).
+import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { useDeleteServer, useGetServer } from "@/api/gen/servers/servers";
+import { getGetServerQueryKey, getListServersQueryKey, useDeleteServer, useGetServer } from "@/api/gen/servers/servers";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
 import { Fact, FactCard } from "@/components/fact-card";
 import { PageBody, PageHeader } from "@/components/page-header";
@@ -22,9 +23,18 @@ function ServerDetail() {
 
   useCrumbs([{ label: "servers", to: "/servers" }, { label: server.data?.name ?? serverId }]);
 
+  const qc = useQueryClient();
+
   const del = useDeleteServer({
     mutation: {
       onSuccess: () => {
+        // /servers renders from cache, and nothing streams server changes in —
+        // so the host we just revoked would still be listed, heartbeat and all,
+        // on the page we land on. Drop the fleet list and this server's own
+        // entry before navigating, so what we arrive at is a fleet we can
+        // vouch for.
+        void qc.invalidateQueries({ queryKey: getListServersQueryKey() });
+        void qc.invalidateQueries({ queryKey: getGetServerQueryKey(serverId) });
         toast.success("Server removed — its agent certificate is revoked");
         void navigate({ to: "/servers" });
       },

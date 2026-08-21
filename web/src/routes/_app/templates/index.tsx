@@ -1,6 +1,8 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Database, Package, Search, ShieldCheck, X } from "lucide-react";
 import { useMemo, useState, type FormEvent } from "react";
+import { getListApplicationsQueryKey } from "@/api/gen/applications/applications";
+import { getListDatabasesQueryKey } from "@/api/gen/databases/databases";
 import type { Template } from "@/api/gen/model";
 import { useListEnvironments, useListProjects } from "@/api/gen/projects/projects";
 import { useListServers } from "@/api/gen/servers/servers";
@@ -14,6 +16,7 @@ import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/
 import { Field } from "@/components/ui/field";
 import { Input, Select } from "@/components/ui/input";
 import { useCrumbs } from "@/lib/crumbs";
+import { useQueryClient } from "@tanstack/react-query";
 
 export const Route = createFileRoute("/_app/templates/")({ component: TemplatesPage });
 
@@ -278,6 +281,7 @@ function TemplateContents({ template }: { template: Template }) {
 }
 
 function InstallDialog({ template }: { template: Template }) {
+  const qc = useQueryClient();
   const navigate = useNavigate();
   const projects = useListProjects();
   const servers = useListServers();
@@ -290,6 +294,11 @@ function InstallDialog({ template }: { template: Template }) {
   const environments = useListEnvironments(projectID, { query: { enabled: projectID !== "" } });
   const install = useInstallTemplate({ mutation: {
     onSuccess: (result) => {
+      // An install drops whole resources into the environment, and the project
+      // page renders those lists from cache — so they are marked stale before
+      // the navigation that lands on them, not after.
+      void qc.invalidateQueries({ queryKey: getListApplicationsQueryKey(environmentID) });
+      void qc.invalidateQueries({ queryKey: getListDatabasesQueryKey(environmentID) });
       const appID = result.applications[0];
       if (appID) void navigate({ to: "/projects/$projectId/applications/$appId", params: { projectId: projectID, appId: appID } });
     },

@@ -1,9 +1,12 @@
 // Application · Settings: sectioned form + danger zone (typed-name delete,
 // ui-principles §2). Dirty state is explicit; nothing saves silently.
+import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import {
+  getGetApplicationQueryKey,
+  getListApplicationsQueryKey,
   useDeleteApplication,
   useGetApplication,
   useUpdateApplication,
@@ -41,6 +44,7 @@ function SettingsForm({
   initial: Application;
 }) {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const [name, setName] = useState(initial.name);
   const [repo, setRepo] = useState(initial.source.repo);
   const [branch, setBranch] = useState(initial.source.branch);
@@ -79,7 +83,14 @@ function SettingsForm({
 
   const update = useUpdateApplication({
     mutation: {
-      onSuccess: () => toast.success("Saved — applies on the next deploy"),
+      onSuccess: () => {
+        // This form is seeded from the detail query and the name it just wrote
+        // is the one the environment lists it under, so both have to be told —
+        // otherwise the page keeps rendering the values the operator replaced.
+        void qc.invalidateQueries({ queryKey: getGetApplicationQueryKey(appId) });
+        void qc.invalidateQueries({ queryKey: getListApplicationsQueryKey(initial.environment_id) });
+        toast.success("Saved — applies on the next deploy");
+      },
       onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Could not save changes"),
     },
   });
@@ -87,6 +98,10 @@ function SettingsForm({
   const del = useDeleteApplication({
     mutation: {
       onSuccess: () => {
+        // The project page we land on renders its applications from cache, so
+        // the row we just deleted would still be sitting there. Drop the list
+        // before navigating rather than after: by then this component is gone.
+        void qc.invalidateQueries({ queryKey: getListApplicationsQueryKey(initial.environment_id) });
         toast.success(`Deleted ${initial.name}`);
         void navigate({ to: "/projects/$projectId", params: { projectId } });
       },

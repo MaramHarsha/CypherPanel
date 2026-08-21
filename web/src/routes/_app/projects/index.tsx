@@ -3,14 +3,19 @@
 // the room. Mission Control renders it as a broadsheet table: an ink rule
 // above the first row, hairlines between the rest, and a tint bleeding off the
 // left edge of anything broken.
-import { useQueries } from "@tanstack/react-query";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useGetMe } from "@/api/gen/auth/auth";
 import { getListApplicationsQueryOptions } from "@/api/gen/applications/applications";
 import { getListDatabasesQueryOptions } from "@/api/gen/databases/databases";
-import { useCreateProject, useListEnvironments, useListProjects } from "@/api/gen/projects/projects";
+import {
+  getListProjectsQueryKey,
+  useCreateProject,
+  useListEnvironments,
+  useListProjects,
+} from "@/api/gen/projects/projects";
 import type { Project } from "@/api/gen/model";
 import { EmptyState } from "@/components/empty-state";
 import { PageBody, PageHeader } from "@/components/page-header";
@@ -201,6 +206,7 @@ function useScopedTeamName(): string | undefined {
 
 function CreateProjectDialog() {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const me = useGetMe();
   const { teamId } = useTeamScope();
   const teams = me.data?.teams ?? [];
@@ -210,7 +216,14 @@ function CreateProjectDialog() {
 
   const create = useCreateProject({
     mutation: {
-      onSuccess: (res) => void navigate({ to: "/projects/$projectId", params: { projectId: res.project.id } }),
+      // The list this dialog was opened from is server state TanStack Query
+      // owns (web-ui-design.md §5), and no SSE stream carries projects — so it
+      // stays as it was until we say otherwise. Mark it stale before leaving,
+      // or coming back shows a list without the project just created.
+      onSuccess: (res) => {
+        void qc.invalidateQueries({ queryKey: getListProjectsQueryKey() });
+        void navigate({ to: "/projects/$projectId", params: { projectId: res.project.id } });
+      },
       onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not create the project"),
     },
   });

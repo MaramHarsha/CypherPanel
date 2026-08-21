@@ -13,6 +13,7 @@ import { Plus } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import {
+  getListDeployKeysQueryKey,
   useCreateDeployKey,
   useDeleteDeployKey,
   useListDeployKeys,
@@ -30,6 +31,7 @@ import { Input } from "@/components/ui/input";
 import { useCrumbs } from "@/lib/crumbs";
 import { relativeTime } from "@/lib/time";
 import { cn } from "@/lib/utils";
+import { useQueryClient } from "@tanstack/react-query";
 
 export const Route = createFileRoute("/_app/settings/deploy-keys")({ component: DeployKeysTab });
 
@@ -102,11 +104,16 @@ function KeyRow({ k }: { k: DeployKey }) {
 // again. §2 wants the blast radius stated, and it is the one thing the operator
 // cannot see from this page — nothing here lists which apps read through it.
 function DeleteKeyDialog({ k }: { k: DeployKey }) {
+  const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const del = useDeleteDeployKey({
     mutation: {
+      // The list is only ever refreshed by whoever changed it — deploy keys
+      // carry no live stream — and a row still showing a copyable public key
+      // the panel has thrown away is exactly the state §10 forbids.
       onSuccess: () => {
         toast.success(`Deleted ${k.name}`);
+        void qc.invalidateQueries({ queryKey: getListDeployKeysQueryKey() });
         setOpen(false);
       },
       onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Could not delete the key"),
@@ -146,13 +153,19 @@ function DeleteKeyDialog({ k }: { k: DeployKey }) {
 }
 
 function CreateKeyDialog({ primary }: { primary?: boolean }) {
+  const qc = useQueryClient();
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [made, setMade] = useState<DeployKey | null>(null);
 
   const create = useCreateDeployKey({
     mutation: {
-      onSuccess: (res) => setMade(res.deploy_key),
+      // The dialog moves on to the public half, but the list underneath is what
+      // the operator returns to for it — it has to know the key exists.
+      onSuccess: (res) => {
+        setMade(res.deploy_key);
+        void qc.invalidateQueries({ queryKey: getListDeployKeysQueryKey() });
+      },
       onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not create the key"),
     },
   });

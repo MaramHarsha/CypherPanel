@@ -9,11 +9,12 @@
 // front and centre, a copy button, and honest progress until the agent is
 // running. It lives in one dialog owned by this page — see the note on
 // `joinOpen` for why it cannot live inside the rows it creates.
+import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { JoinInstructions, Server } from "@/api/gen/model";
-import { useCreateServer, useListServers } from "@/api/gen/servers/servers";
+import { getListServersQueryKey, useCreateServer, useListServers } from "@/api/gen/servers/servers";
 import { CopyButton } from "@/components/copy-field";
 import { EmptyState } from "@/components/empty-state";
 import { HeaderStat, PageBody, PageHeader } from "@/components/page-header";
@@ -180,9 +181,19 @@ function JoinServerDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
   const [join, setJoin] = useState<{ serverId: string; instructions: JoinInstructions } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const qc = useQueryClient();
+
   const create = useCreateServer({
     mutation: {
-      onSuccess: (res) => setJoin({ serverId: res.server.id, instructions: res.join }),
+      // The fleet list is server state TanStack Query owns (web-ui-design.md
+      // §5), and no SSE stream carries servers — so the page behind this dialog
+      // keeps the list it already had. Mark it stale as the row is created: the
+      // host belongs in the fleet from the moment it is named, waiting for its
+      // agent, not from whenever the next poll happens to land.
+      onSuccess: (res) => {
+        void qc.invalidateQueries({ queryKey: getListServersQueryKey() });
+        setJoin({ serverId: res.server.id, instructions: res.join });
+      },
       onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not create the server"),
     },
   });

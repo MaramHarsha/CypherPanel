@@ -1,11 +1,12 @@
 // Application · Previews: environments created from pull requests, each with
 // its TTL. Read-mostly — they're created and destroyed by PR lifecycle events
 // (preview-environments.md); the operator can tear one down early.
+import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ExternalLink, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { useGetApplication } from "@/api/gen/applications/applications";
-import { useDeletePreview, useListPreviews } from "@/api/gen/previews/previews";
+import { getListPreviewsQueryKey, useDeletePreview, useListPreviews } from "@/api/gen/previews/previews";
 import type { Preview } from "@/api/gen/model";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
 import { EmptyState } from "@/components/empty-state";
@@ -58,7 +59,7 @@ function PreviewsTab() {
       {(list) => (
         <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-surface">
           {list.map((p) => (
-            <PreviewRow key={p.id} preview={p} />
+            <PreviewRow key={p.id} appId={appId} preview={p} />
           ))}
         </ul>
       )}
@@ -66,10 +67,17 @@ function PreviewsTab() {
   );
 }
 
-function PreviewRow({ preview: p }: { preview: Preview }) {
+function PreviewRow({ appId, preview: p }: { appId: string; preview: Preview }) {
+  const qc = useQueryClient();
   const del = useDeletePreview({
     mutation: {
-      onSuccess: () => toast.success(`Preview for PR #${p.pr_number} torn down`),
+      onSuccess: () => {
+        // Nothing else refreshes this list: the live stream carries only
+        // application and database invalidations, so a torn-down preview would
+        // sit here looking alive until the page was reloaded.
+        void qc.invalidateQueries({ queryKey: getListPreviewsQueryKey(appId) });
+        toast.success(`Preview for PR #${p.pr_number} torn down`);
+      },
       onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Could not delete the preview"),
     },
   });
