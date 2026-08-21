@@ -158,3 +158,47 @@ func TestContainsReference(t *testing.T) {
 		t.Error("ContainsReference matched something that is not a shared reference")
 	}
 }
+
+// The bound is on OCCURRENCES, not on distinct keys. Before this was true, a
+// value referencing one variable repeatedly passed validation — one distinct
+// ref, and it resolved — and then expanded to the repeat count times the shared
+// value's size. A ~1 MiB env var of one 13-byte reference repeated ~80,600
+// times against a 32 KiB value expanded to ~2.6 GB, which is not a failed
+// deploy: Scheduler.resolveEnv is reached from DesiredStateFor, the agent's
+// full sync on every reconnect, so the control plane OOMed and then OOMed again
+// each time it came back.
+func TestRefsBoundsOccurrencesNotDistinctKeys(t *testing.T) {
+	atLimit := strings.Repeat("{{shared.A}}", MaxReferences)
+	if got, err := Refs(atLimit); err != nil || len(got) != 1 {
+		t.Fatalf("Refs at the occurrence limit = %d refs, %v; want 1, nil", len(got), err)
+	}
+	if _, err := Refs(atLimit + "{{shared.A}}"); !errors.Is(err, ErrTooManyReferences) {
+		t.Fatalf("Refs past the occurrence limit = %v, want ErrTooManyReferences", err)
+	}
+}
+
+// The amplification itself, at the scale that used to kill the plane. Refs is
+// the lock that holds here; the assertion is that the value never reaches
+// Expand at all.
+func TestRefsRefusesTheAmplifyingValue(t *testing.T) {
+	value := strings.Repeat("{{shared.K}}", 80_600) // ~1 MiB, one distinct ref
+	if _, err := Refs(value); !errors.Is(err, ErrTooManyReferences) {
+		t.Fatalf("Refs on the amplifying value = %v, want ErrTooManyReferences", err)
+	}
+}
+
+// Expand's own cap is the second lock: it covers values stored before the
+// occurrence bound existed, which no amount of write-time validation can reach.
+func TestExpandCapsTheExpandedSize(t *testing.T) {
+	big := map[string]string{"K": strings.Repeat("x", 32*1024)}
+	// Under the occurrence bound, so Refs would accept it; the expansion is
+	// still 96 × 32 KiB = 3 MiB, past maxExpandedBytes.
+	stored := strings.Repeat("{{shared.K}}", 96)
+	if _, err := Expand(stored, big); !errors.Is(err, ErrExpansionTooLarge) {
+		t.Fatalf("Expand past the size cap = %v, want ErrExpansionTooLarge", err)
+	}
+	// A value that expands within the cap still works.
+	if got, err := Expand(strings.Repeat("{{shared.K}}", 8), big); err != nil || len(got) != 8*32*1024 {
+		t.Fatalf("Expand within the cap = %d bytes, %v; want %d, nil", len(got), err, 8*32*1024)
+	}
+}

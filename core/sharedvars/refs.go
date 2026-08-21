@@ -22,9 +22,30 @@ const (
 	prefix = "shared."
 )
 
-// MaxReferences bounds how many distinct shared variables one value may
-// reference (§6). An env var is a value, not a template engine.
+// MaxReferences bounds how many references one value may contain (§6) — every
+// OCCURRENCE, not every distinct key. An env var is a value, not a template
+// engine.
+//
+// Counting occurrences is what actually bounds the expansion. Bounding the
+// distinct set left the repeat count free, and Expand substitutes each
+// occurrence: N repeats of one 32 KiB shared value cost N × 32 KiB however few
+// variables that is, so a 1 MiB env var of one repeated reference expanded to
+// gigabytes. §6 states the bound as "references expanded per value", and this
+// is the number that governs it.
 const MaxReferences = 16
+
+// maxExpandedBytes caps one expansion's result. With MaxReferences bounding
+// occurrences this is unreachable through the API — 16 × 32 KiB of substituted
+// value on top of a value the request-body cap already holds under 1 MiB — so
+// it is the second lock, not the first: it covers values stored before the
+// occurrence bound existed, and any future caller that reaches Expand without
+// having gone through Refs.
+//
+// Exceeding it fails the deploy with a named error. That is the whole point:
+// this runs in Scheduler.resolveEnv, which the agent re-enters through
+// DesiredStateFor on every reconnect, so growing the builder unchecked does not
+// fail one deploy — it OOM-kills the control plane, and again after it restarts.
+const maxExpandedBytes = 2 << 20
 
 // ErrMalformedReference is returned for a "{{…}}" that is not a well-formed
 // {{shared.KEY}} — `{{ shared.X }}`, `{{shared.}}`, `{{project.X}}`, an
@@ -36,7 +57,12 @@ const MaxReferences = 16
 var ErrMalformedReference = errors.New(`value contains "{{…}}" that is not a well-formed {{shared.KEY}} reference`)
 
 // ErrTooManyReferences is returned when a value exceeds MaxReferences.
-var ErrTooManyReferences = errors.New("a value may reference at most 16 shared variables")
+var ErrTooManyReferences = errors.New("a value may contain at most 16 shared-variable references")
+
+// ErrExpansionTooLarge is returned when substitution would exceed
+// maxExpandedBytes. Like ErrMalformedReference it names no value: the text it
+// would echo is about to be sealed (ENGINEERING rule 20).
+var ErrExpansionTooLarge = errors.New("expanding this value's shared-variable references exceeds the 2 MiB limit")
 
 // MissingReferenceError names a well-formed reference that does not resolve.
 // Only the KEY is carried: key names are already returned by
@@ -75,6 +101,7 @@ func ContainsReference(value string) bool { return strings.Contains(value, open+
 func Refs(value string) ([]string, error) {
 	var out []string
 	seen := map[string]bool{}
+	found := 0
 	for i := 0; ; {
 		rel := strings.Index(value[i:], open)
 		if rel < 0 {
@@ -84,10 +111,16 @@ func Refs(value string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
+		// The bound is on occurrences; the RESULT is still the distinct set,
+		// because that is what shared_refs records and what the resolver looks
+		// up. Repeats remain legal — `{{shared.HOST}}:{{shared.PORT}}` beside a
+		// second `{{shared.HOST}}` is an ordinary composition — they are simply
+		// no longer free.
+		found++
+		if found > MaxReferences {
+			return nil, ErrTooManyReferences
+		}
 		if !seen[inner] {
-			if len(out) == MaxReferences {
-				return nil, ErrTooManyReferences
-			}
 			seen[inner] = true
 			out = append(out, inner)
 		}
@@ -110,6 +143,9 @@ func Expand(value string, vals map[string]string) (string, error) {
 		rel := strings.Index(value[i:], open)
 		if rel < 0 {
 			b.WriteString(value[i:])
+			if b.Len() > maxExpandedBytes {
+				return "", ErrExpansionTooLarge
+			}
 			return b.String(), nil
 		}
 		start := i + rel
@@ -123,6 +159,9 @@ func Expand(value string, vals map[string]string) (string, error) {
 			return "", &MissingReferenceError{Key: inner}
 		}
 		b.WriteString(v)
+		if b.Len() > maxExpandedBytes {
+			return "", ErrExpansionTooLarge
+		}
 		i = next
 	}
 }
