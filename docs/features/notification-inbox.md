@@ -49,8 +49,9 @@ not swallowed by a dead webhook (§4).
 
 ## 2. The resource model
 
-Two tables, migration **`0022_notification_inbox.sql`** (0021, outbound
-webhooks, landed between this spec being written and being implemented).
+Two tables, migration **`0024_notification_inbox.sql`** (0023, outbound
+webhooks, landed between this spec being written and being implemented; 0021
+and 0022 went to profile photos and panel mail on main).
 Additive, reversible, no backfill — the inbox records forward; `deployments` and
 `backup_records` remain the historical record (rule 16).
 

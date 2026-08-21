@@ -94,7 +94,7 @@ and the drift marker plain SQL: refs are computed at write time from the
 plaintext the operator just supplied, so no read path ever unseals a value to
 answer "who uses this".
 
-Migration: `core/store/migrations/0021_shared_variables.sql` (0020 is the
+Migration: `core/store/migrations/0025_shared_variables.sql` (0024 is the
 current highest), goose Up/Down, additive-first and reversible (rule 16).
 ID prefix `PrefixSharedVariable = "sv"` in `pkg/ids/ids.go`.
 

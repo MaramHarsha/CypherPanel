@@ -123,7 +123,7 @@ composite primary key, no minted id** — `(delivery_id, attempt)` makes an atte
 insert idempotent under redelivery: a duplicate lands as PG `23505` →
 `store.ErrConflict`, which the manager treats as "already recorded" (rule 12).
 
-Migration `0021_outbound_webhooks.sql` (0020 is the current highest), goose
+Migration `0023_outbound_webhooks.sql` (0022 is the current highest), goose
 Up/Down, additive (rule 16), with `idx_webhook_endpoints_project (project_id)`,
 `idx_webhook_deliveries_endpoint (endpoint_id, created_at DESC)` and a partial
 `idx_webhook_deliveries_due (next_attempt_at) WHERE status = 'pending'` so the
