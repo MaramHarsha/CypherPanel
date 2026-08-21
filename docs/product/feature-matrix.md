@@ -64,7 +64,7 @@
 | Custom/user certificates | ✅ | ✅ | **V1.x** | `dokploy/.../schema/certificate.ts` |
 | Redirects & middleware | ⚠️ | ✅ | **V1.x** | `schema/redirects.ts`, `schema/forward-auth.ts` |
 | TCP/UDP port exposure | ✅ | ✅ | **V1** | `schema/port.ts` |
-| Cloudflare DNS automation (auto-create records on domain add) | ❌ | ❌ | **V1.x** | Same API token unlocks DNS-01 wildcard certs — one credential, two features |
+| Cloudflare DNS automation (auto-create records on domain add) | ❌ | ⚠️ (manual only) | **V1** | Dokploy ships a DNS provider abstraction (`utils/dns/{cloudflare,route53}.ts`, `services/dns-provider.ts`) but never wires it to a domain: records are operator-driven CRUD, so nothing is created when a domain is added or reaped when it is removed. Coolify's Cloudflare support is Tunnel/`cloudflared` only. Ours additionally gates routing on ownership — a domain outside a connected Zone is not published ([dns-automation.md](../features/dns-automation.md)). Same API token unlocks DNS-01 wildcard certs — one credential, two features |
 | Cloudflare CDN/proxy mode (trusted headers, origin lockdown) | ❌ | ❌ | **V1.x** | Agent applies Traefik hardening automatically (ADR-004); HTTP/S only — raw TCP ports stay direct |
 | Cloudflare Tunnel (public traffic, zero inbound ports) | ⚠️ (manual guides) | ❌ | **Later** | Rhymes with the dial-home agent (ADR-002); transformative for P4 behind CGNAT |
 

@@ -41,6 +41,9 @@
 - **Delivery** — one event queued for one Webhook Endpoint, with the exact body bytes that were signed and a record per attempt. Bounded retries; replayable.
 - **Endpoint Health** — a Webhook Endpoint's state *derived* from its recent terminal Deliveries (never stored): `healthy`, `failing`, or `unknown` for an endpoint that is disabled or has delivered nothing yet.
 - **Inbox** — the panel's own per-user record of what happened to the resources that user can see, counted on the bell in the top bar. Needs no configuration and carries no credential, which is what distinguishes it from a Notifier.
+- **DNS Provider** — the panel's connection to a DNS operator (Cloudflare at v1). One per panel, owned by panel admins, its API token sealed. What proves an operator owns a domain is possession of a token that can see its Zone.
+- **Zone** — a domain a connected DNS Provider is authoritative for (`example.com`). Cached from the provider, never operator-entered — an operator-entered zone list would be a second place to lie about ownership.
+- **DNS Record** — a record CypherPanel created and therefore manages: it is written when a verified domain is set, updated when it changes, and deleted when the Application, Environment or Project goes away. The panel never modifies a record it did not create.
 
 ## Term mapping to the reference repos
 
