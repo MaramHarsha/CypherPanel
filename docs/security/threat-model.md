@@ -359,8 +359,19 @@ verified".
 - **Disconnecting deletes nothing.** Removing the provider removes our ability
   to act, not our obligation to be careful: records are left exactly as they
   are. Nothing about losing a credential should destroy an operator's DNS. `[§4.5]`
-- **No new SSRF surface.** Unlike §5.11 the destination is not operator-supplied
-  — it is Cloudflare's API base, a constant.
+- **The destination is a constant, and now structurally so.** Unlike §5.11 the
+  host is not operator-supplied. The first implementation built request URLs by
+  concatenating escaped values onto a base string; CodeQL flagged it
+  (`go/request-forgery`) and was right to, because escaping was never the
+  control. `URL.JoinPath` **cleans** the path it builds, so a segment of
+  `../../..` is not neutralised — it is *resolved*, and an operator-supplied
+  account id could redirect the call to a different Cloudflare endpoint with
+  this client's bearer token attached. Three things now hold instead: the base
+  is a parsed `*url.URL` so scheme and host are structure rather than string;
+  every interpolated path segment must be an identifier (no separators, no
+  dot-segments) or the request is refused; and a final check fails closed if a
+  built URL ever leaves the pinned host. Query values need none of this —
+  `Values.Encode` escapes them and they cannot change the path.
 
 **Residual risk.** A token scoped more broadly than CypherPanel's zones can do
 more than CypherPanel needs; we tell the operator to scope it and we cannot
@@ -418,7 +429,7 @@ These are the concrete, checkable requirements the Phase 1 handshake code must s
 | §5.9 Disk exhaustion/self-DoS | Desired-state GC; self-headroom guard; bounded retention; alerts | ADR-003, ADR-005, matrix V1 |
 | §5.10 Mailbox-as-identity | Two factors to move an address; old address always notified; single-use hashed token; sessionOnly + rate limited | panel-mail.md §4–5, rules 20–21 |
 | §5.11 Outbound webhook egress | Metadata-only payload; HMAC over raw bytes; sealed secret; no redirects; project-scoped authz; bounded retries | outbound-webhooks.md §4, §6, rule 20 |
-| §5.12 DNS control / ownership | Sealed token; only records we created; derived content; verification recomputed not stored; panel-admin gated | dns-automation.md §3.1, §4.1, §4.4, rule 20 |
+| §5.12 DNS control / ownership | Sealed token; only records we created; derived content; verification recomputed not stored; panel-admin gated; request host pinned and path segments validated | dns-automation.md §3.1, §4.1, §4.4, rule 20 |
 
 ---
 

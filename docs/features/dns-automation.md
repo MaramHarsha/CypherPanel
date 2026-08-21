@@ -130,6 +130,13 @@ unscoped, which is the correct behaviour for a user-owned token. An id the
 token cannot see is refused by name, because the alternative is an empty zone
 list with no explanation.
 
+**How requests are built.** Every call is assembled from path *segments* and
+query *values* against a parsed base URL, never by string formatting. Each
+interpolated segment must be an identifier — `URL.JoinPath` resolves `..`
+rather than escaping it, so an account id of `../../..` would otherwise pick a
+different Cloudflare endpoint to send the panel's token to. A final check
+refuses any request that would leave the pinned host.
+
 **Permissions.** `Zone → Zone → Read` and `Zone → DNS → Edit`, with *Zone
 Resources* narrowed to the zones CypherPanel should manage. The panel validates
 on save (§5.1) and refuses a token that cannot list zones — a credential that

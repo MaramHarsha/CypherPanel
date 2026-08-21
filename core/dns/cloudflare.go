@@ -88,16 +88,24 @@ func (e *ConflictError) Error() string {
 type cloudflare struct {
 	token string
 	http  *http.Client
-	base  string
+	// base is PARSED, not a string to concatenate onto. Every request is built
+	// with URL.JoinPath and url.Values from it, so the scheme and host are
+	// structure rather than convention: no operator-supplied value can move a
+	// request off this host, and this client carries a bearer token that must
+	// never be sent anywhere else (threat-model §5.12).
+	base *url.URL
 }
 
 // NewCloudflare builds a client for one API token. The token is held in memory
 // for the life of the call chain only — it is unsealed per operation by the
 // service and never stored on a long-lived struct the logger can reach.
 func NewCloudflare(token string) Client {
+	// cloudflareAPI is a compile-time constant, so this cannot fail; parsing it
+	// once here is what lets every call site build a URL structurally.
+	base, _ := url.Parse(cloudflareAPI)
 	return &cloudflare{
 		token: token,
-		base:  cloudflareAPI,
+		base:  base,
 		http: &http.Client{
 			Timeout: 15 * time.Second,
 			// Cloudflare never redirects its API; following one would be a way
@@ -178,7 +186,37 @@ func (e cfEnvelope) isCredentialProblem() bool {
 
 // do issues one API call and unwraps the envelope. The token goes in a header,
 // never a query string, so it cannot land in an intermediary's access log.
-func (c *cloudflare) do(ctx context.Context, method, path string, body any, out any) error {
+//
+// The URL is assembled from path SEGMENTS and query VALUES rather than a
+// formatted string. JoinPath escapes each segment (a "/" in an id becomes %2F,
+// so it cannot open a new path element) and Values.Encode escapes both halves
+// of every parameter. That is what makes "this request goes to Cloudflare"
+// something the types enforce instead of something the caller remembers —
+// CodeQL flagged the previous string-concatenated form as request forgery, and
+// it was right to: a client holding a bearer token is exactly where an
+// attacker-influenced URL turns into a leaked credential.
+func (c *cloudflare) do(ctx context.Context, method string, segments []string, query url.Values, body any, out any) error {
+	// Validate before joining. URL.JoinPath CLEANS the path it builds, so a
+	// segment of "../../.." is not escaped into harmlessness — it is resolved,
+	// and an operator-supplied account id could redirect the call to a
+	// different Cloudflare endpoint with this client's bearer token attached.
+	// Escaping was never the control here; rejecting is.
+	for _, seg := range segments {
+		if err := checkSegment(seg); err != nil {
+			return err
+		}
+	}
+	u := c.base.JoinPath(segments...)
+	if len(query) > 0 {
+		u.RawQuery = query.Encode()
+	}
+	// Defense in depth, and a tripwire for a future refactor: JoinPath cannot
+	// change the host, so this can only fire if someone changes how the URL is
+	// built. Failing closed here is much cheaper than posting a token to
+	// somewhere it was never meant to go.
+	if u.Scheme != c.base.Scheme || u.Host != c.base.Host {
+		return fmt.Errorf("dns: refusing to send a credential to %s", u.Host)
+	}
 	var rdr io.Reader
 	if body != nil {
 		buf, err := json.Marshal(body)
@@ -187,7 +225,7 @@ func (c *cloudflare) do(ctx context.Context, method, path string, body any, out 
 		}
 		rdr = bytes.NewReader(buf)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.base+path, rdr)
+	req, err := http.NewRequestWithContext(ctx, method, u.String(), rdr)
 	if err != nil {
 		return fmt.Errorf("dns: building request: %w", redactURL(err))
 	}
@@ -225,6 +263,25 @@ func (c *cloudflare) do(ctx context.Context, method, path string, body any, out 
 	return nil
 }
 
+// checkSegment rejects anything that would change the SHAPE of the path rather
+// than fill one element of it. Every interpolated segment is an identifier — a
+// Cloudflare account, zone or record id — so this is a narrow allowance, not a
+// blocklist: no separators, no dot-segments, nothing empty, and nothing outside
+// the characters an id actually uses.
+func checkSegment(seg string) error {
+	if seg == "" || seg == "." || seg == ".." {
+		return fmt.Errorf("dns: %q is not a usable identifier", seg)
+	}
+	for _, r := range seg {
+		ok := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') ||
+			r == '_' || r == '-' || r == '.'
+		if !ok {
+			return fmt.Errorf("dns: %q is not a usable identifier", seg)
+		}
+	}
+	return nil
+}
+
 // redactURL strips the request URL out of a transport error before it is
 // returned and later logged — the same defense core/notify uses, for the same
 // reason: a *url.Error's message embeds the URL (ENGINEERING rule 20).
@@ -241,7 +298,8 @@ func (c *cloudflare) ListAccounts(ctx context.Context) ([]Account, error) {
 		ID   string `json:"id"`
 		Name string `json:"name"`
 	}
-	if err := c.do(ctx, http.MethodGet, "/accounts?per_page=50", nil, &out); err != nil {
+	q := url.Values{"per_page": {"50"}}
+	if err := c.do(ctx, http.MethodGet, []string{"accounts"}, q, nil, &out); err != nil {
 		return nil, err
 	}
 	accounts := make([]Account, 0, len(out))
@@ -265,11 +323,11 @@ func (c *cloudflare) ListZones(ctx context.Context, accountID string) ([]Zone, e
 	// Narrowing to the account an account-owned token belongs to is what makes
 	// the zone list mean "the zones this panel may manage" rather than "every
 	// zone this credential happens to reach".
-	path := "/zones?per_page=50&status=active"
+	q := url.Values{"per_page": {"50"}, "status": {"active"}}
 	if accountID != "" {
-		path += "&account.id=" + url.QueryEscape(accountID)
+		q.Set("account.id", accountID)
 	}
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, []string{"zones"}, q, nil, &out); err != nil {
 		return nil, err
 	}
 	zones := make([]Zone, 0, len(out))
@@ -284,11 +342,11 @@ func (c *cloudflare) ListZones(ctx context.Context, accountID string) ([]Zone, e
 // /user/tokens/verify is rejected, which would report a perfectly good
 // credential as broken.
 func (c *cloudflare) VerifyToken(ctx context.Context, accountID string) error {
-	path := "/user/tokens/verify"
+	segments := []string{"user", "tokens", "verify"}
 	if accountID != "" {
-		path = "/accounts/" + url.PathEscape(accountID) + "/tokens/verify"
+		segments = []string{"accounts", accountID, "tokens", "verify"}
 	}
-	return c.do(ctx, http.MethodGet, path, nil, nil)
+	return c.do(ctx, http.MethodGet, segments, nil, nil, nil)
 }
 
 type cfRecord struct {
@@ -306,9 +364,8 @@ func (r cfRecord) toRecord() Record {
 
 func (c *cloudflare) FindRecord(ctx context.Context, zoneID, name, recordType string) (Record, bool, error) {
 	var out []cfRecord
-	path := fmt.Sprintf("/zones/%s/dns_records?type=%s&name=%s",
-		url.PathEscape(zoneID), url.QueryEscape(recordType), url.QueryEscape(name))
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+	q := url.Values{"type": {recordType}, "name": {name}}
+	if err := c.do(ctx, http.MethodGet, []string{"zones", zoneID, "dns_records"}, q, nil, &out); err != nil {
 		return Record{}, false, err
 	}
 	if len(out) == 0 {
@@ -320,7 +377,7 @@ func (c *cloudflare) FindRecord(ctx context.Context, zoneID, name, recordType st
 func (c *cloudflare) CreateRecord(ctx context.Context, zoneID string, r Record) (Record, error) {
 	var out cfRecord
 	body := cfRecord{Type: r.Type, Name: r.Name, Content: r.Content, TTL: r.TTL, Proxied: r.Proxied}
-	if err := c.do(ctx, http.MethodPost, "/zones/"+url.PathEscape(zoneID)+"/dns_records", body, &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, []string{"zones", zoneID, "dns_records"}, nil, body, &out); err != nil {
 		return Record{}, err
 	}
 	return out.toRecord(), nil
@@ -329,16 +386,14 @@ func (c *cloudflare) CreateRecord(ctx context.Context, zoneID string, r Record) 
 func (c *cloudflare) UpdateRecord(ctx context.Context, zoneID, recordID string, r Record) (Record, error) {
 	var out cfRecord
 	body := cfRecord{Type: r.Type, Name: r.Name, Content: r.Content, TTL: r.TTL, Proxied: r.Proxied}
-	path := "/zones/" + url.PathEscape(zoneID) + "/dns_records/" + url.PathEscape(recordID)
-	if err := c.do(ctx, http.MethodPut, path, body, &out); err != nil {
+	if err := c.do(ctx, http.MethodPut, []string{"zones", zoneID, "dns_records", recordID}, nil, body, &out); err != nil {
 		return Record{}, err
 	}
 	return out.toRecord(), nil
 }
 
 func (c *cloudflare) DeleteRecord(ctx context.Context, zoneID, recordID string) error {
-	path := "/zones/" + url.PathEscape(zoneID) + "/dns_records/" + url.PathEscape(recordID)
-	err := c.do(ctx, http.MethodDelete, path, nil, nil)
+	err := c.do(ctx, http.MethodDelete, []string{"zones", zoneID, "dns_records", recordID}, nil, nil, nil)
 	if err != nil && isAlreadyGone(err) {
 		// Desired state is "absent" and it is absent. That is convergence, not
 		// a failure (ENGINEERING rule 12).
