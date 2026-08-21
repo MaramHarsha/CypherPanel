@@ -171,6 +171,37 @@ type Deployment struct {
 	EnvResolvedAt   pgtype.Timestamptz
 }
 
+type DnsProvider struct {
+	ID          int32
+	Kind        string
+	ConfigCt    []byte
+	ConfigNonce []byte
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type DnsRecord struct {
+	ID               string
+	ApplicationID    pgtype.Text
+	ZoneID           string
+	Name             string
+	Type             string
+	Content          string
+	Desired          string
+	ProviderRecordID pgtype.Text
+	LastError        string
+	Attempt          int32
+	NextAttemptAt    pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+type DnsZone struct {
+	ID             string
+	ProviderZoneID string
+	Name           string
+	RefreshedAt    pgtype.Timestamptz
+}
+
 type EmailChange struct {
 	ID         string
 	UserID     string
@@ -306,17 +337,18 @@ type ScheduledTaskRun struct {
 }
 
 type Server struct {
-	ID           string
-	Name         string
-	Status       string
-	Driver       string
-	AgentVersion string
-	Hostname     string
-	EnrolledAt   pgtype.Timestamptz
-	LastSeenAt   pgtype.Timestamptz
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
-	Role         string
+	ID            string
+	Name          string
+	Status        string
+	Driver        string
+	AgentVersion  string
+	Hostname      string
+	EnrolledAt    pgtype.Timestamptz
+	LastSeenAt    pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+	Role          string
+	PublicAddress string
 }
 
 type Session struct {

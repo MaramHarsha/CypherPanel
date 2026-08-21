@@ -769,17 +769,18 @@ func wrapDelete(op string, err error) error {
 
 func serverFromRow(r db.Server) domain.Server {
 	return domain.Server{
-		ID:           r.ID,
-		Name:         r.Name,
-		Status:       domain.ServerStatus(r.Status),
-		Driver:       r.Driver,
-		Role:         r.Role,
-		AgentVersion: r.AgentVersion,
-		Hostname:     r.Hostname,
-		EnrolledAt:   ptrTime(r.EnrolledAt),
-		LastSeenAt:   ptrTime(r.LastSeenAt),
-		CreatedAt:    r.CreatedAt.Time,
-		UpdatedAt:    r.UpdatedAt.Time,
+		ID:            r.ID,
+		Name:          r.Name,
+		Status:        domain.ServerStatus(r.Status),
+		Driver:        r.Driver,
+		Role:          r.Role,
+		AgentVersion:  r.AgentVersion,
+		Hostname:      r.Hostname,
+		PublicAddress: r.PublicAddress,
+		EnrolledAt:    ptrTime(r.EnrolledAt),
+		LastSeenAt:    ptrTime(r.LastSeenAt),
+		CreatedAt:     r.CreatedAt.Time,
+		UpdatedAt:     r.UpdatedAt.Time,
 	}
 }
 

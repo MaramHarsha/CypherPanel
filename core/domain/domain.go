@@ -36,6 +36,12 @@ type Server struct {
 	Role         string
 	AgentVersion string
 	Hostname     string
+	// PublicAddress is where DNS records for this server's applications point
+	// (dns-automation.md §3.4). Operator-supplied: the agent dials out
+	// (ADR-002), the heartbeat carries no address, and a source address seen
+	// through NAT is not necessarily the one the internet reaches. Empty means
+	// "not set", which DNS automation reports as a named, actionable state.
+	PublicAddress string
 	// EnrolledAt is nil until the agent completes enrollment; it distinguishes
 	// "awaiting enrollment" from "enrolled but currently offline".
 	EnrolledAt *time.Time
@@ -186,4 +192,52 @@ type Session struct {
 	UserID    string
 	ExpiresAt time.Time
 	CreatedAt time.Time
+}
+
+// ─── DNS automation (docs/features/dns-automation.md) ───────────────────────
+
+// DNSZone is a domain a connected DNS Provider is authoritative for. Cached
+// from the provider, never operator-entered — an operator-entered zone list
+// would be a second place to lie about ownership (§3.2).
+type DNSZone struct {
+	ID             string
+	ProviderZoneID string
+	Name           string
+	RefreshedAt    time.Time
+}
+
+// Desired states for a DNSRecord. There is deliberately no "status": what
+// should be true is Desired, and what IS true is ProviderRecordID (ADR-005
+// applied to a third-party API instead of an agent).
+const (
+	DNSDesiredPresent = "present"
+	DNSDesiredAbsent  = "absent"
+)
+
+// DNSRecord is one record CypherPanel created and therefore manages. A record
+// with Desired == DNSDesiredAbsent and a non-nil ProviderRecordID is a
+// TOMBSTONE: the application may already be gone, and this row is the only
+// remaining record of what still has to be deleted from the provider (§3.3).
+type DNSRecord struct {
+	ID               string
+	ApplicationID    *string
+	ZoneID           string
+	Name             string
+	Type             string
+	Content          string
+	Desired          string
+	ProviderRecordID *string
+	LastError        string
+	Attempt          int
+	NextAttemptAt    *time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+// DNSRecordWithZone is a record joined to the provider ids the reconciler needs
+// to act on it, so convergence is one query rather than one per row.
+type DNSRecordWithZone struct {
+	DNSRecord
+	ProviderZoneID string
+	ZoneName       string
 }

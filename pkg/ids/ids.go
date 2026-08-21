@@ -66,6 +66,11 @@ const (
 
 	// V1: Panel mail and email changes (docs/features/panel-mail.md).
 	PrefixEmailChange = "ec"
+
+	// DNS automation (dns-automation.md §2). A Zone is cached from the provider;
+	// a Record is one the panel created and therefore owns.
+	PrefixDNSZone   = "dnz"
+	PrefixDNSRecord = "dnr"
 )
 
 // New returns a prefixed, URL-safe, collision-resistant identifier such as
