@@ -79,10 +79,26 @@ const (
 // NotifyEvent is the plane-domain value a channel sender renders. It carries no
 // sealed material — only metadata already surfaced through the API
 // (notifications.md §6).
+//
+// The last four fields are additive (notification-inbox.md §4): they let the
+// inbox render a deep link server-side, so a CLI prints the same words the
+// drawer does. Channel senders ignore them, which is why adding them changed no
+// channel copy.
 type NotifyEvent struct {
 	Type    string
 	Level   NotifyLevel
 	Title   string
 	Body    string
 	Project string
+
+	// ProjectID is the owning project — the inbox's fan-out key. dispatch sets
+	// it where it already resolves the environment.
+	ProjectID string
+	// ResourceKind is application | database (the WebhookResource* constants).
+	ResourceKind string
+	// ResourceID is the application or database the event describes.
+	ResourceID string
+	// FocusID is the deployment or backup record the link opens, and the
+	// per-event identity the digest de-duplicates on.
+	FocusID string
 }

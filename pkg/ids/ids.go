@@ -52,6 +52,11 @@ const (
 	// dedupe on; attempts carry no prefix — they key on (delivery_id, attempt).
 	PrefixWebhookEndpoint = "whe"
 	PrefixWebhookDelivery = "whd"
+
+	// Phase 4: the notification inbox (docs/features/notification-inbox.md).
+	// One id per RECIPIENT, not per event: an item is a per-user row, and two
+	// members of a team hold two rows for the same observed outcome.
+	PrefixInboxItem = "inb"
 )
 
 // New returns a prefixed, URL-safe, collision-resistant identifier such as

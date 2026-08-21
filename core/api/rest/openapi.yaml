@@ -30,6 +30,7 @@ tags:
   - name: previews
   - name: notifiers
   - name: webhooks
+  - name: inbox
   - name: scheduled-tasks
 
 paths:
@@ -2104,6 +2105,100 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { description: The endpoint is disabled. }
 
+  # ─── Notification inbox (notification-inbox.md §6) ────────────────────────
+  #
+  # The panel's own record of what happened to what you own: the same observed
+  # outcomes the notifier channels receive, persisted per user. There is no
+  # owner segment in these paths on purpose — the inbox is ALWAYS the caller's,
+  # and every route filters on the authenticated user's id. No route accepts
+  # another user's id, so tenancy here is a column rather than a resolver.
+  #
+  # An API token acts as its owner: it reads and clears its owner's inbox and
+  # nobody else's.
+  /api/v1/inbox:
+    get:
+      operationId: listInbox
+      tags: [inbox]
+      summary: Page the caller's own notification inbox, newest first
+      parameters:
+        - name: unread
+          in: query
+          required: false
+          schema: { type: boolean }
+          description: "Pass true to return only unread items. Filtered-to-zero is a distinct state from an empty inbox."
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+          description: Page size; caps at 100.
+        - name: before
+          in: query
+          required: false
+          schema: { type: string }
+          description: "Seek cursor: return items strictly older than this item id. Keyset, not offset — a feed gains rows at the head while you page it."
+      responses:
+        "200": { description: "A page of items plus the cursor for the next one (empty when this is the last page).", content: { application/json: { schema: { $ref: "#/components/schemas/InboxPage" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/inbox/unread-count:
+    get:
+      operationId: getInboxUnreadCount
+      tags: [inbox]
+      summary: The caller's unread count — the bell's number
+      responses:
+        "200": { description: Unread item count., content: { application/json: { schema: { $ref: "#/components/schemas/InboxUnreadCount" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/inbox/read-all:
+    post:
+      operationId: markAllInboxRead
+      tags: [inbox]
+      summary: Mark every unread item read
+      responses:
+        "200": { description: "How many items this call actually changed. The items stay listed — reading is not deleting.", content: { application/json: { schema: { $ref: "#/components/schemas/InboxMarked" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/inbox/{id}/read:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Inbox item ID (inb_… prefix). }
+    post:
+      operationId: markInboxItemRead
+      tags: [inbox]
+      summary: Mark one item read (idempotent)
+      responses:
+        "204": { description: "Marked. Marking an already-read item returns 204 and changes nothing." }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404": { description: "No such item in the caller's inbox — the same answer an item belonging to someone else gets." }
+  /api/v1/inbox/preferences:
+    get:
+      operationId: getInboxPreferences
+      tags: [inbox]
+      summary: The caller's muted kinds, and every kind this plane can emit
+      responses:
+        "200": { description: Preferences., content: { application/json: { schema: { $ref: "#/components/schemas/InboxPreferences" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      operationId: setInboxPreferences
+      tags: [inbox]
+      summary: Replace the caller's muted kinds wholesale
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetInboxPreferencesRequest" } } }
+      responses:
+        "200": { description: Updated preferences., content: { application/json: { schema: { $ref: "#/components/schemas/InboxPreferences" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   # ─── Scheduled tasks (scheduled-tasks.md §7) ──────────────────────────────
   /api/v1/applications/{id}/scheduled-tasks:
     parameters:
@@ -3507,6 +3602,86 @@ components:
         next_before:
           type: string
           description: Cursor to pass as ?before= for the next page; empty when this is the last page.
+
+    # ─── Notification inbox ───────────────────────────────────────────────────
+    InboxItem:
+      type: object
+      required: [id, project_id, kind, severity, digest, title, body, link, link_label, created_at, updated_at]
+      properties:
+        id: { type: string, description: inb_… prefixed ID. }
+        project_id: { type: string, description: The project the event happened in. }
+        kind:
+          type: string
+          enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed]
+          description: An event key from the notification taxonomy — the same closed set notifiers and webhook endpoints subscribe to.
+        severity:
+          type: string
+          enum: [info, error]
+          description: >-
+            The event's level, not a resource status. `error` is immediate and
+            individual; `info` is rolled into the day's digest.
+        digest:
+          type: boolean
+          description: >-
+            True when this row is a daily rollup — one per (project, kind, UTC
+            day), one unread however many events it holds. A digest carries no
+            link: a rollup of three backups has no single thing to open.
+        title:
+          type: string
+          description: >-
+            The line to render, composed server-side — "Deploy failed: web", or
+            "Backups: 3/3 succeeded" for a digest. The counters behind that
+            sentence are deliberately not in this contract, so a CLI and the
+            panel print the same words.
+        body: { type: string, description: "Event detail, capped at 2 KB. Renders as text, never as markup." }
+        link: { type: string, description: "An in-panel path such as /projects/prj_…/applications/app_…/deployments?dep=dep_… — validated at write time; empty when there is nothing to open." }
+        link_label: { type: string, description: 'What to call the link — "View deployment", "View backups". Empty when link is.' }
+        read_at: { type: [string, "null"], format: date-time, description: Null while unread; that is what the bell counts. }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    InboxPage:
+      type: object
+      required: [items, next_before]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/InboxItem" }
+        next_before:
+          type: string
+          description: Cursor to pass as ?before= for the next page; empty when this is the last page.
+    InboxUnreadCount:
+      type: object
+      required: [unread]
+      properties:
+        unread: { type: integer, description: How many of the caller's items are unread. }
+    InboxMarked:
+      type: object
+      required: [marked]
+      properties:
+        marked: { type: integer, description: How many items the call changed from unread to read. }
+    InboxPreferences:
+      type: object
+      required: [muted_kinds, available_kinds]
+      properties:
+        muted_kinds:
+          type: array
+          items: { type: string }
+          description: >-
+            Kinds this account does NOT want. Stored as mutes rather than
+            subscriptions, so an empty array means "everything on" and a kind
+            added later is on by default for everyone.
+        available_kinds:
+          type: array
+          items: { type: string }
+          description: Every kind this plane can emit — served rather than hardcoded, so a new taxonomy entry needs no client change.
+    SetInboxPreferencesRequest:
+      type: object
+      required: [muted_kinds]
+      properties:
+        muted_kinds:
+          type: array
+          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed] }
+          description: The complete muted set; this replaces the previous one. A kind outside available_kinds is a 400.
 
     # ─── Scheduled tasks ──────────────────────────────────────────────────────
     ScheduledTask:

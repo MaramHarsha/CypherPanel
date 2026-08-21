@@ -18,7 +18,7 @@ func TestDeliverRedactsWebhookURLOnTransportError(t *testing.T) {
 	secretURL := srv.URL + "/services/SECRET-TOKEN-1234"
 	srv.Close() // listener gone → connection refused, a transport error
 
-	m := New(&mgrStore{}, identityOpener{}, quietLog())
+	m := New(&mgrStore{}, identityOpener{}, quietLog(), nil)
 	n := webhookNotifier("ntf_1", domain.NotifyChannelSlack, secretURL, domain.EventDeployFailed)
 	ev := domain.NotifyEvent{Type: domain.EventDeployFailed, Title: "T", Body: "B"}
 

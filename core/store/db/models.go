@@ -176,6 +176,32 @@ type Environment struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type InboxItem struct {
+	ID         string
+	UserID     string
+	ProjectID  string
+	Kind       string
+	Severity   string
+	Digest     bool
+	Title      string
+	Body       string
+	Link       string
+	LinkLabel  string
+	CountOk    int32
+	CountTotal int32
+	Sources    []string
+	DedupeKey  string
+	ReadAt     pgtype.Timestamptz
+	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+}
+
+type InboxPreference struct {
+	UserID     string
+	MutedKinds []string
+	UpdatedAt  pgtype.Timestamptz
+}
+
 type JoinToken struct {
 	ID         string
 	ServerID   string

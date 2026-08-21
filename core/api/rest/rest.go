@@ -20,6 +20,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/databases"
 	"github.com/MaramHarsha/cypherpanel/core/deploykeys"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
+	"github.com/MaramHarsha/cypherpanel/core/inbox"
 	"github.com/MaramHarsha/cypherpanel/core/notify"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
 	"github.com/MaramHarsha/cypherpanel/core/scheduledtasks"
@@ -106,6 +107,19 @@ type WebhookEndpointService interface {
 	Redeliver(ctx context.Context, deliveryID string) (domain.WebhookDelivery, error)
 }
 
+// InboxService is the notification inbox (consumer-defined; *inbox.Service
+// satisfies it — notification-inbox.md §6). Every method takes the caller's own
+// user id as its first argument and none accepts anyone else's: tenancy in this
+// feature is a column, which is why it adds no authorization resolver.
+type InboxService interface {
+	List(ctx context.Context, userID string, opts inbox.ListOptions) (inbox.Page, error)
+	UnreadCount(ctx context.Context, userID string) (int64, error)
+	MarkRead(ctx context.Context, userID, itemID string) error
+	MarkAllRead(ctx context.Context, userID string) (int64, error)
+	Preferences(ctx context.Context, userID string) (domain.InboxPreferences, error)
+	SetPreferences(ctx context.Context, userID string, muted []string) (domain.InboxPreferences, error)
+}
+
 // TeamService is the tenancy surface (consumer-defined; *teams.Service
 // satisfies it — teams-and-roles.md). RoleForProject/RoleInTeam are the authz
 // queries every project-scoped route runs; the rest back the /teams and /users
@@ -176,6 +190,7 @@ type Deps struct {
 	Notifiers        NotifierService
 	NotifyDelivery   NotifierDelivery
 	WebhookEndpoints WebhookEndpointService
+	Inbox            InboxService
 	ScheduledTasks   ScheduledTaskService
 	Templates        *templates.Service
 	Teams            TeamService
@@ -354,6 +369,19 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/webhook-endpoints/{id}/ping", a.authed(a.handlePingWebhookEndpoint))
 	mux.HandleFunc("GET /api/v1/webhook-endpoints/{id}/deliveries", a.authed(a.handleListWebhookDeliveries))
 	mux.HandleFunc("POST /api/v1/webhook-deliveries/{id}/redeliver", a.authed(a.handleRedeliverWebhookDelivery))
+
+	// Phase 4: the notification inbox (notification-inbox.md §6). The
+	// collection is `/inbox`, not `/users/{id}/inbox`: the inbox is always the
+	// caller's, and the absence of an owner segment is what makes that
+	// guarantee syntactic. These are NOT sessionOnly — a token acts as its
+	// owner, so it reads and clears its owner's inbox and nobody else's, which
+	// is not credential management.
+	mux.HandleFunc("GET /api/v1/inbox", a.authed(a.handleListInbox))
+	mux.HandleFunc("GET /api/v1/inbox/unread-count", a.authed(a.handleInboxUnreadCount))
+	mux.HandleFunc("POST /api/v1/inbox/read-all", a.authed(a.handleMarkAllInboxRead))
+	mux.HandleFunc("POST /api/v1/inbox/{id}/read", a.authed(a.handleMarkInboxItemRead))
+	mux.HandleFunc("GET /api/v1/inbox/preferences", a.authed(a.handleGetInboxPreferences))
+	mux.HandleFunc("PUT /api/v1/inbox/preferences", a.authed(a.handlePutInboxPreferences))
 
 	// Phase 3: scheduled tasks (scheduled-tasks.md §7).
 	mux.HandleFunc("POST /api/v1/applications/{id}/scheduled-tasks", a.authed(a.handleCreateScheduledTask))

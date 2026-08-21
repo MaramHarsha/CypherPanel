@@ -41,6 +41,13 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         predicate: (q) => {
           const k = q.queryKey[0];
           if (typeof k !== "string") return false;
+          // The notification inbox rides the same stream rather than opening a
+          // second one (notification-inbox.md §7). It is exact, not
+          // approximate: every transition that mints an item also emits this
+          // invalidation, and the item's recipients are a subset of the set
+          // that can see the resource. Stream down, the QueryClient's SSE-gated
+          // 5 s poll covers the bell — no new endpoint either.
+          if (k.startsWith("/api/v1/inbox")) return true;
           // The changed resource itself (detail, deployments, previews …) and
           // every environment-scoped list that could contain it.
           return k.includes(detail) || k.endsWith(listTail);

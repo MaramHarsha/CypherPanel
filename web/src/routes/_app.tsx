@@ -17,6 +17,7 @@ import { ApiError } from "@/api/client";
 import { useGetMe, useLogout } from "@/api/gen/auth/auth";
 import { PlaneOfflinePage } from "@/components/error-page";
 import { CommandPalette, openCommandPalette } from "@/components/command-palette";
+import { InboxBell } from "@/components/inbox-bell";
 import { SSEBanner } from "@/components/sse-banner";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import {
@@ -188,6 +189,10 @@ function TopBar() {
           >
             <Search className="h-4 w-4" aria-hidden />
           </button>
+          {/* 13u. Chrome, not navigation: the bell opens a panel in place and
+              leads nowhere, so it belongs in this control cluster rather than
+              as a fifth item in a nav ui-principles §4 fixes at four. */}
+          <InboxBell />
           <AccountMenu />
           <ThemeToggle />
         </div>

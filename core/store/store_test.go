@@ -1119,3 +1119,284 @@ func containsDelivery(rows []domain.WebhookDelivery, id string) bool {
 	}
 	return false
 }
+
+// TestStoreInboxRoundtrip exercises the notification-inbox tables against real
+// Postgres (ENGINEERING rule 29): the TEXT[] columns, the recipient join that
+// carries the tenancy guarantee, the mute filter, the digest upsert and its
+// redelivery guard, the unread count, the two mark verbs, seek paging, the
+// prune, the team-removal sweep and the cascades (notification-inbox.md §2,
+// §4, §6).
+func TestStoreInboxRoundtrip(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	// Two teams, one member each — acceptance 1's shape.
+	teamA, err := s.CreateTeam(ctx, ids.New(ids.PrefixTeam), "inbox-a-"+ids.Secret()[:8])
+	if err != nil {
+		t.Fatalf("CreateTeam(a): %v", err)
+	}
+	teamB, err := s.CreateTeam(ctx, ids.New(ids.PrefixTeam), "inbox-b-"+ids.Secret()[:8])
+	if err != nil {
+		t.Fatalf("CreateTeam(b): %v", err)
+	}
+	userA, err := s.CreateUser(ctx, ids.New(ids.PrefixUser), "a-"+ids.Secret()[:8]+"@example.test", "hash", domain.RoleMember)
+	if err != nil {
+		t.Fatalf("CreateUser(a): %v", err)
+	}
+	userB, err := s.CreateUser(ctx, ids.New(ids.PrefixUser), "b-"+ids.Secret()[:8]+"@example.test", "hash", domain.RoleMember)
+	if err != nil {
+		t.Fatalf("CreateUser(b): %v", err)
+	}
+	quiet, err := s.CreateUser(ctx, ids.New(ids.PrefixUser), "q-"+ids.Secret()[:8]+"@example.test", "hash", domain.RoleMember)
+	if err != nil {
+		t.Fatalf("CreateUser(quiet): %v", err)
+	}
+	for _, m := range []struct{ team, user string }{
+		{teamA.ID, userA.ID}, {teamA.ID, quiet.ID}, {teamB.ID, userB.ID},
+	} {
+		if _, err := s.UpsertTeamMember(ctx, m.team, m.user, domain.RoleMember); err != nil {
+			t.Fatalf("UpsertTeamMember: %v", err)
+		}
+	}
+	projA, _, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject),
+		"inbox-proj-"+ids.Secret()[:8], teamA.ID, ids.New(ids.PrefixEnvironment), "production")
+	if err != nil {
+		t.Fatalf("CreateProjectWithEnvironment: %v", err)
+	}
+
+	// Preferences default to absent, which must read as "everything on".
+	prefs, err := s.GetInboxPreferences(ctx, quiet.ID)
+	if err != nil {
+		t.Fatalf("GetInboxPreferences (absent row): %v", err)
+	}
+	if len(prefs.MutedKinds) != 0 {
+		t.Fatalf("absent preferences = %v, want empty", prefs.MutedKinds)
+	}
+	if _, err := s.SetInboxPreferences(ctx, quiet.ID, []string{domain.EventBackupSucceeded}); err != nil {
+		t.Fatalf("SetInboxPreferences: %v", err)
+	}
+
+	// The recipient join is the whole tenancy guarantee: team A's project
+	// resolves to team A's members and nobody else, and the mute filter drops
+	// exactly the muter.
+	recipients, err := s.ListInboxRecipients(ctx, projA.ID, domain.EventBackupFailed)
+	if err != nil {
+		t.Fatalf("ListInboxRecipients: %v", err)
+	}
+	if len(recipients) != 2 || !containsString(recipients, userA.ID) || !containsString(recipients, quiet.ID) {
+		t.Fatalf("recipients = %v, want both members of team A", recipients)
+	}
+	if containsString(recipients, userB.ID) {
+		t.Fatal("a member of another team was resolved as a recipient")
+	}
+	muted, err := s.ListInboxRecipients(ctx, projA.ID, domain.EventBackupSucceeded)
+	if err != nil {
+		t.Fatalf("ListInboxRecipients (muted kind): %v", err)
+	}
+	if len(muted) != 1 || muted[0] != userA.ID {
+		t.Fatalf("recipients for a muted kind = %v, want only the unmuting member", muted)
+	}
+
+	// An immediate item per recipient, then the same observation again: the
+	// (user_id, dedupe_key) unique index makes redelivery a no-op (rule 12).
+	fail := InboxFanout{
+		IDs:       []string{ids.New(ids.PrefixInboxItem), ids.New(ids.PrefixInboxItem)},
+		UserIDs:   []string{userA.ID, quiet.ID},
+		ProjectID: projA.ID,
+		Kind:      domain.EventBackupFailed,
+		Severity:  string(domain.NotifyError),
+		Title:     "Backup failed: atlas-pg",
+		Body:      "Database atlas-pg backup failed.",
+		Link:      "/projects/" + projA.ID + "/databases/db_x/backups",
+		LinkLabel: "View backups",
+		DedupeKey: domain.EventBackupFailed + ":br_1",
+		FocusID:   "br_1",
+	}
+	if err := s.InsertInboxItems(ctx, fail); err != nil {
+		t.Fatalf("InsertInboxItems: %v", err)
+	}
+	fail.IDs = []string{ids.New(ids.PrefixInboxItem), ids.New(ids.PrefixInboxItem)}
+	if err := s.InsertInboxItems(ctx, fail); err != nil {
+		t.Fatalf("InsertInboxItems (redelivery): %v", err)
+	}
+	if n, err := s.CountUnreadInboxItems(ctx, userA.ID); err != nil || n != 1 {
+		t.Fatalf("unread after redelivery = %d, %v, want 1", n, err)
+	}
+	if n, _ := s.CountUnreadInboxItems(ctx, userB.ID); n != 0 {
+		t.Fatalf("the other team's member has %d items, want 0", n)
+	}
+
+	// The digest: created by the first success, incremented by the second, and
+	// left alone by a third carrying a source already rolled in.
+	digestKey := "digest:" + domain.EventBackupSucceeded + ":" + projA.ID + ":2026-08-21"
+	ok := InboxFanout{
+		IDs: []string{ids.New(ids.PrefixInboxItem)}, UserIDs: []string{userA.ID},
+		ProjectID: projA.ID, Kind: domain.EventBackupSucceeded,
+		Severity: string(domain.NotifyInfo), Title: "Backups",
+		DedupeKey: digestKey, FocusID: "br_2",
+	}
+	if err := s.UpsertInboxDigests(ctx, ok); err != nil {
+		t.Fatalf("UpsertInboxDigests: %v", err)
+	}
+	ok.IDs, ok.FocusID = []string{ids.New(ids.PrefixInboxItem)}, "br_3"
+	if err := s.UpsertInboxDigests(ctx, ok); err != nil {
+		t.Fatalf("UpsertInboxDigests (second): %v", err)
+	}
+	ok.IDs = []string{ids.New(ids.PrefixInboxItem)}
+	if err := s.UpsertInboxDigests(ctx, ok); err != nil {
+		t.Fatalf("UpsertInboxDigests (redelivery): %v", err)
+	}
+	digest := findByDedupe(t, s, userA.ID, digestKey)
+	if digest.CountOK != 2 || digest.CountTotal != 2 {
+		t.Fatalf("digest counters = %d/%d after a redelivered success, want 2/2", digest.CountOK, digest.CountTotal)
+	}
+	if len(digest.Sources) != 2 {
+		t.Fatalf("digest sources = %v, want two distinct entries", digest.Sources)
+	}
+	if !digest.Digest || digest.Link != "" {
+		t.Fatalf("digest row shape wrong: %+v", digest)
+	}
+
+	// A failure raises the denominator on the existing digest and never creates
+	// one — the honest "2/3 succeeded".
+	if err := s.BumpInboxDigestTotals(ctx, digestKey, "br_4"); err != nil {
+		t.Fatalf("BumpInboxDigestTotals: %v", err)
+	}
+	if err := s.BumpInboxDigestTotals(ctx, digestKey, "br_4"); err != nil {
+		t.Fatalf("BumpInboxDigestTotals (redelivery): %v", err)
+	}
+	digest = findByDedupe(t, s, userA.ID, digestKey)
+	if digest.CountOK != 2 || digest.CountTotal != 3 {
+		t.Fatalf("digest counters = %d/%d after a failure, want 2/3", digest.CountOK, digest.CountTotal)
+	}
+	absentKey := "digest:" + domain.EventDeploySucceeded + ":" + projA.ID + ":2026-08-21"
+	if err := s.BumpInboxDigestTotals(ctx, absentKey, "dep_1"); err != nil {
+		t.Fatalf("BumpInboxDigestTotals (no digest): %v", err)
+	}
+	if rows, _ := s.ListInboxItems(ctx, userA.ID, false, 50); len(rows) != 2 {
+		t.Fatalf("items = %d, want 2 — a failure must not conjure a digest", len(rows))
+	}
+
+	// Seek paging: page two is strictly older, with no overlap.
+	page1, err := s.ListInboxItems(ctx, userA.ID, false, 1)
+	if err != nil || len(page1) != 1 {
+		t.Fatalf("first page = %v, %v", page1, err)
+	}
+	page2, err := s.ListInboxItemsBefore(ctx, userA.ID, false, page1[0].ID, 5)
+	if err != nil {
+		t.Fatalf("ListInboxItemsBefore: %v", err)
+	}
+	if len(page2) != 1 || page2[0].ID == page1[0].ID {
+		t.Fatalf("second page = %+v, want the one older row", page2)
+	}
+	// A cursor that is not the caller's own yields an empty page, never a
+	// restart at the newest row.
+	if rows, err := s.ListInboxItemsBefore(ctx, userB.ID, false, page1[0].ID, 5); err != nil || len(rows) != 0 {
+		t.Fatalf("foreign cursor = %+v, %v, want empty", rows, err)
+	}
+
+	// Marking: one, then all. Items stay listed; another user's item is not
+	// addressable at all.
+	if _, err := s.MarkInboxItemRead(ctx, userA.ID, page1[0].ID); err != nil {
+		t.Fatalf("MarkInboxItemRead: %v", err)
+	}
+	again, err := s.MarkInboxItemRead(ctx, userA.ID, page1[0].ID)
+	if err != nil {
+		t.Fatalf("MarkInboxItemRead (idempotent): %v", err)
+	}
+	if again.ReadAt == nil {
+		t.Fatal("re-marking cleared read_at")
+	}
+	if _, err := s.MarkInboxItemRead(ctx, userB.ID, page1[0].ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("marking another user's item = %v, want ErrNotFound", err)
+	}
+	unread, err := s.ListInboxItems(ctx, userA.ID, true, 50)
+	if err != nil {
+		t.Fatalf("ListInboxItems (unread): %v", err)
+	}
+	if len(unread) != 1 {
+		t.Fatalf("unread items = %d, want 1", len(unread))
+	}
+	marked, err := s.MarkAllInboxItemsRead(ctx, userA.ID)
+	if err != nil || marked != 1 {
+		t.Fatalf("MarkAllInboxItemsRead = %d, %v, want 1", marked, err)
+	}
+	if all, _ := s.ListInboxItems(ctx, userA.ID, false, 50); len(all) != 2 {
+		t.Fatalf("items after marking all read = %d, want 2 — reading is not deleting", len(all))
+	}
+
+	// The prune keeps the newest N per user, in one statement across users.
+	for i := 0; i < 4; i++ {
+		if err := s.InsertInboxItems(ctx, InboxFanout{
+			IDs: []string{ids.New(ids.PrefixInboxItem)}, UserIDs: []string{userA.ID},
+			ProjectID: projA.ID, Kind: domain.EventDeployFailed,
+			Severity: string(domain.NotifyError), Title: "Deploy failed: web",
+			DedupeKey: domain.EventDeployFailed + ":dep_" + ids.Secret()[:8],
+		}); err != nil {
+			t.Fatalf("InsertInboxItems (bulk): %v", err)
+		}
+	}
+	if err := s.PruneInboxItems(ctx, []string{userA.ID, quiet.ID}, 3); err != nil {
+		t.Fatalf("PruneInboxItems: %v", err)
+	}
+	if rows, _ := s.ListInboxItems(ctx, userA.ID, false, 50); len(rows) != 3 {
+		t.Fatalf("items after prune = %d, want 3", len(rows))
+	}
+	if rows, _ := s.ListInboxItems(ctx, quiet.ID, false, 50); len(rows) != 1 {
+		t.Fatalf("under-cap user pruned to %d, want their 1 item untouched", len(rows))
+	}
+
+	// Leaving a team empties that team's items and leaves everyone else's.
+	if err := s.DeleteInboxItemsForTeamMember(ctx, teamA.ID, quiet.ID); err != nil {
+		t.Fatalf("DeleteInboxItemsForTeamMember: %v", err)
+	}
+	if rows, _ := s.ListInboxItems(ctx, quiet.ID, false, 50); len(rows) != 0 {
+		t.Fatalf("ex-member still holds %d items", len(rows))
+	}
+	if rows, _ := s.ListInboxItems(ctx, userA.ID, false, 50); len(rows) != 3 {
+		t.Fatalf("a teammate's items were swept too: %d remain, want 3", len(rows))
+	}
+
+	// Deleting the project cascades the rest; deleting the user takes their
+	// preferences with them.
+	if err := s.DeleteProject(ctx, projA.ID); err != nil {
+		t.Fatalf("DeleteProject: %v", err)
+	}
+	if rows, _ := s.ListInboxItems(ctx, userA.ID, false, 50); len(rows) != 0 {
+		t.Fatalf("%d items survived the project cascade", len(rows))
+	}
+	if err := s.DeleteUser(ctx, quiet.ID); err != nil {
+		t.Fatalf("DeleteUser: %v", err)
+	}
+	after, err := s.GetInboxPreferences(ctx, quiet.ID)
+	if err != nil {
+		t.Fatalf("preferences lookup after user delete: %v", err)
+	}
+	if len(after.MutedKinds) != 0 {
+		t.Fatalf("preferences survived the user cascade: %v", after.MutedKinds)
+	}
+}
+
+func containsString(xs []string, x string) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+func findByDedupe(t *testing.T, s *Store, userID, dedupeKey string) domain.InboxItem {
+	t.Helper()
+	rows, err := s.ListInboxItems(context.Background(), userID, false, 100)
+	if err != nil {
+		t.Fatalf("ListInboxItems: %v", err)
+	}
+	for _, r := range rows {
+		if r.DedupeKey == dedupeKey {
+			return r
+		}
+	}
+	t.Fatalf("no item with dedupe key %q in %d rows", dedupeKey, len(rows))
+	return domain.InboxItem{}
+}

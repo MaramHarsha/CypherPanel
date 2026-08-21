@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -69,7 +70,7 @@ func TestDeliverSlackPostsText(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := New(&mgrStore{}, identityOpener{}, quietLog())
+	m := New(&mgrStore{}, identityOpener{}, quietLog(), nil)
 	n := webhookNotifier("ntf_1", domain.NotifyChannelSlack, srv.URL, domain.EventDeployFailed)
 	ev := domain.NotifyEvent{Type: domain.EventDeployFailed, Title: "T", Body: "B"}
 	if err := m.Deliver(context.Background(), n, ev); err != nil {
@@ -88,7 +89,7 @@ func TestDeliverDiscordPostsContent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := New(&mgrStore{}, identityOpener{}, quietLog())
+	m := New(&mgrStore{}, identityOpener{}, quietLog(), nil)
 	n := webhookNotifier("ntf_1", domain.NotifyChannelDiscord, srv.URL, domain.EventDeployFailed)
 	if err := m.Deliver(context.Background(), n, domain.NotifyEvent{Title: "T", Body: "B"}); err != nil {
 		t.Fatalf("Deliver: %v", err)
@@ -112,7 +113,7 @@ func TestDeliverTelegramUsesTokenPath(t *testing.T) {
 	telegramAPI = srv.URL
 	defer func() { telegramAPI = old }()
 
-	m := New(&mgrStore{}, identityOpener{}, quietLog())
+	m := New(&mgrStore{}, identityOpener{}, quietLog(), nil)
 	n := domain.Notifier{
 		ID: "ntf_1", Channel: domain.NotifyChannelTelegram,
 		ConfigCT: []byte(`{"bot_token":"TOK","chat_id":"42"}`),
@@ -134,7 +135,7 @@ func TestDeliverNon2xxIsError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := New(&mgrStore{}, identityOpener{}, quietLog())
+	m := New(&mgrStore{}, identityOpener{}, quietLog(), nil)
 	n := webhookNotifier("ntf_1", domain.NotifyChannelSlack, srv.URL, domain.EventDeployFailed)
 	if err := m.Deliver(context.Background(), n, domain.NotifyEvent{}); err == nil {
 		t.Fatal("non-2xx response should be a delivery error")
@@ -161,7 +162,7 @@ func TestNotifyDeployReachesOnlySubscribed(t *testing.T) {
 			webhookNotifier("ntf_fail", domain.NotifyChannelSlack, fail.URL, domain.EventDeployFailed),
 		},
 	}
-	m := New(st, identityOpener{}, quietLog())
+	m := New(st, identityOpener{}, quietLog(), nil)
 
 	// A successful deploy must reach only the deploy.succeeded subscriber.
 	m.NotifyDeploy(context.Background(), domain.Application{Name: "web", EnvironmentID: "env_1"},
@@ -190,7 +191,7 @@ func TestFanOutIsolatesAFailingChannel(t *testing.T) {
 			webhookNotifier("ntf_good", domain.NotifyChannelSlack, good.URL, domain.EventDeployFailed),
 		},
 	}
-	m := New(st, identityOpener{}, quietLog())
+	m := New(st, identityOpener{}, quietLog(), nil)
 	m.NotifyDeploy(context.Background(), domain.Application{Name: "web", EnvironmentID: "env_1"},
 		domain.Deployment{ID: "dep_1", Status: domain.DeployFailed, Detail: "boom"})
 
@@ -210,7 +211,7 @@ func TestNotifyDeployDetachedFromCanceledContext(t *testing.T) {
 		env:       domain.Environment{ID: "env_1", ProjectID: "prj_1", Name: "production"},
 		notifiers: []domain.Notifier{webhookNotifier("ntf_1", domain.NotifyChannelSlack, srv.URL, domain.EventDeploySucceeded)},
 	}
-	m := New(st, identityOpener{}, quietLog())
+	m := New(st, identityOpener{}, quietLog(), nil)
 
 	// The caller's context is canceled the instant NotifyDeploy returns (the
 	// scheduler's handler context). Delivery must still complete (spec §1).
@@ -223,5 +224,103 @@ func TestNotifyDeployDetachedFromCanceledContext(t *testing.T) {
 	case <-hit:
 	case <-time.After(2 * time.Second):
 		t.Fatal("delivery was canceled with the caller's context")
+	}
+}
+
+// --- the inbox audience (notification-inbox.md §1, §4) ---
+
+// recordingInbox captures what dispatch hands the inbox, and signals when it
+// has, so the detached goroutine can be awaited rather than slept on.
+type recordingInbox struct {
+	got  chan domain.NotifyEvent
+	fail error
+}
+
+func newRecordingInbox() *recordingInbox {
+	return &recordingInbox{got: make(chan domain.NotifyEvent, 4)}
+}
+
+func (r *recordingInbox) Record(_ context.Context, ev domain.NotifyEvent) error {
+	r.got <- ev
+	return r.fail
+}
+
+// The whole point of the inbox: a panel with NO notifiers configured at all —
+// which is most panels — still gets a record of what happened. The inbox write
+// comes before the notifier lookup precisely so this holds.
+func TestDispatchRecordsToTheInboxWithZeroNotifiers(t *testing.T) {
+	box := newRecordingInbox()
+	st := &mgrStore{env: domain.Environment{ID: "env_1", ProjectID: "prj_1", Name: "production"}}
+	m := New(st, identityOpener{}, quietLog(), box)
+
+	m.NotifyDeploy(context.Background(),
+		domain.Application{ID: "app_web", Name: "web", EnvironmentID: "env_1"},
+		domain.Deployment{ID: "dep_9", Status: domain.DeployFailed, RevisionID: "rev_1", Detail: "healthcheck never passed"})
+
+	select {
+	case ev := <-box.got:
+		if ev.Type != domain.EventDeployFailed || ev.Level != domain.NotifyError {
+			t.Fatalf("event = %s/%s, want deploy.failed/error", ev.Type, ev.Level)
+		}
+		if ev.ProjectID != "prj_1" {
+			t.Fatalf("project_id = %q, want the resolved project", ev.ProjectID)
+		}
+		// The four additive fields are what let the item carry a deep link.
+		if ev.ResourceKind != domain.WebhookResourceApplication || ev.ResourceID != "app_web" || ev.FocusID != "dep_9" {
+			t.Fatalf("link fields = %q/%q/%q", ev.ResourceKind, ev.ResourceID, ev.FocusID)
+		}
+		// The bell and a Slack message render the same value, so the words match.
+		if ev.Title != "Deploy failed: web" {
+			t.Fatalf("title = %q", ev.Title)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no inbox record with zero notifiers configured")
+	}
+}
+
+func TestDispatchRecordsBackupsWithTheirRecord(t *testing.T) {
+	box := newRecordingInbox()
+	st := &mgrStore{env: domain.Environment{ID: "env_1", ProjectID: "prj_1", Name: "production"}}
+	m := New(st, identityOpener{}, quietLog(), box)
+
+	m.NotifyBackup(context.Background(),
+		domain.Database{ID: "db_atlas", Name: "atlas-pg", EnvironmentID: "env_1"},
+		domain.BackupRecord{ID: "br_3", Status: domain.BackupSucceeded})
+
+	select {
+	case ev := <-box.got:
+		if ev.Type != domain.EventBackupSucceeded || ev.ResourceKind != domain.WebhookResourceDatabase {
+			t.Fatalf("event = %s/%s", ev.Type, ev.ResourceKind)
+		}
+		if ev.ResourceID != "db_atlas" || ev.FocusID != "br_3" {
+			t.Fatalf("link fields = %q/%q", ev.ResourceID, ev.FocusID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no inbox record for a backup outcome")
+	}
+}
+
+// A failing inbox write is logged, never fatal to the channel fan-out: the two
+// audiences are independent, and a dead database must not silence Slack.
+func TestChannelDeliveryContinuesWhenTheInboxFails(t *testing.T) {
+	hit := make(chan struct{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hit <- struct{}{} }))
+	defer srv.Close()
+
+	box := newRecordingInbox()
+	box.fail = errors.New("database is down")
+	st := &mgrStore{
+		env:       domain.Environment{ID: "env_1", ProjectID: "prj_1", Name: "production"},
+		notifiers: []domain.Notifier{webhookNotifier("ntf_1", domain.NotifyChannelSlack, srv.URL, domain.EventDeployFailed)},
+	}
+	m := New(st, identityOpener{}, quietLog(), box)
+	m.NotifyDeploy(context.Background(),
+		domain.Application{ID: "app_web", Name: "web", EnvironmentID: "env_1"},
+		domain.Deployment{ID: "dep_1", Status: domain.DeployFailed})
+
+	select {
+	case <-hit:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a failing inbox write stopped the channel fan-out")
 	}
 }

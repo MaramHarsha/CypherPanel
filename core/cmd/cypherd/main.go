@@ -33,6 +33,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/enroll"
 	"github.com/MaramHarsha/cypherpanel/core/guard"
 	"github.com/MaramHarsha/cypherpanel/core/identity"
+	"github.com/MaramHarsha/cypherpanel/core/inbox"
 	"github.com/MaramHarsha/cypherpanel/core/notify"
 	"github.com/MaramHarsha/cypherpanel/core/onboarding"
 	"github.com/MaramHarsha/cypherpanel/core/previews"
@@ -175,11 +176,19 @@ func run(log *slog.Logger) error {
 	// deployments from the agents' observed reports (ADR-005).
 	sched := scheduler.New(st, b, box, log)
 
+	// The notification inbox: the same observed outcomes, persisted per user and
+	// counted on a bell (notification-inbox.md). It is the one channel that
+	// needs no configuration, no webhook and no secret, so it hangs off the
+	// notify fan-out rather than adding a second event source — and its write
+	// runs BEFORE the notifier lookup, which is what makes the bell work on a
+	// panel with no channels configured at all.
+	inboxSvc := inbox.New(st, log)
+
 	// Notifications: terminal deploy/backup outcomes fan out to a project's
 	// configured channels (notifications.md). Delivery is best-effort and
 	// detached, so it never blocks the pipeline.
 	notifySvc := notify.NewService(st, box)
-	notifyMgr := notify.New(st, box, log)
+	notifyMgr := notify.New(st, box, log, inboxSvc)
 	sched.AddSink(notifyMgr)
 
 	// Outbound webhooks: the same terminal outcomes, POSTed as signed JSON to
@@ -371,6 +380,7 @@ func run(log *slog.Logger) error {
 		ScheduledTasks:  scheduledTaskSvc,
 
 		WebhookEndpoints: webhookSvc,
+		Inbox:            inboxSvc,
 		Templates:        templateSvc,
 		Teams:            teamSvc,
 		Scheduler:        sched,

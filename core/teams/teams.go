@@ -50,6 +50,9 @@ type Store interface {
 	GetTeamMember(ctx context.Context, teamID, userID string) (domain.TeamMember, error)
 	ListTeamMembers(ctx context.Context, teamID string) ([]domain.TeamMember, error)
 	DeleteTeamMember(ctx context.Context, teamID, userID string) error
+	// DeleteInboxItemsForTeamMember drops the ex-member's notification-inbox
+	// items for this team's projects (notification-inbox.md §4).
+	DeleteInboxItemsForTeamMember(ctx context.Context, teamID, userID string) error
 	CountTeamOwners(ctx context.Context, teamID string) (int64, error)
 	ListTeamsByUser(ctx context.Context, userID string) ([]domain.TeamWithRole, error)
 	GetTeamRoleForProject(ctx context.Context, projectID, userID string) (string, error)
@@ -231,6 +234,13 @@ func (s *Service) ChangeMemberRole(ctx context.Context, teamID, userID, role, ac
 
 // RemoveMember removes a member, enforcing grant rules (removing an owner
 // requires owner) and the last-owner guard.
+//
+// It also empties this team's notification-inbox items from the ex-member's
+// inbox (notification-inbox.md §4). The rule there is "never hold an item for a
+// team you do not belong to", and a stale title naming a project you were just
+// removed from breaks it as surely as a live delivery would. The membership row
+// goes first: if the cleanup then fails, the caller sees the error and retries,
+// and in the meantime the person has already lost access.
 func (s *Service) RemoveMember(ctx context.Context, teamID, userID, actorRole string) error {
 	cur, err := s.store.GetTeamMember(ctx, teamID, userID)
 	if err != nil {
@@ -244,7 +254,13 @@ func (s *Service) RemoveMember(ctx context.Context, teamID, userID, actorRole st
 			return err
 		}
 	}
-	return s.store.DeleteTeamMember(ctx, teamID, userID)
+	if err := s.store.DeleteTeamMember(ctx, teamID, userID); err != nil {
+		return err
+	}
+	if err := s.store.DeleteInboxItemsForTeamMember(ctx, teamID, userID); err != nil {
+		return fmt.Errorf("teams: clearing inbox items for removed member %s: %w", userID, err)
+	}
+	return nil
 }
 
 // requireGrantRank: acting on the owner rank requires owner; anything else
