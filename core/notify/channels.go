@@ -147,9 +147,11 @@ func (m *Manager) sendEmail(cfg []byte, ev domain.NotifyEvent) error {
 	)
 }
 
-// sanitizeHeader neutralises CR and LF in a header value so it cannot inject
-// additional headers or split the message (email header injection).
-func sanitizeHeader(v string) string {
+// SanitizeHeader neutralises CR and LF in a header value so it cannot inject
+// additional headers or split the message (email header injection). Exported so
+// callers assembling a message body from anything a person typed can apply the
+// same rule to it.
+func SanitizeHeader(v string) string {
 	return strings.NewReplacer("\r", " ", "\n", " ").Replace(v)
 }
 
@@ -167,12 +169,17 @@ func splitRecipients(list string) []string {
 // buildMessage assembles a minimal RFC 5322 plain-text message.
 func buildMessage(from string, to []string, subject, body string) []byte {
 	var b strings.Builder
-	fmt.Fprintf(&b, "From: %s\r\n", from)
-	fmt.Fprintf(&b, "To: %s\r\n", strings.Join(to, ", "))
-	// Neutralise CR/LF in the subject so an app/database name propagated into
-	// ev.Title (NotifyDeploy/NotifyBackup) cannot inject extra SMTP headers or
-	// split the message.
-	fmt.Fprintf(&b, "Subject: %s\r\n", sanitizeHeader(subject))
+	// Every header value is neutralised, not just the subject: a CR or LF in
+	// any of them ends the header and starts another, which is how a single
+	// recipient field becomes a Bcc to somewhere else. From and To carry
+	// operator- and user-supplied values just as Subject does.
+	fmt.Fprintf(&b, "From: %s\r\n", SanitizeHeader(from))
+	recipients := make([]string, 0, len(to))
+	for _, addr := range to {
+		recipients = append(recipients, SanitizeHeader(addr))
+	}
+	fmt.Fprintf(&b, "To: %s\r\n", strings.Join(recipients, ", "))
+	fmt.Fprintf(&b, "Subject: %s\r\n", SanitizeHeader(subject))
 	b.WriteString("MIME-Version: 1.0\r\n")
 	b.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
 	b.WriteString("\r\n")

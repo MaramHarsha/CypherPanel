@@ -40,40 +40,58 @@ var (
 // a forwarded link goes stale.
 const emailChangeTTL = 30 * time.Minute
 
+// PendingChange is what a caller needs to tell people about a requested move:
+// the wire token for the new address, the addresses themselves, and nothing
+// from the request that produced it.
+//
+// NewEmail is the address as this function parsed it, not as it arrived. The
+// caller must use this and never the raw request field: what a person typed is
+// untrusted input, and it ends up in a recipient list and an email body.
+type PendingChange struct {
+	Token    string
+	NewEmail string
+	OldEmail string
+}
+
 // RequestEmailChange proves the caller owns the account, records a pending
-// change, and returns the wire token to mail to the new address — together with
-// the old address, which the caller must warn (threat-model §5.10).
-func (a *Authenticator) RequestEmailChange(ctx context.Context, userID, newEmail, currentPassword string) (token, oldEmail string, err error) {
-	newEmail = strings.TrimSpace(newEmail)
-	addr, parseErr := mail.ParseAddress(newEmail)
+// change, and returns what is needed to mail both addresses — the new one its
+// confirmation, the old one its warning (threat-model §5.10).
+func (a *Authenticator) RequestEmailChange(ctx context.Context, userID, newEmail, currentPassword string) (PendingChange, error) {
+	addr, parseErr := mail.ParseAddress(strings.TrimSpace(newEmail))
 	if parseErr != nil {
-		return "", "", invalid(fmt.Sprintf("%q is not a valid email address", newEmail))
+		return PendingChange{}, invalid(fmt.Sprintf("%q is not a valid email address", newEmail))
 	}
+	// From here on only the parsed address is used. ParseAddress accepts
+	// "Name <a@b.com>", so the raw string and the address are not the same
+	// value — and only one of them belongs in a header.
 	newEmail = addr.Address
 
 	user, err := a.store.GetUserByID(ctx, userID)
 	if err != nil {
-		return "", "", err
+		return PendingChange{}, err
 	}
 	// Possession of a session never weakens a credential on its own.
 	if !CheckPassword(user.PasswordHash, currentPassword) {
-		return "", "", ErrInvalidCredentials
+		return PendingChange{}, ErrInvalidCredentials
 	}
 	if strings.EqualFold(newEmail, user.Email) {
-		return "", "", ErrSameEmail
+		return PendingChange{}, ErrSameEmail
 	}
 	if _, err := a.store.GetUserByEmail(ctx, newEmail); err == nil {
-		return "", "", ErrEmailInUse
+		return PendingChange{}, ErrEmailInUse
 	} else if !errors.Is(err, store.ErrNotFound) {
-		return "", "", err
+		return PendingChange{}, err
 	}
 
 	secret := ids.Secret()
 	id := ids.New(ids.PrefixEmailChange)
-	if _, err := a.store.CreateEmailChange(ctx, id, userID, newEmail, HashToken(secret), time.Now().Add(emailChangeTTL)); err != nil {
-		return "", "", err
+	change, err := a.store.CreateEmailChange(ctx, id, userID, newEmail, HashToken(secret), time.Now().Add(emailChangeTTL))
+	if err != nil {
+		return PendingChange{}, err
 	}
-	return id + "." + secret, user.Email, nil
+	// The address is read back from the row that was just written, so what goes
+	// into the mail is what the panel stored rather than what the request said.
+	return PendingChange{Token: id + "." + secret, NewEmail: change.NewEmail, OldEmail: user.Email}, nil
 }
 
 // ConfirmEmailChange spends a pending change and moves the address. It also

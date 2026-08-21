@@ -17,17 +17,17 @@ func request(t *testing.T, a *Authenticator, fs *fakeStore) (token, userID strin
 		t.Fatalf("HashPassword: %v", err)
 	}
 	fs.users["old@example.com"] = domain.User{ID: "usr_1", Email: "old@example.com", PasswordHash: hash}
-	token, old, err := a.RequestEmailChange(context.Background(), "usr_1", "new@example.com", "correct-horse")
+	change, err := a.RequestEmailChange(context.Background(), "usr_1", "new@example.com", "correct-horse")
 	if err != nil {
 		t.Fatalf("RequestEmailChange: %v", err)
 	}
-	if old != "old@example.com" {
-		t.Fatalf("old address = %q, want the address being moved away from", old)
+	if change.OldEmail != "old@example.com" {
+		t.Fatalf("old address = %q, want the address being moved away from", change.OldEmail)
 	}
-	if !strings.Contains(token, ".") {
-		t.Fatalf("token %q is not the id.secret wire form", token)
+	if !strings.Contains(change.Token, ".") {
+		t.Fatalf("token %q is not the id.secret wire form", change.Token)
 	}
-	return token, "usr_1"
+	return change.Token, "usr_1"
 }
 
 func TestEmailChangeRequiresCurrentPassword(t *testing.T) {
@@ -36,7 +36,7 @@ func TestEmailChangeRequiresCurrentPassword(t *testing.T) {
 	hash, _ := HashPassword("correct-horse")
 	fs.users["old@example.com"] = domain.User{ID: "usr_1", Email: "old@example.com", PasswordHash: hash}
 
-	if _, _, err := a.RequestEmailChange(context.Background(), "usr_1", "new@example.com", "wrong"); err == nil {
+	if _, err := a.RequestEmailChange(context.Background(), "usr_1", "new@example.com", "wrong"); err == nil {
 		t.Fatal("a wrong current password started a change; a session alone must never move an address")
 	}
 }
@@ -110,7 +110,25 @@ func TestEmailChangeRefusesAddressInUse(t *testing.T) {
 	fs.users["old@example.com"] = domain.User{ID: "usr_1", Email: "old@example.com", PasswordHash: hash}
 	fs.users["taken@example.com"] = domain.User{ID: "usr_2", Email: "taken@example.com"}
 
-	if _, _, err := a.RequestEmailChange(context.Background(), "usr_1", "taken@example.com", "correct-horse"); err == nil {
+	if _, err := a.RequestEmailChange(context.Background(), "usr_1", "taken@example.com", "correct-horse"); err == nil {
 		t.Fatal("a change to an address already in use was allowed")
+	}
+}
+
+// A person can type a display-name form, and ParseAddress accepts it — but only
+// the bare address may reach a recipient list or a message body. Returning the
+// raw string is how untrusted input becomes a header (CWE-640).
+func TestRequestReturnsTheParsedAddressNotTheRawInput(t *testing.T) {
+	fs := newFakeStore()
+	a := NewAuthenticator(fs, nil, nil, time.Hour)
+	hash, _ := HashPassword("correct-horse")
+	fs.users["old@example.com"] = domain.User{ID: "usr_1", Email: "old@example.com", PasswordHash: hash}
+
+	change, err := a.RequestEmailChange(context.Background(), "usr_1", `"Sai H" <new@example.com>`, "correct-horse")
+	if err != nil {
+		t.Fatalf("RequestEmailChange: %v", err)
+	}
+	if change.NewEmail != "new@example.com" {
+		t.Fatalf("NewEmail = %q, want the bare parsed address", change.NewEmail)
 	}
 }

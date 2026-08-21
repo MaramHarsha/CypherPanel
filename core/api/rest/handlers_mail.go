@@ -10,6 +10,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/auth"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/mail"
+	"github.com/MaramHarsha/cypherpanel/core/notify"
 )
 
 // MailService is the panel's own transport (consumer-defined, rule 6).
@@ -156,7 +157,7 @@ func (a *API) handleRequestEmailChange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, oldEmail, err := a.deps.Auth.RequestEmailChange(r.Context(), p.User.ID, req.NewEmail, req.CurrentPassword)
+	change, err := a.deps.Auth.RequestEmailChange(r.Context(), p.User.ID, req.NewEmail, req.CurrentPassword)
 	switch {
 	case err == nil:
 	case errors.Is(err, auth.ErrInvalidCredentials):
@@ -179,8 +180,13 @@ func (a *API) handleRequestEmailChange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	link := a.deps.ConsoleURL + "/settings/profile?confirm=" + token
-	if err := a.deps.Mail.Send(r.Context(), []string{req.NewEmail},
+	// Everything below uses the addresses the authenticator validated and stored,
+	// never req.NewEmail: what a person typed reaches a recipient list and an
+	// email body, and untrusted input in either is how a trusted sender becomes
+	// someone else's relay (CWE-640). The link's host comes from the panel's own
+	// advertised base URL for the same reason — never from a request header.
+	link := a.deps.ConsoleURL + "/settings/profile?confirm=" + change.Token
+	if err := a.deps.Mail.Send(r.Context(), []string{change.NewEmail},
 		"Confirm your new CypherPanel address",
 		"Open this link while signed in to the panel to finish moving your account to this address:\n\n"+
 			link+"\n\nThe link works once and expires in 30 minutes. If you did not ask for this, ignore it — nothing has changed.",
@@ -192,9 +198,9 @@ func (a *API) handleRequestEmailChange(w http.ResponseWriter, r *http.Request) {
 
 	// Best effort, and deliberately after the confirmation: if the warning
 	// cannot be delivered, the change still stands or falls on the link.
-	if err := a.deps.Mail.Send(r.Context(), []string{oldEmail},
+	if err := a.deps.Mail.Send(r.Context(), []string{change.OldEmail},
 		"Someone asked to move your CypherPanel account",
-		"A request was made to change this account's sign-in address to "+req.NewEmail+".\n\n"+
+		"A request was made to change this account's sign-in address to "+notify.SanitizeHeader(change.NewEmail)+".\n\n"+
 			"If that was you, no action is needed here — confirm it from the link sent to the new address.\n"+
 			"If it was not, change your password now: whoever asked already had your password and a signed-in session.",
 	); err != nil {
