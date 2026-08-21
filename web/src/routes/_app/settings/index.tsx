@@ -425,18 +425,34 @@ function SessionsSection() {
       <PageState query={sessions} empty={<EmptyState title="No active sessions" hint="Sign in to create one." />}>
         {(list) => (
           <>
-            <ul className="divide-y divide-border-subtle overflow-hidden rounded-lg border border-border bg-surface">
-              {list.map((s) => (
-                <SessionRow
-                  key={s.id}
-                  id={s.id}
-                  current={s.current}
-                  created={s.created_at}
-                  expires={s.expires_at}
-                  onRevoked={invalidate}
-                />
-              ))}
-            </ul>
+            {/* The list scrolls inside itself rather than growing the page.
+                Sessions are the one list here with no natural ceiling — a
+                laptop, a phone and every browser you ever signed in from all
+                sit in it — and a page whose other sections get pushed a
+                screenful down by a long one is worse at answering the question
+                the section exists for. About five rows deep, so there is always
+                something cut off to say "keep scrolling". */}
+            <div
+              className="max-h-[19rem] overflow-y-auto overscroll-contain rounded-lg border border-border bg-surface"
+              // Focusable and named, because a region you can only reach with a
+              // pointer is not reachable at all (ui-principles §9).
+              tabIndex={0}
+              role="group"
+              aria-label="Live sessions"
+            >
+              <ul className="divide-y divide-border-subtle">
+                {list.map((s) => (
+                  <SessionRow
+                    key={s.id}
+                    id={s.id}
+                    current={s.current}
+                    created={s.created_at}
+                    expires={s.expires_at}
+                    onRevoked={invalidate}
+                  />
+                ))}
+              </ul>
+            </div>
             {/* The bulk action sits under the list it acts on, with the count
                 of what it will take beside it — a pill labelled "everywhere
                 else" is otherwise a number you cannot see before clicking. */}
