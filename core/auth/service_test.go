@@ -213,6 +213,37 @@ func (f *fakeStore) GetUserByEmail(_ context.Context, email string) (domain.User
 	return u, nil
 }
 
+func (f *fakeStore) GetUserByID(_ context.Context, id string) (domain.User, error) {
+	for _, u := range f.users {
+		if u.ID == id {
+			return u, nil
+		}
+	}
+	return domain.User{}, store.ErrNotFound
+}
+
+func (f *fakeStore) UpdateUserProfile(_ context.Context, userID, displayName, timezone string) (domain.User, error) {
+	for email, u := range f.users {
+		if u.ID == userID {
+			u.DisplayName, u.Timezone = displayName, timezone
+			f.users[email] = u
+			return u, nil
+		}
+	}
+	return domain.User{}, store.ErrNotFound
+}
+
+func (f *fakeStore) UpdateUserPassword(_ context.Context, userID, passwordHash string) error {
+	for email, u := range f.users {
+		if u.ID == userID {
+			u.PasswordHash = passwordHash
+			f.users[email] = u
+			return nil
+		}
+	}
+	return store.ErrNotFound
+}
+
 func (f *fakeStore) CreateSession(_ context.Context, _, userID string, tokenHash []byte, _ time.Time) error {
 	f.sessions[string(tokenHash)] = userID
 	return nil

@@ -52,6 +52,10 @@ type Store interface {
 	GetAPIToken(ctx context.Context, id string) (domain.APIToken, error)
 	DeleteAPIToken(ctx context.Context, id string) error
 
+	GetUserByID(ctx context.Context, id string) (domain.User, error)
+	UpdateUserProfile(ctx context.Context, userID, displayName, timezone string) (domain.User, error)
+	UpdateUserPassword(ctx context.Context, userID, passwordHash string) error
+
 	SetTOTPSecret(ctx context.Context, userID string, ct, nonce []byte) error
 	EnableTOTP(ctx context.Context, userID string) error
 	DisableTOTP(ctx context.Context, userID string) error

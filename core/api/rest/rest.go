@@ -202,6 +202,8 @@ func (a *API) Handler() http.Handler {
 
 	// Live sessions: see where the account is signed in, and sign it out.
 	// Session-only — an API token must not be able to cut off the operator.
+	mux.HandleFunc("PATCH /api/v1/auth/me", a.sessionOnly(a.handleUpdateProfile))
+	mux.HandleFunc("POST /api/v1/auth/password", a.sessionOnly(a.handleChangePassword))
 	mux.HandleFunc("GET /api/v1/auth/sessions", a.sessionOnly(a.handleListSessions))
 	mux.HandleFunc("DELETE /api/v1/auth/sessions/{id}", a.sessionOnly(a.handleRevokeSession))
 	mux.HandleFunc("POST /api/v1/auth/sessions/revoke-others", a.sessionOnly(a.handleRevokeOtherSessions))

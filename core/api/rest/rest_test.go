@@ -102,6 +102,29 @@ func (f *fakeAuthStore) GetUserByEmail(_ context.Context, email string) (domain.
 	return f.user, nil
 }
 
+func (f *fakeAuthStore) GetUserByID(_ context.Context, id string) (domain.User, error) {
+	if id != f.user.ID {
+		return domain.User{}, store.ErrNotFound
+	}
+	return f.user, nil
+}
+
+func (f *fakeAuthStore) UpdateUserProfile(_ context.Context, userID, displayName, timezone string) (domain.User, error) {
+	if userID != f.user.ID {
+		return domain.User{}, store.ErrNotFound
+	}
+	f.user.DisplayName, f.user.Timezone = displayName, timezone
+	return f.user, nil
+}
+
+func (f *fakeAuthStore) UpdateUserPassword(_ context.Context, userID, passwordHash string) error {
+	if userID != f.user.ID {
+		return store.ErrNotFound
+	}
+	f.user.PasswordHash = passwordHash
+	return nil
+}
+
 func (f *fakeAuthStore) CreateSession(_ context.Context, _, _ string, tokenHash []byte, _ time.Time) error {
 	f.sessions[string(tokenHash)] = f.user
 	return nil

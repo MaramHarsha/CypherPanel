@@ -87,6 +87,11 @@ type userDTO struct {
 	ID    string `json:"id"`
 	Email string `json:"email"`
 	Role  string `json:"role"`
+	// Empty means the panel has no name for this person and falls back to the
+	// address; an empty timezone means UTC, which is what it printed before
+	// anyone could choose (ui-principles §10).
+	DisplayName string `json:"display_name"`
+	Timezone    string `json:"timezone"`
 }
 
 type loginResponse struct {
@@ -151,7 +156,13 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	resp := meResponse{userDTO: userDTO{ID: user.ID, Email: user.Email, Role: user.Role}, Teams: []teamDTO{}}
+	resp := meResponse{
+		userDTO: userDTO{
+			ID: user.ID, Email: user.Email, Role: user.Role,
+			DisplayName: user.DisplayName, Timezone: user.Timezone,
+		},
+		Teams: []teamDTO{},
+	}
 	if a.deps.Teams != nil {
 		list, err := a.deps.Teams.ListFor(r.Context(), user)
 		if err != nil {

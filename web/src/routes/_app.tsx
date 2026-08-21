@@ -11,17 +11,7 @@ import {
   useNavigate,
   useRouterState,
 } from "@tanstack/react-router";
-import {
-  Boxes,
-  ChevronDown,
-  LayoutTemplate,
-  LogOut,
-  Moon,
-  Search,
-  Server,
-  Settings,
-  Sun,
-} from "lucide-react";
+import { Boxes, ChevronDown, LayoutTemplate, LogOut, Moon, Search, Server, Settings, Sun, UserRound } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ApiError } from "@/api/client";
 import { useGetMe, useLogout } from "@/api/gen/auth/auth";
@@ -319,6 +309,14 @@ function AccountMenu() {
           </>
         )}
         <DropdownSeparator />
+        {/* The menu already names who you are, so the next question it should
+            answer is where to change that (canvas 13i). */}
+        <DropdownItem
+          onSelect={() => void navigate({ to: "/settings/profile" })}
+          className="flex items-center gap-2"
+        >
+          <UserRound className="h-3.5 w-3.5" aria-hidden /> Profile settings
+        </DropdownItem>
         <DropdownItem onSelect={() => logout.mutate()} className="flex items-center gap-2">
           <LogOut className="h-3.5 w-3.5" aria-hidden /> Sign out
         </DropdownItem>

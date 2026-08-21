@@ -81,9 +81,15 @@ type User struct {
 	Email        string
 	PasswordHash string
 	Role         string
-	TOTPEnabled  bool
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// DisplayName is what teammates see; empty means the panel has no name for
+	// this person yet and falls back to the address.
+	DisplayName string
+	// Timezone is an IANA name the UI reads timestamps in. Empty means UTC,
+	// which is what the panel printed before anyone could choose.
+	Timezone    string
+	TOTPEnabled bool
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // JoinToken is a single-use, short-lived enrollment credential bound to one

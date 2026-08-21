@@ -179,6 +179,32 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+    patch:
+      operationId: updateProfile
+      tags: [auth]
+      summary: Set your own display name and timezone (session only)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/UpdateProfileRequest" } } }
+      responses:
+        "200": { description: The updated account., content: { application/json: { schema: { $ref: "#/components/schemas/User" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/auth/password:
+    post:
+      operationId: changePassword
+      tags: [auth]
+      summary: Change your own password, proving the current one (session only)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ChangePasswordRequest" } } }
+      responses:
+        "200": { description: Changed; reports how many other sessions were revoked., content: { application/json: { schema: { $ref: "#/components/schemas/ChangePasswordResponse" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { description: The current password is wrong — the same answer a failed sign-in gets., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /api/v1/auth/sessions:
     get:
@@ -2155,6 +2181,47 @@ components:
           type: string
         role:
           type: string
+        display_name:
+          type: string
+          description: What teammates see. Empty means the panel falls back to the address.
+        timezone:
+          type: string
+          description: IANA name the UI reads timestamps in. Empty means UTC.
+
+    UpdateProfileRequest:
+      type: object
+      properties:
+        display_name:
+          type: string
+          maxLength: 64
+          description: Empty clears it, and the address is shown instead.
+        timezone:
+          type: string
+          maxLength: 64
+          description: An IANA name such as Europe/Berlin. Empty means UTC.
+
+    ChangePasswordRequest:
+      type: object
+      required: [current_password, new_password]
+      properties:
+        current_password:
+          type: string
+        new_password:
+          type: string
+          minLength: 8
+        revoke_other_sessions:
+          type: boolean
+          default: false
+          description: Sign every other device out. The session making the request survives.
+
+    ChangePasswordResponse:
+      type: object
+      required: [revoked]
+      properties:
+        revoked:
+          type: integer
+          format: int64
+          description: Other sessions signed out; 0 unless asked.
 
     LoginResponse:
       type: object
@@ -2837,6 +2904,12 @@ components:
           type: string
           description: Panel role.
           enum: [member, admin, owner]
+        display_name:
+          type: string
+          description: What teammates see. Empty means the panel falls back to the address.
+        timezone:
+          type: string
+          description: IANA name the UI reads timestamps in. Empty means UTC.
         teams:
           type: array
           items: { $ref: "#/components/schemas/Team" }

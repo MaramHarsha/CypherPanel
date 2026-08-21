@@ -27,6 +27,8 @@ import type {
 import type {
   ApiToken,
   BadRequestResponse,
+  ChangePasswordRequest,
+  ChangePasswordResponse,
   CreateTokenRequest,
   CreateTokenResponse,
   Error,
@@ -43,7 +45,9 @@ import type {
   TOTPEnrollResponse,
   TOTPStatus,
   TOTPVerifyResponse,
-  UnauthorizedResponse
+  UnauthorizedResponse,
+  UpdateProfileRequest,
+  User
 } from '.././model';
 
 import { apiFetch } from '../../client';
@@ -468,6 +472,148 @@ export function useGetMe<TData = Awaited<ReturnType<typeof getMe>>, TError = Una
 
 
 /**
+ * @summary Set your own display name and timezone (session only)
+ */
+export const getUpdateProfileUrl = () => {
+
+
+  
+
+  return `/api/v1/auth/me`
+}
+
+export const updateProfile = async (updateProfileRequest: UpdateProfileRequest, options?: RequestInit): Promise<User> => {
+  
+  return apiFetch<User>(getUpdateProfileUrl(),
+  {      
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      updateProfileRequest,)
+  }
+);}
+
+
+
+
+export const getUpdateProfileMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateProfile>>, TError,{data: UpdateProfileRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateProfile>>, TError,{data: UpdateProfileRequest}, TContext> => {
+
+const mutationKey = ['updateProfile'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateProfile>>, {data: UpdateProfileRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  updateProfile(data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateProfileMutationResult = NonNullable<Awaited<ReturnType<typeof updateProfile>>>
+    export type UpdateProfileMutationBody = UpdateProfileRequest
+    export type UpdateProfileMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary Set your own display name and timezone (session only)
+ */
+export const useUpdateProfile = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateProfile>>, TError,{data: UpdateProfileRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof updateProfile>>,
+        TError,
+        {data: UpdateProfileRequest},
+        TContext
+      > => {
+
+      const mutationOptions = getUpdateProfileMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    /**
+ * @summary Change your own password, proving the current one (session only)
+ */
+export const getChangePasswordUrl = () => {
+
+
+  
+
+  return `/api/v1/auth/password`
+}
+
+export const changePassword = async (changePasswordRequest: ChangePasswordRequest, options?: RequestInit): Promise<ChangePasswordResponse> => {
+  
+  return apiFetch<ChangePasswordResponse>(getChangePasswordUrl(),
+  {      
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      changePasswordRequest,)
+  }
+);}
+
+
+
+
+export const getChangePasswordMutationOptions = <TError = BadRequestResponse | Error | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof changePassword>>, TError,{data: ChangePasswordRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof changePassword>>, TError,{data: ChangePasswordRequest}, TContext> => {
+
+const mutationKey = ['changePassword'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof changePassword>>, {data: ChangePasswordRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  changePassword(data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ChangePasswordMutationResult = NonNullable<Awaited<ReturnType<typeof changePassword>>>
+    export type ChangePasswordMutationBody = ChangePasswordRequest
+    export type ChangePasswordMutationError = BadRequestResponse | Error | ForbiddenResponse
+
+    /**
+ * @summary Change your own password, proving the current one (session only)
+ */
+export const useChangePassword = <TError = BadRequestResponse | Error | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof changePassword>>, TError,{data: ChangePasswordRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof changePassword>>,
+        TError,
+        {data: ChangePasswordRequest},
+        TContext
+      > => {
+
+      const mutationOptions = getChangePasswordMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    /**
  * Every device currently signed in to this account. Requires an interactive session — a personal access token may not manage sessions.
 
  * @summary List the caller's live sessions

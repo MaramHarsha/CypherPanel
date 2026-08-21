@@ -499,6 +499,37 @@ type TOTPSecret struct {
 	Enabled bool
 }
 
+// GetUserByID loads one account. Used where the caller already holds an id and
+// must re-read the row — proving a current password, for instance, where the
+// session's cached copy is not enough.
+func (s *Store) GetUserByID(ctx context.Context, id string) (domain.User, error) {
+	row, err := s.q.GetUserByID(ctx, id)
+	if err != nil {
+		return domain.User{}, wrap("getting user by id", err)
+	}
+	return userFromRow(row), nil
+}
+
+// UpdateUserProfile writes the fields a person sets about themselves. Both are
+// stored verbatim after the caller has validated them: the store's job is the
+// row, not the policy.
+func (s *Store) UpdateUserProfile(ctx context.Context, userID, displayName, timezone string) (domain.User, error) {
+	row, err := s.q.UpdateUserProfile(ctx, db.UpdateUserProfileParams{ID: userID, DisplayName: displayName, Timezone: timezone})
+	if err != nil {
+		return domain.User{}, wrapUpdate("updating profile", err)
+	}
+	return userFromRow(row), nil
+}
+
+// UpdateUserPassword replaces the stored hash. Revoking the sessions that were
+// opened with the old password is the caller's decision, not this one's.
+func (s *Store) UpdateUserPassword(ctx context.Context, userID, passwordHash string) error {
+	if err := s.q.UpdateUserPassword(ctx, db.UpdateUserPasswordParams{ID: userID, PasswordHash: passwordHash}); err != nil {
+		return fmt.Errorf("store: updating password: %w", err)
+	}
+	return nil
+}
+
 // SetTOTPSecret stores (or replaces) the enrolling secret; it does not activate
 // two-factor — EnableTOTP does, after a code is verified.
 func (s *Store) SetTOTPSecret(ctx context.Context, userID string, ct, nonce []byte) error {
@@ -645,6 +676,8 @@ func userFromRow(r db.User) domain.User {
 		Email:        r.Email,
 		PasswordHash: r.PasswordHash,
 		Role:         r.Role,
+		DisplayName:  r.DisplayName,
+		Timezone:     r.Timezone,
 		TOTPEnabled:  r.TotpEnabled,
 		CreatedAt:    r.CreatedAt.Time,
 		UpdatedAt:    r.UpdatedAt.Time,
