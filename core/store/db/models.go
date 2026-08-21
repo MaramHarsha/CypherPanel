@@ -168,6 +168,16 @@ type Deployment struct {
 	BuilderServerID pgtype.Text
 }
 
+type EmailChange struct {
+	ID         string
+	UserID     string
+	NewEmail   string
+	TokenHash  []byte
+	ExpiresAt  pgtype.Timestamptz
+	ConsumedAt pgtype.Timestamptz
+	CreatedAt  pgtype.Timestamptz
+}
+
 type Environment struct {
 	ID        string
 	ProjectID string
@@ -195,6 +205,13 @@ type Notifier struct {
 	Events      []string
 	Enabled     bool
 	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type PanelMail struct {
+	ID          int32
+	ConfigCt    []byte
+	ConfigNonce []byte
 	UpdatedAt   pgtype.Timestamptz
 }
 

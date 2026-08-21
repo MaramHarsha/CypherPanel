@@ -104,18 +104,26 @@ func redactURL(err error) error {
 	return err
 }
 
-// sendEmail delivers via SMTP (stdlib net/smtp). smtp.SendMail issues STARTTLS
-// when the server advertises it; auth is used only when a username is set.
-func (m *Manager) sendEmail(cfg []byte, ev domain.NotifyEvent) error {
-	var c emailConfig
-	if err := json.Unmarshal(cfg, &c); err != nil {
-		return fmt.Errorf("decoding email config: %w", err)
-	}
-	to := splitRecipients(c.To)
+// MailConfig is everything needed to hand a message to an SMTP server. It is
+// exported because the panel now has mail of its own to send — account mail,
+// which belongs to no project (docs/features/panel-mail.md) — and that must go
+// through this sender rather than a second copy of it.
+type MailConfig struct {
+	SMTPHost string
+	SMTPPort int
+	Username string
+	From     string
+	Password string
+}
+
+// SendMail delivers one message over SMTP (stdlib net/smtp). smtp.SendMail
+// issues STARTTLS when the server advertises it; auth is used only when a
+// username is set.
+func SendMail(c MailConfig, to []string, subject, body string) error {
 	if len(to) == 0 {
 		return fmt.Errorf("no recipients")
 	}
-	msg := buildMessage(c.From, to, ev.Title, ev.Title+"\n\n"+ev.Body)
+	msg := buildMessage(c.From, to, subject, body)
 	addr := fmt.Sprintf("%s:%d", c.SMTPHost, c.SMTPPort)
 	var auth smtp.Auth
 	if c.Username != "" {
@@ -125,6 +133,18 @@ func (m *Manager) sendEmail(cfg []byte, ev domain.NotifyEvent) error {
 		return fmt.Errorf("smtp send: %w", err)
 	}
 	return nil
+}
+
+// sendEmail delivers a notifier's event through the same sender.
+func (m *Manager) sendEmail(cfg []byte, ev domain.NotifyEvent) error {
+	var c emailConfig
+	if err := json.Unmarshal(cfg, &c); err != nil {
+		return fmt.Errorf("decoding email config: %w", err)
+	}
+	return SendMail(
+		MailConfig{SMTPHost: c.SMTPHost, SMTPPort: c.SMTPPort, Username: c.Username, From: c.From, Password: c.Password},
+		splitRecipients(c.To), ev.Title, ev.Title+"\n\n"+ev.Body,
+	)
 }
 
 // sanitizeHeader neutralises CR and LF in a header value so it cannot inject

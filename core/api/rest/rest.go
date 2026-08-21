@@ -158,6 +158,7 @@ type Deps struct {
 	ScheduledTasks  ScheduledTaskService
 	Templates       *templates.Service
 	Teams           TeamService
+	Mail            MailService
 	Scheduler       Deployer
 	Deployments     DeploymentReader
 	Opener          Opener
@@ -204,6 +205,8 @@ func (a *API) Handler() http.Handler {
 	// Session-only — an API token must not be able to cut off the operator.
 	mux.HandleFunc("PATCH /api/v1/auth/me", a.sessionOnly(a.handleUpdateProfile))
 	mux.HandleFunc("POST /api/v1/auth/password", a.sessionOnly(a.handleChangePassword))
+	mux.HandleFunc("POST /api/v1/auth/email/change", a.sessionOnly(a.handleRequestEmailChange))
+	mux.HandleFunc("POST /api/v1/auth/email/confirm", a.sessionOnly(a.handleConfirmEmailChange))
 	mux.HandleFunc("PUT /api/v1/auth/me/avatar", a.sessionOnly(a.handleSetAvatar))
 	mux.HandleFunc("DELETE /api/v1/auth/me/avatar", a.sessionOnly(a.handleDeleteAvatar))
 	mux.HandleFunc("GET /api/v1/users/{id}/avatar", a.authed(a.handleGetAvatar))
@@ -298,6 +301,13 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/databases/{id}/connection-info", a.authed(a.handleDatabaseConnectionInfo))
 
 	// Phase 3: database backups (managed-databases.md §7).
+	// Panel Mail: panel-wide infrastructure, so panel-admin gated like the
+	// backup targets and servers beside it (docs/features/panel-mail.md §2.2).
+	mux.HandleFunc("GET /api/v1/panel/mail", a.authed(a.handleGetPanelMail))
+	mux.HandleFunc("PUT /api/v1/panel/mail", a.authed(a.handleSetPanelMail))
+	mux.HandleFunc("DELETE /api/v1/panel/mail", a.authed(a.handleDeletePanelMail))
+	mux.HandleFunc("POST /api/v1/panel/mail/test", a.authed(a.handleTestPanelMail))
+
 	mux.HandleFunc("POST /api/v1/backup-targets", a.authed(a.handleCreateBackupTarget))
 	mux.HandleFunc("GET /api/v1/backup-targets", a.authed(a.handleListBackupTargets))
 	mux.HandleFunc("GET /api/v1/backup-targets/{id}", a.authed(a.handleGetBackupTarget))

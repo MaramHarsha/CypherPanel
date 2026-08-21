@@ -30,6 +30,8 @@ import type {
   BadRequestResponse,
   ChangePasswordRequest,
   ChangePasswordResponse,
+  ConfirmEmailChangeRequest,
+  ConfirmEmailChangeResponse,
   CreateTokenRequest,
   CreateTokenResponse,
   Error,
@@ -38,6 +40,7 @@ import type {
   LoginResponse,
   Me,
   NotFoundResponse,
+  RequestEmailChangeRequest,
   RevokeOtherSessions200,
   Session,
   SetupRequest,
@@ -858,6 +861,152 @@ export function useGetAvatar<TData = Awaited<ReturnType<typeof getAvatar>>, TErr
 
 
 /**
+ * Mails a single-use confirmation link to the new address, and a notice to the old one. Requires the current password: possession of a session never weakens a credential on its own (threat-model §5.10).
+
+ * @summary Ask to move your account to a new sign-in address (session only)
+ */
+export const getRequestEmailChangeUrl = () => {
+
+
+  
+
+  return `/api/v1/auth/email/change`
+}
+
+export const requestEmailChange = async (requestEmailChangeRequest: RequestEmailChangeRequest, options?: RequestInit): Promise<void> => {
+  
+  return apiFetch<void>(getRequestEmailChangeUrl(),
+  {      
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      requestEmailChangeRequest,)
+  }
+);}
+
+
+
+
+export const getRequestEmailChangeMutationOptions = <TError = BadRequestResponse | Error | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof requestEmailChange>>, TError,{data: RequestEmailChangeRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof requestEmailChange>>, TError,{data: RequestEmailChangeRequest}, TContext> => {
+
+const mutationKey = ['requestEmailChange'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof requestEmailChange>>, {data: RequestEmailChangeRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  requestEmailChange(data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RequestEmailChangeMutationResult = NonNullable<Awaited<ReturnType<typeof requestEmailChange>>>
+    export type RequestEmailChangeMutationBody = RequestEmailChangeRequest
+    export type RequestEmailChangeMutationError = BadRequestResponse | Error | ForbiddenResponse
+
+    /**
+ * @summary Ask to move your account to a new sign-in address (session only)
+ */
+export const useRequestEmailChange = <TError = BadRequestResponse | Error | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof requestEmailChange>>, TError,{data: RequestEmailChangeRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof requestEmailChange>>,
+        TError,
+        {data: RequestEmailChangeRequest},
+        TContext
+      > => {
+
+      const mutationOptions = getRequestEmailChangeMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    /**
+ * Needs the token and a live session — a mailbox alone must not be able to move an account. Revokes every other session on success.
+
+ * @summary Finish moving your account, using the emailed token (session only)
+ */
+export const getConfirmEmailChangeUrl = () => {
+
+
+  
+
+  return `/api/v1/auth/email/confirm`
+}
+
+export const confirmEmailChange = async (confirmEmailChangeRequest: ConfirmEmailChangeRequest, options?: RequestInit): Promise<ConfirmEmailChangeResponse> => {
+  
+  return apiFetch<ConfirmEmailChangeResponse>(getConfirmEmailChangeUrl(),
+  {      
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      confirmEmailChangeRequest,)
+  }
+);}
+
+
+
+
+export const getConfirmEmailChangeMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmEmailChange>>, TError,{data: ConfirmEmailChangeRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof confirmEmailChange>>, TError,{data: ConfirmEmailChangeRequest}, TContext> => {
+
+const mutationKey = ['confirmEmailChange'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof confirmEmailChange>>, {data: ConfirmEmailChangeRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  confirmEmailChange(data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ConfirmEmailChangeMutationResult = NonNullable<Awaited<ReturnType<typeof confirmEmailChange>>>
+    export type ConfirmEmailChangeMutationBody = ConfirmEmailChangeRequest
+    export type ConfirmEmailChangeMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error
+
+    /**
+ * @summary Finish moving your account, using the emailed token (session only)
+ */
+export const useConfirmEmailChange = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmEmailChange>>, TError,{data: ConfirmEmailChangeRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof confirmEmailChange>>,
+        TError,
+        {data: ConfirmEmailChangeRequest},
+        TContext
+      > => {
+
+      const mutationOptions = getConfirmEmailChangeMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    /**
  * Every device currently signed in to this account. Requires an interactive session — a personal access token may not manage sessions.
 
  * @summary List the caller's live sessions

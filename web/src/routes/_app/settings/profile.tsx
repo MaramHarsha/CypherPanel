@@ -8,7 +8,7 @@
 // end ui-principles §11 rules out.
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import {
   getDeleteAvatarUrl,
@@ -16,12 +16,15 @@ import {
   getListSessionsQueryKey,
   getSetAvatarUrl,
   useChangePassword,
+  useConfirmEmailChange,
+  useRequestEmailChange,
   useGetMe,
   useGetTotpStatus,
   useListSessions,
   useUpdateProfile,
 } from "@/api/gen/auth/auth";
 import { ApiError, apiFetch } from "@/api/client";
+import { useGetPanelMail } from "@/api/gen/panel/panel";
 import { Eyebrow } from "@/components/eyebrow";
 import { UserAvatar, avatarQueryKey, useAvatar } from "@/components/user-avatar";
 import { StatusPill } from "@/components/status-badge";
@@ -239,13 +242,16 @@ function ProfileForm({ email, name, timezone }: { email: string; name: string; t
           )}
         </Field>
 
-        <Field label="Email" qualifier="· sign-in address">
+        {/* Canvas 13i's own qualifier. The field stays read-only in the form on
+            purpose: moving a sign-in address is a re-auth-gated action, not a
+            field save, so it opens its own dialog rather than joining the
+            Save button below. */}
+        <Field label="Email" qualifier="· re-verified on change">
           {(id) => (
-            <Tooltip content="Changing the sign-in address needs a re-verification flow the panel does not have yet">
-              <span className="inline-flex w-full">
-                <Input id={id} value={email} readOnly disabled />
-              </span>
-            </Tooltip>
+            <div className="flex items-center gap-2">
+              <Input id={id} value={email} readOnly className="flex-1" />
+              <ChangeEmailDialog current={email} />
+            </div>
           )}
         </Field>
 
@@ -557,5 +563,179 @@ function NotifyChips() {
         ))}
       </div>
     </Tooltip>
+  );
+}
+
+/**
+ * Moving the sign-in address (docs/features/panel-mail.md §3, threat-model
+ * §5.10). Modelled on the change-password dialog, because it is the same kind
+ * of act: re-authenticated, consequential, and it ends other sessions.
+ *
+ * Two things must be true before the address moves, and the dialog says both:
+ * the current password proves this is not a borrowed session, and a link sent
+ * to the new address proves the mailbox is reachable. Neither alone is enough.
+ */
+function ChangeEmailDialog({ current }: { current: string }) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [next, setNext] = useState("");
+  const [password, setPassword] = useState("");
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // A pending change nobody can be told about is a row that only ever expires,
+  // so the control says so before it is pressed rather than failing at submit.
+  const mail = useGetPanelMail();
+  const canSend = mail.data?.configured ?? false;
+
+  const request = useRequestEmailChange({
+    mutation: {
+      onSuccess: () => setSent(true),
+      onError: (e: unknown) => setError(e instanceof ApiError ? e.message : "Could not start the change"),
+    },
+  });
+
+  const confirm = useConfirmEmailChange({
+    mutation: {
+      onSuccess: (res) => {
+        const n = (res as { revoked?: number }).revoked ?? 0;
+        toast.success(n > 0 ? `Address changed · ${n} other session${n === 1 ? "" : "s"} signed out` : "Address changed");
+        void qc.invalidateQueries({ queryKey: getGetMeQueryKey() });
+        void qc.invalidateQueries({ queryKey: getListSessionsQueryKey() });
+        setOpen(false);
+      },
+      onError: (e: unknown) => setError(e instanceof ApiError ? e.message : "Could not finish the change"),
+    },
+  });
+
+  // The confirmation link lands back here carrying its token.
+  const search = new URLSearchParams(typeof window === "undefined" ? "" : window.location.search);
+  const inboundToken = search.get("confirm");
+
+  useEffect(() => {
+    if (!inboundToken) return;
+    setOpen(true);
+    setSent(true);
+  }, [inboundToken]);
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (!o) {
+          setNext("");
+          setPassword("");
+          setSent(false);
+          setError(null);
+        }
+      }}
+    >
+      <DialogTrigger asChild>
+        <Button variant="secondary" size="sm" disabled={!canSend} className="shrink-0">
+          Change
+        </Button>
+      </DialogTrigger>
+      <DialogContent title={inboundToken ? "Confirm your new address" : "Change sign-in address"}>
+        {inboundToken ? (
+          <div className="space-y-4">
+            <p className="text-[13px] leading-relaxed text-text-mid">
+              This link finishes moving your account. Every other signed-in device will be signed out, because the
+              address that can recover this account is changing.
+            </p>
+            {error && (
+              <p role="alert" className="rounded-md border border-danger/35 bg-danger/[0.06] px-3 py-2 text-[13px] text-danger">
+                {error}
+              </p>
+            )}
+            <div className="flex justify-end gap-2.5">
+              <DialogClose asChild>
+                <Button variant="ghost">Not now</Button>
+              </DialogClose>
+              <ActionButton
+                variant="accent"
+                state={confirm.isPending ? "busy" : "idle"}
+                busyLabel="Confirming…"
+                onClick={() => {
+                  setError(null);
+                  confirm.mutate({ data: { token: inboundToken } });
+                }}
+              >
+                Confirm the change
+              </ActionButton>
+            </div>
+          </div>
+        ) : sent ? (
+          <div className="space-y-4">
+            <p className="text-[13px] leading-relaxed text-text-mid">
+              A confirmation link is on its way to <b className="text-text">{next}</b>. Open it while signed in here —
+              the link alone cannot move the account, and it expires in 30 minutes.
+            </p>
+            <p className="text-[12px] leading-relaxed text-text-faint">
+              {current} has been told a change was requested, in case it was not you.
+            </p>
+            <div className="flex justify-end">
+              <DialogClose asChild>
+                <Button variant="primary">Done</Button>
+              </DialogClose>
+            </div>
+          </div>
+        ) : (
+          <form
+            onSubmit={(e: FormEvent) => {
+              e.preventDefault();
+              setError(null);
+              request.mutate({ data: { new_email: next, current_password: password } });
+            }}
+            className="space-y-3"
+          >
+            <Field label="New address" qualifier="· where the confirmation goes">
+              {(id) => (
+                <Input
+                  id={id}
+                  type="email"
+                  required
+                  autoFocus
+                  className="font-sans"
+                  value={next}
+                  onChange={(e) => setNext(e.target.value)}
+                />
+              )}
+            </Field>
+            <Field label="Current password" hint="Proves this is you and not a borrowed session.">
+              {(id) => (
+                <Input
+                  id={id}
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              )}
+            </Field>
+            {error && (
+              <p role="alert" className="rounded-md border border-danger/35 bg-danger/[0.06] px-3 py-2 text-[13px] text-danger">
+                {error}
+              </p>
+            )}
+            <div className="flex justify-end gap-2.5 pt-1">
+              <DialogClose asChild>
+                <Button variant="ghost">Cancel</Button>
+              </DialogClose>
+              <ActionButton
+                type="submit"
+                variant="accent"
+                state={request.isPending ? "busy" : "idle"}
+                busyLabel="Sending…"
+                disabled={next === "" || password === ""}
+              >
+                Send confirmation
+              </ActionButton>
+            </div>
+          </form>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

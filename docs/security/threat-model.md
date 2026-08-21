@@ -206,6 +206,54 @@ Each scenario states the attack, the property that must hold, the controls, and 
 
 **Residual risk.** A determined authenticated attacker can still generate load; rate limiting and per-team quotas (post-v1) bound it. The self-inflicted case — the common one — is designed out.
 
+### 5.10 Mailbox-as-identity: account takeover through an email change
+
+**Attack.** The panel gains an outbound mail transport (**Panel Mail**) and the
+ability to move an account to a new sign-in address ([panel-mail.md](../features/panel-mail.md)).
+That introduces a trust the model did not previously contain: the operator's
+mailbox. Three ways it bites. **(a)** An attacker who has read an operator's
+mailbox — a far softer target than the panel — follows a confirmation link and
+inherits the account, which is A4 and therefore fleet *command*. **(b)** An
+attacker holding only a live session (a stolen laptop, an unlocked browser)
+moves the address to one they control and locks the owner out permanently.
+**(c)** The panel's SMTP credentials become a new asset: they are a sending
+identity, useful for phishing the operator's own team from a trusted address.
+
+**Property that must hold.** No single stolen thing moves an account. A mailbox
+alone, a session alone, or a password alone must each be insufficient — and the
+rightful owner is always told, on the channel they still control.
+
+**Controls.**
+- **Two factors for the move, not one.** The request needs a live session *and*
+  the current password; the confirmation needs a secret that only ever went to
+  the new address *and* a live session. (a) and (b) both fail. `[panel-mail.md §4]`
+- **The old address is always notified**, naming the new one, at request time.
+  This is the only signal left if the session and the password are already lost,
+  and it is what turns a silent takeover into a detected one. `[panel-mail.md §5]`
+- **Other sessions are revoked when the address changes**, on the same reasoning
+  as a password change: the address that can recover the account has moved.
+- **The token is single-use, 30 minutes, and hashed at rest**, spent by an atomic
+  `UPDATE … WHERE consumed_at IS NULL AND expires_at > now()`, with the secret
+  compared in constant time *before* the consume so a wrong guess cannot burn a
+  valid change — the `join_tokens` discipline (§5.3) applied unchanged.
+- **Both routes are `sessionOnly` and rate limited.** An API token can never
+  reach them (§5.8's rule), and the confirm endpoint — a guessing surface — is
+  throttled like `Login`.
+- **SMTP credentials are sealed** with the master key like every other secret,
+  never returned by any route, and absent from errors and logs (§6). A panel
+  compromise already implies them; nothing weaker does.
+- **The confirmation link is built from the panel's own advertised base URL**,
+  never from a request header, so it cannot be pointed at an attacker's host.
+
+**Residual risk.** An attacker holding *both* a live session and the current
+password can still move the address — but that attacker has already won the
+account by §5.8's measure, and the notice to the old address makes it loud
+rather than silent. A compromised mailbox still receives the notice intended to
+warn about it; nothing here defends an operator whose mail *and* panel are both
+in someone else's hands. Password reset by email is deliberately **not** added
+(panel-mail.md §8): it would make the mailbox sufficient on its own, which is
+exactly the property this scenario exists to preserve.
+
 ## 6. Cross-cutting controls (apply everywhere)
 
 - **Secrets never in logs, errors, or API responses** — mask by default (ENGINEERING rule 20). Every log line carries resource IDs, never secret values (rule 4).
