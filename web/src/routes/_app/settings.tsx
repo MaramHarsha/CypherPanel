@@ -3,20 +3,23 @@
 // (ui-principles §4 — nav items compete with each other).
 import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
 import { PageBody, PageHeader } from "@/components/page-header";
-import { useCrumbs } from "@/lib/crumbs";
 
 export const Route = createFileRoute("/_app/settings")({ component: SettingsLayout });
 
 const TABS = [
   { to: "/settings", label: "Account", exact: true },
+  { to: "/settings/profile", label: "Profile", exact: false },
   { to: "/settings/teams", label: "Teams", exact: false },
   { to: "/settings/users", label: "Users", exact: false },
   { to: "/settings/deploy-keys", label: "Deploy keys", exact: false },
   { to: "/settings/backup-targets", label: "Backup targets", exact: false },
+  { to: "/settings/mail", label: "Mail", exact: false },
 ] as const;
 
 function SettingsLayout() {
-  useCrumbs([{ label: "settings" }]);
+  // The trail is declared by each tab, not here: a dateline reading SETTINGS on
+  // the deploy-keys tab names the section rather than the place, and the accent
+  // segment is meant to be where you actually are (canvas 13a).
   return (
     <>
       <PageHeader

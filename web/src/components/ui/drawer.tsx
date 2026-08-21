@@ -1,9 +1,16 @@
 // Right-side drawer (radix dialog): the canonical detail surface — the list
 // stays visible behind it (ui-principles §4: drawers over modals).
 //
-// `tone="ink"` is the live-deploy drawer: an ink panel in BOTH themes, because
-// what it frames is a log pane and log panes are already ink (4e token table).
-// A deploy in progress should feel like looking into the machine.
+// `tone="ink"` is the live-deploy drawer (canvas 1c): an ink panel in BOTH
+// themes, because what it frames is a log pane and log panes are already ink
+// (4e token table). A deploy in progress should feel like looking into the
+// machine. Its head is not a toolbar — the revision line sits inside the
+// panel's own padding and the stage rail's top margin does the separating,
+// so no hairline cuts across the top of the pane.
+//
+// Below `sm` it becomes a bottom sheet (canvas 14c): rounded at the top, led by
+// a grab handle, with the list still visible above it. A full-viewport cover
+// would answer "what is deploying?" by hiding what you were looking at.
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { type ReactNode } from "react";
@@ -25,23 +32,41 @@ export function Drawer({ open, onOpenChange, title, label, children, wide, tone 
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-black/50" />
+        <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-[rgba(22,19,14,0.5)] dark:bg-black/60" />
         <DialogPrimitive.Content
           className={cn(
-            "fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l shadow-2xl focus:outline-none",
-            ink ? "border-pane-border bg-[#16130e] text-[#e9e5dc]" : "border-border bg-surface",
-            wide ? "sm:max-w-2xl" : "sm:max-w-lg",
+            "fixed inset-x-0 bottom-0 z-50 flex max-h-[85dvh] flex-col rounded-t-2xl shadow-sheet focus:outline-none",
+            // From `sm` up it is the right-hand column the canvas draws.
+            "sm:inset-y-0 sm:left-auto sm:right-0 sm:max-h-none sm:rounded-none sm:border-l sm:shadow-modal",
+            // A pane sizes itself against its parent, so the sheet needs a
+            // definite height or the log viewer inside it never scrolls — it
+            // just grows the sheet until the whole thing scrolls instead.
+            ink && "h-[85dvh] sm:h-auto",
+            ink
+              ? "bg-toast text-toast-text sm:border-l-[1.5px] sm:border-border-strong"
+              : "border-border bg-surface",
+            wide ? "sm:w-full sm:max-w-2xl" : "sm:w-full sm:max-w-lg",
           )}
           aria-describedby={undefined}
         >
+          {/* The grab handle only exists on the sheet; above `sm` the panel is
+              a column and there is nothing to drag. */}
+          <div
+            aria-hidden
+            className={cn(
+              "mx-auto mt-2.5 h-1 w-9 shrink-0 rounded-full sm:hidden",
+              ink ? "bg-pane-border" : "bg-border",
+            )}
+          />
           <div
             className={cn(
-              "flex items-center justify-between border-b px-5 py-3.5",
-              ink ? "border-pane-border" : "border-border",
+              "flex items-center justify-between",
+              ink ? "px-6 pb-0 pt-4 sm:pt-[22px]" : "border-b px-5 py-3.5",
+              !ink && "border-border",
             )}
           >
             <DialogPrimitive.Title
-              className={cn("min-w-0 text-[15px] font-semibold", ink ? "text-[#f0ece3]" : "text-text")}
+              className={cn("min-w-0 text-[15px] font-semibold", ink ? "text-toast-text" : "text-text")}
             >
               <span className="sr-only">{label}</span>
               <span aria-hidden>{title}</span>
@@ -51,7 +76,7 @@ export function Drawer({ open, onOpenChange, title, label, children, wide, tone 
               className={cn(
                 "rounded p-1",
                 ink
-                  ? "text-pane-faint hover:bg-white/10 hover:text-[#f0ece3]"
+                  ? "text-toast-dismiss hover:text-toast-text"
                   : "text-text-faint hover:bg-raised hover:text-text",
               )}
             >

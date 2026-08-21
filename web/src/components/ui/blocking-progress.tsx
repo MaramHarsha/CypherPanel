@@ -1,5 +1,5 @@
-// Blocking operations — design canvas `10d`. The popup an operation gets when
-// it runs longer than ~2s AND cannot be cancelled honestly.
+// Blocking operations — design canvas `10d` (dark twin `13an`). The popup an
+// operation gets when it runs longer than ~2s AND cannot be cancelled honestly.
 //
 // Two rules the canvas is emphatic about, both about not lying:
 //
@@ -23,10 +23,13 @@ export interface ProgressStep {
   state: StepState;
 }
 
-const MARK: Record<StepState, { glyph: string; className: string }> = {
-  done: { glyph: "✓", className: "text-status-running" },
-  active: { glyph: "▸", className: "text-status-deploying" },
-  pending: { glyph: "○", className: "text-text-disabled" },
+// Glyph, colour — and the word. Canvas 14g: "every dot carries the word, not
+// just the color", so the mark that is decoration for the eye is spelled out
+// for a screen reader instead of leaving the whole list sounding identical.
+const MARK: Record<StepState, { glyph: string; word: string; className: string }> = {
+  done: { glyph: "✓", word: "Done:", className: "text-status-running" },
+  active: { glyph: "▸", word: "In progress:", className: "text-status-deploying" },
+  pending: { glyph: "○", word: "Waiting:", className: "text-text-disabled" },
 };
 
 export interface BlockingProgressProps {
@@ -52,6 +55,7 @@ export function BlockingProgress({
   noCancelReason,
   onOpenChange,
 }: BlockingProgressProps) {
+  const active = steps.find((s) => s.state === "active");
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -67,21 +71,33 @@ export function BlockingProgress({
         onEscapeKeyDown={(e) => e.preventDefault()}
         onPointerDownOutside={(e) => e.preventDefault()}
       >
-        <ol className="mt-1 font-mono text-[11.5px] leading-[2.1] text-text-mid">
+        {/* Steps are set in the panel's readable secondary body colour, not the
+            label grey: this is the only account of what the machine is doing
+            and it has to survive being read across a desk. */}
+        <ol className="mt-0.5 font-mono text-[11.5px] leading-[2.1] text-text-dim">
           {steps.map((s) => (
             <li key={s.label} className={cn(s.state === "pending" && "text-text-disabled")}>
               <span className={MARK[s.state].className} aria-hidden>
                 {MARK[s.state].glyph}
-              </span>{" "}
-              {s.label}
+              </span>
+              <span className="sr-only">{MARK[s.state].word} </span> {s.label}
             </li>
           ))}
         </ol>
 
+        {/* 14g: a log tail would never stop talking, so the stage summary speaks
+            instead — one polite announcement each time the work moves on. */}
+        <p role="status" className="sr-only">
+          {active?.label ?? ""}
+        </p>
+
         {progress !== undefined && (
           <div
-            className="mt-3 h-1.5 overflow-hidden rounded-full bg-raised"
+            // The track is the quiet in-card rule colour, so an unfilled bar
+            // reads as an empty channel rather than as a second surface.
+            className="mt-3 h-1.5 overflow-hidden rounded-full bg-border-subtle"
             role="progressbar"
+            aria-label={title}
             aria-valuenow={Math.round(progress * 100)}
             aria-valuemin={0}
             aria-valuemax={100}
@@ -93,7 +109,10 @@ export function BlockingProgress({
           </div>
         )}
 
-        <p className="mt-3.5 flex items-start gap-[9px] text-[12px] leading-[1.5] text-text-faint">
+        {/* The canvas centres the ⚠ against the three lines this sentence takes
+            at 430px. Narrower than that it wraps to five or six, where a glyph
+            floating beside the middle of a paragraph reads as a mistake. */}
+        <p className="mt-3.5 flex items-start gap-[9px] text-[12px] leading-[1.5] text-text-faint sm:items-center">
           <span className="flex-none" aria-hidden>
             ⚠
           </span>

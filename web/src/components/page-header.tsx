@@ -25,11 +25,22 @@ interface PageHeaderProps {
 export function PageHeader({ title, badge, actions, hint, below, size = "lg", className }: PageHeaderProps) {
   const crumbs = useCrumbsValue();
   return (
-    <header className={cn("border-b border-border px-4 pt-6 sm:px-8", below ? "pb-0" : "pb-5", className)}>
+    // How much air the band takes above the dateline is set by what sits under
+    // the title: a masthead with nothing below it gets 1a's full 34px, one
+    // carrying a tab strip gives 4px back (1b), and a resource header — whose
+    // title is 28px rather than 34px — starts 26px down (1c).
+    <header
+      className={cn(
+        "border-b border-border px-4 sm:px-8",
+        size === "lg" ? (below ? "pt-[30px]" : "pt-[34px]") : "pt-[26px]",
+        below ? "pb-0" : "pb-[22px]",
+        className,
+      )}
+    >
       <Breadcrumbs crumbs={crumbs} />
       <div className="mt-2 flex flex-wrap items-end gap-x-4 gap-y-3">
-        <div className="flex min-w-0 flex-wrap items-center gap-3">
-          <h1 className={cn(size === "lg" ? "page-title" : "text-[26px] font-bold leading-none tracking-tight")}>
+        <div className={cn("flex min-w-0 flex-wrap items-center", size === "lg" ? "gap-4" : "gap-3.5")}>
+          <h1 className={cn(size === "lg" ? "page-title" : "text-[28px] font-bold leading-none tracking-[-0.03em]")}>
             {title}
           </h1>
           {badge}

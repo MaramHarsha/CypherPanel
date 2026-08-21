@@ -11,7 +11,7 @@ export function DropdownContent({ className, ...props }: ComponentPropsWithoutRe
       <DropdownPrimitive.Content
         sideOffset={4}
         className={cn(
-          "z-50 min-w-40 rounded-md border border-border bg-overlay p-1 shadow-lg",
+          "z-50 min-w-40 rounded-md border border-border bg-overlay p-1 shadow-pop",
           className,
         )}
         {...props}

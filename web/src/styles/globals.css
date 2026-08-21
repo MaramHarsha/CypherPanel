@@ -25,8 +25,19 @@
   --raised: #f4f1ea;
   --overlay: #ffffff;
   --border: #e4dfd5;
+  /* Three weights, not one: hairlines between rows (--border), the quieter
+     rule inside a card (--border-subtle), and the line that makes a control
+     read as a control (--border-input). The canvas keeps them a step apart on
+     purpose — a field bounded by the row-rule colour stops looking fillable. */
+  --border-subtle: #eee9df;
+  --border-input: #d8d3c8;
+  /* The strongest line in the product: the 1.5px rule under the top bar and
+     above a table's first row, the outline pill, the focused field. */
   --border-strong: #16130e;
   --text: #16130e;
+  /* Readable secondary body copy — commit subjects, step lists, rollup counts.
+     A step darker than --text-mid, which is the label grey. */
+  --text-dim: #514b40;
   --text-mid: #6f695e;
   --text-faint: #8a8375;
 
@@ -37,7 +48,7 @@
 
   /* the primary button is an ink pill; it inverts in dark */
   --primary: #16130e;
-  --primary-hover: #2a261d;
+  --primary-hover: #2e2a22;
   --primary-fg: #faf8f4;
 
   /* status vocabulary (ui-principles §5) — each holds 4.5:1 on --bg */
@@ -45,22 +56,46 @@
   --status-deploying: #1b62c4;
   --status-stopped: #8a8375;
   --status-error: #d92d0a;
-  --status-degraded: #9a6700;
+  --status-degraded: #d9a521;
   --status-unknown: #8a8375;
+
+  /* Amber reads as amber on a dot and as mud in a sentence, so degraded gets
+     the same split the error status already has: a marker colour and a text
+     colour. Only the text token is promised 4.5:1 on --bg. */
+  --status-degraded-text: #9a6700;
 
   /* error text needs more depth than the error dot to stay readable */
   --danger: #c1330a;
   --danger-hover: #9c2708;
-  --focus: #1b62c4;
+  /* The focus ring is signal orange in BOTH themes (canvas 14g: "2px orange,
+     3px offset — :focus-visible only, identical in dark"). Blue stays reserved
+     for the deploying status, so a focused row never reads as a state. */
+  --focus: #e8490f;
 
   /* the ramp bottoms out here: a control you cannot press, still legible */
   --text-disabled: #b9b2a4;
+
+  /* A disabled pill is filled, not faded (canvas 10b/13al): the paper-grey fill
+     inverts with the theme, but the label holds one value in both — the same
+     argument the log panes and toasts win on. */
+  --disabled-fg: #a49c8c;
 
   /* log and terminal panes are ink in BOTH themes — they are already ink */
   --pane: #0d0b08;
   --pane-text: #b8b2a6;
   --pane-faint: #5d5850;
+  /* One step above --pane-faint: a stage that has not been reached yet is not
+     as quiet as a timestamp, and 10px type needs the extra contrast. */
+  --pane-dim: #6f695e;
   --pane-border: #3a3630;
+
+  /* Severity inside a pane. A log line that reads as a warning at noon has to
+     read the same way at 2am, so these belong to the pane rather than to the
+     --status-* ramp: they are terminal colours and never invert. */
+  --pane-ok: #4ac26b;
+  --pane-info: #58a6ff;
+  --pane-warn: #e0b23f;
+  --pane-error: #ff6a5e;
 
   /* Toasts are ink in BOTH themes too (canvas 10c). They sit above the page
      rather than in it, so they keep one identity instead of inverting with the
@@ -72,6 +107,15 @@
 
   --font-sans: "Instrument Sans Variable", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Fragment Mono", ui-monospace, "Cascadia Mono", monospace;
+
+  /* Three depths and one lift — everything else is flat, because 1px borders
+     carry the structure here (canvas "Shape & depth"). */
+  --depth-modal: 0 20px 50px rgb(0 0 0 / 0.35);
+  --depth-pop: 0 12px 32px rgb(0 0 0 / 0.25);
+  --depth-card: 0 3px 10px rgb(0 0 0 / 0.08);
+  --depth-lift: 0 2px 8px rgb(0 0 0 / 0.2);
+  /* A bottom sheet casts upward — the only shadow in the system that does. */
+  --depth-sheet: 0 -10px 30px rgb(0 0 0 / 0.3);
 }
 
 .dark {
@@ -80,8 +124,14 @@
   --raised: #23201a;
   --overlay: #1c1914;
   --border: #2a261d;
-  --border-strong: #3a352b;
+  --border-subtle: #262218;
+  --border-input: #3a352b;
+  /* Mirrored, not dimmed: on ink the strongest line is paper. The dark cards
+     draw the top-bar rule, the active tab and the outline pill in #ece7db —
+     #3a352b is the *input* border there, which is what it now serves. */
+  --border-strong: #ece7db;
   --text: #ece7db;
+  --text-dim: #b8b0a0;
   --text-mid: #a49c8c;
   --text-faint: #6f695e;
 
@@ -91,7 +141,7 @@
 
   /* inverted: paper pill, ink text */
   --primary: #ece7db;
-  --primary-hover: #ffffff;
+  --primary-hover: #fffdf4;
   --primary-fg: #14120c;
 
   --status-running: #5cbf7f;
@@ -99,11 +149,14 @@
   --status-stopped: #6f695e;
   --status-error: #ff6a5e;
   --status-degraded: #e0b23f;
+  --status-degraded-text: #e0b23f;
   --status-unknown: #6f695e;
 
-  --danger: #ff6a5e;
-  --danger-hover: #ff8a80;
-  --focus: #5f9fe8;
+  /* Error text lifts off the dot colour here (canvas 13al: a FAILED pill is
+     #ff8a7d text inside a #ff6a5e border). --status-error stays the marker.
+     --focus is deliberately not overridden — the ring is orange in both. */
+  --danger: #ff8a7d;
+  --danger-hover: #ffa79c;
 
   /* Disabled sits above the faint text here, not below it: on ink, going
      darker to say "unavailable" would drop it out of sight entirely. */
@@ -118,8 +171,11 @@
   --color-raised: var(--raised);
   --color-overlay: var(--overlay);
   --color-border: var(--border);
+  --color-border-subtle: var(--border-subtle);
+  --color-border-input: var(--border-input);
   --color-border-strong: var(--border-strong);
   --color-text: var(--text);
+  --color-text-dim: var(--text-dim);
   --color-text-mid: var(--text-mid);
   --color-text-faint: var(--text-faint);
   --color-accent: var(--accent);
@@ -132,10 +188,16 @@
   --color-danger-hover: var(--danger-hover);
   --color-focus: var(--focus);
   --color-text-disabled: var(--text-disabled);
+  --color-disabled-fg: var(--disabled-fg);
   --color-pane: var(--pane);
   --color-pane-text: var(--pane-text);
   --color-pane-faint: var(--pane-faint);
+  --color-pane-dim: var(--pane-dim);
   --color-pane-border: var(--pane-border);
+  --color-pane-ok: var(--pane-ok);
+  --color-pane-info: var(--pane-info);
+  --color-pane-warn: var(--pane-warn);
+  --color-pane-error: var(--pane-error);
   --color-toast: var(--toast);
   --color-toast-text: var(--toast-text);
   --color-toast-faint: var(--toast-faint);
@@ -145,9 +207,15 @@
   --color-status-stopped: var(--status-stopped);
   --color-status-error: var(--status-error);
   --color-status-degraded: var(--status-degraded);
+  --color-status-degraded-text: var(--status-degraded-text);
   --color-status-unknown: var(--status-unknown);
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
+  --shadow-modal: var(--depth-modal);
+  --shadow-pop: var(--depth-pop);
+  --shadow-card: var(--depth-card);
+  --shadow-lift: var(--depth-lift);
+  --shadow-sheet: var(--depth-sheet);
   --radius-sm: 0.25rem;
   --radius-md: 0.375rem;
   --radius-lg: 0.5rem;
@@ -167,7 +235,7 @@
     background: var(--bg);
     color: var(--text);
     font-family: var(--font-sans);
-    font-size: 0.875rem;
+    font-size: 0.84375rem; /* 13.5px — the canvas body size */
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
   }
@@ -176,12 +244,17 @@
   }
   :focus-visible {
     outline: 2px solid var(--focus);
-    outline-offset: 1px;
+    outline-offset: 3px;
   }
-  /* Scrollbars in the ramp, not the browser default chrome. */
+  /* Scrollbars in the ramp, not the browser default chrome. The thumb follows
+     the control border rather than the rule: on ink, --border-strong is paper,
+     and a paper thumb would be the brightest thing on a dark page. */
   * {
     scrollbar-width: thin;
     scrollbar-color: var(--border-strong) transparent;
+  }
+  .dark * {
+    scrollbar-color: var(--border-input) transparent;
   }
 }
 

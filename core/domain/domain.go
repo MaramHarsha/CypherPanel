@@ -76,14 +76,41 @@ func (s Server) Runs() bool {
 // exactly one owner. The account model supports TOTP (threat-model §8 req 7):
 // the sealed seed stays in the store; the domain only surfaces whether it is
 // enrolled.
+// EmailChange is a pending move of an account to a new sign-in address. It is
+// spent once and expires; the address only moves when the new mailbox proves it
+// can receive mail (docs/features/panel-mail.md §3).
+type EmailChange struct {
+	ID         string
+	UserID     string
+	NewEmail   string
+	ExpiresAt  time.Time
+	ConsumedAt *time.Time
+	CreatedAt  time.Time
+}
+
+// Avatar is a profile photo: small, already-encoded image bytes plus the type
+// they were recognised as. Never the type the uploader claimed.
+type Avatar struct {
+	ContentType string
+	Bytes       []byte
+	ETag        string
+	UpdatedAt   time.Time
+}
+
 type User struct {
 	ID           string
 	Email        string
 	PasswordHash string
 	Role         string
-	TOTPEnabled  bool
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// DisplayName is what teammates see; empty means the panel has no name for
+	// this person yet and falls back to the address.
+	DisplayName string
+	// Timezone is an IANA name the UI reads timestamps in. Empty means UTC,
+	// which is what the panel printed before anyone could choose.
+	Timezone    string
+	TOTPEnabled bool
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // JoinToken is a single-use, short-lived enrollment credential bound to one

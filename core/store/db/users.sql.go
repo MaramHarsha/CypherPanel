@@ -23,7 +23,7 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (id, email, password_hash, role)
 VALUES ($1, $2, $3, $4)
-RETURNING id, email, password_hash, role, totp_secret_enc, totp_secret_nonce, created_at, updated_at, totp_enabled
+RETURNING id, email, password_hash, role, totp_secret_enc, totp_secret_nonce, created_at, updated_at, totp_enabled, display_name, timezone
 `
 
 type CreateUserParams struct {
@@ -51,12 +51,14 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.TotpEnabled,
+		&i.DisplayName,
+		&i.Timezone,
 	)
 	return i, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, password_hash, role, totp_secret_enc, totp_secret_nonce, created_at, updated_at, totp_enabled FROM users WHERE email = $1
+SELECT id, email, password_hash, role, totp_secret_enc, totp_secret_nonce, created_at, updated_at, totp_enabled, display_name, timezone FROM users WHERE email = $1
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -72,12 +74,14 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.TotpEnabled,
+		&i.DisplayName,
+		&i.Timezone,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, password_hash, role, totp_secret_enc, totp_secret_nonce, created_at, updated_at, totp_enabled FROM users WHERE id = $1
+SELECT id, email, password_hash, role, totp_secret_enc, totp_secret_nonce, created_at, updated_at, totp_enabled, display_name, timezone FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
@@ -93,6 +97,87 @@ func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.TotpEnabled,
+		&i.DisplayName,
+		&i.Timezone,
+	)
+	return i, err
+}
+
+const updateUserEmail = `-- name: UpdateUserEmail :one
+UPDATE users
+SET email = $2, updated_at = now()
+WHERE id = $1
+RETURNING id, email, password_hash, role, totp_secret_enc, totp_secret_nonce, created_at, updated_at, totp_enabled, display_name, timezone
+`
+
+type UpdateUserEmailParams struct {
+	ID    string
+	Email string
+}
+
+func (q *Queries) UpdateUserEmail(ctx context.Context, arg UpdateUserEmailParams) (User, error) {
+	row := q.db.QueryRow(ctx, updateUserEmail, arg.ID, arg.Email)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.Role,
+		&i.TotpSecretEnc,
+		&i.TotpSecretNonce,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.TotpEnabled,
+		&i.DisplayName,
+		&i.Timezone,
+	)
+	return i, err
+}
+
+const updateUserPassword = `-- name: UpdateUserPassword :exec
+UPDATE users
+SET password_hash = $2, updated_at = now()
+WHERE id = $1
+`
+
+type UpdateUserPasswordParams struct {
+	ID           string
+	PasswordHash string
+}
+
+func (q *Queries) UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error {
+	_, err := q.db.Exec(ctx, updateUserPassword, arg.ID, arg.PasswordHash)
+	return err
+}
+
+const updateUserProfile = `-- name: UpdateUserProfile :one
+UPDATE users
+SET display_name = $2, timezone = $3, updated_at = now()
+WHERE id = $1
+RETURNING id, email, password_hash, role, totp_secret_enc, totp_secret_nonce, created_at, updated_at, totp_enabled, display_name, timezone
+`
+
+type UpdateUserProfileParams struct {
+	ID          string
+	DisplayName string
+	Timezone    string
+}
+
+func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfileParams) (User, error) {
+	row := q.db.QueryRow(ctx, updateUserProfile, arg.ID, arg.DisplayName, arg.Timezone)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.Role,
+		&i.TotpSecretEnc,
+		&i.TotpSecretNonce,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.TotpEnabled,
+		&i.DisplayName,
+		&i.Timezone,
 	)
 	return i, err
 }

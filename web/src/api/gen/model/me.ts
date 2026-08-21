@@ -13,5 +13,9 @@ export interface Me {
   email: string;
   /** Panel role. */
   role: MeRole;
+  /** What teammates see. Empty means the panel falls back to the address. */
+  display_name?: string;
+  /** IANA name the UI reads timestamps in. Empty means UTC. */
+  timezone?: string;
   teams: Team[];
 }

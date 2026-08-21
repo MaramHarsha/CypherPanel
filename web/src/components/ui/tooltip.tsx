@@ -10,7 +10,7 @@ export function Tooltip({ content, children }: { content: ReactNode; children: R
       <TooltipPrimitive.Portal>
         <TooltipPrimitive.Content
           sideOffset={4}
-          className="z-50 rounded border border-border bg-overlay px-2 py-1 text-xs text-text shadow-md"
+          className="z-50 rounded border border-border bg-overlay px-2 py-1 text-xs text-text shadow-pop"
         >
           {content}
         </TooltipPrimitive.Content>

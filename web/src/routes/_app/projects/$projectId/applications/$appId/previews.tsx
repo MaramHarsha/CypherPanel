@@ -1,18 +1,19 @@
 // Application · Previews: environments created from pull requests, each with
 // its TTL. Read-mostly — they're created and destroyed by PR lifecycle events
 // (preview-environments.md); the operator can tear one down early.
+import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ExternalLink, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { useGetApplication } from "@/api/gen/applications/applications";
-import { useDeletePreview, useListPreviews } from "@/api/gen/previews/previews";
+import { getListPreviewsQueryKey, useDeletePreview, useListPreviews } from "@/api/gen/previews/previews";
 import type { Preview } from "@/api/gen/model";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
 import { EmptyState } from "@/components/empty-state";
 import { PageState } from "@/components/page-state";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
-import { relativeTime, absoluteTime } from "@/lib/time";
+import { absoluteTime, timeUntil } from "@/lib/time";
 
 export const Route = createFileRoute("/_app/projects/$projectId/applications/$appId/previews")({
   component: PreviewsTab,
@@ -36,12 +37,14 @@ function PreviewsTab() {
       empty={
         enabled ? (
           <EmptyState
-            title="No open pull requests"
-            hint={`Previews are on. Open a pull request against ${app.data?.source.branch ?? "the default branch"} and a throwaway copy appears here at its own subdomain, then disappears when the PR closes.`}
+            glyph="⎇"
+            title="No preview environments"
+            hint="Open a pull request and one appears here with its own URL — torn down when the PR closes."
           />
         ) : (
           <EmptyState
             emphasis
+            glyph="⎇"
             title="Previews are off for this app"
             hint="Turn them on and every pull request gets a live copy of the app at its own subdomain, torn down automatically when the PR closes."
             action={
@@ -56,7 +59,7 @@ function PreviewsTab() {
       {(list) => (
         <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-surface">
           {list.map((p) => (
-            <PreviewRow key={p.id} preview={p} />
+            <PreviewRow key={p.id} appId={appId} preview={p} />
           ))}
         </ul>
       )}
@@ -64,10 +67,17 @@ function PreviewsTab() {
   );
 }
 
-function PreviewRow({ preview: p }: { preview: Preview }) {
+function PreviewRow({ appId, preview: p }: { appId: string; preview: Preview }) {
+  const qc = useQueryClient();
   const del = useDeletePreview({
     mutation: {
-      onSuccess: () => toast.success(`Preview for PR #${p.pr_number} torn down`),
+      onSuccess: () => {
+        // Nothing else refreshes this list: the live stream carries only
+        // application and database invalidations, so a torn-down preview would
+        // sit here looking alive until the page was reloaded.
+        void qc.invalidateQueries({ queryKey: getListPreviewsQueryKey(appId) });
+        toast.success(`Preview for PR #${p.pr_number} torn down`);
+      },
       onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Could not delete the preview"),
     },
   });
@@ -91,7 +101,7 @@ function PreviewRow({ preview: p }: { preview: Preview }) {
       <span className="flex shrink-0 items-center gap-3">
         {p.expires_at && (
           <span className="mono hidden text-xs text-text-faint sm:inline" title={absoluteTime(p.expires_at)}>
-            expires {relativeTime(p.expires_at)}
+            expires {timeUntil(p.expires_at)}
           </span>
         )}
         <StatusBadge status={p.status} />
@@ -102,7 +112,19 @@ function PreviewRow({ preview: p }: { preview: Preview }) {
             </Button>
           }
           title={`Tear down the PR #${p.pr_number} preview?`}
-          blastRadius="Removes this preview environment and its containers now. It will be recreated if the pull request is updated."
+          // One entry per consequence, not a paragraph (canvas 13af): the last
+          // one is why this confirm is not "Delete forever" — a teardown is a
+          // pause, and the operator should read that before they hesitate.
+          // For the same reason there is no typed-name gate: ui-principles §2
+          // reserves that for what cannot be undone, and the next push to the
+          // PR rebuilds this. The red rule and the enumerated consequences are
+          // the right weight for an action the copy calls reversible.
+          lead="Tearing this preview down:"
+          blastRadius={[
+            "stops its containers and frees the server now",
+            `${p.domain} stops resolving`,
+            "the next push to the pull request builds it again",
+          ]}
           actionLabel="Tear down"
           pending={del.isPending}
           onConfirm={() => del.mutate({ id: p.id })}

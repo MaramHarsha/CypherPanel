@@ -225,3 +225,27 @@ func TestNotifyDeployDetachedFromCanceledContext(t *testing.T) {
 		t.Fatal("delivery was canceled with the caller's context")
 	}
 }
+
+// Every header value is neutralised, not just the subject. A recipient carrying
+// a line break would otherwise end the To header and start another one — which
+// is how one address becomes a Bcc to somewhere else (CWE-640).
+func TestBuildMessageNeutralisesEveryHeader(t *testing.T) {
+	msg := string(buildMessage(
+		"from@example.com\r\nBcc: sneaky-from@evil.test",
+		[]string{"to@example.com\r\nBcc: sneaky-to@evil.test"},
+		"subject\r\nBcc: sneaky-subject@evil.test",
+		"body line one\nbody line two",
+	))
+	headers, body, found := strings.Cut(msg, "\r\n\r\n")
+	if !found {
+		t.Fatal("message has no header/body separator")
+	}
+	for _, line := range strings.Split(headers, "\r\n") {
+		if strings.HasPrefix(strings.ToLower(line), "bcc:") {
+			t.Fatalf("a header was injected: %q", line)
+		}
+	}
+	if !strings.Contains(body, "body line one\r\nbody line two") {
+		t.Fatalf("body newlines were not normalised: %q", body)
+	}
+}

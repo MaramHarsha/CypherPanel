@@ -22,8 +22,10 @@ const TEXT: Record<Status, string> = {
   running: "text-status-running",
   deploying: "text-status-deploying",
   stopped: "text-status-stopped",
-  error: "text-status-error",
-  degraded: "text-status-degraded",
+  // The word darkens where the dot does not: --status-error / --status-degraded
+  // are marker colours, and only their -text twins hold 4.5:1 on paper.
+  error: "text-danger",
+  degraded: "text-status-degraded-text",
   unknown: "text-status-unknown",
 };
 
@@ -33,7 +35,7 @@ const PILL: Record<Status, string> = {
   deploying: "text-status-deploying bg-status-deploying/8 border-status-deploying/25",
   stopped: "text-text-mid bg-text-mid/6 border-border",
   error: "text-danger bg-status-error/9 border-status-error/30",
-  degraded: "text-status-degraded bg-status-degraded/8 border-status-degraded/25",
+  degraded: "text-status-degraded-text bg-status-degraded/8 border-status-degraded/25",
   unknown: "text-text-mid bg-text-mid/6 border-border",
 };
 
@@ -95,7 +97,7 @@ export function StatusPill({
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded border px-2 py-0.5 font-mono text-[11px] font-medium uppercase tracking-wide",
+        "inline-flex items-center rounded border px-2 py-[3px] font-mono text-[11.5px] font-medium uppercase tracking-wide",
         PILL[s],
         className,
       )}

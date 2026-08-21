@@ -99,7 +99,7 @@ func (q *Queries) DeleteSessionForUser(ctx context.Context, arg DeleteSessionFor
 }
 
 const getSessionByTokenHash = `-- name: GetSessionByTokenHash :one
-SELECT sessions.id, sessions.user_id, sessions.token_hash, sessions.expires_at, sessions.created_at, users.id, users.email, users.password_hash, users.role, users.totp_secret_enc, users.totp_secret_nonce, users.created_at, users.updated_at, users.totp_enabled
+SELECT sessions.id, sessions.user_id, sessions.token_hash, sessions.expires_at, sessions.created_at, users.id, users.email, users.password_hash, users.role, users.totp_secret_enc, users.totp_secret_nonce, users.created_at, users.updated_at, users.totp_enabled, users.display_name, users.timezone
 FROM sessions
 JOIN users ON users.id = sessions.user_id
 WHERE sessions.token_hash = $1
@@ -129,6 +129,8 @@ func (q *Queries) GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (
 		&i.User.CreatedAt,
 		&i.User.UpdatedAt,
 		&i.User.TotpEnabled,
+		&i.User.DisplayName,
+		&i.User.Timezone,
 	)
 	return i, err
 }

@@ -1,7 +1,13 @@
-// ⌘K command palette (web-ui-design.md §3): the fast lane for power users —
-// jump to any project or server, or a top-level destination. Fed only by what
-// the caller can already see; invisible to beginners until summoned. Never a
-// requirement for any flow.
+// ⌘K command palette (web-ui-design.md §3): the fast lane for power users — jump
+// to any project or server, or a top-level page. Fed only by what the caller can
+// already see; invisible to beginners until summoned. Never a requirement for
+// any flow.
+//
+// 15a's miss copy names a wider index than this one — applications and
+// databases too — which needs a control-plane search endpoint: both live under
+// an environment, so covering them from here would mean fanning out over every
+// project on every keystroke. Until that endpoint exists the miss says what is
+// actually searched rather than what the canvas promises.
 import { useNavigate } from "@tanstack/react-router";
 import { Boxes, CornerDownLeft, LayoutTemplate, Search, Server, Settings } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -95,10 +101,29 @@ export function CommandPalette() {
     item.go();
   };
 
+  // The miss state's only verb, reachable both by pointer and by ↵ — the
+  // footer promises ↵ opens something, and on a miss this is the something.
+  const createProject = () => {
+    setOpen(false);
+    setQuery("");
+    void navigate({ to: "/projects" });
+  };
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent title="Command palette" className="top-[14%] max-w-lg translate-y-0 p-0">
-        <div className="flex items-center gap-2.5 border-b-[1.5px] border-border-strong px-4">
+      {/* 15a opens the palette straight onto its search row: no heading, no ✕,
+          esc closes — which is what the footer already tells the operator. The
+          child selector zeroes the shared card's masthead padding, which the
+          card keeps even when its title is only an accessible name. The panel
+          stays white while the modals around it went to paper: a palette is a
+          field, not a sheet of stationery. */}
+      <DialogContent
+        title="Command palette"
+        hideTitle
+        hideClose
+        className="top-[14%] max-w-lg translate-y-0 bg-surface [&>div]:p-0"
+      >
+        <div className="flex items-center gap-2.5 border-b-[1.5px] border-border-strong px-[15px] py-3">
           <Search className="h-4 w-4 shrink-0 text-text-faint" aria-hidden />
           <input
             autoFocus
@@ -113,21 +138,26 @@ export function CommandPalette() {
                 setActive((a) => Math.max(a - 1, 0));
               } else if (e.key === "Enter") {
                 e.preventDefault();
-                run(filtered[active]);
+                if (filtered.length === 0) createProject();
+                else run(filtered[active]);
               }
             }}
             placeholder="Jump to a project, server, or page…"
-            className="h-12 w-full bg-transparent font-mono text-sm text-text placeholder:text-text-faint focus:outline-none"
+            className="w-full bg-transparent font-mono text-[13.5px] leading-6 text-text caret-accent placeholder:text-text-faint focus:outline-none"
             aria-label="Search"
           />
         </div>
-        <ul ref={listRef} className="max-h-80 overflow-y-auto p-2" role="listbox">
-          {filtered.length === 0 ? (
-            <li className="px-3 py-8 text-center text-[13px] text-text-faint">
-              No matches — try a project or server name
-            </li>
-          ) : (
-            filtered.map((item, i) => {
+        {/* A listbox with no options is not a listbox: the miss is a sentence
+            and a button, and neither is an `option`, so screen readers that
+            keep only options would announce the miss as silence. It lives
+            outside the list and speaks for itself instead. */}
+        {filtered.length === 0 ? (
+          <div role="status">
+            <NoMatches query={query.trim()} onCreateProject={createProject} />
+          </div>
+        ) : (
+          <ul ref={listRef} className="max-h-80 overflow-y-auto p-2" role="listbox">
+            {filtered.map((item, i) => {
               // Section eyebrows are derived, not hand-placed: the first item
               // of each run of a kind labels the run.
               const heading = item.hint !== filtered[i - 1]?.hint ? SECTION[item.hint] : null;
@@ -155,9 +185,9 @@ export function CommandPalette() {
                   </button>
                 </li>
               );
-            })
-          )}
-        </ul>
+            })}
+          </ul>
+        )}
         <div className="flex gap-4 border-t border-border px-4 py-2 font-mono text-[10.5px] text-text-faint">
           <span>↑↓ navigate</span>
           <span>↵ open</span>
@@ -166,5 +196,32 @@ export function CommandPalette() {
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * 15a, the card the whole feedback layer is named after: never a dead end,
+ * always the next verb. A miss echoes what was typed — so the operator can see
+ * the typo — says what was searched, and offers the one thing that can still be
+ * done from here.
+ *
+ * 15a's own verb is "+ Create application", which the palette cannot honour:
+ * an application is created inside an environment, and the palette has no way
+ * to say which. Projects is where every creation in this product starts, so
+ * that is where the pill goes.
+ */
+function NoMatches({ query, onCreateProject }: { query: string; onCreateProject: () => void }) {
+  return (
+    <div className="px-[15px] py-[22px] text-center">
+      <p className="text-[13px] text-text-dim">{`Nothing matches "${query}"`}</p>
+      <p className="mt-1 text-[12px] text-text-faint">Not a project, server, or page you can see.</p>
+      <button
+        type="button"
+        onClick={onCreateProject}
+        className="mt-3 rounded-full bg-primary px-[15px] py-[7px] text-[12px] font-semibold text-primary-fg hover:bg-primary-hover"
+      >
+        + New project
+      </button>
+    </div>
   );
 }

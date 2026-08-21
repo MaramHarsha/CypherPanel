@@ -1,15 +1,21 @@
-// Application · Overview: what is live, where, and how it's wired — outcomes
-// first, machine detail in mono (web-ui-design.md §4).
-import { createFileRoute } from "@tanstack/react-router";
+// Application · Overview: what is live, where it runs, and how it's wired —
+// outcomes first, machine detail in mono (web-ui-design.md §4). The three fact
+// cards answer those three questions in that order; the two surfaces that own
+// an action of their own — the domain check and the push-to-deploy webhook —
+// sit under them rather than competing with the facts for attention.
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { ExternalLink } from "lucide-react";
 import { useCheckApplicationDomain, useGetApplication } from "@/api/gen/applications/applications";
 import { getHandleGithubWebhookUrl } from "@/api/gen/deployments/deployments";
+import { useGetServer } from "@/api/gen/servers/servers";
+import type { Application } from "@/api/gen/model";
 import { CopyField } from "@/components/copy-field";
 import { Fact, FactCard } from "@/components/fact-card";
 import { PageState } from "@/components/page-state";
-import { StatusDot } from "@/components/status-badge";
-import { Button } from "@/components/ui/button";
+import { StatusBadge, StatusDot } from "@/components/status-badge";
+import { ActionButton } from "@/components/ui/action-button";
 import { relativeTime, absoluteTime } from "@/lib/time";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_app/projects/$projectId/applications/$appId/")({
   component: OverviewTab,
@@ -21,6 +27,27 @@ function shortRev(id: string | null | undefined): string {
   return tail.slice(0, 7);
 }
 
+/** What the rollout gate actually does. A `tcp` or `none` probe never looks at
+ *  `health.path`, so printing the path for those states a check that is not
+ *  running — the one thing an overview must not do. */
+function healthSentence(a: Application): string {
+  const every = `every ${a.health.interval_seconds}s`;
+  switch (a.health.kind ?? "http") {
+    case "none":
+      return "none · container liveness only";
+    case "tcp":
+      return `tcp :${a.runtime.port} ${every}`;
+    default:
+      return `${a.health.path} ${every}`;
+  }
+}
+
+/** How the checkout becomes an image, in one value. */
+function buildSentence(a: Application): string {
+  if (a.build.kind === "static") return "static site · nginx";
+  return `${a.build.kind} · ${a.build.dockerfile_path}`;
+}
+
 function OverviewTab() {
   const { appId } = Route.useParams();
   const app = useGetApplication(appId);
@@ -28,86 +55,163 @@ function OverviewTab() {
   return (
     <PageState query={app} isEmpty={() => false}>
       {(a) => {
-          const webhookUrl = new URL(getHandleGithubWebhookUrl(a.webhook_id), window.location.origin).toString();
-          // Converged means the agent reports serving exactly what we asked
-          // for. That equality is the whole desired-state story (ADR-005), so
-          // it gets a mark rather than being left for the reader to diff.
-          const converged =
-            a.desired_revision_id != null && a.observed_revision_id === a.desired_revision_id;
-          const proto = a.route.https ?? true ? "https" : "http";
+        const webhookUrl = new URL(getHandleGithubWebhookUrl(a.webhook_id), window.location.origin).toString();
+        // Desired and observed are allowed to differ (ADR-005), and the gap is
+        // the only interesting thing about them: while it is open the agent is
+        // still working, and while it is closed there is nothing to say. So the
+        // second revision appears exactly when it disagrees with the first,
+        // rather than sitting there permanently with a mark to decode.
+        const rollingOut =
+          a.desired_revision_id != null && a.observed_revision_id !== a.desired_revision_id;
+        const fromImage = a.source.kind === "image";
+        const ports = a.ports ?? [];
+        const volumes = a.volumes ?? [];
+        const limited = Boolean(a.runtime.cpu_limit || a.runtime.memory_limit_mb);
 
-          return (
-            <div className="space-y-3.5">
-              <div className="grid gap-3.5 lg:grid-cols-2">
-                <FactCard title="Status">
-                  <Fact label="State">
-                    <span className="inline-flex items-center gap-2">
-                      <StatusDot status={a.status} />
-                      <span className="uppercase">{a.status ?? "unknown"}</span>
-                    </span>
+        return (
+          <div className="space-y-3.5">
+            <div className="grid gap-3.5 lg:grid-cols-2">
+              <FactCard title="Status">
+                <Fact label="State">
+                  <StatusBadge status={a.status} />
+                </Fact>
+                <Fact label="Serving revision">{shortRev(a.observed_revision_id)}</Fact>
+                {rollingOut && (
+                  <Fact label="Rolling out">
+                    <span className="text-status-deploying">{shortRev(a.desired_revision_id)}</span>
                   </Fact>
-                  <Fact label="Serving revision">{shortRev(a.observed_revision_id)}</Fact>
-                  <Fact label="Desired revision">
-                    {shortRev(a.desired_revision_id)}
-                    {converged && <span className="ml-1.5 text-status-running">=</span>}
-                  </Fact>
-                  <Fact label="Health check">
-                    {a.health.path} every {a.health.interval_seconds}s
-                  </Fact>
-                  <Fact label="Created">
-                    <span title={absoluteTime(a.created_at)}>{relativeTime(a.created_at)}</span>
-                  </Fact>
-                  {a.status_detail && (
-                    <div className="border-t border-border pt-2.5 text-[12.5px] leading-relaxed text-text-mid">
-                      {a.status_detail}
-                    </div>
+                )}
+                <Fact label="Health check">{healthSentence(a)}</Fact>
+                <Fact label="Created">
+                  <span title={absoluteTime(a.created_at)}>{relativeTime(a.created_at)}</span>
+                </Fact>
+                {a.status_detail && (
+                  // The quiet rule, not the row hairline: this is a note inside
+                  // a card rather than another fact in the list.
+                  <div className="border-t border-border-subtle pt-2.5 text-[12.5px] leading-relaxed text-text-dim">
+                    {a.status_detail}
+                  </div>
+                )}
+              </FactCard>
+
+              <FactCard title="Source">
+                {fromImage ? (
+                  <>
+                    <Fact label="Image">
+                      <span title={a.source.image}>{a.source.image}</span>
+                    </Fact>
+                    <Fact label="Build">no build step · the agent pulls it</Fact>
+                  </>
+                ) : (
+                  <>
+                    <Fact label="Repository">
+                      <span title={a.source.repo}>{a.source.repo}</span>
+                    </Fact>
+                    <Fact label="Branch">{a.source.branch}</Fact>
+                    <Fact label="Build">{buildSentence(a)}</Fact>
+                    <Fact label="Context">{a.build.context}</Fact>
+                  </>
+                )}
+              </FactCard>
+
+              <FactCard title="Where it runs">
+                <Fact label="Server">
+                  <ServerFact serverId={a.runtime.server_id} />
+                </Fact>
+                <Fact label="Container port">{a.runtime.port}</Fact>
+                <Fact label="Domain">
+                  {a.route.domain ? (
+                    <a
+                      href={`${a.route.https ? "https" : "http"}://${a.route.domain}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-accent hover:underline"
+                    >
+                      {a.route.domain} <ExternalLink className="h-3 w-3" aria-hidden />
+                    </a>
+                  ) : (
+                    "internal only"
                   )}
-                </FactCard>
-
-                <FactCard title="Source">
-                  <Fact label="Repository">{a.source.repo}</Fact>
-                  <Fact label="Branch">{a.source.branch}</Fact>
-                  <Fact label="Build">
-                    {a.build.dockerfile_path} · ctx {a.build.context}
+                </Fact>
+                {a.route.domain && a.route.path_prefix !== "/" && (
+                  <Fact label="Path">{a.route.path_prefix}</Fact>
+                )}
+                <Fact label="TLS">
+                  {!a.route.domain ? "—" : a.route.https ? (
+                    <span className="text-status-running">✓ auto-renews</span>
+                  ) : (
+                    <span className="text-status-degraded-text">off · plain http</span>
+                  )}
+                </Fact>
+                {ports.length > 0 && (
+                  <Fact label="Published ports">
+                    {ports.map((p) => `${p.host_port}:${p.container_port}/${p.protocol}`).join(" · ")}
                   </Fact>
-                  <Fact label="Domain">
-                    {a.route.domain ? (
-                      <a
-                        href={`${proto}://${a.route.domain}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 text-accent hover:underline"
-                      >
-                        {a.route.domain} <ExternalLink className="h-3 w-3" aria-hidden />
-                      </a>
-                    ) : (
-                      "internal only"
-                    )}
+                )}
+                {volumes.length > 0 && (
+                  <Fact label="Volumes">{volumes.map((v) => `${v.name} → ${v.path}`).join(" · ")}</Fact>
+                )}
+                {limited && (
+                  <Fact label="Limits">
+                    {[
+                      a.runtime.cpu_limit ? `${a.runtime.cpu_limit} cpu` : null,
+                      a.runtime.memory_limit_mb ? `${a.runtime.memory_limit_mb} MB` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
                   </Fact>
-                  <Fact label="TLS">
-                    {a.route.domain && (a.route.https ?? true) ? (
-                      <span className="text-status-running">✓ auto-renews</span>
-                    ) : (
-                      "—"
-                    )}
-                  </Fact>
-                </FactCard>
-              </div>
+                )}
+              </FactCard>
+            </div>
 
-              {a.route.domain && <DomainCheck appId={appId} />}
+            {a.route.domain && <DomainCheck appId={appId} domain={a.route.domain} />}
 
-              <FactCard title="Push to deploy">
-                <p className="text-[12.5px] leading-relaxed text-text-mid">
+            {/* An image-source app has no repository to hang a webhook on, and
+                telling its operator to open GitHub → Settings → Webhooks is a
+                dead end. It gets the sentence that is true for it instead:
+                what a deploy actually does. */}
+            {fromImage ? (
+              <section className="rounded-lg border border-border bg-surface p-4.5">
+                <h2 className="eyebrow">Deploying</h2>
+                <p className="mt-3 max-w-2xl text-[12.5px] leading-relaxed text-text-dim">
+                  No build runs — the agent pulls the image and rolls it out. A digest is fetched once and never
+                  changes; a tag is re-fetched every deploy, so redeploying a tag that has moved runs the new
+                  image.
+                </p>
+              </section>
+            ) : (
+              <section className="rounded-lg border border-border bg-surface p-4.5">
+                <h2 className="eyebrow">Push to deploy</h2>
+                <p className="mt-3 max-w-2xl text-[12.5px] leading-relaxed text-text-dim">
                   Add this webhook to the GitHub repository (Settings → Webhooks, content type JSON) and every push
                   to <span className="font-mono text-[12px] text-text">{a.source.branch}</span> deploys
                   automatically.
                 </p>
-                <CopyField value={webhookUrl} className="mt-1" />
-              </FactCard>
-            </div>
-          );
+                <CopyField value={webhookUrl} className="mt-2.5" />
+              </section>
+            )}
+          </div>
+        );
       }}
     </PageState>
+  );
+}
+
+/** The host this app is placed on, by its name rather than its `srv_…` id —
+ *  and as a link, because "which machine is this on?" is almost always
+ *  followed by "how is that machine doing?". */
+function ServerFact({ serverId }: { serverId: string }) {
+  const server = useGetServer(serverId, { query: { retry: false } });
+  // The id is the fallback, not the first draft: printing `srv_01J…` for a
+  // frame and then swapping it for a name is a flicker the canvas never has
+  // (canvas 10e).
+  if (server.isPending) {
+    return <span aria-hidden className="inline-block h-3 w-[90px] animate-pulse rounded bg-border-subtle" />;
+  }
+  return (
+    <Link to="/servers/$serverId" params={{ serverId }} className="hover:text-accent">
+      {server.data?.name ?? serverId}
+    </Link>
   );
 }
 
@@ -115,39 +219,64 @@ function OverviewTab() {
  *  and still be answered by another program on port 80, which nothing in the
  *  panel could see before. Checked on demand rather than polled: it makes an
  *  outbound request to the public internet. */
-function DomainCheck({ appId }: { appId: string }) {
+function DomainCheck({ appId, domain }: { appId: string; domain: string }) {
   const check = useCheckApplicationDomain(appId, { query: { enabled: false, retry: false } });
   const r = check.data;
+  const ok = r?.verdict === "ok";
+  const answered = Boolean(r) || check.isError;
 
-  const tone =
-    r?.verdict === "ok"
+  const tone = check.isError
+    ? "border-status-error/40 bg-status-error/[0.05]"
+    : ok
       ? "border-status-running/40 bg-status-running/[0.06]"
       : r
         ? "border-status-degraded/40 bg-status-degraded/[0.07]"
         : "border-border bg-surface";
 
   return (
-    <section className={`rounded-lg border p-4.5 ${tone}`}>
+    <section className={cn("rounded-lg border p-4.5", tone)}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="eyebrow">Domain</h2>
-        <Button size="sm" disabled={check.isFetching} onClick={() => void check.refetch()}>
-          {check.isFetching ? "Checking…" : "Check domain"}
-        </Button>
+        <ActionButton
+          size="sm"
+          state={check.isFetching ? "busy" : "idle"}
+          busyLabel="Checking…"
+          onClick={() => void check.refetch()}
+        >
+          {answered ? "Check again" : "Check domain"}
+        </ActionButton>
       </div>
-      {r ? (
+      {check.isError ? (
+        // The check itself failing is a third outcome, and saying nothing about
+        // it leaves the last verdict on screen as though it were current
+        // (ui-principles §1, §10).
+        <p className="mt-3 text-[13px] leading-relaxed text-danger">
+          The check couldn&rsquo;t run. The panel makes this request itself, so it needs outbound internet access
+          from the CypherPanel host — try again once it has it.
+        </p>
+      ) : r ? (
         <div className="mt-3 space-y-1.5">
-          <p className="text-[13px] leading-relaxed text-text">{r.summary}</p>
-          {r.remedy && <p className="text-[12.5px] leading-relaxed text-text-mid">{r.remedy}</p>}
-          {r.resolved_ips.length > 0 && (
-            <p className="font-mono text-[11.5px] text-text-faint">
-              resolves to {r.resolved_ips.join(", ")}
-              {r.http_status ? ` · answered ${r.http_status}` : ""}
+          <p className="flex items-start gap-2.5 text-[13px] leading-relaxed text-text">
+            <StatusDot status={ok ? "running" : "degraded"} className="mt-[5px]" />
+            {r.summary}
+          </p>
+          {r.remedy && <p className="pl-[18px] text-[12.5px] leading-relaxed text-text-dim">{r.remedy}</p>}
+          {(r.resolved_ips.length > 0 || r.http_status || r.served_by) && (
+            <p className="pl-[18px] font-mono text-[11.5px] text-text-faint">
+              {[
+                r.resolved_ips.length > 0 ? `resolves to ${r.resolved_ips.join(", ")}` : null,
+                r.http_status ? `answered ${r.http_status}` : null,
+                r.served_by ? `served by ${r.served_by}` : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
             </p>
           )}
         </div>
       ) : (
-        <p className="mt-3 text-[12.5px] leading-relaxed text-text-mid">
-          Confirms the domain resolves here and that this app — not something else on the server — is what answers.
+        <p className="mt-3 text-[12.5px] leading-relaxed text-text-dim">
+          Confirms that <span className="font-mono text-[12px] text-text">{domain}</span> resolves here and that
+          this app — not something else on the server — is what answers.
         </p>
       )}
     </section>

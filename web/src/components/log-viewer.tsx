@@ -9,7 +9,58 @@ import { useSSE } from "@/lib/use-sse";
 
 const MAX_LINES = 5000;
 
-export function LogViewer({ url, className }: { url: string; className?: string }) {
+// A log pane earns its density by giving the timestamp its own colour column
+// and the severity word its own colour, so the eye can skip whichever it does
+// not need. Nothing else on the line is touched: a guess painted red would be
+// worse than plain text, so anything unrecognised stays --pane-text.
+const TIMESTAMP = /^(?:\d{4}-\d{2}-\d{2}[T ])?\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?/;
+
+const SEVERITY: Record<string, string> = {
+  ok: "text-pane-ok",
+  ready: "text-pane-ok",
+  healthy: "text-pane-ok",
+  info: "text-pane-info",
+  warn: "text-pane-warn",
+  warning: "text-pane-warn",
+  err: "text-pane-error",
+  error: "text-pane-error",
+  fatal: "text-pane-error",
+  panic: "text-pane-error",
+};
+
+/** One line split into its coloured parts; `severity` is "" when unrecognised. */
+function parseLine(line: string): { stamp: string; severity: string; severityClass: string; rest: string } {
+  const stamp = TIMESTAMP.exec(line)?.[0] ?? "";
+  const after = line.slice(stamp.length);
+  // The severity word is only ever the first token after the stamp — matching
+  // it anywhere would colour the word "error" inside a message that reports one.
+  const token = /^(\s*)\[?([A-Za-z]+)\]?/.exec(after);
+  const cls = token ? SEVERITY[token[2]!.toLowerCase()] : undefined;
+  if (!token || !cls) return { stamp, severity: "", severityClass: "", rest: after };
+  return {
+    stamp: stamp + token[1],
+    severity: token[0].slice(token[1]!.length),
+    severityClass: cls,
+    rest: after.slice(token[0].length),
+  };
+}
+
+export function LogViewer({
+  url,
+  live = false,
+  className,
+}: {
+  url: string;
+  /**
+   * True while the thing being logged can still emit — a running deployment, a
+   * container tail. cypherd never closes a replay stream (it parks on the
+   * context), so the transport says "open" for a build that finished yesterday:
+   * only the caller knows whether more output is coming, and until it says so
+   * the pane does not promise any.
+   */
+  live?: boolean;
+  className?: string;
+}) {
   const [lines, setLines] = useState<string[]>([]);
   const [wrap, setWrap] = useState(false);
   const [follow, setFollow] = useState(true);
@@ -50,7 +101,7 @@ export function LogViewer({ url, className }: { url: string; className?: string 
         className,
       )}
     >
-      <SSEBanner status={status} />
+      <SSEBanner status={status} tone="ink" />
       <div className="flex items-center justify-between border-b border-pane-border px-2.5 py-1">
         <span className="eyebrow text-pane-faint">log</span>
         <div className="flex items-center gap-1">
@@ -85,16 +136,38 @@ export function LogViewer({ url, className }: { url: string; className?: string 
         aria-live="off"
       >
         {lines.length === 0 ? (
-          <p className="font-mono text-xs text-pane-faint">Waiting for output…</p>
+          <p className="font-mono text-[11px] text-pane-faint">Waiting for output…</p>
         ) : (
-          <pre
+          <div
             className={cn(
-              "font-mono text-[11.5px] leading-[1.75] text-pane-text",
-              wrap ? "whitespace-pre-wrap break-all" : "whitespace-pre",
+              "min-w-full font-mono text-[11px] leading-[1.75] text-pane-text",
+              wrap ? "whitespace-pre-wrap break-all" : "w-fit whitespace-pre",
             )}
           >
-            {lines.join("\n")}
-          </pre>
+            {lines.map((line, i) => {
+              const { stamp, severity, severityClass, rest } = parseLine(line);
+              const last = i === lines.length - 1;
+              return (
+                // min-h keeps a blank line blank rather than collapsing it —
+                // spacing in build output is often the only paragraphing it has.
+                <div key={i} className="min-h-[1.75em]">
+                  {stamp && <span className="text-pane-faint">{stamp}</span>}
+                  {severity && <span className={severityClass}>{severity}</span>}
+                  {rest}
+                  {/* The caret belongs to a stream that is still open AND to a
+                      source that can still write. On a finished deploy's replay
+                      it would promise output that will never arrive
+                      (ui-principles §10). */}
+                  {last && live && status === "open" && (
+                    <span
+                      aria-hidden
+                      className="ml-1 inline-block h-[11px] w-[6px] translate-y-[2px] bg-pane-ok"
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
     </div>

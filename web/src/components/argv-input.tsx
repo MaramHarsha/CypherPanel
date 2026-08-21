@@ -1,9 +1,17 @@
 // ArgvInput — a scheduled-task command as an argv list, mirroring ADR-011:
 // never a shell-string textbox (each token is passed straight to exec, so no
 // shell parsing, no injection surface).
-import { Plus, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+//
+// Canvas 9c draws that as one field holding inline mono chips — `npm` `run`
+// `migrate` — rather than a numbered stack of inputs. The chips ARE the point:
+// the boundary between two arguments is a thing you can see, which is exactly
+// what a shell string hides. The field's label carries the explanation
+// ("· argv, never a shell string"), so no paragraph is needed under it.
+//
+// Each chip stays a real input with a real accessible name: the canvas is a
+// static mockup, and it does not get to cost a keyboard user the ability to
+// edit or remove an argument.
+import { X } from "lucide-react";
 
 interface ArgvInputProps {
   value: string[];
@@ -18,39 +26,51 @@ export function ArgvInput({ value, onChange }: ArgvInputProps) {
   const remove = (i: number) => onChange(args.filter((_, idx) => idx !== i));
 
   return (
-    <div className="space-y-1.5">
-      {args.map((arg, i) => (
-        <div key={i} className="flex items-center gap-2">
-          <span className="mono w-6 shrink-0 text-right text-xs text-text-faint">{i}</span>
-          <Input
-            value={arg}
-            onChange={(e) => set(i, e.target.value)}
-            className="mono"
-            placeholder={i === 0 ? "command" : "argument"}
-            autoComplete="off"
-            spellCheck={false}
-            aria-label={`Argument ${i}`}
-          />
-          {args.length > 1 && (
-            <button
-              type="button"
-              aria-label={`Remove argument ${i}`}
-              onClick={() => remove(i)}
-              className="rounded p-1 text-text-faint hover:bg-raised hover:text-text"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </div>
-      ))}
-      <Button type="button" size="sm" variant="ghost" onClick={add}>
-        <Plus className="h-3.5 w-3.5" /> Add argument
-      </Button>
-      <p className="text-xs text-text-faint">
-        Each box is one argument passed directly to the program — no shell, so quoting and{" "}
-        <span className="mono">{"&&"}</span> don&apos;t apply. Example: <span className="mono">rails</span> ·{" "}
-        <span className="mono">db:migrate</span>.
-      </p>
+    <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-border-input bg-surface px-2.5 py-2">
+      {args.map((arg, i) => {
+        const placeholder = i === 0 ? "command" : "argument";
+        return (
+          // The ring is the chip's, not the bare input's: an argument is a
+          // token you can see the edges of, so the focused edge should be that
+          // same edge. It stays keyboard-only (`:focus-visible`) and stays the
+          // system's one ring — 2px orange at 3px offset (canvas 14g).
+          <span
+            key={i}
+            className="inline-flex items-center gap-1 rounded-[4px] bg-text/[0.06] px-2 py-[3px] font-mono text-[12px] text-text has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-[3px] has-[input:focus-visible]:outline-focus"
+          >
+            <input
+              value={arg}
+              onChange={(e) => set(i, e.target.value)}
+              placeholder={placeholder}
+              autoComplete="off"
+              spellCheck={false}
+              aria-label={`Argument ${i}`}
+              // Mono, so a character count is a width: the chip grows with the
+              // token instead of reserving a full row for a three-letter verb.
+              style={{ width: `${Math.max(arg.length, placeholder.length, 3)}ch` }}
+              // Ringless on purpose — the chip around it takes the ring.
+              className="bg-transparent text-text outline-none placeholder:text-text-disabled"
+            />
+            {args.length > 1 && (
+              <button
+                type="button"
+                aria-label={`Remove argument ${i}`}
+                onClick={() => remove(i)}
+                className="-mr-0.5 rounded-[3px] text-text-faint hover:text-text"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </span>
+        );
+      })}
+      <button
+        type="button"
+        onClick={add}
+        className="rounded-[4px] px-1 py-[3px] font-mono text-[12px] text-text-disabled hover:text-text-mid"
+      >
+        add arg…
+      </button>
     </div>
   );
 }

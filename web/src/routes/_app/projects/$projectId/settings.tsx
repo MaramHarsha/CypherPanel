@@ -13,7 +13,12 @@ import {
   useListNotifiers,
   useTestNotifier,
 } from "@/api/gen/notifiers/notifiers";
-import { useDeleteProject, useGetProject } from "@/api/gen/projects/projects";
+import {
+  getGetProjectQueryKey,
+  getListProjectsQueryKey,
+  useDeleteProject,
+  useGetProject,
+} from "@/api/gen/projects/projects";
 import type { Notifier } from "@/api/gen/model";
 import { ApiError } from "@/api/client";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
@@ -44,8 +49,10 @@ function ProjectSettings() {
   const project = useGetProject(projectId);
   const notifiers = useListNotifiers(projectId);
 
+  // Canvas 12c datelines this page from the project, not from the projects
+  // list: the trail names where you are inside the project, and PROJECTS is
+  // already one click away in the top bar.
   useCrumbs([
-    { label: "projects", to: "/projects" },
     { label: project.data?.project.name ?? projectId, to: `/projects/${projectId}` },
     { label: "settings" },
   ]);
@@ -91,11 +98,18 @@ function ProjectSettings() {
  *  instruction, not a notification. */
 function DangerZone({ projectId, name }: { projectId: string; name: string }) {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const [blocked, setBlocked] = useState<string | null>(null);
 
   const del = useDeleteProject({
     mutation: {
       onSuccess: () => {
+        // /projects renders from cache, and nothing streams project changes
+        // in — so the row we just deleted would still be sitting there when we
+        // land. Drop both the list and this project's own entry first, then
+        // navigate, so the page we arrive at is one we can vouch for.
+        void qc.invalidateQueries({ queryKey: getListProjectsQueryKey() });
+        void qc.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
         toast.success(`Deleted ${name}`);
         void navigate({ to: "/projects" });
       },
@@ -110,12 +124,14 @@ function DangerZone({ projectId, name }: { projectId: string; name: string }) {
   });
 
   return (
-    <section className="mt-8 rounded-lg border border-danger/35 p-4.5">
-      <h2 className="eyebrow text-danger">Danger zone</h2>
-      <div className="mt-3.5 flex flex-wrap items-center justify-between gap-3">
+    // 12c draws this as one plain white card behind a heavy red rule — no
+    // eyebrow: "Delete this project" already says which zone this is, and a
+    // second heading only pushes the sentence that matters further down.
+    <section className="mt-8 rounded-lg border-[1.5px] border-status-error/40 bg-surface px-4 py-3.5">
+      <div className="flex flex-wrap items-center justify-between gap-3.5">
         <div className="min-w-0">
-          <p className="text-[13px] font-semibold text-text">Delete this project</p>
-          <p className="mt-0.5 text-[12.5px] leading-relaxed text-text-mid">
+          <p className="text-[13.5px] font-semibold text-text">Delete this project</p>
+          <p className="mt-[3px] text-xs leading-relaxed text-text-mid">
             Removes the project and its environments. Delete its applications and databases first.
           </p>
         </div>

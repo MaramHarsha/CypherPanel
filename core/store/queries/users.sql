@@ -11,3 +11,20 @@ SELECT * FROM users WHERE id = $1;
 
 -- name: CountUsers :one
 SELECT count(*) FROM users;
+
+-- name: UpdateUserProfile :one
+UPDATE users
+SET display_name = $2, timezone = $3, updated_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: UpdateUserPassword :exec
+UPDATE users
+SET password_hash = $2, updated_at = now()
+WHERE id = $1;
+
+-- name: UpdateUserEmail :one
+UPDATE users
+SET email = $2, updated_at = now()
+WHERE id = $1
+RETURNING *;

@@ -19,7 +19,6 @@ import { ConfirmDestructive } from "@/components/confirm-destructive";
 import { CronField } from "@/components/cron-field";
 import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
-import { InlineHint } from "@/components/inline-hint";
 import { PageState } from "@/components/page-state";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
@@ -100,7 +99,15 @@ function TaskCard({ appId, task }: { appId: string; task: ScheduledTask }) {
               </Button>
             }
             title={`Delete "${task.name}"?`}
-            blastRadius="Stops this scheduled task. Runs already recorded are kept in history until they age out."
+            // The list reads as consequences rather than removals, because the
+            // second one is a survival — the canvas keeps a survival in the
+            // entry it qualifies instead of dropping it after the box (13af).
+            lead="Deleting this task:"
+            blastRadius={[
+              "nothing runs on this schedule again",
+              "runs already recorded stay in history until they age out",
+            ]}
+            confirmName={task.name}
             actionLabel="Delete task"
             pending={del.isPending}
             onConfirm={() => del.mutate({ id: task.id })}
@@ -190,20 +197,36 @@ function NewTaskDialog({ appId, primary }: { appId: string; primary?: boolean })
           <Plus className="h-3.5 w-3.5" /> New task
         </Button>
       </DialogTrigger>
-      <DialogContent title="Schedule a task" description="CypherPanel runs this command inside the app's container on the schedule you set.">
+      {/* No description under the title: canvas 9c puts the one thing that
+          needs saying — where the command runs — in the footer note, next to
+          the button that commits to it. */}
+      <DialogContent title="New scheduled task">
         <form onSubmit={submit} className="space-y-4">
           <Field label="Name">
-            {(id) => <Input id={id} required autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="nightly-migrate" />}
+            {(id) => (
+              <Input
+                id={id}
+                required
+                autoFocus
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="nightly-migrate"
+                className="font-sans"
+              />
+            )}
           </Field>
+          {/* CronField and ArgvInput each own their control's accessible name,
+              so these are the label's text without the htmlFor Field gives. */}
           <div>
-            <p className="mb-1 text-[13px] font-medium text-text">Schedule</p>
-            <InlineHint>When to run, as a cron expression.</InlineHint>
-            <div className="mt-1.5">
-              <CronField value={schedule} onChange={setSchedule} />
-            </div>
+            <p className="mb-[5px] text-[12px] font-semibold text-text">
+              Schedule <span className="font-normal text-text-faint">· cron, server time UTC</span>
+            </p>
+            <CronField value={schedule} onChange={setSchedule} />
           </div>
           <div>
-            <p className="mb-1 text-[13px] font-medium text-text">Command</p>
+            <p className="mb-[5px] text-[12px] font-semibold text-text">
+              Command <span className="font-normal text-text-faint">· argv, never a shell string</span>
+            </p>
             <ArgvInput value={command} onChange={setCommand} />
           </div>
           {error && (
@@ -211,7 +234,8 @@ function NewTaskDialog({ appId, primary }: { appId: string; primary?: boolean })
               {error}
             </p>
           )}
-          <div className="flex justify-end gap-2">
+          <div className="flex items-center gap-2.5">
+            <span className="mr-auto text-[11.5px] text-text-faint">runs in the app's own container</span>
             <DialogClose asChild>
               <Button variant="ghost">Cancel</Button>
             </DialogClose>

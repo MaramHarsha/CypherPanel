@@ -46,6 +46,9 @@ const (
 
 	// V1: Two-factor auth recovery codes (docs/features/two-factor-auth.md).
 	PrefixRecoveryCode = "rc"
+
+	// V1: Panel mail and email changes (docs/features/panel-mail.md).
+	PrefixEmailChange = "ec"
 )
 
 // New returns a prefixed, URL-safe, collision-resistant identifier such as

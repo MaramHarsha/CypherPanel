@@ -33,6 +33,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/enroll"
 	"github.com/MaramHarsha/cypherpanel/core/guard"
 	"github.com/MaramHarsha/cypherpanel/core/identity"
+	"github.com/MaramHarsha/cypherpanel/core/mail"
 	"github.com/MaramHarsha/cypherpanel/core/notify"
 	"github.com/MaramHarsha/cypherpanel/core/onboarding"
 	"github.com/MaramHarsha/cypherpanel/core/previews"
@@ -353,6 +354,7 @@ func run(log *slog.Logger) error {
 		ScheduledTasks:  scheduledTaskSvc,
 		Templates:       templateSvc,
 		Teams:           teamSvc,
+		Mail:            mail.New(st, box),
 		Scheduler:       sched,
 		Deployments:     st,
 		Opener:          box,

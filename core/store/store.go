@@ -499,6 +499,150 @@ type TOTPSecret struct {
 	Enabled bool
 }
 
+// SetUserAvatar replaces the caller's photo. The bytes arrive already validated
+// — the store's job is the row, not the policy.
+func (s *Store) SetUserAvatar(ctx context.Context, userID, contentType string, data []byte, etag string) error {
+	if err := s.q.SetUserAvatar(ctx, db.SetUserAvatarParams{UserID: userID, ContentType: contentType, Bytes: data, Etag: etag}); err != nil {
+		return fmt.Errorf("store: setting avatar: %w", err)
+	}
+	return nil
+}
+
+// GetUserAvatar returns a user's photo, or ErrNotFound when they have none.
+func (s *Store) GetUserAvatar(ctx context.Context, userID string) (domain.Avatar, error) {
+	row, err := s.q.GetUserAvatar(ctx, userID)
+	if err != nil {
+		return domain.Avatar{}, wrap("getting avatar", err)
+	}
+	return domain.Avatar{ContentType: row.ContentType, Bytes: row.Bytes, ETag: row.Etag, UpdatedAt: row.UpdatedAt.Time}, nil
+}
+
+// DeleteUserAvatar removes the photo; the initials come back in its place.
+func (s *Store) DeleteUserAvatar(ctx context.Context, userID string) error {
+	if err := s.q.DeleteUserAvatar(ctx, userID); err != nil {
+		return fmt.Errorf("store: deleting avatar: %w", err)
+	}
+	return nil
+}
+
+// ─── panel mail (docs/features/panel-mail.md) ───────────────────────────────
+
+// GetPanelMail returns the sealed SMTP configuration, or ErrNotFound when the
+// panel has never been given one.
+func (s *Store) GetPanelMail(ctx context.Context) (ct, nonce []byte, updatedAt time.Time, err error) {
+	row, err := s.q.GetPanelMail(ctx)
+	if err != nil {
+		return nil, nil, time.Time{}, wrap("getting panel mail", err)
+	}
+	return row.ConfigCt, row.ConfigNonce, row.UpdatedAt.Time, nil
+}
+
+// SetPanelMail replaces the configuration wholesale — there is no partial
+// update, for the reason notifiers refuse one: half-writing a credential.
+func (s *Store) SetPanelMail(ctx context.Context, ct, nonce []byte) error {
+	if err := s.q.SetPanelMail(ctx, db.SetPanelMailParams{ConfigCt: ct, ConfigNonce: nonce}); err != nil {
+		return fmt.Errorf("store: setting panel mail: %w", err)
+	}
+	return nil
+}
+
+// DeletePanelMail forgets the configuration; the panel can no longer send.
+func (s *Store) DeletePanelMail(ctx context.Context) error {
+	if err := s.q.DeletePanelMail(ctx); err != nil {
+		return fmt.Errorf("store: deleting panel mail: %w", err)
+	}
+	return nil
+}
+
+// ─── email changes ──────────────────────────────────────────────────────────
+
+// CreateEmailChange records a pending move and the hash of the secret that will
+// authorise it.
+func (s *Store) CreateEmailChange(ctx context.Context, id, userID, newEmail string, tokenHash []byte, expiresAt time.Time) (domain.EmailChange, error) {
+	row, err := s.q.CreateEmailChange(ctx, db.CreateEmailChangeParams{
+		ID: id, UserID: userID, NewEmail: newEmail, TokenHash: tokenHash,
+		ExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
+	})
+	if err != nil {
+		return domain.EmailChange{}, wrapCreate("creating email change", err)
+	}
+	return emailChangeFromRow(row), nil
+}
+
+// EmailChangeTokenHash returns the stored hash for a pending change, so the
+// caller can compare the presented secret before spending anything.
+func (s *Store) EmailChangeTokenHash(ctx context.Context, id string) (domain.EmailChange, []byte, error) {
+	row, err := s.q.GetEmailChange(ctx, id)
+	if err != nil {
+		return domain.EmailChange{}, nil, wrap("getting email change", err)
+	}
+	return emailChangeFromRow(row), row.TokenHash, nil
+}
+
+// ConsumeEmailChange spends the change. No row back means it was already used or
+// has expired — the only race-free answer, which is why it is one statement.
+func (s *Store) ConsumeEmailChange(ctx context.Context, id string) (domain.EmailChange, error) {
+	row, err := s.q.ConsumeEmailChange(ctx, id)
+	if err != nil {
+		return domain.EmailChange{}, wrap("consuming email change", err)
+	}
+	return emailChangeFromRow(row), nil
+}
+
+func emailChangeFromRow(r db.EmailChange) domain.EmailChange {
+	ec := domain.EmailChange{
+		ID: r.ID, UserID: r.UserID, NewEmail: r.NewEmail,
+		ExpiresAt: r.ExpiresAt.Time, CreatedAt: r.CreatedAt.Time,
+	}
+	if r.ConsumedAt.Valid {
+		t := r.ConsumedAt.Time
+		ec.ConsumedAt = &t
+	}
+	return ec
+}
+
+// GetUserByID loads one account. Used where the caller already holds an id and
+// must re-read the row — proving a current password, for instance, where the
+// session's cached copy is not enough.
+func (s *Store) GetUserByID(ctx context.Context, id string) (domain.User, error) {
+	row, err := s.q.GetUserByID(ctx, id)
+	if err != nil {
+		return domain.User{}, wrap("getting user by id", err)
+	}
+	return userFromRow(row), nil
+}
+
+// UpdateUserEmail moves an account to a new sign-in address. The uniqueness
+// constraint on users.email is the last word here, so a race between two
+// changes resolves in the database rather than in a check-then-write.
+func (s *Store) UpdateUserEmail(ctx context.Context, userID, email string) (domain.User, error) {
+	row, err := s.q.UpdateUserEmail(ctx, db.UpdateUserEmailParams{ID: userID, Email: email})
+	if err != nil {
+		return domain.User{}, wrapUpdate("updating email", err)
+	}
+	return userFromRow(row), nil
+}
+
+// UpdateUserProfile writes the fields a person sets about themselves. Both are
+// stored verbatim after the caller has validated them: the store's job is the
+// row, not the policy.
+func (s *Store) UpdateUserProfile(ctx context.Context, userID, displayName, timezone string) (domain.User, error) {
+	row, err := s.q.UpdateUserProfile(ctx, db.UpdateUserProfileParams{ID: userID, DisplayName: displayName, Timezone: timezone})
+	if err != nil {
+		return domain.User{}, wrapUpdate("updating profile", err)
+	}
+	return userFromRow(row), nil
+}
+
+// UpdateUserPassword replaces the stored hash. Revoking the sessions that were
+// opened with the old password is the caller's decision, not this one's.
+func (s *Store) UpdateUserPassword(ctx context.Context, userID, passwordHash string) error {
+	if err := s.q.UpdateUserPassword(ctx, db.UpdateUserPasswordParams{ID: userID, PasswordHash: passwordHash}); err != nil {
+		return fmt.Errorf("store: updating password: %w", err)
+	}
+	return nil
+}
+
 // SetTOTPSecret stores (or replaces) the enrolling secret; it does not activate
 // two-factor — EnableTOTP does, after a code is verified.
 func (s *Store) SetTOTPSecret(ctx context.Context, userID string, ct, nonce []byte) error {
@@ -645,6 +789,8 @@ func userFromRow(r db.User) domain.User {
 		Email:        r.Email,
 		PasswordHash: r.PasswordHash,
 		Role:         r.Role,
+		DisplayName:  r.DisplayName,
+		Timezone:     r.Timezone,
 		TOTPEnabled:  r.TotpEnabled,
 		CreatedAt:    r.CreatedAt.Time,
 		UpdatedAt:    r.UpdatedAt.Time,

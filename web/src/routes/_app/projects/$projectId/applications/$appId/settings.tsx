@@ -1,9 +1,12 @@
 // Application · Settings: sectioned form + danger zone (typed-name delete,
 // ui-principles §2). Dirty state is explicit; nothing saves silently.
+import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import {
+  getGetApplicationQueryKey,
+  getListApplicationsQueryKey,
   useDeleteApplication,
   useGetApplication,
   useUpdateApplication,
@@ -41,6 +44,7 @@ function SettingsForm({
   initial: Application;
 }) {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const [name, setName] = useState(initial.name);
   const [repo, setRepo] = useState(initial.source.repo);
   const [branch, setBranch] = useState(initial.source.branch);
@@ -79,7 +83,14 @@ function SettingsForm({
 
   const update = useUpdateApplication({
     mutation: {
-      onSuccess: () => toast.success("Saved — applies on the next deploy"),
+      onSuccess: () => {
+        // This form is seeded from the detail query and the name it just wrote
+        // is the one the environment lists it under, so both have to be told —
+        // otherwise the page keeps rendering the values the operator replaced.
+        void qc.invalidateQueries({ queryKey: getGetApplicationQueryKey(appId) });
+        void qc.invalidateQueries({ queryKey: getListApplicationsQueryKey(initial.environment_id) });
+        toast.success("Saved — applies on the next deploy");
+      },
       onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Could not save changes"),
     },
   });
@@ -87,6 +98,10 @@ function SettingsForm({
   const del = useDeleteApplication({
     mutation: {
       onSuccess: () => {
+        // The project page we land on renders its applications from cache, so
+        // the row we just deleted would still be sitting there. Drop the list
+        // before navigating rather than after: by then this component is gone.
+        void qc.invalidateQueries({ queryKey: getListApplicationsQueryKey(initial.environment_id) });
         toast.success(`Deleted ${initial.name}`);
         void navigate({ to: "/projects/$projectId", params: { projectId } });
       },
@@ -238,17 +253,27 @@ function SettingsForm({
 
       <section className="space-y-2">
         <Eyebrow className="text-danger">Danger zone</Eyebrow>
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-danger/35 p-4">
+        <div className="flex items-center justify-between gap-3 rounded-lg border-[1.5px] border-status-error/40 bg-surface px-4 py-3.5">
           <div>
-            <p className="text-[13px] font-medium text-text">Delete this application</p>
-            <p className="text-xs text-text-mid">Stops the container, removes its route, and deletes its deploy history.</p>
+            <p className="text-[13.5px] font-semibold text-text">Delete this application</p>
+            <p className="mt-[3px] text-xs text-text-mid">Stops the container, removes its route, and deletes its deploy history.</p>
           </div>
           <ConfirmDestructive
             trigger={<Button variant="danger">Delete</Button>}
             title={`Delete ${initial.name}?`}
-            blastRadius="Deletes this application, stops its running container, removes its domain route, and erases its deployments. This cannot be undone."
+            // One entry per class of thing, each carrying its own consequence:
+            // 13af's box is meant to be scanned, and a single sentence with a
+            // red square in front of it is not.
+            blastRadius={[
+              "this application + the container serving it",
+              initial.route.domain
+                ? `its route at ${initial.route.domain} & the TLS cert`
+                : "its domain route & TLS cert",
+              ...(initial.preview_enabled ? ["every preview environment open for it"] : []),
+              "its whole deployment history — this cannot be undone",
+            ]}
             confirmName={initial.name}
-            actionLabel="Delete application"
+            actionLabel="Delete forever"
             pending={del.isPending}
             onConfirm={() => del.mutate({ id: appId })}
           />
