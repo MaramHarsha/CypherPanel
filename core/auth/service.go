@@ -53,7 +53,14 @@ type Store interface {
 	DeleteAPIToken(ctx context.Context, id string) error
 
 	GetUserByID(ctx context.Context, id string) (domain.User, error)
+	SetUserAvatar(ctx context.Context, userID, contentType string, data []byte, etag string) error
+	GetUserAvatar(ctx context.Context, userID string) (domain.Avatar, error)
+	DeleteUserAvatar(ctx context.Context, userID string) error
 	UpdateUserProfile(ctx context.Context, userID, displayName, timezone string) (domain.User, error)
+	UpdateUserEmail(ctx context.Context, userID, email string) (domain.User, error)
+	CreateEmailChange(ctx context.Context, id, userID, newEmail string, tokenHash []byte, expiresAt time.Time) (domain.EmailChange, error)
+	EmailChangeTokenHash(ctx context.Context, id string) (domain.EmailChange, []byte, error)
+	ConsumeEmailChange(ctx context.Context, id string) (domain.EmailChange, error)
 	UpdateUserPassword(ctx context.Context, userID, passwordHash string) error
 
 	SetTOTPSecret(ctx context.Context, userID string, ct, nonce []byte) error

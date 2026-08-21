@@ -1,11 +1,16 @@
 package rest
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"strings"
 
 	"github.com/MaramHarsha/cypherpanel/core/auth"
+	"github.com/MaramHarsha/cypherpanel/core/store"
 )
 
 type updateProfileRequest struct {
@@ -19,6 +24,10 @@ type changePasswordRequest struct {
 	// RevokeOtherSessions signs every other device out. The dialog asks
 	// (canvas 9i) rather than deciding, so the field is explicit here too.
 	RevokeOtherSessions bool `json:"revoke_other_sessions"`
+}
+
+type avatarResponse struct {
+	ETag string `json:"etag"`
 }
 
 type changePasswordResponse struct {
@@ -82,4 +91,73 @@ func (a *API) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		a.deps.Log.Error("changing password", "error", err)
 		writeError(w, http.StatusInternalServerError, "could not change your password")
 	}
+}
+
+// handleSetAvatar takes the image as the raw request body. Multipart would add
+// a parser and a filename we would only throw away; the browser can send a File
+// directly, and MaxBytesReader caps it before anything is buffered.
+func (a *API) handleSetAvatar(w http.ResponseWriter, r *http.Request) {
+	p, _ := principalFromContext(r.Context())
+	r.Body = http.MaxBytesReader(w, r.Body, auth.MaxAvatarBytes+1)
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("an avatar is at most %d MB", auth.MaxAvatarBytes>>20))
+		return
+	}
+	etag, err := a.deps.Auth.SetAvatar(r.Context(), p.User.ID, data)
+	if err != nil {
+		var ve *auth.ValidationError
+		if errors.As(err, &ve) {
+			writeError(w, http.StatusBadRequest, ve.Error())
+			return
+		}
+		a.deps.Log.Error("setting avatar", "error", err)
+		writeError(w, http.StatusInternalServerError, "could not save that image")
+		return
+	}
+	writeJSON(w, http.StatusOK, avatarResponse{ETag: etag})
+}
+
+// handleDeleteAvatar removes the photo; initials take its place.
+func (a *API) handleDeleteAvatar(w http.ResponseWriter, r *http.Request) {
+	p, _ := principalFromContext(r.Context())
+	if err := a.deps.Auth.RemoveAvatar(r.Context(), p.User.ID); err != nil {
+		a.deps.Log.Error("removing avatar", "error", err)
+		writeError(w, http.StatusInternalServerError, "could not remove that image")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleGetAvatar serves a user's photo to any signed-in caller — a panel's
+// members are not anonymous to each other, and a member list wants faces.
+//
+// The response is locked down rather than trusted: the content type is the one
+// the bytes were recognised as, nosniff stops a browser from reconsidering it,
+// and a default-src 'none' policy means that even a file that somehow got past
+// the allowlist has nothing to reach for.
+func (a *API) handleGetAvatar(w http.ResponseWriter, r *http.Request) {
+	av, err := a.deps.Auth.Avatar(r.Context(), r.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "no avatar")
+			return
+		}
+		a.deps.Log.Error("reading avatar", "error", err)
+		writeError(w, http.StatusInternalServerError, "could not read that image")
+		return
+	}
+	w.Header().Set("Content-Type", av.ContentType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	w.Header().Set("Content-Disposition", "inline")
+	// Private: it is per-user content behind a session, so a shared cache must
+	// not keep it. The ETag still saves the round trip for the browser itself.
+	w.Header().Set("Cache-Control", "private, max-age=0, must-revalidate")
+	w.Header().Set("ETag", `"`+av.ETag+`"`)
+	if match := r.Header.Get("If-None-Match"); match != "" && strings.Contains(match, av.ETag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	http.ServeContent(w, r, "", av.UpdatedAt, bytes.NewReader(av.Bytes))
 }

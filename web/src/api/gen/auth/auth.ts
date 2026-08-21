@@ -26,9 +26,12 @@ import type {
 
 import type {
   ApiToken,
+  AvatarResponse,
   BadRequestResponse,
   ChangePasswordRequest,
   ChangePasswordResponse,
+  ConfirmEmailChangeRequest,
+  ConfirmEmailChangeResponse,
   CreateTokenRequest,
   CreateTokenResponse,
   Error,
@@ -37,6 +40,7 @@ import type {
   LoginResponse,
   Me,
   NotFoundResponse,
+  RequestEmailChangeRequest,
   RevokeOtherSessions200,
   Session,
   SetupRequest,
@@ -610,6 +614,395 @@ export const useChangePassword = <TError = BadRequestResponse | Error | Forbidde
       > => {
 
       const mutationOptions = getChangePasswordMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    /**
+ * The image is the raw request body. The stored content type is the one sniffed from the bytes, never the declared one; PNG, JPEG and WebP are accepted and SVG deliberately is not.
+
+ * @summary Replace your own profile photo (session only)
+ */
+export const getSetAvatarUrl = () => {
+
+
+  
+
+  return `/api/v1/auth/me/avatar`
+}
+
+export const setAvatar = async (setAvatarBody: Blob, options?: RequestInit): Promise<AvatarResponse> => {
+  
+  return apiFetch<AvatarResponse>(getSetAvatarUrl(),
+  {      
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'image/png', ...options?.headers },
+    body: JSON.stringify(
+      setAvatarBody,)
+  }
+);}
+
+
+
+
+export const getSetAvatarMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setAvatar>>, TError,{data: Blob}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setAvatar>>, TError,{data: Blob}, TContext> => {
+
+const mutationKey = ['setAvatar'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setAvatar>>, {data: Blob}> = (props) => {
+          const {data} = props ?? {};
+
+          return  setAvatar(data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetAvatarMutationResult = NonNullable<Awaited<ReturnType<typeof setAvatar>>>
+    export type SetAvatarMutationBody = Blob
+    export type SetAvatarMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error
+
+    /**
+ * @summary Replace your own profile photo (session only)
+ */
+export const useSetAvatar = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setAvatar>>, TError,{data: Blob}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setAvatar>>,
+        TError,
+        {data: Blob},
+        TContext
+      > => {
+
+      const mutationOptions = getSetAvatarMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    /**
+ * @summary Remove your own profile photo (session only)
+ */
+export const getDeleteAvatarUrl = () => {
+
+
+  
+
+  return `/api/v1/auth/me/avatar`
+}
+
+export const deleteAvatar = async ( options?: RequestInit): Promise<void> => {
+  
+  return apiFetch<void>(getDeleteAvatarUrl(),
+  {      
+    ...options,
+    method: 'DELETE'
+    
+    
+  }
+);}
+
+
+
+
+export const getDeleteAvatarMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAvatar>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteAvatar>>, TError,void, TContext> => {
+
+const mutationKey = ['deleteAvatar'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteAvatar>>, void> = () => {
+          
+
+          return  deleteAvatar(requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteAvatarMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAvatar>>>
+    
+    export type DeleteAvatarMutationError = UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary Remove your own profile photo (session only)
+ */
+export const useDeleteAvatar = <TError = UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAvatar>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteAvatar>>,
+        TError,
+        void,
+        TContext
+      > => {
+
+      const mutationOptions = getDeleteAvatarMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    /**
+ * @summary A user's profile photo, for any signed-in caller
+ */
+export const getGetAvatarUrl = (id: string,) => {
+
+
+  
+
+  return `/api/v1/users/${id}/avatar`
+}
+
+export const getAvatar = async (id: string, options?: RequestInit): Promise<Blob> => {
+  
+  return apiFetch<Blob>(getGetAvatarUrl(id),
+  {      
+    ...options,
+    method: 'GET'
+    
+    
+  }
+);}
+
+
+
+
+
+export const getGetAvatarQueryKey = (id?: string,) => {
+    return [
+    `/api/v1/users/${id}/avatar`
+    ] as const;
+    }
+
+    
+export const getGetAvatarQueryOptions = <TData = Awaited<ReturnType<typeof getAvatar>>, TError = void | UnauthorizedResponse | ForbiddenResponse | Error>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAvatar>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAvatarQueryKey(id);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAvatar>>> = ({ signal }) => getAvatar(id, { signal, ...requestOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAvatar>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetAvatarQueryResult = NonNullable<Awaited<ReturnType<typeof getAvatar>>>
+export type GetAvatarQueryError = void | UnauthorizedResponse | ForbiddenResponse | Error
+
+
+export function useGetAvatar<TData = Awaited<ReturnType<typeof getAvatar>>, TError = void | UnauthorizedResponse | ForbiddenResponse | Error>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAvatar>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getAvatar>>,
+          TError,
+          Awaited<ReturnType<typeof getAvatar>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAvatar<TData = Awaited<ReturnType<typeof getAvatar>>, TError = void | UnauthorizedResponse | ForbiddenResponse | Error>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAvatar>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getAvatar>>,
+          TError,
+          Awaited<ReturnType<typeof getAvatar>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAvatar<TData = Awaited<ReturnType<typeof getAvatar>>, TError = void | UnauthorizedResponse | ForbiddenResponse | Error>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAvatar>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary A user's profile photo, for any signed-in caller
+ */
+
+export function useGetAvatar<TData = Awaited<ReturnType<typeof getAvatar>>, TError = void | UnauthorizedResponse | ForbiddenResponse | Error>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAvatar>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetAvatarQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+/**
+ * Mails a single-use confirmation link to the new address, and a notice to the old one. Requires the current password: possession of a session never weakens a credential on its own (threat-model §5.10).
+
+ * @summary Ask to move your account to a new sign-in address (session only)
+ */
+export const getRequestEmailChangeUrl = () => {
+
+
+  
+
+  return `/api/v1/auth/email/change`
+}
+
+export const requestEmailChange = async (requestEmailChangeRequest: RequestEmailChangeRequest, options?: RequestInit): Promise<void> => {
+  
+  return apiFetch<void>(getRequestEmailChangeUrl(),
+  {      
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      requestEmailChangeRequest,)
+  }
+);}
+
+
+
+
+export const getRequestEmailChangeMutationOptions = <TError = BadRequestResponse | Error | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof requestEmailChange>>, TError,{data: RequestEmailChangeRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof requestEmailChange>>, TError,{data: RequestEmailChangeRequest}, TContext> => {
+
+const mutationKey = ['requestEmailChange'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof requestEmailChange>>, {data: RequestEmailChangeRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  requestEmailChange(data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RequestEmailChangeMutationResult = NonNullable<Awaited<ReturnType<typeof requestEmailChange>>>
+    export type RequestEmailChangeMutationBody = RequestEmailChangeRequest
+    export type RequestEmailChangeMutationError = BadRequestResponse | Error | ForbiddenResponse
+
+    /**
+ * @summary Ask to move your account to a new sign-in address (session only)
+ */
+export const useRequestEmailChange = <TError = BadRequestResponse | Error | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof requestEmailChange>>, TError,{data: RequestEmailChangeRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof requestEmailChange>>,
+        TError,
+        {data: RequestEmailChangeRequest},
+        TContext
+      > => {
+
+      const mutationOptions = getRequestEmailChangeMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    /**
+ * Needs the token and a live session — a mailbox alone must not be able to move an account. Revokes every other session on success.
+
+ * @summary Finish moving your account, using the emailed token (session only)
+ */
+export const getConfirmEmailChangeUrl = () => {
+
+
+  
+
+  return `/api/v1/auth/email/confirm`
+}
+
+export const confirmEmailChange = async (confirmEmailChangeRequest: ConfirmEmailChangeRequest, options?: RequestInit): Promise<ConfirmEmailChangeResponse> => {
+  
+  return apiFetch<ConfirmEmailChangeResponse>(getConfirmEmailChangeUrl(),
+  {      
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      confirmEmailChangeRequest,)
+  }
+);}
+
+
+
+
+export const getConfirmEmailChangeMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmEmailChange>>, TError,{data: ConfirmEmailChangeRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof confirmEmailChange>>, TError,{data: ConfirmEmailChangeRequest}, TContext> => {
+
+const mutationKey = ['confirmEmailChange'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof confirmEmailChange>>, {data: ConfirmEmailChangeRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  confirmEmailChange(data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ConfirmEmailChangeMutationResult = NonNullable<Awaited<ReturnType<typeof confirmEmailChange>>>
+    export type ConfirmEmailChangeMutationBody = ConfirmEmailChangeRequest
+    export type ConfirmEmailChangeMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error
+
+    /**
+ * @summary Finish moving your account, using the emailed token (session only)
+ */
+export const useConfirmEmailChange = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmEmailChange>>, TError,{data: ConfirmEmailChangeRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof confirmEmailChange>>,
+        TError,
+        {data: ConfirmEmailChangeRequest},
+        TContext
+      > => {
+
+      const mutationOptions = getConfirmEmailChangeMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

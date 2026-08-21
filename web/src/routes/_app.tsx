@@ -11,7 +11,7 @@ import {
   useNavigate,
   useRouterState,
 } from "@tanstack/react-router";
-import { Boxes, ChevronDown, LayoutTemplate, LogOut, Moon, Search, Server, Settings, Sun, UserRound } from "lucide-react";
+import { Boxes, Check, ChevronDown, LayoutTemplate, LogOut, Moon, Search, Server, Settings, Sun, UserRound } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ApiError } from "@/api/client";
 import { useGetMe, useLogout } from "@/api/gen/auth/auth";
@@ -19,6 +19,7 @@ import { PlaneOfflinePage } from "@/components/error-page";
 import { CommandPalette, openCommandPalette } from "@/components/command-palette";
 import { InboxBell } from "@/components/inbox-bell";
 import { SSEBanner } from "@/components/sse-banner";
+import { UserAvatar } from "@/components/user-avatar";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import {
   Dropdown,
@@ -32,6 +33,7 @@ import { CrumbsProvider } from "@/lib/crumbs";
 import { LiveProvider, useLiveStatus } from "@/lib/live";
 import { relativeTime } from "@/lib/time";
 import { setTheme, useTheme } from "@/lib/theme";
+import { cn } from "@/lib/utils";
 import { TeamProvider, useTeamScope } from "@/lib/team";
 
 export const Route = createFileRoute("/_app")({
@@ -252,15 +254,6 @@ function ThemeToggle() {
   );
 }
 
-/** Initials for the team avatar chip — two letters, from word starts. */
-function initials(name: string): string {
-  const parts = name.trim().split(/[\s\-_]+/).filter(Boolean);
-  if (parts.length === 0) return "··";
-  const first = parts[0]?.[0] ?? "";
-  const second = parts.length > 1 ? (parts[1]?.[0] ?? "") : (parts[0]?.[1] ?? "");
-  return (first + second).toUpperCase();
-}
-
 /** Team scope + account in one chip — teams are context, not a destination. */
 function AccountMenu() {
   const me = useGetMe();
@@ -276,38 +269,55 @@ function AccountMenu() {
   });
 
   const teams = me.data?.teams ?? [];
-  const current = teams.find((t) => t.id === teamId);
-  const label = current?.name ?? (teams.length > 1 ? "All teams" : (teams[0]?.name ?? "Account"));
+  const email = me.data?.email ?? "";
+  const displayName = me.data?.display_name ?? "";
+  // The chip names the person, not the team. The canvas draws a team pill here,
+  // but the control it actually opens is the account menu — and a menu that
+  // signs you out should say whose session it is about to end. Team scope keeps
+  // its own section inside, where the active one is ticked.
+  const label = displayName || email.split("@")[0] || "Account";
+  const scoped = teams.find((t) => t.id === teamId);
 
   return (
     <Dropdown>
       <DropdownTrigger asChild>
-        {/* The canvas sets the team name in lower case; done in CSS so the
-            chip's accessible name is still the team's own spelling. The caret
-            is not on the canvas pill, which is a static mock — here the chip
-            switches team scope and signs out, and nothing else says so. */}
         <button
           type="button"
-          className="flex shrink-0 items-center gap-2 rounded-full border border-border-input bg-surface py-[5px] pl-1.5 pr-3 text-[12.5px] font-medium lowercase text-text hover:border-border-strong"
+          aria-label={`Account menu for ${displayName || email}`}
+          className="flex shrink-0 items-center gap-2 rounded-full border border-border-input bg-surface py-[5px] pl-1.5 pr-3 text-[12.5px] font-medium text-text hover:border-border-strong"
         >
-          <span className="flex h-[22px] w-[22px] items-center justify-center rounded-full bg-primary font-mono text-[10px] uppercase text-primary-fg">
-            {initials(label)}
-          </span>
+          <UserAvatar
+            userId={me.data?.id}
+            name={displayName}
+            email={email}
+            className="h-[22px] w-[22px]"
+            textClassName="text-[10px]"
+          />
           <span className="hidden max-w-32 truncate sm:inline">{label}</span>
           <ChevronDown className="h-3 w-3 shrink-0 text-text-faint" aria-hidden />
         </button>
       </DropdownTrigger>
       <DropdownContent align="end" className="w-56">
-        <div className="truncate px-2 py-1.5 font-mono text-[11px] text-text-faint" title={me.data?.email}>
-          {me.data?.email ?? "…"}
+        <div className="truncate px-2 py-1.5 font-mono text-[11px] text-text-faint" title={email}>
+          {email || "…"}
         </div>
         {teams.length > 1 && (
           <>
             <DropdownSeparator />
+            {/* The chip used to carry the scope; now that it carries the person,
+                the tick is the only thing that says which team you are looking
+                at, so it is not decoration. */}
             <div className="eyebrow px-2 pb-1 pt-1.5">Team scope</div>
-            <DropdownItem onSelect={() => setTeamId(null)}>All teams</DropdownItem>
+            <DropdownItem onSelect={() => setTeamId(null)} className="flex items-center gap-2">
+              <Check className={cn("h-3 w-3 shrink-0", scoped ? "invisible" : "text-accent")} aria-hidden />
+              All teams
+            </DropdownItem>
             {teams.map((t) => (
-              <DropdownItem key={t.id} onSelect={() => setTeamId(t.id)}>
+              <DropdownItem key={t.id} onSelect={() => setTeamId(t.id)} className="flex items-center gap-2">
+                <Check
+                  className={cn("h-3 w-3 shrink-0", scoped?.id === t.id ? "text-accent" : "invisible")}
+                  aria-hidden
+                />
                 {t.name}
               </DropdownItem>
             ))}

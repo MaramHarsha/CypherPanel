@@ -63,6 +63,9 @@ const (
 	// scope are the same row shape, which is what lets a value be promoted
 	// between them without touching any referencing application (§3).
 	PrefixSharedVariable = "sv"
+
+	// V1: Panel mail and email changes (docs/features/panel-mail.md).
+	PrefixEmailChange = "ec"
 )
 
 // New returns a prefixed, URL-safe, collision-resistant identifier such as

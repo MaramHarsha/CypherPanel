@@ -2,25 +2,31 @@
 // panel looks to you, and the credentials that protect it.
 //
 // The fields here were UI-only until the API caught up; they are real now
-// (PATCH /auth/me, POST /auth/password). What is still drawn but inert is the
-// avatar and the personal digest chips, because nothing stores an image or a
-// per-person subscription yet — and a control that looks live and does nothing
-// is the dead end ui-principles §11 rules out.
-import { useQueryClient } from "@tanstack/react-query";
+// (PATCH /auth/me, POST /auth/password, PUT /auth/me/avatar). What is still
+// drawn but inert is the digest chip row, because nothing stores a per-person
+// subscription yet — and a control that looks live and does nothing is the dead
+// end ui-principles §11 rules out.
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import {
+  getDeleteAvatarUrl,
   getGetMeQueryKey,
   getListSessionsQueryKey,
+  getSetAvatarUrl,
   useChangePassword,
+  useConfirmEmailChange,
+  useRequestEmailChange,
   useGetMe,
   useGetTotpStatus,
   useListSessions,
   useUpdateProfile,
 } from "@/api/gen/auth/auth";
-import { ApiError } from "@/api/client";
+import { ApiError, apiFetch } from "@/api/client";
+import { useGetPanelMail } from "@/api/gen/panel/panel";
 import { Eyebrow } from "@/components/eyebrow";
+import { UserAvatar, avatarQueryKey, useAvatar } from "@/components/user-avatar";
 import { StatusPill } from "@/components/status-badge";
 import { ActionButton } from "@/components/ui/action-button";
 import { Button } from "@/components/ui/button";
@@ -33,15 +39,6 @@ import { setTheme, useThemePreference, type ThemePreference } from "@/lib/theme"
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_app/settings/profile")({ component: ProfileTab });
-
-/** Initials for the avatar — from the name once there is one, else the address. */
-function initials(name: string, email: string): string {
-  const source = name.trim() || (email.split("@")[0] ?? "");
-  const parts = source.split(/[\s.\-_+]/).filter(Boolean);
-  const first = parts[0]?.[0] ?? source[0] ?? "·";
-  const second = parts.length > 1 ? (parts[1]?.[0] ?? "") : (source[1] ?? "");
-  return (first + second).toUpperCase();
-}
 
 /**
  * The zones this browser knows. `supportedValuesOf` is the only way to get the
@@ -68,16 +65,14 @@ function ProfileTab() {
   const me = useGetMe();
   const email = me.data?.email ?? "";
   const name = me.data?.display_name ?? "";
+  // Whether there is a photo to remove comes from the same cached query the
+  // picture itself reads, so the controls and the image can never disagree.
+  const { data: photo } = useAvatar(me.data?.id);
 
   return (
     <div className="max-w-2xl space-y-4">
       <div className="flex items-center gap-4">
-        <span
-          aria-hidden
-          className="flex size-14 flex-none items-center justify-center rounded-full bg-primary font-mono text-[18px] text-primary-fg"
-        >
-          {email ? initials(name, email) : "·"}
-        </span>
+        <UserAvatar userId={me.data?.id} name={name} email={email} className="size-14" textClassName="text-[18px]" />
         <div className="min-w-0 flex-1">
           <p className="truncate text-[20px] font-bold tracking-[-0.02em] text-text">{name || email || "…"}</p>
           <p className="mono mt-0.5 truncate text-[12px] text-text-faint">
@@ -85,17 +80,7 @@ function ProfileTab() {
             {(me.data?.teams?.length ?? 0) > 0 && ` · ${me.data?.teams.length} team${me.data?.teams.length === 1 ? "" : "s"}`}
           </p>
         </div>
-        <Tooltip content="Avatars need somewhere to store an image — not built yet">
-          <span className="inline-flex">
-            <button
-              type="button"
-              disabled
-              className="shrink-0 whitespace-nowrap rounded-full border border-border-input bg-surface px-3.5 py-1.5 text-[12px] font-semibold text-text-disabled"
-            >
-              Change photo
-            </button>
-          </span>
-        </Tooltip>
+        <PhotoControls userId={me.data?.id} hasPhoto={Boolean(photo)} />
       </div>
 
       <ProfileForm email={email} name={name} timezone={me.data?.timezone ?? ""} />
@@ -109,6 +94,102 @@ function ProfileTab() {
           today; per-person digests need a backend before this can be switched on.
         </p>
       </section>
+    </div>
+  );
+}
+
+/** Accepted here as well as on the server, so a wrong file fails before upload. */
+const AVATAR_TYPES = "image/png,image/jpeg,image/webp";
+const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
+
+function PhotoControls({ userId, hasPhoto }: { userId?: string; hasPhoto: boolean }) {
+  const qc = useQueryClient();
+  const picker = useRef<HTMLInputElement>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // One key, two consumers: the profile header and the top-bar chip both read
+  // it, so invalidating here changes the picture in both without a reload.
+  const done = (msg: string) => {
+    void qc.invalidateQueries({ queryKey: avatarQueryKey(userId) });
+    void qc.invalidateQueries({ queryKey: getGetMeQueryKey() });
+    toast.success(msg);
+  };
+
+  // The generated client cannot express this one: orval JSON.stringifies the
+  // body for a binary request, which would upload "{}". It still owns the URL,
+  // and apiFetch still owns auth and the error envelope.
+  const upload = useMutation({
+    mutationFn: (file: File) =>
+      apiFetch<{ etag: string }>(getSetAvatarUrl(), {
+        method: "PUT",
+        headers: { "Content-Type": file.type },
+        body: file,
+      }),
+    onSuccess: () => done("Photo updated"),
+    onError: (e: unknown) => setError(e instanceof ApiError ? e.message : "Could not upload that image"),
+  });
+
+  const remove = useMutation({
+    mutationFn: () => apiFetch<void>(getDeleteAvatarUrl(), { method: "DELETE" }),
+    onSuccess: () => done("Photo removed"),
+    onError: (e: unknown) => setError(e instanceof ApiError ? e.message : "Could not remove the photo"),
+  });
+
+  const pick = (file: File | undefined) => {
+    setError(null);
+    if (!file) return;
+    // Checked here too so an obviously wrong file is refused without a round
+    // trip; the server checks the bytes regardless, which is the real gate.
+    if (!AVATAR_TYPES.split(",").includes(file.type)) {
+      setError("Choose a PNG, JPEG or WebP image");
+      return;
+    }
+    if (file.size > MAX_AVATAR_BYTES) {
+      setError(
+        `That image is ${(file.size / 1024 / 1024).toFixed(1)} MB — the limit is ${MAX_AVATAR_BYTES / 1024 / 1024} MB`,
+      );
+      return;
+    }
+    upload.mutate(file);
+  };
+
+  return (
+    <div className="flex shrink-0 flex-col items-end gap-1">
+      <div className="flex items-center gap-2">
+        {hasPhoto && (
+          <button
+            type="button"
+            disabled={remove.isPending}
+            onClick={() => remove.mutate()}
+            className="text-[12px] font-medium text-danger hover:underline disabled:opacity-50"
+          >
+            {remove.isPending ? "Removing…" : "Remove"}
+          </button>
+        )}
+        <ActionButton
+          variant="secondary"
+          size="sm"
+          state={upload.isPending ? "busy" : "idle"}
+          busyLabel="Uploading…"
+          disabled={!userId}
+          onClick={() => picker.current?.click()}
+        >
+          {hasPhoto ? "Change photo" : "Add photo"}
+        </ActionButton>
+      </div>
+      <input
+        ref={picker}
+        type="file"
+        accept={AVATAR_TYPES}
+        className="sr-only"
+        aria-label="Choose a profile photo"
+        onChange={(e) => {
+          pick(e.target.files?.[0]);
+          // Cleared so choosing the same file twice still fires a change.
+          e.target.value = "";
+        }}
+      />
+      {error && <p className="max-w-56 text-right text-[11.5px] leading-snug text-danger">{error}</p>}
     </div>
   );
 }
@@ -161,13 +242,16 @@ function ProfileForm({ email, name, timezone }: { email: string; name: string; t
           )}
         </Field>
 
-        <Field label="Email" qualifier="· sign-in address">
+        {/* Canvas 13i's own qualifier. The field stays read-only in the form on
+            purpose: moving a sign-in address is a re-auth-gated action, not a
+            field save, so it opens its own dialog rather than joining the
+            Save button below. */}
+        <Field label="Email" qualifier="· re-verified on change">
           {(id) => (
-            <Tooltip content="Changing the sign-in address needs a re-verification flow the panel does not have yet">
-              <span className="inline-flex w-full">
-                <Input id={id} value={email} readOnly disabled />
-              </span>
-            </Tooltip>
+            <div className="flex items-center gap-2">
+              <Input id={id} value={email} readOnly className="flex-1" />
+              <ChangeEmailDialog current={email} />
+            </div>
           )}
         </Field>
 
@@ -479,5 +563,179 @@ function NotifyChips() {
         ))}
       </div>
     </Tooltip>
+  );
+}
+
+/**
+ * Moving the sign-in address (docs/features/panel-mail.md §3, threat-model
+ * §5.10). Modelled on the change-password dialog, because it is the same kind
+ * of act: re-authenticated, consequential, and it ends other sessions.
+ *
+ * Two things must be true before the address moves, and the dialog says both:
+ * the current password proves this is not a borrowed session, and a link sent
+ * to the new address proves the mailbox is reachable. Neither alone is enough.
+ */
+function ChangeEmailDialog({ current }: { current: string }) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [next, setNext] = useState("");
+  const [password, setPassword] = useState("");
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // A pending change nobody can be told about is a row that only ever expires,
+  // so the control says so before it is pressed rather than failing at submit.
+  const mail = useGetPanelMail();
+  const canSend = mail.data?.configured ?? false;
+
+  const request = useRequestEmailChange({
+    mutation: {
+      onSuccess: () => setSent(true),
+      onError: (e: unknown) => setError(e instanceof ApiError ? e.message : "Could not start the change"),
+    },
+  });
+
+  const confirm = useConfirmEmailChange({
+    mutation: {
+      onSuccess: (res) => {
+        const n = (res as { revoked?: number }).revoked ?? 0;
+        toast.success(n > 0 ? `Address changed · ${n} other session${n === 1 ? "" : "s"} signed out` : "Address changed");
+        void qc.invalidateQueries({ queryKey: getGetMeQueryKey() });
+        void qc.invalidateQueries({ queryKey: getListSessionsQueryKey() });
+        setOpen(false);
+      },
+      onError: (e: unknown) => setError(e instanceof ApiError ? e.message : "Could not finish the change"),
+    },
+  });
+
+  // The confirmation link lands back here carrying its token.
+  const search = new URLSearchParams(typeof window === "undefined" ? "" : window.location.search);
+  const inboundToken = search.get("confirm");
+
+  useEffect(() => {
+    if (!inboundToken) return;
+    setOpen(true);
+    setSent(true);
+  }, [inboundToken]);
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (!o) {
+          setNext("");
+          setPassword("");
+          setSent(false);
+          setError(null);
+        }
+      }}
+    >
+      <DialogTrigger asChild>
+        <Button variant="secondary" size="sm" disabled={!canSend} className="shrink-0">
+          Change
+        </Button>
+      </DialogTrigger>
+      <DialogContent title={inboundToken ? "Confirm your new address" : "Change sign-in address"}>
+        {inboundToken ? (
+          <div className="space-y-4">
+            <p className="text-[13px] leading-relaxed text-text-mid">
+              This link finishes moving your account. Every other signed-in device will be signed out, because the
+              address that can recover this account is changing.
+            </p>
+            {error && (
+              <p role="alert" className="rounded-md border border-danger/35 bg-danger/[0.06] px-3 py-2 text-[13px] text-danger">
+                {error}
+              </p>
+            )}
+            <div className="flex justify-end gap-2.5">
+              <DialogClose asChild>
+                <Button variant="ghost">Not now</Button>
+              </DialogClose>
+              <ActionButton
+                variant="accent"
+                state={confirm.isPending ? "busy" : "idle"}
+                busyLabel="Confirming…"
+                onClick={() => {
+                  setError(null);
+                  confirm.mutate({ data: { token: inboundToken } });
+                }}
+              >
+                Confirm the change
+              </ActionButton>
+            </div>
+          </div>
+        ) : sent ? (
+          <div className="space-y-4">
+            <p className="text-[13px] leading-relaxed text-text-mid">
+              A confirmation link is on its way to <b className="text-text">{next}</b>. Open it while signed in here —
+              the link alone cannot move the account, and it expires in 30 minutes.
+            </p>
+            <p className="text-[12px] leading-relaxed text-text-faint">
+              {current} has been told a change was requested, in case it was not you.
+            </p>
+            <div className="flex justify-end">
+              <DialogClose asChild>
+                <Button variant="primary">Done</Button>
+              </DialogClose>
+            </div>
+          </div>
+        ) : (
+          <form
+            onSubmit={(e: FormEvent) => {
+              e.preventDefault();
+              setError(null);
+              request.mutate({ data: { new_email: next, current_password: password } });
+            }}
+            className="space-y-3"
+          >
+            <Field label="New address" qualifier="· where the confirmation goes">
+              {(id) => (
+                <Input
+                  id={id}
+                  type="email"
+                  required
+                  autoFocus
+                  className="font-sans"
+                  value={next}
+                  onChange={(e) => setNext(e.target.value)}
+                />
+              )}
+            </Field>
+            <Field label="Current password" hint="Proves this is you and not a borrowed session.">
+              {(id) => (
+                <Input
+                  id={id}
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              )}
+            </Field>
+            {error && (
+              <p role="alert" className="rounded-md border border-danger/35 bg-danger/[0.06] px-3 py-2 text-[13px] text-danger">
+                {error}
+              </p>
+            )}
+            <div className="flex justify-end gap-2.5 pt-1">
+              <DialogClose asChild>
+                <Button variant="ghost">Cancel</Button>
+              </DialogClose>
+              <ActionButton
+                type="submit"
+                variant="accent"
+                state={request.isPending ? "busy" : "idle"}
+                busyLabel="Sending…"
+                disabled={next === "" || password === ""}
+              >
+                Send confirmation
+              </ActionButton>
+            </div>
+          </form>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

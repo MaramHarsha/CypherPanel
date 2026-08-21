@@ -13,13 +13,16 @@ import (
 // fakeStore is an in-memory Store for authenticator unit tests. Integration
 // tests exercise the real Postgres store (ENGINEERING rule 29).
 type fakeStore struct {
-	users       map[string]domain.User       // by email
-	sessions    map[string]string            // token-hash → userID
-	tokens      map[string]domain.APIToken   // token id → metadata
-	byHash      map[string]string            // token-hash → token id
-	touched     map[string]int               // token-hash → times touched
-	totpSecrets map[string]*store.TOTPSecret // userID → 2FA secret+state
-	recovery    map[string][]string          // userID → unused code-hashes
+	users             map[string]domain.User        // by email
+	sessions          map[string]string             // token-hash → userID
+	tokens            map[string]domain.APIToken    // token id → metadata
+	byHash            map[string]string             // token-hash → token id
+	touched           map[string]int                // token-hash → times touched
+	totpSecrets       map[string]*store.TOTPSecret  // userID → 2FA secret+state
+	recovery          map[string][]string           // userID → unused code-hashes
+	avatars           map[string]domain.Avatar      // userID → profile photo
+	emailChanges      map[string]domain.EmailChange // pending address moves
+	emailChangeHashes map[string][]byte             // change id → token hash
 }
 
 func newFakeStore() *fakeStore {
@@ -211,6 +214,71 @@ func (f *fakeStore) GetUserByEmail(_ context.Context, email string) (domain.User
 		return domain.User{}, store.ErrNotFound
 	}
 	return u, nil
+}
+
+func (f *fakeStore) SetUserAvatar(_ context.Context, userID, contentType string, data []byte, etag string) error {
+	if f.avatars == nil {
+		f.avatars = map[string]domain.Avatar{}
+	}
+	f.avatars[userID] = domain.Avatar{ContentType: contentType, Bytes: data, ETag: etag}
+	return nil
+}
+
+func (f *fakeStore) GetUserAvatar(_ context.Context, userID string) (domain.Avatar, error) {
+	av, ok := f.avatars[userID]
+	if !ok {
+		return domain.Avatar{}, store.ErrNotFound
+	}
+	return av, nil
+}
+
+func (f *fakeStore) DeleteUserAvatar(_ context.Context, userID string) error {
+	delete(f.avatars, userID)
+	return nil
+}
+
+func (f *fakeStore) UpdateUserEmail(_ context.Context, userID, email string) (domain.User, error) {
+	for e, u := range f.users {
+		if u.ID == userID {
+			delete(f.users, e)
+			u.Email = email
+			f.users[email] = u
+			return u, nil
+		}
+	}
+	return domain.User{}, store.ErrNotFound
+}
+
+func (f *fakeStore) CreateEmailChange(_ context.Context, id, userID, newEmail string, tokenHash []byte, expiresAt time.Time) (domain.EmailChange, error) {
+	if f.emailChanges == nil {
+		f.emailChanges = map[string]domain.EmailChange{}
+	}
+	if f.emailChangeHashes == nil {
+		f.emailChangeHashes = map[string][]byte{}
+	}
+	ec := domain.EmailChange{ID: id, UserID: userID, NewEmail: newEmail, ExpiresAt: expiresAt}
+	f.emailChanges[id] = ec
+	f.emailChangeHashes[id] = tokenHash
+	return ec, nil
+}
+
+func (f *fakeStore) EmailChangeTokenHash(_ context.Context, id string) (domain.EmailChange, []byte, error) {
+	ec, ok := f.emailChanges[id]
+	if !ok {
+		return domain.EmailChange{}, nil, store.ErrNotFound
+	}
+	return ec, f.emailChangeHashes[id], nil
+}
+
+func (f *fakeStore) ConsumeEmailChange(_ context.Context, id string) (domain.EmailChange, error) {
+	ec, ok := f.emailChanges[id]
+	if !ok || ec.ConsumedAt != nil {
+		return domain.EmailChange{}, store.ErrNotFound
+	}
+	now := time.Now()
+	ec.ConsumedAt = &now
+	f.emailChanges[id] = ec
+	return ec, nil
 }
 
 func (f *fakeStore) GetUserByID(_ context.Context, id string) (domain.User, error) {

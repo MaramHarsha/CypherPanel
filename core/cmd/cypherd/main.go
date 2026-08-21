@@ -34,6 +34,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/guard"
 	"github.com/MaramHarsha/cypherpanel/core/identity"
 	"github.com/MaramHarsha/cypherpanel/core/inbox"
+	"github.com/MaramHarsha/cypherpanel/core/mail"
 	"github.com/MaramHarsha/cypherpanel/core/notify"
 	"github.com/MaramHarsha/cypherpanel/core/onboarding"
 	"github.com/MaramHarsha/cypherpanel/core/previews"
@@ -372,26 +373,26 @@ func run(log *slog.Logger) error {
 
 	// REST API + console.
 	api := rest.New(rest.Deps{
-		Auth:            authr,
-		Onboarding:      onboardSvc,
-		Servers:         serverSvc,
-		Projects:        projectSvc,
-		Applications:    appSvc,
-		DeployKeys:      deployKeySvc,
-		Databases:       dbSvc,
-		BackupTargets:   backupTargetSvc,
-		BackupSchedules: backupScheduleSvc,
-		Backups:         sched,
-		Previews:        previewMgr,
-		Notifiers:       notifySvc,
-		NotifyDelivery:  notifyMgr,
-		ScheduledTasks:  scheduledTaskSvc,
-
+		Auth:             authr,
+		Onboarding:       onboardSvc,
+		Servers:          serverSvc,
+		Projects:         projectSvc,
+		Applications:     appSvc,
+		DeployKeys:       deployKeySvc,
+		Databases:        dbSvc,
+		BackupTargets:    backupTargetSvc,
+		BackupSchedules:  backupScheduleSvc,
+		Backups:          sched,
+		Previews:         previewMgr,
+		Notifiers:        notifySvc,
+		NotifyDelivery:   notifyMgr,
+		ScheduledTasks:   scheduledTaskSvc,
 		WebhookEndpoints: webhookSvc,
 		Inbox:            inboxSvc,
 		SharedVariables:  sharedVarSvc,
 		Templates:        templateSvc,
 		Teams:            teamSvc,
+		Mail:             mail.New(st, box),
 		Scheduler:        sched,
 		Deployments:      st,
 		Opener:           box,

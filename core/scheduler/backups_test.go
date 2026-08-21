@@ -172,19 +172,30 @@ func TestRestoreRequiresConfirm(t *testing.T) {
 func TestSweepDueBackupsFiresOnlyDue(t *testing.T) {
 	fs, fb := newFakeStore(), &fakeBus{}
 	seedBackupFixture(fs)
+	// The clock is pinned, and every fixture time is relative to it.
+	//
+	// Against a real clock this test asserted something that is only true for
+	// most of the day: bak_2 is a daily 3am schedule whose last run is five
+	// minutes ago, so between 03:00 and 03:05 its next run lands in the past
+	// and the sweep correctly fires both. The sweep was right and the test was
+	// wrong, once a day, for five minutes — which is exactly how it failed in
+	// CI rather than here.
+	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+
 	// due: every-minute schedule created two minutes ago, never run.
 	due := fs.schedules["bak_1"]
 	due.Schedule = "* * * * *"
 	due.Enabled = true
-	due.CreatedAt = time.Now().Add(-2 * time.Minute)
+	due.CreatedAt = now.Add(-2 * time.Minute)
 	fs.schedules["bak_1"] = due
 	// not due: daily-at-3am schedule that ran five minutes ago.
-	ran := time.Now().Add(-5 * time.Minute)
+	ran := now.Add(-5 * time.Minute)
 	fs.schedules["bak_2"] = domain.DatabaseBackup{
 		ID: "bak_2", DatabaseID: "db_1", TargetID: "bt_1", RetentionCount: 7,
 		Schedule: "0 3 * * *", Enabled: true, LastRunAt: &ran,
 	}
 	s := newScheduler(fs, fb)
+	s.now = func() time.Time { return now }
 
 	s.SweepDueBackups(context.Background())
 

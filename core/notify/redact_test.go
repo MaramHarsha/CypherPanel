@@ -32,7 +32,7 @@ func TestDeliverRedactsWebhookURLOnTransportError(t *testing.T) {
 }
 
 func TestSanitizeHeaderStripsCRLF(t *testing.T) {
-	got := sanitizeHeader("Deploy failed: app\r\nBcc: evil@example.com")
+	got := SanitizeHeader("Deploy failed: app\r\nBcc: evil@example.com")
 	if strings.ContainsAny(got, "\r\n") {
 		t.Fatalf("sanitizeHeader left CR/LF in %q", got)
 	}

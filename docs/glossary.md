@@ -34,6 +34,8 @@
 - **Preview Environment** — an environment created from a pull request, destroyed on merge/close or TTL expiry.
 - **Join Token** — single-use, short-lived token that lets a new agent enroll and obtain its mTLS certificate.
 - **Backup Target** — an S3-compatible storage destination for backups.
+- **Panel Mail** — the panel's own outbound email transport: one SMTP configuration owned by the panel rather than by a project, used for account mail the panel itself must send. Distinct from a **Notifier**, which is a project's channel for telling *people* about *its* events.
+- **Email Change** — a pending, single-use, short-lived request to move an account to a new sign-in address. It is only applied once the new address proves it can receive mail.
 
 ## Term mapping to the reference repos
 

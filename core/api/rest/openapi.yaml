@@ -209,6 +209,136 @@ paths:
         "401": { description: The current password is wrong — the same answer a failed sign-in gets., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /api/v1/auth/me/avatar:
+    put:
+      operationId: setAvatar
+      tags: [auth]
+      summary: Replace your own profile photo (session only)
+      description: >
+        The image is the raw request body. The stored content type is the one
+        sniffed from the bytes, never the declared one; PNG, JPEG and WebP are
+        accepted and SVG deliberately is not.
+      requestBody:
+        required: true
+        content:
+          image/png: { schema: { type: string, format: binary } }
+          image/jpeg: { schema: { type: string, format: binary } }
+          image/webp: { schema: { type: string, format: binary } }
+      responses:
+        "200": { description: Stored., content: { application/json: { schema: { $ref: "#/components/schemas/AvatarResponse" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "413": { description: Larger than the 2 MB limit., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      operationId: deleteAvatar
+      tags: [auth]
+      summary: Remove your own profile photo (session only)
+      responses:
+        "204": { description: Removed; initials are shown instead. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/users/{id}/avatar:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: User ID. }
+    get:
+      operationId: getAvatar
+      tags: [auth]
+      summary: A user's profile photo, for any signed-in caller
+      responses:
+        "200":
+          description: The image bytes, served with the type they were recognised as.
+          content:
+            image/png: { schema: { type: string, format: binary } }
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+        "304": { description: Unchanged since the ETag the caller holds. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: That user has no photo., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /api/v1/auth/email/change:
+    post:
+      operationId: requestEmailChange
+      tags: [auth]
+      summary: Ask to move your account to a new sign-in address (session only)
+      description: >
+        Mails a single-use confirmation link to the new address, and a notice to
+        the old one. Requires the current password: possession of a session never
+        weakens a credential on its own (threat-model §5.10).
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/RequestEmailChangeRequest" } } }
+      responses:
+        "202": { description: Confirmation sent to the new address. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { description: The current password is wrong., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: That address is already in use., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "502": { description: The panel could not send the mail., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /api/v1/auth/email/confirm:
+    post:
+      operationId: confirmEmailChange
+      tags: [auth]
+      summary: Finish moving your account, using the emailed token (session only)
+      description: >
+        Needs the token and a live session — a mailbox alone must not be able to
+        move an account. Revokes every other session on success.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ConfirmEmailChangeRequest" } } }
+      responses:
+        "200": { description: The address moved., content: { application/json: { schema: { $ref: "#/components/schemas/ConfirmEmailChangeResponse" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: That address was taken while confirming., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /api/v1/panel/mail:
+    get:
+      operationId: getPanelMail
+      tags: [panel]
+      summary: The panel's mail settings, as a hint (panel admin)
+      responses:
+        "200": { description: Whether mail is configured, and a hint naming it. Never the credentials., content: { application/json: { schema: { $ref: "#/components/schemas/PanelMailSettings" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: setPanelMail
+      tags: [panel]
+      summary: Replace the panel's mail settings (panel admin)
+      description: Wholesale replacement — there is no partial update of a credential.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetPanelMailRequest" } } }
+      responses:
+        "200": { description: Saved., content: { application/json: { schema: { $ref: "#/components/schemas/PanelMailSettings" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    delete:
+      operationId: deletePanelMail
+      tags: [panel]
+      summary: Forget the panel's mail settings (panel admin)
+      responses:
+        "204": { description: Removed; the panel can no longer send. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/panel/mail/test:
+    post:
+      operationId: testPanelMail
+      tags: [panel]
+      summary: Send a test message to the configured from address (panel admin)
+      responses:
+        "202": { description: Sent. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "502": { description: The mail server refused it; the message is its own., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
   /api/v1/auth/sessions:
     get:
       operationId: listSessions
@@ -2554,6 +2684,61 @@ components:
           type: boolean
           default: false
           description: Sign every other device out. The session making the request survives.
+
+    AvatarResponse:
+      type: object
+      required: [etag]
+      properties:
+        etag:
+          type: string
+          description: Changes when the image does; use it to bust a cached <img>.
+
+    RequestEmailChangeRequest:
+      type: object
+      required: [new_email, current_password]
+      properties:
+        new_email: { type: string }
+        current_password: { type: string }
+
+    ConfirmEmailChangeRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          description: The `id.secret` value from the confirmation link.
+
+    ConfirmEmailChangeResponse:
+      type: object
+      required: [email, revoked]
+      properties:
+        email: { type: string }
+        revoked:
+          type: integer
+          format: int64
+          description: Other sessions signed out, because the recovery address moved.
+
+    PanelMailSettings:
+      type: object
+      required: [configured, config_hint]
+      properties:
+        configured: { type: boolean }
+        config_hint:
+          type: string
+          description: Non-secret summary, e.g. "smtp.acme.com → ops@acme.com". Never the password.
+        updated_at: { type: string, format: date-time }
+
+    SetPanelMailRequest:
+      type: object
+      required: [smtp_host, smtp_port, from]
+      properties:
+        smtp_host: { type: string }
+        smtp_port: { type: integer, minimum: 1, maximum: 65535 }
+        username: { type: string }
+        password:
+          type: string
+          description: Write-only. Never returned by any route.
+        from: { type: string }
 
     ChangePasswordResponse:
       type: object
