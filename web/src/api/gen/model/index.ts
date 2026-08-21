@@ -27,6 +27,7 @@ export * from './appVolume';
 export * from './application';
 export * from './applicationDesiredRevisionId';
 export * from './applicationStatus';
+export * from './avatarResponse';
 export * from './backupRecord';
 export * from './backupRecordFinishedAt';
 export * from './backupRecordStatus';

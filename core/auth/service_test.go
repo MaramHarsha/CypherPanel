@@ -20,6 +20,7 @@ type fakeStore struct {
 	touched     map[string]int               // token-hash → times touched
 	totpSecrets map[string]*store.TOTPSecret // userID → 2FA secret+state
 	recovery    map[string][]string          // userID → unused code-hashes
+	avatars     map[string]domain.Avatar    // userID → profile photo
 }
 
 func newFakeStore() *fakeStore {
@@ -211,6 +212,27 @@ func (f *fakeStore) GetUserByEmail(_ context.Context, email string) (domain.User
 		return domain.User{}, store.ErrNotFound
 	}
 	return u, nil
+}
+
+func (f *fakeStore) SetUserAvatar(_ context.Context, userID, contentType string, data []byte, etag string) error {
+	if f.avatars == nil {
+		f.avatars = map[string]domain.Avatar{}
+	}
+	f.avatars[userID] = domain.Avatar{ContentType: contentType, Bytes: data, ETag: etag}
+	return nil
+}
+
+func (f *fakeStore) GetUserAvatar(_ context.Context, userID string) (domain.Avatar, error) {
+	av, ok := f.avatars[userID]
+	if !ok {
+		return domain.Avatar{}, store.ErrNotFound
+	}
+	return av, nil
+}
+
+func (f *fakeStore) DeleteUserAvatar(_ context.Context, userID string) error {
+	delete(f.avatars, userID)
+	return nil
 }
 
 func (f *fakeStore) GetUserByID(_ context.Context, id string) (domain.User, error) {

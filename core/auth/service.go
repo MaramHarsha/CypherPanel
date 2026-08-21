@@ -53,6 +53,9 @@ type Store interface {
 	DeleteAPIToken(ctx context.Context, id string) error
 
 	GetUserByID(ctx context.Context, id string) (domain.User, error)
+	SetUserAvatar(ctx context.Context, userID, contentType string, data []byte, etag string) error
+	GetUserAvatar(ctx context.Context, userID string) (domain.Avatar, error)
+	DeleteUserAvatar(ctx context.Context, userID string) error
 	UpdateUserProfile(ctx context.Context, userID, displayName, timezone string) (domain.User, error)
 	UpdateUserPassword(ctx context.Context, userID, passwordHash string) error
 

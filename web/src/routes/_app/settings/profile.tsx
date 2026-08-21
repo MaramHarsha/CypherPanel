@@ -2,24 +2,27 @@
 // panel looks to you, and the credentials that protect it.
 //
 // The fields here were UI-only until the API caught up; they are real now
-// (PATCH /auth/me, POST /auth/password). What is still drawn but inert is the
-// avatar and the personal digest chips, because nothing stores an image or a
-// per-person subscription yet — and a control that looks live and does nothing
-// is the dead end ui-principles §11 rules out.
-import { useQueryClient } from "@tanstack/react-query";
+// (PATCH /auth/me, POST /auth/password, PUT /auth/me/avatar). What is still
+// drawn but inert is the digest chip row, because nothing stores a per-person
+// subscription yet — and a control that looks live and does nothing is the dead
+// end ui-principles §11 rules out.
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import {
+  getDeleteAvatarUrl,
+  getGetAvatarUrl,
   getGetMeQueryKey,
   getListSessionsQueryKey,
+  getSetAvatarUrl,
   useChangePassword,
   useGetMe,
   useGetTotpStatus,
   useListSessions,
   useUpdateProfile,
 } from "@/api/gen/auth/auth";
-import { ApiError } from "@/api/client";
+import { ApiError, apiBlob, apiFetch } from "@/api/client";
 import { Eyebrow } from "@/components/eyebrow";
 import { StatusPill } from "@/components/status-badge";
 import { ActionButton } from "@/components/ui/action-button";
@@ -68,16 +71,20 @@ function ProfileTab() {
   const me = useGetMe();
   const email = me.data?.email ?? "";
   const name = me.data?.display_name ?? "";
+  // Bumped after an upload or a removal so the picture refetches; the image
+  // sits behind an ETag, so nothing else would tell it to.
+  const [bust, setBust] = useState(0);
+  const [hasPhoto, setHasPhoto] = useState(false);
 
   return (
     <div className="max-w-2xl space-y-4">
       <div className="flex items-center gap-4">
-        <span
-          aria-hidden
-          className="flex size-14 flex-none items-center justify-center rounded-full bg-primary font-mono text-[18px] text-primary-fg"
-        >
-          {email ? initials(name, email) : "·"}
-        </span>
+        <Avatar
+          userId={me.data?.id}
+          fallback={email ? initials(name, email) : "·"}
+          bust={bust}
+          onResolved={setHasPhoto}
+        />
         <div className="min-w-0 flex-1">
           <p className="truncate text-[20px] font-bold tracking-[-0.02em] text-text">{name || email || "…"}</p>
           <p className="mono mt-0.5 truncate text-[12px] text-text-faint">
@@ -85,17 +92,7 @@ function ProfileTab() {
             {(me.data?.teams?.length ?? 0) > 0 && ` · ${me.data?.teams.length} team${me.data?.teams.length === 1 ? "" : "s"}`}
           </p>
         </div>
-        <Tooltip content="Avatars need somewhere to store an image — not built yet">
-          <span className="inline-flex">
-            <button
-              type="button"
-              disabled
-              className="shrink-0 whitespace-nowrap rounded-full border border-border-input bg-surface px-3.5 py-1.5 text-[12px] font-semibold text-text-disabled"
-            >
-              Change photo
-            </button>
-          </span>
-        </Tooltip>
+        <PhotoControls userId={me.data?.id} hasPhoto={hasPhoto} onChanged={() => setBust((b) => b + 1)} />
       </div>
 
       <ProfileForm email={email} name={name} timezone={me.data?.timezone ?? ""} />
@@ -109,6 +106,172 @@ function ProfileTab() {
           today; per-person digests need a backend before this can be switched on.
         </p>
       </section>
+    </div>
+  );
+}
+
+/**
+ * The photo, or the initials that stand in for it.
+ *
+ * The bytes are fetched rather than pointed at: `GET /users/{id}/avatar` needs
+ * the bearer token, so an `<img src>` the browser resolves on its own would go
+ * out unauthenticated, and a token in the query string would write the
+ * credential into history and logs.
+ *
+ * They then become a `data:` URL rather than an object URL, because the panel's
+ * CSP is `img-src 'self' data:` — a `blob:` URL is refused, and widening a
+ * policy that web-ui-design.md §5 calls a deliberate security property is a bad
+ * trade for an image capped at 256 KB. It also removes the object-URL lifetime
+ * question entirely: nothing to revoke, nothing to leak.
+ *
+ * `bust` changes on upload and removal, which is what makes the picture change
+ * without a reload — the response sits behind an ETag and nothing else would.
+ */
+function Avatar({
+  userId,
+  fallback,
+  bust,
+  onResolved,
+}: {
+  userId?: string;
+  fallback: string;
+  bust?: number;
+  onResolved?: (hasPhoto: boolean) => void;
+}) {
+  const [src, setSrc] = useState<string | null>(null);
+  // Held in a ref so the effect does not re-run when the parent re-renders with
+  // a fresh callback — that would refetch the image on every keystroke.
+  const resolved = useRef(onResolved);
+  resolved.current = onResolved;
+
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    void apiBlob(getGetAvatarUrl(userId))
+      .then(async (blob) => {
+        if (cancelled) return;
+        resolved.current?.(Boolean(blob));
+        if (!blob) {
+          setSrc(null);
+          return;
+        }
+        const dataURL = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(blob);
+        });
+        if (!cancelled) setSrc(dataURL);
+      })
+      .catch(() => {
+        // No photo, or it could not be read: the initials are a complete answer.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, bust]);
+
+  if (src) {
+    return <img src={src} alt="" className="size-14 flex-none rounded-full object-cover" />;
+  }
+  return (
+    <span
+      aria-hidden
+      className="flex size-14 flex-none items-center justify-center rounded-full bg-primary font-mono text-[18px] text-primary-fg"
+    >
+      {fallback}
+    </span>
+  );
+}
+
+/** Accepted here as well as on the server, so a wrong file fails before upload. */
+const AVATAR_TYPES = "image/png,image/jpeg,image/webp";
+const MAX_AVATAR_BYTES = 256 * 1024;
+
+function PhotoControls({ userId, hasPhoto, onChanged }: { userId?: string; hasPhoto: boolean; onChanged: () => void }) {
+  const qc = useQueryClient();
+  const picker = useRef<HTMLInputElement>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const done = (msg: string) => {
+    void qc.invalidateQueries({ queryKey: getGetMeQueryKey() });
+    onChanged();
+    toast.success(msg);
+  };
+
+  // The generated client cannot express this one: orval JSON.stringifies the
+  // body for a binary request, which would upload "{}". It still owns the URL,
+  // and apiFetch still owns auth and the error envelope.
+  const upload = useMutation({
+    mutationFn: (file: File) =>
+      apiFetch<{ etag: string }>(getSetAvatarUrl(), {
+        method: "PUT",
+        headers: { "Content-Type": file.type },
+        body: file,
+      }),
+    onSuccess: () => done("Photo updated"),
+    onError: (e: unknown) => setError(e instanceof ApiError ? e.message : "Could not upload that image"),
+  });
+
+  const remove = useMutation({
+    mutationFn: () => apiFetch<void>(getDeleteAvatarUrl(), { method: "DELETE" }),
+    onSuccess: () => done("Photo removed"),
+    onError: (e: unknown) => setError(e instanceof ApiError ? e.message : "Could not remove the photo"),
+  });
+
+  const pick = (file: File | undefined) => {
+    setError(null);
+    if (!file) return;
+    // Checked here too so an obviously wrong file is refused without a round
+    // trip; the server checks the bytes regardless, which is the real gate.
+    if (!AVATAR_TYPES.split(",").includes(file.type)) {
+      setError("Choose a PNG, JPEG or WebP image");
+      return;
+    }
+    if (file.size > MAX_AVATAR_BYTES) {
+      setError(`That image is ${Math.round(file.size / 1024)} KB — the limit is ${MAX_AVATAR_BYTES / 1024} KB`);
+      return;
+    }
+    upload.mutate(file);
+  };
+
+  return (
+    <div className="flex shrink-0 flex-col items-end gap-1">
+      <div className="flex items-center gap-2">
+        {hasPhoto && (
+          <button
+            type="button"
+            disabled={remove.isPending}
+            onClick={() => remove.mutate()}
+            className="text-[12px] font-medium text-danger hover:underline disabled:opacity-50"
+          >
+            {remove.isPending ? "Removing…" : "Remove"}
+          </button>
+        )}
+        <ActionButton
+          variant="secondary"
+          size="sm"
+          state={upload.isPending ? "busy" : "idle"}
+          busyLabel="Uploading…"
+          disabled={!userId}
+          onClick={() => picker.current?.click()}
+        >
+          {hasPhoto ? "Change photo" : "Add photo"}
+        </ActionButton>
+      </div>
+      <input
+        ref={picker}
+        type="file"
+        accept={AVATAR_TYPES}
+        className="sr-only"
+        aria-label="Choose a profile photo"
+        onChange={(e) => {
+          pick(e.target.files?.[0]);
+          // Cleared so choosing the same file twice still fires a change.
+          e.target.value = "";
+        }}
+      />
+      {error && <p className="max-w-56 text-right text-[11.5px] leading-snug text-danger">{error}</p>}
     </div>
   );
 }

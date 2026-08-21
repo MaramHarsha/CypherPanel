@@ -76,6 +76,15 @@ func (s Server) Runs() bool {
 // exactly one owner. The account model supports TOTP (threat-model §8 req 7):
 // the sealed seed stays in the store; the domain only surfaces whether it is
 // enrolled.
+// Avatar is a profile photo: small, already-encoded image bytes plus the type
+// they were recognised as. Never the type the uploader claimed.
+type Avatar struct {
+	ContentType string
+	Bytes       []byte
+	ETag        string
+	UpdatedAt   time.Time
+}
+
 type User struct {
 	ID           string
 	Email        string

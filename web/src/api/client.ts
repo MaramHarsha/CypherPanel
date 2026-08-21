@@ -19,6 +19,31 @@ function redirectToLogin(): void {
   window.location.assign(`/login${ret}`);
 }
 
+/**
+ * The same request path, for a response that is bytes rather than JSON.
+ *
+ * It exists because an authenticated image cannot be an `<img src>`: the URL
+ * carries no bearer token, and putting one in a query string would write the
+ * credential into history and logs. So the bytes are fetched here and handed to
+ * the element as an object URL.
+ */
+export async function apiBlob(url: string, init?: RequestInit): Promise<Blob | null> {
+  const headers = new Headers(init?.headers);
+  const token = getToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+
+  const res = await fetch(url, { ...init, headers });
+  if (res.status === 401) {
+    clearToken();
+    redirectToLogin();
+    throw new ApiError(401, "Session expired — sign in again");
+  }
+  // A missing image is an answer, not a failure: it means "no photo".
+  if (res.status === 404) return null;
+  if (!res.ok) throw new ApiError(res.status, res.statusText || `Request failed (${res.status})`);
+  return res.blob();
+}
+
 export async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   const token = getToken();

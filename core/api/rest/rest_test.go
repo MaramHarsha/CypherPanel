@@ -42,6 +42,7 @@ type fakeAuthStore struct {
 	byHash   map[string]string          // string(tokenHash) → token id
 	totp     store.TOTPSecret
 	recovery [][]byte // unused recovery code-hashes
+	avatars     map[string]domain.Avatar    // userID → profile photo
 }
 
 // fakeBox is an identity SecretBox for handler tests.
@@ -100,6 +101,27 @@ func (f *fakeAuthStore) GetUserByEmail(_ context.Context, email string) (domain.
 		return domain.User{}, store.ErrNotFound
 	}
 	return f.user, nil
+}
+
+func (f *fakeAuthStore) SetUserAvatar(_ context.Context, userID, contentType string, data []byte, etag string) error {
+	if f.avatars == nil {
+		f.avatars = map[string]domain.Avatar{}
+	}
+	f.avatars[userID] = domain.Avatar{ContentType: contentType, Bytes: data, ETag: etag}
+	return nil
+}
+
+func (f *fakeAuthStore) GetUserAvatar(_ context.Context, userID string) (domain.Avatar, error) {
+	av, ok := f.avatars[userID]
+	if !ok {
+		return domain.Avatar{}, store.ErrNotFound
+	}
+	return av, nil
+}
+
+func (f *fakeAuthStore) DeleteUserAvatar(_ context.Context, userID string) error {
+	delete(f.avatars, userID)
+	return nil
 }
 
 func (f *fakeAuthStore) GetUserByID(_ context.Context, id string) (domain.User, error) {

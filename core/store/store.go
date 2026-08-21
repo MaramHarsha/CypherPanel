@@ -499,6 +499,32 @@ type TOTPSecret struct {
 	Enabled bool
 }
 
+// SetUserAvatar replaces the caller's photo. The bytes arrive already validated
+// — the store's job is the row, not the policy.
+func (s *Store) SetUserAvatar(ctx context.Context, userID, contentType string, data []byte, etag string) error {
+	if err := s.q.SetUserAvatar(ctx, db.SetUserAvatarParams{UserID: userID, ContentType: contentType, Bytes: data, Etag: etag}); err != nil {
+		return fmt.Errorf("store: setting avatar: %w", err)
+	}
+	return nil
+}
+
+// GetUserAvatar returns a user's photo, or ErrNotFound when they have none.
+func (s *Store) GetUserAvatar(ctx context.Context, userID string) (domain.Avatar, error) {
+	row, err := s.q.GetUserAvatar(ctx, userID)
+	if err != nil {
+		return domain.Avatar{}, wrap("getting avatar", err)
+	}
+	return domain.Avatar{ContentType: row.ContentType, Bytes: row.Bytes, ETag: row.Etag, UpdatedAt: row.UpdatedAt.Time}, nil
+}
+
+// DeleteUserAvatar removes the photo; the initials come back in its place.
+func (s *Store) DeleteUserAvatar(ctx context.Context, userID string) error {
+	if err := s.q.DeleteUserAvatar(ctx, userID); err != nil {
+		return fmt.Errorf("store: deleting avatar: %w", err)
+	}
+	return nil
+}
+
 // GetUserByID loads one account. Used where the caller already holds an id and
 // must re-read the row — proving a current password, for instance, where the
 // session's cached copy is not enough.
