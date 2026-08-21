@@ -448,3 +448,28 @@ func TestSharedVariableRoutesWithoutTheService(t *testing.T) {
 		t.Errorf("application GET without the service = %d (body %s)", status, body)
 	}
 }
+
+// An omitted `value` is not an instruction to blank the variable. The field is
+// a pointer precisely so the handler can tell absent from empty: with a plain
+// string the two were the same zero value, so `PATCH {}` — a client that built
+// its body wrong, or forgot the field — replaced a sealed credential with "",
+// answered 200, and left nothing to recover it from. openapi has always
+// declared `value` required; this is the handler agreeing.
+func TestPatchSharedVariableRequiresTheValueField(t *testing.T) {
+	ts, st := newSharedVarServer(t, domain.RoleMember, domain.RoleMember)
+	token := login(t, ts)
+
+	status, _, body := doJSON(t, "PATCH", ts.URL+"/api/v1/shared-variables/sv_project", token, `{}`)
+	if status != http.StatusBadRequest {
+		t.Fatalf("PATCH with no value = %d, want 400 (body %s)", status, body)
+	}
+	if _, written := st.values["sv_project"]; written {
+		t.Fatalf("PATCH {} reached SetValue and wrote %q over the sealed value", st.values["sv_project"])
+	}
+
+	// An EXPLICIT empty string is still allowed — it is a value, and the caller
+	// clearly meant it.
+	if status, _, body := doJSON(t, "PATCH", ts.URL+"/api/v1/shared-variables/sv_project", token, `{"value":""}`); status != http.StatusOK {
+		t.Fatalf("PATCH with an explicit empty value = %d, want 200 (body %s)", status, body)
+	}
+}

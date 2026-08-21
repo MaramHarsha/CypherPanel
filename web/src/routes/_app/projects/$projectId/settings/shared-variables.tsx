@@ -170,10 +170,15 @@ function VariableRow({ projectId, variable: v }: { projectId: string; variable: 
             autoComplete="off"
             autoFocus
           />
+          {/* An empty box is nothing to save, not an instruction to blank the
+              variable: the value is write-only, so a blank Replace destroys a
+              credential nobody can read back or recover. Deliberately emptying
+              one is an API call. */}
           <Button
             size="sm"
             variant="primary"
-            disabled={update.isPending}
+            disabled={update.isPending || value === ""}
+            title={value === "" ? "Type the new value first" : undefined}
             onClick={() => update.mutate({ id: v.id, data: { value } })}
           >
             Save

@@ -145,8 +145,15 @@ func (a *API) handleGetSharedVariable(w http.ResponseWriter, r *http.Request) {
 // immutable after create: changing either would silently re-point or orphan
 // every referencing application, so delete-and-recreate is the explicit path
 // and the delete guard fires (§7).
+//
+// Value is a POINTER so the handler can tell an omitted field from an empty
+// one. With a plain string the two are the same zero value, and `PATCH {}` —
+// a client that forgot the field, or sent a body it built wrong — replaced a
+// sealed credential with "" and answered 200. The value cannot be read back to
+// notice, and nothing keeps a previous one, so that write is unrecoverable.
+// openapi declares `value` required; this makes the handler agree.
 type patchSharedVariableRequest struct {
-	Value string `json:"value"`
+	Value *string `json:"value"`
 }
 
 func (a *API) handlePatchSharedVariable(w http.ResponseWriter, r *http.Request) {
@@ -165,7 +172,11 @@ func (a *API) handlePatchSharedVariable(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	v, err := a.deps.SharedVariables.SetValue(r.Context(), r.PathValue("id"), req.Value)
+	if req.Value == nil {
+		writeError(w, http.StatusBadRequest, "value is required — send an empty string to set the variable to empty")
+		return
+	}
+	v, err := a.deps.SharedVariables.SetValue(r.Context(), r.PathValue("id"), *req.Value)
 	if err != nil {
 		a.writeSharedVariableError(w, "updating shared variable", err)
 		return
