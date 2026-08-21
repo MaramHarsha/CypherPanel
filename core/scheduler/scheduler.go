@@ -494,18 +494,26 @@ func (s *Scheduler) startRollout(ctx context.Context, dep domain.Deployment, app
 	if _, err := s.store.SetApplicationDesiredRevision(ctx, app.ID, rev.ID); err != nil {
 		return err
 	}
+	// Stamped BEFORE buildSpec reads the environment, not after.
+	//
+	// The stamp is compared against shared_variables.updated_at to derive
+	// "redeploy to apply" (§5), so it must not be later than the moment the
+	// values were actually read. Taken afterwards, an edit landing during
+	// buildSpec got updated_at < env_resolved_at and the application was marked
+	// CLEAN while this rollout shipped the value from before the edit — the one
+	// direction §5 promises is impossible. Taken first, that same edit lands
+	// after the stamp and the marker correctly reads pending: the rollout may
+	// be redundant, but it can never hide a needed one.
+	//
+	// Best-effort: a stamp failure must not abort a rollout that is otherwise
+	// ready to publish — it only leaves the marker showing pending, which is
+	// the safe direction.
+	if err := s.store.SetDeploymentEnvResolved(ctx, dep.ID); err != nil {
+		s.log.Error("stamping resolved environment", "deployment_id", dep.ID, "error", err)
+	}
 	spec, err := s.buildSpec(ctx, app, rev, envStrict)
 	if err != nil {
 		return err
-	}
-	// The instant this rollout's environment was frozen onto the wire. It moves
-	// onto the application only when the rollout is OBSERVED running, which is
-	// what makes "redeploy to apply" derivable and un-fakeable
-	// (shared-variables.md §5). Best-effort: a stamp failure must not abort a
-	// rollout that is otherwise ready to publish — it only leaves the marker
-	// showing pending, which is the safe direction.
-	if err := s.store.SetDeploymentEnvResolved(ctx, dep.ID); err != nil {
-		s.log.Error("stamping resolved environment", "deployment_id", dep.ID, "error", err)
 	}
 	work := &agentv1.RolloutWork{DeploymentId: dep.ID, Spec: spec}
 	data, err := proto.Marshal(work)
