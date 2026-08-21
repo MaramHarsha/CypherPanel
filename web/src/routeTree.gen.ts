@@ -19,6 +19,7 @@ import { Route as AppServersServerIdRouteImport } from './routes/_app/servers/$s
 import { Route as AppSettingsIndexRouteImport } from './routes/_app/settings/index'
 import { Route as AppSettingsBackupTargetsRouteImport } from './routes/_app/settings/backup-targets'
 import { Route as AppSettingsDeployKeysRouteImport } from './routes/_app/settings/deploy-keys'
+import { Route as AppSettingsProfileRouteImport } from './routes/_app/settings/profile'
 import { Route as AppSettingsTeamsRouteImport } from './routes/_app/settings/teams'
 import { Route as AppSettingsUsersRouteImport } from './routes/_app/settings/users'
 import { Route as AppTemplatesIndexRouteImport } from './routes/_app/templates/index'
@@ -86,6 +87,11 @@ const AppSettingsBackupTargetsRoute =
 const AppSettingsDeployKeysRoute = AppSettingsDeployKeysRouteImport.update({
   id: '/deploy-keys',
   path: '/deploy-keys',
+  getParentRoute: () => AppSettingsRoute,
+} as any)
+const AppSettingsProfileRoute = AppSettingsProfileRouteImport.update({
+  id: '/profile',
+  path: '/profile',
   getParentRoute: () => AppSettingsRoute,
 } as any)
 const AppSettingsTeamsRoute = AppSettingsTeamsRouteImport.update({
@@ -201,6 +207,7 @@ export interface FileRoutesByFullPath {
   '/servers/$serverId': typeof AppServersServerIdRoute
   '/settings/backup-targets': typeof AppSettingsBackupTargetsRoute
   '/settings/deploy-keys': typeof AppSettingsDeployKeysRoute
+  '/settings/profile': typeof AppSettingsProfileRoute
   '/settings/teams': typeof AppSettingsTeamsRoute
   '/settings/users': typeof AppSettingsUsersRoute
   '/projects/': typeof AppProjectsIndexRoute
@@ -229,6 +236,7 @@ export interface FileRoutesByTo {
   '/servers/$serverId': typeof AppServersServerIdRoute
   '/settings/backup-targets': typeof AppSettingsBackupTargetsRoute
   '/settings/deploy-keys': typeof AppSettingsDeployKeysRoute
+  '/settings/profile': typeof AppSettingsProfileRoute
   '/settings/teams': typeof AppSettingsTeamsRoute
   '/settings/users': typeof AppSettingsUsersRoute
   '/projects': typeof AppProjectsIndexRoute
@@ -258,6 +266,7 @@ export interface FileRoutesById {
   '/_app/servers/$serverId': typeof AppServersServerIdRoute
   '/_app/settings/backup-targets': typeof AppSettingsBackupTargetsRoute
   '/_app/settings/deploy-keys': typeof AppSettingsDeployKeysRoute
+  '/_app/settings/profile': typeof AppSettingsProfileRoute
   '/_app/settings/teams': typeof AppSettingsTeamsRoute
   '/_app/settings/users': typeof AppSettingsUsersRoute
   '/_app/projects/': typeof AppProjectsIndexRoute
@@ -289,6 +298,7 @@ export interface FileRouteTypes {
     | '/servers/$serverId'
     | '/settings/backup-targets'
     | '/settings/deploy-keys'
+    | '/settings/profile'
     | '/settings/teams'
     | '/settings/users'
     | '/projects/'
@@ -317,6 +327,7 @@ export interface FileRouteTypes {
     | '/servers/$serverId'
     | '/settings/backup-targets'
     | '/settings/deploy-keys'
+    | '/settings/profile'
     | '/settings/teams'
     | '/settings/users'
     | '/projects'
@@ -345,6 +356,7 @@ export interface FileRouteTypes {
     | '/_app/servers/$serverId'
     | '/_app/settings/backup-targets'
     | '/_app/settings/deploy-keys'
+    | '/_app/settings/profile'
     | '/_app/settings/teams'
     | '/_app/settings/users'
     | '/_app/projects/'
@@ -443,6 +455,13 @@ declare module '@tanstack/react-router' {
       path: '/deploy-keys'
       fullPath: '/settings/deploy-keys'
       preLoaderRoute: typeof AppSettingsDeployKeysRouteImport
+      parentRoute: typeof AppSettingsRoute
+    }
+    '/_app/settings/profile': {
+      id: '/_app/settings/profile'
+      path: '/profile'
+      fullPath: '/settings/profile'
+      preLoaderRoute: typeof AppSettingsProfileRouteImport
       parentRoute: typeof AppSettingsRoute
     }
     '/_app/settings/teams': {
@@ -577,6 +596,7 @@ declare module '@tanstack/react-router' {
 interface AppSettingsRouteChildren {
   AppSettingsBackupTargetsRoute: typeof AppSettingsBackupTargetsRoute
   AppSettingsDeployKeysRoute: typeof AppSettingsDeployKeysRoute
+  AppSettingsProfileRoute: typeof AppSettingsProfileRoute
   AppSettingsTeamsRoute: typeof AppSettingsTeamsRoute
   AppSettingsUsersRoute: typeof AppSettingsUsersRoute
   AppSettingsIndexRoute: typeof AppSettingsIndexRoute
@@ -585,6 +605,7 @@ interface AppSettingsRouteChildren {
 const AppSettingsRouteChildren: AppSettingsRouteChildren = {
   AppSettingsBackupTargetsRoute: AppSettingsBackupTargetsRoute,
   AppSettingsDeployKeysRoute: AppSettingsDeployKeysRoute,
+  AppSettingsProfileRoute: AppSettingsProfileRoute,
   AppSettingsTeamsRoute: AppSettingsTeamsRoute,
   AppSettingsUsersRoute: AppSettingsUsersRoute,
   AppSettingsIndexRoute: AppSettingsIndexRoute,

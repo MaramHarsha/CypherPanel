@@ -8,6 +8,7 @@ export const Route = createFileRoute("/_app/settings")({ component: SettingsLayo
 
 const TABS = [
   { to: "/settings", label: "Account", exact: true },
+  { to: "/settings/profile", label: "Profile", exact: false },
   { to: "/settings/teams", label: "Teams", exact: false },
   { to: "/settings/users", label: "Users", exact: false },
   { to: "/settings/deploy-keys", label: "Deploy keys", exact: false },
