@@ -203,6 +203,7 @@ Each scenario states the attack, the property that must hold, the controls, and 
 - **The control plane reserves disk headroom for its own database** and self-protects — it will refuse or defer work before it starves its own Postgres. `[Phase 1: the plane's own resource guard is a boot-time concern]`
 - **Bounded retention on `logs.*`/`state.*`** (ADR-003 says "bounded retention"; the Dokploy footprint measurement showed 22.76 GiB *written* on an idle install — [research/dokploy.md](../../research/dokploy.md)): JetStream retention limits and sampled/batched metrics cap write churn and disk use by design, not by cleanup-after. `[Phase 1: JetStream stream config sets limits from day one]`
 - **Threshold alerts before failure** (matrix V1, upgraded from V1.x precisely because of this finding): the operator is warned while there's still room to act.
+- **Every expansion is bounded, in the count *and* the result.** Anywhere the plane substitutes operator text into operator text, the amplification factor is capped, not just the input: a **Shared Variable** reference is bounded at 16 *occurrences* per value (not 16 distinct keys, which left the repeat count free) and the expanded result is capped besides. This is memory, not disk, and it is the sharper version of this scenario — `Scheduler.resolveEnv` is re-entered from `DesiredStateFor` on every agent reconnect, so an unbounded expansion does not fail one deploy, it OOMs the plane and OOMs it again on restart. `[shared-variables.md §6]`
 
 **Residual risk.** A determined authenticated attacker can still generate load; rate limiting and per-team quotas (post-v1) bound it. The self-inflicted case — the common one — is designed out.
 
@@ -254,6 +255,65 @@ in someone else's hands. Password reset by email is deliberately **not** added
 (panel-mail.md §8): it would make the mailbox sufficient on its own, which is
 exactly the property this scenario exists to preserve.
 
+### 5.11 The panel as an HTTP client: outbound webhooks
+
+**Attack.** Until now the control plane made no outbound HTTP request to an
+address an operator chose, except a notifier's fixed provider host. An
+**Outbound Webhook** ([outbound-webhooks.md](../features/outbound-webhooks.md))
+makes the panel POST signed JSON to *any* URL a project member registers, on
+every subscribed transition, with retries. Four ways that bites. **(a)** The URL
+is an egress path out of the control-plane network: `http://127.0.0.1:…`,
+`http://10.0.0.7:5432`, `http://169.254.169.254/latest/meta-data/` all resolve
+from where `cypherd` runs, not from where the operator sits. **(b)** Unlike a
+notifier, every attempt's **status and duration are persisted and readable** via
+`GET /webhook-endpoints/{id}/deliveries`, which turns (a) from blind SSRF into a
+semi-blind scanner a member can drive on demand with `POST …/ping`. **(c)** The
+signing secret is a new asset: whoever holds it can forge events *to the
+receiver*, and receivers act on them. **(d)** The payload leaves the trust
+boundary — anything put in it is disclosed to whoever controls that URL.
+
+**Property that must hold.** An outbound webhook may carry only what its
+subscriber is already entitled to read, must be attributable to us, and must not
+become a general-purpose network probe or an unbounded amplifier.
+
+**Controls.**
+- **The payload carries no sealed material** — deploy and backup metadata that
+  the API already returns to the same caller. Never env vars, connection strings,
+  or anything from a `*_ct` column. `[outbound-webhooks.md §6]`
+- **Signed, and bound to a moment.** HMAC-SHA256 over `timestamp + "." + rawBody`
+  with a fresh timestamp per attempt, `sha256=<hex>` matching this repo's
+  existing inbound convention so receivers can reuse a known recipe. The MAC
+  covers the raw bytes, and the published contract tells receivers to verify
+  before parsing and to dedupe on `X-CypherPanel-Delivery`. `[§4]`
+- **The secret is sealed** with the master key, unsealed only to sign, absent
+  from the endpoint DTO by construction, and returned exactly twice — at create
+  and at rotate. A database read yields ciphertext. `[§6, rule 20]`
+- **Redirects are never followed**, so a receiver cannot bounce a signed body to
+  a third party, and **response bodies are never stored or logged** — a
+  receiver's error page can carry its own secrets. Transport errors go through
+  `redactURL` so a token-bearing URL cannot ride out in a `*url.Error`. `[§6]`
+- **Authorized at the project, like a notifier.** Every route resolves through
+  `projectIDForWebhookEndpoint` / `projectIDForWebhookDelivery` at `RoleMember`;
+  non-member 404, under-ranked 403 (§5.8's rule). A delivery is not addressable
+  without its endpoint.
+- **Bounded** (§5.9's discipline): four attempts, a ~31-minute horizon, a 10s
+  per-attempt timeout, and the 200 most recent deliveries per endpoint retained,
+  attempts cascading.
+
+**Accepted risk — egress is not filtered.** We enforce `http`/`https` only and
+refuse redirects, but we do **not** block private, loopback or link-local
+destinations. This is the same posture as
+[notifications.md](../features/notifications.md) §6 and rests on the same
+premise: the operator is the trust root and already runs arbitrary containers on
+these servers. It is recorded here rather than left implicit because (b) makes
+this surface *more* informative than a notifier's — a member can read back
+whether a port answered and how fast. Two things make that acceptable today: the
+caller must already hold `RoleMember` on a project, and a panel that runs
+untrusted members is outside §7's assumptions. **If per-team quotas or untrusted
+members ever land, this scenario is the one to revisit** — the control then is a
+destination denylist resolved at request time, not at validation time, to avoid
+a DNS-rebinding gap.
+
 ## 6. Cross-cutting controls (apply everywhere)
 
 - **Secrets never in logs, errors, or API responses** — mask by default (ENGINEERING rule 20). Every log line carries resource IDs, never secret values (rule 4).
@@ -299,6 +359,8 @@ These are the concrete, checkable requirements the Phase 1 handshake code must s
 | §5.7 Build/exec | Builds off the plane; resource caps; terminal audited & authorized | vision NN-5, ADR-001, ADR-002 |
 | §5.8 Web/API | No SSR framework; auth+object-authz default; rate limit; masking | ADR-001, rules 20–21 |
 | §5.9 Disk exhaustion/self-DoS | Desired-state GC; self-headroom guard; bounded retention; alerts | ADR-003, ADR-005, matrix V1 |
+| §5.10 Mailbox-as-identity | Two factors to move an address; old address always notified; single-use hashed token; sessionOnly + rate limited | panel-mail.md §4–5, rules 20–21 |
+| §5.11 Outbound webhook egress | Metadata-only payload; HMAC over raw bytes; sealed secret; no redirects; project-scoped authz; bounded retries | outbound-webhooks.md §4, §6, rule 20 |
 
 ---
 
