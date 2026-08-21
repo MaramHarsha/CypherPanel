@@ -24,11 +24,29 @@ type DNSService interface {
 }
 
 type dnsSettingsDTO struct {
-	Configured bool       `json:"configured"`
-	Kind       string     `json:"kind"`
-	ConfigHint string     `json:"config_hint"`
-	ZoneCount  int        `json:"zone_count"`
-	UpdatedAt  *time.Time `json:"updated_at,omitempty"`
+	Configured  bool       `json:"configured"`
+	Kind        string     `json:"kind"`
+	ConfigHint  string     `json:"config_hint"`
+	ZoneCount   int        `json:"zone_count"`
+	AccountID   string     `json:"account_id,omitempty"`
+	AccountName string     `json:"account_name,omitempty"`
+	UpdatedAt   *time.Time `json:"updated_at,omitempty"`
+}
+
+// dnsAccountDTO is one Cloudflare account the token can see. Returned only in
+// the 400 that asks which one to use — never a general listing, because the
+// question "what else does this credential reach?" is not one the API answers.
+type dnsAccountDTO struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// chooseAccountResponse is the body of that 400. It carries the choices so the
+// UI can render a picker instead of sending the operator to Cloudflare to find
+// an ID (ui-principles §11: a dead end is a bug).
+type chooseAccountResponse struct {
+	Error    string          `json:"error"`
+	Accounts []dnsAccountDTO `json:"accounts"`
 }
 
 // The token goes in and is never read back — the notifier contract, for the
@@ -36,6 +54,10 @@ type dnsSettingsDTO struct {
 // This one is A3b (threat-model §5.12): it can repoint any zone it covers.
 type setDNSRequest struct {
 	APIToken string `json:"api_token"`
+	// AccountID is optional. Empty asks the panel to resolve it: an
+	// account-owned token belongs to exactly one account, so the common case
+	// needs no input. It is only required when a token can see several.
+	AccountID string `json:"account_id"`
 }
 
 type dnsZoneDTO struct {
@@ -68,7 +90,10 @@ type applicationDNSDTO struct {
 }
 
 func dnsSettingsToDTO(s dns.Settings) dnsSettingsDTO {
-	dto := dnsSettingsDTO{Configured: s.Configured, Kind: s.Kind, ConfigHint: s.Hint, ZoneCount: s.ZoneCount}
+	dto := dnsSettingsDTO{
+		Configured: s.Configured, Kind: s.Kind, ConfigHint: s.Hint, ZoneCount: s.ZoneCount,
+		AccountID: s.AccountID, AccountName: s.AccountName,
+	}
 	if !s.UpdatedAt.IsZero() {
 		u := s.UpdatedAt
 		dto.UpdatedAt = &u
@@ -118,7 +143,7 @@ func (a *API) handleSetPanelDNS(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	s, err := a.deps.DNS.Set(r.Context(), dns.Config{APIToken: req.APIToken})
+	s, err := a.deps.DNS.Set(r.Context(), dns.Config{APIToken: req.APIToken, AccountID: req.AccountID})
 	if err != nil {
 		a.writeDNSError(w, "saving dns provider", err)
 		return
@@ -269,6 +294,17 @@ func (a *API) dnsMissingReason(ctx context.Context, app domain.Application) stri
 // operator's to fix and carries the provider's own words; everything else is
 // ours and is logged rather than shown.
 func (a *API) writeDNSError(w http.ResponseWriter, op string, err error) {
+	// A token that reaches several accounts is a question, not a fault. Answer
+	// it with the choices so the operator picks one in the panel.
+	var ambiguous *dns.AmbiguousAccountError
+	if errors.As(err, &ambiguous) {
+		out := chooseAccountResponse{Error: ambiguous.Error()}
+		for _, acc := range ambiguous.Accounts {
+			out.Accounts = append(out.Accounts, dnsAccountDTO{ID: acc.ID, Name: acc.Name})
+		}
+		writeJSON(w, http.StatusBadRequest, out)
+		return
+	}
 	var ve *dns.ValidationError
 	if errors.As(err, &ve) {
 		writeError(w, http.StatusBadRequest, ve.Msg)

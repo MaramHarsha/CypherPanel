@@ -38,6 +38,8 @@ export * from './changeMemberRoleRequest';
 export * from './changeMemberRoleRequestRole';
 export * from './changePasswordRequest';
 export * from './changePasswordResponse';
+export * from './chooseAccountError';
+export * from './chooseAccountErrorAccountsItem';
 export * from './confirmEmailChangeRequest';
 export * from './confirmEmailChangeResponse';
 export * from './connectionInfo';

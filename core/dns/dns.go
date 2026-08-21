@@ -46,6 +46,21 @@ const recordTTL = 1
 // are the wire format and a typo cannot silently become an empty setting.
 type Config struct {
 	APIToken string `json:"api_token"`
+	// AccountID scopes an ACCOUNT-OWNED token to the account that owns it
+	// (https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/).
+	//
+	// Empty means a user-owned token, which is the classic "My Profile → API
+	// Tokens" kind and needs no account. Cloudflare recommends account-owned
+	// tokens for durable integrations precisely because they survive the person
+	// who made them leaving, which is what a panel is.
+	//
+	// It changes two calls: zones are listed filtered by account.id, and the
+	// token verifies at /accounts/{id}/tokens/verify rather than
+	// /user/tokens/verify.
+	AccountID string `json:"account_id"`
+	// AccountName is cached for display only. It is not a credential and not
+	// authoritative — the ID is.
+	AccountName string `json:"account_name"`
 }
 
 // Store is the persistence this needs (consumer-defined, ENGINEERING rule 6).
@@ -92,11 +107,22 @@ func New(st Store, box SecretBox) *Service {
 // Settings is what the API may say about the configuration: whether one exists
 // and a hint naming it. Never the token.
 type Settings struct {
-	Configured bool
-	Kind       string
-	Hint       string
-	ZoneCount  int
-	UpdatedAt  time.Time
+	Configured  bool
+	Kind        string
+	Hint        string
+	ZoneCount   int
+	AccountID   string
+	AccountName string
+	UpdatedAt   time.Time
+}
+
+// AmbiguousAccountError is returned when a token can see several accounts and
+// the operator has not said which one to use. It carries the choices so the UI
+// can render a picker rather than asking them to go and find an ID.
+type AmbiguousAccountError struct{ Accounts []Account }
+
+func (e *AmbiguousAccountError) Error() string {
+	return "this token can see more than one Cloudflare account — choose which one CypherPanel should manage"
 }
 
 // Hint renders the non-secret half. There is nothing in a DNS token worth
@@ -118,7 +144,7 @@ func Hint(zones []domain.DNSZone) string {
 // ─── Provider configuration ─────────────────────────────────────────────────
 
 func (s *Service) Get(ctx context.Context) (Settings, error) {
-	kind, _, updated, err := s.load(ctx)
+	kind, cfg, updated, err := s.load(ctx)
 	// load has already translated a missing row into ErrNotConfigured; matching
 	// store.ErrNotFound here never fired, so "no provider connected" — the
 	// ordinary state of every install that has not set one up — surfaced as a
@@ -133,7 +159,10 @@ func (s *Service) Get(ctx context.Context) (Settings, error) {
 	if err != nil {
 		return Settings{}, fmt.Errorf("dns: listing zones: %w", err)
 	}
-	return Settings{Configured: true, Kind: kind, Hint: Hint(zones), ZoneCount: len(zones), UpdatedAt: updated}, nil
+	return Settings{
+		Configured: true, Kind: kind, Hint: Hint(zones), ZoneCount: len(zones),
+		AccountID: cfg.AccountID, AccountName: cfg.AccountName, UpdatedAt: updated,
+	}, nil
 }
 
 // Set validates the credential against the provider BEFORE persisting anything,
@@ -144,7 +173,41 @@ func (s *Service) Set(ctx context.Context, c Config) (Settings, error) {
 	if strings.TrimSpace(c.APIToken) == "" {
 		return Settings{}, invalid("an API token is required")
 	}
-	zones, err := s.newCli(c.APIToken).ListZones(ctx)
+	cli := s.newCli(c.APIToken)
+
+	// Resolve which account this token belongs to, unless the operator already
+	// said. An account-owned token is scoped to exactly one account, so the
+	// common case needs no input at all — asking someone to go and copy an ID
+	// they will find in one place is work the panel can do for them.
+	if c.AccountID == "" {
+		accounts, err := cli.ListAccounts(ctx)
+		switch {
+		case err != nil:
+			// A token without Account:Read cannot list accounts. That is not a
+			// failure: a user-owned token does not need an account at all, and
+			// an account-owned token whose id the operator pasted is handled
+			// above. Fall through unscoped.
+		case len(accounts) == 1:
+			c.AccountID, c.AccountName = accounts[0].ID, accounts[0].Name
+		case len(accounts) > 1:
+			return Settings{}, &AmbiguousAccountError{Accounts: accounts}
+		}
+	} else if accounts, err := cli.ListAccounts(ctx); err == nil {
+		// Name the chosen account for display, and refuse one the token cannot
+		// actually see — a mistyped id would otherwise produce an empty zone
+		// list with no explanation.
+		known := false
+		for _, a := range accounts {
+			if a.ID == c.AccountID {
+				c.AccountName, known = a.Name, true
+			}
+		}
+		if !known {
+			return Settings{}, invalid("this token cannot see the account " + c.AccountID + " — check the account ID, or leave it empty to let the panel resolve it")
+		}
+	}
+
+	zones, err := cli.ListZones(ctx, c.AccountID)
 	if err != nil {
 		var ae *AuthError
 		if errors.As(err, &ae) {
@@ -153,7 +216,11 @@ func (s *Service) Set(ctx context.Context, c Config) (Settings, error) {
 		return Settings{}, invalid("could not reach Cloudflare with this token: " + err.Error())
 	}
 	if len(zones) == 0 {
-		return Settings{}, invalid("this token can see no zones — check it is scoped to the zones CypherPanel should manage")
+		msg := "this token can see no zones — check it is scoped to the zones CypherPanel should manage"
+		if c.AccountID != "" {
+			msg = "this token can see no zones in " + accountLabel(c) + " — check it is scoped to the zones CypherPanel should manage"
+		}
+		return Settings{}, invalid(msg)
 	}
 
 	blob, err := json.Marshal(c)
@@ -171,6 +238,14 @@ func (s *Service) Set(ctx context.Context, c Config) (Settings, error) {
 		return Settings{}, err
 	}
 	return s.Get(ctx)
+}
+
+// accountLabel names an account the way an operator recognises it.
+func accountLabel(c Config) string {
+	if c.AccountName != "" {
+		return c.AccountName
+	}
+	return "account " + c.AccountID
 }
 
 // Delete disconnects the provider. It deletes NOTHING at Cloudflare: removing
@@ -194,7 +269,7 @@ func (s *Service) RefreshZones(ctx context.Context) ([]domain.DNSZone, error) {
 	if err != nil {
 		return nil, err
 	}
-	zones, err := s.newCli(cfg.APIToken).ListZones(ctx)
+	zones, err := s.newCli(cfg.APIToken).ListZones(ctx, cfg.AccountID)
 	if err != nil {
 		return nil, err
 	}
@@ -212,8 +287,10 @@ func (s *Service) Test(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.newCli(cfg.APIToken).ListZones(ctx)
-	return err
+	// Verify, not list: the verify endpoint is what Cloudflare provides for
+	// exactly this question, and it differs by token type — an account-owned
+	// token verifies under its account, a user-owned one under /user.
+	return s.newCli(cfg.APIToken).VerifyToken(ctx, cfg.AccountID)
 }
 
 func (s *Service) cacheZones(ctx context.Context, zones []Zone) error {

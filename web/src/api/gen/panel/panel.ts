@@ -26,6 +26,7 @@ import type {
 
 import type {
   BadRequestResponse,
+  ChooseAccountError,
   DNSSettings,
   DNSZone,
   Error,
@@ -170,7 +171,7 @@ export const setPanelDNS = async (setPanelDNSRequest: SetPanelDNSRequest, option
 
 
 
-export const getSetPanelDNSMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+export const getSetPanelDNSMutationOptions = <TError = ChooseAccountError | UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setPanelDNS>>, TError,{data: SetPanelDNSRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof setPanelDNS>>, TError,{data: SetPanelDNSRequest}, TContext> => {
 
@@ -197,12 +198,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type SetPanelDNSMutationResult = NonNullable<Awaited<ReturnType<typeof setPanelDNS>>>
     export type SetPanelDNSMutationBody = SetPanelDNSRequest
-    export type SetPanelDNSMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+    export type SetPanelDNSMutationError = ChooseAccountError | UnauthorizedResponse | ForbiddenResponse
 
     /**
  * @summary Connect a DNS provider (panel admin)
  */
-export const useSetPanelDNS = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+export const useSetPanelDNS = <TError = ChooseAccountError | UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setPanelDNS>>, TError,{data: SetPanelDNSRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof setPanelDNS>>,

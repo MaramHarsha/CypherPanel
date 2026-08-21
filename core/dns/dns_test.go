@@ -218,12 +218,18 @@ func (plainBox) Seal(p []byte) ([]byte, []byte, error) { return p, []byte("n"), 
 func (plainBox) Open(c, _ []byte) ([]byte, error)      { return c, nil }
 
 type fakeClient struct {
-	zones   []Zone
-	records map[string]Record // key: zone|name|type
-	listErr error
-	creates int
-	deletes int
-	nextID  int
+	accounts []Account
+	zones    []Zone
+	records  map[string]Record // key: zone|name|type
+	listErr  error
+	creates  int
+	deletes  int
+	nextID   int
+	// What the last call was scoped to, so tests can assert the account filter
+	// is actually applied rather than merely stored.
+	lastZoneAccount string
+	verifiedAccount string
+	verified        bool
 }
 
 func newFakeClient(zoneNames ...string) *fakeClient {
@@ -236,11 +242,25 @@ func newFakeClient(zoneNames ...string) *fakeClient {
 
 func key(zone, name, typ string) string { return zone + "|" + name + "|" + typ }
 
-func (c *fakeClient) ListZones(context.Context) ([]Zone, error) {
+func (c *fakeClient) ListAccounts(context.Context) ([]Account, error) {
 	if c.listErr != nil {
 		return nil, c.listErr
 	}
+	return c.accounts, nil
+}
+
+func (c *fakeClient) ListZones(_ context.Context, accountID string) ([]Zone, error) {
+	if c.listErr != nil {
+		return nil, c.listErr
+	}
+	c.lastZoneAccount = accountID
 	return c.zones, nil
+}
+
+func (c *fakeClient) VerifyToken(_ context.Context, accountID string) error {
+	c.verifiedAccount = accountID
+	c.verified = true
+	return c.listErr
 }
 
 func (c *fakeClient) FindRecord(_ context.Context, zoneID, name, typ string) (Record, bool, error) {
@@ -578,5 +598,121 @@ func TestGetReportsUnconfiguredRatherThanFailing(t *testing.T) {
 	}
 	if got.Configured {
 		t.Fatalf("Get with no provider = %+v; want configured false", got)
+	}
+}
+
+// ─── Account-owned tokens (Cloudflare's recommended kind) ───────────────────
+
+// An account-owned token belongs to exactly one account, so the panel resolves
+// it rather than asking the operator to go and copy an ID.
+func TestSetAdoptsTheOnlyAccountATokenCanSee(t *testing.T) {
+	st, cli := newFakeStore(), newFakeClient("example.com")
+	cli.accounts = []Account{{ID: "acct_1", Name: "Acme Ltd"}}
+	s := newTestService(st, cli)
+
+	got, err := s.Set(context.Background(), Config{APIToken: "tok"})
+	if err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if got.AccountID != "acct_1" || got.AccountName != "Acme Ltd" {
+		t.Fatalf("settings = %+v; want the single account adopted and named", got)
+	}
+	// And the zone list is actually scoped to it — storing the id without
+	// filtering by it would be a lie the UI repeats.
+	if cli.lastZoneAccount != "acct_1" {
+		t.Fatalf("zones were listed with account %q; want acct_1", cli.lastZoneAccount)
+	}
+}
+
+// Several accounts is a question, not a guess: picking one for the operator
+// could write records into the wrong company's DNS.
+func TestSetAsksWhichAccountWhenThereAreSeveral(t *testing.T) {
+	st, cli := newFakeStore(), newFakeClient("example.com")
+	cli.accounts = []Account{{ID: "acct_1", Name: "Acme Ltd"}, {ID: "acct_2", Name: "Side Project"}}
+	s := newTestService(st, cli)
+
+	_, err := s.Set(context.Background(), Config{APIToken: "tok"})
+	var ae *AmbiguousAccountError
+	if !errors.As(err, &ae) {
+		t.Fatalf("Set with two accounts = %v; want an AmbiguousAccountError", err)
+	}
+	if len(ae.Accounts) != 2 {
+		t.Fatalf("error carries %d accounts; the UI needs all of them to offer a choice", len(ae.Accounts))
+	}
+	if st.configured {
+		t.Fatal("an unanswered question was persisted")
+	}
+}
+
+// Choosing one of them proceeds, scoped to that account.
+func TestSetAcceptsAChosenAccount(t *testing.T) {
+	st, cli := newFakeStore(), newFakeClient("example.com")
+	cli.accounts = []Account{{ID: "acct_1", Name: "Acme Ltd"}, {ID: "acct_2", Name: "Side Project"}}
+	s := newTestService(st, cli)
+
+	got, err := s.Set(context.Background(), Config{APIToken: "tok", AccountID: "acct_2"})
+	if err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if got.AccountID != "acct_2" || got.AccountName != "Side Project" {
+		t.Fatalf("settings = %+v; want acct_2 named", got)
+	}
+	if cli.lastZoneAccount != "acct_2" {
+		t.Fatalf("zones listed with %q; want acct_2", cli.lastZoneAccount)
+	}
+}
+
+// A mistyped account id would otherwise produce an empty zone list with no
+// explanation, which is the dead end ui-principles §11 forbids.
+func TestSetRefusesAnAccountTheTokenCannotSee(t *testing.T) {
+	st, cli := newFakeStore(), newFakeClient("example.com")
+	cli.accounts = []Account{{ID: "acct_1", Name: "Acme Ltd"}}
+	s := newTestService(st, cli)
+
+	_, err := s.Set(context.Background(), Config{APIToken: "tok", AccountID: "acct_typo"})
+	var ve *ValidationError
+	if !errors.As(err, &ve) || !strings.Contains(ve.Msg, "acct_typo") {
+		t.Fatalf("Set with an unknown account = %v; want a ValidationError naming it", err)
+	}
+	if st.configured {
+		t.Fatal("a bad account id was persisted")
+	}
+}
+
+// A user-owned token cannot list accounts at all. That is not a failure — it is
+// the classic token type, and it needs no account.
+func TestSetProceedsUnscopedWhenAccountsCannotBeListed(t *testing.T) {
+	st, cli := newFakeStore(), newFakeClient("example.com")
+	s := newTestService(st, cli)
+	// No accounts, no error: a token without Account:Read simply sees none.
+
+	got, err := s.Set(context.Background(), Config{APIToken: "tok"})
+	if err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if got.AccountID != "" {
+		t.Fatalf("account = %q; a user-owned token should stay unscoped", got.AccountID)
+	}
+	if cli.lastZoneAccount != "" {
+		t.Fatalf("zones filtered by %q; want unfiltered", cli.lastZoneAccount)
+	}
+}
+
+// Test verifies at the endpoint matching the token type. An account-owned token
+// calling /user/tokens/verify is rejected by Cloudflare, which would report a
+// perfectly good credential as broken.
+func TestTestVerifiesUnderTheRightScope(t *testing.T) {
+	st, cli := newFakeStore(), newFakeClient("example.com")
+	cli.accounts = []Account{{ID: "acct_1", Name: "Acme Ltd"}}
+	s := configure(t, st, cli)
+
+	if err := s.Test(context.Background()); err != nil {
+		t.Fatalf("Test: %v", err)
+	}
+	if !cli.verified {
+		t.Fatal("Test did not call the verify endpoint")
+	}
+	if cli.verifiedAccount != "acct_1" {
+		t.Fatalf("verified under %q; an account-owned token must verify under its account", cli.verifiedAccount)
 	}
 }

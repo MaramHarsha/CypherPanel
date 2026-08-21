@@ -5,18 +5,8 @@
  * Operator-facing control-plane API covering Phases 1–3: authentication and teams/roles, the server lifecycle, projects/environments, applications and the deploy pipeline, managed databases with S3 backups/restore, preview environments, notifications, and scheduled tasks. Authentication is a bearer session token from /api/v1/auth/login; the GitHub webhook authenticates by per-application HMAC instead. Every project-scoped route is authorized by team membership (a non-member sees 404, insufficient rank 403).
  * OpenAPI spec version: 0.3.0
  */
-import type { DNSSettingsKind } from './dNSSettingsKind';
 
-export interface DNSSettings {
-  configured: boolean;
-  /** The Cloudflare account the zone list is scoped to. Empty for a user-owned token. */
-  account_id?: string;
-  /** Display only; the id is what is authoritative. */
-  account_name?: string;
-  /** The provider kind. Only Cloudflare at v1. */
-  kind: DNSSettingsKind;
-  /** Names the zones the token can reach — the thing an operator actually wants confirmed. Never the token itself. */
-  config_hint: string;
-  zone_count: number;
-  updated_at?: string;
-}
+export type ChooseAccountErrorAccountsItem = {
+  id: string;
+  name: string;
+};

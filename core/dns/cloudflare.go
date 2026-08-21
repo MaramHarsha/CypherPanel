@@ -23,9 +23,19 @@ const cloudflareAPI = "https://api.cloudflare.com/client/v4"
 // migration (spec §2). The shape is deliberately the same five operations
 // Dokploy's DnsClient settled on — concept only, never code (CLAUDE.md rule 1).
 type Client interface {
-	// ListZones returns every zone the credential can see. This IS the
-	// ownership proof: a zone you cannot list is a domain you cannot claim.
-	ListZones(ctx context.Context) ([]Zone, error)
+	// ListAccounts returns the accounts the credential can see. Used to resolve
+	// which account an account-owned token belongs to, so the operator picks
+	// from a list instead of pasting an ID. A token without Account:Read cannot
+	// call this, which is not an error — see Service.Set.
+	ListAccounts(ctx context.Context) ([]Account, error)
+	// ListZones returns every zone the credential can see, narrowed to one
+	// account when accountID is set. This IS the ownership proof: a zone you
+	// cannot list is a domain you cannot claim.
+	ListZones(ctx context.Context, accountID string) ([]Zone, error)
+	// VerifyToken checks the credential is live without reading anything else.
+	// The endpoint differs by token type: an account-owned token verifies at
+	// /accounts/{id}/tokens/verify, a user-owned one at /user/tokens/verify.
+	VerifyToken(ctx context.Context, accountID string) error
 	// FindRecord returns the record at (zone, name, type), or ok=false.
 	FindRecord(ctx context.Context, zoneID, name, recordType string) (Record, bool, error)
 	CreateRecord(ctx context.Context, zoneID string, r Record) (Record, error)
@@ -34,6 +44,13 @@ type Client interface {
 	// SUCCESS, not an error — the caller's desired state is "absent" either way
 	// (ENGINEERING rule 12).
 	DeleteRecord(ctx context.Context, zoneID, recordID string) error
+}
+
+// Account is a Cloudflare account the credential can see. An account-owned
+// token belongs to exactly one; a user-owned token may see several.
+type Account struct {
+	ID   string
+	Name string
 }
 
 // Zone is a domain the credential is authoritative for.
@@ -219,15 +236,40 @@ func redactURL(err error) error {
 	return err
 }
 
-func (c *cloudflare) ListZones(ctx context.Context) ([]Zone, error) {
+func (c *cloudflare) ListAccounts(ctx context.Context) ([]Account, error) {
 	var out []struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
 	}
-	// per_page=50 is Cloudflare's max for this endpoint; an operator with more
-	// zones than that is beyond what one panel-wide token should be managing,
-	// and §9 records paging as out of scope for this slice.
-	if err := c.do(ctx, http.MethodGet, "/zones?per_page=50&status=active", nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, "/accounts?per_page=50", nil, &out); err != nil {
+		return nil, err
+	}
+	accounts := make([]Account, 0, len(out))
+	for _, a := range out {
+		accounts = append(accounts, Account{ID: a.ID, Name: a.Name})
+	}
+	return accounts, nil
+}
+
+func (c *cloudflare) ListZones(ctx context.Context, accountID string) ([]Zone, error) {
+	var out []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	// per_page=50 is Cloudflare's documented maximum for this endpoint (their
+	// OpenAPI schema caps it there); an operator with more zones than that is
+	// beyond what one panel-wide token should be managing, and §9 records paging
+	// as out of scope for this slice.
+	//
+	// account.id is the filter name Cloudflare uses — dotted, not account_id.
+	// Narrowing to the account an account-owned token belongs to is what makes
+	// the zone list mean "the zones this panel may manage" rather than "every
+	// zone this credential happens to reach".
+	path := "/zones?per_page=50&status=active"
+	if accountID != "" {
+		path += "&account.id=" + url.QueryEscape(accountID)
+	}
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
 	}
 	zones := make([]Zone, 0, len(out))
@@ -235,6 +277,18 @@ func (c *cloudflare) ListZones(ctx context.Context) ([]Zone, error) {
 		zones = append(zones, Zone{ProviderID: z.ID, Name: z.Name})
 	}
 	return zones, nil
+}
+
+// VerifyToken calls the verify endpoint that matches the token type. Getting
+// this wrong is a real failure mode: an account-owned token calling
+// /user/tokens/verify is rejected, which would report a perfectly good
+// credential as broken.
+func (c *cloudflare) VerifyToken(ctx context.Context, accountID string) error {
+	path := "/user/tokens/verify"
+	if accountID != "" {
+		path = "/accounts/" + url.PathEscape(accountID) + "/tokens/verify"
+	}
+	return c.do(ctx, http.MethodGet, path, nil, nil)
 }
 
 type cfRecord struct {

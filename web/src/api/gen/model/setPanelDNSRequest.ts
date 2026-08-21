@@ -7,6 +7,8 @@
  */
 
 export interface SetPanelDNSRequest {
-  /** A Cloudflare API token with Zone:Read and DNS:Edit on the zones CypherPanel should manage. Write-only: it is sealed at rest and never returned. */
+  /** A Cloudflare API token with Zone:Read and DNS:Edit on the zones CypherPanel should manage. Write-only: it is sealed at rest and never returned. Cloudflare recommends an *account-owned* token for durable integrations, because it survives the person who created it leaving: https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/ */
   api_token: string;
+  /** Optional. The Cloudflare account an account-owned token belongs to. Leave it empty and the panel resolves it — a token that sees exactly one account adopts it. A token that sees several returns 400 with the choices, and you send one back here. A classic user-owned token needs no account at all. */
+  account_id?: string;
 }

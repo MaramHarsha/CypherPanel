@@ -39,7 +39,7 @@ func TestCredentialProblemsAreClassifiedByCode(t *testing.T) {
 			defer srv.Close()
 			c := &cloudflare{token: "t", base: srv.URL, http: srv.Client()}
 
-			_, err := c.ListZones(context.Background())
+			_, err := c.ListZones(context.Background(), "")
 			var ae *AuthError
 			if !errors.As(err, &ae) {
 				t.Fatalf("err = %v; want an AuthError so the operator is told to fix the token", err)
@@ -61,7 +61,7 @@ func TestNonCredentialErrorsStayPlain(t *testing.T) {
 	defer srv.Close()
 	c := &cloudflare{token: "t", base: srv.URL, http: srv.Client()}
 
-	_, err := c.ListZones(context.Background())
+	_, err := c.ListZones(context.Background(), "")
 	var ae *AuthError
 	if errors.As(err, &ae) {
 		t.Fatalf("a server-side failure was reported as a credential problem: %v", err)

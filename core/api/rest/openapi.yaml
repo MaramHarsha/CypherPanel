@@ -318,7 +318,12 @@ paths:
         content: { application/json: { schema: { $ref: "#/components/schemas/SetPanelDNSRequest" } } }
       responses:
         "200": { description: Connected., content: { application/json: { schema: { $ref: "#/components/schemas/DNSSettings" } } } }
-        "400": { $ref: "#/components/responses/BadRequest" }
+        "400":
+          description: >-
+            Refused. When the token can see more than one Cloudflare account the body also
+            carries `accounts`, and the request should be repeated with one of their ids in
+            `account_id`.
+          content: { application/json: { schema: { $ref: "#/components/schemas/ChooseAccountError" } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
     delete:
@@ -2825,6 +2830,12 @@ components:
       required: [configured, kind, config_hint, zone_count]
       properties:
         configured: { type: boolean }
+        account_id:
+          type: string
+          description: The Cloudflare account the zone list is scoped to. Empty for a user-owned token.
+        account_name:
+          type: string
+          description: Display only; the id is what is authoritative.
         kind: { type: string, enum: [cloudflare], description: The provider kind. Only Cloudflare at v1. }
         config_hint:
           type: string
@@ -2843,6 +2854,31 @@ components:
           description: >-
             A Cloudflare API token with Zone:Read and DNS:Edit on the zones CypherPanel
             should manage. Write-only: it is sealed at rest and never returned.
+            Cloudflare recommends an *account-owned* token for durable integrations, because
+            it survives the person who created it leaving:
+            https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/
+        account_id:
+          type: string
+          description: >-
+            Optional. The Cloudflare account an account-owned token belongs to. Leave it
+            empty and the panel resolves it — a token that sees exactly one account adopts
+            it. A token that sees several returns 400 with the choices, and you send one back
+            here. A classic user-owned token needs no account at all.
+
+    ChooseAccountError:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+        accounts:
+          type: array
+          description: Present only when the token reaches several accounts; the choices to pick from.
+          items:
+            type: object
+            required: [id, name]
+            properties:
+              id: { type: string }
+              name: { type: string }
 
     DNSZone:
       type: object
