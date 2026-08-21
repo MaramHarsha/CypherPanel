@@ -30,6 +30,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/config"
 	"github.com/MaramHarsha/cypherpanel/core/databases"
 	"github.com/MaramHarsha/cypherpanel/core/deploykeys"
+	"github.com/MaramHarsha/cypherpanel/core/dns"
 	"github.com/MaramHarsha/cypherpanel/core/enroll"
 	"github.com/MaramHarsha/cypherpanel/core/guard"
 	"github.com/MaramHarsha/cypherpanel/core/identity"
@@ -178,6 +179,12 @@ func run(log *slog.Logger) error {
 	// deployments from the agents' observed reports (ADR-005).
 	sched := scheduler.New(st, b, box, log)
 
+	// DNS automation (dns-automation.md). The verifier is what gates routing on
+	// domain ownership; with no provider configured it reports "not enforced"
+	// and every domain routes, exactly as before this feature existed.
+	dnsSvc := dns.New(st, box)
+	sched.SetDomainVerifier(dnsSvc)
+
 	// The notification inbox: the same observed outcomes, persisted per user and
 	// counted on a bell (notification-inbox.md). It is the one channel that
 	// needs no configuration, no webhook and no secret, so it hangs off the
@@ -246,6 +253,15 @@ func run(log *slog.Logger) error {
 	go func() {
 		defer wg.Done()
 		webhookMgr.RunRetrySweeper(ctx, cfg.SweepInterval)
+	}()
+
+	// DNS convergence: creates the records a verified domain needs, and — the
+	// half that actually leaks if it is missed — deletes the ones whose
+	// application, environment or project is gone (dns-automation.md §4.4).
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		dnsSvc.RunSweeper(ctx, cfg.SweepInterval, log)
 	}()
 
 	if err := sched.Recover(ctx); err != nil {
@@ -393,6 +409,9 @@ func run(log *slog.Logger) error {
 		Templates:        templateSvc,
 		Teams:            teamSvc,
 		Mail:             mail.New(st, box),
+		DNS:              dnsSvc,
+		DNSZones:         st,
+		ServerAddresses:  st,
 		Scheduler:        sched,
 		Deployments:      st,
 		Opener:           box,

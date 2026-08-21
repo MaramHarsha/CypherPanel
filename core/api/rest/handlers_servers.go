@@ -7,7 +7,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/MaramHarsha/cypherpanel/core/domain"
@@ -16,32 +18,36 @@ import (
 )
 
 type serverDTO struct {
-	ID           string  `json:"id"`
-	Name         string  `json:"name"`
-	Status       string  `json:"status"`
-	Driver       string  `json:"driver"`
-	Role         string  `json:"role"`
-	AgentVersion string  `json:"agent_version"`
-	Hostname     string  `json:"hostname"`
-	Enrolled     bool    `json:"enrolled"`
-	EnrolledAt   *string `json:"enrolled_at"`
-	LastSeenAt   *string `json:"last_seen_at"`
-	CreatedAt    string  `json:"created_at"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Status       string `json:"status"`
+	Driver       string `json:"driver"`
+	Role         string `json:"role"`
+	AgentVersion string `json:"agent_version"`
+	Hostname     string `json:"hostname"`
+	// PublicAddress is where DNS records for this server's applications point
+	// (dns-automation.md §3.4). Empty until an operator sets it.
+	PublicAddress string  `json:"public_address"`
+	Enrolled      bool    `json:"enrolled"`
+	EnrolledAt    *string `json:"enrolled_at"`
+	LastSeenAt    *string `json:"last_seen_at"`
+	CreatedAt     string  `json:"created_at"`
 }
 
 func toServerDTO(s domain.Server) serverDTO {
 	return serverDTO{
-		ID:           s.ID,
-		Name:         s.Name,
-		Status:       string(s.Status),
-		Driver:       s.Driver,
-		Role:         s.Role,
-		AgentVersion: s.AgentVersion,
-		Hostname:     s.Hostname,
-		Enrolled:     s.Enrolled(),
-		EnrolledAt:   formatTime(s.EnrolledAt),
-		LastSeenAt:   formatTime(s.LastSeenAt),
-		CreatedAt:    s.CreatedAt.UTC().Format(time.RFC3339),
+		ID:            s.ID,
+		Name:          s.Name,
+		Status:        string(s.Status),
+		Driver:        s.Driver,
+		Role:          s.Role,
+		AgentVersion:  s.AgentVersion,
+		Hostname:      s.Hostname,
+		PublicAddress: s.PublicAddress,
+		Enrolled:      s.Enrolled(),
+		EnrolledAt:    formatTime(s.EnrolledAt),
+		LastSeenAt:    formatTime(s.LastSeenAt),
+		CreatedAt:     s.CreatedAt.UTC().Format(time.RFC3339),
 	}
 }
 
@@ -200,4 +206,50 @@ func (a *API) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+}
+
+// patchServerRequest carries the only operator-editable field on a server. A
+// pointer so an omitted field is distinguishable from an explicit "" — clearing
+// the address is a real action (it stops new records being written), and it
+// must not be something a partial body does by accident.
+type patchServerRequest struct {
+	PublicAddress *string `json:"public_address"`
+}
+
+// handlePatchServer sets where this server's applications' DNS records point.
+// Panel admin, like every other server-shaped decision: a public address is
+// infrastructure, not a project's business.
+func (a *API) handlePatchServer(w http.ResponseWriter, r *http.Request) {
+	user, ok := userFromContext(r.Context())
+	if !ok || !a.requirePanelRole(w, user, domain.RoleAdmin) {
+		return
+	}
+	var req patchServerRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.PublicAddress == nil {
+		writeError(w, http.StatusBadRequest, "public_address is required")
+		return
+	}
+	addr := strings.TrimSpace(*req.PublicAddress)
+	// An A record's content must be an IP. Refusing a hostname here is kinder
+	// than letting Cloudflare refuse it later against a record nobody is
+	// watching (ui-principles §11).
+	if addr != "" && net.ParseIP(addr) == nil {
+		writeError(w, http.StatusBadRequest, "public_address must be an IP address — that is what an A record points at")
+		return
+	}
+	srv, err := a.deps.ServerAddresses.SetServerPublicAddress(r.Context(), r.PathValue("id"), addr)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "server not found")
+			return
+		}
+		a.deps.Log.Error("setting server public address", "error", err)
+		writeError(w, http.StatusInternalServerError, "could not update the server")
+		return
+	}
+	writeJSON(w, http.StatusOK, toServerDTO(srv))
 }

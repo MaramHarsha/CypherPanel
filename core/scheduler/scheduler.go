@@ -26,6 +26,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	"github.com/MaramHarsha/cypherpanel/core/dns"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/sharedvars"
 	"github.com/MaramHarsha/cypherpanel/core/store"
@@ -122,6 +123,13 @@ type EventSink interface {
 }
 
 // Scheduler owns pipeline state transitions. Construct with New.
+// DomainVerifier answers whether a hostname is inside a Zone this panel can
+// manage. Consumer-defined (ENGINEERING rule 6): the scheduler needs one
+// question answered, not the whole DNS service.
+type DomainVerifier interface {
+	Verify(ctx context.Context, host string) (dns.Verification, error)
+}
+
 type Scheduler struct {
 	store  Store
 	bus    Bus
@@ -132,6 +140,11 @@ type Scheduler struct {
 	// sinks receive terminal outcomes. An empty slice is already a no-op, so
 	// the call sites need no nil guard (outbound-webhooks.md §5).
 	sinks []EventSink
+
+	// dns verifies that a route's domain is one the operator owns
+	// (dns-automation.md §4.2). nil when DNS automation is not wired, which
+	// routableDomain treats as "nothing is enforced".
+	dns DomainVerifier
 
 	// mu serializes pipeline transitions: deploy requests and event handlers
 	// race on the per-app queue, and the transitions are read-modify-write.
@@ -643,6 +656,42 @@ func (s *Scheduler) resolveEnv(ctx context.Context, app domain.Application, pol 
 // buildSpec assembles the wire AppSpec from the revision's immutable config
 // snapshot, the built image, and the app's current (decrypted, shared-expanded)
 // env vars.
+// routableDomain is where domain ownership is ENFORCED (dns-automation.md §4.2).
+//
+// An unverified domain is blanked on the wire, so the agent writes no router
+// rule for it: the application deploys and runs, it is simply not published at
+// a hostname nobody proved they own. Certificates follow routing, so Traefik
+// also never asks Let's Encrypt for a name we cannot prove — which keeps an
+// unverified domain from burning the ACME rate limit.
+//
+// Blanking rather than refusing the deploy is deliberate. The operator fixes
+// the zone in Cloudflare and redeploys; nothing has to be re-entered, and the
+// desired state was never wrong, only unverifiable.
+//
+// With no DNS Provider configured, Verify reports Enforced=false and every
+// domain passes — an install that never connects Cloudflare behaves exactly as
+// it did before this feature existed.
+func (s *Scheduler) routableDomain(ctx context.Context, domainName string) string {
+	if domainName == "" || s.dns == nil {
+		return domainName
+	}
+	v, err := s.dns.Verify(ctx, domainName)
+	if err != nil {
+		// Fail OPEN on an infrastructure error, not on a verdict. A database
+		// hiccup must not silently un-route every domain on the panel; a real
+		// "this is not your domain" is a verdict, and that path returns no
+		// error.
+		s.log.Error("scheduler: verifying domain, routing it anyway", "domain", domainName, "error", err)
+		return domainName
+	}
+	if v.Enforced && !v.Verified {
+		s.log.Warn("scheduler: domain is not in a connected DNS zone, not routing it",
+			"domain", domainName, "zones", v.AvailableZones)
+		return ""
+	}
+	return domainName
+}
+
 func (s *Scheduler) buildSpec(ctx context.Context, app domain.Application, rev domain.Revision, pol envPolicy) (*agentv1.AppSpec, error) {
 	var cs configSnapshot
 	if err := json.Unmarshal(rev.ConfigSnapshot, &cs); err != nil {
@@ -679,7 +728,7 @@ func (s *Scheduler) buildSpec(ctx context.Context, app domain.Application, rev d
 			Retries:         uint32(cs.Health.Retries),
 		},
 		Route: &agentv1.RouteSpec{
-			Domain:     cs.Route.Domain,
+			Domain:     s.routableDomain(ctx, cs.Route.Domain),
 			Https:      cs.Route.HTTPS,
 			PathPrefix: cs.Route.PathPrefix,
 		},
@@ -1334,3 +1383,8 @@ func (s *Scheduler) Recover(ctx context.Context) error {
 	}
 	return nil
 }
+
+// SetDomainVerifier wires domain-ownership verification. Optional: without it
+// every domain routes, which is exactly how the panel behaved before DNS
+// automation existed (dns-automation.md §4.1).
+func (s *Scheduler) SetDomainVerifier(v DomainVerifier) { s.dns = v }

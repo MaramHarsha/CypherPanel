@@ -216,16 +216,22 @@ type Deps struct {
 	Templates        *templates.Service
 	Teams            TeamService
 	Mail             MailService
-	Scheduler        Deployer
-	Deployments      DeploymentReader
-	Opener           Opener
-	Pinger           Pinger
-	CACertPEM        []byte
-	EnrollAddr       string // advertised gRPC enrollment address (host:port)
-	NATSURL          string // advertised data-plane URL
-	Logs             LogSubscriber
-	ConsoleURL       string // advertised HTTP base URL (installer + CA fetch)
-	Log              *slog.Logger
+	// DNS is the panel's DNS Provider; nil when DNS automation is not wired,
+	// which every handler treats as "nothing is enforced" (dns-automation.md §4.1).
+	DNS      DNSService
+	DNSZones DNSReader
+	// ServerAddresses records where a server's applications' DNS points.
+	ServerAddresses ServerAddressWriter
+	Scheduler       Deployer
+	Deployments     DeploymentReader
+	Opener          Opener
+	Pinger          Pinger
+	CACertPEM       []byte
+	EnrollAddr      string // advertised gRPC enrollment address (host:port)
+	NATSURL         string // advertised data-plane URL
+	Logs            LogSubscriber
+	ConsoleURL      string // advertised HTTP base URL (installer + CA fetch)
+	Log             *slog.Logger
 }
 
 // API holds the HTTP handlers and their dependencies.
@@ -302,6 +308,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/servers", a.authed(a.handleListServers))
 	mux.HandleFunc("POST /api/v1/servers", a.authed(a.handleCreateServer))
 	mux.HandleFunc("GET /api/v1/servers/{id}", a.authed(a.handleGetServer))
+	mux.HandleFunc("PATCH /api/v1/servers/{id}", a.authed(a.handlePatchServer))
 	mux.HandleFunc("DELETE /api/v1/servers/{id}", a.authed(a.handleDeleteServer))
 
 	// Deploy keys.
@@ -330,6 +337,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/v1/applications/{id}", a.authed(a.handlePatchApplication))
 	mux.HandleFunc("DELETE /api/v1/applications/{id}", a.authed(a.handleDeleteApplication))
 	mux.HandleFunc("GET /api/v1/applications/{id}/domain-check", a.authed(a.handleCheckApplicationDomain))
+	mux.HandleFunc("GET /api/v1/applications/{id}/dns", a.authed(a.handleGetApplicationDNS))
 	mux.HandleFunc("GET /api/v1/applications/{id}/logs", a.authed(a.handleGetApplicationLogs))
 	mux.HandleFunc("GET /api/v1/applications/{id}/env", a.authed(a.handleListEnvVars))
 	mux.HandleFunc("PUT /api/v1/applications/{id}/env/{key}", a.authed(a.handleSetEnvVar))
@@ -364,6 +372,15 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/panel/mail", a.authed(a.handleSetPanelMail))
 	mux.HandleFunc("DELETE /api/v1/panel/mail", a.authed(a.handleDeletePanelMail))
 	mux.HandleFunc("POST /api/v1/panel/mail/test", a.authed(a.handleTestPanelMail))
+
+	// DNS automation (dns-automation.md §5). Panel-scoped like mail: a
+	// Cloudflare account is an operator-level asset, not a team's.
+	mux.HandleFunc("GET /api/v1/panel/dns", a.authed(a.handleGetPanelDNS))
+	mux.HandleFunc("PUT /api/v1/panel/dns", a.authed(a.handleSetPanelDNS))
+	mux.HandleFunc("DELETE /api/v1/panel/dns", a.authed(a.handleDeletePanelDNS))
+	mux.HandleFunc("POST /api/v1/panel/dns/test", a.authed(a.handleTestPanelDNS))
+	mux.HandleFunc("GET /api/v1/panel/dns/zones", a.authed(a.handleListDNSZones))
+	mux.HandleFunc("POST /api/v1/panel/dns/zones/refresh", a.authed(a.handleRefreshDNSZones))
 
 	mux.HandleFunc("POST /api/v1/backup-targets", a.authed(a.handleCreateBackupTarget))
 	mux.HandleFunc("GET /api/v1/backup-targets", a.authed(a.handleListBackupTargets))

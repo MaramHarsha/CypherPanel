@@ -296,6 +296,89 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { description: That address was taken while confirming., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
+  /api/v1/panel/dns:
+    get:
+      operationId: getPanelDNS
+      tags: [panel]
+      summary: The panel's DNS provider, as a hint (panel admin)
+      responses:
+        "200": { description: Whether a DNS provider is connected, and a hint naming the zones it can see. Never the token., content: { application/json: { schema: { $ref: "#/components/schemas/DNSSettings" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: setPanelDNS
+      tags: [panel]
+      summary: Connect a DNS provider (panel admin)
+      description: >-
+        Wholesale replacement — there is no partial update of a credential. The token is
+        validated against the provider before anything is stored, so a token that cannot
+        list zones is refused with the provider's own message and persists nothing.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetPanelDNSRequest" } } }
+      responses:
+        "200": { description: Connected., content: { application/json: { schema: { $ref: "#/components/schemas/DNSSettings" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    delete:
+      operationId: deletePanelDNS
+      tags: [panel]
+      summary: Disconnect the DNS provider (panel admin)
+      description: >-
+        Deletes nothing at the provider: removing the token removes the panel's ability to
+        act, not its obligation to be careful. Every domain becomes unverified, which stops
+        routing at those hostnames.
+      responses:
+        "204": { description: Disconnected; existing records are left untouched at the provider. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/panel/dns/test:
+    post:
+      operationId: testPanelDNS
+      tags: [panel]
+      summary: Check the DNS credential still works (panel admin)
+      description: Writes nothing — a test that wrote state would be a second way to configure the panel.
+      responses:
+        "202": { description: The credential works. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/panel/dns/zones:
+    get:
+      operationId: listDNSZones
+      tags: [panel]
+      summary: The zones this panel can manage (panel admin)
+      responses:
+        "200": { description: The cached zone list., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/DNSZone" } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/panel/dns/zones/refresh:
+    post:
+      operationId: refreshDNSZones
+      tags: [panel]
+      summary: Re-read the zone list from the provider (panel admin)
+      responses:
+        "200": { description: The refreshed zone list., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/DNSZone" } } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/applications/{id}/dns:
+    get:
+      operationId: getApplicationDNS
+      tags: [applications]
+      summary: Whether this application's domain is verified, and what its record is doing
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        "200": { description: The DNS state for this application., content: { application/json: { schema: { $ref: "#/components/schemas/ApplicationDNS" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /api/v1/panel/mail:
     get:
       operationId: getPanelMail
@@ -708,6 +791,25 @@ paths:
           $ref: "#/components/responses/Forbidden"
 
   /api/v1/servers/{id}:
+    patch:
+      operationId: updateServer
+      tags: [servers]
+      summary: Set where this server's applications' DNS records point (panel admin)
+      description: >-
+        The control plane cannot learn a server's public address: the agent dials out, the
+        heartbeat carries no address, and a source address seen through NAT is not
+        necessarily the one the internet reaches. So the operator supplies it. Must be an IP
+        address — that is what an A record points at. An empty string clears it.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PatchServerRequest" } } }
+      responses:
+        "200": { description: Updated., content: { application/json: { schema: { $ref: "#/components/schemas/Server" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
     parameters:
       - name: id
         in: path
@@ -2718,6 +2820,71 @@ components:
           format: int64
           description: Other sessions signed out, because the recovery address moved.
 
+    DNSSettings:
+      type: object
+      required: [configured, kind, config_hint, zone_count]
+      properties:
+        configured: { type: boolean }
+        kind: { type: string, enum: [cloudflare], description: The provider kind. Only Cloudflare at v1. }
+        config_hint:
+          type: string
+          description: >-
+            Names the zones the token can reach — the thing an operator actually wants
+            confirmed. Never the token itself.
+        zone_count: { type: integer }
+        updated_at: { type: string, format: date-time }
+
+    SetPanelDNSRequest:
+      type: object
+      required: [api_token]
+      properties:
+        api_token:
+          type: string
+          description: >-
+            A Cloudflare API token with Zone:Read and DNS:Edit on the zones CypherPanel
+            should manage. Write-only: it is sealed at rest and never returned.
+
+    DNSZone:
+      type: object
+      required: [id, name, refreshed_at]
+      properties:
+        id: { type: string }
+        name: { type: string, description: "The zone apex, e.g. example.com." }
+        refreshed_at: { type: string, format: date-time }
+
+    ApplicationDNS:
+      type: object
+      required: [enforced, verified, available_zones, domain, record_created]
+      properties:
+        enforced:
+          type: boolean
+          description: >-
+            False when no DNS provider is connected. Everything downstream keys off this:
+            an install that never connects one behaves exactly as it did before.
+        verified: { type: boolean, description: Whether the domain falls inside a zone this panel can manage. }
+        zone: { type: string, description: The zone the domain matched, when verified. }
+        available_zones:
+          type: array
+          items: { type: string }
+          description: The connected zones, so a refusal can say what you do have.
+        domain: { type: string }
+        reason: { type: string, description: Why no record exists although the domain verified. }
+        record_name: { type: string }
+        record_content: { type: string }
+        record_created: { type: boolean, description: Whether the record has been observed to exist at the provider. }
+        last_error: { type: string, description: The provider's own words on the last failed attempt. }
+        next_attempt_at: { type: string, format: date-time }
+
+    PatchServerRequest:
+      type: object
+      required: [public_address]
+      properties:
+        public_address:
+          type: string
+          description: >-
+            An IP address — what an A record points at. Empty string clears it, which stops
+            new DNS records being written for this server's applications.
+
     PanelMailSettings:
       type: object
       required: [configured, config_hint]
@@ -2871,6 +3038,13 @@ components:
           type: string
         hostname:
           type: string
+        public_address:
+          type: string
+          description: >-
+            Where DNS records for this server's applications point
+            (dns-automation.md §3.4). Empty until an operator sets it; the plane
+            cannot learn it, because the agent dials out and the heartbeat
+            carries no address.
         enrolled:
           type: boolean
           description: Whether an agent has completed enrollment.

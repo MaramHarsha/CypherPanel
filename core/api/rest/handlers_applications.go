@@ -263,6 +263,7 @@ func (a *API) handleCreateApplication(w http.ResponseWriter, r *http.Request) {
 		a.writeAppError(w, err, "could not create application")
 		return
 	}
+	a.syncApplicationDNS(r.Context(), app)
 	writeJSON(w, http.StatusCreated, createApplicationResponse{
 		Application: toApplicationDTO(app),
 		Webhook: webhookInfo{
@@ -435,6 +436,7 @@ func (a *API) handlePatchApplication(w http.ResponseWriter, r *http.Request) {
 		a.writeAppError(w, err, "could not update application")
 		return
 	}
+	a.syncApplicationDNS(r.Context(), app)
 	dto := toApplicationDTO(app)
 	dto.RedeployPending = a.redeployPending(r.Context(), app.ID)
 	writeJSON(w, http.StatusOK, dto)
@@ -458,6 +460,16 @@ func (a *API) handleDeleteApplication(w http.ResponseWriter, r *http.Request) {
 		a.deps.Log.Error("deleting application", "error", err)
 		writeError(w, http.StatusInternalServerError, "could not delete application")
 		return
+	}
+	// Tombstone BEFORE the row goes, while application_id is still readable.
+	// Correctness does not depend on this — ON DELETE SET NULL leaves an orphan
+	// the sweeper reaps anyway (dns-automation.md §4.3) — but doing it here
+	// makes the delete from Cloudflare happen on the next tick rather than
+	// waiting to be noticed.
+	if a.deps.DNS != nil {
+		if err := a.deps.DNS.ForgetApplication(r.Context(), app.ID); err != nil {
+			a.deps.Log.Error("tombstoning application dns", "app_id", app.ID, "error", err)
+		}
 	}
 	if err := a.deps.Applications.Delete(r.Context(), app.ID); err != nil {
 		a.deps.Log.Error("deleting application", "error", err)
@@ -567,5 +579,27 @@ func (a *API) writeAppError(w http.ResponseWriter, err error, genericMsg string)
 	default:
 		a.deps.Log.Error("application request failed", "error", err)
 		writeError(w, http.StatusInternalServerError, genericMsg)
+	}
+}
+
+// syncApplicationDNS re-derives this application's desired DNS Record after its
+// route changed (dns-automation.md §4.3). It writes desired state only; the
+// sweeper does the talking to Cloudflare, so a provider outage cannot fail an
+// otherwise valid update.
+//
+// Best effort by design: a failure here leaves the record as it was, and the
+// sweeper's next pass reconciles from the truth in the database. Blocking a
+// route change on a DNS write would make the panel less useful than it is
+// without the feature.
+func (a *API) syncApplicationDNS(ctx context.Context, app domain.Application) {
+	if a.deps.DNS == nil {
+		return
+	}
+	var publicAddress string
+	if srv, err := a.deps.Servers.Get(ctx, app.Runtime.ServerID); err == nil {
+		publicAddress = srv.PublicAddress
+	}
+	if err := a.deps.DNS.SyncApplication(ctx, app, publicAddress); err != nil {
+		a.deps.Log.Error("syncing application dns", "app_id", app.ID, "error", err)
 	}
 }
