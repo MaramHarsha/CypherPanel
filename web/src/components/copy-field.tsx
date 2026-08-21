@@ -14,28 +14,33 @@ const shell =
   "flex min-w-0 items-center justify-between gap-2 rounded-md border border-border-input bg-surface py-1.5 pl-3 pr-2";
 
 /**
- * Copy text to the clipboard, however this page happens to be served.
+ * Put `value` on the clipboard without trusting the browser to work out what
+ * "the selection" means.
  *
- * `navigator.clipboard` exists only in a secure context — https, or localhost.
- * A self-hosted panel is routinely reached at `http://<ip>:<port>` before TLS
- * is set up, and there the async API is simply `undefined`: the copy button
- * threw, nothing landed on the clipboard, and the button gave no sign either
- * way. The `execCommand` path is deprecated but works on plain HTTP, which is
- * the whole point of having it.
+ * The legacy path used to select a hidden textarea and let the default copy
+ * handler take whatever was selected — which is why the button could report
+ * success while the clipboard stayed empty: `execCommand` returns whether the
+ * command *ran*, not whether anything was written, and any interference with
+ * the selection (an overlay, a focus trap, a browser that declines to select an
+ * off-screen node) leaves it copying nothing. Handling the `copy` event
+ * ourselves fixes both halves: `setData` states the exact text, and the
+ * handler firing is real proof, so the checkmark can only appear when the write
+ * actually happened.
  */
-async function writeClipboard(value: string): Promise<boolean> {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(value);
-      return true;
-    } catch {
-      // Denied by permissions policy — fall through to the legacy path.
-    }
-  }
+function legacyCopy(value: string): boolean {
+  let handled = false;
+  const onCopy = (e: ClipboardEvent) => {
+    e.clipboardData?.setData("text/plain", value);
+    e.preventDefault();
+    handled = true;
+  };
+  document.addEventListener("copy", onCopy);
+
+  // `execCommand("copy")` is a no-op with an empty selection, so a selected
+  // node still has to exist — but it is only there to arm the command. What
+  // lands on the clipboard is the string above.
   const ta = document.createElement("textarea");
   ta.value = value;
-  // Keep it off-screen and unfocusable-looking, but still selectable: a
-  // `display: none` or `hidden` element cannot be selected, so the copy fails.
   ta.setAttribute("readonly", "");
   ta.style.position = "fixed";
   ta.style.top = "-1000px";
@@ -44,12 +49,36 @@ async function writeClipboard(value: string): Promise<boolean> {
   try {
     ta.select();
     ta.setSelectionRange(0, value.length);
-    return document.execCommand("copy");
+    document.execCommand("copy");
   } catch {
-    return false;
+    // Ignored: `handled` is the answer, not this call.
   } finally {
-    document.body.removeChild(ta);
+    document.removeEventListener("copy", onCopy);
+    ta.remove();
   }
+  return handled;
+}
+
+/**
+ * `navigator.clipboard` exists only in a secure context — https, or localhost.
+ * A self-hosted panel is routinely reached at `http://<ip>:<port>` before TLS
+ * is set up, and the check matters beyond the call failing: awaiting a promise
+ * that cannot resolve spends the user gesture, and the synchronous fallback
+ * afterwards is then too late for the browser to allow. So the context decides
+ * the path up front rather than one being tried and the other picked up late.
+ */
+async function writeClipboard(value: string): Promise<boolean> {
+  if (window.isSecureContext && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(value);
+      return true;
+    } catch {
+      // Denied by permissions policy — worth one late attempt, which some
+      // browsers still honour, but its result is reported honestly.
+      return legacyCopy(value);
+    }
+  }
+  return legacyCopy(value);
 }
 
 export function CopyButton({ value, label }: { value: string; label: string }) {

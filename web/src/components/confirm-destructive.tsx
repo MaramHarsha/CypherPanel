@@ -71,6 +71,19 @@ export function ConfirmDestructive({
         description={lead}
         className="border-t-[3px] border-t-status-error"
       >
+        {/* A form, so the typed name submits on Enter. Typing a resource name
+            and pressing Enter is the natural end of this gesture; without it
+            the operator has to leave the keyboard to finish a confirmation
+            they have already committed to in writing. The disabled button
+            still gates it — an unarmed form submits nothing. */}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!armed || pending) return;
+            onConfirm();
+            setOpen(false);
+          }}
+        >
         <ul className="mt-1 rounded-lg border border-status-error/30 bg-surface px-[15px] py-3 font-mono text-[12px] leading-[2] text-text-mid">
           {items.map((item) => (
             <li key={item}>
@@ -114,12 +127,9 @@ export function ConfirmDestructive({
               red so the shape of the decision stays visible while it is still
               refused, rather than swapping in a different-looking object. */}
           <Button
+            type="submit"
             variant="primary"
             disabled={!armed || pending}
-            onClick={() => {
-              onConfirm();
-              setOpen(false);
-            }}
             className={cn(
               "bg-status-error text-white hover:bg-danger-hover",
               "disabled:bg-status-error disabled:text-white disabled:opacity-45",
@@ -128,6 +138,7 @@ export function ConfirmDestructive({
             {pending ? "Working…" : actionLabel}
           </Button>
         </div>
+        </form>
       </DialogContent>
     </Dialog>
   );
