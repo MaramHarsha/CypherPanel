@@ -121,8 +121,8 @@ function ProfileTab() {
  * They then become a `data:` URL rather than an object URL, because the panel's
  * CSP is `img-src 'self' data:` — a `blob:` URL is refused, and widening a
  * policy that web-ui-design.md §5 calls a deliberate security property is a bad
- * trade for an image capped at 256 KB. It also removes the object-URL lifetime
- * question entirely: nothing to revoke, nothing to leak.
+ * trade for a bounded image. It also removes the object-URL lifetime question
+ * entirely: nothing to revoke, nothing to leak.
  *
  * `bust` changes on upload and removal, which is what makes the picture change
  * without a reload — the response sits behind an ETag and nothing else would.
@@ -186,7 +186,7 @@ function Avatar({
 
 /** Accepted here as well as on the server, so a wrong file fails before upload. */
 const AVATAR_TYPES = "image/png,image/jpeg,image/webp";
-const MAX_AVATAR_BYTES = 256 * 1024;
+const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 
 function PhotoControls({ userId, hasPhoto, onChanged }: { userId?: string; hasPhoto: boolean; onChanged: () => void }) {
   const qc = useQueryClient();
@@ -229,7 +229,9 @@ function PhotoControls({ userId, hasPhoto, onChanged }: { userId?: string; hasPh
       return;
     }
     if (file.size > MAX_AVATAR_BYTES) {
-      setError(`That image is ${Math.round(file.size / 1024)} KB — the limit is ${MAX_AVATAR_BYTES / 1024} KB`);
+      setError(
+        `That image is ${(file.size / 1024 / 1024).toFixed(1)} MB — the limit is ${MAX_AVATAR_BYTES / 1024 / 1024} MB`,
+      );
       return;
     }
     upload.mutate(file);

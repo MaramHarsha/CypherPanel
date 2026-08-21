@@ -101,7 +101,7 @@ func (a *API) handleSetAvatar(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, auth.MaxAvatarBytes+1)
 	data, err := io.ReadAll(r.Body)
 	if err != nil {
-		writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("an avatar is at most %d KB", auth.MaxAvatarBytes>>10))
+		writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("an avatar is at most %d MB", auth.MaxAvatarBytes>>20))
 		return
 	}
 	etag, err := a.deps.Auth.SetAvatar(r.Context(), p.User.ID, data)

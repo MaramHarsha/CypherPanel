@@ -226,7 +226,7 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "413": { description: Larger than the 256 KB limit., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "413": { description: Larger than the 2 MB limit., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
     delete:
       operationId: deleteAvatar
       tags: [auth]

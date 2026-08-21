@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"image"
+
 	// Registered for their DecodeConfig side effect: the header of a real PNG
 	// or JPEG has to parse, not merely start with the right bytes.
 	_ "image/jpeg"
@@ -19,9 +20,10 @@ import (
 )
 
 const (
-	// Large enough for a photograph at avatar size, small enough that a row per
-	// user never becomes a storage question.
-	MaxAvatarBytes = 256 << 10
+	// Large enough for a photo straight off a phone or a camera, which is what
+	// people actually reach for; small enough that a row per user never becomes
+	// a storage question.
+	MaxAvatarBytes = 2 << 20
 	// A header-only guard against a decompression bomb: a 40-byte PNG can claim
 	// to be 60000x60000 and only the dimensions reveal it.
 	maxAvatarPixels = 4096
@@ -45,7 +47,7 @@ func (a *Authenticator) SetAvatar(ctx context.Context, userID string, data []byt
 		return "", invalid("that file is empty")
 	}
 	if len(data) > MaxAvatarBytes {
-		return "", invalid(fmt.Sprintf("an avatar is at most %d KB", MaxAvatarBytes>>10))
+		return "", invalid(fmt.Sprintf("an avatar is at most %d MB", MaxAvatarBytes>>20))
 	}
 
 	sniffed := http.DetectContentType(data)
