@@ -602,7 +602,7 @@ func (q *Queries) RotateWebhookEndpointSecret(ctx context.Context, arg RotateWeb
 const updateWebhookDeliveryProgress = `-- name: UpdateWebhookDeliveryProgress :one
 UPDATE webhook_deliveries
 SET status = $2, attempt = $3, next_attempt_at = $4, updated_at = now()
-WHERE id = $1
+WHERE id = $1 AND attempt = $5
 RETURNING id, endpoint_id, event_type, resource_kind, resource_id, resource_name, payload, status, attempt, next_attempt_at, redelivery_of, created_at, updated_at
 `
 
@@ -611,14 +611,23 @@ type UpdateWebhookDeliveryProgressParams struct {
 	Status        string
 	Attempt       int32
 	NextAttemptAt pgtype.Timestamptz
+	FromAttempt   int32
 }
 
+// UpdateWebhookDeliveryProgress advances a delivery, but only from the attempt
+// the caller actually started from: `from_attempt` is a compare-and-set, not a
+// filter. Two workers can hold the same row — the detached first attempt and a
+// sweeper tick that finds it due — and without this guard the slower one's
+// write lands last and wins, flipping a delivery that already succeeded back to
+// pending for another round of retries. Matching zero rows is the correct
+// answer for the loser: someone else moved this delivery on.
 func (q *Queries) UpdateWebhookDeliveryProgress(ctx context.Context, arg UpdateWebhookDeliveryProgressParams) (WebhookDelivery, error) {
 	row := q.db.QueryRow(ctx, updateWebhookDeliveryProgress,
 		arg.ID,
 		arg.Status,
 		arg.Attempt,
 		arg.NextAttemptAt,
+		arg.FromAttempt,
 	)
 	var i WebhookDelivery
 	err := row.Scan(

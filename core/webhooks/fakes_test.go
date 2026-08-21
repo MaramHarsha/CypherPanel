@@ -208,11 +208,17 @@ func (s *fakeStore) GetWebhookDelivery(_ context.Context, id string) (domain.Web
 	return d, nil
 }
 
-func (s *fakeStore) UpdateWebhookDeliveryProgress(_ context.Context, id, status string, attempt int, next *time.Time) (domain.WebhookDelivery, error) {
+func (s *fakeStore) UpdateWebhookDeliveryProgress(_ context.Context, id, status string, fromAttempt, attempt int, next *time.Time) (domain.WebhookDelivery, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	d, ok := s.deliveries[id]
 	if !ok {
+		return domain.WebhookDelivery{}, store.ErrNotFound
+	}
+	// The compare-and-set the real query does in SQL: a caller whose starting
+	// attempt no longer matches lost the row to another worker and its write is
+	// refused, exactly as `WHERE id = $1 AND attempt = @from_attempt` refuses it.
+	if d.Attempt != fromAttempt {
 		return domain.WebhookDelivery{}, store.ErrNotFound
 	}
 	d.Status, d.Attempt, d.NextAttemptAt, d.UpdatedAt = status, attempt, next, s.now()

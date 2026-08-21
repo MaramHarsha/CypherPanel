@@ -72,7 +72,7 @@ type Store interface {
 	ListEnabledWebhookEndpointsForEvent(ctx context.Context, projectID, eventType string) ([]domain.WebhookEndpoint, error)
 	GetWebhookEndpoint(ctx context.Context, id string) (domain.WebhookEndpoint, error)
 	CreateWebhookDelivery(ctx context.Context, d domain.WebhookDelivery) (domain.WebhookDelivery, error)
-	UpdateWebhookDeliveryProgress(ctx context.Context, id, status string, attempt int, nextAttemptAt *time.Time) (domain.WebhookDelivery, error)
+	UpdateWebhookDeliveryProgress(ctx context.Context, id, status string, fromAttempt, attempt int, nextAttemptAt *time.Time) (domain.WebhookDelivery, error)
 	CreateWebhookDeliveryAttempt(ctx context.Context, a domain.WebhookDeliveryAttempt) (domain.WebhookDeliveryAttempt, error)
 	ListDueWebhookDeliveries(ctx context.Context, now time.Time, limit int32) ([]domain.WebhookDelivery, error)
 	DeleteOldWebhookDeliveries(ctx context.Context, endpointID string, keep int32) error
@@ -286,6 +286,15 @@ func (m *Manager) enqueue(ctx context.Context, e domain.WebhookEndpoint, ev even
 	defer cancel()
 
 	now := m.now()
+	// The first attempt runs detached, immediately after this row lands. Writing
+	// next_attempt_at = now would make the delivery due the instant it exists,
+	// so a sweeper tick landing in the middle of that attempt would pick it up
+	// and send a second, concurrent POST of the same signed body. Leasing it for
+	// one attempt window hands ownership to that first attempt; if the process
+	// dies before the attempt lands, the row is still persisted and the sweeper
+	// collects it once the lease elapses, which is the restart property spec §4
+	// and ENGINEERING rule 15 actually ask for.
+	leaseUntil := now.Add(deliveryTimeout)
 	id := ids.New(ids.PrefixWebhookDelivery)
 	body, err := json.Marshal(envelope{
 		Event:       ev.Type,
@@ -309,7 +318,7 @@ func (m *Manager) enqueue(ctx context.Context, e domain.WebhookEndpoint, ev even
 		Payload:       string(body),
 		Status:        domain.DeliveryPending,
 		Attempt:       0,
-		NextAttemptAt: &now,
+		NextAttemptAt: &leaseUntil,
 		RedeliveryOf:  redeliveryOf,
 	})
 }
@@ -342,7 +351,7 @@ func (m *Manager) Attempt(ctx context.Context, e domain.WebhookEndpoint, d domai
 		// Without the secret nothing can be signed, and no later attempt will
 		// fare better — terminate rather than burn the retry budget.
 		m.log.Error("webhooks: unsealing signing secret", "endpoint_id", e.ID, "delivery_id", d.ID, "error", err)
-		return m.store.UpdateWebhookDeliveryProgress(ctx, d.ID, domain.DeliveryFailed, d.Attempt, nil)
+		return m.advance(ctx, d, domain.DeliveryFailed, d.Attempt, nil)
 	}
 
 	status, dur, sendErr := m.post(ctx, e.URL, d, secret)
@@ -366,13 +375,35 @@ func (m *Manager) Attempt(ctx context.Context, e domain.WebhookEndpoint, d domai
 
 	switch {
 	case sendErr == nil && status/100 == 2:
-		return m.store.UpdateWebhookDeliveryProgress(ctx, d.ID, domain.DeliverySucceeded, n, nil)
+		return m.advance(ctx, d, domain.DeliverySucceeded, n, nil)
 	case retryable(status, sendErr) && n < maxAttempts:
 		next := m.now().Add(m.backoffFor(n))
-		return m.store.UpdateWebhookDeliveryProgress(ctx, d.ID, domain.DeliveryPending, n, &next)
+		return m.advance(ctx, d, domain.DeliveryPending, n, &next)
 	default:
-		return m.store.UpdateWebhookDeliveryProgress(ctx, d.ID, domain.DeliveryFailed, n, nil)
+		return m.advance(ctx, d, domain.DeliveryFailed, n, nil)
 	}
+}
+
+// advance writes a delivery's new state, but only if the row still holds the
+// attempt count this worker started from.
+//
+// Losing that compare-and-set is not an error. It means another worker — the
+// detached first attempt, or a sweeper tick that found the row due — already
+// moved this delivery on, and the correct thing to do with our own result is
+// drop it: the winner's outcome is the one on record, and re-writing ours could
+// resurrect a delivery that already succeeded. The delivery is returned as we
+// last read it so callers keep a coherent value.
+func (m *Manager) advance(ctx context.Context, d domain.WebhookDelivery, status string, attempt int, next *time.Time) (domain.WebhookDelivery, error) {
+	saved, err := m.store.UpdateWebhookDeliveryProgress(ctx, d.ID, status, d.Attempt, attempt, next)
+	if errors.Is(err, store.ErrNotFound) {
+		m.log.Info("webhooks: delivery already advanced by another worker",
+			"delivery_id", d.ID, "from_attempt", d.Attempt, "dropped_status", status)
+		return d, nil
+	}
+	if err != nil {
+		return domain.WebhookDelivery{}, err
+	}
+	return saved, nil
 }
 
 // retryable decides whether another attempt could plausibly succeed
@@ -551,7 +582,7 @@ func (m *Manager) SweepDue(ctx context.Context) {
 			// The endpoint was switched off mid-backoff. No request is made, so
 			// no attempt row is written; the delivery just stops being pending
 			// (a disabled endpoint reports health "unknown" regardless).
-			if _, err := m.store.UpdateWebhookDeliveryProgress(ctx, d.ID, domain.DeliveryFailed, d.Attempt, nil); err != nil {
+			if _, err := m.advance(ctx, d, domain.DeliveryFailed, d.Attempt, nil); err != nil {
 				m.log.Error("webhooks: abandoning delivery for disabled endpoint", "endpoint_id", e.ID, "delivery_id", d.ID, "error", err)
 			}
 			continue

@@ -645,3 +645,59 @@ func waitForStatus(t *testing.T, st *fakeStore, id, want string) {
 	d, _ := st.GetWebhookDelivery(context.Background(), id)
 	t.Fatalf("delivery %s status = %q, want %q", id, d.Status, want)
 }
+
+// A freshly enqueued delivery is LEASED to the first attempt, not left due the
+// instant it exists. Before this, next_attempt_at was `now`, so a sweeper tick
+// landing while the detached first attempt was still in flight picked the same
+// row up and sent a second, concurrent POST of the same signed body — spec §8
+// acceptance 1 says the receiver gets exactly one.
+func TestEnqueuedDeliveryIsNotImmediatelyDue(t *testing.T) {
+	c := newClock()
+	st := newFakeStore(c.now)
+	m := newTestManager(st, c)
+	rec := newReceiver(t, http.StatusOK)
+	e := st.seedEndpoint("whe_race_1", "prj_1", rec.url(), "s", []string{domain.EventDeployFailed}, true)
+
+	d := enqueueForTest(t, m, e)
+	if d.NextAttemptAt == nil || !d.NextAttemptAt.After(c.now()) {
+		t.Fatalf("a new delivery is due at %v with the clock at %v; want a lease into the future", d.NextAttemptAt, c.now())
+	}
+	// A sweep landing before the first attempt has finished must not touch it.
+	m.SweepDue(context.Background())
+	if n := len(rec.captured()); n != 0 {
+		t.Fatalf("the sweeper made %d requests for a leased delivery, want 0", n)
+	}
+}
+
+// The progress write is a compare-and-set on the attempt the worker started
+// from. This is the second lock: even if two workers do hold the same delivery,
+// the loser's write must not land — otherwise it flips a delivery that already
+// SUCCEEDED back to pending and the receiver gets the whole retry ladder again.
+func TestStaleProgressWriteCannotResurrectASucceededDelivery(t *testing.T) {
+	c := newClock()
+	st := newFakeStore(c.now)
+	m := newTestManager(st, c)
+	rec := newReceiver(t, http.StatusOK)
+	e := st.seedEndpoint("whe_race_2", "prj_1", rec.url(), "s", []string{domain.EventDeployFailed}, true)
+
+	// Worker A reads the delivery at attempt 0 and succeeds it.
+	d := enqueueForTest(t, m, e)
+	stale := d // worker B's copy, read at the same attempt
+	if got := attempt(t, m, e, d); got.Status != domain.DeliverySucceeded {
+		t.Fatalf("status = %s, want succeeded", got.Status)
+	}
+
+	// Worker B now finishes its own (duplicate) attempt against its stale copy.
+	// Its write is refused, and Attempt reports no error: losing the race is a
+	// normal outcome, not a store failure.
+	if _, err := m.advance(context.Background(), stale, domain.DeliveryPending, 1, &[]time.Time{c.now().Add(time.Minute)}[0]); err != nil {
+		t.Fatalf("a losing worker returned an error: %v", err)
+	}
+	after, err := st.GetWebhookDelivery(context.Background(), d.ID)
+	if err != nil {
+		t.Fatalf("GetWebhookDelivery: %v", err)
+	}
+	if after.Status != domain.DeliverySucceeded || after.NextAttemptAt != nil {
+		t.Fatalf("delivery = %s next=%v; a stale write resurrected a succeeded delivery", after.Status, after.NextAttemptAt)
+	}
+}

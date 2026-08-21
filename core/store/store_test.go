@@ -1004,7 +1004,14 @@ func TestStoreWebhookEndpointRoundtrip(t *testing.T) {
 	if !containsDelivery(dueRows, d.ID) {
 		t.Fatalf("due list %+v missing the pending delivery", dueRows)
 	}
-	if _, err := s.UpdateWebhookDeliveryProgress(ctx, d.ID, domain.DeliveryFailed, 2, nil); err != nil {
+	// The progress write is a compare-and-set on the attempt the caller started
+	// from. A stale writer — the loser of the sweeper/first-attempt race — must
+	// not be able to move the row, or it could flip a delivery that already
+	// succeeded back to pending for another round of retries.
+	if _, err := s.UpdateWebhookDeliveryProgress(ctx, d.ID, domain.DeliverySucceeded, 0, 1, nil); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("stale progress write = %v, want ErrNotFound", err)
+	}
+	if _, err := s.UpdateWebhookDeliveryProgress(ctx, d.ID, domain.DeliveryFailed, 1, 2, nil); err != nil {
 		t.Fatalf("UpdateWebhookDeliveryProgress: %v", err)
 	}
 	dueRows, _ = s.ListDueWebhookDeliveries(ctx, time.Now(), 50)

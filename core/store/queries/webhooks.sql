@@ -47,10 +47,17 @@ RETURNING *;
 -- name: GetWebhookDelivery :one
 SELECT * FROM webhook_deliveries WHERE id = $1;
 
+-- UpdateWebhookDeliveryProgress advances a delivery, but only from the attempt
+-- the caller actually started from: `from_attempt` is a compare-and-set, not a
+-- filter. Two workers can hold the same row — the detached first attempt and a
+-- sweeper tick that finds it due — and without this guard the slower one's
+-- write lands last and wins, flipping a delivery that already succeeded back to
+-- pending for another round of retries. Matching zero rows is the correct
+-- answer for the loser: someone else moved this delivery on.
 -- name: UpdateWebhookDeliveryProgress :one
 UPDATE webhook_deliveries
 SET status = $2, attempt = $3, next_attempt_at = $4, updated_at = now()
-WHERE id = $1
+WHERE id = $1 AND attempt = @from_attempt
 RETURNING *;
 
 -- name: ListWebhookDeliveriesByEndpoint :many

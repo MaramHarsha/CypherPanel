@@ -133,12 +133,18 @@ func (s *Store) GetWebhookDelivery(ctx context.Context, id string) (domain.Webho
 
 // UpdateWebhookDeliveryProgress advances a delivery's status, attempt count and
 // next-attempt time. nextAttemptAt is nil once the delivery is terminal.
-func (s *Store) UpdateWebhookDeliveryProgress(ctx context.Context, id, status string, attempt int, nextAttemptAt *time.Time) (domain.WebhookDelivery, error) {
+//
+// fromAttempt is the attempt count the caller read before it started work; the
+// write only lands if the row still holds it. A caller that loses the race gets
+// ErrNotFound, which means "another worker already advanced this delivery",
+// never "no such delivery".
+func (s *Store) UpdateWebhookDeliveryProgress(ctx context.Context, id, status string, fromAttempt, attempt int, nextAttemptAt *time.Time) (domain.WebhookDelivery, error) {
 	row, err := s.q.UpdateWebhookDeliveryProgress(ctx, db.UpdateWebhookDeliveryProgressParams{
 		ID:            id,
 		Status:        status,
 		Attempt:       int32(attempt),
 		NextAttemptAt: tsFromPtr(nextAttemptAt),
+		FromAttempt:   int32(fromAttempt),
 	})
 	if err != nil {
 		return domain.WebhookDelivery{}, wrapUpdate("updating webhook delivery", err)
