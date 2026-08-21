@@ -46,6 +46,12 @@ const (
 
 	// V1: Two-factor auth recovery codes (docs/features/two-factor-auth.md).
 	PrefixRecoveryCode = "rc"
+
+	// Phase 4: Outbound webhooks (docs/features/outbound-webhooks.md). A
+	// delivery id is also the X-CypherPanel-Delivery header value receivers
+	// dedupe on; attempts carry no prefix — they key on (delivery_id, attempt).
+	PrefixWebhookEndpoint = "whe"
+	PrefixWebhookDelivery = "whd"
 )
 
 // New returns a prefixed, URL-safe, collision-resistant identifier such as

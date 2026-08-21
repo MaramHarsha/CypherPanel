@@ -144,6 +144,31 @@ func (a *API) projectIDForNotifier(ctx context.Context, notifierID string) (stri
 	return n.ProjectID, nil
 }
 
+func (a *API) projectIDForWebhookEndpoint(ctx context.Context, endpointID string) (string, error) {
+	if a.deps.WebhookEndpoints == nil {
+		return "", store.ErrNotFound
+	}
+	e, err := a.deps.WebhookEndpoints.Get(ctx, endpointID)
+	if err != nil {
+		return "", err
+	}
+	return e.ProjectID, nil
+}
+
+// projectIDForWebhookDelivery chains through the delivery's endpoint — a
+// delivery is only ever addressable by someone who can see the endpoint that
+// produced it (outbound-webhooks.md §6).
+func (a *API) projectIDForWebhookDelivery(ctx context.Context, deliveryID string) (string, error) {
+	if a.deps.WebhookEndpoints == nil {
+		return "", store.ErrNotFound
+	}
+	d, err := a.deps.WebhookEndpoints.GetDelivery(ctx, deliveryID)
+	if err != nil {
+		return "", err
+	}
+	return a.projectIDForWebhookEndpoint(ctx, d.EndpointID)
+}
+
 func (a *API) projectIDForScheduledTask(ctx context.Context, taskID string) (string, error) {
 	if a.deps.ScheduledTasks == nil {
 		return "", store.ErrNotFound

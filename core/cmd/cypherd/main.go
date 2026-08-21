@@ -46,6 +46,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/store"
 	"github.com/MaramHarsha/cypherpanel/core/teams"
 	"github.com/MaramHarsha/cypherpanel/core/templates"
+	"github.com/MaramHarsha/cypherpanel/core/webhooks"
 	"github.com/MaramHarsha/cypherpanel/pkg/pki"
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
 )
@@ -179,7 +180,15 @@ func run(log *slog.Logger) error {
 	// detached, so it never blocks the pipeline.
 	notifySvc := notify.NewService(st, box)
 	notifyMgr := notify.New(st, box, log)
-	sched.SetNotifier(notifyMgr)
+	sched.AddSink(notifyMgr)
+
+	// Outbound webhooks: the same terminal outcomes, POSTed as signed JSON to
+	// the operator's own systems, with a delivery id, bounded retry and a
+	// per-attempt record (outbound-webhooks.md). A second sink on the same
+	// seam — delivery is detached, so it never blocks the pipeline.
+	webhookMgr := webhooks.New(st, box, log)
+	webhookSvc := webhooks.NewService(st, box, webhookMgr)
+	sched.AddSink(webhookMgr)
 
 	// Scheduled tasks: cron declared on an app, run by the agent in the app's
 	// own container (scheduled-tasks.md, ADR-011). CRUD converges via the
@@ -210,6 +219,15 @@ func run(log *slog.Logger) error {
 	go func() {
 		defer wg.Done()
 		sched.RunBackupSweeper(ctx, cfg.SweepInterval)
+	}()
+
+	// Outbound webhook retries: next_attempt_at lives in Postgres and the
+	// delivery row is written before the first attempt, so a plane restart
+	// mid-backoff loses nothing (outbound-webhooks.md §4).
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		webhookMgr.RunRetrySweeper(ctx, cfg.SweepInterval)
 	}()
 
 	if err := sched.Recover(ctx); err != nil {
@@ -351,18 +369,20 @@ func run(log *slog.Logger) error {
 		Notifiers:       notifySvc,
 		NotifyDelivery:  notifyMgr,
 		ScheduledTasks:  scheduledTaskSvc,
-		Templates:       templateSvc,
-		Teams:           teamSvc,
-		Scheduler:       sched,
-		Deployments:     st,
-		Opener:          box,
-		Pinger:          st,
-		CACertPEM:       ca.CertPEM(),
-		EnrollAddr:      cfg.AdvertisedEnrollAddr(),
-		NATSURL:         cfg.AdvertisedNATSURL(),
-		Logs:            b,
-		ConsoleURL:      cfg.AdvertisedConsoleURL(),
-		Log:             log,
+
+		WebhookEndpoints: webhookSvc,
+		Templates:        templateSvc,
+		Teams:            teamSvc,
+		Scheduler:        sched,
+		Deployments:      st,
+		Opener:           box,
+		Pinger:           st,
+		CACertPEM:        ca.CertPEM(),
+		EnrollAddr:       cfg.AdvertisedEnrollAddr(),
+		NATSURL:          cfg.AdvertisedNATSURL(),
+		Logs:             b,
+		ConsoleURL:       cfg.AdvertisedConsoleURL(),
+		Log:              log,
 	})
 	httpSrv := &http.Server{
 		Addr:              cfg.HTTPAddr,

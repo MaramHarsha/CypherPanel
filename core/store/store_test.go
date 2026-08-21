@@ -872,3 +872,250 @@ func TestStoreBackupRetentionPrune(t *testing.T) {
 		t.Fatalf("remaining records = %d, want 2 (the newest two)", len(remaining))
 	}
 }
+
+// TestStoreWebhookEndpointRoundtrip exercises the outbound-webhook tables
+// against real Postgres: the TEXT[] events column and its ANY(events) filter,
+// the sealed BYTEA pair, the UNIQUE (project_id, url) guard, the composite
+// attempt key's idempotence, seek paging, retention pruning, and the cascades
+// (outbound-webhooks.md §2, §6, §7).
+func TestStoreWebhookEndpointRoundtrip(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	_, proj, _, _ := seedApp(t, s)
+
+	target := "https://ops.meridian.dev/hooks/" + ids.Secret()
+	e, err := s.CreateWebhookEndpoint(ctx, domain.WebhookEndpoint{
+		ID:          ids.New(ids.PrefixWebhookEndpoint),
+		ProjectID:   proj.ID,
+		URL:         target,
+		SecretCT:    []byte("sealed-signing-secret"),
+		SecretNonce: []byte("nonce"),
+		Events:      []string{domain.EventDeployFailed, domain.EventBackupFailed},
+		Enabled:     true,
+	})
+	if err != nil {
+		t.Fatalf("CreateWebhookEndpoint: %v", err)
+	}
+	if len(e.Events) != 2 || e.Events[0] != domain.EventDeployFailed {
+		t.Fatalf("events not round-tripped: %+v", e.Events)
+	}
+	if string(e.SecretCT) != "sealed-signing-secret" {
+		t.Fatalf("sealed secret not round-tripped: %q", e.SecretCT)
+	}
+
+	// The URL is the endpoint's identity: a second one on the same URL would
+	// silently double every delivery (spec section 2).
+	if _, err := s.CreateWebhookEndpoint(ctx, domain.WebhookEndpoint{
+		ID: ids.New(ids.PrefixWebhookEndpoint), ProjectID: proj.ID, URL: target,
+		SecretCT: []byte("x"), SecretNonce: []byte("n"),
+		Events: []string{domain.EventDeployFailed}, Enabled: true,
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate URL = %v, want ErrConflict", err)
+	}
+
+	// The event filter matches a subscribed event and excludes an unsubscribed
+	// one; disabling removes it from the query but keeps the row.
+	got, err := s.ListEnabledWebhookEndpointsForEvent(ctx, proj.ID, domain.EventDeployFailed)
+	if err != nil {
+		t.Fatalf("ListEnabledWebhookEndpointsForEvent: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != e.ID {
+		t.Fatalf("event filter = %+v, want the one subscribed endpoint", got)
+	}
+	if none, err := s.ListEnabledWebhookEndpointsForEvent(ctx, proj.ID, domain.EventDeploySucceeded); err != nil || len(none) != 0 {
+		t.Fatalf("unsubscribed event = %+v, %v, want empty", none, err)
+	}
+	e.Enabled = false
+	if _, err := s.UpdateWebhookEndpoint(ctx, e); err != nil {
+		t.Fatalf("UpdateWebhookEndpoint: %v", err)
+	}
+	if disabled, _ := s.ListEnabledWebhookEndpointsForEvent(ctx, proj.ID, domain.EventDeployFailed); len(disabled) != 0 {
+		t.Fatalf("disabled endpoint still matched: %+v", disabled)
+	}
+	e.Enabled = true
+	if _, err := s.UpdateWebhookEndpoint(ctx, e); err != nil {
+		t.Fatalf("re-enabling: %v", err)
+	}
+
+	// Rotating replaces the sealed pair in place, with no overlap window.
+	rotated, err := s.RotateWebhookEndpointSecret(ctx, e.ID, []byte("sealed-v2"), []byte("nonce2"))
+	if err != nil {
+		t.Fatalf("RotateWebhookEndpointSecret: %v", err)
+	}
+	if string(rotated.SecretCT) != "sealed-v2" {
+		t.Fatalf("rotate did not replace the secret: %q", rotated.SecretCT)
+	}
+
+	// One delivery with its attempts: response_status is nullable (a transport
+	// error has none), and the composite PK makes a repeat insert a conflict
+	// the manager reads as "already recorded" (ENGINEERING rule 12).
+	due := time.Now().Add(-time.Minute)
+	d, err := s.CreateWebhookDelivery(ctx, domain.WebhookDelivery{
+		ID:            ids.New(ids.PrefixWebhookDelivery),
+		EndpointID:    e.ID,
+		EventType:     domain.EventDeployFailed,
+		ResourceKind:  domain.WebhookResourceApplication,
+		ResourceID:    "app_gone_tomorrow",
+		ResourceName:  "web",
+		Payload:       `{"event":"deploy.failed"}`,
+		Status:        domain.DeliveryPending,
+		Attempt:       1,
+		NextAttemptAt: &due,
+	})
+	if err != nil {
+		t.Fatalf("CreateWebhookDelivery: %v", err)
+	}
+	if d.NextAttemptAt == nil || d.RedeliveryOf != nil {
+		t.Fatalf("nullable columns not round-tripped: %+v", d)
+	}
+	code := 500
+	if _, err := s.CreateWebhookDeliveryAttempt(ctx, domain.WebhookDeliveryAttempt{
+		DeliveryID: d.ID, Attempt: 1, ResponseStatus: &code, DurationMS: 84,
+	}); err != nil {
+		t.Fatalf("CreateWebhookDeliveryAttempt: %v", err)
+	}
+	if _, err := s.CreateWebhookDeliveryAttempt(ctx, domain.WebhookDeliveryAttempt{
+		DeliveryID: d.ID, Attempt: 1, DurationMS: 1,
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("repeat attempt insert = %v, want ErrConflict", err)
+	}
+	if _, err := s.CreateWebhookDeliveryAttempt(ctx, domain.WebhookDeliveryAttempt{
+		DeliveryID: d.ID, Attempt: 2, DurationMS: 12, Error: "dial tcp: connection refused",
+	}); err != nil {
+		t.Fatalf("CreateWebhookDeliveryAttempt(2): %v", err)
+	}
+	attempts, err := s.ListWebhookDeliveryAttempts(ctx, d.ID)
+	if err != nil {
+		t.Fatalf("ListWebhookDeliveryAttempts: %v", err)
+	}
+	if len(attempts) != 2 || attempts[0].ResponseStatus == nil || *attempts[0].ResponseStatus != 500 {
+		t.Fatalf("attempts = %+v, want two with the first carrying 500", attempts)
+	}
+	if attempts[1].ResponseStatus != nil {
+		t.Fatalf("transport-error attempt has response_status %v, want NULL", attempts[1].ResponseStatus)
+	}
+
+	// The partial due index feeds the retry sweeper; a terminal delivery drops
+	// out of it.
+	dueRows, err := s.ListDueWebhookDeliveries(ctx, time.Now(), 50)
+	if err != nil {
+		t.Fatalf("ListDueWebhookDeliveries: %v", err)
+	}
+	if !containsDelivery(dueRows, d.ID) {
+		t.Fatalf("due list %+v missing the pending delivery", dueRows)
+	}
+	if _, err := s.UpdateWebhookDeliveryProgress(ctx, d.ID, domain.DeliveryFailed, 2, nil); err != nil {
+		t.Fatalf("UpdateWebhookDeliveryProgress: %v", err)
+	}
+	dueRows, _ = s.ListDueWebhookDeliveries(ctx, time.Now(), 50)
+	if containsDelivery(dueRows, d.ID) {
+		t.Fatal("a terminal delivery is still due")
+	}
+
+	// Health input and last-delivery time.
+	statuses, err := s.ListRecentTerminalWebhookDeliveryStatuses(ctx, e.ID, 10)
+	if err != nil {
+		t.Fatalf("ListRecentTerminalWebhookDeliveryStatuses: %v", err)
+	}
+	if len(statuses) != 1 || statuses[0] != domain.DeliveryFailed {
+		t.Fatalf("terminal statuses = %v, want [failed]", statuses)
+	}
+	last, err := s.LastWebhookDeliveryAt(ctx, e.ID)
+	if err != nil || last == nil {
+		t.Fatalf("LastWebhookDeliveryAt = %v, %v, want a time", last, err)
+	}
+
+	// Seek paging over 120 deliveries: 50 + 50 + 20, no repeats, no gaps.
+	const extra = 119
+	for i := 0; i < extra; i++ {
+		if _, err := s.CreateWebhookDelivery(ctx, domain.WebhookDelivery{
+			ID: ids.New(ids.PrefixWebhookDelivery), EndpointID: e.ID,
+			EventType: domain.EventDeployFailed, ResourceKind: domain.WebhookResourceApplication,
+			ResourceID: "app_x", ResourceName: "web", Payload: "{}", Status: domain.DeliverySucceeded,
+		}); err != nil {
+			t.Fatalf("CreateWebhookDelivery(%d): %v", i, err)
+		}
+	}
+	seen := map[string]bool{}
+	before := ""
+	for pages := 1; ; pages++ {
+		var rows []domain.WebhookDelivery
+		if before == "" {
+			rows, err = s.ListWebhookDeliveriesByEndpoint(ctx, e.ID, 50)
+		} else {
+			rows, err = s.ListWebhookDeliveriesBefore(ctx, e.ID, before, 50)
+		}
+		if err != nil {
+			t.Fatalf("paging: %v", err)
+		}
+		for _, r := range rows {
+			if seen[r.ID] {
+				t.Fatalf("delivery %s repeated across pages", r.ID)
+			}
+			seen[r.ID] = true
+		}
+		if len(rows) < 50 {
+			break
+		}
+		before = rows[len(rows)-1].ID
+		if pages > 5 {
+			t.Fatal("paging did not terminate")
+		}
+	}
+	if len(seen) != extra+1 {
+		t.Fatalf("paged %d deliveries, want %d with no gaps", len(seen), extra+1)
+	}
+
+	// Retention: pruning to 100 drops the oldest, and their attempts cascade.
+	if err := s.DeleteOldWebhookDeliveries(ctx, e.ID, 100); err != nil {
+		t.Fatalf("DeleteOldWebhookDeliveries: %v", err)
+	}
+	kept, err := s.ListWebhookDeliveriesByEndpoint(ctx, e.ID, 500)
+	if err != nil {
+		t.Fatalf("ListWebhookDeliveriesByEndpoint: %v", err)
+	}
+	if len(kept) != 100 {
+		t.Fatalf("kept %d deliveries, want 100 after the prune", len(kept))
+	}
+	if _, err := s.GetWebhookDelivery(ctx, d.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("the oldest delivery survived the prune: %v", err)
+	}
+	if pruned, err := s.ListWebhookDeliveryAttempts(ctx, d.ID); err != nil || len(pruned) != 0 {
+		t.Fatalf("attempts = %+v, %v, want cascaded away with their delivery", pruned, err)
+	}
+
+	// Deleting the endpoint cascades its deliveries; deleting the project
+	// cascades the endpoint.
+	survivor := kept[0].ID
+	if err := s.DeleteWebhookEndpoint(ctx, e.ID); err != nil {
+		t.Fatalf("DeleteWebhookEndpoint: %v", err)
+	}
+	if _, err := s.GetWebhookDelivery(ctx, survivor); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("delivery survived its endpoint: %v", err)
+	}
+
+	second, err := s.CreateWebhookEndpoint(ctx, domain.WebhookEndpoint{
+		ID: ids.New(ids.PrefixWebhookEndpoint), ProjectID: proj.ID,
+		URL:      "https://ops.meridian.dev/hooks/" + ids.Secret(),
+		SecretCT: []byte("ct"), SecretNonce: []byte("n"),
+		Events: []string{domain.EventDeploySucceeded}, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateWebhookEndpoint(second): %v", err)
+	}
+	if err := s.DeleteProject(ctx, proj.ID); err != nil {
+		t.Fatalf("DeleteProject: %v", err)
+	}
+	if _, err := s.GetWebhookEndpoint(ctx, second.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("endpoint survived the project cascade: %v", err)
+	}
+}
+
+func containsDelivery(rows []domain.WebhookDelivery, id string) bool {
+	for _, r := range rows {
+		if r.ID == id {
+			return true
+		}
+	}
+	return false
+}

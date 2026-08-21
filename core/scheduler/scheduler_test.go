@@ -768,7 +768,7 @@ func TestNotifierFiresOnDeploySuccess(t *testing.T) {
 	fs.addApp("app_1", "srv_1")
 	s := newScheduler(fs, fb)
 	rec := &recordingNotifier{}
-	s.SetNotifier(rec)
+	s.AddSink(rec)
 
 	dep, _ := s.Deploy(context.Background(), "app_1", "manual", "")
 	s.HandleDeployEvent(context.Background(), "srv_1", &agentv1.DeployEvent{
@@ -792,7 +792,7 @@ func TestNotifierFiresOnDeployFailure(t *testing.T) {
 	fs.addApp("app_1", "srv_1")
 	s := newScheduler(fs, fb)
 	rec := &recordingNotifier{}
-	s.SetNotifier(rec)
+	s.AddSink(rec)
 
 	dep, _ := s.Deploy(context.Background(), "app_1", "manual", "")
 	s.HandleDeployEvent(context.Background(), "srv_1", &agentv1.DeployEvent{

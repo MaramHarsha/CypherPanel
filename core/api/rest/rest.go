@@ -25,6 +25,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/scheduledtasks"
 	"github.com/MaramHarsha/cypherpanel/core/servers"
 	"github.com/MaramHarsha/cypherpanel/core/templates"
+	"github.com/MaramHarsha/cypherpanel/core/webhooks"
 )
 
 // Pinger is the readiness dependency (the store).
@@ -86,6 +87,25 @@ type NotifierDelivery interface {
 	Deliver(ctx context.Context, n domain.Notifier, ev domain.NotifyEvent) error
 }
 
+// WebhookEndpointService is the outbound webhook surface — endpoint CRUD, the
+// derived Endpoint Health read model, the paged delivery log, ping and
+// redeliver (consumer-defined; *webhooks.Service satisfies it —
+// outbound-webhooks.md §7). Get and GetDelivery are also what the
+// authorization resolvers walk, so they stay plain lookups.
+type WebhookEndpointService interface {
+	Create(ctx context.Context, projectID string, in webhooks.CreateInput) (webhooks.Created, error)
+	Update(ctx context.Context, id string, in webhooks.UpdateInput) (webhooks.EndpointView, error)
+	Get(ctx context.Context, id string) (domain.WebhookEndpoint, error)
+	View(ctx context.Context, id string) (webhooks.EndpointView, error)
+	ListViews(ctx context.Context, projectID string) ([]webhooks.EndpointView, error)
+	Delete(ctx context.Context, id string) error
+	RotateSecret(ctx context.Context, id string) (string, error)
+	Ping(ctx context.Context, id string) (domain.WebhookDelivery, error)
+	Deliveries(ctx context.Context, endpointID string, limit int, before string) (webhooks.Page, error)
+	GetDelivery(ctx context.Context, id string) (domain.WebhookDelivery, error)
+	Redeliver(ctx context.Context, deliveryID string) (domain.WebhookDelivery, error)
+}
+
 // TeamService is the tenancy surface (consumer-defined; *teams.Service
 // satisfies it — teams-and-roles.md). RoleForProject/RoleInTeam are the authz
 // queries every project-scoped route runs; the rest back the /teams and /users
@@ -142,32 +162,33 @@ type OnboardingService interface {
 }
 
 type Deps struct {
-	Auth            *auth.Authenticator
-	Onboarding      OnboardingService
-	Servers         *servers.Service
-	Projects        *projects.Service
-	Applications    *applications.Service
-	DeployKeys      *deploykeys.Service
-	Databases       *databases.Service
-	BackupTargets   *databases.BackupTargetService
-	BackupSchedules *databases.BackupScheduleService
-	Backups         BackupOps
-	Previews        PreviewManager
-	Notifiers       NotifierService
-	NotifyDelivery  NotifierDelivery
-	ScheduledTasks  ScheduledTaskService
-	Templates       *templates.Service
-	Teams           TeamService
-	Scheduler       Deployer
-	Deployments     DeploymentReader
-	Opener          Opener
-	Pinger          Pinger
-	CACertPEM       []byte
-	EnrollAddr      string // advertised gRPC enrollment address (host:port)
-	NATSURL         string // advertised data-plane URL
-	Logs            LogSubscriber
-	ConsoleURL      string // advertised HTTP base URL (installer + CA fetch)
-	Log             *slog.Logger
+	Auth             *auth.Authenticator
+	Onboarding       OnboardingService
+	Servers          *servers.Service
+	Projects         *projects.Service
+	Applications     *applications.Service
+	DeployKeys       *deploykeys.Service
+	Databases        *databases.Service
+	BackupTargets    *databases.BackupTargetService
+	BackupSchedules  *databases.BackupScheduleService
+	Backups          BackupOps
+	Previews         PreviewManager
+	Notifiers        NotifierService
+	NotifyDelivery   NotifierDelivery
+	WebhookEndpoints WebhookEndpointService
+	ScheduledTasks   ScheduledTaskService
+	Templates        *templates.Service
+	Teams            TeamService
+	Scheduler        Deployer
+	Deployments      DeploymentReader
+	Opener           Opener
+	Pinger           Pinger
+	CACertPEM        []byte
+	EnrollAddr       string // advertised gRPC enrollment address (host:port)
+	NATSURL          string // advertised data-plane URL
+	Logs             LogSubscriber
+	ConsoleURL       string // advertised HTTP base URL (installer + CA fetch)
+	Log              *slog.Logger
 }
 
 // API holds the HTTP handlers and their dependencies.
@@ -319,6 +340,20 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/v1/notifiers/{id}", a.authed(a.handlePatchNotifier))
 	mux.HandleFunc("DELETE /api/v1/notifiers/{id}", a.authed(a.handleDeleteNotifier))
 	mux.HandleFunc("POST /api/v1/notifiers/{id}/test", a.authed(a.handleTestNotifier))
+
+	// Phase 4: outbound webhooks (outbound-webhooks.md §7). Notifiers talk to
+	// people; these talk to machines. Nothing here triggers a deploy, so
+	// deployRoutes is untouched: reads need `read`, mutations — including ping
+	// and redeliver — need `write`.
+	mux.HandleFunc("POST /api/v1/projects/{id}/webhook-endpoints", a.authed(a.handleCreateWebhookEndpoint))
+	mux.HandleFunc("GET /api/v1/projects/{id}/webhook-endpoints", a.authed(a.handleListWebhookEndpoints))
+	mux.HandleFunc("GET /api/v1/webhook-endpoints/{id}", a.authed(a.handleGetWebhookEndpoint))
+	mux.HandleFunc("PATCH /api/v1/webhook-endpoints/{id}", a.authed(a.handlePatchWebhookEndpoint))
+	mux.HandleFunc("DELETE /api/v1/webhook-endpoints/{id}", a.authed(a.handleDeleteWebhookEndpoint))
+	mux.HandleFunc("POST /api/v1/webhook-endpoints/{id}/rotate-secret", a.authed(a.handleRotateWebhookSecret))
+	mux.HandleFunc("POST /api/v1/webhook-endpoints/{id}/ping", a.authed(a.handlePingWebhookEndpoint))
+	mux.HandleFunc("GET /api/v1/webhook-endpoints/{id}/deliveries", a.authed(a.handleListWebhookDeliveries))
+	mux.HandleFunc("POST /api/v1/webhook-deliveries/{id}/redeliver", a.authed(a.handleRedeliverWebhookDelivery))
 
 	// Phase 3: scheduled tasks (scheduled-tasks.md §7).
 	mux.HandleFunc("POST /api/v1/applications/{id}/scheduled-tasks", a.authed(a.handleCreateScheduledTask))

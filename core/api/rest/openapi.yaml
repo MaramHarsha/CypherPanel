@@ -29,6 +29,7 @@ tags:
   - name: backups
   - name: previews
   - name: notifiers
+  - name: webhooks
   - name: scheduled-tasks
 
 paths:
@@ -1956,6 +1957,153 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
 
+  # ─── Outbound webhooks (outbound-webhooks.md §7) ──────────────────────────
+  #
+  # Notifiers talk to people; these talk to machines. Every delivery is POSTed
+  # as JSON signed with the endpoint's own secret. Verify it BEFORE parsing —
+  # a signature over reserialised JSON signs the wrong bytes:
+  #
+  #   mac := hmac.New(sha256.New, []byte(endpointSecret))
+  #   mac.Write([]byte(ts + "." + string(rawBody)))   // ts = X-CypherPanel-Timestamp
+  #   got, ok := strings.CutPrefix(sig, "sha256=")    // sig = X-CypherPanel-Signature
+  #   want := hex.EncodeToString(mac.Sum(nil))
+  #   if !ok || !hmac.Equal([]byte(want), []byte(got)) { reject() }   // constant time
+  #   if abs(now-atoi(ts)) > 300 { reject() }                         // 5-minute replay window
+  #
+  # Delivery is at-least-once and unordered: dedupe on X-CypherPanel-Delivery.
+  /api/v1/projects/{id}/webhook-endpoints:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Project ID. }
+    get:
+      operationId: listWebhookEndpoints
+      tags: [webhooks]
+      summary: List a project's outbound webhook endpoints
+      responses:
+        "200": { description: "Endpoints (the signing secret is never included).", content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/WebhookEndpoint" } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: createWebhookEndpoint
+      tags: [webhooks]
+      summary: Create an outbound webhook endpoint (the signing secret is shown exactly once)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateWebhookEndpointRequest" } } }
+      responses:
+        "201": { description: "Endpoint created. `secret` is the raw HMAC signing secret and is returned here and never again.", content: { application/json: { schema: { $ref: "#/components/schemas/CreateWebhookEndpointResponse" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: An endpoint with that URL already exists in the project. }
+  /api/v1/webhook-endpoints/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Webhook endpoint ID (whe_… prefix). }
+    get:
+      operationId: getWebhookEndpoint
+      tags: [webhooks]
+      summary: Get an outbound webhook endpoint
+      responses:
+        "200": { description: The endpoint., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookEndpoint" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateWebhookEndpoint
+      tags: [webhooks]
+      summary: Update an endpoint's url, events or enabled flag
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PatchWebhookEndpointRequest" } } }
+      responses:
+        "200": { description: Updated., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookEndpoint" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: An endpoint with that URL already exists in the project. }
+    delete:
+      operationId: deleteWebhookEndpoint
+      tags: [webhooks]
+      summary: Delete an endpoint (its deliveries and attempts go with it)
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/webhook-endpoints/{id}/rotate-secret:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Webhook endpoint ID. }
+    post:
+      operationId: rotateWebhookSecret
+      tags: [webhooks]
+      summary: Replace the signing secret (returned once; no overlap window)
+      responses:
+        "200": { description: "The new signing secret. The previous one stops verifying immediately — send a ping to confirm the new one.", content: { application/json: { schema: { $ref: "#/components/schemas/WebhookSecret" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/webhook-endpoints/{id}/ping:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Webhook endpoint ID. }
+    post:
+      operationId: pingWebhookEndpoint
+      tags: [webhooks]
+      summary: Send a synthetic webhook.ping delivery to prove the wiring
+      responses:
+        "202": { description: "Delivery recorded and attempted (detached). webhook.ping is delivery-only — it is never subscribed to, so an endpoint always receives its own pings.", content: { application/json: { schema: { $ref: "#/components/schemas/WebhookDelivery" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: The endpoint is disabled. }
+  /api/v1/webhook-endpoints/{id}/deliveries:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Webhook endpoint ID. }
+    get:
+      operationId: listWebhookDeliveries
+      tags: [webhooks]
+      summary: Page an endpoint's delivery log, newest first
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+          description: Page size; caps at 100.
+        - name: before
+          in: query
+          required: false
+          schema: { type: string }
+          description: "Seek cursor: return deliveries strictly older than this delivery id."
+      responses:
+        "200": { description: "A page of deliveries plus the cursor for the next one (empty when this is the last page).", content: { application/json: { schema: { $ref: "#/components/schemas/WebhookDeliveryPage" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/webhook-deliveries/{id}/redeliver:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Webhook delivery ID (whd_… prefix). }
+    post:
+      operationId: redeliverWebhookDelivery
+      tags: [webhooks]
+      summary: Replay a delivery as a new one
+      responses:
+        "202": { description: "A new delivery with a fresh id, a fresh attempt schedule and redelivery_of set. The original row is never mutated — the log is evidence.", content: { application/json: { schema: { $ref: "#/components/schemas/WebhookDelivery" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: The endpoint is disabled. }
+
   # ─── Scheduled tasks (scheduled-tasks.md §7) ──────────────────────────────
   /api/v1/applications/{id}/scheduled-tasks:
     parameters:
@@ -3273,6 +3421,92 @@ components:
           type: object
           description: Supply to reseal the channel config wholesale; omit to keep the existing sealed value.
           additionalProperties: true
+
+    # ─── Outbound webhooks ────────────────────────────────────────────────────
+    WebhookEndpoint:
+      type: object
+      required: [id, project_id, url, events, enabled, health, created_at, updated_at]
+      properties:
+        id: { type: string, description: whe_… prefixed ID. }
+        project_id: { type: string }
+        url: { type: string, description: "The http(s) receiver. It is the endpoint's identity — there is no name." }
+        events:
+          type: array
+          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed] }
+        enabled: { type: boolean }
+        health:
+          type: string
+          enum: [healthy, degraded, failing, unknown]
+          description: >-
+            Derived from the ten most recent terminal deliveries, never stored.
+            unknown = disabled or nothing delivered yet; healthy = all ten
+            succeeded; degraded = the most recent succeeded but at least one
+            failed; failing = the most recent exhausted its attempts.
+        last_delivery_at: { type: [string, "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CreateWebhookEndpointRequest:
+      type: object
+      required: [url, events]
+      properties:
+        url: { type: string, description: http(s) receiver. }
+        events:
+          type: array
+          minItems: 1
+          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed] }
+          description: "webhook.ping is not subscribable — an endpoint always receives its own pings."
+        enabled: { type: boolean, default: true }
+    PatchWebhookEndpointRequest:
+      type: object
+      properties:
+        url: { type: string }
+        events:
+          type: array
+          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed] }
+        enabled: { type: boolean }
+    CreateWebhookEndpointResponse:
+      type: object
+      required: [endpoint, secret]
+      properties:
+        endpoint: { $ref: "#/components/schemas/WebhookEndpoint" }
+        secret:
+          type: string
+          description: >-
+            The raw HMAC signing secret, shown here exactly once and never
+            retrievable again. Store it in the receiver now.
+    WebhookSecret:
+      type: object
+      required: [secret]
+      properties:
+        secret: { type: string, description: The raw HMAC signing secret, shown exactly once. }
+    WebhookDelivery:
+      type: object
+      required: [id, endpoint_id, event_type, resource_kind, resource_id, resource_name, status, attempt, created_at, updated_at]
+      properties:
+        id: { type: string, description: "whd_… prefixed ID — this is the X-CypherPanel-Delivery header value." }
+        endpoint_id: { type: string }
+        event_type: { type: string, description: "deploy.succeeded | deploy.failed | backup.succeeded | backup.failed | webhook.ping" }
+        resource_kind: { type: string, enum: [application, database] }
+        resource_id: { type: string, description: "The resource this event describes. Deliberately not a foreign key — the log outlives what it describes." }
+        resource_name: { type: string, description: Denormalised so the feed still reads correctly after a deletion. }
+        status: { type: string, enum: [pending, succeeded, failed] }
+        attempt: { type: integer, description: "Attempts made so far (max 4)." }
+        response_status: { type: [integer, "null"], description: "The most recent attempt's HTTP status; null before the first attempt and on a transport error." }
+        duration_ms: { type: [integer, "null"], description: "How long the most recent attempt took; null before the first attempt." }
+        next_attempt_at: { type: [string, "null"], format: date-time, description: When the next retry is due; null once terminal. }
+        redelivery_of: { type: [string, "null"], description: The original delivery id when this row is a replay. }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    WebhookDeliveryPage:
+      type: object
+      required: [deliveries, next_before]
+      properties:
+        deliveries:
+          type: array
+          items: { $ref: "#/components/schemas/WebhookDelivery" }
+        next_before:
+          type: string
+          description: Cursor to pass as ?before= for the next page; empty when this is the last page.
 
     # ─── Scheduled tasks ──────────────────────────────────────────────────────
     ScheduledTask:

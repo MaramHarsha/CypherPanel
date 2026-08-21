@@ -102,11 +102,12 @@ type Opener interface {
 	Open(ciphertext, nonce []byte) ([]byte, error)
 }
 
-// Notifier delivers terminal-outcome notifications (consumer-defined;
-// *notify.Manager satisfies it — notifications.md §4). Optional: a nil notifier
-// means the transitions still happen, just without messages. Implementations
-// must not block — delivery is fire-and-forget (spec §1).
-type Notifier interface {
+// EventSink receives terminal outcomes (consumer-defined; *notify.Manager and
+// *webhooks.Manager both satisfy it — notifications.md §4,
+// outbound-webhooks.md §5). Registering none means the transitions still
+// happen, just unannounced. Implementations must not block — delivery is
+// fire-and-forget and must never slow or fail a deploy.
+type EventSink interface {
 	NotifyDeploy(ctx context.Context, app domain.Application, dep domain.Deployment)
 	NotifyBackup(ctx context.Context, db domain.Database, rec domain.BackupRecord)
 }
@@ -119,8 +120,9 @@ type Scheduler struct {
 	log    *slog.Logger
 	now    func() time.Time
 
-	// notify is optional; guarded at every call site (may be nil).
-	notify Notifier
+	// sinks receive terminal outcomes. An empty slice is already a no-op, so
+	// the call sites need no nil guard (outbound-webhooks.md §5).
+	sinks []EventSink
 
 	// mu serializes pipeline transitions: deploy requests and event handlers
 	// race on the per-app queue, and the transitions are read-modify-write.
@@ -132,9 +134,27 @@ func New(st Store, b Bus, opener Opener, log *slog.Logger) *Scheduler {
 	return &Scheduler{store: st, bus: b, opener: opener, log: log, now: time.Now}
 }
 
-// SetNotifier attaches an optional notifier for terminal-outcome messages. Kept
-// separate from New so notifications stay an opt-in add-on (nil = disabled).
-func (s *Scheduler) SetNotifier(n Notifier) { s.notify = n }
+// AddSink registers a consumer of terminal outcomes. Kept separate from New so
+// announcing stays an opt-in add-on (no sinks = silent). It replaces the
+// earlier single-notifier setter rather than sitting beside it: two ways to
+// register one thing is how a second sink gets silently dropped
+// (outbound-webhooks.md §5).
+func (s *Scheduler) AddSink(k EventSink) { s.sinks = append(s.sinks, k) }
+
+// emitDeploy hands a deploy's terminal outcome to every sink. Sinks return
+// immediately after detaching, so this never blocks the pipeline.
+func (s *Scheduler) emitDeploy(ctx context.Context, app domain.Application, dep domain.Deployment) {
+	for _, k := range s.sinks {
+		k.NotifyDeploy(ctx, app, dep)
+	}
+}
+
+// emitBackup hands a backup's terminal outcome to every sink.
+func (s *Scheduler) emitBackup(ctx context.Context, db domain.Database, rec domain.BackupRecord) {
+	for _, k := range s.sinks {
+		k.NotifyBackup(ctx, db, rec)
+	}
+}
 
 // configSnapshot is the immutable per-revision config (stored as the
 // revision's config_snapshot JSON): what rollback restores. Env vars are
@@ -764,9 +784,7 @@ func (s *Scheduler) HandleAppStatus(ctx context.Context, serverID string, st *ag
 				return
 			}
 			s.log.Info("deployment succeeded", "deployment_id", dep.ID, "app_id", dep.ApplicationID, "revision_id", dep.RevisionID, "server_id", serverID)
-			if s.notify != nil {
-				s.notify.NotifyDeploy(ctx, app, done)
-			}
+			s.emitDeploy(ctx, app, done)
 			s.promoteNext(ctx, dep.ApplicationID)
 			return
 		}
@@ -820,14 +838,12 @@ func (s *Scheduler) fail(ctx context.Context, dep domain.Deployment, detail stri
 		return
 	}
 	s.log.Warn("deployment failed", "deployment_id", dep.ID, "app_id", dep.ApplicationID, "detail", detail)
-	// Load the app for the notification and to clear the plane-driven
+	// Load the app for the announcement and to clear the plane-driven
 	// 'deploying' override; a lookup miss just drops the notice (the failure is
 	// already recorded and logged).
 	if app, err := s.store.GetApplication(ctx, dep.ApplicationID); err == nil {
 		s.clearDeployingStatus(ctx, app, detail)
-		if s.notify != nil {
-			s.notify.NotifyDeploy(ctx, app, failed)
-		}
+		s.emitDeploy(ctx, app, failed)
 	}
 	s.promoteNext(ctx, dep.ApplicationID)
 }
