@@ -309,7 +309,11 @@ func TestInboxUnreadCountAndFilter(t *testing.T) {
 func TestInboxListRejectsABadLimit(t *testing.T) {
 	ts, _ := newInboxServer(t)
 	token := login(t, ts)
-	for _, bad := range []string{"0", "-3", "many"} {
+	// "2147483648" is 2^31: it parses fine as a platform int on 64-bit and then
+	// wraps to a negative when narrowed to the int32 the query's LIMIT takes.
+	// Parsing at an explicit bit size is what turns that into an honest 400
+	// (CodeQL go/incorrect-integer-conversion).
+	for _, bad := range []string{"0", "-3", "many", "2147483648", "9223372036854775808"} {
 		status, _, body := doJSON(t, "GET", ts.URL+"/api/v1/inbox?limit="+bad, token, "")
 		if status != http.StatusBadRequest {
 			t.Errorf("limit=%s = %d, want 400 (%s)", bad, status, body)

@@ -447,6 +447,15 @@ func TestDeliveryLogPagingParameters(t *testing.T) {
 	if status, _, _ := doJSON(t, "GET", ts.URL+"/api/v1/webhook-endpoints/whe_test/deliveries?limit=x", token, ""); status != http.StatusBadRequest {
 		t.Fatalf("limit=x = %d, want 400", status)
 	}
+	// 2^31 parses fine as a platform int on 64-bit and then wraps to a negative
+	// when narrowed to the int32 the query's LIMIT takes. Parsing at an explicit
+	// bit size is what turns that into an honest 400, and keeps a wrapped
+	// negative from ever reaching the store (CodeQL go/incorrect-integer-conversion).
+	for _, over := range []string{"2147483648", "9223372036854775808"} {
+		if status, _, _ := doJSON(t, "GET", ts.URL+"/api/v1/webhook-endpoints/whe_test/deliveries?limit="+over, token, ""); status != http.StatusBadRequest {
+			t.Fatalf("limit=%s = %d, want 400", over, status)
+		}
+	}
 }
 
 // PATCH keeps what the request omits (the repo's uniform semantics).

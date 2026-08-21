@@ -272,12 +272,17 @@ func (a *API) handleListWebhookDeliveries(w http.ResponseWriter, r *http.Request
 	}
 	limit := 0 // 0 = the service's default
 	if raw := r.URL.Query().Get("limit"); raw != "" {
-		n, err := strconv.Atoi(raw)
+		// ParseInt with an explicit bit size, not Atoi: the service narrows this
+		// to int32 for the query's LIMIT, and Atoi's architecture-dependent int
+		// silently wraps on that narrowing (CodeQL go/incorrect-integer-
+		// conversion). Refusing an out-of-range number at the edge is also the
+		// honest answer — the service clamp is a cap, not a parser.
+		n, err := strconv.ParseInt(raw, 10, 32)
 		if err != nil || n < 1 {
 			writeError(w, http.StatusBadRequest, "limit must be a positive integer")
 			return
 		}
-		limit = n
+		limit = int(n)
 	}
 	page, err := a.deps.WebhookEndpoints.Deliveries(r.Context(), r.PathValue("id"), limit, r.URL.Query().Get("before"))
 	if err != nil {
