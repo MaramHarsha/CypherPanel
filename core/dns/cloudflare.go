@@ -102,6 +102,10 @@ type cfEnvelope struct {
 type cfError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+	// Chain carries the specific reason behind a generic code. Cloudflare
+	// answers a malformed token with 6003 "Invalid request headers" and puts
+	// the useful half — "Invalid format for Authorization header" — in here.
+	Chain []cfError `json:"error_chain"`
 }
 
 // message renders the provider's own words. The operator needs to know whether
@@ -110,14 +114,49 @@ type cfError struct {
 func (e cfEnvelope) message() string {
 	parts := make([]string, 0, len(e.Errors))
 	for _, x := range e.Errors {
-		if x.Message != "" {
-			parts = append(parts, x.Message)
+		msg := x.Message
+		// Prefer the chained reason: "Invalid format for Authorization header"
+		// tells the operator what to fix; "Invalid request headers" does not.
+		for _, c := range x.Chain {
+			if c.Message != "" {
+				msg = c.Message
+			}
+		}
+		if msg != "" {
+			parts = append(parts, msg)
 		}
 	}
 	if len(parts) == 0 {
 		return "Cloudflare rejected the request"
 	}
 	return strings.Join(parts, "; ")
+}
+
+// credentialCodes are the Cloudflare error codes that mean "the problem is your
+// token", whatever HTTP status they arrive with. Cloudflare answers a malformed
+// token with 400 rather than 401, so classifying on status alone reports a
+// credential problem as an unreachable API — which sends the operator looking
+// at their network instead of their token.
+var credentialCodes = map[int]bool{
+	6003:  true, // invalid request headers (malformed Authorization)
+	6111:  true, // invalid format for Authorization header
+	9109:  true, // invalid access token
+	10000: true, // authentication error
+}
+
+// isCredentialProblem reports whether any error in the envelope, at any depth,
+// is about the credential.
+func (e cfEnvelope) isCredentialProblem() bool {
+	var walk func([]cfError) bool
+	walk = func(errs []cfError) bool {
+		for _, x := range errs {
+			if credentialCodes[x.Code] || walk(x.Chain) {
+				return true
+			}
+		}
+		return false
+	}
+	return walk(e.Errors)
 }
 
 // do issues one API call and unwraps the envelope. The token goes in a header,
@@ -155,7 +194,7 @@ func (c *cloudflare) do(ctx context.Context, method, path string, body any, out 
 	if err := json.Unmarshal(raw, &env); err != nil {
 		return fmt.Errorf("dns: Cloudflare returned %s with an unreadable body", resp.Status)
 	}
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || env.isCredentialProblem() {
 		return &AuthError{Msg: env.message()}
 	}
 	if !env.Success {
