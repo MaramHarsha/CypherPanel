@@ -20,7 +20,7 @@ type fakeStore struct {
 	touched     map[string]int               // token-hash → times touched
 	totpSecrets map[string]*store.TOTPSecret // userID → 2FA secret+state
 	recovery    map[string][]string          // userID → unused code-hashes
-	avatars     map[string]domain.Avatar    // userID → profile photo
+	avatars     map[string]domain.Avatar     // userID → profile photo
 }
 
 func newFakeStore() *fakeStore {

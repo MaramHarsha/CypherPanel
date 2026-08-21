@@ -41,8 +41,8 @@ type fakeAuthStore struct {
 	tokens   map[string]domain.APIToken // token id → metadata
 	byHash   map[string]string          // string(tokenHash) → token id
 	totp     store.TOTPSecret
-	recovery [][]byte // unused recovery code-hashes
-	avatars     map[string]domain.Avatar    // userID → profile photo
+	recovery [][]byte                 // unused recovery code-hashes
+	avatars  map[string]domain.Avatar // userID → profile photo
 }
 
 // fakeBox is an identity SecretBox for handler tests.
