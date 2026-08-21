@@ -564,3 +564,19 @@ func TestConvergenceIsIdempotent(t *testing.T) {
 		t.Fatalf("provider holds %d records; want exactly 1", len(cli.records))
 	}
 }
+
+// The ordinary state of every install that has not connected a provider. Get
+// must report `configured: false`, not an error — load translates a missing row
+// into ErrNotConfigured, and matching store.ErrNotFound here never fired, so
+// this surfaced as a 500 on the Settings screen of a panel that had done
+// nothing wrong. Found by running it, not by reading it.
+func TestGetReportsUnconfiguredRatherThanFailing(t *testing.T) {
+	s := newTestService(newFakeStore(), newFakeClient())
+	got, err := s.Get(context.Background())
+	if err != nil {
+		t.Fatalf("Get with no provider = %v; want no error", err)
+	}
+	if got.Configured {
+		t.Fatalf("Get with no provider = %+v; want configured false", got)
+	}
+}

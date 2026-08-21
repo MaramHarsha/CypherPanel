@@ -119,7 +119,11 @@ func Hint(zones []domain.DNSZone) string {
 
 func (s *Service) Get(ctx context.Context) (Settings, error) {
 	kind, _, updated, err := s.load(ctx)
-	if errors.Is(err, store.ErrNotFound) {
+	// load has already translated a missing row into ErrNotConfigured; matching
+	// store.ErrNotFound here never fired, so "no provider connected" — the
+	// ordinary state of every install that has not set one up — surfaced as a
+	// 500 instead of `configured: false`.
+	if errors.Is(err, ErrNotConfigured) {
 		return Settings{}, nil
 	}
 	if err != nil {
