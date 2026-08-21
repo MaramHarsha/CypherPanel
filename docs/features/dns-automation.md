@@ -213,9 +213,27 @@ rate limit on a name we cannot prove.
 | Domain changed | Old row → `desired = 'absent'`; new row → `desired = 'present'` |
 | Domain cleared | Row → `desired = 'absent'` |
 | Server's public address changed | Row's `content` updated; reconciler PATCHes the record |
-| Application deleted | `application_id = NULL`, `desired = 'absent'` |
-| **Project or environment deleted** | Every record of every application beneath it → `desired = 'absent'` |
+| Application deleted | `application_id = NULL` (the FK), then reaped — see below |
+| **Project or environment deleted** | The same, by the same one rule |
 | DNS Provider disconnected | Records are **left alone**, not deleted — see §4.5 |
+
+**Deletion is one rule, not three.** `application_id` is `ON DELETE SET NULL`,
+and environments and projects cascade to applications — so deleting an
+application, an environment, or a whole project all leave the *same* trace: a
+record with no application. A record with no application has no reason to
+exist, so the reconciler's first act on every tick is:
+
+```sql
+UPDATE dns_records SET desired = 'absent'
+WHERE application_id IS NULL AND desired = 'present'
+```
+
+That is why deletion is reliable. It does not depend on a hook having fired for
+the right entity, which is exactly the failure mode `research/coolify.md`
+records ("previews leak unless lifecycle is owned by state, not events"). The
+explicit per-entity tombstones still exist, because they make the common case
+immediate rather than waiting for a tick — but correctness does not rest on
+them.
 
 ### 4.4 The reconciler
 

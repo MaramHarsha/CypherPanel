@@ -19,6 +19,7 @@ import { Route as AppServersServerIdRouteImport } from './routes/_app/servers/$s
 import { Route as AppSettingsIndexRouteImport } from './routes/_app/settings/index'
 import { Route as AppSettingsBackupTargetsRouteImport } from './routes/_app/settings/backup-targets'
 import { Route as AppSettingsDeployKeysRouteImport } from './routes/_app/settings/deploy-keys'
+import { Route as AppSettingsDnsRouteImport } from './routes/_app/settings/dns'
 import { Route as AppSettingsMailRouteImport } from './routes/_app/settings/mail'
 import { Route as AppSettingsProfileRouteImport } from './routes/_app/settings/profile'
 import { Route as AppSettingsTeamsRouteImport } from './routes/_app/settings/teams'
@@ -91,6 +92,11 @@ const AppSettingsBackupTargetsRoute =
 const AppSettingsDeployKeysRoute = AppSettingsDeployKeysRouteImport.update({
   id: '/deploy-keys',
   path: '/deploy-keys',
+  getParentRoute: () => AppSettingsRoute,
+} as any)
+const AppSettingsDnsRoute = AppSettingsDnsRouteImport.update({
+  id: '/dns',
+  path: '/dns',
   getParentRoute: () => AppSettingsRoute,
 } as any)
 const AppSettingsMailRoute = AppSettingsMailRouteImport.update({
@@ -234,6 +240,7 @@ export interface FileRoutesByFullPath {
   '/servers/$serverId': typeof AppServersServerIdRoute
   '/settings/backup-targets': typeof AppSettingsBackupTargetsRoute
   '/settings/deploy-keys': typeof AppSettingsDeployKeysRoute
+  '/settings/dns': typeof AppSettingsDnsRoute
   '/settings/mail': typeof AppSettingsMailRoute
   '/settings/profile': typeof AppSettingsProfileRoute
   '/settings/teams': typeof AppSettingsTeamsRoute
@@ -267,6 +274,7 @@ export interface FileRoutesByTo {
   '/servers/$serverId': typeof AppServersServerIdRoute
   '/settings/backup-targets': typeof AppSettingsBackupTargetsRoute
   '/settings/deploy-keys': typeof AppSettingsDeployKeysRoute
+  '/settings/dns': typeof AppSettingsDnsRoute
   '/settings/mail': typeof AppSettingsMailRoute
   '/settings/profile': typeof AppSettingsProfileRoute
   '/settings/teams': typeof AppSettingsTeamsRoute
@@ -300,6 +308,7 @@ export interface FileRoutesById {
   '/_app/servers/$serverId': typeof AppServersServerIdRoute
   '/_app/settings/backup-targets': typeof AppSettingsBackupTargetsRoute
   '/_app/settings/deploy-keys': typeof AppSettingsDeployKeysRoute
+  '/_app/settings/dns': typeof AppSettingsDnsRoute
   '/_app/settings/mail': typeof AppSettingsMailRoute
   '/_app/settings/profile': typeof AppSettingsProfileRoute
   '/_app/settings/teams': typeof AppSettingsTeamsRoute
@@ -336,6 +345,7 @@ export interface FileRouteTypes {
     | '/servers/$serverId'
     | '/settings/backup-targets'
     | '/settings/deploy-keys'
+    | '/settings/dns'
     | '/settings/mail'
     | '/settings/profile'
     | '/settings/teams'
@@ -369,6 +379,7 @@ export interface FileRouteTypes {
     | '/servers/$serverId'
     | '/settings/backup-targets'
     | '/settings/deploy-keys'
+    | '/settings/dns'
     | '/settings/mail'
     | '/settings/profile'
     | '/settings/teams'
@@ -401,6 +412,7 @@ export interface FileRouteTypes {
     | '/_app/servers/$serverId'
     | '/_app/settings/backup-targets'
     | '/_app/settings/deploy-keys'
+    | '/_app/settings/dns'
     | '/_app/settings/mail'
     | '/_app/settings/profile'
     | '/_app/settings/teams'
@@ -504,6 +516,13 @@ declare module '@tanstack/react-router' {
       path: '/deploy-keys'
       fullPath: '/settings/deploy-keys'
       preLoaderRoute: typeof AppSettingsDeployKeysRouteImport
+      parentRoute: typeof AppSettingsRoute
+    }
+    '/_app/settings/dns': {
+      id: '/_app/settings/dns'
+      path: '/dns'
+      fullPath: '/settings/dns'
+      preLoaderRoute: typeof AppSettingsDnsRouteImport
       parentRoute: typeof AppSettingsRoute
     }
     '/_app/settings/mail': {
@@ -673,6 +692,7 @@ declare module '@tanstack/react-router' {
 interface AppSettingsRouteChildren {
   AppSettingsBackupTargetsRoute: typeof AppSettingsBackupTargetsRoute
   AppSettingsDeployKeysRoute: typeof AppSettingsDeployKeysRoute
+  AppSettingsDnsRoute: typeof AppSettingsDnsRoute
   AppSettingsMailRoute: typeof AppSettingsMailRoute
   AppSettingsProfileRoute: typeof AppSettingsProfileRoute
   AppSettingsTeamsRoute: typeof AppSettingsTeamsRoute
@@ -683,6 +703,7 @@ interface AppSettingsRouteChildren {
 const AppSettingsRouteChildren: AppSettingsRouteChildren = {
   AppSettingsBackupTargetsRoute: AppSettingsBackupTargetsRoute,
   AppSettingsDeployKeysRoute: AppSettingsDeployKeysRoute,
+  AppSettingsDnsRoute: AppSettingsDnsRoute,
   AppSettingsMailRoute: AppSettingsMailRoute,
   AppSettingsProfileRoute: AppSettingsProfileRoute,
   AppSettingsTeamsRoute: AppSettingsTeamsRoute,

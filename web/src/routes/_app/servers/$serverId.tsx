@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { getGetServerQueryKey, getListServersQueryKey, useDeleteServer, useGetServer } from "@/api/gen/servers/servers";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
 import { Fact, FactCard } from "@/components/fact-card";
+import { ServerPublicAddress } from "@/components/server-public-address";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { ResourceGone } from "@/components/resource-gone";
 import { PageState } from "@/components/page-state";
@@ -76,6 +77,9 @@ function ServerDetail() {
             <div className="max-w-2xl space-y-3.5">
               <FactCard title="Host">
                 <Fact label="Hostname">{srv.hostname || "—"}</Fact>
+                <Fact label="Public address">
+                  <ServerPublicAddress serverId={srv.id} value={srv.public_address ?? ""} />
+                </Fact>
                 <Fact label="Agent version">{srv.agent_version || "—"}</Fact>
                 <Fact label="Role">{srv.role ?? "all"}</Fact>
                 <Fact label="Driver">{srv.driver}</Fact>

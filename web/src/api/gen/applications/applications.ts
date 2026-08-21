@@ -26,6 +26,7 @@ import type {
 
 import type {
   Application,
+  ApplicationDNS,
   BadRequestResponse,
   CreateApplicationRequest,
   CreateApplicationResponse,
@@ -33,6 +34,7 @@ import type {
   EnvVarKeys,
   Error,
   ForbiddenResponse,
+  NotFoundResponse,
   PatchApplicationRequest,
   SetEnvVarRequest,
   UnauthorizedResponse
@@ -42,6 +44,106 @@ import { apiFetch } from '../../client';
 
 
 type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
+
+
+
+/**
+ * @summary Whether this application's domain is verified, and what its record is doing
+ */
+export const getGetApplicationDNSUrl = (id: string,) => {
+
+
+  
+
+  return `/api/v1/applications/${id}/dns`
+}
+
+export const getApplicationDNS = async (id: string, options?: RequestInit): Promise<ApplicationDNS> => {
+  
+  return apiFetch<ApplicationDNS>(getGetApplicationDNSUrl(id),
+  {      
+    ...options,
+    method: 'GET'
+    
+    
+  }
+);}
+
+
+
+
+
+export const getGetApplicationDNSQueryKey = (id?: string,) => {
+    return [
+    `/api/v1/applications/${id}/dns`
+    ] as const;
+    }
+
+    
+export const getGetApplicationDNSQueryOptions = <TData = Awaited<ReturnType<typeof getApplicationDNS>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationDNS>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetApplicationDNSQueryKey(id);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getApplicationDNS>>> = ({ signal }) => getApplicationDNS(id, { signal, ...requestOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getApplicationDNS>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetApplicationDNSQueryResult = NonNullable<Awaited<ReturnType<typeof getApplicationDNS>>>
+export type GetApplicationDNSQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useGetApplicationDNS<TData = Awaited<ReturnType<typeof getApplicationDNS>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationDNS>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getApplicationDNS>>,
+          TError,
+          Awaited<ReturnType<typeof getApplicationDNS>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetApplicationDNS<TData = Awaited<ReturnType<typeof getApplicationDNS>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationDNS>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getApplicationDNS>>,
+          TError,
+          Awaited<ReturnType<typeof getApplicationDNS>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetApplicationDNS<TData = Awaited<ReturnType<typeof getApplicationDNS>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationDNS>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Whether this application's domain is verified, and what its record is doing
+ */
+
+export function useGetApplicationDNS<TData = Awaited<ReturnType<typeof getApplicationDNS>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationDNS>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetApplicationDNSQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
 
 
 

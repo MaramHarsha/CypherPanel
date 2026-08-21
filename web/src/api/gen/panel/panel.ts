@@ -26,9 +26,12 @@ import type {
 
 import type {
   BadRequestResponse,
+  DNSSettings,
+  DNSZone,
   Error,
   ForbiddenResponse,
   PanelMailSettings,
+  SetPanelDNSRequest,
   SetPanelMailRequest,
   UnauthorizedResponse
 } from '.././model';
@@ -41,6 +44,490 @@ type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 
 
 /**
+ * @summary The panel's DNS provider, as a hint (panel admin)
+ */
+export const getGetPanelDNSUrl = () => {
+
+
+  
+
+  return `/api/v1/panel/dns`
+}
+
+export const getPanelDNS = async ( options?: RequestInit): Promise<DNSSettings> => {
+  
+  return apiFetch<DNSSettings>(getGetPanelDNSUrl(),
+  {      
+    ...options,
+    method: 'GET'
+    
+    
+  }
+);}
+
+
+
+
+
+export const getGetPanelDNSQueryKey = () => {
+    return [
+    `/api/v1/panel/dns`
+    ] as const;
+    }
+
+    
+export const getGetPanelDNSQueryOptions = <TData = Awaited<ReturnType<typeof getPanelDNS>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelDNS>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPanelDNSQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPanelDNS>>> = ({ signal }) => getPanelDNS({ signal, ...requestOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPanelDNS>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetPanelDNSQueryResult = NonNullable<Awaited<ReturnType<typeof getPanelDNS>>>
+export type GetPanelDNSQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useGetPanelDNS<TData = Awaited<ReturnType<typeof getPanelDNS>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelDNS>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getPanelDNS>>,
+          TError,
+          Awaited<ReturnType<typeof getPanelDNS>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetPanelDNS<TData = Awaited<ReturnType<typeof getPanelDNS>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelDNS>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getPanelDNS>>,
+          TError,
+          Awaited<ReturnType<typeof getPanelDNS>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetPanelDNS<TData = Awaited<ReturnType<typeof getPanelDNS>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelDNS>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary The panel's DNS provider, as a hint (panel admin)
+ */
+
+export function useGetPanelDNS<TData = Awaited<ReturnType<typeof getPanelDNS>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelDNS>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetPanelDNSQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+/**
+ * Wholesale replacement — there is no partial update of a credential. The token is validated against the provider before anything is stored, so a token that cannot list zones is refused with the provider's own message and persists nothing.
+ * @summary Connect a DNS provider (panel admin)
+ */
+export const getSetPanelDNSUrl = () => {
+
+
+  
+
+  return `/api/v1/panel/dns`
+}
+
+export const setPanelDNS = async (setPanelDNSRequest: SetPanelDNSRequest, options?: RequestInit): Promise<DNSSettings> => {
+  
+  return apiFetch<DNSSettings>(getSetPanelDNSUrl(),
+  {      
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      setPanelDNSRequest,)
+  }
+);}
+
+
+
+
+export const getSetPanelDNSMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setPanelDNS>>, TError,{data: SetPanelDNSRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setPanelDNS>>, TError,{data: SetPanelDNSRequest}, TContext> => {
+
+const mutationKey = ['setPanelDNS'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setPanelDNS>>, {data: SetPanelDNSRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  setPanelDNS(data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetPanelDNSMutationResult = NonNullable<Awaited<ReturnType<typeof setPanelDNS>>>
+    export type SetPanelDNSMutationBody = SetPanelDNSRequest
+    export type SetPanelDNSMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary Connect a DNS provider (panel admin)
+ */
+export const useSetPanelDNS = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setPanelDNS>>, TError,{data: SetPanelDNSRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setPanelDNS>>,
+        TError,
+        {data: SetPanelDNSRequest},
+        TContext
+      > => {
+
+      const mutationOptions = getSetPanelDNSMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    /**
+ * Deletes nothing at the provider: removing the token removes the panel's ability to act, not its obligation to be careful. Every domain becomes unverified, which stops routing at those hostnames.
+ * @summary Disconnect the DNS provider (panel admin)
+ */
+export const getDeletePanelDNSUrl = () => {
+
+
+  
+
+  return `/api/v1/panel/dns`
+}
+
+export const deletePanelDNS = async ( options?: RequestInit): Promise<void> => {
+  
+  return apiFetch<void>(getDeletePanelDNSUrl(),
+  {      
+    ...options,
+    method: 'DELETE'
+    
+    
+  }
+);}
+
+
+
+
+export const getDeletePanelDNSMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deletePanelDNS>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deletePanelDNS>>, TError,void, TContext> => {
+
+const mutationKey = ['deletePanelDNS'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deletePanelDNS>>, void> = () => {
+          
+
+          return  deletePanelDNS(requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeletePanelDNSMutationResult = NonNullable<Awaited<ReturnType<typeof deletePanelDNS>>>
+    
+    export type DeletePanelDNSMutationError = UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary Disconnect the DNS provider (panel admin)
+ */
+export const useDeletePanelDNS = <TError = UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deletePanelDNS>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deletePanelDNS>>,
+        TError,
+        void,
+        TContext
+      > => {
+
+      const mutationOptions = getDeletePanelDNSMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    /**
+ * Writes nothing — a test that wrote state would be a second way to configure the panel.
+ * @summary Check the DNS credential still works (panel admin)
+ */
+export const getTestPanelDNSUrl = () => {
+
+
+  
+
+  return `/api/v1/panel/dns/test`
+}
+
+export const testPanelDNS = async ( options?: RequestInit): Promise<void> => {
+  
+  return apiFetch<void>(getTestPanelDNSUrl(),
+  {      
+    ...options,
+    method: 'POST'
+    
+    
+  }
+);}
+
+
+
+
+export const getTestPanelDNSMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof testPanelDNS>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof testPanelDNS>>, TError,void, TContext> => {
+
+const mutationKey = ['testPanelDNS'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof testPanelDNS>>, void> = () => {
+          
+
+          return  testPanelDNS(requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type TestPanelDNSMutationResult = NonNullable<Awaited<ReturnType<typeof testPanelDNS>>>
+    
+    export type TestPanelDNSMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary Check the DNS credential still works (panel admin)
+ */
+export const useTestPanelDNS = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof testPanelDNS>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof testPanelDNS>>,
+        TError,
+        void,
+        TContext
+      > => {
+
+      const mutationOptions = getTestPanelDNSMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    /**
+ * @summary The zones this panel can manage (panel admin)
+ */
+export const getListDNSZonesUrl = () => {
+
+
+  
+
+  return `/api/v1/panel/dns/zones`
+}
+
+export const listDNSZones = async ( options?: RequestInit): Promise<DNSZone[]> => {
+  
+  return apiFetch<DNSZone[]>(getListDNSZonesUrl(),
+  {      
+    ...options,
+    method: 'GET'
+    
+    
+  }
+);}
+
+
+
+
+
+export const getListDNSZonesQueryKey = () => {
+    return [
+    `/api/v1/panel/dns/zones`
+    ] as const;
+    }
+
+    
+export const getListDNSZonesQueryOptions = <TData = Awaited<ReturnType<typeof listDNSZones>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDNSZones>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListDNSZonesQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listDNSZones>>> = ({ signal }) => listDNSZones({ signal, ...requestOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listDNSZones>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListDNSZonesQueryResult = NonNullable<Awaited<ReturnType<typeof listDNSZones>>>
+export type ListDNSZonesQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useListDNSZones<TData = Awaited<ReturnType<typeof listDNSZones>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDNSZones>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listDNSZones>>,
+          TError,
+          Awaited<ReturnType<typeof listDNSZones>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListDNSZones<TData = Awaited<ReturnType<typeof listDNSZones>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDNSZones>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listDNSZones>>,
+          TError,
+          Awaited<ReturnType<typeof listDNSZones>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListDNSZones<TData = Awaited<ReturnType<typeof listDNSZones>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDNSZones>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary The zones this panel can manage (panel admin)
+ */
+
+export function useListDNSZones<TData = Awaited<ReturnType<typeof listDNSZones>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDNSZones>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListDNSZonesQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+/**
+ * @summary Re-read the zone list from the provider (panel admin)
+ */
+export const getRefreshDNSZonesUrl = () => {
+
+
+  
+
+  return `/api/v1/panel/dns/zones/refresh`
+}
+
+export const refreshDNSZones = async ( options?: RequestInit): Promise<DNSZone[]> => {
+  
+  return apiFetch<DNSZone[]>(getRefreshDNSZonesUrl(),
+  {      
+    ...options,
+    method: 'POST'
+    
+    
+  }
+);}
+
+
+
+
+export const getRefreshDNSZonesMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshDNSZones>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof refreshDNSZones>>, TError,void, TContext> => {
+
+const mutationKey = ['refreshDNSZones'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof refreshDNSZones>>, void> = () => {
+          
+
+          return  refreshDNSZones(requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RefreshDNSZonesMutationResult = NonNullable<Awaited<ReturnType<typeof refreshDNSZones>>>
+    
+    export type RefreshDNSZonesMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary Re-read the zone list from the provider (panel admin)
+ */
+export const useRefreshDNSZones = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshDNSZones>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof refreshDNSZones>>,
+        TError,
+        void,
+        TContext
+      > => {
+
+      const mutationOptions = getRefreshDNSZonesMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    /**
  * @summary The panel's mail settings, as a hint (panel admin)
  */
 export const getGetPanelMailUrl = () => {
