@@ -94,15 +94,46 @@ dns_providers(
 )
 ```
 
-The sealed config is `{ "api_token": "" }`. The token is the only secret and it
-is never returned by any route; `GET` reports `configured` plus a
-`config_hint` naming the account and zone count, the `notifiers` discipline.
+The sealed config is `{ "api_token": "", "account_id": "", "account_name": "" }`.
+The token is the only secret; the account is sealed with it because the blob is
+sealed as a unit. `GET` reports `configured`, the account, and a `config_hint`
+naming the zones — never the token, the `notifiers` discipline.
 
-**Token scope.** The operator creates a Cloudflare API token with
-`Zone:Read` + `DNS:Edit` on the zones they want CypherPanel to manage.
-The panel validates on save (§5.1) and refuses a token that cannot list zones —
-a credential that fails at first use is a dead end, and a dead end is a bug
-(ui-principles §11).
+### 3.1.1 Which token, and why the account matters
+
+Cloudflare has **two kinds of API token**, and the difference is not cosmetic:
+
+| | User-owned | **Account-owned** |
+|---|---|---|
+| Made at | My Profile → API Tokens | Manage Account → API Tokens |
+| Belongs to | a person | the account |
+| Survives that person leaving | ❌ | ✅ |
+| Verifies at | `/user/tokens/verify` | `/accounts/{id}/tokens/verify` |
+
+[Cloudflare recommends account-owned tokens](https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/)
+for durable integrations that "act as service principals with their own specific
+set of permissions" — which is exactly what a panel is. A user-owned token dies
+with the person who made it, and the failure mode is every domain silently
+un-verifying months later.
+
+So the config carries an optional **account id**, and it changes two calls:
+
+- zones are listed as `GET /zones?account.id=<id>` — Cloudflare's filter is
+  dotted, `account.id`, not `account_id`;
+- the token verifies under its account rather than under `/user`. Calling the
+  wrong one reports a perfectly good credential as broken.
+
+**The operator does not have to find that id.** On save the panel calls
+`GET /accounts`: exactly one → adopt it; several → return 400 **with the
+choices**, and the UI offers a picker; none, or no permission to ask → proceed
+unscoped, which is the correct behaviour for a user-owned token. An id the
+token cannot see is refused by name, because the alternative is an empty zone
+list with no explanation.
+
+**Permissions.** `Zone → Zone → Read` and `Zone → DNS → Edit`, with *Zone
+Resources* narrowed to the zones CypherPanel should manage. The panel validates
+on save (§5.1) and refuses a token that cannot list zones — a credential that
+fails at first use is a dead end, and a dead end is a bug (ui-principles §11).
 
 ### 3.2 Zones
 
@@ -277,8 +308,8 @@ operator confirms.
 ## 5. API
 
 ```
-GET    /api/v1/panel/dns            → { configured, kind, config_hint, zone_count }   (panel admin)
-PUT    /api/v1/panel/dns            → { configured, kind, config_hint, zone_count }   (panel admin)
+GET    /api/v1/panel/dns            → { configured, kind, config_hint, zone_count, account_id, account_name }
+PUT    /api/v1/panel/dns            → the same, or 400 + { accounts } to choose one   (panel admin)
 DELETE /api/v1/panel/dns            → 204                                             (panel admin)
 POST   /api/v1/panel/dns/test       → 202                                             (panel admin)
 GET    /api/v1/panel/dns/zones      → [ { id, name, refreshed_at } ]                  (panel admin)
@@ -298,10 +329,18 @@ records.
 
 ### 5.1 Validation on save
 
-`PUT /panel/dns` calls Cloudflare's zone list before writing anything. A token
-that cannot list zones is refused with Cloudflare's own message — the operator
-needs to know whether it is a bad token or a missing permission, and
-paraphrasing it would make them guess. Nothing is persisted on failure.
+`PUT /panel/dns` resolves the account (§3.1.1) and calls Cloudflare's zone list
+before writing anything. A token that cannot list zones is refused with
+Cloudflare's own message — the operator needs to know whether it is a bad token
+or a missing permission, and paraphrasing it would make them guess. Nothing is
+persisted on any failure.
+
+Cloudflare answers a **malformed** token with HTTP 400, not 401, so classifying
+on status alone reports a credential problem as an unreachable API and sends the
+operator to look at their network. The client classifies on Cloudflare's own
+error codes (6003, 6111, 9109, 10000) at any depth of the `error_chain`, and
+surfaces the chained reason — "Invalid format for Authorization header" tells
+them what to fix; "Invalid request headers" does not.
 
 ## 6. UI
 

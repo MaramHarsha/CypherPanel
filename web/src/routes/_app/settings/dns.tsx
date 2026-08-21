@@ -30,7 +30,7 @@ import { Eyebrow } from "@/components/eyebrow";
 import { PageState } from "@/components/page-state";
 import { ActionButton } from "@/components/ui/action-button";
 import { Field } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
+import { Input, Select } from "@/components/ui/input";
 import { useCrumbs } from "@/lib/crumbs";
 import { atLeast, type Role } from "@/lib/roles";
 import { relativeTime } from "@/lib/time";
@@ -65,16 +65,37 @@ function DNSTab() {
           Until you connect one, nothing changes — domains route exactly as they do today.
         </p>
       </section>
-      <PageState query={dns}>{(settings) => <DNSForm configured={settings.configured} hint={settings.config_hint} />}</PageState>
+      <PageState query={dns}>{(settings) => (
+          <DNSForm
+            configured={settings.configured}
+            hint={settings.config_hint}
+            accountName={settings.account_name}
+          />
+        )}</PageState>
       {dns.data?.configured && <ZoneList />}
     </div>
   );
 }
 
-function DNSForm({ configured, hint }: { configured: boolean; hint: string }) {
+/** One Cloudflare account, as returned in the 400 that asks which to use. */
+type AccountChoice = { id: string; name: string };
+
+function DNSForm({
+  configured,
+  hint,
+  accountName,
+}: {
+  configured: boolean;
+  hint: string;
+  accountName?: string;
+}) {
   const qc = useQueryClient();
   const [token, setToken] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Populated only when Cloudflare tells us the token reaches several accounts.
+  // Until then there is no picker, because the common case has nothing to pick.
+  const [choices, setChoices] = useState<AccountChoice[]>([]);
+  const [accountId, setAccountId] = useState("");
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: getGetPanelDNSQueryKey() });
@@ -86,11 +107,26 @@ function DNSForm({ configured, hint }: { configured: boolean; hint: string }) {
       onSuccess: () => {
         invalidate();
         setToken("");
+        setChoices([]);
+        setAccountId("");
         toast.success("Cloudflare connected");
       },
-      // The provider's own words: "Invalid API Token" and "missing permission"
-      // want different fixes, and paraphrasing would make the operator guess.
-      onError: (e: unknown) => setError(e instanceof ApiError ? e.message : "Could not connect to Cloudflare"),
+      // Two different failures land here. "This token reaches several accounts"
+      // is a question — it arrives with the choices, and turns into a picker
+      // rather than an error the operator has to go and solve elsewhere.
+      // Everything else is the provider's own words: "Invalid access token" and
+      // "missing permission" want different fixes, and paraphrasing would make
+      // the operator guess.
+      onError: (e: unknown) => {
+        const body = e instanceof ApiError ? (e.body as { accounts?: AccountChoice[] } | undefined) : undefined;
+        if (body?.accounts?.length) {
+          setChoices(body.accounts);
+          setAccountId(body.accounts[0]?.id ?? "");
+          setError(null);
+          return;
+        }
+        setError(e instanceof ApiError ? e.message : "Could not connect to Cloudflare");
+      },
     },
   });
 
@@ -114,7 +150,7 @@ function DNSForm({ configured, hint }: { configured: boolean; hint: string }) {
   const submit = (e: FormEvent) => {
     e.preventDefault();
     setError(null);
-    save.mutate({ data: { api_token: token } });
+    save.mutate({ data: { api_token: token, ...(accountId ? { account_id: accountId } : {}) } });
   };
 
   return (
@@ -122,6 +158,7 @@ function DNSForm({ configured, hint }: { configured: boolean; hint: string }) {
       {configured && (
         <div className="rounded-lg border border-border bg-surface px-4 py-3">
           <p className="text-[13px] font-semibold text-text">Connected</p>
+          {accountName && <p className="mt-0.5 text-[12px] text-text-mid">{accountName}</p>}
           <p className="mono mt-0.5 truncate text-[12px] text-text-faint">{hint}</p>
           <p className="mt-1.5 text-[11.5px] leading-relaxed text-text-faint">
             Saving again replaces the token, which is never shown back.
@@ -142,11 +179,39 @@ function DNSForm({ configured, hint }: { configured: boolean; hint: string }) {
           />
         )}
       </Field>
-      <p className="text-[11.5px] leading-relaxed text-text-faint">
-        Create it in Cloudflare with <span className="mono">Zone:Read</span> and <span className="mono">DNS:Edit</span>,
-        scoped to the zones CypherPanel should manage. It can repoint any zone it covers, so give it no more than it
-        needs.
-      </p>
+      {choices.length > 0 && (
+        <Field label="Cloudflare account" qualifier="· this token reaches more than one">
+          {(id) => (
+            <Select id={id} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+              {choices.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </Select>
+          )}
+        </Field>
+      )}
+
+      <div className="rounded-lg border border-border-subtle bg-bg px-3.5 py-3 text-[11.5px] leading-relaxed text-text-mid">
+        <p className="font-semibold text-text">Which token to create</p>
+        <p className="mt-1">
+          In Cloudflare, go to <span className="mono">Manage Account → API Tokens → Create Token</span> and make an{" "}
+          <strong className="font-semibold">account-owned</strong> token. Cloudflare recommends these for durable
+          integrations because they belong to the account rather than to you — the panel keeps working after you leave.
+          A personal token from <span className="mono">My Profile → API Tokens</span> also works.
+        </p>
+        <p className="mt-1.5">
+          Give it two permissions: <span className="mono">Zone → Zone → Read</span> and{" "}
+          <span className="mono">Zone → DNS → Edit</span>. Under <em>Zone Resources</em>, include only the zones
+          CypherPanel should manage — this token can repoint any zone it covers, including MX records, so give it no
+          more than it needs.
+        </p>
+        <p className="mt-1.5 text-text-faint">
+          You do not need to find your account ID. Paste the token and the panel resolves it; if the token reaches
+          several accounts, it will ask which one.
+        </p>
+      </div>
 
       {error && (
         <p role="alert" className="rounded-md border border-danger/35 bg-danger/[0.06] px-3 py-2 text-[13px] text-danger">
