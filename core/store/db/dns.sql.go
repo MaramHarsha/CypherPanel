@@ -172,6 +172,55 @@ func (q *Queries) GetDNSZoneByName(ctx context.Context, name string) (DnsZone, e
 	return i, err
 }
 
+const listApplicationsWantingDNS = `-- name: ListApplicationsWantingDNS :many
+SELECT a.id, a.route_domain, s.public_address
+FROM applications a
+JOIN servers s ON s.id = a.runtime_server_id
+WHERE a.route_domain <> '' AND s.public_address <> ''
+ORDER BY a.id
+`
+
+type ListApplicationsWantingDNSRow struct {
+	ID            string
+	RouteDomain   string
+	PublicAddress string
+}
+
+// ListApplicationsWantingDNS is what makes record CREATION state-owned rather
+// than event-owned.
+//
+// Hooking the two application REST handlers was not enough: a template install
+// creates applications through templates.Install, a preview environment through
+// its own path, and each new caller would silently produce no DNS at all. The
+// first real use of this feature hit exactly that — a Grafana template with a
+// verified domain and no record, because no hook fired. Deriving the desired
+// set from the applications table on every sweep makes it impossible for a
+// creation path to be forgotten (§4.3, and research/coolify.md's lesson that
+// lifecycle must be owned by state, not events).
+//
+// Applications whose server has no public address are excluded here rather than
+// filtered later: there is nothing to point a record at, and §6 reports that as
+// its own state.
+func (q *Queries) ListApplicationsWantingDNS(ctx context.Context) ([]ListApplicationsWantingDNSRow, error) {
+	rows, err := q.db.Query(ctx, listApplicationsWantingDNS)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListApplicationsWantingDNSRow{}
+	for rows.Next() {
+		var i ListApplicationsWantingDNSRow
+		if err := rows.Scan(&i.ID, &i.RouteDomain, &i.PublicAddress); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDNSRecordsForServer = `-- name: ListDNSRecordsForServer :many
 SELECT r.id, r.application_id, r.zone_id, r.name, r.type, r.content, r.desired, r.provider_record_id, r.last_error, r.attempt, r.next_attempt_at, r.created_at, r.updated_at FROM dns_records r
 JOIN applications a ON a.id = r.application_id

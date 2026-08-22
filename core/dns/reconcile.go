@@ -133,9 +133,14 @@ func (s *Service) SweepDue(ctx context.Context, log *slog.Logger) {
 		log.Error("dns: loading provider for sweep", "error", err)
 		return
 	}
-	// Reap first: a record whose application is gone has no reason to exist,
-	// and this is what makes "deleting a project removes its records from
-	// Cloudflare" true without depending on a delete hook having fired (§4.3).
+	// Derive the desired set from the applications table, then reap what no
+	// longer belongs. Both halves are deliberately state-owned: a creation path
+	// nobody hooked (a template install, a preview) would otherwise produce no
+	// record at all, and a deletion nobody hooked would leave one behind
+	// forever. Neither depends on an event having fired (§4.3).
+	if err := s.deriveDesired(ctx, log); err != nil {
+		log.Error("dns: deriving desired records", "error", err)
+	}
 	if err := s.store.TombstoneOrphanedDNSRecords(ctx); err != nil {
 		log.Error("dns: reaping orphaned records", "error", err)
 	}
@@ -150,6 +155,28 @@ func (s *Service) SweepDue(ctx context.Context, log *slog.Logger) {
 			s.fail(ctx, r, err, log)
 		}
 	}
+}
+
+// deriveDesired walks every application that asks for a hostname and makes the
+// desired record match. It is SyncApplication's logic applied to the whole
+// table rather than to one application at a time, so the REST hooks are an
+// optimisation for immediacy and never the thing correctness rests on.
+//
+// A failure on one application is logged and skipped: one unverifiable domain
+// must not stop every other record converging.
+func (s *Service) deriveDesired(ctx context.Context, log *slog.Logger) error {
+	wants, err := s.store.ListApplicationsWantingDNS(ctx)
+	if err != nil {
+		return err
+	}
+	for _, w := range wants {
+		app := domain.Application{ID: w.ApplicationID}
+		app.Route.Domain = w.Domain
+		if err := s.SyncApplication(ctx, app, w.ServerPublicAddress); err != nil {
+			log.Error("dns: deriving record", "app_id", w.ApplicationID, "domain", w.Domain, "error", err)
+		}
+	}
+	return nil
 }
 
 // converge makes one record match its desired state.

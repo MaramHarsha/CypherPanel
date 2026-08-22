@@ -77,6 +77,7 @@ type Store interface {
 	UpsertDNSRecord(ctx context.Context, r domain.DNSRecord) (domain.DNSRecord, error)
 	TombstoneDNSRecordsForApplication(ctx context.Context, appID string) error
 	TombstoneOrphanedDNSRecords(ctx context.Context) error
+	ListApplicationsWantingDNS(ctx context.Context) ([]domain.DNSWant, error)
 	ListDueDNSRecords(ctx context.Context, now time.Time, limit int32) ([]domain.DNSRecordWithZone, error)
 	MarkDNSRecordCreated(ctx context.Context, id, providerRecordID string) (domain.DNSRecord, error)
 	DeleteDNSRecordRow(ctx context.Context, id string) error

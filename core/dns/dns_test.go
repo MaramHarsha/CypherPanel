@@ -70,6 +70,8 @@ type fakeStore struct {
 	zones         []domain.DNSZone
 	records       map[string]domain.DNSRecord
 	orphansReaped int
+	// wants stands in for the applications table: what the sweeper derives from.
+	wants []domain.DNSWant
 }
 
 func newFakeStore() *fakeStore {
@@ -148,6 +150,10 @@ func (f *fakeStore) TombstoneDNSRecordsForApplication(_ context.Context, appID s
 		}
 	}
 	return nil
+}
+
+func (f *fakeStore) ListApplicationsWantingDNS(context.Context) ([]domain.DNSWant, error) {
+	return f.wants, nil
 }
 
 func (f *fakeStore) TombstoneOrphanedDNSRecords(context.Context) error {
@@ -714,5 +720,58 @@ func TestTestVerifiesUnderTheRightScope(t *testing.T) {
 	}
 	if cli.verifiedAccount != "acct_1" {
 		t.Fatalf("verified under %q; an account-owned token must verify under its account", cli.verifiedAccount)
+	}
+}
+
+// The bug a real install found: a Grafana template was installed with the domain
+// grafana.<zone>, the zone verified, the server had a public address — and no
+// DNS record was ever created, because templates.Install creates applications
+// through its own path and the REST hooks never fired.
+//
+// Record creation must therefore be DERIVED from the applications table, not
+// hooked onto the paths that happen to be known today. This test creates no
+// application through any hook at all: it only says the row exists.
+func TestRecordsAreDerivedForApplicationsNoHookEverSaw(t *testing.T) {
+	st, cli := newFakeStore(), newFakeClient("example.com")
+	s := configure(t, st, cli)
+	ctx := context.Background()
+
+	// An application that appeared by some other means — a template install, a
+	// preview, anything. SyncApplication was never called for it.
+	st.wants = []domain.DNSWant{
+		{ApplicationID: "app_from_template", Domain: "grafana.example.com", ServerPublicAddress: "203.0.113.9"},
+	}
+
+	s.SweepDue(ctx, discard())
+
+	got, ok := cli.records[key("cf_example.com", "grafana.example.com", "A")]
+	if !ok {
+		t.Fatalf("no record was created for an app no hook saw; provider holds %v", cli.records)
+	}
+	if got.Content != "203.0.113.9" {
+		t.Fatalf("record content = %q; want the server's address", got.Content)
+	}
+}
+
+// Derivation must not fight itself: sweeping repeatedly over the same table
+// creates one record, not one per tick.
+func TestDerivationIsIdempotent(t *testing.T) {
+	st, cli := newFakeStore(), newFakeClient("example.com")
+	s := configure(t, st, cli)
+	ctx := context.Background()
+	st.wants = []domain.DNSWant{
+		{ApplicationID: "app_1", Domain: "grafana.example.com", ServerPublicAddress: "203.0.113.9"},
+	}
+
+	s.SweepDue(ctx, discard())
+	after := cli.creates
+	s.SweepDue(ctx, discard())
+	s.SweepDue(ctx, discard())
+
+	if cli.creates != after {
+		t.Fatalf("re-sweeping created %d more records; want none", cli.creates-after)
+	}
+	if len(cli.records) != 1 {
+		t.Fatalf("provider holds %d records; want 1", len(cli.records))
 	}
 }

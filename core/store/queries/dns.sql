@@ -145,3 +145,25 @@ WHERE a.runtime_server_id = $1 AND r.desired = 'present';
 UPDATE dns_records
 SET desired = 'absent', next_attempt_at = now(), attempt = 0, last_error = '', updated_at = now()
 WHERE application_id IS NULL AND desired = 'present';
+
+-- ListApplicationsWantingDNS is what makes record CREATION state-owned rather
+-- than event-owned.
+--
+-- Hooking the two application REST handlers was not enough: a template install
+-- creates applications through templates.Install, a preview environment through
+-- its own path, and each new caller would silently produce no DNS at all. The
+-- first real use of this feature hit exactly that — a Grafana template with a
+-- verified domain and no record, because no hook fired. Deriving the desired
+-- set from the applications table on every sweep makes it impossible for a
+-- creation path to be forgotten (§4.3, and research/coolify.md's lesson that
+-- lifecycle must be owned by state, not events).
+--
+-- Applications whose server has no public address are excluded here rather than
+-- filtered later: there is nothing to point a record at, and §6 reports that as
+-- its own state.
+-- name: ListApplicationsWantingDNS :many
+SELECT a.id, a.route_domain, s.public_address
+FROM applications a
+JOIN servers s ON s.id = a.runtime_server_id
+WHERE a.route_domain <> '' AND s.public_address <> ''
+ORDER BY a.id;

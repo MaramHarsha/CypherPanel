@@ -248,6 +248,16 @@ type DNSRecord struct {
 	UpdatedAt        time.Time
 }
 
+// DNSWant is one application's claim on a hostname: what the desired DNS Record
+// is derived FROM. Deriving beats hooking — a creation path nobody remembered
+// to hook produces no DNS at all, which is how a template install shipped a
+// verified domain with no record.
+type DNSWant struct {
+	ApplicationID       string
+	Domain              string
+	ServerPublicAddress string
+}
+
 // DNSRecordWithZone is a record joined to the provider ids the reconciler needs
 // to act on it, so convergence is one query rather than one per row.
 type DNSRecordWithZone struct {

@@ -268,6 +268,15 @@ rate limit on a name we cannot prove.
 | **Project or environment deleted** | The same, by the same one rule |
 | DNS Provider disconnected | Records are **left alone**, not deleted — see §4.5 |
 
+**Creation is derived, not hooked.** On every tick the reconciler walks the
+applications table and makes each one's desired record match its route. The REST
+hooks on create and patch stay, because they make the common case immediate —
+but correctness does not rest on them. It cannot: an application can be born
+from a **template install**, a preview environment, or anything added later, and
+every one of those paths would otherwise have needed remembering. The first real
+use of this feature was a Grafana template with a verified domain and no record,
+for exactly that reason.
+
 **Deletion is one rule, not three.** `application_id` is `ON DELETE SET NULL`,
 and environments and projects cascade to applications — so deleting an
 application, an environment, or a whole project all leave the *same* trace: a

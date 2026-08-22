@@ -134,6 +134,22 @@ func (s *Store) TombstoneDNSRecordsForEnvironment(ctx context.Context, envID str
 // Because application_id is ON DELETE SET NULL and environments and projects
 // cascade to applications, this single statement covers application, environment
 // and project deletion alike (§4.3).
+// ListApplicationsWantingDNS returns every application whose route asks for a
+// record and whose server can provide the content for one.
+func (s *Store) ListApplicationsWantingDNS(ctx context.Context) ([]domain.DNSWant, error) {
+	rows, err := s.q.ListApplicationsWantingDNS(ctx)
+	if err != nil {
+		return nil, wrap("listing applications wanting dns", err)
+	}
+	out := make([]domain.DNSWant, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, domain.DNSWant{
+			ApplicationID: r.ID, Domain: r.RouteDomain, ServerPublicAddress: r.PublicAddress,
+		})
+	}
+	return out, nil
+}
+
 func (s *Store) TombstoneOrphanedDNSRecords(ctx context.Context) error {
 	if err := s.q.TombstoneOrphanedDNSRecords(ctx); err != nil {
 		return wrap("tombstoning orphaned dns records", err)
