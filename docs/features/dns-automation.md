@@ -380,8 +380,25 @@ underneath so the operator can see exactly what the panel believes it can
 manage. A **Refresh zones** action, because a zone added in Cloudflare should
 be usable without waiting for a sweep.
 
-**Application → Settings → Domain** — the domain field gains a verification
-state directly beneath it:
+**Application → Settings → Domain** — once a provider is connected the field
+stops being free text. The zones Cloudflare returns *are* the domains you can
+use, so the field offers them: a subdomain box beside a zone picker, which can
+only produce a hostname that verifies. Free text invited `google.com` — which
+the panel accepts, stores, and then quietly refuses to route, leaving an
+application that looks fine and serves nothing.
+
+A **custom domain** stays possible, because someone will always have a zone
+managed elsewhere. It is a deliberate second choice and it says permanently that
+it is not verified, with a way back to a domain you do own. With no provider
+connected the field is plain text exactly as before.
+
+**Wherever a domain is shown as a link, the link is only offered when the panel
+will actually serve that hostname.** An unverified domain appears struck
+through and marked instead. A hyperlink is a claim that clicking it reaches the
+app; for a domain the panel publishes no route for, that claim is false, and
+offering it is how someone ends up debugging DNS that was never published.
+
+The field also gains a verification state directly beneath it:
 
 - *Verified · example.com* — with the zone named.
 - *Record created, but the zone is pending* — the record exists in Cloudflare

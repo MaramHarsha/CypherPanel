@@ -4,7 +4,7 @@
 // have to navigate to start a deploy.
 import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
-import { ChevronDown, ExternalLink } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 import { useGetApplication } from "@/api/gen/applications/applications";
 import { useGetMe } from "@/api/gen/auth/auth";
@@ -15,6 +15,7 @@ import {
 } from "@/api/gen/deployments/deployments";
 import { useGetProject, useListEnvironments } from "@/api/gen/projects/projects";
 import { PageBody, PageHeader } from "@/components/page-header";
+import { HeaderDomain } from "@/components/domain-link";
 import { RedeployPending } from "@/components/redeploy-pending";
 import { ResourceGone } from "@/components/resource-gone";
 import { StatusBadge } from "@/components/status-badge";
@@ -114,16 +115,11 @@ function ApplicationLayout() {
             {/* The canvas title row is name · dot · state word and nothing
                 else, so the one-click route to the running app stays but drops
                 out of the accent: orange is the Deploy pill's here. */}
-            {domain && (
-              <a
-                href={`${https ? "https" : "http"}://${domain}`}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 font-mono text-[12px] text-text-mid hover:text-text"
-              >
-                {domain} <ExternalLink className="h-3 w-3" aria-hidden />
-              </a>
-            )}
+            {/* The one-click route to the running app — but only when the
+                panel will actually serve that hostname. An unverified domain
+                links nowhere, and offering the link anyway is how someone ends
+                up debugging DNS that was never published. */}
+            {domain && <HeaderDomain applicationId={appId} domain={domain} https={https} />}
           </span>
         }
         actions={<DeployButton appId={appId} branch={app.data?.source.branch} />}
