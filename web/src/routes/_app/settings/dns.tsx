@@ -291,8 +291,18 @@ function ZoneList() {
             <ul className="divide-y divide-border-subtle overflow-hidden rounded-lg border border-border bg-surface">
               {list.map((z) => (
                 <li key={z.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
-                  <span className="mono truncate text-[12.5px] text-text">{z.name}</span>
-                  <span className="shrink-0 text-[11px] text-text-faint">checked {relativeTime(z.refreshed_at)}</span>
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span
+                      aria-hidden
+                      className={`size-[6px] shrink-0 rounded-full ${
+                        z.status === "active" ? "bg-status-running" : "bg-status-degraded"
+                      }`}
+                    />
+                    <span className="mono truncate text-[12.5px] text-text">{z.name}</span>
+                  </span>
+                  <span className="shrink-0 text-[11px] text-text-faint">
+                    {z.status === "active" ? `checked ${relativeTime(z.refreshed_at)}` : z.status}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -303,6 +313,12 @@ function ZoneList() {
         A domain is verified when it falls inside one of these. Add a zone in Cloudflare, refresh, and it becomes
         usable — no need to re-enter the domain.
       </p>
+      {(zones.data ?? []).some((z) => z.status !== "active") && (
+        <p className="text-[11.5px] leading-relaxed text-status-degraded-text">
+          A zone that is not <span className="mono">active</span> is still yours and still verifies a domain — but the
+          domain will not resolve until you point your registrar's nameservers at the ones Cloudflare gave you.
+        </p>
+      )}
     </section>
   );
 }

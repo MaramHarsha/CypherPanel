@@ -64,6 +64,19 @@ export function DomainVerification({ applicationId }: { applicationId: string })
     );
   }
 
+  // Owning the zone and the domain resolving are different facts. Saying only
+  // "verified" here would leave someone waiting for a domain that cannot work
+  // until they finish the nameserver step at their registrar.
+  if (data.zone_status && data.zone_status !== "active") {
+    return (
+      <Note tone="pending">
+        <strong className="font-semibold">Record created, but the zone is {data.zone_status}.</strong>{" "}
+        <span className="mono">{data.record_name}</span> points at <span className="mono">{data.record_content}</span>{" "}
+        in Cloudflare. It will not resolve until you point your registrar's nameservers at Cloudflare.
+      </Note>
+    );
+  }
+
   return (
     <Note tone="ok">
       Verified in <span className="mono">{data.zone}</span>.{" "}

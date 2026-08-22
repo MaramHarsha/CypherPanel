@@ -158,6 +158,19 @@ authority: verification failures always re-check against the provider before
 refusing, so a zone added in Cloudflare five seconds ago does not need a manual
 refresh to work.
 
+**Activation is not ownership**, and conflating the two was this feature's first
+real-account bug. Cloudflare zones are `initializing`, `pending`, `active` or
+`moved`; a zone is `pending` from the moment you add the domain until its
+nameservers are repointed at Cloudflare, which can be days. The first cut listed
+zones with `status=active`, so an operator who had just added their domain was
+told the panel **could see no zones at all** — while the domain sat plainly
+visible in their Cloudflare dashboard.
+
+So the status is *stored and reported*, never used as a filter. A zone you own
+verifies a domain whatever its activation state. Whether the domain **resolves**
+is a different fact, and the UI says which one you are looking at (§6). Only
+`moved` is dropped, because that zone has genuinely left this provider.
+
 ### 3.3 Records
 
 ```
@@ -362,6 +375,11 @@ be usable without waiting for a sweep.
 state directly beneath it:
 
 - *Verified · example.com* — with the zone named.
+- *Record created, but the zone is pending* — the record exists in Cloudflare
+  and the domain still will not resolve until the registrar's nameservers point
+  at Cloudflare. Owning the zone and serving traffic are different milestones,
+  and saying only "verified" would leave someone waiting for a domain that
+  cannot work yet.
 - *Verification pending in Cloudflare* — with the connected zones listed and a
   link to the DNS tab. This is the state the operator sees when they type a
   domain they have not added to Cloudflare.
