@@ -26,3 +26,6 @@ resources:
         PLEX_CLAIM: ""
         PUID: "1000"
         TZ: America/Toronto
+first_login:
+  kind: setup
+  note: "Open the domain and sign in with your Plex account to claim the server."

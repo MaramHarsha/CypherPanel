@@ -29,3 +29,6 @@ resources:
         POSTGRES_PORT: "5432"
         POSTGRES_USER: '{{db.db.user}}'
         TRANSFORM_LOCALHOST_TO_DOCKER_INTERNAL: "true"
+first_login:
+  kind: setup
+  note: "Open the domain and create the first account."

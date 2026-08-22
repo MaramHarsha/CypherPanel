@@ -19,3 +19,7 @@ resources:
       env:
         MASTERPASS: '{{secret.16}}'
         STORE_PATH: /app
+first_login:
+  kind: credentials
+  password_env: MASTERPASS
+  note: "There is no username; the gateway asks for this master password alone."

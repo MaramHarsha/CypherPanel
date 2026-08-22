@@ -26,3 +26,6 @@ resources:
         DB_NAME: '{{db.db.database}}'
         DB_PASSWORD: '{{db.db.password}}'
         DB_USER: '{{db.db.user}}'
+first_login:
+  kind: setup
+  note: "Open the domain and run the Vvveb installer."

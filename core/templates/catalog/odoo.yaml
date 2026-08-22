@@ -27,3 +27,6 @@ resources:
         HOST: '{{db.db.host}}'
         PASSWORD: '{{db.db.password}}'
         USER: '{{db.db.user}}'
+first_login:
+  kind: setup
+  note: "Open the domain and create the database, which creates the admin account."

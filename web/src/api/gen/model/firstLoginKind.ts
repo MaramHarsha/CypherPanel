@@ -5,11 +5,16 @@
  * Operator-facing control-plane API covering Phases 1–3: authentication and teams/roles, the server lifecycle, projects/environments, applications and the deploy pipeline, managed databases with S3 backups/restore, preview environments, notifications, and scheduled tasks. Authentication is a bearer session token from /api/v1/auth/login; the GitHub webhook authenticates by per-application HMAC instead. Every project-scoped route is authorized by team membership (a non-member sees 404, insufficient rank 403).
  * OpenAPI spec version: 0.3.0
  */
-import type { FirstLogin } from './firstLogin';
 
-export interface InstallTemplateResponse {
-  applications: string[];
-  databases: string[];
-  /** How to get into what was just installed. Returned ONCE — when `generated` is true this is the only place that password ever appears. Absent when the template declares nothing. */
-  first_login?: FirstLogin;
-}
+/**
+ * `credentials` — sign in with what is here. `setup` — the app creates the account itself on first visit. `none` — there is no sign-in.
+ */
+export type FirstLoginKind = typeof FirstLoginKind[keyof typeof FirstLoginKind];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const FirstLoginKind = {
+  credentials: 'credentials',
+  setup: 'setup',
+  none: 'none',
+} as const;

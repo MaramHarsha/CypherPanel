@@ -38,3 +38,6 @@ resources:
         SMTP_PORT: ""
         SMTP_SECURE: ""
         SMTP_USERNAME: ""
+first_login:
+  kind: setup
+  note: "Open the domain and create the workspace — the first account becomes the owner."

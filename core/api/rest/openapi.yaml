@@ -3903,6 +3903,37 @@ components:
         databases:
           type: array
           items: { type: string }
+        first_login:
+          allOf: [{ $ref: "#/components/schemas/FirstLogin" }]
+          description: >-
+            How to get into what was just installed. Returned ONCE — when `generated` is
+            true this is the only place that password ever appears. Absent when the template
+            declares nothing.
+
+    FirstLogin:
+      type: object
+      required: [kind, generated]
+      properties:
+        kind:
+          type: string
+          enum: [credentials, setup, none]
+          description: >-
+            `credentials` — sign in with what is here. `setup` — the app creates the account
+            itself on first visit. `none` — there is no sign-in.
+        application_id:
+          type: string
+          description: The installed application these apply to.
+        username: { type: string }
+        password: { type: string }
+        generated:
+          type: boolean
+          description: >-
+            True when the panel invented this password rather than it being a documented
+            upstream default. A generated one is shown once and cannot be recovered; a
+            default is public knowledge about the image.
+        note:
+          type: string
+          description: The one thing to do first, or to change immediately.
 
     # ─── Backups ──────────────────────────────────────────────────────────────
     BackupTarget:

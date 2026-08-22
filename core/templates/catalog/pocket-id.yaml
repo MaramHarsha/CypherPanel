@@ -33,3 +33,6 @@ resources:
         SMTP_TLS: starttls
         SMTP_USER: ""
         TRUST_PROXY: "true"
+first_login:
+  kind: setup
+  note: "Open the domain and complete the Pocket ID setup — the first user becomes admin."

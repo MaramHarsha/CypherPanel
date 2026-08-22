@@ -35,3 +35,8 @@ resources:
         DOLI_URL_ROOT: https://{{domain}}
         WWW_GROUP_ID: "1000"
         WWW_USER_ID: "1000"
+first_login:
+  kind: credentials
+  username_env: DOLI_ADMIN_LOGIN
+  password_env: DOLI_ADMIN_PASSWORD
+  note: "Both the login and the password were generated for this install — there is no default to fall back on."

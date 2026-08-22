@@ -27,3 +27,6 @@ resources:
         CELLD_WATCH: /var/lib/celld/state
         RUST_LOG: info
         S3_ENDPOINT: ""
+first_login:
+  kind: setup
+  note: "Open the domain and create the first account."

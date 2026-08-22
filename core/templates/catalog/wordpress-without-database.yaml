@@ -16,3 +16,6 @@ resources:
       volumes:
         - name: wordpress-files
           path: /var/www/html
+first_login:
+  kind: setup
+  note: "Open the domain and run the WordPress installer — it creates your admin account. You must supply your own database."

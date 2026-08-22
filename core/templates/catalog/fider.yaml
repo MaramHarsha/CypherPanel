@@ -33,3 +33,6 @@ resources:
         EMAIL_SMTP_PORT: "587"
         EMAIL_SMTP_USERNAME: postmaster@mailgun.com
         JWT_SECRET: '{{secret.32}}'
+first_login:
+  kind: setup
+  note: "Open the domain and complete the Fider setup — it creates the administrator."

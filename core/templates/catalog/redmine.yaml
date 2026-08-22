@@ -34,3 +34,6 @@ resources:
         REDMINE_DB_POSTGRES: '{{db.db.host}}'
         REDMINE_DB_USERNAME: '{{db.db.user}}'
         SECRET_KEY_BASE: '{{secret.32}}'
+first_login:
+  kind: setup
+  note: "Sign in with admin / admin — Redmine forces a password change immediately."

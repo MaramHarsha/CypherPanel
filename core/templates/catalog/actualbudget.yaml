@@ -19,3 +19,6 @@ resources:
           path: /data
       env:
         ACTUAL_LOGIN_METHOD: password
+first_login:
+  kind: setup
+  note: "Open the domain and set the server password on first use."

@@ -23,3 +23,6 @@ resources:
         PGID: "1000"
         PUID: "1000"
         TZ: Etc/UTC
+first_login:
+  kind: setup
+  note: "Sign in with admin / admin123, then change it immediately under Admin."

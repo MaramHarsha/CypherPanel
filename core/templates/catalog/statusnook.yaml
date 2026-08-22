@@ -16,3 +16,6 @@ resources:
       volumes:
         - name: statusnook-data
           path: /app/statusnook-data
+first_login:
+  kind: setup
+  note: "Open the domain and complete Statusnook's setup to create the admin account."

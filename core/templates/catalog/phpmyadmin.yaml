@@ -22,3 +22,6 @@ resources:
         PMA_ARBITRARY: "1"
         PUID: "1000"
         TZ: Europe/Madrid
+first_login:
+  kind: setup
+  note: "There is no separate account: sign in with the credentials of the database you are connecting to."

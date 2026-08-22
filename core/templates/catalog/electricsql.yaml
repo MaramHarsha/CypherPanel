@@ -22,3 +22,6 @@ resources:
         ELECTRIC_SECRET: '{{secret.32}}'
         ELECTRIC_STORAGE_DIR: /app/persistent
         ELECTRIC_USAGE_REPORTING: "false"
+first_login:
+  kind: none
+  note: "There is no sign-in — open the domain and use it."

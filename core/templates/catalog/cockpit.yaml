@@ -20,3 +20,6 @@ resources:
           path: /var/www/html/.spaces
         - name: cockpit-storage
           path: /var/www/html/storage
+first_login:
+  kind: setup
+  note: "Open /install on your domain to create the first admin user."

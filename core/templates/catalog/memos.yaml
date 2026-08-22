@@ -17,3 +17,6 @@ resources:
       volumes:
         - name: memos
           path: /var/opt/memos
+first_login:
+  kind: setup
+  note: "Open the domain and sign up — the first account becomes the host."

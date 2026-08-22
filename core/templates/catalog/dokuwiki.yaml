@@ -20,3 +20,6 @@ resources:
         PGID: "1000"
         PUID: "1000"
         TZ: Europe/Madrid
+first_login:
+  kind: setup
+  note: "Open /install.php on your domain to create the admin account, then delete that file."

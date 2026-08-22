@@ -22,3 +22,6 @@ resources:
         PUID: "1000"
         SIYUAN_ACCESS_AUTH_CODE: '{{secret.16}}'
         TZ: UTC
+first_login:
+  kind: setup
+  note: "Open the domain and set the access password on first use."

@@ -21,3 +21,6 @@ resources:
         PGID: "1000"
         PUID: "1000"
         TZ: America/Toronto
+first_login:
+  kind: setup
+  note: "No sign-in by default; set authentication under Settings → General."

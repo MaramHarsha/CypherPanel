@@ -25,3 +25,6 @@ resources:
         SEARXNG_REDIS_URL: redis://:{{db.cache.password}}@{{db.cache.host}}:6379/0
         SEARXNG_SECRET: '{{secret.16}}'
         SEARXNG_URL: https://{{domain}}
+first_login:
+  kind: none
+  note: "There is no sign-in — open the domain and use it."

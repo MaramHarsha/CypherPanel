@@ -19,3 +19,6 @@ resources:
           path: /space
       env:
         SB_USER: '{{secret.16}}:{{secret.16}}'
+first_login:
+  kind: setup
+  note: "Open the domain; set SB_USER in the app's environment variables to require a login."

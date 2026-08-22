@@ -26,3 +26,6 @@ resources:
         JEAN_NO_TOKEN: "0"
         JEAN_PORT: "3456"
         JEAN_TOKEN: '{{secret.32}}'
+first_login:
+  kind: setup
+  note: "Open the domain and create the first account."

@@ -29,3 +29,8 @@ resources:
         TOLGEE_AUTHENTICATION_INITIAL_USERNAME: admin
         TOLGEE_AUTHENTICATION_JWT_SECRET: '{{secret.16}}'
         TOLGEE_POSTGRES_AUTOSTART_ENABLED: "false"
+first_login:
+  kind: credentials
+  username: admin
+  password_env: TOLGEE_AUTHENTICATION_INITIAL_PASSWORD
+  note: "Tolgee asks you to change this on first sign-in."

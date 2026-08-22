@@ -18,3 +18,6 @@ resources:
           path: /readeck
       env:
         READECK_USE_X_FORWARDED: "true"
+first_login:
+  kind: setup
+  note: "Open the domain and create the first account."

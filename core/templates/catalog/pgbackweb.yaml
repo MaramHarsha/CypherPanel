@@ -25,3 +25,6 @@ resources:
         PBW_ENCRYPTION_KEY: '{{secret.32}}'
         PBW_POSTGRES_CONN_STRING: postgresql://{{db.db.user}}:{{db.db.password}}@{{db.db.host}}:5432/{{db.db.database}}?sslmode=disable
         TZ: UTC
+first_login:
+  kind: setup
+  note: "Open the domain and create the first account."

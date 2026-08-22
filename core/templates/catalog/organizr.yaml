@@ -18,3 +18,6 @@ resources:
           path: /config
       env:
         branch: v2-master
+first_login:
+  kind: setup
+  note: "Open the domain and complete the Organizr setup to create the admin account."

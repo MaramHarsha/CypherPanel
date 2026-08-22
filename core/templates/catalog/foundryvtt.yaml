@@ -32,3 +32,6 @@ resources:
         FOUNDRY_USERNAME: ""
         FOUNDRY_WORLD: ""
         TIMEZONE: UTC
+first_login:
+  kind: setup
+  note: "Open the domain and enter your Foundry licence key, then set the admin access key."

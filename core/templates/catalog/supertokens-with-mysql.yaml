@@ -19,3 +19,6 @@ resources:
       env:
         API_KEYS: ""
         MYSQL_CONNECTION_URI: mysql://{{db.db.user}}:{{db.db.password}}@{{db.db.host}}:3306/{{db.db.database}}
+first_login:
+  kind: setup
+  note: "SuperTokens is an auth backend with no dashboard login of its own; connect your app to it."

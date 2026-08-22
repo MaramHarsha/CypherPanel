@@ -16,3 +16,6 @@ resources:
       volumes:
         - name: classicpress-files
           path: /var/www/html
+first_login:
+  kind: setup
+  note: "Open the domain and run the ClassicPress installer. You must supply your own database."

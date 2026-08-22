@@ -17,3 +17,6 @@ resources:
       volumes:
         - name: cloudbeaver-data
           path: /opt/cloudbeaver/workspace
+first_login:
+  kind: setup
+  note: "Open the domain and complete CloudBeaver's setup to create the administrator."

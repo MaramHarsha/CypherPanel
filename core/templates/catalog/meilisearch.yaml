@@ -21,3 +21,6 @@ resources:
         MEILI_ENV: production
         MEILI_MASTER_KEY: '{{secret.16}}'
         MEILI_NO_ANALYTICS: "true"
+first_login:
+  kind: none
+  note: "There is no sign-in — open the domain and use it."

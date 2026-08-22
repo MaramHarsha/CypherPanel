@@ -14,3 +14,6 @@ resources:
       route: true
       health:
         kind: tcp
+first_login:
+  kind: none
+  note: "There is no sign-in — open the domain and use it."

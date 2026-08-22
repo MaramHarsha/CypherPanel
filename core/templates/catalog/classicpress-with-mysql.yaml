@@ -25,3 +25,6 @@ resources:
         CLASSICPRESS_DB_NAME: '{{db.db.database}}'
         CLASSICPRESS_DB_PASSWORD: '{{db.db.password}}'
         CLASSICPRESS_DB_USER: '{{db.db.user}}'
+first_login:
+  kind: setup
+  note: "Open the domain and run the ClassicPress installer — it creates your admin account."

@@ -25,3 +25,6 @@ resources:
           path: /logs/
       env:
         DOCKER_ENABLE_SECURITY: "false"
+first_login:
+  kind: none
+  note: "There is no sign-in — open the domain and use it."

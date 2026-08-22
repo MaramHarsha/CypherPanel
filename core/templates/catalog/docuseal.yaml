@@ -19,3 +19,6 @@ resources:
           path: /data
       env:
         HOST: https://{{domain}}
+first_login:
+  kind: setup
+  note: "Open the domain and create the first account, which becomes the administrator."

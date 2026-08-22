@@ -17,3 +17,6 @@ resources:
       volumes:
         - name: nocodb-data
           path: /usr/app/data/
+first_login:
+  kind: setup
+  note: "Open the domain and sign up — the first account becomes the super admin."

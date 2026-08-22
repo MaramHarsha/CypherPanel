@@ -24,3 +24,7 @@ resources:
         PUID: "1000"
         SETTINGS_ENCRYPTION_KEY: '{{secret.16}}'
         TZ: Europe/London
+first_login:
+  kind: credentials
+  password_env: DUPLICATI__WEBSERVICE_PASSWORD
+  note: "There is no username; Duplicati asks for this password alone."

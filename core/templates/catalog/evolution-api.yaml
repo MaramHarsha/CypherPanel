@@ -144,3 +144,6 @@ resources:
         WEBHOOK_GLOBAL_WEBHOOK_BY_EVENTS: "false"
         WEBSOCKET_ENABLED: "false"
         WEBSOCKET_GLOBAL_EVENTS: "false"
+first_login:
+  kind: setup
+  note: "Authenticate with the API key in the app's environment variables — there is no web login."

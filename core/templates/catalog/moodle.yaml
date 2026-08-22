@@ -34,3 +34,8 @@ resources:
         MOODLE_PASSWORD: '{{secret.16}}'
         MOODLE_SITE_NAME: New Site
         MOODLE_USERNAME: user
+first_login:
+  kind: credentials
+  username: user
+  password_env: MOODLE_PASSWORD
+  note: "The account's email is user@example.com. Change both under Site administration."

@@ -24,3 +24,6 @@ resources:
         PGID: "1000"
         PUID: "1000"
         TZ: Europe/Madrid
+first_login:
+  kind: setup
+  note: "Open the domain and complete the Emby setup wizard — it creates your admin account."

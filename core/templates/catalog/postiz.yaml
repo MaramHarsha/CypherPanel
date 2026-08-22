@@ -91,3 +91,6 @@ resources:
         X_API_SECRET: ""
         YOUTUBE_CLIENT_ID: ""
         YOUTUBE_CLIENT_SECRET: ""
+first_login:
+  kind: setup
+  note: "Open the domain and register the first account."

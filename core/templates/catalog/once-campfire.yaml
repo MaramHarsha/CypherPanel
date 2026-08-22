@@ -24,3 +24,6 @@ resources:
         SSL_DOMAIN: "false"
         VAPID_PRIVATE_KEY: ""
         VAPID_PUBLIC_KEY: ""
+first_login:
+  kind: setup
+  note: "Open the domain and create the first account, which becomes the administrator."

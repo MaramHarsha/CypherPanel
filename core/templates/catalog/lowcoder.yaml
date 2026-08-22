@@ -21,3 +21,6 @@ resources:
         LOWCODER_DB_ENCRYPTION_PASSWORD: '{{secret.16}}'
         LOWCODER_DB_ENCRYPTION_SALT: '{{secret.16}}'
         LOWCODER_EMAIL_SIGNUP_ENABLED: "true"
+first_login:
+  kind: none
+  note: "There is no sign-in — open the domain and use it."

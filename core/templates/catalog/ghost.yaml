@@ -35,3 +35,6 @@ resources:
         mail__options__service: Mailgun
         mail__transport: SMTP
         url: https://{{domain}}
+first_login:
+  kind: setup
+  note: "Open /ghost on your domain and create the owner account."

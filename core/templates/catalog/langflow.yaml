@@ -29,3 +29,8 @@ resources:
         LANGFLOW_SUPERUSER: '{{secret.16}}'
         LANGFLOW_SUPERUSER_PASSWORD: '{{secret.16}}'
         PORT: "7860"
+first_login:
+  kind: credentials
+  username_env: LANGFLOW_SUPERUSER
+  password_env: LANGFLOW_SUPERUSER_PASSWORD
+  note: "Both the superuser name and the password were generated for this install."

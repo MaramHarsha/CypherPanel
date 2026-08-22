@@ -20,3 +20,6 @@ resources:
       env:
         RIVET__AUTH__ADMIN_TOKEN: '{{secret.16}}'
         RIVET__FILE_SYSTEM__PATH: /data
+first_login:
+  kind: setup
+  note: "Open the domain and create the first account."

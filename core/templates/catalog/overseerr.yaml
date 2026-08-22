@@ -21,3 +21,6 @@ resources:
         PGID: "1000"
         PUID: "1000"
         TZ: America/Toronto
+first_login:
+  kind: setup
+  note: "Open the domain and sign in with your Plex account to complete setup."

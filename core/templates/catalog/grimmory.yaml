@@ -33,3 +33,6 @@ resources:
         GROUP_ID: "0"
         TZ: UTC
         USER_ID: "0"
+first_login:
+  kind: setup
+  note: "Open the domain and create the first account."

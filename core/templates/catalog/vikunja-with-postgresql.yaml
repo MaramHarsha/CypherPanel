@@ -30,3 +30,6 @@ resources:
         VIKUNJA_SERVICE_ENABLEREGISTRATION: "true"
         VIKUNJA_SERVICE_JWTSECRET: '{{secret.16}}'
         VIKUNJA_SERVICE_PUBLICURL: https://{{domain}}
+first_login:
+  kind: setup
+  note: "Open the domain and register — the first account is yours to make admin."

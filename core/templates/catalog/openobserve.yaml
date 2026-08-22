@@ -23,3 +23,8 @@ resources:
         ZO_ROOT_USER_EMAIL: root@example.com
         ZO_ROOT_USER_PASSWORD: '{{secret.16}}'
         ZO_TELEMETRY: "false"
+first_login:
+  kind: credentials
+  username: root@example.com
+  password_env: ZO_ROOT_USER_PASSWORD
+  note: "Sign in with the email above; it is the root account."

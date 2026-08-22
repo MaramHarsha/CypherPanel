@@ -17,3 +17,6 @@ resources:
       volumes:
         - name: databasus-data
           path: /databasus-data
+first_login:
+  kind: setup
+  note: "Open the domain and create the first account."

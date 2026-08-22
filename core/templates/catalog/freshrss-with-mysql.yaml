@@ -28,3 +28,6 @@ resources:
         MYSQL_DB: '{{db.db.database}}'
         MYSQL_PASSWORD: '{{db.db.password}}'
         MYSQL_USER: '{{db.db.user}}'
+first_login:
+  kind: setup
+  note: "Open the domain and run the FreshRSS installer — it creates your admin account."

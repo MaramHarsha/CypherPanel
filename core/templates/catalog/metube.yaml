@@ -19,3 +19,6 @@ resources:
       env:
         GID: "1000"
         UID: "1000"
+first_login:
+  kind: setup
+  note: "No sign-in; open the domain and use it."

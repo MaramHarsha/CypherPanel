@@ -18,3 +18,6 @@ resources:
         ACCESS_CODE: '{{secret.16}}'
         OPENAI_API_KEY: ""
         OPENAI_PROXY_URL: https://api.openai.com/v1
+first_login:
+  kind: setup
+  note: "Open the domain; set an ACCESS_CODE in the app's environment variables to require a password."

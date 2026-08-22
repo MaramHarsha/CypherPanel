@@ -18,3 +18,6 @@ resources:
           path: /data
       env:
         DOMAIN: "https://{{domain}}"
+first_login:
+  kind: setup
+  note: "Open the domain and register. Consider disabling signups afterwards so yours stays the only account."

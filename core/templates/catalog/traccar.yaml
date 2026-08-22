@@ -22,3 +22,6 @@ resources:
         CONFIG_USE_ENVIRONMENT_VARIABLES: "true"
         DATABASE_PASSWORD: '{{db.db.password}}'
         DATABASE_USER: '{{db.db.user}}'
+first_login:
+  kind: setup
+  note: "Sign in with admin / admin, then change it immediately."

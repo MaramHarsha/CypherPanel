@@ -16,3 +16,6 @@ resources:
       volumes:
         - name: slash-data
           path: /var/opt/slash
+first_login:
+  kind: setup
+  note: "Open the domain and sign up — the first account becomes the admin."

@@ -20,3 +20,8 @@ resources:
         HTTP_AUTH_PASSWORD: '{{secret.16}}'
         HTTP_AUTH_USERNAME: '{{secret.16}}'
         SECRET_KEY_BASE: '{{secret.32}}'
+first_login:
+  kind: credentials
+  username_env: HTTP_AUTH_USERNAME
+  password_env: HTTP_AUTH_PASSWORD
+  note: "These are HTTP basic-auth credentials; the browser will prompt for them."

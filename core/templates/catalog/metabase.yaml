@@ -24,3 +24,6 @@ resources:
         MB_DB_USER: "{{db.db.user}}"
         MB_DB_PASS: "{{db.db.password}}"
         MB_DB_DBNAME: "{{db.db.database}}"
+first_login:
+  kind: setup
+  note: "Open the domain and complete the Metabase setup — it creates the admin account."

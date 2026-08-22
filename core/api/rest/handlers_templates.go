@@ -19,6 +19,24 @@ type installTemplateRequest struct {
 type installTemplateResponse struct {
 	Applications []string `json:"applications"`
 	Databases    []string `json:"databases"`
+	// FirstLogin is how to get into what was just installed. Returned ONCE — a
+	// generated password appears here and nowhere else, ever (managed-databases
+	// §9's discipline). Absent when the template declares nothing.
+	FirstLogin *firstLoginDTO `json:"first_login,omitempty"`
+}
+
+type firstLoginDTO struct {
+	// Kind: "credentials" (sign in with these), "setup" (the app makes you
+	// create the account), "none" (nothing to sign into).
+	Kind          string `json:"kind"`
+	ApplicationID string `json:"application_id,omitempty"`
+	Username      string `json:"username,omitempty"`
+	Password      string `json:"password,omitempty"`
+	// Generated distinguishes a password the panel invented — shown once and
+	// unrecoverable — from a documented upstream default, which is public
+	// knowledge and can be shown at any time.
+	Generated bool   `json:"generated"`
+	Note      string `json:"note,omitempty"`
 }
 
 func (a *API) handleListTemplates(w http.ResponseWriter, _ *http.Request) {
@@ -86,6 +104,20 @@ func (a *API) handleInstallTemplate(w http.ResponseWriter, r *http.Request) {
 		a.deps.Log.Error("installing template", "slug", r.PathValue("slug"), "environment_id", req.EnvironmentID, "error", err)
 		writeError(w, http.StatusInternalServerError, "could not install template")
 	default:
-		writeJSON(w, http.StatusAccepted, installTemplateResponse{Applications: result.ApplicationIDs, Databases: result.DatabaseIDs})
+		writeJSON(w, http.StatusAccepted, installTemplateResponse{
+			Applications: result.ApplicationIDs, Databases: result.DatabaseIDs,
+			FirstLogin: firstLoginToDTO(result.FirstLogin),
+		})
+	}
+}
+
+func firstLoginToDTO(fl *templates.FirstLogin) *firstLoginDTO {
+	if fl == nil {
+		return nil
+	}
+	return &firstLoginDTO{
+		Kind: fl.Kind, ApplicationID: fl.ApplicationID,
+		Username: fl.Username, Password: fl.Password,
+		Generated: fl.Generated, Note: fl.Note,
 	}
 }

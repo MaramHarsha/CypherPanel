@@ -25,3 +25,6 @@ resources:
           path: /metadata
       env:
         TZ: America/Toronto
+first_login:
+  kind: setup
+  note: "Open the domain and create the root account on first visit."

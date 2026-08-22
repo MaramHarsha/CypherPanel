@@ -19,3 +19,6 @@ resources:
         PROXYSCOTCH_BANNED_DESTS: ""
         PROXYSCOTCH_BANNED_OUTPUTS: ""
         PROXYSCOTCH_TOKEN: '{{secret.16}}'
+first_login:
+  kind: none
+  note: "There is no sign-in — open the domain and use it."

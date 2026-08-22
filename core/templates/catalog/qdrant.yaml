@@ -19,3 +19,6 @@ resources:
           path: /qdrant/storage
       env:
         QDRANT__SERVICE__API_KEY: '{{secret.16}}'
+first_login:
+  kind: none
+  note: "There is no sign-in — open the domain and use it."
