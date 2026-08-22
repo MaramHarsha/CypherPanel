@@ -31,10 +31,10 @@ SELECT * FROM dns_zones WHERE name = $1;
 DELETE FROM dns_zones WHERE name <> ALL(@names::text[]);
 
 -- name: UpsertDNSZone :one
-INSERT INTO dns_zones (id, provider_zone_id, name, refreshed_at)
-VALUES ($1, $2, $3, now())
+INSERT INTO dns_zones (id, provider_zone_id, name, status, refreshed_at)
+VALUES ($1, $2, $3, $4, now())
 ON CONFLICT (name) DO UPDATE
-SET provider_zone_id = EXCLUDED.provider_zone_id, refreshed_at = now()
+SET provider_zone_id = EXCLUDED.provider_zone_id, status = EXCLUDED.status, refreshed_at = now()
 RETURNING *;
 
 -- name: CountDNSZones :one

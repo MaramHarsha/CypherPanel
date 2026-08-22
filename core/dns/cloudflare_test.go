@@ -172,3 +172,51 @@ func TestRequestsToAnotherHostAreRefused(t *testing.T) {
 		t.Fatalf("JoinPath moved the host to %q", u.Host)
 	}
 }
+
+// The first real account this feature met returned exactly this: one zone, just
+// added, status "pending" because its nameservers had not been repointed yet.
+// The first cut asked Cloudflare for status=active, so that zone was filtered
+// out and the operator was told their token could see no zones — while their
+// domain sat plainly visible in the Cloudflare dashboard.
+//
+// Activation is not ownership. A zone in your account is yours whether or not
+// it has finished setting up; whether the domain RESOLVES is a separate fact,
+// and one the operator is told rather than silently acted on.
+func TestZonesAreListedWhateverTheirActivationStatus(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		_, _ = w.Write([]byte(`{"success":true,"result":[
+			{"id":"z1","name":"pending.example","status":"pending"},
+			{"id":"z2","name":"initializing.example","status":"initializing"},
+			{"id":"z3","name":"active.example","status":"active"},
+			{"id":"z4","name":"gone.example","status":"moved"}
+		]}`))
+	}))
+	defer srv.Close()
+
+	zones, err := newTestCloudflare(t, srv).ListZones(context.Background(), "acct_1")
+	if err != nil {
+		t.Fatalf("ListZones: %v", err)
+	}
+	if strings.Contains(gotQuery, "status=") {
+		t.Fatalf("query %q still filters on status; that is the bug", gotQuery)
+	}
+	got := map[string]string{}
+	for _, z := range zones {
+		got[z.Name] = z.Status
+	}
+	for _, want := range []string{"pending.example", "initializing.example", "active.example"} {
+		if _, ok := got[want]; !ok {
+			t.Errorf("%s was dropped; a zone you own counts before it is active", want)
+		}
+	}
+	// `moved` is the one exclusion: that zone has left this provider, so it is
+	// genuinely not ours to manage.
+	if _, ok := got["gone.example"]; ok {
+		t.Error("a moved zone was kept; it no longer belongs to this provider")
+	}
+	if got["pending.example"] != "pending" {
+		t.Errorf("status = %q; it has to be carried through to be reported", got["pending.example"])
+	}
+}

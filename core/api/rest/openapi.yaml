@@ -2882,10 +2882,16 @@ components:
 
     DNSZone:
       type: object
-      required: [id, name, refreshed_at]
+      required: [id, name, status, refreshed_at]
       properties:
         id: { type: string }
         name: { type: string, description: "The zone apex, e.g. example.com." }
+        status:
+          type: string
+          description: >-
+            The provider's activation state (initializing, pending, active). A non-active
+            zone is still yours and still verifies a domain — it will not resolve until its
+            nameservers point at the provider.
         refreshed_at: { type: string, format: date-time }
 
     ApplicationDNS:
@@ -2899,6 +2905,9 @@ components:
             an install that never connects one behaves exactly as it did before.
         verified: { type: boolean, description: Whether the domain falls inside a zone this panel can manage. }
         zone: { type: string, description: The zone the domain matched, when verified. }
+        zone_status:
+          type: string
+          description: That zone's activation state, so a verified domain that will not resolve yet says why.
         available_zones:
           type: array
           items: { type: string }

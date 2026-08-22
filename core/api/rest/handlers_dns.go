@@ -61,8 +61,13 @@ type setDNSRequest struct {
 }
 
 type dnsZoneDTO struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Status is the provider's activation state. A non-active zone is still
+	// yours and still verifies a domain — it simply will not resolve until its
+	// nameservers are repointed, which is the operator's next step and worth
+	// saying out loud.
+	Status      string    `json:"status"`
 	RefreshedAt time.Time `json:"refreshed_at"`
 }
 
@@ -75,6 +80,9 @@ type applicationDNSDTO struct {
 	Enforced bool   `json:"enforced"`
 	Verified bool   `json:"verified"`
 	Zone     string `json:"zone,omitempty"`
+	// ZoneStatus is the matched zone's activation state, so a verified domain
+	// that still will not resolve says why.
+	ZoneStatus string `json:"zone_status,omitempty"`
 	// AvailableZones lets a failure say "here is what you do have" instead of
 	// just "no" (ui-principles §11).
 	AvailableZones []string `json:"available_zones"`
@@ -104,7 +112,7 @@ func dnsSettingsToDTO(s dns.Settings) dnsSettingsDTO {
 func zonesToDTO(zones []domain.DNSZone) []dnsZoneDTO {
 	out := make([]dnsZoneDTO, 0, len(zones))
 	for _, z := range zones {
-		out = append(out, dnsZoneDTO{ID: z.ID, Name: z.Name, RefreshedAt: z.RefreshedAt})
+		out = append(out, dnsZoneDTO{ID: z.ID, Name: z.Name, Status: z.Status, RefreshedAt: z.RefreshedAt})
 	}
 	return out
 }
@@ -255,7 +263,7 @@ func (a *API) handleGetApplicationDNS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := applicationDNSDTO{
-		Enforced: v.Enforced, Verified: v.Verified, Zone: v.Zone,
+		Enforced: v.Enforced, Verified: v.Verified, Zone: v.Zone, ZoneStatus: v.ZoneStatus,
 		AvailableZones: v.AvailableZones, Domain: app.Route.Domain,
 	}
 	if out.AvailableZones == nil {

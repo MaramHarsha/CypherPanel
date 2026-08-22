@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/MaramHarsha/cypherpanel/core/domain"
 )
 
 // cloudflareAPI is the only destination this package talks to. Unlike an
@@ -57,6 +59,9 @@ type Account struct {
 type Zone struct {
 	ProviderID string
 	Name       string
+	// Status is Cloudflare's activation state. Reported, never filtered on —
+	// see ListZones.
+	Status string
 }
 
 // Record is one DNS record as the provider sees it.
@@ -311,8 +316,9 @@ func (c *cloudflare) ListAccounts(ctx context.Context) ([]Account, error) {
 
 func (c *cloudflare) ListZones(ctx context.Context, accountID string) ([]Zone, error) {
 	var out []struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
+		ID     string `json:"id"`
+		Name   string `json:"name"`
+		Status string `json:"status"`
 	}
 	// per_page=50 is Cloudflare's documented maximum for this endpoint (their
 	// OpenAPI schema caps it there); an operator with more zones than that is
@@ -323,7 +329,14 @@ func (c *cloudflare) ListZones(ctx context.Context, accountID string) ([]Zone, e
 	// Narrowing to the account an account-owned token belongs to is what makes
 	// the zone list mean "the zones this panel may manage" rather than "every
 	// zone this credential happens to reach".
-	q := url.Values{"per_page": {"50"}, "status": {"active"}}
+	//
+	// There is deliberately NO status filter. Asking for status=active excluded
+	// every zone whose nameservers had not been repointed yet, so an operator
+	// who had just added their domain to Cloudflare was told the panel could see
+	// no zones at all. Activation is not ownership; it is reported instead
+	// (§3.2). Only `moved` is dropped, below, because that zone has genuinely
+	// left this provider.
+	q := url.Values{"per_page": {"50"}}
 	if accountID != "" {
 		q.Set("account.id", accountID)
 	}
@@ -332,7 +345,10 @@ func (c *cloudflare) ListZones(ctx context.Context, accountID string) ([]Zone, e
 	}
 	zones := make([]Zone, 0, len(out))
 	for _, z := range out {
-		zones = append(zones, Zone{ProviderID: z.ID, Name: z.Name})
+		if z.Status == domain.DNSZoneMoved {
+			continue
+		}
+		zones = append(zones, Zone{ProviderID: z.ID, Name: z.Name, Status: z.Status})
 	}
 	return zones, nil
 }

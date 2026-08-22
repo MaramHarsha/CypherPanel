@@ -200,6 +200,7 @@ type DnsZone struct {
 	ProviderZoneID string
 	Name           string
 	RefreshedAt    pgtype.Timestamptz
+	Status         string
 }
 
 type EmailChange struct {

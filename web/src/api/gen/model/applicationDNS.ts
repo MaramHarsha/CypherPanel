@@ -13,6 +13,8 @@ export interface ApplicationDNS {
   verified: boolean;
   /** The zone the domain matched */
   zone?: string;
+  /** That zone's activation state, so a verified domain that will not resolve yet says why. */
+  zone_status?: string;
   /** The connected zones, so a refusal can say what you do have. */
   available_zones: string[];
   domain: string;

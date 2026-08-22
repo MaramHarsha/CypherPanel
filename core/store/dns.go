@@ -53,7 +53,7 @@ func (s *Store) ListDNSZones(ctx context.Context) ([]domain.DNSZone, error) {
 
 func (s *Store) UpsertDNSZone(ctx context.Context, z domain.DNSZone) (domain.DNSZone, error) {
 	row, err := s.q.UpsertDNSZone(ctx, db.UpsertDNSZoneParams{
-		ID: z.ID, ProviderZoneID: z.ProviderZoneID, Name: z.Name,
+		ID: z.ID, ProviderZoneID: z.ProviderZoneID, Name: z.Name, Status: z.Status,
 	})
 	if err != nil {
 		return domain.DNSZone{}, wrapUpdate("upserting dns zone", err)
@@ -79,7 +79,8 @@ func (s *Store) DeleteDNSZonesNotIn(ctx context.Context, names []string) error {
 
 func dnsZoneFromRow(r db.DnsZone) domain.DNSZone {
 	return domain.DNSZone{
-		ID: r.ID, ProviderZoneID: r.ProviderZoneID, Name: r.Name, RefreshedAt: r.RefreshedAt.Time,
+		ID: r.ID, ProviderZoneID: r.ProviderZoneID, Name: r.Name,
+		Status: r.Status, RefreshedAt: r.RefreshedAt.Time,
 	}
 }
 

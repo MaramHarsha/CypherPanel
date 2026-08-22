@@ -156,7 +156,7 @@ func (q *Queries) GetDNSRecordByApplication(ctx context.Context, applicationID p
 }
 
 const getDNSZoneByName = `-- name: GetDNSZoneByName :one
-SELECT id, provider_zone_id, name, refreshed_at FROM dns_zones WHERE name = $1
+SELECT id, provider_zone_id, name, refreshed_at, status FROM dns_zones WHERE name = $1
 `
 
 func (q *Queries) GetDNSZoneByName(ctx context.Context, name string) (DnsZone, error) {
@@ -167,6 +167,7 @@ func (q *Queries) GetDNSZoneByName(ctx context.Context, name string) (DnsZone, e
 		&i.ProviderZoneID,
 		&i.Name,
 		&i.RefreshedAt,
+		&i.Status,
 	)
 	return i, err
 }
@@ -215,7 +216,7 @@ func (q *Queries) ListDNSRecordsForServer(ctx context.Context, runtimeServerID s
 
 const listDNSZones = `-- name: ListDNSZones :many
 
-SELECT id, provider_zone_id, name, refreshed_at FROM dns_zones ORDER BY name
+SELECT id, provider_zone_id, name, refreshed_at, status FROM dns_zones ORDER BY name
 `
 
 // ─── Zones (a cache of what the provider says we may manage) ────────────────
@@ -233,6 +234,7 @@ func (q *Queries) ListDNSZones(ctx context.Context) ([]DnsZone, error) {
 			&i.ProviderZoneID,
 			&i.Name,
 			&i.RefreshedAt,
+			&i.Status,
 		); err != nil {
 			return nil, err
 		}
@@ -528,27 +530,34 @@ func (q *Queries) UpsertDNSRecord(ctx context.Context, arg UpsertDNSRecordParams
 }
 
 const upsertDNSZone = `-- name: UpsertDNSZone :one
-INSERT INTO dns_zones (id, provider_zone_id, name, refreshed_at)
-VALUES ($1, $2, $3, now())
+INSERT INTO dns_zones (id, provider_zone_id, name, status, refreshed_at)
+VALUES ($1, $2, $3, $4, now())
 ON CONFLICT (name) DO UPDATE
-SET provider_zone_id = EXCLUDED.provider_zone_id, refreshed_at = now()
-RETURNING id, provider_zone_id, name, refreshed_at
+SET provider_zone_id = EXCLUDED.provider_zone_id, status = EXCLUDED.status, refreshed_at = now()
+RETURNING id, provider_zone_id, name, refreshed_at, status
 `
 
 type UpsertDNSZoneParams struct {
 	ID             string
 	ProviderZoneID string
 	Name           string
+	Status         string
 }
 
 func (q *Queries) UpsertDNSZone(ctx context.Context, arg UpsertDNSZoneParams) (DnsZone, error) {
-	row := q.db.QueryRow(ctx, upsertDNSZone, arg.ID, arg.ProviderZoneID, arg.Name)
+	row := q.db.QueryRow(ctx, upsertDNSZone,
+		arg.ID,
+		arg.ProviderZoneID,
+		arg.Name,
+		arg.Status,
+	)
 	var i DnsZone
 	err := row.Scan(
 		&i.ID,
 		&i.ProviderZoneID,
 		&i.Name,
 		&i.RefreshedAt,
+		&i.Status,
 	)
 	return i, err
 }

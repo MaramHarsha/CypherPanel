@@ -10,5 +10,7 @@ export interface DNSZone {
   id: string;
   /** The zone apex, e.g. example.com. */
   name: string;
+  /** The provider's activation state (initializing, pending, active). A non-active zone is still yours and still verifies a domain — it will not resolve until its nameservers point at the provider. */
+  status: string;
   refreshed_at: string;
 }

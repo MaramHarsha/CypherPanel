@@ -216,11 +216,16 @@ func (s *Service) Set(ctx context.Context, c Config) (Settings, error) {
 		return Settings{}, invalid("could not reach Cloudflare with this token: " + err.Error())
 	}
 	if len(zones) == 0 {
-		msg := "this token can see no zones — check it is scoped to the zones CypherPanel should manage"
+		// Two very different causes, and the operator can only act on the right
+		// one: either the account genuinely has no domains yet, or the token is
+		// scoped away from the ones it has. Name both rather than guessing.
+		where := "this Cloudflare account"
 		if c.AccountID != "" {
-			msg = "this token can see no zones in " + accountLabel(c) + " — check it is scoped to the zones CypherPanel should manage"
+			where = accountLabel(c)
 		}
-		return Settings{}, invalid(msg)
+		return Settings{}, invalid("no zones found in " + where +
+			" — add your domain in Cloudflare first, or check the token's Zone Resources include it. " +
+			"A domain that is still pending nameserver setup counts; one that has not been added at all does not")
 	}
 
 	blob, err := json.Marshal(c)
@@ -297,7 +302,7 @@ func (s *Service) cacheZones(ctx context.Context, zones []Zone) error {
 	names := make([]string, 0, len(zones))
 	for _, z := range zones {
 		if _, err := s.store.UpsertDNSZone(ctx, domain.DNSZone{
-			ID: ids.New(ids.PrefixDNSZone), ProviderZoneID: z.ProviderID, Name: z.Name,
+			ID: ids.New(ids.PrefixDNSZone), ProviderZoneID: z.ProviderID, Name: z.Name, Status: z.Status,
 		}); err != nil {
 			return fmt.Errorf("dns: caching zone %s: %w", z.Name, err)
 		}
@@ -344,6 +349,10 @@ type Verification struct {
 	Verified bool
 	// Zone is the matched zone name when Verified.
 	Zone string
+	// ZoneStatus is that zone's activation state. Verified and non-active is a
+	// real, common combination — you own the domain, it just does not resolve
+	// through Cloudflare yet.
+	ZoneStatus string
 	// AvailableZones is what the token CAN see, so a failure can say "here is
 	// what you do have" instead of just "no" (ui-principles §11).
 	AvailableZones []string
@@ -370,7 +379,7 @@ func (s *Service) Verify(ctx context.Context, host string) (Verification, error)
 		return v, nil
 	}
 	if z, ok := MatchZone(host, zones); ok {
-		v.Verified, v.Zone = true, z.Name
+		v.Verified, v.Zone, v.ZoneStatus = true, z.Name, z.Status
 	}
 	return v, nil
 }

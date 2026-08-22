@@ -203,8 +203,22 @@ type DNSZone struct {
 	ID             string
 	ProviderZoneID string
 	Name           string
-	RefreshedAt    time.Time
+	// Status is the provider's activation state: initializing, pending, active.
+	// A zone is YOURS regardless — ownership does not wait for nameservers — but
+	// a domain in a non-active zone does not resolve yet, and the operator has
+	// to be told that rather than left wondering (§3.2).
+	Status      string
+	RefreshedAt time.Time
 }
+
+// Zone activation states worth naming (Cloudflare's enum is initializing,
+// pending, active, moved).
+const (
+	DNSZoneActive = "active"
+	// DNSZoneMoved means the zone left this provider; it is no longer ours to
+	// manage and is not cached.
+	DNSZoneMoved = "moved"
+)
 
 // Desired states for a DNSRecord. There is deliberately no "status": what
 // should be true is Desired, and what IS true is ProviderRecordID (ADR-005
