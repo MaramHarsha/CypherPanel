@@ -23,3 +23,7 @@ resources:
         PUID: "1000"
         SUDO_PASSWORD: '{{secret.16}}'
         TZ: Europe/Madrid
+first_login:
+  kind: credentials
+  password_env: PASSWORD
+  note: "There is no username — code-server asks for the password alone. A separate sudo password was generated too, in the SUDO_PASSWORD variable."

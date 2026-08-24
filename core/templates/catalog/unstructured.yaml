@@ -15,3 +15,6 @@ resources:
         kind: tcp
       env:
         UNSTRUCTURED_API_KEY: '{{secret.16}}'
+first_login:
+  kind: none
+  note: "There is no sign-in — open the domain and use it."

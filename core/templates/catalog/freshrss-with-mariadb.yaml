@@ -28,3 +28,6 @@ resources:
         MARIADB_DB: '{{db.db.database}}'
         MARIADB_PASSWORD: '{{db.db.password}}'
         MARIADB_USER: '{{db.db.user}}'
+first_login:
+  kind: setup
+  note: "Open the domain and run the FreshRSS installer — it creates your admin account."

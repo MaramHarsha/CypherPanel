@@ -23,3 +23,6 @@ resources:
         DB_NAME: '{{db.db.database}}'
         DB_PASSWORD: '{{db.db.password}}'
         DB_USERNAME: root
+first_login:
+  kind: setup
+  note: "Open /index.php/installation on your domain to create the admin account."

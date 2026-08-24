@@ -144,6 +144,47 @@ func (a *API) projectIDForNotifier(ctx context.Context, notifierID string) (stri
 	return n.ProjectID, nil
 }
 
+func (a *API) projectIDForWebhookEndpoint(ctx context.Context, endpointID string) (string, error) {
+	if a.deps.WebhookEndpoints == nil {
+		return "", store.ErrNotFound
+	}
+	e, err := a.deps.WebhookEndpoints.Get(ctx, endpointID)
+	if err != nil {
+		return "", err
+	}
+	return e.ProjectID, nil
+}
+
+// projectIDForWebhookDelivery chains through the delivery's endpoint — a
+// delivery is only ever addressable by someone who can see the endpoint that
+// produced it (outbound-webhooks.md §6).
+func (a *API) projectIDForWebhookDelivery(ctx context.Context, deliveryID string) (string, error) {
+	if a.deps.WebhookEndpoints == nil {
+		return "", store.ErrNotFound
+	}
+	d, err := a.deps.WebhookEndpoints.GetDelivery(ctx, deliveryID)
+	if err != nil {
+		return "", err
+	}
+	return a.projectIDForWebhookEndpoint(ctx, d.EndpointID)
+}
+
+// projectIDForSharedVariable resolves straight to the owning project: a shared
+// variable is project-scoped even when narrowed to one environment, and read
+// and write both need domain.RoleMember — the rank an application's own env
+// vars already require, since they are the same class of secret
+// (shared-variables.md §6).
+func (a *API) projectIDForSharedVariable(ctx context.Context, id string) (string, error) {
+	if a.deps.SharedVariables == nil {
+		return "", store.ErrNotFound
+	}
+	v, err := a.deps.SharedVariables.Get(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	return v.ProjectID, nil
+}
+
 func (a *API) projectIDForScheduledTask(ctx context.Context, taskID string) (string, error) {
 	if a.deps.ScheduledTasks == nil {
 		return "", store.ErrNotFound

@@ -27,3 +27,6 @@ resources:
         GLPI_DB_PASSWORD: '{{db.db.password}}'
         GLPI_DB_PORT: "3306"
         GLPI_DB_USER: '{{db.db.user}}'
+first_login:
+  kind: setup
+  note: "Sign in with glpi / glpi, then change it and remove the install file as GLPI prompts."

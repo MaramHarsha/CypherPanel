@@ -555,3 +555,74 @@ func TestInitialDatabaseNameIsAnIdentifier(t *testing.T) {
 		}
 	}
 }
+
+// ── first login (template-catalog.md §4.1) ──────────────────────────────────
+
+// Every bundled template must say how to get into it. An install that ends at a
+// URL the operator cannot sign in to is the dead end ui-principles §11 forbids,
+// and it is what shipped: Grafana ran on its upstream admin/admin with nobody
+// told, and twenty-four templates had a password the panel generated and then
+// sealed where no one could read it.
+func TestEveryBundledTemplateSaysHowToSignIn(t *testing.T) {
+	s := newTestService(t, &fakeApps{}, &fakeDbs{}, &fakeDeployer{})
+	var missing []string
+	for _, tpl := range s.List() {
+		if tpl.FirstLogin == nil {
+			missing = append(missing, tpl.Slug)
+		}
+	}
+	if len(missing) > 0 {
+		t.Fatalf("%d templates declare no first_login: %v", len(missing), missing)
+	}
+}
+
+// A generated credential has to reach the install response, because that is the
+// only place it will ever appear. If this breaks, the app is unusable and
+// nothing says so.
+func TestInstallReturnsAGeneratedCredentialOnce(t *testing.T) {
+	apps, dbs, dep := &fakeApps{}, &fakeDbs{}, &fakeDeployer{}
+	s := newTestService(t, apps, dbs, dep)
+
+	// grafana-with-postgresql generates GF_SECURITY_ADMIN_PASSWORD.
+	res, err := s.Install(context.Background(), "grafana-with-postgresql", InstallInput{
+		EnvironmentID: "env_1", ServerID: "srv_1", Domain: "g.example.com",
+	})
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	fl := res.FirstLogin
+	if fl == nil {
+		t.Fatal("install returned no first_login for a template that generates a password")
+	}
+	if fl.Kind != FirstLoginCredentials || !fl.Generated {
+		t.Fatalf("first_login = %+v; want credentials, generated", fl)
+	}
+	if fl.Username != "admin" || fl.Password == "" {
+		t.Fatalf("first_login = %+v; want admin and a resolved password", fl)
+	}
+	// It must be the ACTUAL generated value, not the placeholder.
+	if strings.Contains(fl.Password, "{{") {
+		t.Fatalf("password %q was never resolved", fl.Password)
+	}
+	// And it must match what was sealed into the application's env.
+	if got := apps.created[0].EnvVars["GF_SECURITY_ADMIN_PASSWORD"]; got != fl.Password {
+		t.Fatalf("reported password %q does not match the one installed (%q)", fl.Password, got)
+	}
+}
+
+// An upstream default is not generated, and must be reported as such — the UI
+// tells the two apart, because one is public knowledge and the other is gone
+// the moment the dialog closes.
+func TestInstallReportsAnUpstreamDefaultAsNotGenerated(t *testing.T) {
+	s := newTestService(t, &fakeApps{}, &fakeDbs{}, &fakeDeployer{})
+	res, err := s.Install(context.Background(), "grafana", InstallInput{
+		EnvironmentID: "env_1", ServerID: "srv_1", Domain: "g.example.com",
+	})
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	fl := res.FirstLogin
+	if fl == nil || fl.Generated || fl.Username != "admin" || fl.Password != "admin" {
+		t.Fatalf("first_login = %+v; want Grafana's documented admin/admin, not generated", fl)
+	}
+}

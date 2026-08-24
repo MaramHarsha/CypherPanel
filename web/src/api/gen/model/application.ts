@@ -44,5 +44,7 @@ export interface Application {
   preview_base_domain?: string;
   /** Backstop lifetime for a preview whose PR never closes; defaults to 72 when unset. */
   preview_ttl_hours?: number;
+  /** Derived, never stored (shared-variables.md §5): a shared variable this application references changed after the environment it is running was frozen onto the wire. It is NOT a status word — the status vocabulary is closed — so render it as a badge beside the status, never in place of one. */
+  redeploy_pending?: boolean;
   created_at: string;
 }

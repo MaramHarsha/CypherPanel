@@ -20,3 +20,6 @@ resources:
       env:
         INSTALL4J_ADD_VM_PARAMS: -Xms2703m -Xmx2703m -XX:MaxDirectMemorySize=2703m -Djava.util.prefs.userRoot=/nexus-data/javaprefs
         NEXUS_SECURITY_RANDOMPASSWORD: "false"
+first_login:
+  kind: setup
+  note: "Sign in with admin and the password in /nexus-data/admin.password inside the container."

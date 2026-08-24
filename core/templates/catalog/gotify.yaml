@@ -27,3 +27,8 @@ resources:
         GOTIFY_REGISTRATION: "false"
         GOTIFY_SERVER_PORT: "80"
         GOTIFY_UPLOADEDIMAGESDIR: data/images
+first_login:
+  kind: credentials
+  username: admin
+  password_env: GOTIFY_DEFAULTUSER_PASS
+  note: "Change it under Users after signing in."

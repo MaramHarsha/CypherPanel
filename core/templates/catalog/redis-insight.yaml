@@ -24,3 +24,6 @@ resources:
         RI_FILES_LOGGER: "true"
         RI_LOG_LEVEL: info
         RI_STDOUT_LOGGER: "true"
+first_login:
+  kind: setup
+  note: "No sign-in; accept the licence terms and add your Redis connection."

@@ -105,6 +105,26 @@ type InstallInput struct {
 type InstallResult struct {
 	ApplicationIDs []string
 	DatabaseIDs    []string
+	// FirstLogin is how to get into what was just installed. It is returned
+	// ONCE, in the install response, and never stored anywhere readable — the
+	// same discipline a managed database's root password follows. A literal
+	// upstream default (admin/admin) is not a secret and could be shown any
+	// time; a generated one genuinely cannot be recovered, which is exactly why
+	// the response is the only place it appears.
+	FirstLogin *FirstLogin
+}
+
+// FirstLogin is the resolved, human-facing answer to "I installed it, now what?"
+type FirstLogin struct {
+	Kind          string
+	ApplicationID string
+	Username      string
+	Password      string
+	// Generated marks a password the panel invented rather than an upstream
+	// default. The UI has to treat the two differently: one is public knowledge
+	// about the image, the other is shown exactly once and is gone afterwards.
+	Generated bool
+	Note      string
 }
 
 // ValidationError marks operator-correctable install failures (bad name,
@@ -265,6 +285,11 @@ func (s *Service) Install(ctx context.Context, slug string, in InstallInput) (In
 
 	// 2. Applications: resolve placeholders, create as image-source apps.
 	var apps []domain.Application
+	// resolvedEnv keeps the plaintext env of each application for the length of
+	// this call only, so a generated credential can be reported back once. It is
+	// never returned wholesale and never stored — the sealed copy in the app's
+	// env vars is the durable one (§4).
+	resolvedEnv := map[string]map[string]string{}
 	for _, a := range tpl.Resources.Applications {
 		env := make(map[string]string, len(a.Env))
 		for k, v := range a.Env {
@@ -274,6 +299,7 @@ func (s *Service) Install(ctx context.Context, slug string, in InstallInput) (In
 			}
 			env[k] = rv
 		}
+		resolvedEnv[a.Name] = env
 		route := domain.AppRoute{}
 		if a.Route && in.Domain != "" {
 			route = domain.AppRoute{Domain: in.Domain, HTTPS: true}
@@ -316,6 +342,9 @@ func (s *Service) Install(ctx context.Context, slug string, in InstallInput) (In
 		}
 		apps = append(apps, created)
 	}
+
+	// Resolve the first-login answer while the plaintext env is still in hand.
+	res.FirstLogin = firstLoginFor(tpl, apps, resolvedEnv)
 
 	// 3. Deploys — the ordinary pipeline; image sources go straight to rollout.
 	for _, app := range apps {
@@ -464,4 +493,53 @@ func newSecret(n int) (string, error) {
 		return "", fmt.Errorf("templates: generating secret: %w", err)
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// firstLoginFor turns a template's declaration into the concrete answer for the
+// install that just happened: the application it applies to, and the actual
+// password when the panel generated one.
+//
+// Returns nil when the template says nothing, which is honest — an empty panel
+// is better than a confident wrong instruction about someone's admin account.
+func firstLoginFor(tpl Template, apps []domain.Application, env map[string]map[string]string) *FirstLogin {
+	fl := tpl.FirstLogin
+	if fl == nil || len(apps) == 0 {
+		return nil
+	}
+	// Which application: the named one, else the first routed one, else the
+	// first. A template with one app — nearly all of them — needs no name.
+	target := apps[0]
+	targetName := tpl.Resources.Applications[0].Name
+	for i, a := range tpl.Resources.Applications {
+		if i >= len(apps) {
+			break
+		}
+		if (fl.Application != "" && a.Name == fl.Application) ||
+			(fl.Application == "" && a.Route) {
+			target, targetName = apps[i], a.Name
+			break
+		}
+	}
+
+	out := &FirstLogin{
+		Kind:          fl.Kind,
+		ApplicationID: target.ID,
+		Username:      fl.Username,
+		Password:      fl.Password,
+		Note:          fl.Note,
+	}
+	// A generated value beats a literal: the literal is only ever a fallback.
+	if e := env[targetName]; e != nil {
+		if fl.UsernameEnv != "" {
+			if v, ok := e[fl.UsernameEnv]; ok && v != "" {
+				out.Username = v
+			}
+		}
+		if fl.PasswordEnv != "" {
+			if v, ok := e[fl.PasswordEnv]; ok && v != "" {
+				out.Password, out.Generated = v, true
+			}
+		}
+	}
+	return out
 }

@@ -28,3 +28,6 @@ resources:
         POSTGRES_USER: '{{db.db.user}}'
         REDIS_PASSWORD: '{{db.cache.password}}'
         SECRET_KEY: '{{secret.32}}'
+first_login:
+  kind: setup
+  note: "Sign in with admin / admin, then change it immediately under Settings."

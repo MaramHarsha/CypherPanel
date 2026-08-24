@@ -22,3 +22,6 @@ resources:
         APPSMITH_MAIL_ENABLED: "false"
         APPSMITH_SENTRY_DSN: ""
         APPSMITH_SMART_LOOK_ID: ""
+first_login:
+  kind: setup
+  note: "Open the domain and sign up — the first account becomes the instance admin."

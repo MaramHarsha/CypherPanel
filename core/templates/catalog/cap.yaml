@@ -32,3 +32,6 @@ resources:
         S3_PATH_STYLE: "true"
         S3_PUBLIC_ENDPOINT: ""
         WEB_URL: https://{{domain}}
+first_login:
+  kind: none
+  note: "There is no sign-in — open the domain and use it."

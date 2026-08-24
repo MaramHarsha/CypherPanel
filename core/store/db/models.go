@@ -24,6 +24,7 @@ type AppEnvVar struct {
 	Key           string
 	ValueCt       []byte
 	ValueNonce    []byte
+	SharedRefs    []string
 }
 
 type Application struct {
@@ -66,6 +67,7 @@ type Application struct {
 	Ports                 []byte
 	HealthKind            string
 	SourceImage           string
+	EnvAppliedAt          pgtype.Timestamptz
 }
 
 type BackupRecord struct {
@@ -166,6 +168,39 @@ type Deployment struct {
 	UpdatedAt       pgtype.Timestamptz
 	FinishedAt      pgtype.Timestamptz
 	BuilderServerID pgtype.Text
+	EnvResolvedAt   pgtype.Timestamptz
+}
+
+type DnsProvider struct {
+	ID          int32
+	Kind        string
+	ConfigCt    []byte
+	ConfigNonce []byte
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type DnsRecord struct {
+	ID               string
+	ApplicationID    pgtype.Text
+	ZoneID           string
+	Name             string
+	Type             string
+	Content          string
+	Desired          string
+	ProviderRecordID pgtype.Text
+	LastError        string
+	Attempt          int32
+	NextAttemptAt    pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+type DnsZone struct {
+	ID             string
+	ProviderZoneID string
+	Name           string
+	RefreshedAt    pgtype.Timestamptz
+	Status         string
 }
 
 type EmailChange struct {
@@ -184,6 +219,32 @@ type Environment struct {
 	Name      string
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
+}
+
+type InboxItem struct {
+	ID         string
+	UserID     string
+	ProjectID  string
+	Kind       string
+	Severity   string
+	Digest     bool
+	Title      string
+	Body       string
+	Link       string
+	LinkLabel  string
+	CountOk    int32
+	CountTotal int32
+	Sources    []string
+	DedupeKey  string
+	ReadAt     pgtype.Timestamptz
+	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+}
+
+type InboxPreference struct {
+	UserID     string
+	MutedKinds []string
+	UpdatedAt  pgtype.Timestamptz
 }
 
 type JoinToken struct {
@@ -277,17 +338,18 @@ type ScheduledTaskRun struct {
 }
 
 type Server struct {
-	ID           string
-	Name         string
-	Status       string
-	Driver       string
-	AgentVersion string
-	Hostname     string
-	EnrolledAt   pgtype.Timestamptz
-	LastSeenAt   pgtype.Timestamptz
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
-	Role         string
+	ID            string
+	Name          string
+	Status        string
+	Driver        string
+	AgentVersion  string
+	Hostname      string
+	EnrolledAt    pgtype.Timestamptz
+	LastSeenAt    pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+	Role          string
+	PublicAddress string
 }
 
 type Session struct {
@@ -296,6 +358,17 @@ type Session struct {
 	TokenHash []byte
 	ExpiresAt pgtype.Timestamptz
 	CreatedAt pgtype.Timestamptz
+}
+
+type SharedVariable struct {
+	ID            string
+	ProjectID     string
+	EnvironmentID pgtype.Text
+	Key           string
+	ValueCt       []byte
+	ValueNonce    []byte
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
 }
 
 type Team struct {
@@ -339,5 +412,42 @@ type UserAvatar struct {
 	ContentType string
 	Bytes       []byte
 	Etag        string
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type WebhookDelivery struct {
+	ID            string
+	EndpointID    string
+	EventType     string
+	ResourceKind  string
+	ResourceID    string
+	ResourceName  string
+	Payload       string
+	Status        string
+	Attempt       int32
+	NextAttemptAt pgtype.Timestamptz
+	RedeliveryOf  pgtype.Text
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
+type WebhookDeliveryAttempt struct {
+	DeliveryID     string
+	Attempt        int32
+	ResponseStatus pgtype.Int4
+	DurationMs     int32
+	Error          string
+	At             pgtype.Timestamptz
+}
+
+type WebhookEndpoint struct {
+	ID          string
+	ProjectID   string
+	Url         string
+	SecretCt    []byte
+	SecretNonce []byte
+	Events      []string
+	Enabled     bool
+	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
 }

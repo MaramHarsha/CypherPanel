@@ -23,3 +23,6 @@ resources:
         CREATE_SUPERUSER: admin:{{db.db.password}}
         DATABASE_URL: mysql://{{db.db.user}}:{{db.db.password}}@{{db.db.host}}:3306/{{db.db.database}}
         SECRET_KEY: '{{db.db.password}}'
+first_login:
+  kind: setup
+  note: "Open the domain and sign in with the credentials from the app's environment variables."

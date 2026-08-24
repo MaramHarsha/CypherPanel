@@ -20,3 +20,6 @@ resources:
         PGID: "1000"
         PUID: "1000"
         TZ: Europe/Madrid
+first_login:
+  kind: setup
+  note: "No sign-in by default; enable authentication in Heimdall's settings if you want one."

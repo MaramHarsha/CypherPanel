@@ -16,3 +16,6 @@ resources:
       volumes:
         - name: data
           path: /app/data
+first_login:
+  kind: setup
+  note: "Open the domain and create the admin account — Uptime Kuma asks on first visit."

@@ -21,3 +21,6 @@ resources:
         DATABASE_URL: "{{db.db.url}}"
         DATABASE_TYPE: postgresql
         APP_SECRET: "{{secret.32}}"
+first_login:
+  kind: setup
+  note: "Sign in with admin / umami, then change the password immediately under Settings."

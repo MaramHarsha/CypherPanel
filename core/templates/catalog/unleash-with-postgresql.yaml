@@ -26,3 +26,8 @@ resources:
         LOG_LEVEL: warn
         UNLEASH_DEFAULT_ADMIN_PASSWORD: '{{secret.16}}'
         UNLEASH_URL: https://{{domain}}
+first_login:
+  kind: credentials
+  username: admin
+  password_env: UNLEASH_DEFAULT_ADMIN_PASSWORD
+  note: "Change it under Admin → Users after signing in."

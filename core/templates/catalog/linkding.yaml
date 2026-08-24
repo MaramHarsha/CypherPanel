@@ -20,3 +20,8 @@ resources:
       env:
         LD_SUPERUSER_NAME: '{{secret.16}}'
         LD_SUPERUSER_PASSWORD: '{{secret.16}}'
+first_login:
+  kind: credentials
+  username_env: LD_SUPERUSER_NAME
+  password_env: LD_SUPERUSER_PASSWORD
+  note: "Both the username and the password were generated for this install."

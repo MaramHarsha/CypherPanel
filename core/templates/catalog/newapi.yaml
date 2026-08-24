@@ -27,3 +27,6 @@ resources:
         SESSION_SECRET: '{{secret.32}}'
         SQL_DSN: postgres://{{db.db.user}}:{{db.db.password}}@{{db.db.host}}:5432/{{db.db.database}}?sslmode=disable&TimeZone=Asia/Shanghai
         TZ: Asia/Shanghai
+first_login:
+  kind: setup
+  note: "Sign in with root / 123456, then change it immediately."

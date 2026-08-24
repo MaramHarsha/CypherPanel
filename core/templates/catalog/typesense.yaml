@@ -21,3 +21,6 @@ resources:
         TYPESENSE_API_KEY: ""
         TYPESENSE_DATA_DIR: /data
         TYPESENSE_ENABLE_CORS: "true"
+first_login:
+  kind: none
+  note: "There is no sign-in — open the domain and use it."

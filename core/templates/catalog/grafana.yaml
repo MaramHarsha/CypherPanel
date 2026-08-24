@@ -18,3 +18,8 @@ resources:
           path: /var/lib/grafana
       env:
         GF_SERVER_ROOT_URL: "https://{{domain}}"
+first_login:
+  kind: credentials
+  username: admin
+  password: admin
+  note: "Grafana's upstream default. It prompts you to change the password on first sign-in — do it, this app is on a public domain."

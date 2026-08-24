@@ -28,3 +28,6 @@ resources:
         GARAGE_S3_API_URL: ""
         GARAGE_WEB_URL: ""
         RUST_LOG: garage=info
+first_login:
+  kind: none
+  note: "There is no sign-in — open the domain and use it."

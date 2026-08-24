@@ -31,3 +31,8 @@ resources:
         DISPLAY_ERRORS: "FALSE"
         SITE_URL: https://{{domain}}
         TIMEZONE: UTC
+first_login:
+  kind: credentials
+  username: admin@example.com
+  password_env: ADMIN_PASS
+  note: "Sign in with the email above, then change both under Manage → Users."

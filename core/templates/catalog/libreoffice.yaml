@@ -20,3 +20,6 @@ resources:
         PGID: "1000"
         PUID: "1000"
         TZ: Etc/UTC
+first_login:
+  kind: none
+  note: "There is no sign-in — open the domain and use it."

@@ -22,3 +22,6 @@ resources:
         DATABASE_URL: postgres://{{db.db.user}}:{{db.db.password}}@{{db.db.host}}:5432/{{db.db.database}}
         SERVER_ADMIN_ACCESS_TOKEN: '{{secret.32}}'
         TZ: Europe/Amsterdam
+first_login:
+  kind: setup
+  note: "Open the domain and register — the first account becomes the admin."

@@ -17,3 +17,6 @@ resources:
       volumes:
         - name: firefox-config
           path: /config
+first_login:
+  kind: none
+  note: "There is no sign-in — open the domain and use it."

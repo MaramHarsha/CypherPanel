@@ -19,3 +19,6 @@ resources:
       env:
         PGADMIN_DEFAULT_EMAIL: ""
         PGADMIN_DEFAULT_PASSWORD: ""
+first_login:
+  kind: setup
+  note: "Set PGADMIN_DEFAULT_EMAIL and PGADMIN_DEFAULT_PASSWORD in the app's environment variables and redeploy — pgAdmin will not start until both are set."

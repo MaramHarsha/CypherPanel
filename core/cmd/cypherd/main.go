@@ -30,9 +30,11 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/config"
 	"github.com/MaramHarsha/cypherpanel/core/databases"
 	"github.com/MaramHarsha/cypherpanel/core/deploykeys"
+	"github.com/MaramHarsha/cypherpanel/core/dns"
 	"github.com/MaramHarsha/cypherpanel/core/enroll"
 	"github.com/MaramHarsha/cypherpanel/core/guard"
 	"github.com/MaramHarsha/cypherpanel/core/identity"
+	"github.com/MaramHarsha/cypherpanel/core/inbox"
 	"github.com/MaramHarsha/cypherpanel/core/mail"
 	"github.com/MaramHarsha/cypherpanel/core/notify"
 	"github.com/MaramHarsha/cypherpanel/core/onboarding"
@@ -43,10 +45,12 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/scheduler"
 	"github.com/MaramHarsha/cypherpanel/core/secret"
 	"github.com/MaramHarsha/cypherpanel/core/servers"
+	"github.com/MaramHarsha/cypherpanel/core/sharedvars"
 	"github.com/MaramHarsha/cypherpanel/core/status"
 	"github.com/MaramHarsha/cypherpanel/core/store"
 	"github.com/MaramHarsha/cypherpanel/core/teams"
 	"github.com/MaramHarsha/cypherpanel/core/templates"
+	"github.com/MaramHarsha/cypherpanel/core/webhooks"
 	"github.com/MaramHarsha/cypherpanel/pkg/pki"
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
 )
@@ -175,12 +179,41 @@ func run(log *slog.Logger) error {
 	// deployments from the agents' observed reports (ADR-005).
 	sched := scheduler.New(st, b, box, log)
 
+	// DNS automation (dns-automation.md). The verifier is what gates routing on
+	// domain ownership; with no provider configured it reports "not enforced"
+	// and every domain routes, exactly as before this feature existed.
+	dnsSvc := dns.New(st, box)
+	sched.SetDomainVerifier(dnsSvc)
+
+	// The notification inbox: the same observed outcomes, persisted per user and
+	// counted on a bell (notification-inbox.md). It is the one channel that
+	// needs no configuration, no webhook and no secret, so it hangs off the
+	// notify fan-out rather than adding a second event source — and its write
+	// runs BEFORE the notifier lookup, which is what makes the bell work on a
+	// panel with no channels configured at all.
+	inboxSvc := inbox.New(st, log)
+
 	// Notifications: terminal deploy/backup outcomes fan out to a project's
 	// configured channels (notifications.md). Delivery is best-effort and
 	// detached, so it never blocks the pipeline.
 	notifySvc := notify.NewService(st, box)
-	notifyMgr := notify.New(st, box, log)
-	sched.SetNotifier(notifyMgr)
+	notifyMgr := notify.New(st, box, log, inboxSvc)
+	sched.AddSink(notifyMgr)
+
+	// Outbound webhooks: the same terminal outcomes, POSTed as signed JSON to
+	// the operator's own systems, with a delivery id, bounded retry and a
+	// per-attempt record (outbound-webhooks.md). A second sink on the same
+	// seam — delivery is detached, so it never blocks the pipeline.
+	webhookMgr := webhooks.New(st, box, log)
+	webhookSvc := webhooks.NewService(st, box, webhookMgr)
+	sched.AddSink(webhookMgr)
+
+	// Project shared variables: one sealed value defined once per project (or
+	// per environment), referenced from any application's env vars as
+	// {{shared.KEY}} (shared-variables.md). It adds no path to the agent — the
+	// expansion happens inside the scheduler's existing sealed-env assembly —
+	// so this service is CRUD plus the used-by and drift read models.
+	sharedVarSvc := sharedvars.NewService(st, box)
 
 	// Scheduled tasks: cron declared on an app, run by the agent in the app's
 	// own container (scheduled-tasks.md, ADR-011). CRUD converges via the
@@ -211,6 +244,24 @@ func run(log *slog.Logger) error {
 	go func() {
 		defer wg.Done()
 		sched.RunBackupSweeper(ctx, cfg.SweepInterval)
+	}()
+
+	// Outbound webhook retries: next_attempt_at lives in Postgres and the
+	// delivery row is written before the first attempt, so a plane restart
+	// mid-backoff loses nothing (outbound-webhooks.md §4).
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		webhookMgr.RunRetrySweeper(ctx, cfg.SweepInterval)
+	}()
+
+	// DNS convergence: creates the records a verified domain needs, and — the
+	// half that actually leaks if it is missed — deletes the ones whose
+	// application, environment or project is gone (dns-automation.md §4.4).
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		dnsSvc.RunSweeper(ctx, cfg.SweepInterval, log)
 	}()
 
 	if err := sched.Recover(ctx); err != nil {
@@ -338,33 +389,39 @@ func run(log *slog.Logger) error {
 
 	// REST API + console.
 	api := rest.New(rest.Deps{
-		Auth:            authr,
-		Onboarding:      onboardSvc,
-		Servers:         serverSvc,
-		Projects:        projectSvc,
-		Applications:    appSvc,
-		DeployKeys:      deployKeySvc,
-		Databases:       dbSvc,
-		BackupTargets:   backupTargetSvc,
-		BackupSchedules: backupScheduleSvc,
-		Backups:         sched,
-		Previews:        previewMgr,
-		Notifiers:       notifySvc,
-		NotifyDelivery:  notifyMgr,
-		ScheduledTasks:  scheduledTaskSvc,
-		Templates:       templateSvc,
-		Teams:           teamSvc,
-		Mail:            mail.New(st, box),
-		Scheduler:       sched,
-		Deployments:     st,
-		Opener:          box,
-		Pinger:          st,
-		CACertPEM:       ca.CertPEM(),
-		EnrollAddr:      cfg.AdvertisedEnrollAddr(),
-		NATSURL:         cfg.AdvertisedNATSURL(),
-		Logs:            b,
-		ConsoleURL:      cfg.AdvertisedConsoleURL(),
-		Log:             log,
+		Auth:             authr,
+		Onboarding:       onboardSvc,
+		Servers:          serverSvc,
+		Projects:         projectSvc,
+		Applications:     appSvc,
+		DeployKeys:       deployKeySvc,
+		Databases:        dbSvc,
+		BackupTargets:    backupTargetSvc,
+		BackupSchedules:  backupScheduleSvc,
+		Backups:          sched,
+		Previews:         previewMgr,
+		Notifiers:        notifySvc,
+		NotifyDelivery:   notifyMgr,
+		ScheduledTasks:   scheduledTaskSvc,
+		WebhookEndpoints: webhookSvc,
+		Inbox:            inboxSvc,
+		SharedVariables:  sharedVarSvc,
+		Templates:        templateSvc,
+		Teams:            teamSvc,
+		Mail:             mail.New(st, box),
+		DNS:              dnsSvc,
+		DNSZones:         st,
+		ServerAddresses:  st,
+		Scheduler:        sched,
+		Deployments:      st,
+		Opener:           box,
+		Pinger:           st,
+		CACertPEM:        ca.CertPEM(),
+		EnrollAddr:       cfg.AdvertisedEnrollAddr(),
+		NATSURL:          cfg.AdvertisedNATSURL(),
+		Logs:             b,
+		ConsoleURL:       cfg.AdvertisedConsoleURL(),
+		Log:              log,
 	})
 	httpSrv := &http.Server{
 		Addr:              cfg.HTTPAddr,

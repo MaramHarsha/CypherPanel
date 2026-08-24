@@ -34,3 +34,6 @@ resources:
         initial_server_url: https://{{domain}}
         initial_ssh_root_url: ssh://changeme:22
         initial_user: '{{secret.16}}'
+first_login:
+  kind: setup
+  note: "Open the domain and complete OneDev's setup wizard — it creates the administrator."

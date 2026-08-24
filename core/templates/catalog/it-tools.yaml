@@ -17,3 +17,6 @@ resources:
       volumes:
         - name: it-tools-data
           path: /app/data
+first_login:
+  kind: none
+  note: "There is no sign-in — open the domain and use it."

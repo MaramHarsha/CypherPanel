@@ -28,3 +28,8 @@ resources:
         INFLUXDB_INIT_PASSWORD: '{{secret.16}}'
         INFLUXDB_INIT_RETENTION: "0"
         INFLUXDB_INIT_USERNAME: '{{secret.16}}'
+first_login:
+  kind: credentials
+  username_env: INFLUXDB_INIT_USERNAME
+  password_env: INFLUXDB_INIT_PASSWORD
+  note: "Both were generated for this install. The initial admin API token was generated too — read it from the app's environment variables."

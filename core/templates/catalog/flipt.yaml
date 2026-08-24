@@ -16,3 +16,6 @@ resources:
       volumes:
         - name: flipt-data
           path: /var/opt/flipt
+first_login:
+  kind: setup
+  note: "Open the domain; Flipt runs without authentication until you configure it."

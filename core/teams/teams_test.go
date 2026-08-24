@@ -17,6 +17,8 @@ type fakeStore struct {
 	users    map[string]domain.User                  // by id
 	byEmail  map[string]domain.User
 	projects map[string]int // teamID -> project count
+	// clearedInboxes is "<teamID>/<userID>" per inbox sweep, in call order.
+	clearedInboxes []string
 }
 
 func newFakeStore() *fakeStore {
@@ -93,6 +95,14 @@ func (f *fakeStore) ListTeamMembers(_ context.Context, teamID string) ([]domain.
 }
 func (f *fakeStore) DeleteTeamMember(_ context.Context, teamID, userID string) error {
 	delete(f.members[teamID], userID)
+	return nil
+}
+
+// clearedInboxes records the (team, user) pairs RemoveMember swept, so the test
+// can assert that leaving a team empties that team's items from the ex-member's
+// inbox (notification-inbox.md §4).
+func (f *fakeStore) DeleteInboxItemsForTeamMember(_ context.Context, teamID, userID string) error {
+	f.clearedInboxes = append(f.clearedInboxes, teamID+"/"+userID)
 	return nil
 }
 func (f *fakeStore) CountTeamOwners(_ context.Context, teamID string) (int64, error) {
@@ -195,6 +205,39 @@ func TestAdminCannotRemoveOwner(t *testing.T) {
 	err := svc.RemoveMember(ctx(), "tm_1", "usr_owner", domain.RoleAdmin)
 	if !errors.Is(err, ErrForbidden) {
 		t.Fatalf("admin removing owner: err = %v, want ErrForbidden", err)
+	}
+}
+
+// Acceptance 7 of notification-inbox.md §8: leaving a team empties that team's
+// items from the ex-member's inbox. The rule is "never hold an item for a team
+// you do not belong to", and a stale title naming a project you were just
+// removed from breaks it as surely as a live delivery would.
+func TestRemoveMemberClearsTheirInboxForThatTeam(t *testing.T) {
+	fs := newFakeStore()
+	fs.addMember("tm_1", "usr_owner", domain.RoleOwner)
+	fs.addMember("tm_1", "usr_member", domain.RoleMember)
+	svc := NewService(fs)
+
+	if err := svc.RemoveMember(ctx(), "tm_1", "usr_member", domain.RoleAdmin); err != nil {
+		t.Fatalf("RemoveMember: %v", err)
+	}
+	if len(fs.clearedInboxes) != 1 || fs.clearedInboxes[0] != "tm_1/usr_member" {
+		t.Fatalf("inbox sweeps = %v, want exactly [tm_1/usr_member]", fs.clearedInboxes)
+	}
+}
+
+// A removal that is refused must not touch anyone's inbox — the guard runs
+// first, so nothing has changed to clean up.
+func TestRefusedRemovalLeavesTheInboxAlone(t *testing.T) {
+	fs := newFakeStore()
+	fs.addMember("tm_1", "usr_owner", domain.RoleOwner)
+	svc := NewService(fs)
+
+	if err := svc.RemoveMember(ctx(), "tm_1", "usr_owner", domain.RoleOwner); !errors.Is(err, ErrLastOwner) {
+		t.Fatalf("removing last owner: err = %v, want ErrLastOwner", err)
+	}
+	if len(fs.clearedInboxes) != 0 {
+		t.Fatalf("inbox swept on a refused removal: %v", fs.clearedInboxes)
 	}
 }
 

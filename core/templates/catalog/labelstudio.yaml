@@ -35,3 +35,8 @@ resources:
         POSTGRE_PORT: "5432"
         POSTGRE_USER: '{{db.db.user}}'
         SSRF_PROTECTION_ENABLED: "true"
+first_login:
+  kind: credentials
+  username: admin@example.com
+  password_env: LABEL_STUDIO_PASSWORD
+  note: "Sign in with the email above; change it under Account & Settings."

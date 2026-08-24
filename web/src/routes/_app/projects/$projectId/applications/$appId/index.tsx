@@ -4,12 +4,12 @@
 // an action of their own — the domain check and the push-to-deploy webhook —
 // sit under them rather than competing with the facts for attention.
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ExternalLink } from "lucide-react";
 import { useCheckApplicationDomain, useGetApplication } from "@/api/gen/applications/applications";
 import { getHandleGithubWebhookUrl } from "@/api/gen/deployments/deployments";
 import { useGetServer } from "@/api/gen/servers/servers";
 import type { Application } from "@/api/gen/model";
 import { CopyField } from "@/components/copy-field";
+import { DomainLink } from "@/components/domain-link";
 import { Fact, FactCard } from "@/components/fact-card";
 import { PageState } from "@/components/page-state";
 import { StatusBadge, StatusDot } from "@/components/status-badge";
@@ -120,18 +120,7 @@ function OverviewTab() {
                 </Fact>
                 <Fact label="Container port">{a.runtime.port}</Fact>
                 <Fact label="Domain">
-                  {a.route.domain ? (
-                    <a
-                      href={`${a.route.https ? "https" : "http"}://${a.route.domain}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 text-accent hover:underline"
-                    >
-                      {a.route.domain} <ExternalLink className="h-3 w-3" aria-hidden />
-                    </a>
-                  ) : (
-                    "internal only"
-                  )}
+                  <DomainLink applicationId={appId} domain={a.route.domain ?? ""} https={a.route.https} />
                 </Fact>
                 {a.route.domain && a.route.path_prefix !== "/" && (
                   <Fact label="Path">{a.route.path_prefix}</Fact>

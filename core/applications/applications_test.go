@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/MaramHarsha/cypherpanel/core/domain"
@@ -24,6 +25,9 @@ type fakeStore struct {
 	servers map[string]bool
 	apps    map[string]domain.Application
 	envVars map[string][]domain.EnvVar // by appID
+	// sharedKeys are the shared-variable keys in force for every environment
+	// this fake knows about (shared-variables.md §3).
+	sharedKeys []string
 }
 
 func newFakeStore() *fakeStore {
@@ -85,7 +89,11 @@ func (f *fakeStore) GetEnvironment(_ context.Context, id string) (domain.Environ
 	if !f.envs[id] {
 		return domain.Environment{}, store.ErrNotFound
 	}
-	return domain.Environment{ID: id}, nil
+	return domain.Environment{ID: id, ProjectID: "prj_1", Name: "production"}, nil
+}
+
+func (f *fakeStore) ListSharedVariableKeysInScope(_ context.Context, _, _ string) ([]string, error) {
+	return f.sharedKeys, nil
 }
 
 func (f *fakeStore) GetServer(_ context.Context, id string) (domain.Server, error) {
@@ -101,6 +109,12 @@ func (f *fakeStore) GetServer(_ context.Context, id string) (domain.Server, erro
 }
 
 func (f *fakeStore) UpsertEnvVar(_ context.Context, appID string, v domain.EnvVar) error {
+	for i, cur := range f.envVars[appID] {
+		if cur.Key == v.Key {
+			f.envVars[appID][i] = v
+			return nil
+		}
+	}
 	f.envVars[appID] = append(f.envVars[appID], v)
 	return nil
 }
@@ -345,10 +359,11 @@ func TestEnvVarKeysAreWriteOnly(t *testing.T) {
 	if err := s.SetEnvVar(context.Background(), app.ID, "API_KEY", "supersecret"); err != nil {
 		t.Fatalf("SetEnvVar: %v", err)
 	}
-	keys, err := s.ListEnvVarKeys(context.Background(), app.ID)
+	view, err := s.ListEnv(context.Background(), app.ID)
 	if err != nil {
-		t.Fatalf("ListEnvVarKeys: %v", err)
+		t.Fatalf("ListEnv: %v", err)
 	}
+	keys := view.Keys
 	for _, k := range keys {
 		if k == "supersecret" {
 			t.Fatal("a value leaked into the keys list")
@@ -369,5 +384,143 @@ func TestSetEnvVarUnknownApp(t *testing.T) {
 	s := NewService(newFakeStore(), fakeSealer{})
 	if err := s.SetEnvVar(context.Background(), "app_missing", "K", "v"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("err = %v, want store.ErrNotFound", err)
+	}
+}
+
+// ─── Shared-variable references (shared-variables.md §3) ────────────────────
+//
+// The write is where strictness lives: a reference that is not well formed, or
+// that does not currently resolve, is a 400 and nothing is stored. Coolify
+// instead ships the literal `{{project.FOO}}` into the container — that is the
+// behaviour the spec says we pointedly do not port.
+
+func TestSetEnvVarRecordsSharedRefs(t *testing.T) {
+	fs := newFakeStore()
+	fs.sharedKeys = []string{"DB_PASS", "DB_USER", "SENTRY_DSN"}
+	s := NewService(fs, fakeSealer{})
+	app, _, err := s.Create(context.Background(), "env_1", validInput())
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	const value = "postgres://{{shared.DB_USER}}:{{shared.DB_PASS}}@db:5432/app"
+	if err := s.SetEnvVar(context.Background(), app.ID, "DATABASE_URL", value); err != nil {
+		t.Fatalf("SetEnvVar: %v", err)
+	}
+	view, err := s.ListEnv(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("ListEnv: %v", err)
+	}
+	refs := view.SharedRefs["DATABASE_URL"]
+	if len(refs) != 2 || refs[0] != "DB_USER" || refs[1] != "DB_PASS" {
+		t.Fatalf("shared_refs = %v, want [DB_USER DB_PASS]", refs)
+	}
+	// The reference wiring is cleartext key names; the value itself is sealed.
+	for _, v := range fs.envVars[app.ID] {
+		if v.Key == "DATABASE_URL" && string(v.ValueCT) != "sealed:"+value {
+			t.Fatalf("value was not sealed: %q", v.ValueCT)
+		}
+	}
+	// A value with no references records none, so the used-by count and the
+	// drift marker stay accurate when a reference is edited away.
+	if err := s.SetEnvVar(context.Background(), app.ID, "DATABASE_URL", "postgres://plain"); err != nil {
+		t.Fatalf("SetEnvVar (rewrite): %v", err)
+	}
+	view, err = s.ListEnv(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("ListEnv: %v", err)
+	}
+	if got := view.SharedRefs["DATABASE_URL"]; len(got) != 0 {
+		t.Fatalf("shared_refs after removing the references = %v, want none", got)
+	}
+}
+
+func TestSetEnvVarRejectsBadReferences(t *testing.T) {
+	cases := map[string]string{
+		"unknown key":      "{{shared.NOPE}}",
+		"inner whitespace": "{{ shared.SENTRY_DSN }}",
+		"empty key":        "{{shared.}}",
+		"other namespace":  "{{project.SENTRY_DSN}}",
+		"unterminated":     "{{shared.SENTRY_DSN",
+		"embedded unknown": "prefix-{{shared.NOPE}}-suffix",
+	}
+	for name, value := range cases {
+		t.Run(name, func(t *testing.T) {
+			fs := newFakeStore()
+			fs.sharedKeys = []string{"SENTRY_DSN"}
+			s := NewService(fs, fakeSealer{})
+			app, _, err := s.Create(context.Background(), "env_1", validInput())
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			before := len(fs.envVars[app.ID])
+			err = s.SetEnvVar(context.Background(), app.ID, "X", value)
+			var ve *ValidationError
+			if !errors.As(err, &ve) {
+				t.Fatalf("SetEnvVar(%q) = %v, want a ValidationError", value, err)
+			}
+			if len(fs.envVars[app.ID]) != before {
+				t.Fatal("a rejected env var was stored anyway")
+			}
+		})
+	}
+}
+
+// The rejection message names the env key and the shared key — both of which
+// the API already returns — and never the value (ENGINEERING rule 20).
+func TestReferenceErrorNamesKeysNotValues(t *testing.T) {
+	fs := newFakeStore()
+	s := NewService(fs, fakeSealer{})
+	app, _, err := s.Create(context.Background(), "env_1", validInput())
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	err = s.SetEnvVar(context.Background(), app.ID, "SENTRY_DSN", "swordfish{{shared.NOPE}}swordfish")
+	if err == nil {
+		t.Fatal("SetEnvVar accepted an unresolvable reference")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "swordfish") {
+		t.Fatalf("the value leaked into the error: %q", msg)
+	}
+	for _, want := range []string{"SENTRY_DSN", "NOPE", "production"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q does not name %q", msg, want)
+		}
+	}
+}
+
+// Create runs the same gate: an application cannot be born with an
+// unresolvable reference and discover it at its first deploy.
+func TestCreateRejectsUnresolvableEnvReference(t *testing.T) {
+	fs := newFakeStore()
+	s := NewService(fs, fakeSealer{})
+	in := validInput()
+	in.EnvVars = map[string]string{"SENTRY_DSN": "{{shared.NOPE}}"}
+	_, _, err := s.Create(context.Background(), "env_1", in)
+	var ve *ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("Create = %v, want a ValidationError", err)
+	}
+	if len(fs.apps) != 0 {
+		t.Fatal("the application was created despite the bad reference")
+	}
+}
+
+func TestCreateAcceptsResolvableEnvReference(t *testing.T) {
+	fs := newFakeStore()
+	fs.sharedKeys = []string{"SENTRY_DSN"}
+	s := NewService(fs, fakeSealer{})
+	in := validInput()
+	in.EnvVars = map[string]string{"SENTRY_DSN": "{{shared.SENTRY_DSN}}"}
+	app, _, err := s.Create(context.Background(), "env_1", in)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	view, err := s.ListEnv(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("ListEnv: %v", err)
+	}
+	if got := view.SharedRefs["SENTRY_DSN"]; len(got) != 1 || got[0] != "SENTRY_DSN" {
+		t.Fatalf("shared_refs = %v, want [SENTRY_DSN]", got)
 	}
 }

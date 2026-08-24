@@ -20,11 +20,14 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/databases"
 	"github.com/MaramHarsha/cypherpanel/core/deploykeys"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
+	"github.com/MaramHarsha/cypherpanel/core/inbox"
 	"github.com/MaramHarsha/cypherpanel/core/notify"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
 	"github.com/MaramHarsha/cypherpanel/core/scheduledtasks"
 	"github.com/MaramHarsha/cypherpanel/core/servers"
+	"github.com/MaramHarsha/cypherpanel/core/sharedvars"
 	"github.com/MaramHarsha/cypherpanel/core/templates"
+	"github.com/MaramHarsha/cypherpanel/core/webhooks"
 )
 
 // Pinger is the readiness dependency (the store).
@@ -86,6 +89,57 @@ type NotifierDelivery interface {
 	Deliver(ctx context.Context, n domain.Notifier, ev domain.NotifyEvent) error
 }
 
+// WebhookEndpointService is the outbound webhook surface — endpoint CRUD, the
+// derived Endpoint Health read model, the paged delivery log, ping and
+// redeliver (consumer-defined; *webhooks.Service satisfies it —
+// outbound-webhooks.md §7). Get and GetDelivery are also what the
+// authorization resolvers walk, so they stay plain lookups.
+type WebhookEndpointService interface {
+	Create(ctx context.Context, projectID string, in webhooks.CreateInput) (webhooks.Created, error)
+	Update(ctx context.Context, id string, in webhooks.UpdateInput) (webhooks.EndpointView, error)
+	Get(ctx context.Context, id string) (domain.WebhookEndpoint, error)
+	View(ctx context.Context, id string) (webhooks.EndpointView, error)
+	ListViews(ctx context.Context, projectID string) ([]webhooks.EndpointView, error)
+	Delete(ctx context.Context, id string) error
+	RotateSecret(ctx context.Context, id string) (string, error)
+	Ping(ctx context.Context, id string) (domain.WebhookDelivery, error)
+	Deliveries(ctx context.Context, endpointID string, limit int, before string) (webhooks.Page, error)
+	GetDelivery(ctx context.Context, id string) (domain.WebhookDelivery, error)
+	Redeliver(ctx context.Context, deliveryID string) (domain.WebhookDelivery, error)
+}
+
+// SharedVariableService is the project shared-variable surface — CRUD, the
+// used-by read model, and the derived "redeploy to apply" marker
+// (consumer-defined; *sharedvars.Service satisfies it — shared-variables.md
+// §7). Get is what the authorization resolver walks, so it stays a plain
+// lookup; every other read returns a View, which structurally cannot carry a
+// value.
+type SharedVariableService interface {
+	Create(ctx context.Context, projectID string, in sharedvars.CreateInput) (sharedvars.View, error)
+	Get(ctx context.Context, id string) (domain.SharedVariable, error)
+	View(ctx context.Context, id string) (sharedvars.View, error)
+	ListViews(ctx context.Context, projectID string) ([]sharedvars.View, error)
+	SetValue(ctx context.Context, id, value string) (sharedvars.View, error)
+	Delete(ctx context.Context, id string) error
+	UsedBy(ctx context.Context, id string) ([]domain.SharedVariableUsage, error)
+
+	RedeployPending(ctx context.Context, appID string) (bool, error)
+	PendingInEnvironment(ctx context.Context, envID string) (map[string]bool, error)
+}
+
+// InboxService is the notification inbox (consumer-defined; *inbox.Service
+// satisfies it — notification-inbox.md §6). Every method takes the caller's own
+// user id as its first argument and none accepts anyone else's: tenancy in this
+// feature is a column, which is why it adds no authorization resolver.
+type InboxService interface {
+	List(ctx context.Context, userID string, opts inbox.ListOptions) (inbox.Page, error)
+	UnreadCount(ctx context.Context, userID string) (int64, error)
+	MarkRead(ctx context.Context, userID, itemID string) error
+	MarkAllRead(ctx context.Context, userID string) (int64, error)
+	Preferences(ctx context.Context, userID string) (domain.InboxPreferences, error)
+	SetPreferences(ctx context.Context, userID string, muted []string) (domain.InboxPreferences, error)
+}
+
 // TeamService is the tenancy surface (consumer-defined; *teams.Service
 // satisfies it — teams-and-roles.md). RoleForProject/RoleInTeam are the authz
 // queries every project-scoped route runs; the rest back the /teams and /users
@@ -142,23 +196,32 @@ type OnboardingService interface {
 }
 
 type Deps struct {
-	Auth            *auth.Authenticator
-	Onboarding      OnboardingService
-	Servers         *servers.Service
-	Projects        *projects.Service
-	Applications    *applications.Service
-	DeployKeys      *deploykeys.Service
-	Databases       *databases.Service
-	BackupTargets   *databases.BackupTargetService
-	BackupSchedules *databases.BackupScheduleService
-	Backups         BackupOps
-	Previews        PreviewManager
-	Notifiers       NotifierService
-	NotifyDelivery  NotifierDelivery
-	ScheduledTasks  ScheduledTaskService
-	Templates       *templates.Service
-	Teams           TeamService
-	Mail            MailService
+	Auth             *auth.Authenticator
+	Onboarding       OnboardingService
+	Servers          *servers.Service
+	Projects         *projects.Service
+	Applications     *applications.Service
+	DeployKeys       *deploykeys.Service
+	Databases        *databases.Service
+	BackupTargets    *databases.BackupTargetService
+	BackupSchedules  *databases.BackupScheduleService
+	Backups          BackupOps
+	Previews         PreviewManager
+	Notifiers        NotifierService
+	NotifyDelivery   NotifierDelivery
+	WebhookEndpoints WebhookEndpointService
+	Inbox            InboxService
+	SharedVariables  SharedVariableService
+	ScheduledTasks   ScheduledTaskService
+	Templates        *templates.Service
+	Teams            TeamService
+	Mail             MailService
+	// DNS is the panel's DNS Provider; nil when DNS automation is not wired,
+	// which every handler treats as "nothing is enforced" (dns-automation.md §4.1).
+	DNS      DNSService
+	DNSZones DNSReader
+	// ServerAddresses records where a server's applications' DNS points.
+	ServerAddresses ServerAddressWriter
 	Scheduler       Deployer
 	Deployments     DeploymentReader
 	Opener          Opener
@@ -245,6 +308,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/servers", a.authed(a.handleListServers))
 	mux.HandleFunc("POST /api/v1/servers", a.authed(a.handleCreateServer))
 	mux.HandleFunc("GET /api/v1/servers/{id}", a.authed(a.handleGetServer))
+	mux.HandleFunc("PATCH /api/v1/servers/{id}", a.authed(a.handlePatchServer))
 	mux.HandleFunc("DELETE /api/v1/servers/{id}", a.authed(a.handleDeleteServer))
 
 	// Deploy keys.
@@ -273,6 +337,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/v1/applications/{id}", a.authed(a.handlePatchApplication))
 	mux.HandleFunc("DELETE /api/v1/applications/{id}", a.authed(a.handleDeleteApplication))
 	mux.HandleFunc("GET /api/v1/applications/{id}/domain-check", a.authed(a.handleCheckApplicationDomain))
+	mux.HandleFunc("GET /api/v1/applications/{id}/dns", a.authed(a.handleGetApplicationDNS))
 	mux.HandleFunc("GET /api/v1/applications/{id}/logs", a.authed(a.handleGetApplicationLogs))
 	mux.HandleFunc("GET /api/v1/applications/{id}/env", a.authed(a.handleListEnvVars))
 	mux.HandleFunc("PUT /api/v1/applications/{id}/env/{key}", a.authed(a.handleSetEnvVar))
@@ -308,6 +373,15 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/panel/mail", a.authed(a.handleDeletePanelMail))
 	mux.HandleFunc("POST /api/v1/panel/mail/test", a.authed(a.handleTestPanelMail))
 
+	// DNS automation (dns-automation.md §5). Panel-scoped like mail: a
+	// Cloudflare account is an operator-level asset, not a team's.
+	mux.HandleFunc("GET /api/v1/panel/dns", a.authed(a.handleGetPanelDNS))
+	mux.HandleFunc("PUT /api/v1/panel/dns", a.authed(a.handleSetPanelDNS))
+	mux.HandleFunc("DELETE /api/v1/panel/dns", a.authed(a.handleDeletePanelDNS))
+	mux.HandleFunc("POST /api/v1/panel/dns/test", a.authed(a.handleTestPanelDNS))
+	mux.HandleFunc("GET /api/v1/panel/dns/zones", a.authed(a.handleListDNSZones))
+	mux.HandleFunc("POST /api/v1/panel/dns/zones/refresh", a.authed(a.handleRefreshDNSZones))
+
 	mux.HandleFunc("POST /api/v1/backup-targets", a.authed(a.handleCreateBackupTarget))
 	mux.HandleFunc("GET /api/v1/backup-targets", a.authed(a.handleListBackupTargets))
 	mux.HandleFunc("GET /api/v1/backup-targets/{id}", a.authed(a.handleGetBackupTarget))
@@ -332,6 +406,46 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/v1/notifiers/{id}", a.authed(a.handlePatchNotifier))
 	mux.HandleFunc("DELETE /api/v1/notifiers/{id}", a.authed(a.handleDeleteNotifier))
 	mux.HandleFunc("POST /api/v1/notifiers/{id}/test", a.authed(a.handleTestNotifier))
+
+	// Phase 4: outbound webhooks (outbound-webhooks.md §7). Notifiers talk to
+	// people; these talk to machines. Nothing here triggers a deploy, so
+	// deployRoutes is untouched: reads need `read`, mutations — including ping
+	// and redeliver — need `write`.
+	mux.HandleFunc("POST /api/v1/projects/{id}/webhook-endpoints", a.authed(a.handleCreateWebhookEndpoint))
+	mux.HandleFunc("GET /api/v1/projects/{id}/webhook-endpoints", a.authed(a.handleListWebhookEndpoints))
+	mux.HandleFunc("GET /api/v1/webhook-endpoints/{id}", a.authed(a.handleGetWebhookEndpoint))
+	mux.HandleFunc("PATCH /api/v1/webhook-endpoints/{id}", a.authed(a.handlePatchWebhookEndpoint))
+	mux.HandleFunc("DELETE /api/v1/webhook-endpoints/{id}", a.authed(a.handleDeleteWebhookEndpoint))
+	mux.HandleFunc("POST /api/v1/webhook-endpoints/{id}/rotate-secret", a.authed(a.handleRotateWebhookSecret))
+	mux.HandleFunc("POST /api/v1/webhook-endpoints/{id}/ping", a.authed(a.handlePingWebhookEndpoint))
+	mux.HandleFunc("GET /api/v1/webhook-endpoints/{id}/deliveries", a.authed(a.handleListWebhookDeliveries))
+	mux.HandleFunc("POST /api/v1/webhook-deliveries/{id}/redeliver", a.authed(a.handleRedeliverWebhookDelivery))
+
+	// Phase 4: the notification inbox (notification-inbox.md §6). The
+	// collection is `/inbox`, not `/users/{id}/inbox`: the inbox is always the
+	// caller's, and the absence of an owner segment is what makes that
+	// guarantee syntactic. These are NOT sessionOnly — a token acts as its
+	// owner, so it reads and clears its owner's inbox and nobody else's, which
+	// is not credential management.
+	mux.HandleFunc("GET /api/v1/inbox", a.authed(a.handleListInbox))
+	mux.HandleFunc("GET /api/v1/inbox/unread-count", a.authed(a.handleInboxUnreadCount))
+	mux.HandleFunc("POST /api/v1/inbox/read-all", a.authed(a.handleMarkAllInboxRead))
+	mux.HandleFunc("POST /api/v1/inbox/{id}/read", a.authed(a.handleMarkInboxItemRead))
+	mux.HandleFunc("GET /api/v1/inbox/preferences", a.authed(a.handleGetInboxPreferences))
+	mux.HandleFunc("PUT /api/v1/inbox/preferences", a.authed(a.handlePutInboxPreferences))
+
+	// Phase 4: project shared variables (shared-variables.md §7). The
+	// collection hangs off the project because that is the scope that owns
+	// them; an environment-scoped variable is the same row with
+	// environment_id set, not a second collection. Nothing here triggers a
+	// deploy — a change is made VISIBLE as "redeploy to apply" rather than
+	// auto-applied (§5) — so deployRoutes is untouched.
+	mux.HandleFunc("POST /api/v1/projects/{id}/shared-variables", a.authed(a.handleCreateSharedVariable))
+	mux.HandleFunc("GET /api/v1/projects/{id}/shared-variables", a.authed(a.handleListSharedVariables))
+	mux.HandleFunc("GET /api/v1/shared-variables/{id}", a.authed(a.handleGetSharedVariable))
+	mux.HandleFunc("PATCH /api/v1/shared-variables/{id}", a.authed(a.handlePatchSharedVariable))
+	mux.HandleFunc("DELETE /api/v1/shared-variables/{id}", a.authed(a.handleDeleteSharedVariable))
+	mux.HandleFunc("GET /api/v1/shared-variables/{id}/used-by", a.authed(a.handleListSharedVariableUsage))
 
 	// Phase 3: scheduled tasks (scheduled-tasks.md §7).
 	mux.HandleFunc("POST /api/v1/applications/{id}/scheduled-tasks", a.authed(a.handleCreateScheduledTask))

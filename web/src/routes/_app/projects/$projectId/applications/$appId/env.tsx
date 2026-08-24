@@ -1,13 +1,22 @@
 // Application · Env vars: write-only values (ui-principles §6) — keys listed,
 // values never returned. Changes apply on the next deploy.
+//
+// A value may reference a project shared variable as {{shared.KEY}}
+// (shared-variables.md §7). The reference is shown under its key as cleartext
+// key names — that is not a reveal, it is the wiring, and the same names are
+// already in this response. When one of those shared values changes, the app
+// reads "redeploy to apply" until it is deployed again (§5), and the action
+// that resolves it is the one already on this screen.
 import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Plus, Trash2 } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import {
+  getGetApplicationQueryKey,
   getListEnvVarKeysQueryKey,
   useDeleteEnvVar,
+  useGetApplication,
   useListEnvVarKeys,
   useSetEnvVar,
 } from "@/api/gen/applications/applications";
@@ -15,6 +24,7 @@ import { getListDeploymentsQueryKey, useDeployApplication } from "@/api/gen/depl
 import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
 import { PageState } from "@/components/page-state";
+import { RedeployPending } from "@/components/redeploy-pending";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toastSuccess } from "@/lib/toast";
@@ -28,10 +38,16 @@ function EnvTab() {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const keys = useListEnvVarKeys(appId);
+  const app = useGetApplication(appId);
   const [newKey, setNewKey] = useState("");
   const [newValue, setNewValue] = useState("");
 
-  const invalidate = () => void qc.invalidateQueries({ queryKey: getListEnvVarKeysQueryKey(appId) });
+  const invalidate = () => {
+    void qc.invalidateQueries({ queryKey: getListEnvVarKeysQueryKey(appId) });
+    // The drift marker rides on the application, so a write that adds or drops
+    // a {{shared.KEY}} reference changes it too.
+    void qc.invalidateQueries({ queryKey: getGetApplicationQueryKey(appId) });
+  };
 
   const deploy = useDeployApplication({
     mutation: {
@@ -91,9 +107,22 @@ function EnvTab() {
         <Eyebrow>Env vars</Eyebrow>
         <p className="mt-1 text-[13px] text-text-mid">
           Injected into the container at deploy time. Values are sealed and write-only — they can be replaced, never read
-          back.
+          back. A value may reference a project shared variable as{" "}
+          <code className="mono text-[11.5px] text-text">{"{{shared.KEY}}"}</code>.
         </p>
       </div>
+
+      {app.data?.redeploy_pending && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-status-degraded/35 bg-status-degraded/[0.06] px-3 py-2">
+          <span className="flex items-center gap-2 text-[13px] text-text">
+            <RedeployPending />
+            <span>A shared variable this app reads has changed since its last deploy.</span>
+          </span>
+          <Button size="sm" variant="primary" disabled={deploy.isPending} onClick={() => deploy.mutate({ id: appId, data: {} })}>
+            Deploy now
+          </Button>
+        </div>
+      )}
 
       <PageState
         query={keys}
@@ -106,6 +135,7 @@ function EnvTab() {
               <EnvRow
                 key={k}
                 name={k}
+                refs={d.shared_refs?.[k] ?? []}
                 onSave={(value) => setVar.mutate({ id: appId, key: k, data: { value } })}
                 onDelete={() => deleteVar.mutate({ id: appId, key: k })}
               />
@@ -150,13 +180,30 @@ function EnvTab() {
   );
 }
 
-function EnvRow({ name, onSave, onDelete }: { name: string; onSave: (value: string) => void; onDelete: () => void }) {
+function EnvRow({
+  name,
+  refs,
+  onSave,
+  onDelete,
+}: {
+  name: string;
+  refs: string[];
+  onSave: (value: string) => void;
+  onDelete: () => void;
+}) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState("");
 
   return (
     <li className="flex items-center justify-between gap-3 px-3 py-2">
-      <span className="mono min-w-0 truncate text-[13px] text-text">{name}</span>
+      <span className="flex min-w-0 flex-col gap-0.5">
+        <span className="mono truncate text-[13px] text-text">{name}</span>
+        {refs.length > 0 && (
+          <span className="mono truncate text-[11px] text-text-faint">
+            reads {refs.map((r) => `{{shared.${r}}}`).join(" ")}
+          </span>
+        )}
+      </span>
       <span className="flex shrink-0 items-center gap-1.5">
         {editing ? (
           <>

@@ -25,3 +25,8 @@ resources:
         DATABASE_URL: postgres://{{db.db.user}}:{{db.db.password}}@{{db.db.host}}:5432/{{db.db.database}}?sslmode=disable
         PORT: "8080"
         RUN_MIGRATIONS: "1"
+first_login:
+  kind: credentials
+  username_env: ADMIN_USERNAME
+  password_env: ADMIN_PASSWORD
+  note: "Both the username and the password were generated for this install — there is no default to fall back on."

@@ -196,6 +196,7 @@ func (s *Store) CreateApplicationWithEnv(ctx context.Context, a domain.Applicati
 			Key:           v.Key,
 			ValueCt:       v.ValueCT,
 			ValueNonce:    v.ValueNonce,
+			SharedRefs:    refsColumn(v.SharedRefs),
 		}); err != nil {
 			return domain.Application{}, wrapCreate("creating env var", err)
 		}
@@ -374,11 +375,22 @@ func (s *Store) UpsertEnvVar(ctx context.Context, appID string, v domain.EnvVar)
 		Key:           v.Key,
 		ValueCt:       v.ValueCT,
 		ValueNonce:    v.ValueNonce,
+		SharedRefs:    refsColumn(v.SharedRefs),
 	})
 	if err != nil {
 		return wrapCreate("upserting env var", err)
 	}
 	return nil
+}
+
+// refsColumn normalises a nil ref slice to the empty array the column defaults
+// to, so a rewrite that drops every {{shared.…}} reference clears the row
+// rather than writing NULL into a NOT NULL column.
+func refsColumn(refs []string) []string {
+	if refs == nil {
+		return []string{}
+	}
+	return refs
 }
 
 func (s *Store) ListEnvVars(ctx context.Context, appID string) ([]domain.EnvVar, error) {
@@ -388,7 +400,7 @@ func (s *Store) ListEnvVars(ctx context.Context, appID string) ([]domain.EnvVar,
 	}
 	out := make([]domain.EnvVar, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, domain.EnvVar{Key: r.Key, ValueCT: r.ValueCt, ValueNonce: r.ValueNonce})
+		out = append(out, domain.EnvVar{Key: r.Key, ValueCT: r.ValueCt, ValueNonce: r.ValueNonce, SharedRefs: r.SharedRefs})
 	}
 	return out, nil
 }
@@ -703,4 +715,10 @@ func ptrFromText(t pgtype.Text) *string {
 	}
 	v := t.String
 	return &v
+}
+
+// pgText is textFromPtr for a value that is always present — a comparison
+// operand rather than a nullable column.
+func pgText(s string) pgtype.Text {
+	return pgtype.Text{String: s, Valid: true}
 }

@@ -872,3 +872,734 @@ func TestStoreBackupRetentionPrune(t *testing.T) {
 		t.Fatalf("remaining records = %d, want 2 (the newest two)", len(remaining))
 	}
 }
+
+// TestStoreWebhookEndpointRoundtrip exercises the outbound-webhook tables
+// against real Postgres: the TEXT[] events column and its ANY(events) filter,
+// the sealed BYTEA pair, the UNIQUE (project_id, url) guard, the composite
+// attempt key's idempotence, seek paging, retention pruning, and the cascades
+// (outbound-webhooks.md §2, §6, §7).
+func TestStoreWebhookEndpointRoundtrip(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	_, proj, _, _ := seedApp(t, s)
+
+	target := "https://ops.meridian.dev/hooks/" + ids.Secret()
+	e, err := s.CreateWebhookEndpoint(ctx, domain.WebhookEndpoint{
+		ID:          ids.New(ids.PrefixWebhookEndpoint),
+		ProjectID:   proj.ID,
+		URL:         target,
+		SecretCT:    []byte("sealed-signing-secret"),
+		SecretNonce: []byte("nonce"),
+		Events:      []string{domain.EventDeployFailed, domain.EventBackupFailed},
+		Enabled:     true,
+	})
+	if err != nil {
+		t.Fatalf("CreateWebhookEndpoint: %v", err)
+	}
+	if len(e.Events) != 2 || e.Events[0] != domain.EventDeployFailed {
+		t.Fatalf("events not round-tripped: %+v", e.Events)
+	}
+	if string(e.SecretCT) != "sealed-signing-secret" {
+		t.Fatalf("sealed secret not round-tripped: %q", e.SecretCT)
+	}
+
+	// The URL is the endpoint's identity: a second one on the same URL would
+	// silently double every delivery (spec section 2).
+	if _, err := s.CreateWebhookEndpoint(ctx, domain.WebhookEndpoint{
+		ID: ids.New(ids.PrefixWebhookEndpoint), ProjectID: proj.ID, URL: target,
+		SecretCT: []byte("x"), SecretNonce: []byte("n"),
+		Events: []string{domain.EventDeployFailed}, Enabled: true,
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate URL = %v, want ErrConflict", err)
+	}
+
+	// The event filter matches a subscribed event and excludes an unsubscribed
+	// one; disabling removes it from the query but keeps the row.
+	got, err := s.ListEnabledWebhookEndpointsForEvent(ctx, proj.ID, domain.EventDeployFailed)
+	if err != nil {
+		t.Fatalf("ListEnabledWebhookEndpointsForEvent: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != e.ID {
+		t.Fatalf("event filter = %+v, want the one subscribed endpoint", got)
+	}
+	if none, err := s.ListEnabledWebhookEndpointsForEvent(ctx, proj.ID, domain.EventDeploySucceeded); err != nil || len(none) != 0 {
+		t.Fatalf("unsubscribed event = %+v, %v, want empty", none, err)
+	}
+	e.Enabled = false
+	if _, err := s.UpdateWebhookEndpoint(ctx, e); err != nil {
+		t.Fatalf("UpdateWebhookEndpoint: %v", err)
+	}
+	if disabled, _ := s.ListEnabledWebhookEndpointsForEvent(ctx, proj.ID, domain.EventDeployFailed); len(disabled) != 0 {
+		t.Fatalf("disabled endpoint still matched: %+v", disabled)
+	}
+	e.Enabled = true
+	if _, err := s.UpdateWebhookEndpoint(ctx, e); err != nil {
+		t.Fatalf("re-enabling: %v", err)
+	}
+
+	// Rotating replaces the sealed pair in place, with no overlap window.
+	rotated, err := s.RotateWebhookEndpointSecret(ctx, e.ID, []byte("sealed-v2"), []byte("nonce2"))
+	if err != nil {
+		t.Fatalf("RotateWebhookEndpointSecret: %v", err)
+	}
+	if string(rotated.SecretCT) != "sealed-v2" {
+		t.Fatalf("rotate did not replace the secret: %q", rotated.SecretCT)
+	}
+
+	// One delivery with its attempts: response_status is nullable (a transport
+	// error has none), and the composite PK makes a repeat insert a conflict
+	// the manager reads as "already recorded" (ENGINEERING rule 12).
+	due := time.Now().Add(-time.Minute)
+	d, err := s.CreateWebhookDelivery(ctx, domain.WebhookDelivery{
+		ID:            ids.New(ids.PrefixWebhookDelivery),
+		EndpointID:    e.ID,
+		EventType:     domain.EventDeployFailed,
+		ResourceKind:  domain.WebhookResourceApplication,
+		ResourceID:    "app_gone_tomorrow",
+		ResourceName:  "web",
+		Payload:       `{"event":"deploy.failed"}`,
+		Status:        domain.DeliveryPending,
+		Attempt:       1,
+		NextAttemptAt: &due,
+	})
+	if err != nil {
+		t.Fatalf("CreateWebhookDelivery: %v", err)
+	}
+	if d.NextAttemptAt == nil || d.RedeliveryOf != nil {
+		t.Fatalf("nullable columns not round-tripped: %+v", d)
+	}
+	code := 500
+	if _, err := s.CreateWebhookDeliveryAttempt(ctx, domain.WebhookDeliveryAttempt{
+		DeliveryID: d.ID, Attempt: 1, ResponseStatus: &code, DurationMS: 84,
+	}); err != nil {
+		t.Fatalf("CreateWebhookDeliveryAttempt: %v", err)
+	}
+	if _, err := s.CreateWebhookDeliveryAttempt(ctx, domain.WebhookDeliveryAttempt{
+		DeliveryID: d.ID, Attempt: 1, DurationMS: 1,
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("repeat attempt insert = %v, want ErrConflict", err)
+	}
+	if _, err := s.CreateWebhookDeliveryAttempt(ctx, domain.WebhookDeliveryAttempt{
+		DeliveryID: d.ID, Attempt: 2, DurationMS: 12, Error: "dial tcp: connection refused",
+	}); err != nil {
+		t.Fatalf("CreateWebhookDeliveryAttempt(2): %v", err)
+	}
+	attempts, err := s.ListWebhookDeliveryAttempts(ctx, d.ID)
+	if err != nil {
+		t.Fatalf("ListWebhookDeliveryAttempts: %v", err)
+	}
+	if len(attempts) != 2 || attempts[0].ResponseStatus == nil || *attempts[0].ResponseStatus != 500 {
+		t.Fatalf("attempts = %+v, want two with the first carrying 500", attempts)
+	}
+	if attempts[1].ResponseStatus != nil {
+		t.Fatalf("transport-error attempt has response_status %v, want NULL", attempts[1].ResponseStatus)
+	}
+
+	// The partial due index feeds the retry sweeper; a terminal delivery drops
+	// out of it.
+	dueRows, err := s.ListDueWebhookDeliveries(ctx, time.Now(), 50)
+	if err != nil {
+		t.Fatalf("ListDueWebhookDeliveries: %v", err)
+	}
+	if !containsDelivery(dueRows, d.ID) {
+		t.Fatalf("due list %+v missing the pending delivery", dueRows)
+	}
+	// The progress write is a compare-and-set on the attempt the caller started
+	// from. A stale writer — the loser of the sweeper/first-attempt race — must
+	// not be able to move the row, or it could flip a delivery that already
+	// succeeded back to pending for another round of retries.
+	if _, err := s.UpdateWebhookDeliveryProgress(ctx, d.ID, domain.DeliverySucceeded, 0, 1, nil); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("stale progress write = %v, want ErrNotFound", err)
+	}
+	if _, err := s.UpdateWebhookDeliveryProgress(ctx, d.ID, domain.DeliveryFailed, 1, 2, nil); err != nil {
+		t.Fatalf("UpdateWebhookDeliveryProgress: %v", err)
+	}
+	dueRows, _ = s.ListDueWebhookDeliveries(ctx, time.Now(), 50)
+	if containsDelivery(dueRows, d.ID) {
+		t.Fatal("a terminal delivery is still due")
+	}
+
+	// Health input and last-delivery time.
+	statuses, err := s.ListRecentTerminalWebhookDeliveryStatuses(ctx, e.ID, 10)
+	if err != nil {
+		t.Fatalf("ListRecentTerminalWebhookDeliveryStatuses: %v", err)
+	}
+	if len(statuses) != 1 || statuses[0] != domain.DeliveryFailed {
+		t.Fatalf("terminal statuses = %v, want [failed]", statuses)
+	}
+	last, err := s.LastWebhookDeliveryAt(ctx, e.ID)
+	if err != nil || last == nil {
+		t.Fatalf("LastWebhookDeliveryAt = %v, %v, want a time", last, err)
+	}
+
+	// Seek paging over 120 deliveries: 50 + 50 + 20, no repeats, no gaps.
+	const extra = 119
+	for i := 0; i < extra; i++ {
+		if _, err := s.CreateWebhookDelivery(ctx, domain.WebhookDelivery{
+			ID: ids.New(ids.PrefixWebhookDelivery), EndpointID: e.ID,
+			EventType: domain.EventDeployFailed, ResourceKind: domain.WebhookResourceApplication,
+			ResourceID: "app_x", ResourceName: "web", Payload: "{}", Status: domain.DeliverySucceeded,
+		}); err != nil {
+			t.Fatalf("CreateWebhookDelivery(%d): %v", i, err)
+		}
+	}
+	seen := map[string]bool{}
+	before := ""
+	for pages := 1; ; pages++ {
+		var rows []domain.WebhookDelivery
+		if before == "" {
+			rows, err = s.ListWebhookDeliveriesByEndpoint(ctx, e.ID, 50)
+		} else {
+			rows, err = s.ListWebhookDeliveriesBefore(ctx, e.ID, before, 50)
+		}
+		if err != nil {
+			t.Fatalf("paging: %v", err)
+		}
+		for _, r := range rows {
+			if seen[r.ID] {
+				t.Fatalf("delivery %s repeated across pages", r.ID)
+			}
+			seen[r.ID] = true
+		}
+		if len(rows) < 50 {
+			break
+		}
+		before = rows[len(rows)-1].ID
+		if pages > 5 {
+			t.Fatal("paging did not terminate")
+		}
+	}
+	if len(seen) != extra+1 {
+		t.Fatalf("paged %d deliveries, want %d with no gaps", len(seen), extra+1)
+	}
+
+	// Retention: pruning to 100 drops the oldest, and their attempts cascade.
+	if err := s.DeleteOldWebhookDeliveries(ctx, e.ID, 100); err != nil {
+		t.Fatalf("DeleteOldWebhookDeliveries: %v", err)
+	}
+	kept, err := s.ListWebhookDeliveriesByEndpoint(ctx, e.ID, 500)
+	if err != nil {
+		t.Fatalf("ListWebhookDeliveriesByEndpoint: %v", err)
+	}
+	if len(kept) != 100 {
+		t.Fatalf("kept %d deliveries, want 100 after the prune", len(kept))
+	}
+	if _, err := s.GetWebhookDelivery(ctx, d.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("the oldest delivery survived the prune: %v", err)
+	}
+	if pruned, err := s.ListWebhookDeliveryAttempts(ctx, d.ID); err != nil || len(pruned) != 0 {
+		t.Fatalf("attempts = %+v, %v, want cascaded away with their delivery", pruned, err)
+	}
+
+	// Deleting the endpoint cascades its deliveries; deleting the project
+	// cascades the endpoint.
+	survivor := kept[0].ID
+	if err := s.DeleteWebhookEndpoint(ctx, e.ID); err != nil {
+		t.Fatalf("DeleteWebhookEndpoint: %v", err)
+	}
+	if _, err := s.GetWebhookDelivery(ctx, survivor); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("delivery survived its endpoint: %v", err)
+	}
+
+	second, err := s.CreateWebhookEndpoint(ctx, domain.WebhookEndpoint{
+		ID: ids.New(ids.PrefixWebhookEndpoint), ProjectID: proj.ID,
+		URL:      "https://ops.meridian.dev/hooks/" + ids.Secret(),
+		SecretCT: []byte("ct"), SecretNonce: []byte("n"),
+		Events: []string{domain.EventDeploySucceeded}, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateWebhookEndpoint(second): %v", err)
+	}
+	if err := s.DeleteProject(ctx, proj.ID); err != nil {
+		t.Fatalf("DeleteProject: %v", err)
+	}
+	if _, err := s.GetWebhookEndpoint(ctx, second.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("endpoint survived the project cascade: %v", err)
+	}
+}
+
+func containsDelivery(rows []domain.WebhookDelivery, id string) bool {
+	for _, r := range rows {
+		if r.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// TestStoreInboxRoundtrip exercises the notification-inbox tables against real
+// Postgres (ENGINEERING rule 29): the TEXT[] columns, the recipient join that
+// carries the tenancy guarantee, the mute filter, the digest upsert and its
+// redelivery guard, the unread count, the two mark verbs, seek paging, the
+// prune, the team-removal sweep and the cascades (notification-inbox.md §2,
+// §4, §6).
+func TestStoreInboxRoundtrip(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	// Two teams, one member each — acceptance 1's shape.
+	teamA, err := s.CreateTeam(ctx, ids.New(ids.PrefixTeam), "inbox-a-"+ids.Secret()[:8])
+	if err != nil {
+		t.Fatalf("CreateTeam(a): %v", err)
+	}
+	teamB, err := s.CreateTeam(ctx, ids.New(ids.PrefixTeam), "inbox-b-"+ids.Secret()[:8])
+	if err != nil {
+		t.Fatalf("CreateTeam(b): %v", err)
+	}
+	userA, err := s.CreateUser(ctx, ids.New(ids.PrefixUser), "a-"+ids.Secret()[:8]+"@example.test", "hash", domain.RoleMember)
+	if err != nil {
+		t.Fatalf("CreateUser(a): %v", err)
+	}
+	userB, err := s.CreateUser(ctx, ids.New(ids.PrefixUser), "b-"+ids.Secret()[:8]+"@example.test", "hash", domain.RoleMember)
+	if err != nil {
+		t.Fatalf("CreateUser(b): %v", err)
+	}
+	quiet, err := s.CreateUser(ctx, ids.New(ids.PrefixUser), "q-"+ids.Secret()[:8]+"@example.test", "hash", domain.RoleMember)
+	if err != nil {
+		t.Fatalf("CreateUser(quiet): %v", err)
+	}
+	for _, m := range []struct{ team, user string }{
+		{teamA.ID, userA.ID}, {teamA.ID, quiet.ID}, {teamB.ID, userB.ID},
+	} {
+		if _, err := s.UpsertTeamMember(ctx, m.team, m.user, domain.RoleMember); err != nil {
+			t.Fatalf("UpsertTeamMember: %v", err)
+		}
+	}
+	projA, _, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject),
+		"inbox-proj-"+ids.Secret()[:8], teamA.ID, ids.New(ids.PrefixEnvironment), "production")
+	if err != nil {
+		t.Fatalf("CreateProjectWithEnvironment: %v", err)
+	}
+
+	// Preferences default to absent, which must read as "everything on".
+	prefs, err := s.GetInboxPreferences(ctx, quiet.ID)
+	if err != nil {
+		t.Fatalf("GetInboxPreferences (absent row): %v", err)
+	}
+	if len(prefs.MutedKinds) != 0 {
+		t.Fatalf("absent preferences = %v, want empty", prefs.MutedKinds)
+	}
+	if _, err := s.SetInboxPreferences(ctx, quiet.ID, []string{domain.EventBackupSucceeded}); err != nil {
+		t.Fatalf("SetInboxPreferences: %v", err)
+	}
+
+	// The recipient join is the whole tenancy guarantee: team A's project
+	// resolves to team A's members and nobody else, and the mute filter drops
+	// exactly the muter.
+	recipients, err := s.ListInboxRecipients(ctx, projA.ID, domain.EventBackupFailed)
+	if err != nil {
+		t.Fatalf("ListInboxRecipients: %v", err)
+	}
+	if len(recipients) != 2 || !containsString(recipients, userA.ID) || !containsString(recipients, quiet.ID) {
+		t.Fatalf("recipients = %v, want both members of team A", recipients)
+	}
+	if containsString(recipients, userB.ID) {
+		t.Fatal("a member of another team was resolved as a recipient")
+	}
+	muted, err := s.ListInboxRecipients(ctx, projA.ID, domain.EventBackupSucceeded)
+	if err != nil {
+		t.Fatalf("ListInboxRecipients (muted kind): %v", err)
+	}
+	if len(muted) != 1 || muted[0] != userA.ID {
+		t.Fatalf("recipients for a muted kind = %v, want only the unmuting member", muted)
+	}
+
+	// An immediate item per recipient, then the same observation again: the
+	// (user_id, dedupe_key) unique index makes redelivery a no-op (rule 12).
+	fail := InboxFanout{
+		IDs:       []string{ids.New(ids.PrefixInboxItem), ids.New(ids.PrefixInboxItem)},
+		UserIDs:   []string{userA.ID, quiet.ID},
+		ProjectID: projA.ID,
+		Kind:      domain.EventBackupFailed,
+		Severity:  string(domain.NotifyError),
+		Title:     "Backup failed: atlas-pg",
+		Body:      "Database atlas-pg backup failed.",
+		Link:      "/projects/" + projA.ID + "/databases/db_x/backups",
+		LinkLabel: "View backups",
+		DedupeKey: domain.EventBackupFailed + ":br_1",
+		FocusID:   "br_1",
+	}
+	if err := s.InsertInboxItems(ctx, fail); err != nil {
+		t.Fatalf("InsertInboxItems: %v", err)
+	}
+	fail.IDs = []string{ids.New(ids.PrefixInboxItem), ids.New(ids.PrefixInboxItem)}
+	if err := s.InsertInboxItems(ctx, fail); err != nil {
+		t.Fatalf("InsertInboxItems (redelivery): %v", err)
+	}
+	if n, err := s.CountUnreadInboxItems(ctx, userA.ID); err != nil || n != 1 {
+		t.Fatalf("unread after redelivery = %d, %v, want 1", n, err)
+	}
+	if n, _ := s.CountUnreadInboxItems(ctx, userB.ID); n != 0 {
+		t.Fatalf("the other team's member has %d items, want 0", n)
+	}
+
+	// The digest: created by the first success, incremented by the second, and
+	// left alone by a third carrying a source already rolled in.
+	digestKey := "digest:" + domain.EventBackupSucceeded + ":" + projA.ID + ":2026-08-21"
+	ok := InboxFanout{
+		IDs: []string{ids.New(ids.PrefixInboxItem)}, UserIDs: []string{userA.ID},
+		ProjectID: projA.ID, Kind: domain.EventBackupSucceeded,
+		Severity: string(domain.NotifyInfo), Title: "Backups",
+		DedupeKey: digestKey, FocusID: "br_2",
+	}
+	if err := s.UpsertInboxDigests(ctx, ok); err != nil {
+		t.Fatalf("UpsertInboxDigests: %v", err)
+	}
+	ok.IDs, ok.FocusID = []string{ids.New(ids.PrefixInboxItem)}, "br_3"
+	if err := s.UpsertInboxDigests(ctx, ok); err != nil {
+		t.Fatalf("UpsertInboxDigests (second): %v", err)
+	}
+	ok.IDs = []string{ids.New(ids.PrefixInboxItem)}
+	if err := s.UpsertInboxDigests(ctx, ok); err != nil {
+		t.Fatalf("UpsertInboxDigests (redelivery): %v", err)
+	}
+	digest := findByDedupe(t, s, userA.ID, digestKey)
+	if digest.CountOK != 2 || digest.CountTotal != 2 {
+		t.Fatalf("digest counters = %d/%d after a redelivered success, want 2/2", digest.CountOK, digest.CountTotal)
+	}
+	if len(digest.Sources) != 2 {
+		t.Fatalf("digest sources = %v, want two distinct entries", digest.Sources)
+	}
+	if !digest.Digest || digest.Link != "" {
+		t.Fatalf("digest row shape wrong: %+v", digest)
+	}
+
+	// A failure raises the denominator on the existing digest and never creates
+	// one — the honest "2/3 succeeded".
+	if err := s.BumpInboxDigestTotals(ctx, digestKey, "br_4"); err != nil {
+		t.Fatalf("BumpInboxDigestTotals: %v", err)
+	}
+	if err := s.BumpInboxDigestTotals(ctx, digestKey, "br_4"); err != nil {
+		t.Fatalf("BumpInboxDigestTotals (redelivery): %v", err)
+	}
+	digest = findByDedupe(t, s, userA.ID, digestKey)
+	if digest.CountOK != 2 || digest.CountTotal != 3 {
+		t.Fatalf("digest counters = %d/%d after a failure, want 2/3", digest.CountOK, digest.CountTotal)
+	}
+	absentKey := "digest:" + domain.EventDeploySucceeded + ":" + projA.ID + ":2026-08-21"
+	if err := s.BumpInboxDigestTotals(ctx, absentKey, "dep_1"); err != nil {
+		t.Fatalf("BumpInboxDigestTotals (no digest): %v", err)
+	}
+	if rows, _ := s.ListInboxItems(ctx, userA.ID, false, 50); len(rows) != 2 {
+		t.Fatalf("items = %d, want 2 — a failure must not conjure a digest", len(rows))
+	}
+
+	// Seek paging: page two is strictly older, with no overlap.
+	page1, err := s.ListInboxItems(ctx, userA.ID, false, 1)
+	if err != nil || len(page1) != 1 {
+		t.Fatalf("first page = %v, %v", page1, err)
+	}
+	page2, err := s.ListInboxItemsBefore(ctx, userA.ID, false, page1[0].ID, 5)
+	if err != nil {
+		t.Fatalf("ListInboxItemsBefore: %v", err)
+	}
+	if len(page2) != 1 || page2[0].ID == page1[0].ID {
+		t.Fatalf("second page = %+v, want the one older row", page2)
+	}
+	// A cursor that is not the caller's own yields an empty page, never a
+	// restart at the newest row.
+	if rows, err := s.ListInboxItemsBefore(ctx, userB.ID, false, page1[0].ID, 5); err != nil || len(rows) != 0 {
+		t.Fatalf("foreign cursor = %+v, %v, want empty", rows, err)
+	}
+
+	// Marking: one, then all. Items stay listed; another user's item is not
+	// addressable at all.
+	if _, err := s.MarkInboxItemRead(ctx, userA.ID, page1[0].ID); err != nil {
+		t.Fatalf("MarkInboxItemRead: %v", err)
+	}
+	again, err := s.MarkInboxItemRead(ctx, userA.ID, page1[0].ID)
+	if err != nil {
+		t.Fatalf("MarkInboxItemRead (idempotent): %v", err)
+	}
+	if again.ReadAt == nil {
+		t.Fatal("re-marking cleared read_at")
+	}
+	if _, err := s.MarkInboxItemRead(ctx, userB.ID, page1[0].ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("marking another user's item = %v, want ErrNotFound", err)
+	}
+	unread, err := s.ListInboxItems(ctx, userA.ID, true, 50)
+	if err != nil {
+		t.Fatalf("ListInboxItems (unread): %v", err)
+	}
+	if len(unread) != 1 {
+		t.Fatalf("unread items = %d, want 1", len(unread))
+	}
+	marked, err := s.MarkAllInboxItemsRead(ctx, userA.ID)
+	if err != nil || marked != 1 {
+		t.Fatalf("MarkAllInboxItemsRead = %d, %v, want 1", marked, err)
+	}
+	if all, _ := s.ListInboxItems(ctx, userA.ID, false, 50); len(all) != 2 {
+		t.Fatalf("items after marking all read = %d, want 2 — reading is not deleting", len(all))
+	}
+
+	// The prune keeps the newest N per user, in one statement across users.
+	for i := 0; i < 4; i++ {
+		if err := s.InsertInboxItems(ctx, InboxFanout{
+			IDs: []string{ids.New(ids.PrefixInboxItem)}, UserIDs: []string{userA.ID},
+			ProjectID: projA.ID, Kind: domain.EventDeployFailed,
+			Severity: string(domain.NotifyError), Title: "Deploy failed: web",
+			DedupeKey: domain.EventDeployFailed + ":dep_" + ids.Secret()[:8],
+		}); err != nil {
+			t.Fatalf("InsertInboxItems (bulk): %v", err)
+		}
+	}
+	if err := s.PruneInboxItems(ctx, []string{userA.ID, quiet.ID}, 3); err != nil {
+		t.Fatalf("PruneInboxItems: %v", err)
+	}
+	if rows, _ := s.ListInboxItems(ctx, userA.ID, false, 50); len(rows) != 3 {
+		t.Fatalf("items after prune = %d, want 3", len(rows))
+	}
+	if rows, _ := s.ListInboxItems(ctx, quiet.ID, false, 50); len(rows) != 1 {
+		t.Fatalf("under-cap user pruned to %d, want their 1 item untouched", len(rows))
+	}
+
+	// Leaving a team empties that team's items and leaves everyone else's.
+	if err := s.DeleteInboxItemsForTeamMember(ctx, teamA.ID, quiet.ID); err != nil {
+		t.Fatalf("DeleteInboxItemsForTeamMember: %v", err)
+	}
+	if rows, _ := s.ListInboxItems(ctx, quiet.ID, false, 50); len(rows) != 0 {
+		t.Fatalf("ex-member still holds %d items", len(rows))
+	}
+	if rows, _ := s.ListInboxItems(ctx, userA.ID, false, 50); len(rows) != 3 {
+		t.Fatalf("a teammate's items were swept too: %d remain, want 3", len(rows))
+	}
+
+	// Deleting the project cascades the rest; deleting the user takes their
+	// preferences with them.
+	if err := s.DeleteProject(ctx, projA.ID); err != nil {
+		t.Fatalf("DeleteProject: %v", err)
+	}
+	if rows, _ := s.ListInboxItems(ctx, userA.ID, false, 50); len(rows) != 0 {
+		t.Fatalf("%d items survived the project cascade", len(rows))
+	}
+	if err := s.DeleteUser(ctx, quiet.ID); err != nil {
+		t.Fatalf("DeleteUser: %v", err)
+	}
+	after, err := s.GetInboxPreferences(ctx, quiet.ID)
+	if err != nil {
+		t.Fatalf("preferences lookup after user delete: %v", err)
+	}
+	if len(after.MutedKinds) != 0 {
+		t.Fatalf("preferences survived the user cascade: %v", after.MutedKinds)
+	}
+}
+
+func containsString(xs []string, x string) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+func findByDedupe(t *testing.T, s *Store, userID, dedupeKey string) domain.InboxItem {
+	t.Helper()
+	rows, err := s.ListInboxItems(context.Background(), userID, false, 100)
+	if err != nil {
+		t.Fatalf("ListInboxItems: %v", err)
+	}
+	for _, r := range rows {
+		if r.DedupeKey == dedupeKey {
+			return r
+		}
+	}
+	t.Fatalf("no item with dedupe key %q in %d rows", dedupeKey, len(rows))
+	return domain.InboxItem{}
+}
+
+// TestStoreSharedVariableRoundtrip is acceptance §9.8 plus the two read models
+// the feature is really about: a scope-accurate used-by count and the derived
+// "redeploy to apply" marker (shared-variables.md §5, §7). It exercises
+// NULLS NOT DISTINCT, which cannot be tested anywhere but a real PostgreSQL.
+func TestStoreSharedVariableRoundtrip(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	_, proj, prod, app := seedApp(t, s)
+
+	staging, err := s.CreateEnvironment(ctx, ids.New(ids.PrefixEnvironment), proj.ID, "staging")
+	if err != nil {
+		t.Fatalf("CreateEnvironment: %v", err)
+	}
+
+	// Project scope and environment scope, same key: both must persist.
+	projectVar, err := s.CreateSharedVariable(ctx, domain.SharedVariable{
+		ID:         ids.New(ids.PrefixSharedVariable),
+		ProjectID:  proj.ID,
+		Key:        "SMTP_HOST",
+		ValueCT:    []byte("ct-project"),
+		ValueNonce: []byte("n1"),
+	})
+	if err != nil {
+		t.Fatalf("CreateSharedVariable (project scope): %v", err)
+	}
+	if projectVar.EnvironmentID != nil {
+		t.Fatalf("environment_id = %v, want nil at project scope", projectVar.EnvironmentID)
+	}
+	prodID := prod.ID
+	scopedVar, err := s.CreateSharedVariable(ctx, domain.SharedVariable{
+		ID:            ids.New(ids.PrefixSharedVariable),
+		ProjectID:     proj.ID,
+		EnvironmentID: &prodID,
+		Key:           "SMTP_HOST",
+		ValueCT:       []byte("ct-production"),
+		ValueNonce:    []byte("n2"),
+	})
+	if err != nil {
+		t.Fatalf("CreateSharedVariable (environment scope): %v", err)
+	}
+
+	// A duplicate of either is a conflict. The project-scope case is the one
+	// NULLS NOT DISTINCT exists for: under default semantics NULL <> NULL, so
+	// this insert would succeed and resolution would become order-dependent.
+	if _, err := s.CreateSharedVariable(ctx, domain.SharedVariable{
+		ID: ids.New(ids.PrefixSharedVariable), ProjectID: proj.ID, Key: "SMTP_HOST",
+		ValueCT: []byte("x"), ValueNonce: []byte("x"),
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate project-scoped row = %v, want ErrConflict", err)
+	}
+	if _, err := s.CreateSharedVariable(ctx, domain.SharedVariable{
+		ID: ids.New(ids.PrefixSharedVariable), ProjectID: proj.ID, EnvironmentID: &prodID, Key: "SMTP_HOST",
+		ValueCT: []byte("x"), ValueNonce: []byte("x"),
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate environment-scoped row = %v, want ErrConflict", err)
+	}
+
+	// Resolution: the environment row shadows the project row in production,
+	// and staging (which has no row of its own) sees the project row.
+	inProd, err := s.ListSharedVariablesInScope(ctx, proj.ID, prod.ID)
+	if err != nil {
+		t.Fatalf("ListSharedVariablesInScope: %v", err)
+	}
+	if len(inProd) != 1 || string(inProd[0].ValueCT) != "ct-production" {
+		t.Fatalf("production scope = %+v, want only the shadowing row", inProd)
+	}
+	inStaging, err := s.ListSharedVariablesInScope(ctx, proj.ID, staging.ID)
+	if err != nil {
+		t.Fatalf("ListSharedVariablesInScope: %v", err)
+	}
+	if len(inStaging) != 1 || string(inStaging[0].ValueCT) != "ct-project" {
+		t.Fatalf("staging scope = %+v, want the project-scoped row", inStaging)
+	}
+	keys, err := s.ListSharedVariableKeysInScope(ctx, proj.ID, staging.ID)
+	if err != nil {
+		t.Fatalf("ListSharedVariableKeysInScope: %v", err)
+	}
+	if len(keys) != 1 || keys[0] != "SMTP_HOST" {
+		t.Fatalf("keys in scope = %v, want [SMTP_HOST]", keys)
+	}
+
+	// Usage: seedApp's application lives in production, so a reference from it
+	// counts against the SHADOWING row and not against the project-scoped one.
+	if err := s.UpsertEnvVar(ctx, app.ID, domain.EnvVar{
+		Key: "SMTP_HOST", ValueCT: []byte("ct"), ValueNonce: []byte("n"), SharedRefs: []string{"SMTP_HOST"},
+	}); err != nil {
+		t.Fatalf("UpsertEnvVar: %v", err)
+	}
+	if n, err := s.CountSharedVariableUsage(ctx, scopedVar.ID); err != nil || n != 1 {
+		t.Fatalf("environment-scoped usage = %d, %v; want 1", n, err)
+	}
+	if n, err := s.CountSharedVariableUsage(ctx, projectVar.ID); err != nil || n != 0 {
+		t.Fatalf("project-scoped usage = %d, %v; want 0 (the app's environment shadows the key)", n, err)
+	}
+	counts, err := s.CountSharedVariableUsageByProject(ctx, proj.ID)
+	if err != nil {
+		t.Fatalf("CountSharedVariableUsageByProject: %v", err)
+	}
+	if counts[scopedVar.ID] != 1 || counts[projectVar.ID] != 0 {
+		t.Fatalf("counts = %v, want the shadowing row credited with the use", counts)
+	}
+	usage, err := s.ListSharedVariableUsage(ctx, scopedVar.ID)
+	if err != nil {
+		t.Fatalf("ListSharedVariableUsage: %v", err)
+	}
+	if len(usage) != 1 || usage[0].ApplicationID != app.ID || usage[0].EnvironmentName != "production" {
+		t.Fatalf("usage = %+v, want the one application in production", usage)
+	}
+	if !usage[0].RedeployPending {
+		t.Fatal("an application that never applied a resolved environment must read as pending")
+	}
+
+	// The env-var round trip carries the cleartext ref list back.
+	vars, err := s.ListEnvVars(ctx, app.ID)
+	if err != nil {
+		t.Fatalf("ListEnvVars: %v", err)
+	}
+	found := false
+	for _, v := range vars {
+		if v.Key == "SMTP_HOST" {
+			found = true
+			if len(v.SharedRefs) != 1 || v.SharedRefs[0] != "SMTP_HOST" {
+				t.Fatalf("shared_refs = %v, want [SMTP_HOST]", v.SharedRefs)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("the referencing env var did not round-trip")
+	}
+
+	// Drift: the marker clears only when a deployment's resolved-environment
+	// stamp is copied onto the application, and only for a stamped deployment.
+	if pending, err := s.ApplicationRedeployPending(ctx, app.ID); err != nil || !pending {
+		t.Fatalf("redeploy pending = %v, %v; want true before anything was applied", pending, err)
+	}
+	rev, err := s.CreateRevision(ctx, ids.New(ids.PrefixRevision), app.ID, "abc", []byte("{}"))
+	if err != nil {
+		t.Fatalf("CreateRevision: %v", err)
+	}
+	dep, err := s.CreateDeployment(ctx, ids.New(ids.PrefixDeployment), app.ID, rev.ID, "manual")
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	// An unstamped deployment must not be able to mark the app clean.
+	if err := s.ApplyDeploymentEnvStamp(ctx, dep.ID); err != nil {
+		t.Fatalf("ApplyDeploymentEnvStamp (unstamped): %v", err)
+	}
+	if pending, err := s.ApplicationRedeployPending(ctx, app.ID); err != nil || !pending {
+		t.Fatalf("redeploy pending = %v, %v; an unstamped deployment must not clear it", pending, err)
+	}
+	if err := s.SetDeploymentEnvResolved(ctx, dep.ID); err != nil {
+		t.Fatalf("SetDeploymentEnvResolved: %v", err)
+	}
+	if err := s.ApplyDeploymentEnvStamp(ctx, dep.ID); err != nil {
+		t.Fatalf("ApplyDeploymentEnvStamp: %v", err)
+	}
+	if pending, err := s.ApplicationRedeployPending(ctx, app.ID); err != nil || pending {
+		t.Fatalf("redeploy pending = %v, %v; want false once the environment was applied", pending, err)
+	}
+	if pendingIDs, err := s.ListRedeployPendingApplications(ctx, prod.ID); err != nil || len(pendingIDs) != 0 {
+		t.Fatalf("pending in production = %v, %v; want none", pendingIDs, err)
+	}
+
+	// A write moves updated_at past the applied stamp, so every referencing
+	// application goes pending again — even when the plaintext is unchanged.
+	if _, err := s.UpdateSharedVariableValue(ctx, scopedVar.ID, []byte("ct-production-2"), []byte("n3")); err != nil {
+		t.Fatalf("UpdateSharedVariableValue: %v", err)
+	}
+	if pending, err := s.ApplicationRedeployPending(ctx, app.ID); err != nil || !pending {
+		t.Fatalf("redeploy pending = %v, %v; want true after the variable changed", pending, err)
+	}
+	pendingIDs, err := s.ListRedeployPendingApplications(ctx, prod.ID)
+	if err != nil || len(pendingIDs) != 1 || pendingIDs[0] != app.ID {
+		t.Fatalf("pending in production = %v, %v; want [%s]", pendingIDs, err, app.ID)
+	}
+
+	// Delete cascades: dropping the environment removes only its scoped row.
+	if err := s.DeleteEnvironment(ctx, prod.ID); err != nil {
+		t.Fatalf("DeleteEnvironment: %v", err)
+	}
+	if _, err := s.GetSharedVariable(ctx, scopedVar.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("environment-scoped row after env delete = %v, want ErrNotFound", err)
+	}
+	if _, err := s.GetSharedVariable(ctx, projectVar.ID); err != nil {
+		t.Fatalf("project-scoped row must survive its sibling environment's deletion: %v", err)
+	}
+
+	// Dropping the project removes what is left.
+	if err := s.DeleteProject(ctx, proj.ID); err != nil {
+		t.Fatalf("DeleteProject: %v", err)
+	}
+	if _, err := s.GetSharedVariable(ctx, projectVar.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("project-scoped row after project delete = %v, want ErrNotFound", err)
+	}
+}

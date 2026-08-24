@@ -27,3 +27,6 @@ resources:
         CORE_RETURN_HTTPS: "false"
         CORE_SECRET: '{{secret.32}}'
         DATABASE_URL: postgres://{{db.db.user}}:{{db.db.password}}@{{db.db.host}}/{{db.db.database}}
+first_login:
+  kind: setup
+  note: "Sign in with administrator / password, then change it immediately."

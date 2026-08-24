@@ -21,3 +21,6 @@ resources:
       env:
         ADMIN_KEY: '{{secret.16}}'
         REDIS_URL: redis://:{{db.cache.password}}@{{db.cache.host}}:6379
+first_login:
+  kind: none
+  note: "There is no sign-in — open the domain and use it."

@@ -21,3 +21,6 @@ resources:
           path: /var/www/FreshRSS/extensions
       env:
         CRON_MIN: 1,31
+first_login:
+  kind: setup
+  note: "Open the domain and run the FreshRSS installer — it creates your admin account."

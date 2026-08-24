@@ -19,3 +19,6 @@ resources:
           path: /var/www/html/images
         - name: mediawiki-sqlite
           path: /var/www/html/data
+first_login:
+  kind: setup
+  note: "Open the domain and run the MediaWiki setup — it creates your admin account and writes LocalSettings.php."

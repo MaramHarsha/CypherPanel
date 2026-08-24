@@ -16,3 +16,6 @@ resources:
       volumes:
         - name: vvveb-data
           path: /var/www/html
+first_login:
+  kind: setup
+  note: "Open the domain and run the Vvveb installer."

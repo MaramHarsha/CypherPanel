@@ -25,3 +25,6 @@ resources:
         WORDPRESS_DB_NAME: '{{db.db.database}}'
         WORDPRESS_DB_PASSWORD: '{{db.db.password}}'
         WORDPRESS_DB_USER: '{{db.db.user}}'
+first_login:
+  kind: setup
+  note: "Open the domain and run the WordPress installer — it creates your admin account."

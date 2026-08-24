@@ -51,6 +51,7 @@
 | Backup restore (in-panel) | ⚠️ | ✅ | **V1** | `dokploy/.../utils/restore` — backups without tested restore fail P2 (Alex) |
 | Private registries | ✅ | ✅ | **V1** (optional, never required) | `schema/registry.ts`; [ADR-008](../adrs/ADR-008-no-registry-required.md): no registry required — local image / mTLS relay / external optional |
 | Scheduled tasks (cron in containers) | ✅ | ✅ | **V1** | `coolify/app/Jobs/ScheduledTaskJob.php`; `schema/schedule.ts` |
+| Shared variables (project / environment scope) | ✅ | ✅ | **V1** | Coolify `app/Models/SharedEnvironmentVariable.php` with `{{scope.KEY}}`; Dokploy `project.env`/`environment.env` resolved by `prepareEnvironmentVariables` with `project.${ref}`. Ours seals the value and refuses an unresolved reference rather than shipping the literal — the one behaviour deliberately not ported ([shared-variables.md](../features/shared-variables.md) §3) |
 | GPU support | ❌ | ⚠️ | **Out** (v1) | `dokploy/.../utils/gpu-setup.ts` |
 
 ## Networking & TLS
@@ -63,7 +64,7 @@
 | Custom/user certificates | ✅ | ✅ | **V1.x** | `dokploy/.../schema/certificate.ts` |
 | Redirects & middleware | ⚠️ | ✅ | **V1.x** | `schema/redirects.ts`, `schema/forward-auth.ts` |
 | TCP/UDP port exposure | ✅ | ✅ | **V1** | `schema/port.ts` |
-| Cloudflare DNS automation (auto-create records on domain add) | ❌ | ❌ | **V1.x** | Same API token unlocks DNS-01 wildcard certs — one credential, two features |
+| Cloudflare DNS automation (auto-create records on domain add) | ❌ | ⚠️ (manual only) | **V1** | Dokploy ships a DNS provider abstraction (`utils/dns/{cloudflare,route53}.ts`, `services/dns-provider.ts`) but never wires it to a domain: records are operator-driven CRUD, so nothing is created when a domain is added or reaped when it is removed. Coolify's Cloudflare support is Tunnel/`cloudflared` only. Ours additionally gates routing on ownership — a domain outside a connected Zone is not published ([dns-automation.md](../features/dns-automation.md)). Same API token unlocks DNS-01 wildcard certs — one credential, two features |
 | Cloudflare CDN/proxy mode (trusted headers, origin lockdown) | ❌ | ❌ | **V1.x** | Agent applies Traefik hardening automatically (ADR-004); HTTP/S only — raw TCP ports stay direct |
 | Cloudflare Tunnel (public traffic, zero inbound ports) | ⚠️ (manual guides) | ❌ | **Later** | Rhymes with the dial-home agent (ADR-002); transformative for P4 behind CGNAT |
 
@@ -104,6 +105,7 @@
 | Roles / permissions | ✅ (Member/Admin/Owner) | ✅ (granular) | **V1** (simple roles) | Granular RBAC **V1.x** |
 | REST API + OpenAPI spec | ✅ | ✅ | **V1** | Both ship `openapi.json`; ours is spec-first |
 | API tokens with scoped abilities | ✅ (read/write/deploy) | ✅ | **V1** | Coolify's ability model is worth copying |
+| Outbound webhooks (signed, retried, replayable) | ❌ | ❌ | **V1** | Neither reference has one: Coolify's `app/Notifications/Channels/` is Discord/Email/Pushover/Slack/Telegram and Dokploy's `utils/notifications/` likewise — all human channels. Ours is the machine-facing twin of a Notifier: HMAC-SHA256 over `timestamp.body`, bounded retries, a readable per-attempt log ([outbound-webhooks.md](../features/outbound-webhooks.md)) |
 | Two-factor authentication (TOTP + recovery codes) | ✅ | ✅ | **V1** | Panel compromise = fleet control; account security is not optional here |
 | Login rate limiting & session management | ✅ | ⚠️ | **V1** | Brute-force protection, session revocation; threat-model deliverable (roadmap Phase 1) |
 | Audit log | ⚠️ | ✅ | **V1.x** | `dokploy/.../schema/audit-log.ts` |

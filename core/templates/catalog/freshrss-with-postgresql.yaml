@@ -29,3 +29,6 @@ resources:
         POSTGRES_HOST: '{{db.db.host}}'
         POSTGRES_PASSWORD: '{{db.db.password}}'
         POSTGRES_USER: '{{db.db.user}}'
+first_login:
+  kind: setup
+  note: "Open the domain and run the FreshRSS installer — it creates your admin account."

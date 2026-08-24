@@ -25,6 +25,12 @@ type Template struct {
 	Category    string       `yaml:"category" json:"category"`
 	Version     string       `yaml:"version" json:"version"`
 	Resources   TplResources `yaml:"resources" json:"resources"`
+	// FirstLogin is what a person needs to know the moment the template
+	// finishes installing: the credentials to sign in with, or that there are
+	// none to have because the app runs its own setup on first visit. Without
+	// it an install ends at a URL the operator cannot get into, which is the
+	// dead end ui-principles §11 forbids (template-catalog.md §4.1).
+	FirstLogin *TplFirstLogin `yaml:"first_login,omitempty" json:"first_login,omitempty"`
 }
 
 type TplResources struct {
@@ -47,6 +53,38 @@ type TplApplication struct {
 	Volumes []TplVolume       `yaml:"volumes" json:"volumes"`
 	Ports   []TplPort         `yaml:"ports" json:"ports"`
 	Env     map[string]string `yaml:"env" json:"env"`
+}
+
+// First-login kinds. The distinction matters because the remedy differs: with
+// credentials you sign in, with setup you create the account yourself, and with
+// none there is no sign-in at all (a database, a proxy, a worker).
+const (
+	FirstLoginCredentials = "credentials"
+	FirstLoginSetup       = "setup"
+	FirstLoginNone        = "none"
+)
+
+// TplFirstLogin describes how to get into a freshly installed template.
+type TplFirstLogin struct {
+	Kind string `yaml:"kind" json:"kind"`
+	// Application names the resource this applies to, when a template installs
+	// more than one. Empty means the first routed application.
+	Application string `yaml:"application,omitempty" json:"application,omitempty"`
+	Username    string `yaml:"username,omitempty" json:"username,omitempty"`
+	// Password is a LITERAL upstream default — "admin", "changeme". It is not a
+	// secret we are keeping; it is public knowledge about the image, and the
+	// only reason to hide it would be to make the app unusable.
+	Password string `yaml:"password,omitempty" json:"password,omitempty"`
+	// PasswordEnv names an env var whose value the panel GENERATED, when the
+	// template asked for {{secret.N}}. The catalog never carries that value —
+	// it is resolved at install and returned once, the same discipline a
+	// managed database's root password follows (managed-databases.md §9).
+	PasswordEnv string `yaml:"password_env,omitempty" json:"password_env,omitempty"`
+	// UsernameEnv is the same, for the rare template that generates a username.
+	UsernameEnv string `yaml:"username_env,omitempty" json:"username_env,omitempty"`
+	// Note is the one sentence a person needs beyond the credentials: what to
+	// do first, or what to change immediately.
+	Note string `yaml:"note,omitempty" json:"note,omitempty"`
 }
 
 type TplHealth struct {
@@ -155,6 +193,10 @@ func (t Template) Validate() error {
 	}
 	if len(t.Version) > 40 {
 		return invalid("version must be ≤40 characters")
+	}
+
+	if err := t.validateFirstLogin(); err != nil {
+		return err
 	}
 
 	if len(t.Resources.Databases) > 3 {
@@ -372,4 +414,65 @@ func resolve(v string, dbs map[string]dbInfo, domainName string, newSecret func(
 		return ""
 	})
 	return out, outerErr
+}
+
+// validateFirstLogin checks the declaration against the resources it describes.
+// A password_env naming a variable the template never sets would install
+// silently and show nothing — the operator would be told there are credentials
+// and given none — so it is a build-time failure, caught by the catalog test
+// that validates every bundled template.
+func (t Template) validateFirstLogin() error {
+	fl := t.FirstLogin
+	if fl == nil {
+		return nil
+	}
+	switch fl.Kind {
+	case FirstLoginCredentials, FirstLoginSetup, FirstLoginNone:
+	default:
+		return invalid("first_login.kind %q must be credentials, setup or none", fl.Kind)
+	}
+	if len(fl.Note) > 300 {
+		return invalid("first_login.note must be ≤300 characters")
+	}
+	if fl.Kind != FirstLoginCredentials {
+		if fl.Username != "" || fl.Password != "" || fl.PasswordEnv != "" || fl.UsernameEnv != "" {
+			return invalid("first_login.kind %q carries credentials; use kind: credentials", fl.Kind)
+		}
+		return nil
+	}
+
+	// Find the application this describes, and prove every referenced env var
+	// is one it actually sets.
+	var app *TplApplication
+	for i := range t.Resources.Applications {
+		a := &t.Resources.Applications[i]
+		if (fl.Application != "" && a.Name == fl.Application) || (fl.Application == "" && a.Route) {
+			app = a
+			break
+		}
+	}
+	if app == nil && fl.Application == "" && len(t.Resources.Applications) > 0 {
+		app = &t.Resources.Applications[0]
+	}
+	if app == nil {
+		return invalid("first_login names application %q, which this template does not install", fl.Application)
+	}
+	for _, ref := range []struct{ field, key string }{
+		{"password_env", fl.PasswordEnv},
+		{"username_env", fl.UsernameEnv},
+	} {
+		if ref.key == "" {
+			continue
+		}
+		if _, ok := app.Env[ref.key]; !ok {
+			return invalid("first_login.%s references %q, which application %q does not set", ref.field, ref.key, app.Name)
+		}
+	}
+	// A username is optional: code-server, Duplicati and others authenticate
+	// with a password alone, and inventing a username to fill the field would
+	// be a wrong instruction rather than a missing one.
+	if fl.Password == "" && fl.PasswordEnv == "" {
+		return invalid("first_login with kind credentials needs a password or password_env")
+	}
+	return nil
 }

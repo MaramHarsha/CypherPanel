@@ -17,3 +17,6 @@ resources:
       volumes:
         - name: trailbase-data
           path: /app/traildepot
+first_login:
+  kind: setup
+  note: "Open /_/admin on your domain and create the first admin user."

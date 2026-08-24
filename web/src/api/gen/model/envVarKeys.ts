@@ -5,7 +5,10 @@
  * Operator-facing control-plane API covering Phases 1–3: authentication and teams/roles, the server lifecycle, projects/environments, applications and the deploy pipeline, managed databases with S3 backups/restore, preview environments, notifications, and scheduled tasks. Authentication is a bearer session token from /api/v1/auth/login; the GitHub webhook authenticates by per-application HMAC instead. Every project-scoped route is authorized by team membership (a non-member sees 404, insufficient rank 403).
  * OpenAPI spec version: 0.3.0
  */
+import type { EnvVarKeysSharedRefs } from './envVarKeysSharedRefs';
 
 export interface EnvVarKeys {
   keys: string[];
+  /** Per env-var key, the shared variables its value references as {{shared.KEY}} (shared-variables.md §7). Key names only — values stay write-only, so the Env vars tab can show the wiring without a reveal. */
+  shared_refs?: EnvVarKeysSharedRefs;
 }

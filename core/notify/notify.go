@@ -29,6 +29,17 @@ type Opener interface {
 	Open(ciphertext, nonce []byte) ([]byte, error)
 }
 
+// Inbox persists an observed outcome as per-user items (consumer-defined;
+// *inbox.Service satisfies it — notification-inbox.md §4). nil disables the
+// inbox; channels are unaffected either way.
+//
+// It is a second AUDIENCE on this one fan-out, not a second event source: the
+// bell and the Slack message say the same words because both render one
+// domain.NotifyEvent.
+type Inbox interface {
+	Record(ctx context.Context, ev domain.NotifyEvent) error
+}
+
 // deliveryTimeout bounds one channel send so a hung endpoint can't pin a
 // goroutine indefinitely.
 const deliveryTimeout = 10 * time.Second
@@ -44,15 +55,20 @@ type Manager struct {
 	opener Opener
 	http   *http.Client
 	log    *slog.Logger
+	// inbox is optional and nil-guarded at its one call site.
+	inbox Inbox
 }
 
-// New wires the manager.
-func New(st Store, opener Opener, log *slog.Logger) *Manager {
+// New wires the manager. box is the inbox sink (nil = no in-panel inbox); it is
+// a constructor argument rather than a setter because a dependency that can be
+// attached later is a dependency that can be forgotten (ENGINEERING rule 5).
+func New(st Store, opener Opener, log *slog.Logger, box Inbox) *Manager {
 	return &Manager{
 		store:  st,
 		opener: opener,
 		http:   &http.Client{Timeout: deliveryTimeout},
 		log:    log,
+		inbox:  box,
 	}
 }
 
@@ -70,6 +86,9 @@ func (m *Manager) NotifyDeploy(ctx context.Context, app domain.Application, dep 
 	if dep.Detail != "" {
 		ev.Body += "\n" + dep.Detail
 	}
+	// Values already in hand, so the inbox can render a deep link to the exact
+	// deployment (notification-inbox.md §4). Channel senders ignore them.
+	ev.ResourceKind, ev.ResourceID, ev.FocusID = domain.WebhookResourceApplication, app.ID, dep.ID
 	m.dispatch(ctx, app.EnvironmentID, ev)
 }
 
@@ -84,6 +103,7 @@ func (m *Manager) NotifyBackup(ctx context.Context, db domain.Database, rec doma
 	if rec.Detail != "" {
 		ev.Body += "\n" + rec.Detail
 	}
+	ev.ResourceKind, ev.ResourceID, ev.FocusID = domain.WebhookResourceDatabase, db.ID, rec.ID
 	m.dispatch(ctx, db.EnvironmentID, ev)
 }
 
@@ -101,7 +121,20 @@ func (m *Manager) dispatch(ctx context.Context, envID string, ev domain.NotifyEv
 			m.log.Error("notify: resolving project", "env_id", envID, "error", err)
 			return
 		}
-		ev.Project = env.Name
+		ev.Project, ev.ProjectID = env.Name, env.ProjectID
+
+		// The inbox write comes FIRST, before the notifier lookup — which
+		// returns early on error. Recording first is what makes the bell work
+		// on a panel with no channels configured at all, which is most panels
+		// (notification-inbox.md §4). It is persistence, not delivery: its
+		// failure is logged loudly rather than swallowed by a dead webhook, and
+		// it never stops the channel fan-out from running.
+		if m.inbox != nil {
+			if err := m.inbox.Record(c, ev); err != nil {
+				m.log.Error("notify: recording inbox items", "project_id", env.ProjectID, "event", ev.Type, "error", err)
+			}
+		}
+
 		notifiers, err := m.store.ListEnabledNotifiersForEvent(c, env.ProjectID, ev.Type)
 		if err != nil {
 			m.log.Error("notify: listing notifiers", "project_id", env.ProjectID, "event", ev.Type, "error", err)

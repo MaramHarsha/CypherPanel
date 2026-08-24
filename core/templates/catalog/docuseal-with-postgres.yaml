@@ -24,3 +24,6 @@ resources:
       env:
         DATABASE_URL: postgresql://{{db.db.user}}:{{db.db.password}}@{{db.db.host}}:5432/{{db.db.database}}
         HOST: https://{{domain}}
+first_login:
+  kind: setup
+  note: "Open the domain and create the first account, which becomes the administrator."

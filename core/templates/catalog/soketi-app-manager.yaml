@@ -32,3 +32,6 @@ resources:
         PUSHER_SCHEME: ""
         SOKETI_DB_REDIS_PASSWORD: ""
         SOKETI_DB_REDIS_USERNAME: ""
+first_login:
+  kind: setup
+  note: "Sign in with the app credentials in the app's environment variables."

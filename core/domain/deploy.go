@@ -177,6 +177,14 @@ type EnvVar struct {
 	Key        string
 	ValueCT    []byte
 	ValueNonce []byte
+	// SharedRefs names the shared variables this value references as
+	// {{shared.KEY}}, recorded in CLEARTEXT at write time from the plaintext
+	// the operator just supplied (shared-variables.md §2). Key names are not
+	// secret — they are already returned by GET /applications/{id}/env — and
+	// storing them is what makes the used-by count and the "redeploy to apply"
+	// marker plain SQL, so no read path ever unseals a value to answer
+	// "who uses this".
+	SharedRefs []string
 }
 
 // Revision is an immutable record a Deployment points at: the built image plus

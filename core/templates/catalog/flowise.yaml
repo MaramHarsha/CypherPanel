@@ -27,3 +27,8 @@ resources:
         LOG_PATH: /root/.flowise/logs
         PORT: "3001"
         SECRETKEY_PATH: /root/.flowise
+first_login:
+  kind: credentials
+  username_env: FLOWISE_USERNAME
+  password_env: FLOWISE_PASSWORD
+  note: "Both the username and the password were generated for this install."

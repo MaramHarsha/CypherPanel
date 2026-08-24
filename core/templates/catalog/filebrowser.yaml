@@ -14,3 +14,6 @@ resources:
       route: true
       health:
         kind: tcp
+first_login:
+  kind: setup
+  note: "Sign in with admin / admin, then change it immediately under Settings."

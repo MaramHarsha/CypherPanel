@@ -25,3 +25,8 @@ resources:
         PGID: "1000"
         PUID: "1000"
         USER: '{{secret.16}}'
+first_login:
+  kind: credentials
+  username_env: USER
+  password_env: PASS
+  note: "Both were generated for this install; they guard the web interface."

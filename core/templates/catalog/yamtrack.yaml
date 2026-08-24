@@ -26,3 +26,6 @@ resources:
         SECRET: '{{secret.16}}'
         TZ: Europe/Berlin
         URLS: https://{{domain}}
+first_login:
+  kind: setup
+  note: "Open the domain and register the first account."

@@ -3,11 +3,12 @@ import { Database, Package, Search, ShieldCheck, X } from "lucide-react";
 import { useMemo, useState, type FormEvent } from "react";
 import { getListApplicationsQueryKey } from "@/api/gen/applications/applications";
 import { getListDatabasesQueryKey } from "@/api/gen/databases/databases";
-import type { Template } from "@/api/gen/model";
+import type { FirstLogin, Template } from "@/api/gen/model";
 import { useListEnvironments, useListProjects } from "@/api/gen/projects/projects";
 import { useListServers } from "@/api/gen/servers/servers";
 import { useInstallTemplate, useListTemplates } from "@/api/gen/templates/templates";
 import { EmptyState } from "@/components/empty-state";
+import { FirstLoginNotice } from "@/components/first-login-notice";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { PageState } from "@/components/page-state";
 import { ActionButton } from "@/components/ui/action-button";
@@ -291,6 +292,8 @@ function InstallDialog({ template }: { template: Template }) {
   const [name, setName] = useState("");
   const [domain, setDomain] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [firstLogin, setFirstLogin] = useState<FirstLogin | null>(null);
+  const [afterNotice, setAfterNotice] = useState<() => void>(() => () => {});
   const environments = useListEnvironments(projectID, { query: { enabled: projectID !== "" } });
   const install = useInstallTemplate({ mutation: {
     onSuccess: (result) => {
@@ -300,7 +303,18 @@ function InstallDialog({ template }: { template: Template }) {
       void qc.invalidateQueries({ queryKey: getListApplicationsQueryKey(environmentID) });
       void qc.invalidateQueries({ queryKey: getListDatabasesQueryKey(environmentID) });
       const appID = result.applications[0];
-      if (appID) void navigate({ to: "/projects/$projectId/applications/$appId", params: { projectId: projectID, appId: appID } });
+      const go = () => {
+        if (appID) void navigate({ to: "/projects/$projectId/applications/$appId", params: { projectId: projectID, appId: appID } });
+      };
+      // A generated password appears in this response and nowhere else ever, so
+      // navigating straight past it would destroy it. Hold the navigation until
+      // the notice is dismissed; with nothing to say, go as before.
+      if (result.first_login) {
+        setFirstLogin(result.first_login);
+        setAfterNotice(() => go);
+        return;
+      }
+      go();
     },
     onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not install template"),
   }});
@@ -351,6 +365,17 @@ function InstallDialog({ template }: { template: Template }) {
               <X className="h-4 w-4" />
             </DialogClose>
           </div>
+
+          {firstLogin && (
+            <FirstLoginNotice
+              first={firstLogin}
+              templateName={template.name}
+              onContinue={() => {
+                setFirstLogin(null);
+                afterNotice();
+              }}
+            />
+          )}
 
           <form onSubmit={submit} className="space-y-3">
             {/* Two columns at the canvas's 430px, one on a phone: paired

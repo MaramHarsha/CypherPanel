@@ -34,3 +34,6 @@ resources:
         NEXTAUTH_SECRET: '{{secret.32}}'
         NEXTAUTH_URL: https://{{domain}}
         REDIS_URL: redis://:{{db.cache.password}}@{{db.cache.host}}:6379
+first_login:
+  kind: setup
+  note: "Open the domain and create the first account, which becomes the administrator."

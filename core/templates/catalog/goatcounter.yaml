@@ -17,3 +17,6 @@ resources:
       volumes:
         - name: goatcounter-data
           path: /home/goatcounter/goatcounter-data
+first_login:
+  kind: setup
+  note: "Open the domain and create the first site and account."

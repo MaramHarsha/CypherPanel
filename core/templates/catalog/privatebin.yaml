@@ -16,3 +16,6 @@ resources:
       volumes:
         - name: privatebin-data
           path: /srv/data
+first_login:
+  kind: none
+  note: "There is no sign-in — open the domain and use it."

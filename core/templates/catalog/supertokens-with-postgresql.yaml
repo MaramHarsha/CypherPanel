@@ -20,3 +20,6 @@ resources:
       env:
         API_KEYS: ""
         POSTGRESQL_CONNECTION_URI: '"postgresql://{{db.db.user}}:{{db.db.password}}@{{db.db.host}}:5432/{{db.db.database}}"'
+first_login:
+  kind: setup
+  note: "SuperTokens is an auth backend with no dashboard login of its own; connect your app to it."

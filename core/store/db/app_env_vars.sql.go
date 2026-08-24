@@ -24,7 +24,7 @@ func (q *Queries) DeleteEnvVar(ctx context.Context, arg DeleteEnvVarParams) erro
 }
 
 const listEnvVars = `-- name: ListEnvVars :many
-SELECT application_id, key, value_ct, value_nonce FROM app_env_vars WHERE application_id = $1 ORDER BY key
+SELECT application_id, key, value_ct, value_nonce, shared_refs FROM app_env_vars WHERE application_id = $1 ORDER BY key
 `
 
 func (q *Queries) ListEnvVars(ctx context.Context, applicationID string) ([]AppEnvVar, error) {
@@ -41,6 +41,7 @@ func (q *Queries) ListEnvVars(ctx context.Context, applicationID string) ([]AppE
 			&i.Key,
 			&i.ValueCt,
 			&i.ValueNonce,
+			&i.SharedRefs,
 		); err != nil {
 			return nil, err
 		}
@@ -53,10 +54,12 @@ func (q *Queries) ListEnvVars(ctx context.Context, applicationID string) ([]AppE
 }
 
 const upsertEnvVar = `-- name: UpsertEnvVar :exec
-INSERT INTO app_env_vars (application_id, key, value_ct, value_nonce)
-VALUES ($1, $2, $3, $4)
+INSERT INTO app_env_vars (application_id, key, value_ct, value_nonce, shared_refs)
+VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (application_id, key)
-DO UPDATE SET value_ct = EXCLUDED.value_ct, value_nonce = EXCLUDED.value_nonce
+DO UPDATE SET value_ct = EXCLUDED.value_ct,
+              value_nonce = EXCLUDED.value_nonce,
+              shared_refs = EXCLUDED.shared_refs
 `
 
 type UpsertEnvVarParams struct {
@@ -64,6 +67,7 @@ type UpsertEnvVarParams struct {
 	Key           string
 	ValueCt       []byte
 	ValueNonce    []byte
+	SharedRefs    []string
 }
 
 func (q *Queries) UpsertEnvVar(ctx context.Context, arg UpsertEnvVarParams) error {
@@ -72,6 +76,7 @@ func (q *Queries) UpsertEnvVar(ctx context.Context, arg UpsertEnvVarParams) erro
 		arg.Key,
 		arg.ValueCt,
 		arg.ValueNonce,
+		arg.SharedRefs,
 	)
 	return err
 }

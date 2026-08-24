@@ -26,3 +26,6 @@ resources:
         HBOX_MAILER_USERNAME: ""
         HBOX_OPTIONS_ALLOW_REGISTRATION: "false"
         HBOX_WEB_MAX_UPLOAD_SIZE: "10"
+first_login:
+  kind: setup
+  note: "Open the domain and register — the first account is the owner."

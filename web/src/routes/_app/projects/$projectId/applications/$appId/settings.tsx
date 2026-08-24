@@ -17,6 +17,8 @@ import { Eyebrow } from "@/components/eyebrow";
 import { PageState } from "@/components/page-state";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
+import { DomainField } from "@/components/domain-field";
+import { DomainVerification } from "@/components/domain-verification";
 import { Input, Select } from "@/components/ui/input";
 
 export const Route = createFileRoute("/_app/projects/$projectId/applications/$appId/settings")({
@@ -144,9 +146,10 @@ function SettingsForm({
             <Field label="Image" hint="A moving tag is re-pulled on every deploy; a digest is pinned.">
               {(id) => <Input id={id} required value={image} onChange={(e) => setImage(e.target.value)} className="mono" />}
             </Field>
-            <Field label="Domain" hint="Where the app is reachable.">
-              {(id) => <Input id={id} value={domain} onChange={(e) => setDomain(e.target.value)} className="mono" />}
-            </Field>
+            <div>
+              <DomainField applicationId={initial.id} value={domain} onChange={setDomain} />
+              <DomainVerification applicationId={initial.id} />
+            </div>
           </>
         ) : (
           <>
@@ -157,9 +160,10 @@ function SettingsForm({
               <Field label="Branch">
                 {(id) => <Input id={id} value={branch} onChange={(e) => setBranch(e.target.value)} className="mono" />}
               </Field>
-              <Field label="Domain" hint="Where the app is reachable.">
-                {(id) => <Input id={id} value={domain} onChange={(e) => setDomain(e.target.value)} className="mono" />}
-              </Field>
+              <div>
+                <DomainField applicationId={initial.id} value={domain} onChange={setDomain} />
+                <DomainVerification applicationId={initial.id} />
+              </div>
             </div>
           </>
         )}

@@ -21,6 +21,7 @@ What we protect, most to least catastrophic if lost:
 | A1 | **Ability to execute code on managed servers** | Emergent — from agent trust in the plane | This is the fleet. Coolify's stored SSH keys make this A1 loss a single query; our whole design exists to keep it un-stealable. |
 | A2 | **The control-plane signing key / CA** (issues agent client certs) | Control-plane host, encrypted at rest | Whoever holds it can mint an agent identity or impersonate the plane. Root of the mTLS trust. |
 | A3 | **Application & database secrets** (env vars, DB credentials, registry creds, provider tokens) | Postgres (encrypted), delivered to the serving node | Direct breach of user data; the reason "mask by default" is ENGINEERING rule 20. |
+| A3b | **The DNS Provider token** (Cloudflare, `DNS:Edit`) | Postgres (sealed), used only by the plane | Ranks above the rest of A3 because it acts *outside* the panel: whoever holds it repoints any zone it covers — including MX, which is mail interception, and including the panel's own hostname. It is also what proves domain ownership, so losing it silently un-verifies every domain (§5.12). |
 | A4 | **Admin/user authentication material** (password hash, session tokens, API tokens, TOTP seeds) | Postgres | Account takeover → A3, and (bounded, not A1) fleet *command*. |
 | A5 | **Join tokens** (in flight, during the enrollment window) | Installer invocation → agent memory → plane | A leaked valid token lets an attacker enroll a rogue agent (see §5.3). Single-use + short-lived by design. |
 | A6 | **Desired state & audit history** | Postgres | Integrity matters: silently altering desired state is how an attacker turns the reconciler into their deployment tool. |
@@ -203,6 +204,7 @@ Each scenario states the attack, the property that must hold, the controls, and 
 - **The control plane reserves disk headroom for its own database** and self-protects — it will refuse or defer work before it starves its own Postgres. `[Phase 1: the plane's own resource guard is a boot-time concern]`
 - **Bounded retention on `logs.*`/`state.*`** (ADR-003 says "bounded retention"; the Dokploy footprint measurement showed 22.76 GiB *written* on an idle install — [research/dokploy.md](../../research/dokploy.md)): JetStream retention limits and sampled/batched metrics cap write churn and disk use by design, not by cleanup-after. `[Phase 1: JetStream stream config sets limits from day one]`
 - **Threshold alerts before failure** (matrix V1, upgraded from V1.x precisely because of this finding): the operator is warned while there's still room to act.
+- **Every expansion is bounded, in the count *and* the result.** Anywhere the plane substitutes operator text into operator text, the amplification factor is capped, not just the input: a **Shared Variable** reference is bounded at 16 *occurrences* per value (not 16 distinct keys, which left the repeat count free) and the expanded result is capped besides. This is memory, not disk, and it is the sharper version of this scenario — `Scheduler.resolveEnv` is re-entered from `DesiredStateFor` on every agent reconnect, so an unbounded expansion does not fail one deploy, it OOMs the plane and OOMs it again on restart. `[shared-variables.md §6]`
 
 **Residual risk.** A determined authenticated attacker can still generate load; rate limiting and per-team quotas (post-v1) bound it. The self-inflicted case — the common one — is designed out.
 
@@ -254,6 +256,132 @@ in someone else's hands. Password reset by email is deliberately **not** added
 (panel-mail.md §8): it would make the mailbox sufficient on its own, which is
 exactly the property this scenario exists to preserve.
 
+### 5.11 The panel as an HTTP client: outbound webhooks
+
+**Attack.** Until now the control plane made no outbound HTTP request to an
+address an operator chose, except a notifier's fixed provider host. An
+**Outbound Webhook** ([outbound-webhooks.md](../features/outbound-webhooks.md))
+makes the panel POST signed JSON to *any* URL a project member registers, on
+every subscribed transition, with retries. Four ways that bites. **(a)** The URL
+is an egress path out of the control-plane network: `http://127.0.0.1:…`,
+`http://10.0.0.7:5432`, `http://169.254.169.254/latest/meta-data/` all resolve
+from where `cypherd` runs, not from where the operator sits. **(b)** Unlike a
+notifier, every attempt's **status and duration are persisted and readable** via
+`GET /webhook-endpoints/{id}/deliveries`, which turns (a) from blind SSRF into a
+semi-blind scanner a member can drive on demand with `POST …/ping`. **(c)** The
+signing secret is a new asset: whoever holds it can forge events *to the
+receiver*, and receivers act on them. **(d)** The payload leaves the trust
+boundary — anything put in it is disclosed to whoever controls that URL.
+
+**Property that must hold.** An outbound webhook may carry only what its
+subscriber is already entitled to read, must be attributable to us, and must not
+become a general-purpose network probe or an unbounded amplifier.
+
+**Controls.**
+- **The payload carries no sealed material** — deploy and backup metadata that
+  the API already returns to the same caller. Never env vars, connection strings,
+  or anything from a `*_ct` column. `[outbound-webhooks.md §6]`
+- **Signed, and bound to a moment.** HMAC-SHA256 over `timestamp + "." + rawBody`
+  with a fresh timestamp per attempt, `sha256=<hex>` matching this repo's
+  existing inbound convention so receivers can reuse a known recipe. The MAC
+  covers the raw bytes, and the published contract tells receivers to verify
+  before parsing and to dedupe on `X-CypherPanel-Delivery`. `[§4]`
+- **The secret is sealed** with the master key, unsealed only to sign, absent
+  from the endpoint DTO by construction, and returned exactly twice — at create
+  and at rotate. A database read yields ciphertext. `[§6, rule 20]`
+- **Redirects are never followed**, so a receiver cannot bounce a signed body to
+  a third party, and **response bodies are never stored or logged** — a
+  receiver's error page can carry its own secrets. Transport errors go through
+  `redactURL` so a token-bearing URL cannot ride out in a `*url.Error`. `[§6]`
+- **Authorized at the project, like a notifier.** Every route resolves through
+  `projectIDForWebhookEndpoint` / `projectIDForWebhookDelivery` at `RoleMember`;
+  non-member 404, under-ranked 403 (§5.8's rule). A delivery is not addressable
+  without its endpoint.
+- **Bounded** (§5.9's discipline): four attempts, a ~31-minute horizon, a 10s
+  per-attempt timeout, and the 200 most recent deliveries per endpoint retained,
+  attempts cascading.
+
+**Accepted risk — egress is not filtered.** We enforce `http`/`https` only and
+refuse redirects, but we do **not** block private, loopback or link-local
+destinations. This is the same posture as
+[notifications.md](../features/notifications.md) §6 and rests on the same
+premise: the operator is the trust root and already runs arbitrary containers on
+these servers. It is recorded here rather than left implicit because (b) makes
+this surface *more* informative than a notifier's — a member can read back
+whether a port answered and how fast. Two things make that acceptable today: the
+caller must already hold `RoleMember` on a project, and a panel that runs
+untrusted members is outside §7's assumptions. **If per-team quotas or untrusted
+members ever land, this scenario is the one to revisit** — the control then is a
+destination denylist resolved at request time, not at validation time, to avoid
+a DNS-rebinding gap.
+
+### 5.12 DNS control: the token that proves ownership
+
+**Attack.** The panel gains a **DNS Provider** — one Cloudflare token with
+`DNS:Edit`, used both to prove an operator owns a domain and to write the
+records that make it resolve ([dns-automation.md](../features/dns-automation.md)).
+Three ways it bites. **(a)** The token is A3b: whoever reads it repoints any
+zone it covers. That is not confined to CypherPanel's own records — MX included,
+which is mail interception, and the panel's own hostname included, which is
+where sessions are issued. **(b)** The panel is now a *writer* in someone's DNS,
+so a bug that deletes the wrong record is an outage the operator cannot
+attribute to us without reading Cloudflare's audit log. **(c)** Because the
+connection is panel-wide (§1 of that spec), any project member who can set a
+domain causes a record to be written in the operator's zones under a name they
+choose.
+
+**Property that must hold.** The panel writes only records it created, only
+inside zones the token already covers, only with content it derived itself —
+and losing the token degrades to "nothing is verified", never to "everything is
+verified".
+
+**Controls.**
+- **The token is sealed** with the master key, unsealed only to call Cloudflare,
+  never returned by any route, never logged, absent from error strings (§6,
+  rule 20). `PUT` replaces wholesale; there is no partial-secret merge, so a
+  masked round-trip cannot be replayed back into storage. `[dns-automation.md §3.1]`
+- **We only ever touch records we created.** A record with no `dns_records` row
+  is never modified or deleted. Adoption on conflict is narrow — same zone,
+  name, type *and* content — so an operator's hand-made record with different
+  content is a named conflict, never a silent overwrite. `[§4.4]`
+- **Content is derived, never supplied.** The record's value is the app's own
+  server address; the only operator-controlled input is a hostname that must
+  already fall inside a connected zone. This is what stops (c) from becoming
+  "point any name in your zone at any address".
+- **Verification is derived, never stored.** `domain_verified` is recomputed
+  from the current zone list on every read. A stored flag would survive the
+  token being revoked or a zone being removed — a stale *security* decision,
+  which is worse than a recomputed one. Revoking the token unverifies
+  everything, which fails closed. `[§4.1]`
+- **Panel-admin gated.** Every `/panel/dns` route takes `requirePanelRole(admin)`;
+  a project member sees only whether their own application's domain is verified,
+  never the token, the zone list, or another project's records. `[§5]`
+- **Disconnecting deletes nothing.** Removing the provider removes our ability
+  to act, not our obligation to be careful: records are left exactly as they
+  are. Nothing about losing a credential should destroy an operator's DNS. `[§4.5]`
+- **The destination is a constant, and now structurally so.** Unlike §5.11 the
+  host is not operator-supplied. The first implementation built request URLs by
+  concatenating escaped values onto a base string; CodeQL flagged it
+  (`go/request-forgery`) and was right to, because escaping was never the
+  control. `URL.JoinPath` **cleans** the path it builds, so a segment of
+  `../../..` is not neutralised — it is *resolved*, and an operator-supplied
+  account id could redirect the call to a different Cloudflare endpoint with
+  this client's bearer token attached. Three things now hold instead: the base
+  is a parsed `*url.URL` so scheme and host are structure rather than string;
+  every interpolated path segment must be an identifier (no separators, no
+  dot-segments) or the request is refused; and a final check fails closed if a
+  built URL ever leaves the pinned host. Query values need none of this —
+  `Values.Encode` escapes them and they cannot change the path.
+
+**Residual risk.** A token scoped more broadly than CypherPanel's zones can do
+more than CypherPanel needs; we tell the operator to scope it and we cannot
+enforce that, because a token's scope is Cloudflare's to police. And the
+panel-wide choice means (c) is real: a member who can name a domain can create a
+record in your zone. It is bounded — inside your zones only, with content they
+do not choose, visible and attributable in the UI — but an operator running
+untrusted members should scope the token to a zone they do not mind sharing.
+**Per-team providers are the control if that assumption ever stops holding.**
+
 ## 6. Cross-cutting controls (apply everywhere)
 
 - **Secrets never in logs, errors, or API responses** — mask by default (ENGINEERING rule 20). Every log line carries resource IDs, never secret values (rule 4).
@@ -299,6 +427,9 @@ These are the concrete, checkable requirements the Phase 1 handshake code must s
 | §5.7 Build/exec | Builds off the plane; resource caps; terminal audited & authorized | vision NN-5, ADR-001, ADR-002 |
 | §5.8 Web/API | No SSR framework; auth+object-authz default; rate limit; masking | ADR-001, rules 20–21 |
 | §5.9 Disk exhaustion/self-DoS | Desired-state GC; self-headroom guard; bounded retention; alerts | ADR-003, ADR-005, matrix V1 |
+| §5.10 Mailbox-as-identity | Two factors to move an address; old address always notified; single-use hashed token; sessionOnly + rate limited | panel-mail.md §4–5, rules 20–21 |
+| §5.11 Outbound webhook egress | Metadata-only payload; HMAC over raw bytes; sealed secret; no redirects; project-scoped authz; bounded retries | outbound-webhooks.md §4, §6, rule 20 |
+| §5.12 DNS control / ownership | Sealed token; only records we created; derived content; verification recomputed not stored; panel-admin gated; request host pinned and path segments validated | dns-automation.md §3.1, §4.1, §4.4, rule 20 |
 
 ---
 

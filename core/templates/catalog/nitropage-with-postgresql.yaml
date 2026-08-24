@@ -25,3 +25,7 @@ resources:
         DATABASE_URL: postgresql://{{db.db.user}}:{{db.db.password}}@{{db.db.host}}:5432/{{db.db.database}}
         NP_AUTH_PASSWORD: '{{secret.32}}'
         NP_AUTH_SALT: '{{secret.16}}'
+first_login:
+  kind: credentials
+  password_env: NP_AUTH_PASSWORD
+  note: "There is no username; Nitropage asks for this password alone."

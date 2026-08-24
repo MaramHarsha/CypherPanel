@@ -35,7 +35,14 @@ type applicationDTO struct {
 	PreviewEnabled     bool   `json:"preview_enabled"`
 	PreviewBaseDomain  string `json:"preview_base_domain"`
 	PreviewTTLHours    int    `json:"preview_ttl_hours"`
-	CreatedAt          string `json:"created_at"`
+	// RedeployPending is DERIVED, never stored (shared-variables.md §5): a
+	// shared variable this application references changed after the environment
+	// it is running was frozen onto the wire. It is not a status word — the
+	// six-word vocabulary in ui-principles §5 is closed and "needs a redeploy"
+	// is not an observed state — so the UI renders it as a badge beside the
+	// status, never in place of one.
+	RedeployPending bool   `json:"redeploy_pending"`
+	CreatedAt       string `json:"created_at"`
 }
 
 type appSourceDTO struct {
@@ -256,6 +263,7 @@ func (a *API) handleCreateApplication(w http.ResponseWriter, r *http.Request) {
 		a.writeAppError(w, err, "could not create application")
 		return
 	}
+	a.syncApplicationDNS(r.Context(), app)
 	writeJSON(w, http.StatusCreated, createApplicationResponse{
 		Application: toApplicationDTO(app),
 		Webhook: webhookInfo{
@@ -282,9 +290,14 @@ func (a *API) handleListApplications(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not list applications")
 		return
 	}
+	// One query for the whole environment rather than one per row
+	// (shared-variables.md §5).
+	pending := a.redeployPendingSet(r.Context(), r.PathValue("id"))
 	out := make([]applicationDTO, 0, len(list))
 	for _, app := range list {
-		out = append(out, toApplicationDTO(app))
+		dto := toApplicationDTO(app)
+		dto.RedeployPending = pending[app.ID]
+		out = append(out, dto)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -306,7 +319,9 @@ func (a *API) handleGetApplication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not get application")
 		return
 	}
-	writeJSON(w, http.StatusOK, toApplicationDTO(app))
+	dto := toApplicationDTO(app)
+	dto.RedeployPending = a.redeployPending(r.Context(), app.ID)
+	writeJSON(w, http.StatusOK, dto)
 }
 
 // handleGetApplicationLogs streams an application's runtime logs as SSE:
@@ -421,7 +436,10 @@ func (a *API) handlePatchApplication(w http.ResponseWriter, r *http.Request) {
 		a.writeAppError(w, err, "could not update application")
 		return
 	}
-	writeJSON(w, http.StatusOK, toApplicationDTO(app))
+	a.syncApplicationDNS(r.Context(), app)
+	dto := toApplicationDTO(app)
+	dto.RedeployPending = a.redeployPending(r.Context(), app.ID)
+	writeJSON(w, http.StatusOK, dto)
 }
 
 func (a *API) handleDeleteApplication(w http.ResponseWriter, r *http.Request) {
@@ -443,6 +461,16 @@ func (a *API) handleDeleteApplication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not delete application")
 		return
 	}
+	// Tombstone BEFORE the row goes, while application_id is still readable.
+	// Correctness does not depend on this — ON DELETE SET NULL leaves an orphan
+	// the sweeper reaps anyway (dns-automation.md §4.3) — but doing it here
+	// makes the delete from Cloudflare happen on the next tick rather than
+	// waiting to be noticed.
+	if a.deps.DNS != nil {
+		if err := a.deps.DNS.ForgetApplication(r.Context(), app.ID); err != nil {
+			a.deps.Log.Error("tombstoning application dns", "app_id", app.ID, "error", err)
+		}
+	}
 	if err := a.deps.Applications.Delete(r.Context(), app.ID); err != nil {
 		a.deps.Log.Error("deleting application", "error", err)
 		writeError(w, http.StatusInternalServerError, "could not delete application")
@@ -463,7 +491,7 @@ func (a *API) handleListEnvVars(w http.ResponseWriter, r *http.Request) {
 	}) {
 		return
 	}
-	keys, err := a.deps.Applications.ListEnvVarKeys(r.Context(), r.PathValue("id"))
+	view, err := a.deps.Applications.ListEnv(r.Context(), r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "application not found")
 		return
@@ -473,7 +501,18 @@ func (a *API) handleListEnvVars(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not list environment variables")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string][]string{"keys": keys})
+	// shared_refs is additive (ENGINEERING rule 17): keys is unchanged, and the
+	// new object maps each env key to the shared variables its value references,
+	// so the Env vars tab can show the wiring without a reveal
+	// (shared-variables.md §7).
+	writeJSON(w, http.StatusOK, envVarKeysDTO{Keys: view.Keys, SharedRefs: view.SharedRefs})
+}
+
+// envVarKeysDTO is the env-var listing: keys only — a value is never returned
+// (ui-principles §6) — plus the cleartext shared-variable wiring.
+type envVarKeysDTO struct {
+	Keys       []string            `json:"keys"`
+	SharedRefs map[string][]string `json:"shared_refs"`
 }
 
 type setEnvVarRequest struct {
@@ -540,5 +579,27 @@ func (a *API) writeAppError(w http.ResponseWriter, err error, genericMsg string)
 	default:
 		a.deps.Log.Error("application request failed", "error", err)
 		writeError(w, http.StatusInternalServerError, genericMsg)
+	}
+}
+
+// syncApplicationDNS re-derives this application's desired DNS Record after its
+// route changed (dns-automation.md §4.3). It writes desired state only; the
+// sweeper does the talking to Cloudflare, so a provider outage cannot fail an
+// otherwise valid update.
+//
+// Best effort by design: a failure here leaves the record as it was, and the
+// sweeper's next pass reconciles from the truth in the database. Blocking a
+// route change on a DNS write would make the panel less useful than it is
+// without the feature.
+func (a *API) syncApplicationDNS(ctx context.Context, app domain.Application) {
+	if a.deps.DNS == nil {
+		return
+	}
+	var publicAddress string
+	if srv, err := a.deps.Servers.Get(ctx, app.Runtime.ServerID); err == nil {
+		publicAddress = srv.PublicAddress
+	}
+	if err := a.deps.DNS.SyncApplication(ctx, app, publicAddress); err != nil {
+		a.deps.Log.Error("syncing application dns", "app_id", app.ID, "error", err)
 	}
 }

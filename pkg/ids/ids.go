@@ -47,8 +47,30 @@ const (
 	// V1: Two-factor auth recovery codes (docs/features/two-factor-auth.md).
 	PrefixRecoveryCode = "rc"
 
+	// Phase 4: Outbound webhooks (docs/features/outbound-webhooks.md). A
+	// delivery id is also the X-CypherPanel-Delivery header value receivers
+	// dedupe on; attempts carry no prefix — they key on (delivery_id, attempt).
+	PrefixWebhookEndpoint = "whe"
+	PrefixWebhookDelivery = "whd"
+
+	// Phase 4: the notification inbox (docs/features/notification-inbox.md).
+	// One id per RECIPIENT, not per event: an item is a per-user row, and two
+	// members of a team hold two rows for the same observed outcome.
+	PrefixInboxItem = "inb"
+
+	// Phase 4: project shared variables (docs/features/shared-variables.md).
+	// One id per variable regardless of scope — project scope and environment
+	// scope are the same row shape, which is what lets a value be promoted
+	// between them without touching any referencing application (§3).
+	PrefixSharedVariable = "sv"
+
 	// V1: Panel mail and email changes (docs/features/panel-mail.md).
 	PrefixEmailChange = "ec"
+
+	// DNS automation (dns-automation.md §2). A Zone is cached from the provider;
+	// a Record is one the panel created and therefore owns.
+	PrefixDNSZone   = "dnz"
+	PrefixDNSRecord = "dnr"
 )
 
 // New returns a prefixed, URL-safe, collision-resistant identifier such as

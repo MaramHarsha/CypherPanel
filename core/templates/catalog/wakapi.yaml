@@ -44,3 +44,6 @@ resources:
         WAKAPI_SECURITY_EXPOSE_METRICS: "false"
         WAKAPI_SECURITY_PASSWORD_SALT: '{{secret.32}}'
         WAKAPI_SERVER_LISTEN_IPV6: '"-"'
+first_login:
+  kind: setup
+  note: "Open the domain and sign up — then copy your API key from the settings page."

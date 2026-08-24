@@ -30,6 +30,8 @@ import type {
   CreateServerResponse,
   Error,
   ForbiddenResponse,
+  NotFoundResponse,
+  PatchServerRequest,
   Server,
   UnauthorizedResponse
 } from '.././model';
@@ -410,6 +412,79 @@ export const useCreateServer = <TError = BadRequestResponse | UnauthorizedRespon
       > => {
 
       const mutationOptions = getCreateServerMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    /**
+ * The control plane cannot learn a server's public address: the agent dials out, the heartbeat carries no address, and a source address seen through NAT is not necessarily the one the internet reaches. So the operator supplies it. Must be an IP address — that is what an A record points at. An empty string clears it.
+ * @summary Set where this server's applications' DNS records point (panel admin)
+ */
+export const getUpdateServerUrl = (id: string,) => {
+
+
+  
+
+  return `/api/v1/servers/${id}`
+}
+
+export const updateServer = async (id: string,
+    patchServerRequest: PatchServerRequest, options?: RequestInit): Promise<Server> => {
+  
+  return apiFetch<Server>(getUpdateServerUrl(id),
+  {      
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      patchServerRequest,)
+  }
+);}
+
+
+
+
+export const getUpdateServerMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateServer>>, TError,{id: string;data: PatchServerRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateServer>>, TError,{id: string;data: PatchServerRequest}, TContext> => {
+
+const mutationKey = ['updateServer'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateServer>>, {id: string;data: PatchServerRequest}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateServer(id,data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateServerMutationResult = NonNullable<Awaited<ReturnType<typeof updateServer>>>
+    export type UpdateServerMutationBody = PatchServerRequest
+    export type UpdateServerMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Set where this server's applications' DNS records point (panel admin)
+ */
+export const useUpdateServer = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateServer>>, TError,{id: string;data: PatchServerRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof updateServer>>,
+        TError,
+        {id: string;data: PatchServerRequest},
+        TContext
+      > => {
+
+      const mutationOptions = getUpdateServerMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

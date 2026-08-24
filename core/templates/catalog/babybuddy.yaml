@@ -21,3 +21,6 @@ resources:
         PGID: "1000"
         PUID: "1000"
         TZ: Europe/Madrid
+first_login:
+  kind: setup
+  note: "Sign in with admin / admin, then change it immediately."

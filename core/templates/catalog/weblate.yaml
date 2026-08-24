@@ -40,3 +40,8 @@ resources:
         WEBLATE_ADMIN_NAME: Admin
         WEBLATE_ADMIN_PASSWORD: '{{secret.16}}'
         WEBLATE_SITE_DOMAIN: '{{domain}}'
+first_login:
+  kind: credentials
+  username: admin
+  password_env: WEBLATE_ADMIN_PASSWORD
+  note: "The account's email is admin@example.com. Change both under the admin interface."

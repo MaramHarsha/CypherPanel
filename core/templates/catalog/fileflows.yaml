@@ -27,3 +27,6 @@ resources:
         PGID: "1000"
         PUID: "1000"
         TZ: America/Toronto
+first_login:
+  kind: setup
+  note: "Open the domain and complete the FileFlows setup."

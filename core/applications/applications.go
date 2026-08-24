@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/MaramHarsha/cypherpanel/core/domain"
+	"github.com/MaramHarsha/cypherpanel/core/sharedvars"
 	"github.com/MaramHarsha/cypherpanel/core/store"
 	"github.com/MaramHarsha/cypherpanel/pkg/ids"
 )
@@ -125,6 +126,10 @@ type Store interface {
 	UpsertEnvVar(ctx context.Context, appID string, v domain.EnvVar) error
 	ListEnvVars(ctx context.Context, appID string) ([]domain.EnvVar, error)
 	DeleteEnvVar(ctx context.Context, appID, key string) error
+
+	// Phase 4: shared variables (shared-variables.md §3). Keys only — the
+	// write-time reference check never unseals a value.
+	ListSharedVariableKeysInScope(ctx context.Context, projectID, environmentID string) ([]string, error)
 }
 
 // Sealer seals plaintext for storage at rest. *secret.Box satisfies it.
@@ -164,7 +169,8 @@ type CreateInput struct {
 // with the raw webhook secret (shown exactly once). Secrets are sealed before
 // they reach the store.
 func (s *Service) Create(ctx context.Context, envID string, in CreateInput) (app domain.Application, webhookSecret string, err error) {
-	if _, err := s.store.GetEnvironment(ctx, envID); err != nil {
+	env, err := s.store.GetEnvironment(ctx, envID)
+	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return domain.Application{}, "", ErrEnvironmentNotFound
 		}
@@ -196,11 +202,18 @@ func (s *Service) Create(ctx context.Context, envID string, in CreateInput) (app
 
 	sealedVars := make([]domain.EnvVar, 0, len(in.EnvVars))
 	for k, v := range in.EnvVars {
+		// Same strict write-time check as PUT .../env/{key}: an unresolvable
+		// {{shared.KEY}} is refused here rather than shipped and discovered at
+		// the first deploy (shared-variables.md §3).
+		refs, rerr := s.sharedRefs(ctx, env, k, v)
+		if rerr != nil {
+			return domain.Application{}, "", rerr
+		}
 		ct, nonce, serr := s.sealer.Seal([]byte(v))
 		if serr != nil {
 			return domain.Application{}, "", fmt.Errorf("applications: sealing env var: %w", serr)
 		}
-		sealedVars = append(sealedVars, domain.EnvVar{Key: k, ValueCT: ct, ValueNonce: nonce})
+		sealedVars = append(sealedVars, domain.EnvVar{Key: k, ValueCT: ct, ValueNonce: nonce, SharedRefs: refs})
 	}
 
 	created, err := s.store.CreateApplicationWithEnv(ctx, domain.Application{
@@ -376,39 +389,95 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-// SetEnvVar seals and upserts one environment variable.
+// SetEnvVar seals and upserts one environment variable, recording which shared
+// variables its value references (shared-variables.md §3).
 func (s *Service) SetEnvVar(ctx context.Context, appID, key, value string) error {
-	if _, err := s.store.GetApplication(ctx, appID); err != nil {
+	app, err := s.store.GetApplication(ctx, appID)
+	if err != nil {
 		return fmt.Errorf("applications: getting application: %w", err)
 	}
 	if !validEnvKey(key) {
 		return invalid("env var key must match [A-Za-z_][A-Za-z0-9_]*")
 	}
+	env, err := s.store.GetEnvironment(ctx, app.EnvironmentID)
+	if err != nil {
+		return fmt.Errorf("applications: getting environment: %w", err)
+	}
+	refs, err := s.sharedRefs(ctx, env, key, value)
+	if err != nil {
+		return err
+	}
 	ct, nonce, err := s.sealer.Seal([]byte(value))
 	if err != nil {
 		return fmt.Errorf("applications: sealing env var: %w", err)
 	}
-	if err := s.store.UpsertEnvVar(ctx, appID, domain.EnvVar{Key: key, ValueCT: ct, ValueNonce: nonce}); err != nil {
+	if err := s.store.UpsertEnvVar(ctx, appID, domain.EnvVar{Key: key, ValueCT: ct, ValueNonce: nonce, SharedRefs: refs}); err != nil {
 		return fmt.Errorf("applications: setting env var: %w", err)
 	}
 	return nil
 }
 
-// ListEnvVarKeys returns only the keys of an application's env vars — values are
-// write-only and never returned (ui-principles §6).
-func (s *Service) ListEnvVarKeys(ctx context.Context, appID string) ([]string, error) {
+// EnvView is an application's environment-variable wiring: the keys (values are
+// write-only and never returned — ui-principles §6) and, per key, the shared
+// variables that key's value references. The refs let the Env vars tab show the
+// wiring without a reveal (shared-variables.md §7).
+type EnvView struct {
+	Keys       []string
+	SharedRefs map[string][]string
+}
+
+// ListEnv returns an application's env-var keys and their shared-variable
+// references. No value is unsealed on this path.
+func (s *Service) ListEnv(ctx context.Context, appID string) (EnvView, error) {
 	if _, err := s.store.GetApplication(ctx, appID); err != nil {
-		return nil, fmt.Errorf("applications: getting application: %w", err)
+		return EnvView{}, fmt.Errorf("applications: getting application: %w", err)
 	}
 	vars, err := s.store.ListEnvVars(ctx, appID)
 	if err != nil {
-		return nil, fmt.Errorf("applications: listing env vars: %w", err)
+		return EnvView{}, fmt.Errorf("applications: listing env vars: %w", err)
 	}
-	keys := make([]string, 0, len(vars))
+	out := EnvView{Keys: make([]string, 0, len(vars)), SharedRefs: map[string][]string{}}
 	for _, v := range vars {
-		keys = append(keys, v.Key)
+		out.Keys = append(out.Keys, v.Key)
+		if len(v.SharedRefs) > 0 {
+			out.SharedRefs[v.Key] = v.SharedRefs
+		}
 	}
-	return keys, nil
+	return out, nil
+}
+
+// sharedRefs validates a value's {{shared.KEY}} references against the shared
+// variables in force for the application's environment, and returns them for
+// storage (shared-variables.md §3).
+//
+// Strict on both counts: a "{{…}}" that is not a well-formed {{shared.KEY}} is
+// refused, and so is a well-formed reference that does not currently resolve.
+// Neither message ever echoes the value — only the env key and the shared key,
+// both of which the API already returns (ENGINEERING rule 20).
+func (s *Service) sharedRefs(ctx context.Context, env domain.Environment, key, value string) ([]string, error) {
+	refs, err := sharedvars.Refs(value)
+	if err != nil {
+		return nil, invalid("environment variable " + key + ": " + err.Error())
+	}
+	if len(refs) == 0 {
+		return nil, nil
+	}
+	known, err := s.store.ListSharedVariableKeysInScope(ctx, env.ProjectID, env.ID)
+	if err != nil {
+		return nil, fmt.Errorf("applications: listing shared variables in scope: %w", err)
+	}
+	have := make(map[string]bool, len(known))
+	for _, k := range known {
+		have[k] = true
+	}
+	for _, ref := range refs {
+		if !have[ref] {
+			return nil, invalid(fmt.Sprintf(
+				"environment variable %s references {{shared.%s}}, which is not defined in this project or in environment %q",
+				key, ref, env.Name))
+		}
+	}
+	return refs, nil
 }
 
 // DeleteEnvVar removes one environment variable.

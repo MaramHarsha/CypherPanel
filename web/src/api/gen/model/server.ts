@@ -22,6 +22,8 @@ export interface Server {
   role?: ServerRole;
   agent_version: string;
   hostname: string;
+  /** Where DNS records for this server's applications point (dns-automation.md §3.4). Empty until an operator sets it; the plane cannot learn it, because the agent dials out and the heartbeat carries no address. */
+  public_address?: string;
   /** Whether an agent has completed enrollment. */
   enrolled: boolean;
   enrolled_at?: ServerEnrolledAt;

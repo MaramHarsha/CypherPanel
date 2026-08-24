@@ -116,6 +116,51 @@ straight to rollout). Resource names are `<name>-<resource>` where `name`
 defaults to the slug; a name collision in the environment fails validation
 before anything is created.
 
+### 4.1 First login
+
+An install used to end by handing the operator a URL and nothing else. That was
+a dead end (ui-principles §11) in three different ways, all of which shipped:
+
+- **Upstream defaults nobody was told.** `grafana` sets no admin credentials, so
+  it runs on Grafana's `admin`/`admin` — published on a public domain, with no
+  mention anywhere in the panel.
+- **Generated passwords nobody could read.** Twenty-four templates ask for
+  `{{secret.N}}` on an admin credential. It is sealed into the app's env vars
+  and never returned, so the app was permanently unreachable. Seven of those —
+  `flowise`, `linkding`, `linkding-plus`, `influxdb`, `langflow`, `sessy`,
+  `transmission` — generated the **username** too, so there was no way in at all.
+- **Apps that make you create the account**, where the right answer is "there is
+  no password, go and set one" rather than silence.
+
+So every template declares `first_login`, and the catalog test refuses one that
+does not:
+
+```yaml
+first_login:
+  kind: credentials        # credentials | setup | none
+  username: admin
+  password: admin          # a documented upstream default
+  # password_env: GF_SECURITY_ADMIN_PASSWORD   # ...or the var the panel generated
+  note: "Change it on first sign-in."
+```
+
+`password_env` / `username_env` name a variable the template sets to
+`{{secret.N}}`. The catalog never carries the value — it is resolved during
+install, while the plaintext env is still in hand, and returned **once** in the
+install response. That is the managed-database root-password discipline (§9 of
+[managed-databases.md](managed-databases.md)) applied to templates: shown once,
+sealed thereafter, never readable again. Validation rejects a `password_env`
+naming a variable the application does not set, because the failure otherwise is
+silent — the operator is promised credentials and given none.
+
+`generated` travels with it so the UI can tell the two apart. An upstream
+default is public knowledge about the image and can be shown any time; a
+generated one vanishes when the dialog closes, and the dialog says so.
+
+A username is optional: `code-server`, Duplicati and Drizzle Gateway
+authenticate with a password alone, and inventing a username to fill the field
+would be a wrong instruction rather than a missing one.
+
 **Ordering, and its current limit.** Databases are created before the
 applications that reference them, but `Create` returns once provisioning work
 is *published*, not once the engine accepts connections — so a dependent app

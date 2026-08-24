@@ -6,10 +6,19 @@ import { clearToken, getToken } from "@/lib/auth";
 /** The API's error envelope, written for humans (render `error` verbatim). */
 export class ApiError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) {
+  /**
+   * The parsed error body, when there was one. Most callers want `message` and
+   * nothing else — but some 4xx responses are a QUESTION rather than a refusal
+   * and carry the choices needed to answer it (connecting a DNS provider whose
+   * token reaches several Cloudflare accounts is the first). Dropping the body
+   * would send the operator elsewhere to find something the panel already knew.
+   */
+  readonly body?: unknown;
+  constructor(status: number, message: string, body?: unknown) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.body = body;
   }
 }
 
@@ -62,13 +71,15 @@ export async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
 
   if (!res.ok) {
     let message = res.statusText || `Request failed (${res.status})`;
+    let parsed: unknown;
     try {
-      const body = (await res.json()) as { error?: string };
+      parsed = await res.json();
+      const body = parsed as { error?: string };
       if (body.error) message = body.error;
     } catch {
       // Non-JSON error body — keep the status text.
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, parsed);
   }
 
   if (res.status === 204 || res.headers.get("Content-Length") === "0") {

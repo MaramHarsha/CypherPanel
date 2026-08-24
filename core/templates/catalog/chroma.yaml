@@ -20,3 +20,6 @@ resources:
       env:
         IS_PERSISTENT: "TRUE"
         PERSIST_DIRECTORY: /data
+first_login:
+  kind: none
+  note: "There is no sign-in — open the domain and use it."
