@@ -703,21 +703,59 @@ type fakeDeployer struct {
 	deploys   []string // "appID/trigger/ref"
 	removed   []string // "serverID/appID"
 	rollbacks []string
+	// requesters records who each attributed deploy/rollback was made for.
+	requesters []string
+	// frozen, when set, makes every attributed start refuse with that detail —
+	// the freeze-window answer (deploy-protection.md §6).
+	frozen string
+	// parked makes an attributed deploy come back awaiting_approval.
+	parked bool
 }
 
-func (f *fakeDeployer) Deploy(_ context.Context, appID, trigger, ref string) (domain.Deployment, error) {
+// Deploy delegates to DeployAs with no requester, exactly as the real
+// scheduler does — so the machine-triggered callers (a template install, a
+// preview) pass the same gate a person's deploy does, and a fake cannot let
+// one of them through a freeze the real plane would refuse.
+func (f *fakeDeployer) Deploy(ctx context.Context, appID, trigger, ref string) (domain.Deployment, error) {
+	return f.DeployAs(ctx, appID, trigger, ref, "")
+}
+
+// DeployAs records the requester alongside the request, so a test can assert
+// that the handler attributed the deploy to the caller (deploy-protection.md
+// §2). frozen and parked model the two answers the gate produces.
+func (f *fakeDeployer) DeployAs(_ context.Context, appID, trigger, ref, requestedBy string) (domain.Deployment, error) {
+	if f.frozen != "" {
+		return domain.Deployment{}, &scheduler.FrozenError{Detail: f.frozen}
+	}
 	f.deploys = append(f.deploys, appID+"/"+trigger+"/"+ref)
-	return domain.Deployment{ID: "dep_test", ApplicationID: appID, RevisionID: "rev_test", Status: domain.DeployBuilding, Trigger: trigger, CreatedAt: time.Now()}, nil
+	f.requesters = append(f.requesters, requestedBy)
+	dep := domain.Deployment{
+		ID: "dep_test", ApplicationID: appID, RevisionID: "rev_test",
+		Status: domain.DeployBuilding, Trigger: trigger, CreatedAt: time.Now(),
+	}
+	if f.parked {
+		dep.Status = domain.DeployAwaitingApproval
+		dep.Detail = "waiting for approval from an owner"
+	}
+	return dep, nil
 }
 
-func (f *fakeDeployer) Rollback(_ context.Context, deploymentID string) (domain.Deployment, error) {
+func (f *fakeDeployer) Rollback(ctx context.Context, deploymentID string) (domain.Deployment, error) {
+	return f.RollbackAs(ctx, deploymentID, "")
+}
+
+func (f *fakeDeployer) RollbackAs(_ context.Context, deploymentID, requestedBy string) (domain.Deployment, error) {
 	if deploymentID == "dep_unbuilt" {
 		return domain.Deployment{}, scheduler.ErrRevisionNotBuilt
 	}
 	if deploymentID != "dep_test" {
 		return domain.Deployment{}, store.ErrNotFound
 	}
+	if f.frozen != "" {
+		return domain.Deployment{}, &scheduler.FrozenError{Detail: f.frozen}
+	}
 	f.rollbacks = append(f.rollbacks, deploymentID)
+	f.requesters = append(f.requesters, requestedBy)
 	return domain.Deployment{ID: "dep_rb", ApplicationID: "app_x", RevisionID: "rev_test", Status: domain.DeployRollingOut, Trigger: "rollback", CreatedAt: time.Now()}, nil
 }
 

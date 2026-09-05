@@ -173,6 +173,49 @@ func (q *Queries) InsertPanelInboxItems(ctx context.Context, arg InsertPanelInbo
 	return err
 }
 
+const listApprovalInboxRecipients = `-- name: ListApprovalInboxRecipients :many
+SELECT m.user_id
+FROM projects p
+JOIN team_members m ON m.team_id = p.team_id
+LEFT JOIN inbox_preferences pr ON pr.user_id = m.user_id
+WHERE p.id = $1
+  AND NOT ($2::text = ANY(COALESCE(pr.muted_kinds, '{}'::text[])))
+  AND (CASE m.role WHEN 'owner' THEN 3 WHEN 'admin' THEN 2 WHEN 'member' THEN 1 ELSE 0 END)
+      >= (CASE $3::text WHEN 'owner' THEN 3 WHEN 'admin' THEN 2 WHEN 'member' THEN 1 ELSE 0 END)
+ORDER BY m.user_id
+`
+
+type ListApprovalInboxRecipientsParams struct {
+	ProjectID string
+	Kind      string
+	MinRole   string
+}
+
+// ListApprovalInboxRecipients is ListInboxRecipients narrowed by RANK: the
+// members of the project's team who could actually act on a parked deploy
+// (deploy-protection.md §9). Addressing everyone would put an item people
+// cannot act on in front of them, and the rule "never hold an item for a team
+// you do not belong to" still holds because membership is still the join.
+func (q *Queries) ListApprovalInboxRecipients(ctx context.Context, arg ListApprovalInboxRecipientsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listApprovalInboxRecipients, arg.ProjectID, arg.Kind, arg.MinRole)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var user_id string
+		if err := rows.Scan(&user_id); err != nil {
+			return nil, err
+		}
+		items = append(items, user_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listInboxItems = `-- name: ListInboxItems :many
 SELECT id, user_id, project_id, kind, severity, digest, title, body, link, link_label, count_ok, count_total, sources, dedupe_key, read_at, created_at, updated_at FROM inbox_items
 WHERE user_id = $1
@@ -287,6 +330,47 @@ func (q *Queries) ListInboxItemsBefore(ctx context.Context, arg ListInboxItemsBe
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listInboxRecipientIfMember = `-- name: ListInboxRecipientIfMember :many
+SELECT m.user_id
+FROM projects p
+JOIN team_members m ON m.team_id = p.team_id
+LEFT JOIN inbox_preferences pr ON pr.user_id = m.user_id
+WHERE p.id = $1
+  AND m.user_id = $2
+  AND NOT ($3::text = ANY(COALESCE(pr.muted_kinds, '{}'::text[])))
+`
+
+type ListInboxRecipientIfMemberParams struct {
+	ProjectID string
+	UserID    string
+	Kind      string
+}
+
+// ListInboxRecipientIfMember resolves ONE named user to a recipient list of
+// zero or one: an approve/reject decision is news for the person who asked for
+// the deploy and nobody else (deploy-protection.md §9). It is a query rather
+// than a bare id so a requester who has since left the team, or muted the kind,
+// is filtered by the same rule every other fan-out obeys.
+func (q *Queries) ListInboxRecipientIfMember(ctx context.Context, arg ListInboxRecipientIfMemberParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listInboxRecipientIfMember, arg.ProjectID, arg.UserID, arg.Kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var user_id string
+		if err := rows.Scan(&user_id); err != nil {
+			return nil, err
+		}
+		items = append(items, user_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

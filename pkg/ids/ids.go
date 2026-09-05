@@ -71,6 +71,15 @@ const (
 	// a Record is one the panel created and therefore owns.
 	PrefixDNSZone   = "dnz"
 	PrefixDNSRecord = "dnr"
+
+	// V1.x: deploy protection (docs/features/deploy-protection.md §2). Only
+	// two of the feature's four tables mint an id: an EnvironmentProtection is
+	// keyed by its environment and a DeployApproval by its deployment, which
+	// is what makes "one policy per environment" and "one gate decision per
+	// deployment" invariants the database enforces rather than rules a service
+	// has to remember.
+	PrefixFreezeWindow = "fzw"
+	PrefixBreakGlass   = "bg"
 )
 
 // New returns a prefixed, URL-safe, collision-resistant identifier such as

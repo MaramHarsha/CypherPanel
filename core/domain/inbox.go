@@ -32,21 +32,51 @@ const (
 // panelInboxKinds is the panel-level half of the inbox taxonomy.
 var panelInboxKinds = []string{InboxKindPanelUpdateAvailable}
 
-// InboxKinds returns every kind an inbox item may carry and a preference list
-// may mute: the subscribable event taxonomy first, then the panel-level kinds.
-// A copy — callers may not mutate the taxonomy.
-func InboxKinds() []string {
-	out := EventTypes()
-	return append(out, panelInboxKinds...)
+// Deploy-protection inbox kinds (deploy-protection.md §9). Like the panel-level
+// kinds these are inbox kinds ONLY — never a notifier or an outbound-webhook
+// subscription. notifications.md §3's taxonomy is fed by TERMINAL transitions,
+// and a parked deploy has not finished; a decision on it is governance news for
+// two named audiences, not an outcome to broadcast to a channel.
+const (
+	// InboxKindDeployAwaitingApproval: a deploy parked on this environment's
+	// approval gate. Addressed to the members who could actually act on it —
+	// those at or above the approval's required_role.
+	InboxKindDeployAwaitingApproval = "deploy.awaiting_approval"
+	// InboxKindDeployApproved / InboxKindDeployRejected: the decision, back to
+	// the person who asked for the deploy and nobody else.
+	InboxKindDeployApproved = "deploy.approved"
+	InboxKindDeployRejected = "deploy.rejected"
+)
+
+// protectionInboxKinds is the deploy-protection half of the inbox taxonomy.
+var protectionInboxKinds = []string{
+	InboxKindDeployAwaitingApproval,
+	InboxKindDeployApproved,
+	InboxKindDeployRejected,
 }
 
-// ValidInboxKind reports whether key is an inbox kind (ValidEventType or a
-// panel-level kind).
+// InboxKinds returns every kind an inbox item may carry and a preference list
+// may mute: the subscribable event taxonomy first, then the inbox-only kinds
+// (panel-level, then deploy protection). A copy — callers may not mutate the
+// taxonomy.
+func InboxKinds() []string {
+	out := EventTypes()
+	out = append(out, panelInboxKinds...)
+	return append(out, protectionInboxKinds...)
+}
+
+// ValidInboxKind reports whether key is an inbox kind (ValidEventType or one of
+// the inbox-only kinds).
 func ValidInboxKind(key string) bool {
 	if ValidEventType(key) {
 		return true
 	}
 	for _, k := range panelInboxKinds {
+		if k == key {
+			return true
+		}
+	}
+	for _, k := range protectionInboxKinds {
 		if k == key {
 			return true
 		}

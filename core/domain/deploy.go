@@ -249,12 +249,34 @@ const (
 	DeployRollingOut   DeploymentStatus = "rolling_out"
 	DeploySucceeded    DeploymentStatus = "succeeded"
 	DeployFailed       DeploymentStatus = "failed"
+
+	// DeployAwaitingApproval is a deploy that protection parked before it
+	// started (deploy-protection.md §3): the Revision and Deployment exist,
+	// no work item was published, and the application's own status is
+	// untouched because start() never ran. NON-TERMINAL — a parked deploy has
+	// not finished — but it holds no pipeline slot either, so the two queue
+	// queries in core/store/queries/deployments.sql exclude it alongside the
+	// terminal states.
+	//
+	// REJECTION does not add a sixth status: it ends the deployment as failed
+	// with a detail naming the rejecter. The terminal set ('succeeded',
+	// 'failed') is load-bearing in the queue queries, in Terminal() below and
+	// in the web isTerminal(), and a fifth terminal status would touch all
+	// three for no observable gain. A rejected deploy is a deploy that did not
+	// ship; WHY it did not ship lives on the DeployApproval row, which is what
+	// answers governance questions anyway.
+	DeployAwaitingApproval DeploymentStatus = "awaiting_approval"
 )
 
 // Terminal reports whether a deployment has finished (succeeded or failed).
+// A parked deploy is deliberately not terminal: it has not finished, it is
+// waiting for a person.
 func (s DeploymentStatus) Terminal() bool {
 	return s == DeploySucceeded || s == DeployFailed
 }
+
+// Parked reports whether a deployment is waiting on a gate decision.
+func (s DeploymentStatus) Parked() bool { return s == DeployAwaitingApproval }
 
 // Deployment is a recorded transition of an Application to a revision.
 type Deployment struct {

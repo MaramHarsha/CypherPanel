@@ -28,6 +28,7 @@ import type {
 
 import type {
   BadRequestResponse,
+  Error,
   ForbiddenResponse,
   InstallTemplateRequest,
   InstallTemplateResponse,
@@ -285,7 +286,7 @@ export const installTemplate = async (slug: string,
 
 
 
-export const getInstallTemplateMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+export const getInstallTemplateMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof installTemplate>>, TError,{slug: string;data: InstallTemplateRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof installTemplate>>, TError,{slug: string;data: InstallTemplateRequest}, TContext> => {
 
@@ -314,12 +315,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type InstallTemplateMutationResult = NonNullable<Awaited<ReturnType<typeof installTemplate>>>
     export type InstallTemplateMutationBody = InstallTemplateRequest
-    export type InstallTemplateMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+    export type InstallTemplateMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error
 
     /**
  * @summary Resolve a template into ordinary resources and deploy it
  */
-export const useInstallTemplate = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+export const useInstallTemplate = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof installTemplate>>, TError,{slug: string;data: InstallTemplateRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof installTemplate>>,

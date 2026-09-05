@@ -20,6 +20,9 @@ import (
 type fakeStore struct {
 	// members maps a project id to the users of the team that owns it.
 	members map[string][]string
+	// roles maps a user id to their rank in that team, for the rank-narrowed
+	// fan-out deploy protection uses. An absent entry is domain.RoleMember.
+	roles map[string]string
 	// owners are the panel/team owners a panel-level kind reaches.
 	owners []string
 	// items maps a user id to their rows, in insertion order.
@@ -37,6 +40,7 @@ type fakeStore struct {
 func newFakeStore() *fakeStore {
 	return &fakeStore{
 		members: map[string][]string{},
+		roles:   map[string]string{},
 		items:   map[string][]*domain.InboxItem{},
 		prefs:   map[string][]string{},
 		clock:   time.Date(2026, 8, 21, 4, 2, 0, 0, time.UTC),
@@ -77,6 +81,40 @@ func (f *fakeStore) ListInboxRecipients(_ context.Context, projectID, kind strin
 }
 
 // owners lists the users a panel-level kind reaches (panel or team owners).
+// ListApprovalInboxRecipients narrows ListInboxRecipients by rank, the way the
+// SQL does (deploy-protection.md §9).
+func (f *fakeStore) ListApprovalInboxRecipients(ctx context.Context, projectID, kind, minRole string) ([]string, error) {
+	all, err := f.ListInboxRecipients(ctx, projectID, kind)
+	if err != nil {
+		return nil, err
+	}
+	out := []string{}
+	for _, u := range all {
+		role := f.roles[u]
+		if role == "" {
+			role = domain.RoleMember
+		}
+		if domain.RoleRank(role) >= domain.RoleRank(minRole) {
+			out = append(out, u)
+		}
+	}
+	return out, nil
+}
+
+// ListInboxRecipientIfMember resolves one named user to zero or one recipient.
+func (f *fakeStore) ListInboxRecipientIfMember(ctx context.Context, projectID, kind, userID string) ([]string, error) {
+	all, err := f.ListInboxRecipients(ctx, projectID, kind)
+	if err != nil {
+		return nil, err
+	}
+	for _, u := range all {
+		if u == userID {
+			return []string{u}, nil
+		}
+	}
+	return []string{}, nil
+}
+
 func (f *fakeStore) ListPanelInboxRecipients(_ context.Context, kind string) ([]string, error) {
 	if f.failRecipients {
 		return nil, fmt.Errorf("boom")

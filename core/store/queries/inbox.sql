@@ -193,3 +193,33 @@ INSERT INTO inbox_preferences (user_id, muted_kinds) VALUES ($1, $2)
 ON CONFLICT (user_id) DO UPDATE
 SET muted_kinds = EXCLUDED.muted_kinds, updated_at = now()
 RETURNING *;
+
+-- ListApprovalInboxRecipients is ListInboxRecipients narrowed by RANK: the
+-- members of the project's team who could actually act on a parked deploy
+-- (deploy-protection.md §9). Addressing everyone would put an item people
+-- cannot act on in front of them, and the rule "never hold an item for a team
+-- you do not belong to" still holds because membership is still the join.
+-- name: ListApprovalInboxRecipients :many
+SELECT m.user_id
+FROM projects p
+JOIN team_members m ON m.team_id = p.team_id
+LEFT JOIN inbox_preferences pr ON pr.user_id = m.user_id
+WHERE p.id = @project_id
+  AND NOT (@kind::text = ANY(COALESCE(pr.muted_kinds, '{}'::text[])))
+  AND (CASE m.role WHEN 'owner' THEN 3 WHEN 'admin' THEN 2 WHEN 'member' THEN 1 ELSE 0 END)
+      >= (CASE @min_role::text WHEN 'owner' THEN 3 WHEN 'admin' THEN 2 WHEN 'member' THEN 1 ELSE 0 END)
+ORDER BY m.user_id;
+
+-- ListInboxRecipientIfMember resolves ONE named user to a recipient list of
+-- zero or one: an approve/reject decision is news for the person who asked for
+-- the deploy and nobody else (deploy-protection.md §9). It is a query rather
+-- than a bare id so a requester who has since left the team, or muted the kind,
+-- is filtered by the same rule every other fan-out obeys.
+-- name: ListInboxRecipientIfMember :many
+SELECT m.user_id
+FROM projects p
+JOIN team_members m ON m.team_id = p.team_id
+LEFT JOIN inbox_preferences pr ON pr.user_id = m.user_id
+WHERE p.id = @project_id
+  AND m.user_id = @user_id
+  AND NOT (@kind::text = ANY(COALESCE(pr.muted_kinds, '{}'::text[])));

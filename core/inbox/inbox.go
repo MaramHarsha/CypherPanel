@@ -44,6 +44,11 @@ func invalid(msg string) error { return &ValidationError{Msg: msg} }
 type Store interface {
 	ListInboxRecipients(ctx context.Context, projectID, kind string) ([]string, error)
 	ListPanelInboxRecipients(ctx context.Context, kind string) ([]string, error)
+	// Deploy protection addresses two narrower audiences than "the team"
+	// (deploy-protection.md §9): the members who could act on a parked deploy,
+	// and the one person who asked for it.
+	ListApprovalInboxRecipients(ctx context.Context, projectID, kind, minRole string) ([]string, error)
+	ListInboxRecipientIfMember(ctx context.Context, projectID, kind, userID string) ([]string, error)
 	InsertInboxItems(ctx context.Context, f store.InboxFanout) error
 	InsertPanelInboxItems(ctx context.Context, f store.InboxFanout) error
 	UpsertInboxDigests(ctx context.Context, f store.InboxFanout) error
@@ -158,6 +163,212 @@ func (s *Service) RecordPanelUpdate(ctx context.Context, u PanelUpdate) error {
 		return fmt.Errorf("inbox: pruning: %w", err)
 	}
 	return nil
+}
+
+// ─── Deploy protection (deploy-protection.md §9) ────────────────────────────
+
+// DeployNotice is what deploy protection tells the inbox about one parked
+// deployment or one decision on it. Every field is already on screen elsewhere,
+// so nothing here is a secret; the item is DENORMALISED like every other one —
+// it states what happened, it does not point at current state (spec §2).
+type DeployNotice struct {
+	ProjectID     string
+	ApplicationID string
+	// ApplicationName and Commit make the line readable without a lookup:
+	// "web · c99d2e1". Commit may be empty (an image-source app has no commit).
+	ApplicationName string
+	Commit          string
+	DeploymentID    string
+	// RequiredRole addresses the awaiting-approval item: only members at or
+	// above it can act, so only they are told.
+	RequiredRole string
+	// RequestedBy is the user the DECISION items are addressed to. Empty for a
+	// webhook deploy, in which case there is nobody to tell and the write is a
+	// no-op.
+	RequestedBy string
+	// RequesterEmail names that person in the awaiting-approval body, so an
+	// approver reads "requested by alex@acme.com" rather than a user id.
+	RequesterEmail string
+	// ActorEmail is who decided, named in the body of a decision item.
+	ActorEmail string
+	// Reason is the rejecter's sentence, carried verbatim into the body.
+	Reason string
+}
+
+// RecordDeployAwaitingApproval tells the people who can act — the project's
+// team members at or above RequiredRole — that a deploy is parked.
+//
+// Severity is info, not error: a deploy waiting for a person is the control
+// working, not a fault. It is written immediately rather than digested, because
+// a rollup of "3 deploys awaited approval today" is unactionable, and the
+// digest windows are deliberately only defined for the two terminal outcome
+// families (notification-inbox.md §3).
+func (s *Service) RecordDeployAwaitingApproval(ctx context.Context, n DeployNotice) error {
+	if n.ProjectID == "" || n.DeploymentID == "" {
+		return nil
+	}
+	role := n.RequiredRole
+	if !domain.ValidRole(role) {
+		// An unknown rank must never widen the audience: fall back to the
+		// narrowest one the role set has.
+		role = domain.RoleOwner
+	}
+	recipients, err := s.store.ListApprovalInboxRecipients(ctx, n.ProjectID,
+		domain.InboxKindDeployAwaitingApproval, role)
+	if err != nil {
+		return fmt.Errorf("inbox: resolving approval recipients for %s: %w", n.ProjectID, err)
+	}
+	return s.writeDeployItems(ctx, recipients, n, domain.InboxKindDeployAwaitingApproval,
+		"Deploy awaits approval — "+shortID(n.DeploymentID), awaitingBody(n))
+}
+
+// RecordDeployApproved tells the requester their deploy was let through.
+func (s *Service) RecordDeployApproved(ctx context.Context, n DeployNotice) error {
+	return s.recordDeployDecision(ctx, n, domain.InboxKindDeployApproved,
+		"Deploy approved — "+shortID(n.DeploymentID), decisionBody(n, "Approved"))
+}
+
+// RecordDeployRejected tells the requester their deploy was refused, and by
+// whom. Still severity info: a governance decision is not an infrastructure
+// fault, and the deploy's own failure is recorded on the deployment row.
+func (s *Service) RecordDeployRejected(ctx context.Context, n DeployNotice) error {
+	return s.recordDeployDecision(ctx, n, domain.InboxKindDeployRejected,
+		"Deploy rejected — "+shortID(n.DeploymentID), decisionBody(n, "Rejected"))
+}
+
+// recordDeployDecision writes one item to the requester, if there is one and
+// they are still a member who has not muted the kind.
+func (s *Service) recordDeployDecision(ctx context.Context, n DeployNotice, kind, title, body string) error {
+	if n.ProjectID == "" || n.DeploymentID == "" || n.RequestedBy == "" {
+		// A webhook deploy has nobody to tell: the push, not a person, asked
+		// for it.
+		return nil
+	}
+	recipients, err := s.store.ListInboxRecipientIfMember(ctx, n.ProjectID, kind, n.RequestedBy)
+	if err != nil {
+		return fmt.Errorf("inbox: resolving requester %s: %w", n.RequestedBy, err)
+	}
+	return s.writeDeployItems(ctx, recipients, n, kind, title, body)
+}
+
+// writeDeployItems is the shared fan-out: one immediate item per recipient,
+// deduped on (user, deployment, kind) so a redelivered decision is a no-op
+// (ENGINEERING rule 12), then the same prune every other write runs.
+func (s *Service) writeDeployItems(ctx context.Context, recipients []string, n DeployNotice, kind, title, body string) error {
+	if len(recipients) == 0 {
+		return nil
+	}
+	link, label := deploymentLink(n)
+	f := store.InboxFanout{
+		IDs:       mintIDs(len(recipients)),
+		UserIDs:   recipients,
+		ProjectID: n.ProjectID,
+		Kind:      kind,
+		Severity:  string(domain.NotifyInfo),
+		Title:     title,
+		Body:      clampBody(body),
+		Link:      link,
+		LinkLabel: label,
+		DedupeKey: kind + ":" + n.DeploymentID,
+		FocusID:   n.DeploymentID,
+	}
+	if err := s.store.InsertInboxItems(ctx, f); err != nil {
+		return fmt.Errorf("inbox: inserting deploy items: %w", err)
+	}
+	if err := s.store.PruneInboxItems(ctx, recipients, domain.InboxRetention); err != nil {
+		return fmt.Errorf("inbox: pruning: %w", err)
+	}
+	return nil
+}
+
+// awaitingBody is the line an approver reads: what is waiting, on which app,
+// at which commit, and who asked. Composed here so a CLI prints the same
+// sentence the drawer does (CLAUDE.md rule 4).
+func awaitingBody(n DeployNotice) string {
+	body := describeDeploy(n)
+	if n.RequestedByEmailOrPush() == "" {
+		return body
+	}
+	return body + " · " + n.RequestedByEmailOrPush()
+}
+
+// decisionBody names the verdict, the decider and — for a rejection — why.
+func decisionBody(n DeployNotice, verdict string) string {
+	body := verdict
+	if n.ActorEmail != "" {
+		body += " by " + n.ActorEmail
+	}
+	body += ". " + describeDeploy(n)
+	if n.Reason != "" {
+		body += "\nReason: " + n.Reason
+	}
+	return body
+}
+
+// describeDeploy renders "web · c99d2e1", degrading to whichever half is known.
+func describeDeploy(n DeployNotice) string {
+	switch {
+	case n.ApplicationName != "" && n.Commit != "":
+		return n.ApplicationName + " · " + shortCommit(n.Commit)
+	case n.ApplicationName != "":
+		return n.ApplicationName
+	default:
+		return shortID(n.DeploymentID)
+	}
+}
+
+// RequestedByEmailOrPush names who asked for the deploy, or says a push did.
+// A method on the notice so the awaiting item and the screens agree on the
+// wording for the same absent requester.
+func (n DeployNotice) RequestedByEmailOrPush() string {
+	if n.RequesterEmail != "" {
+		return "requested by " + n.RequesterEmail
+	}
+	return "pushed via webhook"
+}
+
+// deploymentLink is the in-panel path the item opens — the same shape
+// deepLink builds for a deploy outcome, validated the same way (spec §5).
+func deploymentLink(n DeployNotice) (path, label string) {
+	if n.ProjectID == "" || n.ApplicationID == "" || n.DeploymentID == "" {
+		return "", ""
+	}
+	path = "/projects/" + n.ProjectID + "/applications/" + n.ApplicationID +
+		"/deployments?dep=" + n.DeploymentID
+	if !validPath(path) {
+		return "", ""
+	}
+	return path, "View deployment"
+}
+
+// shortID is the handle a screen shows instead of a full prefixed id: the
+// prefix plus seven characters of the random part, e.g. "dep_9f2abcd". Ids
+// carry ~130 bits, so seven base32 characters are ample to recognise one in a
+// list — and the full id is one click away.
+func shortID(id string) string {
+	const keep = 7
+	if i := strings.IndexByte(id, '_'); i >= 0 && len(id) > i+1+keep {
+		return id[:i+1+keep]
+	}
+	return id
+}
+
+// shortCommit is the seven-character SHA prefix operators actually read. A ref
+// that is not a SHA (a branch name, an image reference) is left alone.
+func shortCommit(c string) string {
+	if len(c) >= 40 && isHex(c) {
+		return c[:7]
+	}
+	return c
+}
+
+func isHex(s string) bool {
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') && (r < 'A' || r > 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 // panelUpdateBody composes the update item's body: what you run, what the

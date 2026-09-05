@@ -7,6 +7,7 @@
  * Every response — success, error and SSE stream alike — carries an `X-Request-Id` header (`components/headers/RequestId`), and every JSON error body repeats it as `trace_id`. It is the value to quote in a bug report and the key to search for in `GET /api/v1/panel/logs`. Individual responses reference the header only where a generated client benefits; it is present on all of them.
  * OpenAPI spec version: 0.3.0
  */
+import type { DeployApproval } from './deployApproval.ts';
 import type { DeploymentStatus } from './deploymentStatus.ts';
 import type { DeploymentTrigger } from './deploymentTrigger.ts';
 
@@ -14,9 +15,12 @@ export interface Deployment {
   id: string;
   application_id: string;
   revision_id: string;
+  /** Pipeline state. `awaiting_approval` is a deploy that deploy protection parked before it started: nothing was published, the application's own status is untouched, and it holds no queue slot. It is NOT terminal — it is waiting for a person. A rejected deploy ends `failed`, with a detail naming the rejecter. */
   status: DeploymentStatus;
   trigger: DeploymentTrigger;
   detail?: string;
+  /** The gate decision on this deployment, present only when it was gated. Carries enough to render the pending card without a second request; a deployment that was never gated omits it entirely. */
+  approval?: DeployApproval | null;
   created_at: string;
   finished_at?: string | null;
 }

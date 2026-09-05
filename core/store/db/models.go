@@ -97,6 +97,15 @@ type BackupTarget struct {
 	UpdatedAt      pgtype.Timestamptz
 }
 
+type BreakGlassGrant struct {
+	ID            string
+	EnvironmentID string
+	OpenedBy      pgtype.Text
+	Reason        string
+	CreatedAt     pgtype.Timestamptz
+	ExpiresAt     pgtype.Timestamptz
+}
+
 type Database struct {
 	ID                 string
 	EnvironmentID      string
@@ -145,6 +154,18 @@ type DatabaseRevision struct {
 	DatabaseID     string
 	ConfigSnapshot []byte
 	CreatedAt      pgtype.Timestamptz
+}
+
+type DeployApproval struct {
+	DeploymentID  string
+	EnvironmentID string
+	RequestedBy   pgtype.Text
+	RequiredRole  string
+	State         string
+	DecidedBy     pgtype.Text
+	DecidedAt     pgtype.Timestamptz
+	Reason        string
+	CreatedAt     pgtype.Timestamptz
 }
 
 type DeployKey struct {
@@ -220,6 +241,26 @@ type Environment struct {
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
 	Kind      string
+}
+
+type EnvironmentProtection struct {
+	EnvironmentID   string
+	RequireApproval bool
+	MinApproverRole string
+	FreezeEnabled   bool
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
+type FreezeWindow struct {
+	ID            string
+	EnvironmentID string
+	StartDow      int16
+	StartMinute   int32
+	EndDow        int16
+	EndMinute     int32
+	Timezone      string
+	CreatedAt     pgtype.Timestamptz
 }
 
 type InboxItem struct {

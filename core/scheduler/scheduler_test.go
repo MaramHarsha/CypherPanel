@@ -327,10 +327,15 @@ func (f *fakeStore) UpdateDeploymentStatus(_ context.Context, id string, status 
 	return d, nil
 }
 
+// activeFor mirrors the two queue queries in
+// core/store/queries/deployments.sql, which exclude the terminal states AND
+// awaiting_approval: a parked deploy holds no pipeline slot, so it can neither
+// block a later deploy nor be resumed by Recover (deploy-protection.md §3). A
+// fake that used Terminal() alone would hide exactly that.
 func (f *fakeStore) activeFor(appID string) []domain.Deployment {
 	var out []domain.Deployment
 	for _, d := range f.deployments {
-		if (appID == "" || d.ApplicationID == appID) && !d.Status.Terminal() {
+		if (appID == "" || d.ApplicationID == appID) && !d.Status.Terminal() && !d.Status.Parked() {
 			out = append(out, d)
 		}
 	}

@@ -93,6 +93,36 @@ being saved, the certificate rotates at its logged renewal point onto the
 alternate on-disk slot, and the whole rotation costs **zero bus reconnects**
 (evidence in [the spec](features/agent-identity-and-tls.md) §9).
 
+**Deploy protection** has landed
+([deploy-protection.md](features/deploy-protection.md), feature-matrix
+**V1.x**): an Environment can declare **who must approve a deploy there** and
+**when deploys are not allowed at all**, and the plane enforces both at the
+single point where a Deployment is born — before any work item reaches an
+agent. A gated deploy is not a second pipeline; it is the ordinary pipeline
+that has not been allowed to start, parked as
+`Deployment.status = awaiting_approval` with no work published, no application
+status touched and no queue slot held, so `Recover()` needs no new case and a
+plane restart mid-approval is indistinguishable from no restart. Freeze windows
+are weekly, declared in their own IANA zone, half-open and allowed to wrap the
+week; the plane embeds the zone database (`_ "time/tzdata"`) so a static binary
+on a bare image can still evaluate one, and a zone it cannot load refuses the
+deploy rather than passing it. A refused deploy answers `409` naming the window
+and when it lifts — from `POST /applications/{id}/deploy`, from
+`POST /deployments/{id}/rollback`, and from the GitHub webhook, so a failed
+delivery is diagnosable from the response alone and redeliverable after the
+window — and from `POST /templates/{slug}/install`, which deploys and is
+therefore rolled back rather than left half-created. **Break glass** is a
+30-minute recorded override of the freeze — never of the approval — opened by a
+team owner with a required reason. Approve, reject, break glass **and the policy
+`PUT` itself** are `sessionOnly`: an API token inherits its owner's role, so a
+`deploy`-able CI token could otherwise approve the deploy it had just requested,
+and a `write`-able one could send `{require_approval:false, freeze_enabled:false,
+windows:[]}` and delete the gate outright — either way it would be decorative
+(threat-model §5.8); the deploy routes are unchanged, so CI keeps working and
+its deploys park. Preview
+environments stay unprotected by construction — freezing them would strand
+every open PR.
+
 ## Post-v1 directions (recorded, not scheduled)
 
 Deliberate **Later** items from the [feature matrix](product/feature-matrix.md), captured so v1 work doesn't preempt or accidentally foreclose them:

@@ -42,19 +42,33 @@ words, because both render one `domain.NotifyEvent`. A new event key costs
 nothing here: the inbox subscribes to the taxonomy, not to individual
 transitions, so notifications.md §8's follow-ons render unchanged.
 
-**One exception, added later: panel-level kinds.** Some news is about the panel
-rather than about a project's resources, and has no `NotifyEvent` behind it —
-today just `panel.update_available`
+**One exception, grown twice: inbox-only kinds.** Some news has no
+`NotifyEvent` behind it, and there are now two families of it.
+
+*Panel-level kinds* are about the panel rather than about a project's resources
+— today just `panel.update_available`
 ([control-plane-hardening.md](control-plane-hardening.md) §3), written by the
 update check straight to owners. Those items have no project (`project_id` is
-nullable from migration `0028`), so the team-removal sweep never touches them,
-and they are *inbox* kinds only: `domain.InboxKinds()` is `EventTypes()` plus
-the panel kinds, preferences validate against `ValidInboxKind`, and notifiers
-and webhook endpoints keep subscribing to `EventTypes()` alone. Nothing emits a
-panel kind to a channel. Nothing new
-reaches an agent — like notifiers, this is a plane-internal reaction to state
-that already exists (ADR-005): no work item, no subject, no proto change, no
-imperative path (CLAUDE.md rule 3). And unlike channel delivery, the inbox write
+nullable from migration `0028`), so the team-removal sweep never touches them.
+
+*Deploy-protection kinds* are the second family: `deploy.awaiting_approval`,
+`deploy.approved` and `deploy.rejected`
+([deploy-protection.md](deploy-protection.md) §9.1). They ARE about a project's
+resources and carry a `project_id` like any other item, but they describe a
+decision waiting on a person rather than an outcome that has been observed, so
+they have no `NotifyEvent` either: a gate that nobody is told about is a
+bottleneck, and a "deploy awaiting approval" line in Slack would announce a
+governance step as an infrastructure event. Their audience is narrower than a
+project's team, too — the awaiting item is rank-narrowed to the members who
+could actually act on it, and the two decisions go to the requester alone.
+
+Both families are *inbox* kinds only: `domain.InboxKinds()` is `EventTypes()`
+plus the panel kinds plus deploy protection's three, preferences validate
+against `ValidInboxKind`, and notifiers and webhook endpoints keep subscribing
+to `EventTypes()` alone. Nothing emits an inbox-only kind to a channel, and
+nothing new reaches an agent — like notifiers, this is a plane-internal reaction
+to state that already exists (ADR-005): no work item, no subject, no proto
+change, no imperative path (CLAUDE.md rule 3). And unlike channel delivery, the inbox write
 is **persistence, not delivery**: it happens first, and its failure is logged,
 not swallowed by a dead webhook (§4).
 

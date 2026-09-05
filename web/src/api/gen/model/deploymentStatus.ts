@@ -8,6 +8,9 @@
  * OpenAPI spec version: 0.3.0
  */
 
+/**
+ * Pipeline state. `awaiting_approval` is a deploy that deploy protection parked before it started: nothing was published, the application's own status is untouched, and it holds no queue slot. It is NOT terminal — it is waiting for a person. A rejected deploy ends `failed`, with a detail naming the rejecter.
+ */
 export type DeploymentStatus = typeof DeploymentStatus[keyof typeof DeploymentStatus];
 
 
@@ -18,4 +21,5 @@ export const DeploymentStatus = {
   rolling_out: 'rolling_out',
   succeeded: 'succeeded',
   failed: 'failed',
+  awaiting_approval: 'awaiting_approval',
 } as const;

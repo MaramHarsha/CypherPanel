@@ -39,6 +39,25 @@ import (
 // never produced an image (its build failed or never ran).
 var ErrRevisionNotBuilt = errors.New("scheduler: revision was never built")
 
+// ErrFrozen marks a deploy refused because its environment is inside a freeze
+// window (deploy-protection.md §4). Nothing is written when it is returned — no
+// Revision, no Deployment — so a refused deploy leaves no orphan behind, and a
+// GitHub delivery can simply be redelivered once the window lifts.
+var ErrFrozen = errors.New("scheduler: environment is frozen")
+
+// ErrNotParked refuses a decision on a deployment that is not awaiting
+// approval — one already running, already finished, or already decided.
+// Handlers map it to 409.
+var ErrNotParked = errors.New("scheduler: deployment is not awaiting approval")
+
+// FrozenError carries the sentence the 409 body shows: which environment is
+// frozen and when it lifts, e.g. "production is frozen until Mon 08:00
+// Europe/Berlin". It wraps ErrFrozen, so callers may match either.
+type FrozenError struct{ Detail string }
+
+func (e *FrozenError) Error() string { return e.Detail }
+func (e *FrozenError) Unwrap() error { return ErrFrozen }
+
 // ErrRevisionDataInvalid marks a revision whose stored data cannot be turned
 // into a container spec at all — today, a config snapshot that will not parse.
 // It is permanent and scoped to one application: no retry can produce a spec,
@@ -143,6 +162,23 @@ type DomainVerifier interface {
 	Verify(ctx context.Context, host string) (dns.Verification, error)
 }
 
+// Gate is the deploy-protection admission check (consumer-defined;
+// *protection.Service satisfies it — deploy-protection.md §4). It is consulted
+// once, in Deploy and Rollback, at the moment a Deployment is born and before
+// any work item is published.
+//
+// A nil Gate means protection is not wired and every deploy is clear — the same
+// nil-guard the optional DomainVerifier uses. It is deliberately NOT a sink:
+// the gate can refuse, so its errors are propagated, never swallowed (§5, fail
+// closed).
+type Gate interface {
+	Admit(ctx context.Context, environmentID string) (domain.DeployAdmission, error)
+	// Park records the gate decision for a deployment the scheduler has just
+	// parked. Its failure fails the deployment: a parked deploy with no
+	// approval row could never be decided.
+	Park(ctx context.Context, dep domain.Deployment, environmentID, requestedBy, requiredRole string) error
+}
+
 type Scheduler struct {
 	store  Store
 	bus    Bus
@@ -158,6 +194,11 @@ type Scheduler struct {
 	// (dns-automation.md §4.2). nil when DNS automation is not wired, which
 	// routableDomain treats as "nothing is enforced".
 	dns DomainVerifier
+
+	// gate is deploy protection (deploy-protection.md). nil when it is not
+	// wired, which admit() treats as "every deploy is clear" — the behaviour
+	// of every panel before this feature existed.
+	gate Gate
 
 	// mu serializes pipeline transitions: deploy requests and event handlers
 	// race on the per-app queue, and the transitions are read-modify-write.
@@ -246,13 +287,34 @@ func imageTag(appID, revisionID string) string {
 // a Deployment to roll it out, then starts the pipeline (or queues behind the
 // app's active deployment). ref, when non-empty, is the exact commit to build;
 // empty builds the configured branch's head.
+//
+// It is DeployAs with no requester: the machine-triggered path (a template
+// install, a preview environment). A deploy a person asked for goes through
+// DeployAs so the gate can record who asked (deploy-protection.md §4).
 func (s *Scheduler) Deploy(ctx context.Context, appID, trigger, ref string) (domain.Deployment, error) {
+	return s.DeployAs(ctx, appID, trigger, ref, "")
+}
+
+// DeployAs is Deploy attributed to a user. requestedBy is the calling user's
+// id, or empty for a deploy no person asked for — a webhook push, a template
+// install — which is what a parked deployment stores as a NULL requester
+// (deploy-protection.md §2).
+func (s *Scheduler) DeployAs(ctx context.Context, appID, trigger, ref, requestedBy string) (domain.Deployment, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	app, err := s.store.GetApplication(ctx, appID)
 	if err != nil {
 		return domain.Deployment{}, fmt.Errorf("scheduler: getting application: %w", err)
+	}
+	// The gate runs BEFORE anything is written (deploy-protection.md §4): a
+	// freeze refuses outright, leaving no orphan Revision behind.
+	admission, err := s.admit(ctx, app)
+	if err != nil {
+		return domain.Deployment{}, err
+	}
+	if admission.Frozen {
+		return domain.Deployment{}, &FrozenError{Detail: admission.FreezeDetail}
 	}
 	snapshot, err := snapshotOf(app)
 	if err != nil {
@@ -281,6 +343,9 @@ func (s *Scheduler) Deploy(ctx context.Context, appID, trigger, ref string) (dom
 	if err != nil {
 		return domain.Deployment{}, fmt.Errorf("scheduler: creating deployment: %w", err)
 	}
+	if admission.NeedsApproval {
+		return s.park(ctx, dep, app, admission, requestedBy)
+	}
 	if serr := s.tryStart(ctx, dep); serr != nil {
 		// Return the current record alongside the error: a fail-fast start
 		// (no builder, bad deploy key) already wrote status=failed with the
@@ -296,7 +361,17 @@ func (s *Scheduler) Deploy(ctx context.Context, appID, trigger, ref string) (dom
 // Rollback starts a Deployment that re-points the application at the revision
 // a previous deployment shipped — same pipeline, build skipped (the image
 // exists; the agent's revision-window GC retains it).
+//
+// It is RollbackAs with no requester; a rollback a person asked for goes
+// through RollbackAs.
 func (s *Scheduler) Rollback(ctx context.Context, deploymentID string) (domain.Deployment, error) {
+	return s.RollbackAs(ctx, deploymentID, "")
+}
+
+// RollbackAs is Rollback attributed to a user. A rollback is a deploy — it
+// changes what is serving — so it passes the same gate, and inside a freeze it
+// is refused for the same reason a forward deploy is (deploy-protection.md §1).
+func (s *Scheduler) RollbackAs(ctx context.Context, deploymentID, requestedBy string) (domain.Deployment, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -311,9 +386,23 @@ func (s *Scheduler) Rollback(ctx context.Context, deploymentID string) (domain.D
 	if rev.Image == "" {
 		return domain.Deployment{}, ErrRevisionNotBuilt
 	}
+	app, err := s.store.GetApplication(ctx, src.ApplicationID)
+	if err != nil {
+		return domain.Deployment{}, fmt.Errorf("scheduler: getting application: %w", err)
+	}
+	admission, err := s.admit(ctx, app)
+	if err != nil {
+		return domain.Deployment{}, err
+	}
+	if admission.Frozen {
+		return domain.Deployment{}, &FrozenError{Detail: admission.FreezeDetail}
+	}
 	dep, err := s.store.CreateDeployment(ctx, ids.New(ids.PrefixDeployment), src.ApplicationID, rev.ID, "rollback")
 	if err != nil {
 		return domain.Deployment{}, fmt.Errorf("scheduler: creating rollback deployment: %w", err)
+	}
+	if admission.NeedsApproval {
+		return s.park(ctx, dep, app, admission, requestedBy)
 	}
 	if serr := s.tryStart(ctx, dep); serr != nil {
 		if fresh, err := s.store.GetDeployment(ctx, dep.ID); err == nil {
@@ -322,6 +411,136 @@ func (s *Scheduler) Rollback(ctx context.Context, deploymentID string) (domain.D
 		return dep, serr
 	}
 	return s.store.GetDeployment(ctx, dep.ID)
+}
+
+// ─── Deploy protection (deploy-protection.md §§3–4) ─────────────────────────
+
+// admit asks the gate whether this application's environment will accept a
+// deploy right now. No gate means no protection, which is how every panel
+// behaved before the feature existed. A gate that errors REFUSES: fail closed,
+// because a protection control that fails open is worse than none (§5).
+func (s *Scheduler) admit(ctx context.Context, app domain.Application) (domain.DeployAdmission, error) {
+	if s.gate == nil {
+		return domain.DeployAdmission{}, nil
+	}
+	adm, err := s.gate.Admit(ctx, app.EnvironmentID)
+	if err != nil {
+		return domain.DeployAdmission{}, fmt.Errorf("scheduler: evaluating deploy protection for %s: %w", app.ID, err)
+	}
+	return adm, nil
+}
+
+// park holds a freshly created Deployment at the gate: it moves to
+// awaiting_approval and NO work item is published, so the agent observes
+// nothing and the application's own status is untouched — start() is what sets
+// an app to deploying, and a parked deploy never reaches it (§3).
+//
+// Callers hold s.mu.
+func (s *Scheduler) park(ctx context.Context, dep domain.Deployment, app domain.Application,
+	adm domain.DeployAdmission, requestedBy string) (domain.Deployment, error) {
+	parked, err := s.store.UpdateDeploymentStatus(ctx, dep.ID, domain.DeployAwaitingApproval,
+		"waiting for approval from "+articleFor(adm.RequiredRole))
+	if err != nil {
+		return dep, err
+	}
+	if perr := s.gate.Park(ctx, parked, app.EnvironmentID, requestedBy, adm.RequiredRole); perr != nil {
+		// A deployment parked with no approval row could never be decided —
+		// no approve or reject route can reach it. Ending it is the honest
+		// outcome, and the detail says what to do about it.
+		s.log.Error("recording deploy approval", "deployment_id", parked.ID,
+			"app_id", app.ID, "environment_id", app.EnvironmentID, "error", perr)
+		failed, ferr := s.failParked(ctx, parked, "could not record the approval request — deploy again")
+		if ferr != nil {
+			return parked, perr
+		}
+		return failed, perr
+	}
+	return parked, nil
+}
+
+// ApproveDeployment releases a parked deployment into the ordinary queue: it
+// becomes queued and tryStart promotes it if it is at the head, so two
+// approvals granted at once serialize exactly like two manual deploys (§3).
+//
+// It asserts the parked state rather than trusting the caller, because the
+// approval row and the deployment row are written separately and only this
+// assertion makes "approved twice" harmless.
+func (s *Scheduler) ApproveDeployment(ctx context.Context, deploymentID string) (domain.Deployment, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	dep, err := s.store.GetDeployment(ctx, deploymentID)
+	if err != nil {
+		return domain.Deployment{}, fmt.Errorf("scheduler: getting deployment: %w", err)
+	}
+	if !dep.Status.Parked() {
+		return dep, ErrNotParked
+	}
+	queued, err := s.store.UpdateDeploymentStatus(ctx, dep.ID, domain.DeployQueued, "")
+	if err != nil {
+		return dep, err
+	}
+	s.log.Info("parked deployment approved", "deployment_id", dep.ID, "app_id", dep.ApplicationID)
+	if serr := s.tryStart(ctx, queued); serr != nil {
+		if fresh, gerr := s.store.GetDeployment(ctx, queued.ID); gerr == nil {
+			return fresh, serr
+		}
+		return queued, serr
+	}
+	return s.store.GetDeployment(ctx, queued.ID)
+}
+
+// RejectDeployment ends a parked deployment as failed, carrying detail — the
+// sentence naming the rejecter and their reason (§3).
+func (s *Scheduler) RejectDeployment(ctx context.Context, deploymentID, detail string) (domain.Deployment, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	dep, err := s.store.GetDeployment(ctx, deploymentID)
+	if err != nil {
+		return domain.Deployment{}, fmt.Errorf("scheduler: getting deployment: %w", err)
+	}
+	if !dep.Status.Parked() {
+		return dep, ErrNotParked
+	}
+	return s.failParked(ctx, dep, detail)
+}
+
+// failParked ends a deployment that never started. Deliberately NOT fail():
+//
+//   - there is no 'deploying' override to take back — start() never ran, so
+//     the application has been reporting what it is actually doing all along;
+//   - no queued successor to promote — a parked deploy holds no pipeline slot
+//     (the queue queries exclude awaiting_approval), so ending it frees
+//     nothing;
+//   - nothing is emitted to the notifier/webhook sinks. Their taxonomy is
+//     observed OUTCOMES (notifications.md §3), and announcing "deploy failed"
+//     in Slack would misrepresent a governance decision as an infrastructure
+//     failure. The requester is told directly, in the inbox, by the item that
+//     names who rejected it and why (§9).
+//
+// Callers hold s.mu.
+func (s *Scheduler) failParked(ctx context.Context, dep domain.Deployment, detail string) (domain.Deployment, error) {
+	failed, err := s.store.UpdateDeploymentStatus(ctx, dep.ID, domain.DeployFailed, detail)
+	if err != nil {
+		return dep, fmt.Errorf("scheduler: ending parked deployment: %w", err)
+	}
+	s.log.Info("parked deployment ended", "deployment_id", dep.ID,
+		"app_id", dep.ApplicationID, "detail", detail)
+	return failed, nil
+}
+
+// articleFor renders a role with its article, so a parked deployment's detail
+// reads "waiting for approval from an owner" rather than "from owner".
+func articleFor(role string) string {
+	switch role {
+	case domain.RoleAdmin, domain.RoleOwner:
+		return "an " + role
+	case domain.RoleMember:
+		return "a " + role
+	default:
+		return "an approver"
+	}
 }
 
 // RemoveApp publishes desired absence for a deleted application. Called after
@@ -1475,7 +1694,12 @@ func (s *Scheduler) Recover(ctx context.Context) error {
 			if err := s.startRollout(ctx, dep, app, rev); err != nil {
 				s.log.Error("recover: republishing rollout", "deployment_id", dep.ID, "error", err)
 			}
-		case domain.DeploySucceeded, domain.DeployFailed:
+		case domain.DeploySucceeded, domain.DeployFailed, domain.DeployAwaitingApproval:
+			// Unreachable: ListActiveDeployments excludes all three. Listed so
+			// the switch names every status, and so a parked deploy's absence
+			// from recovery is a stated decision rather than an omission —
+			// nothing was published for it, so there is nothing to republish
+			// (deploy-protection.md §3; ENGINEERING rule 15, vacuously).
 		}
 	}
 	return nil
@@ -1485,3 +1709,8 @@ func (s *Scheduler) Recover(ctx context.Context) error {
 // every domain routes, which is exactly how the panel behaved before DNS
 // automation existed (dns-automation.md §4.1).
 func (s *Scheduler) SetDomainVerifier(v DomainVerifier) { s.dns = v }
+
+// SetGate wires deploy protection. Optional: without it every deploy is
+// admitted, which is exactly how the panel behaved before the feature existed
+// (deploy-protection.md §4).
+func (s *Scheduler) SetGate(g Gate) { s.gate = g }

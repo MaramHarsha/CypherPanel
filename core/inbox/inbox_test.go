@@ -611,11 +611,36 @@ func TestSetPreferencesValidatesAndDeduplicates(t *testing.T) {
 }
 
 // The preference list names the whole inbox taxonomy: the subscribable events
-// plus the panel-level kinds (control-plane-hardening.md §3).
+// plus the inbox-only kinds — panel-level (control-plane-hardening.md §3) and
+// deploy protection's (deploy-protection.md §9).
+//
+// Compared against domain.InboxKinds() element by element rather than against a
+// count, so adding a kind does not need this test edited: what it asserts is
+// that the preference list DELEGATES to the taxonomy, and that every kind in it
+// is one ValidInboxKind accepts — the pair that keeps a mutable preference from
+// naming something no item can ever carry.
 func TestAvailableKindsIsTheTaxonomy(t *testing.T) {
-	got := AvailableKinds()
-	if len(got) != len(domain.InboxKinds()) || len(got) != len(domain.EventTypes())+1 {
-		t.Fatalf("AvailableKinds = %v, want the inbox taxonomy %v", got, domain.InboxKinds())
+	got, want := AvailableKinds(), domain.InboxKinds()
+	if len(got) != len(want) {
+		t.Fatalf("AvailableKinds = %v, want %v", got, want)
+	}
+	for i, k := range want {
+		if got[i] != k {
+			t.Fatalf("AvailableKinds[%d] = %q, want %q", i, got[i], k)
+		}
+		if !domain.ValidInboxKind(k) {
+			t.Errorf("taxonomy names %q but ValidInboxKind rejects it", k)
+		}
+	}
+	// Every event type is an inbox kind, and the inbox-only kinds are the
+	// surplus: the taxonomy is a superset, never a different set.
+	if len(got) <= len(domain.EventTypes()) {
+		t.Fatalf("AvailableKinds = %v does not extend the event taxonomy %v", got, domain.EventTypes())
+	}
+	for _, k := range domain.EventTypes() {
+		if !domain.ValidInboxKind(k) {
+			t.Errorf("event type %q is not an inbox kind", k)
+		}
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/MaramHarsha/cypherpanel/core/api/rest/webui"
 	"github.com/MaramHarsha/cypherpanel/core/applications"
@@ -24,6 +25,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/inbox"
 	"github.com/MaramHarsha/cypherpanel/core/notify"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
+	"github.com/MaramHarsha/cypherpanel/core/protection"
 	"github.com/MaramHarsha/cypherpanel/core/scheduledtasks"
 	"github.com/MaramHarsha/cypherpanel/core/servers"
 	"github.com/MaramHarsha/cypherpanel/core/sharedvars"
@@ -38,10 +40,43 @@ type Pinger interface {
 
 // Deployer starts pipelines and publishes desired absence (consumer-defined;
 // *scheduler.Scheduler satisfies it).
+//
+// The two start verbs are the ATTRIBUTED forms: every deploy reachable from
+// this API was asked for by an identified principal, or by a signed webhook
+// push that has none, and deploy protection records which (deploy-protection.md
+// §2). The unattributed Deploy/Rollback stay on the scheduler for the
+// machine-triggered paths — a template install, a preview environment — which
+// this package never calls.
 type Deployer interface {
-	Deploy(ctx context.Context, appID, trigger, ref string) (domain.Deployment, error)
-	Rollback(ctx context.Context, deploymentID string) (domain.Deployment, error)
+	DeployAs(ctx context.Context, appID, trigger, ref, requestedBy string) (domain.Deployment, error)
+	RollbackAs(ctx context.Context, deploymentID, requestedBy string) (domain.Deployment, error)
 	RemoveApp(ctx context.Context, serverID, appID string) error
+}
+
+// ProtectionService is deploy protection (consumer-defined; *protection.Service
+// satisfies it — deploy-protection.md §6): the policy document, the approval
+// queue, the two decision verbs and the recorded freeze override. nil when the
+// feature is not wired, which every handler treats as "nothing is protected" —
+// the same answer the default document gives.
+type ProtectionService interface {
+	Get(ctx context.Context, envID string) (domain.EnvironmentProtection, error)
+	Set(ctx context.Context, envID string, in protection.Document) (domain.EnvironmentProtection, error)
+
+	Approvals(ctx context.Context, envID, state string) ([]domain.DeployApproval, error)
+	// ApprovalFor is also what the deployment DTO attaches, so it stays a
+	// plain lookup; store.ErrNotFound means the deployment was never gated.
+	ApprovalFor(ctx context.Context, deploymentID string) (domain.DeployApproval, error)
+	// ApprovalsForApplication decorates ONE PAGE of deployments: the ids are
+	// the rows being rendered, not the application's whole deploy history.
+	ApprovalsForApplication(ctx context.Context, appID string, deploymentIDs []string) (map[string]domain.DeployApproval, error)
+	Approve(ctx context.Context, deploymentID string, actor domain.User) (domain.Deployment, domain.DeployApproval, error)
+	Reject(ctx context.Context, deploymentID, reason string, actor domain.User) (domain.Deployment, domain.DeployApproval, error)
+
+	OpenBreakGlass(ctx context.Context, envID string, actor domain.User, reason string) (domain.BreakGlassGrant, error)
+	BreakGlassGrants(ctx context.Context, envID string) ([]domain.BreakGlassGrant, error)
+	// Now is the service's own clock, so a grant's `active` flag in a response
+	// and the gate's decision are read from one time source.
+	Now() time.Time
 }
 
 // DeploymentReader reads deployment records (consumer-defined; *store.Store
@@ -230,15 +265,18 @@ type Deps struct {
 	DNSZones DNSReader
 	// ServerAddresses records where a server's applications' DNS points.
 	ServerAddresses ServerAddressWriter
-	Scheduler       Deployer
-	Deployments     DeploymentReader
-	Opener          Opener
-	Pinger          Pinger
-	CACertPEM       []byte
-	EnrollAddr      string // advertised gRPC enrollment address (host:port)
-	NATSURL         string // advertised data-plane URL
-	Logs            LogSubscriber
-	ConsoleURL      string // advertised HTTP base URL (installer + CA fetch)
+	// Protection is deploy protection (deploy-protection.md); nil when it is
+	// not wired, which every handler treats as "nothing is protected".
+	Protection  ProtectionService
+	Scheduler   Deployer
+	Deployments DeploymentReader
+	Opener      Opener
+	Pinger      Pinger
+	CACertPEM   []byte
+	EnrollAddr  string // advertised gRPC enrollment address (host:port)
+	NATSURL     string // advertised data-plane URL
+	Logs        LogSubscriber
+	ConsoleURL  string // advertised HTTP base URL (installer + CA fetch)
 	// TrustedProxies are the peer CIDRs allowed to speak for a client through
 	// X-Forwarded-For / X-Real-IP / X-Request-Id. Empty means nothing is
 	// trusted and the TCP peer is always the client (§5).
@@ -487,6 +525,33 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/v1/shared-variables/{id}", a.authed(a.handlePatchSharedVariable))
 	mux.HandleFunc("DELETE /api/v1/shared-variables/{id}", a.authed(a.handleDeleteSharedVariable))
 	mux.HandleFunc("GET /api/v1/shared-variables/{id}/used-by", a.authed(a.handleListSharedVariableUsage))
+
+	// V1.x: deploy protection (deploy-protection.md §6). Protection hangs off
+	// the ENVIRONMENT because that is the unit an operator reasons about; the
+	// two decision routes hang off the DEPLOYMENT because that is what is
+	// parked.
+	//
+	// deployRoutes gains no entry, deliberately: approve triggers a rollout,
+	// but no token ability can reach it — approve, reject and break glass are
+	// sessionOnly. An API token inherits its owner's role, so a `deploy`-able
+	// token in CI could otherwise approve the deploy it had just requested and
+	// the gate would be decorative (§5, threat-model §5.8). The deploy routes
+	// themselves are unchanged, so CI keeps working: its deploys park.
+	//
+	// The PUT is sessionOnly for the SAME reason, and with more force: a
+	// `write`-ability token whose owner is a team admin could otherwise send
+	// `{require_approval:false, freeze_enabled:false, windows:[]}` and then
+	// deploy freely. Switching the whole control off is strictly more powerful
+	// than the single 30-minute break-glass grant that is already session-only,
+	// so it cannot be the one door a leaked CI token is left holding.
+	mux.HandleFunc("GET /api/v1/environments/{id}/protection", a.authed(a.handleGetEnvironmentProtection))
+	mux.HandleFunc("PUT /api/v1/environments/{id}/protection", a.sessionOnly(a.handleSetEnvironmentProtection))
+	mux.HandleFunc("GET /api/v1/environments/{id}/approvals", a.authed(a.handleListDeployApprovals))
+	mux.HandleFunc("GET /api/v1/environments/{id}/break-glass", a.authed(a.handleListBreakGlassGrants))
+	mux.HandleFunc("POST /api/v1/environments/{id}/break-glass", a.sessionOnly(a.handleOpenBreakGlass))
+	mux.HandleFunc("GET /api/v1/deployments/{id}/approval", a.authed(a.handleGetDeployApproval))
+	mux.HandleFunc("POST /api/v1/deployments/{id}/approve", a.sessionOnly(a.handleApproveDeployment))
+	mux.HandleFunc("POST /api/v1/deployments/{id}/reject", a.sessionOnly(a.handleRejectDeployment))
 
 	// Phase 3: scheduled tasks (scheduled-tasks.md §7).
 	mux.HandleFunc("POST /api/v1/applications/{id}/scheduled-tasks", a.authed(a.handleCreateScheduledTask))

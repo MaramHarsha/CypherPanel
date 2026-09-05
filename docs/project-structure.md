@@ -35,6 +35,10 @@ cypherpanel/
 │   ├── secret/                  # AES-256-GCM sealing with the master key
 │   ├── servers/                 # operator-facing server lifecycle
 │   ├── projects/               # operator-facing project/environment lifecycle (Phase 2)
+│   ├── protection/              # deploy protection: the freeze-window arithmetic,
+│   │                            #   the admission gate the scheduler consults, and
+│   │                            #   the approval / break-glass decisions
+│   │                            #   (deploy-protection.md)
 │   ├── applications/           # application lifecycle: config, sealed env, webhook secret (Phase 2)
 │   ├── status/                  # heartbeat consumption, liveness → status transitions
 │   ├── scheduler/               # deploy pipeline: work-item producers, deployment state

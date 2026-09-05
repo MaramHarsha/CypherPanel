@@ -100,6 +100,12 @@ func (a *API) handleInstallTemplate(w http.ResponseWriter, r *http.Request) {
 			"environment_id", req.EnvironmentID, "remaining", partial.Remaining, "error", partial.Cause)
 		writeError(w, http.StatusInternalServerError,
 			"could not install template, and rolling it back left resources behind: "+strings.Join(partial.Remaining, ", "))
+	case writeIfFrozen(w, err):
+		// A template install deploys, so it passes the same gate a deploy
+		// does (deploy-protection.md §1). Placed after the partial branch: a
+		// refusal that also stranded resources has to name them first, or they
+		// are unfindable. A clean refusal answers 409 naming the window, so the
+		// operator retries after it rather than reading a blank 500.
 	case err != nil:
 		a.deps.Log.Error("installing template", "slug", r.PathValue("slug"), "environment_id", req.EnvironmentID, "error", err)
 		writeError(w, http.StatusInternalServerError, "could not install template")

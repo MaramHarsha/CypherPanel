@@ -41,6 +41,7 @@ tags:
   - name: inbox
   - name: shared-variables
   - name: scheduled-tasks
+  - name: protection
 
 paths:
   /healthz:
@@ -1137,6 +1138,18 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: >-
+            The environment is inside a freeze window; nothing was written. An
+            install deploys, so it passes the same gate a deploy does — and the
+            resources it had begun to create are rolled back, so the refusal
+            leaves no partial install behind. The error names the window and
+            when it lifts, e.g. "production is frozen until Mon 08:00
+            Europe/Berlin", so the request can simply be retried after it. A
+            team owner may open a break-glass grant first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /api/v1/projects/{id}:
     parameters:
       - name: id
@@ -1519,17 +1532,39 @@ paths:
               $ref: "#/components/schemas/DeployRequest"
       responses:
         "202":
-          description: Pipeline started; poll the deployment for progress.
+          description: >-
+            Accepted. Normally the pipeline has started; poll the deployment for
+            progress. When the target environment requires approval
+            (deploy-protection.md), the deployment comes back with
+            `status: awaiting_approval` and its `approval` summary instead — no
+            work item has been published, and it starts only once someone at or
+            above `approval.required_role` approves it.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Deployment"
+        "400":
+          description: Malformed request body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           description: No such application.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: >-
+            The environment is inside a freeze window; nothing was written. The
+            error names the window and when it lifts, e.g. "production is frozen
+            until Mon 08:00 Europe/Berlin", so the request can simply be retried
+            after it. A team owner may open a break-glass grant first.
           content:
             application/json:
               schema:
@@ -1637,7 +1672,12 @@ paths:
             type: string
       responses:
         "202":
-          description: Rollback pipeline started.
+          description: >-
+            Accepted. Normally the rollback pipeline has started. When the
+            environment requires approval the deployment comes back with
+            `status: awaiting_approval` and its `approval` summary — a rollback
+            changes what is serving, so it passes the same gate a forward deploy
+            does.
           content:
             application/json:
               schema:
@@ -1653,7 +1693,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: The revision was never built; nothing to roll back to.
+          description: >-
+            Either the revision was never built (nothing to roll back to), or
+            the environment is inside a freeze window — in which case the error
+            names the window and when it lifts. Nothing is written in either
+            case.
           content:
             application/json:
               schema:
@@ -1680,7 +1724,11 @@ paths:
           description: GitHub's HMAC-SHA256 body signature ("sha256=<hex>").
       responses:
         "202":
-          description: Push on the configured branch; deployment started.
+          description: >-
+            Push on the configured branch; deployment started — or, when the
+            environment requires approval, parked with
+            `status: awaiting_approval` and a `requested_by`-less approval
+            (a push has no panel user behind it).
           content:
             application/json:
               schema:
@@ -1695,6 +1743,16 @@ paths:
                 $ref: "#/components/schemas/Error"
         "404":
           description: Unknown webhook id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: >-
+            The environment is inside a freeze window; nothing was written. The
+            error names the window and when it lifts, so the delivery is
+            diagnosable from the response alone and can be redelivered from
+            GitHub after the window.
           content:
             application/json:
               schema:
@@ -2847,6 +2905,412 @@ paths:
           $ref: "#/components/responses/Forbidden"
 
   # ─── Scheduled tasks (scheduled-tasks.md §7) ──────────────────────────────
+  # ─── Deploy protection (deploy-protection.md §6) ──────────────────────────
+  # Protection hangs off the ENVIRONMENT because that is the unit an operator
+  # reasons about ("nobody deploys to production on a Friday"), and the two
+  # decision routes hang off the DEPLOYMENT because that is what is parked.
+
+  /api/v1/environments/{id}/protection:
+    get:
+      operationId: getEnvironmentProtection
+      tags: [protection]
+      summary: The environment's deploy-protection policy
+      description: >-
+        Returns the DEFAULT document (`require_approval: false`, `windows: []`)
+        for an environment that has never been protected, rather than 404: "not
+        protected" is an answer, and a 404 would make a screen invent one. Any
+        team member may read it.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The policy in force.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvironmentProtection"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such environment (or the caller is not a member of its team).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    put:
+      operationId: setEnvironmentProtection
+      tags: [protection]
+      summary: Replace the environment's protection policy (team admin, session only)
+      description: >-
+        Carries the WHOLE document — the flags plus the complete window list —
+        and replaces it wholesale; an empty `windows` array means no freeze.
+        There is no partial update, because flags and windows describing
+        different intents is exactly the state an operator cannot reason about.
+        Every field is required for the same reason: an omitted one read as a
+        default would turn a forgotten field into a policy change, answered
+        `200`. Preview environments cannot be protected.
+
+
+        Session only, like break glass and the two decision routes, and for the
+        same reason with more force: this request can switch the control off
+        wholesale (`require_approval: false`, `freeze_enabled: false`,
+        `windows: []`), which is strictly more powerful than the single
+        30-minute grant that suspends one freeze. A leaked CI token must not be
+        able to switch a protection control off — including by deleting it.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetProtectionRequest"
+      responses:
+        "200":
+          description: The stored policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvironmentProtection"
+        "400":
+          description: >-
+            Invalid document — an unknown role, a day or minute out of range, a
+            window that starts and ends at the same moment, a time zone that is
+            not an IANA name, or more than 8 windows.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: >-
+            Not a team admin, or the caller authenticated with an API token
+            rather than an interactive session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No such environment (or the caller is not a member of its team).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: >-
+            This is a preview environment. Previews are ordinary environments
+            with a TTL and stay unprotected — freezing them would strand every
+            open pull request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: >-
+            Deploy protection is not enabled on this panel, so there is no
+            policy to write. Reads still answer: the default document says
+            nothing is protected, which is true.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/environments/{id}/approvals:
+    get:
+      operationId: listDeployApprovals
+      tags: [protection]
+      summary: The environment's gate decisions, newest first
+      description: >-
+        Bounded to the 100 most recent decisions. The pending queue is short by
+        construction, but `state=all` asks for a history that grows for as long
+        as the environment exists, and an unbounded answer is one that
+        eventually stops arriving.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: false
+          description: Filter by decision state. Defaults to `pending`; pass `all` for every state.
+          schema:
+            type: string
+            enum: [pending, approved, rejected, all]
+      responses:
+        "200":
+          description: The approvals.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DeployApproval"
+        "400":
+          description: Unknown state filter.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such environment (or the caller is not a member of its team).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/environments/{id}/break-glass:
+    get:
+      operationId: listBreakGlassGrants
+      tags: [protection]
+      summary: Break-glass grants on this environment, newest first
+      description: >-
+        Active and recent grants, each with who opened it, why, and when it
+        lapses. Any team member may read them: a recorded override is only a
+        control if the people it affects can see it.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The grants.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BreakGlassGrant"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such environment (or the caller is not a member of its team).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: openBreakGlass
+      tags: [protection]
+      summary: Suspend this environment's freeze for 30 minutes (team owner, session only)
+      description: >-
+        Opens a bounded, recorded override of the FREEZE gate — and only the
+        freeze gate; the approval gate is unaffected. The grant lapses on its
+        own after 30 minutes and is never revoked early. The reason is required
+        and is stored verbatim beside the opener's name.
+
+
+        Session only: an API token may not open one, for the same reason it may
+        not manage credentials — a leaked CI token must not be able to switch a
+        protection control off.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BreakGlassRequest"
+      responses:
+        "201":
+          description: The grant.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BreakGlassGrant"
+        "400":
+          description: Missing, over-long or multi-line reason.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Not a team owner, or the caller authenticated with an API token rather than a session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No such environment (or the caller is not a member of its team).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: >-
+            Deploy protection is not enabled on this panel, so no freeze exists
+            to suspend. The grant listing still answers, with nothing in it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/deployments/{id}/approval:
+    get:
+      operationId: getDeployApproval
+      tags: [protection]
+      summary: One deployment's gate decision
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The approval.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeployApproval"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: >-
+            No such deployment, or it was never gated — an ungated deployment
+            has no approval, which is the ordinary case.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/deployments/{id}/approve:
+    post:
+      operationId: approveDeployment
+      tags: [protection]
+      summary: Approve a parked deploy and let it run (approver rank, session only)
+      description: >-
+        The caller must rank at or above the approval's `required_role` — the
+        rank snapshotted when the deploy parked, so relaxing the policy since
+        then does not relax this decision. The requester may not approve their
+        own deploy while another qualifying approver exists; where they are the
+        only one, they may, because a two-person rule needs two people.
+
+
+        Session only: an API token inherits its owner's role, so a `deploy`
+        token in CI could otherwise approve the deploy it had just requested and
+        the gate would be decorative. Deploy routes are unchanged, so CI keeps
+        working — its deploys park.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          description: Approved; the deployment re-entered the ordinary queue.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deployment"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: >-
+            Rank below `required_role`, an API token rather than a session, or
+            the requester approving their own deploy while another qualifying
+            approver exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No such deployment, or it was never gated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Already approved or rejected — decisions are once-only.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/deployments/{id}/reject:
+    post:
+      operationId: rejectDeployment
+      tags: [protection]
+      summary: Reject a parked deploy (approver rank, session only)
+      description: >-
+        Ends the deployment as `failed` with a detail naming the rejecter and
+        their reason. No container is ever touched, because the deploy never
+        started. The reason is required.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RejectDeploymentRequest"
+      responses:
+        "200":
+          description: Rejected; the deployment ended failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deployment"
+        "400":
+          description: Missing, over-long or multi-line reason.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Rank below `required_role`, or an API token rather than a session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No such deployment, or it was never gated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Already approved or rejected — decisions are once-only.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /api/v1/applications/{id}/scheduled-tasks:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Application ID. }
@@ -4288,12 +4752,26 @@ components:
           type: string
         status:
           type: string
-          enum: [queued, building, distributing, rolling_out, succeeded, failed]
+          description: >-
+            Pipeline state. `awaiting_approval` is a deploy that deploy
+            protection parked before it started: nothing was published, the
+            application's own status is untouched, and it holds no queue slot.
+            It is NOT terminal — it is waiting for a person. A rejected deploy
+            ends `failed`, with a detail naming the rejecter.
+          enum: [queued, building, distributing, rolling_out, succeeded, failed, awaiting_approval]
         trigger:
           type: string
           enum: [manual, webhook, rollback]
         detail:
           type: string
+        approval:
+          description: >-
+            The gate decision on this deployment, present only when it was
+            gated. Carries enough to render the pending card without a second
+            request; a deployment that was never gated omits it entirely.
+          oneOf:
+            - $ref: "#/components/schemas/DeployApproval"
+            - type: "null"
         created_at:
           type: string
           format: date-time
@@ -4938,6 +5416,195 @@ components:
           description: The complete muted set; this replaces the previous one. A kind outside available_kinds is a 400.
 
     # ─── Project shared variables (shared-variables.md §7) ────────────────
+    # ─── Deploy protection (deploy-protection.md §2, §6) ────────────────────
+
+    EnvironmentProtection:
+      type: object
+      required: [environment_id, require_approval, min_approver_role, freeze_enabled, windows]
+      properties:
+        environment_id: { type: string }
+        require_approval:
+          type: boolean
+          description: >-
+            Deploys to this environment park until someone at or above
+            min_approver_role approves them. Webhook deploys park too — they
+            simply have no requester.
+        min_approver_role:
+          type: string
+          enum: [member, admin, owner]
+          description: >-
+            The minimum team rank that may approve. Snapshotted onto each
+            approval at park time, so relaxing it does not relax a deploy that
+            is already parked.
+        freeze_enabled:
+          type: boolean
+          description: >-
+            The master switch over `windows`. Turning it off keeps the declared
+            windows, so they can be re-armed without retyping; an empty
+            `windows` list means no freeze whatever this says.
+        windows:
+          type: array
+          items:
+            $ref: "#/components/schemas/FreezeWindow"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    FreezeWindow:
+      type: object
+      required: [id, start_dow, start_minute, end_dow, end_minute, timezone, summary]
+      properties:
+        id: { type: string, description: fzw_… prefixed ID, minted on each wholesale write. }
+        start_dow:
+          type: integer
+          minimum: 0
+          maximum: 6
+          description: 0 = Sunday … 6 = Saturday.
+        start_minute:
+          type: integer
+          minimum: 0
+          maximum: 1439
+          description: Minutes past local midnight, in `timezone`.
+        end_dow:
+          type: integer
+          minimum: 0
+          maximum: 6
+        end_minute:
+          type: integer
+          minimum: 0
+          maximum: 1439
+        timezone:
+          type: string
+          description: >-
+            IANA name, e.g. "Europe/Berlin". The window is evaluated on WALL
+            CLOCK in this zone, so a DST change makes it an hour shorter or
+            longer in absolute terms twice a year — which is what "no deploys
+            after six on Friday" means. The window is half-open and may wrap the
+            week (Fri 18:00 → Mon 08:00 is one window).
+        summary:
+          type: string
+          description: >-
+            The window rendered as the sentence the panel and the CLI both
+            print, e.g. "Fri 18:00 → Mon 08:00 (Europe/Berlin)". Derived,
+            never stored.
+
+    SetProtectionRequest:
+      type: object
+      # Every field is required, and the handler answers 400 for each omission
+      # rather than applying a default: this is a wholesale replace, so a
+      # forgotten field would silently rewrite the policy and answer 200.
+      required: [require_approval, min_approver_role, freeze_enabled, windows]
+      properties:
+        require_approval: { type: boolean }
+        min_approver_role:
+          type: string
+          enum: [member, admin, owner]
+        freeze_enabled: { type: boolean }
+        windows:
+          type: array
+          maxItems: 8
+          description: The complete window list; it replaces whatever was there.
+          items:
+            $ref: "#/components/schemas/FreezeWindowInput"
+
+    FreezeWindowInput:
+      type: object
+      required: [start_dow, start_minute, end_dow, end_minute, timezone]
+      properties:
+        start_dow: { type: integer, minimum: 0, maximum: 6 }
+        start_minute: { type: integer, minimum: 0, maximum: 1439 }
+        end_dow: { type: integer, minimum: 0, maximum: 6 }
+        end_minute: { type: integer, minimum: 0, maximum: 1439 }
+        timezone: { type: string, description: "IANA name, e.g. Europe/Berlin." }
+
+    DeployApproval:
+      type: object
+      required: [deployment_id, environment_id, required_role, state, created_at]
+      properties:
+        deployment_id: { type: string }
+        environment_id: { type: string }
+        requested_by:
+          type: string
+          description: >-
+            The user who asked for the deploy. Empty for a webhook deploy — a
+            push has no panel user behind it — and for a requester who has since
+            been deleted.
+        requested_by_email:
+          type: string
+          description: That user's address, joined for display. Empty when there is no requester.
+        required_role:
+          type: string
+          enum: [member, admin, owner]
+          description: The rank that must approve, snapshotted at park time.
+        state:
+          type: string
+          enum: [pending, approved, rejected]
+        decided_by:
+          type: string
+          description: Who approved or rejected; empty while pending.
+        decided_by_email:
+          type: string
+        decided_at:
+          type: string
+          format: date-time
+          nullable: true
+        reason:
+          type: string
+          description: The rejecter's sentence, stored verbatim and rendered as text. Empty on an approval.
+        created_at:
+          type: string
+          format: date-time
+
+    BreakGlassGrant:
+      type: object
+      required: [id, environment_id, opened_by, reason, created_at, expires_at, active]
+      properties:
+        id: { type: string, description: bg_… prefixed ID. }
+        environment_id: { type: string }
+        opened_by: { type: string }
+        opened_by_email: { type: string }
+        reason:
+          type: string
+          description: Why the freeze was overridden, stored verbatim and rendered as text.
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          description: >-
+            30 minutes after it was opened. Grants lapse on their own and are
+            never revoked early.
+        active:
+          type: boolean
+          description: Whether the grant still suspends the freeze, as of this response.
+
+    BreakGlassRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Required, single-line. It is the gate on the dialog instead of a typed name.
+
+    RejectDeploymentRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: >-
+            Why the deploy is refused. It becomes part of the deployment's
+            detail ("rejected by alex@acme.com: shipping Monday") and of the
+            requester's inbox item.
+
     SharedVariable:
       type: object
       required: [id, project_id, environment_id, environment_name, key, used_by_count, created_at, updated_at]

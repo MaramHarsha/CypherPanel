@@ -44,6 +44,9 @@
 - **DNS Provider** — the panel's connection to a DNS operator (Cloudflare at v1). One per panel, owned by panel admins, its API token sealed. What proves an operator owns a domain is possession of a token that can see its Zone.
 - **Zone** — a domain a connected DNS Provider is authoritative for (`example.com`). Cached from the provider, never operator-entered — an operator-entered zone list would be a second place to lie about ownership.
 - **DNS Record** — a record CypherPanel created and therefore manages: it is written when a verified domain is set, updated when it changes, and deleted when the Application, Environment or Project goes away. The panel never modifies a record it did not create.
+- **Deploy Protection** — desired state about *deploying*: an Environment's declaration of who must approve a deploy there and when deploys are not allowed at all. Enforced once, where a Deployment is born, before any Work Item is published. Off by default, and never applied to a preview environment.
+- **Freeze Window** — a weekly recurring interval, declared in its own IANA time zone, during which an Environment refuses deploys. Half-open and allowed to wrap the week (`Fri 18:00 → Mon 08:00`). Evaluated on wall clock in that zone, so it stays put across a DST change.
+- **Break Glass** — a bounded, recorded override of an Environment's Freeze Window: a team owner opens one with a required reason and it lapses on its own after 30 minutes. It never bypasses an approval requirement, and it is never revoked early.
 
 ## Term mapping to the reference repos
 

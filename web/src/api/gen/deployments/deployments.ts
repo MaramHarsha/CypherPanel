@@ -83,7 +83,7 @@ export const deployApplication = async (id: string,
 
 
 
-export const getDeployApplicationMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | Error,
+export const getDeployApplicationMutationOptions = <TError = Error | UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deployApplication>>, TError,{id: string;data?: DeployRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof deployApplication>>, TError,{id: string;data?: DeployRequest}, TContext> => {
 
@@ -112,12 +112,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type DeployApplicationMutationResult = NonNullable<Awaited<ReturnType<typeof deployApplication>>>
     export type DeployApplicationMutationBody = DeployRequest | undefined
-    export type DeployApplicationMutationError = UnauthorizedResponse | ForbiddenResponse | Error
+    export type DeployApplicationMutationError = Error | UnauthorizedResponse | ForbiddenResponse
 
     /**
  * @summary Deploy the application (build → rollout, zero-downtime)
  */
-export const useDeployApplication = <TError = UnauthorizedResponse | ForbiddenResponse | Error,
+export const useDeployApplication = <TError = Error | UnauthorizedResponse | ForbiddenResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deployApplication>>, TError,{id: string;data?: DeployRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof deployApplication>>,

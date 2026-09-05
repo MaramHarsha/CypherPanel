@@ -46,6 +46,40 @@ func (s *Store) ListPanelInboxRecipients(ctx context.Context, kind string) ([]st
 	return out, nil
 }
 
+// ListApprovalInboxRecipients is ListInboxRecipients narrowed by RANK: the
+// members of the project's team who could actually act on a parked deploy
+// (deploy-protection.md §9). Addressing everyone would put an item in front of
+// people who cannot act on it; the "never hold an item for a team you do not
+// belong to" rule still holds, because membership is still the join.
+func (s *Store) ListApprovalInboxRecipients(ctx context.Context, projectID, kind, minRole string) ([]string, error) {
+	out, err := s.q.ListApprovalInboxRecipients(ctx, db.ListApprovalInboxRecipientsParams{
+		ProjectID: projectID,
+		Kind:      kind,
+		MinRole:   minRole,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("store: listing approval inbox recipients: %w", err)
+	}
+	return out, nil
+}
+
+// ListInboxRecipientIfMember resolves ONE named user to a recipient list of
+// zero or one — a decision on a parked deploy is news for the person who asked
+// for it and nobody else (deploy-protection.md §9). It is a query rather than a
+// bare id so a requester who has since left the team, or muted the kind, is
+// filtered by the same rule every other fan-out obeys.
+func (s *Store) ListInboxRecipientIfMember(ctx context.Context, projectID, kind, userID string) ([]string, error) {
+	out, err := s.q.ListInboxRecipientIfMember(ctx, db.ListInboxRecipientIfMemberParams{
+		ProjectID: projectID,
+		Kind:      kind,
+		UserID:    userID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("store: listing inbox recipient: %w", err)
+	}
+	return out, nil
+}
+
 // InsertPanelInboxItems writes one immediate, project-less item per recipient.
 // The (user_id, dedupe_key) conflict is dropped, which is what makes "once per
 // version" hold across restarts. ProjectID, Link and LinkLabel on f are

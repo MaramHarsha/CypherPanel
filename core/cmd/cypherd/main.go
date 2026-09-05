@@ -18,6 +18,15 @@ import (
 	"syscall"
 	"time"
 
+	// The embedded IANA time-zone database (~450 KB). cypherd is a static
+	// binary (ADR-001) that can land on an image with no /usr/share/zoneinfo,
+	// and two features resolve operator-supplied zone names at runtime: deploy
+	// protection's freeze windows (deploy-protection.md §4) and the profile
+	// timezone in core/auth. Without this, time.LoadLocation would fail on such
+	// an image — refusing every deploy on a frozen environment, since the gate
+	// fails closed. Negligible against vision.md's <300 MB plane budget.
+	_ "time/tzdata"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/protobuf/proto"
@@ -42,6 +51,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/paneltls"
 	"github.com/MaramHarsha/cypherpanel/core/previews"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
+	"github.com/MaramHarsha/cypherpanel/core/protection"
 	"github.com/MaramHarsha/cypherpanel/core/relay"
 	"github.com/MaramHarsha/cypherpanel/core/scheduledtasks"
 	"github.com/MaramHarsha/cypherpanel/core/scheduler"
@@ -269,6 +279,16 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 	// so this service is CRUD plus the used-by and drift read models.
 	sharedVarSvc := sharedvars.NewService(st, box)
 
+	// Deploy protection: an Environment declares who must approve a deploy
+	// there and when deploys are refused outright (deploy-protection.md). The
+	// gate is consulted once, where a Deployment is born, and BEFORE any work
+	// item is published — so it adds no path to the agent and no NATS subject.
+	// The two directions are wired separately on purpose: the scheduler asks
+	// the gate whether to admit, and the gate asks the scheduler to release or
+	// end what it parked, so the pipeline keeps its single owner and its lock.
+	protectionSvc := protection.New(st, sched, inboxSvc, log.With("component", "protection"))
+	sched.SetGate(protectionSvc)
+
 	// Scheduled tasks: cron declared on an app, run by the agent in the app's
 	// own container (scheduled-tasks.md, ADR-011). CRUD converges via the
 	// scheduler; run observations flow back on state.<server>.task.
@@ -489,6 +509,7 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		ScheduledTasks:   scheduledTaskSvc,
 		WebhookEndpoints: webhookSvc,
 		Inbox:            inboxSvc,
+		Protection:       protectionSvc,
 		SharedVariables:  sharedVarSvc,
 		Templates:        templateSvc,
 		Teams:            teamSvc,
