@@ -60,12 +60,18 @@ type appSourceDTO struct {
 	Branch      string  `json:"branch"`
 	DeployKeyID *string `json:"deploy_key_id"`
 	Image       string  `json:"image"` // OCI reference; set iff kind == "image"
+	// RegistryID authenticates where this app's bits come from: the image for
+	// an image source, the private base image for a build (registries.md).
+	RegistryID *string `json:"registry_id"`
 }
 
 type appBuildDTO struct {
 	Kind           string `json:"kind"`
 	DockerfilePath string `json:"dockerfile_path"`
 	Context        string `json:"context"`
+	// Push-after-build (ADR-008 path 3); null is every application by default.
+	PushRegistryID *string `json:"push_registry_id"`
+	PushRepository string  `json:"push_repository"`
 }
 
 type appVolumeDTO struct {
@@ -152,8 +158,8 @@ func toApplicationDTO(a domain.Application) applicationDTO {
 		ID:                 a.ID,
 		EnvironmentID:      a.EnvironmentID,
 		Name:               a.Name,
-		Source:             appSourceDTO{Kind: a.Source.Kind, Repo: a.Source.Repo, Branch: a.Source.Branch, DeployKeyID: a.Source.DeployKeyID, Image: a.Source.Image},
-		Build:              appBuildDTO{Kind: a.Build.Kind, DockerfilePath: a.Build.DockerfilePath, Context: a.Build.Context},
+		Source:             appSourceDTO{Kind: a.Source.Kind, Repo: a.Source.Repo, Branch: a.Source.Branch, DeployKeyID: a.Source.DeployKeyID, Image: a.Source.Image, RegistryID: a.Source.RegistryID},
+		Build:              appBuildDTO{Kind: a.Build.Kind, DockerfilePath: a.Build.DockerfilePath, Context: a.Build.Context, PushRegistryID: a.Build.PushRegistryID, PushRepository: a.Build.PushRepository},
 		Runtime:            appRuntimeDTO{ServerID: a.Runtime.ServerID, Port: a.Runtime.Port, Replicas: a.Runtime.Replicas, CPULimit: a.Runtime.CPULimit, MemoryLimitMB: a.Runtime.MemoryLimitMB},
 		Route:              appRouteDTO{Domain: a.Route.Domain, HTTPS: a.Route.HTTPS, PathPrefix: a.Route.PathPrefix},
 		Health:             appHealthDTO{Kind: a.Health.Kind, Path: a.Health.Path, IntervalSeconds: a.Health.IntervalSeconds, TimeoutSeconds: a.Health.TimeoutSeconds, Retries: a.Health.Retries},
@@ -181,6 +187,7 @@ type createApplicationRequest struct {
 		Branch      string  `json:"branch"`
 		DeployKeyID *string `json:"deploy_key_id"`
 		Image       string  `json:"image"`
+		RegistryID  *string `json:"registry_id"`
 	} `json:"source"`
 	Build struct {
 		// AppBuild.kind is required by the OpenAPI schema, so every generated
@@ -189,9 +196,11 @@ type createApplicationRequest struct {
 		// "invalid request body" — creating an application through the contract
 		// was impossible. The service defaults an empty kind to "dockerfile"
 		// and rejects anything else (applications.go validateAndDefault).
-		Kind           string `json:"kind"`
-		DockerfilePath string `json:"dockerfile_path"`
-		Context        string `json:"context"`
+		Kind           string  `json:"kind"`
+		DockerfilePath string  `json:"dockerfile_path"`
+		Context        string  `json:"context"`
+		PushRegistryID *string `json:"push_registry_id"`
+		PushRepository string  `json:"push_repository"`
 	} `json:"build"`
 	Runtime struct {
 		ServerID      string   `json:"server_id"`
@@ -238,8 +247,8 @@ func (r createApplicationRequest) toInput() applications.CreateInput {
 	}
 	return applications.CreateInput{
 		Name:    r.Name,
-		Source:  domain.AppSource{Kind: r.Source.Kind, Repo: r.Source.Repo, Branch: r.Source.Branch, DeployKeyID: r.Source.DeployKeyID, Image: r.Source.Image},
-		Build:   domain.AppBuild{Kind: r.Build.Kind, DockerfilePath: r.Build.DockerfilePath, Context: r.Build.Context},
+		Source:  domain.AppSource{Kind: r.Source.Kind, Repo: r.Source.Repo, Branch: r.Source.Branch, DeployKeyID: r.Source.DeployKeyID, Image: r.Source.Image, RegistryID: r.Source.RegistryID},
+		Build:   domain.AppBuild{Kind: r.Build.Kind, DockerfilePath: r.Build.DockerfilePath, Context: r.Build.Context, PushRegistryID: r.Build.PushRegistryID, PushRepository: r.Build.PushRepository},
 		Runtime: domain.AppRuntime{ServerID: r.Runtime.ServerID, Port: r.Runtime.Port, Replicas: r.Runtime.Replicas, CPULimit: r.Runtime.CPULimit, MemoryLimitMB: r.Runtime.MemoryLimitMB},
 		Route:   domain.AppRoute{Domain: r.Route.Domain, HTTPS: https, PathPrefix: r.Route.PathPrefix},
 		Health:  domain.AppHealth{Kind: r.Health.Kind, Path: r.Health.Path, IntervalSeconds: r.Health.IntervalSeconds, TimeoutSeconds: r.Health.TimeoutSeconds, Retries: r.Health.Retries},
@@ -378,13 +387,16 @@ type patchApplicationRequest struct {
 		Branch      string  `json:"branch"`
 		DeployKeyID *string `json:"deploy_key_id"`
 		Image       string  `json:"image"`
+		RegistryID  *string `json:"registry_id"`
 	} `json:"source"`
 	Build *struct {
 		// Same contract mismatch as createApplicationRequest.Build — a client
 		// echoing back the application it just read could not PATCH it.
-		Kind           string `json:"kind"`
-		DockerfilePath string `json:"dockerfile_path"`
-		Context        string `json:"context"`
+		Kind           string  `json:"kind"`
+		DockerfilePath string  `json:"dockerfile_path"`
+		Context        string  `json:"context"`
+		PushRegistryID *string `json:"push_registry_id"`
+		PushRepository string  `json:"push_repository"`
 	} `json:"build"`
 	Runtime *struct {
 		Port          *int     `json:"port"`
@@ -424,10 +436,10 @@ func (a *API) handlePatchApplication(w http.ResponseWriter, r *http.Request) {
 	}
 	in := applications.UpdateInput{Name: req.Name}
 	if req.Source != nil {
-		in.Source = &domain.AppSource{Kind: req.Source.Kind, Repo: req.Source.Repo, Branch: req.Source.Branch, DeployKeyID: req.Source.DeployKeyID, Image: req.Source.Image}
+		in.Source = &domain.AppSource{Kind: req.Source.Kind, Repo: req.Source.Repo, Branch: req.Source.Branch, DeployKeyID: req.Source.DeployKeyID, Image: req.Source.Image, RegistryID: req.Source.RegistryID}
 	}
 	if req.Build != nil {
-		in.Build = &domain.AppBuild{Kind: req.Build.Kind, DockerfilePath: req.Build.DockerfilePath, Context: req.Build.Context}
+		in.Build = &domain.AppBuild{Kind: req.Build.Kind, DockerfilePath: req.Build.DockerfilePath, Context: req.Build.Context, PushRegistryID: req.Build.PushRegistryID, PushRepository: req.Build.PushRepository}
 	}
 	if req.Runtime != nil {
 		in.Port = req.Runtime.Port // nil = unchanged; explicit 0 is rejected by validation

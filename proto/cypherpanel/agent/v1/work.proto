@@ -69,6 +69,42 @@ message AppSpec {
   // zero-mutation. Carried per revision (config snapshot), so rollback of an
   // image revision pulls correctly even after the app's source changed kind.
   bool pull = 15;
+  // registry_auth authenticates the pull when image lives in a private
+  // registry (registries.md; ADR-008 path 3). Unset is the ordinary case — a
+  // public image, or one that arrived by local build or relay — and it stays
+  // unset unless pull is true, because there is nothing to authenticate to.
+  // Assembled per work item from the plane's sealed credential, carried only
+  // over mTLS (rule 23) and never logged or written to disk (rule 20).
+  RegistryAuth registry_auth = 16;
+}
+
+// RegistryAuth is one credential for one registry, as the daemon wants it.
+//
+// It is deliberately a value on the work item rather than agent configuration:
+// an agent holds no registry credentials of its own, so revoking one on the
+// plane revokes it everywhere at the next work item, and a captured agent disk
+// yields nothing.
+message RegistryAuth {
+  // The registry host, matching the image reference's own prefix — ghcr.io,
+  // registry.example.com, registry:5000.
+  string server_address = 1;
+  // Empty for a registry that takes a bearer identity token rather than a
+  // username and password.
+  string username = 2;
+  // Password or access token. Never logged (rule 20).
+  string token = 3;
+}
+
+// RegistryPush is the optional second home for a completed build (ADR-008
+// path 3). Nothing in the deploy path depends on it: the rollout still runs
+// the local image or the relayed one, and this is an additional copy pushed
+// where the operator already runs a registry.
+message RegistryPush {
+  // The full reference to push, already namespaced by the plane —
+  // ghcr.io/acme/web:<revision_id>. The builder tags its local build as this
+  // and pushes that reference.
+  string image = 1;
+  RegistryAuth auth = 2;
 }
 
 // PortMapping publishes a container port to a host port on one protocol. The
@@ -172,6 +208,16 @@ message BuildWork {
   // image has to listen on it — otherwise "it just works" would depend on the
   // operator having guessed the web server's default.
   uint32 runtime_port = 10;
+  // source_auth authenticates against the registry the app's INPUTS come from:
+  // here, the base image a private Dockerfile FROM names. Unset for the
+  // ordinary public base image. Same credential the app's image source would
+  // use, because "where this app's bits come from" is one answer.
+  RegistryAuth source_auth = 11;
+  // push, when set, is where the completed image is pushed in addition to
+  // staying in the builder's local daemon. A failed push fails the deployment
+  // rather than reporting success for an image that is not where it was
+  // promised to be.
+  RegistryPush push = 12;
 }
 
 // PushImageWork commands a builder-role agent to stream a built image to the

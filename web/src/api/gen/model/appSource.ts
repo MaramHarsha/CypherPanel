@@ -22,4 +22,9 @@ export interface AppSource {
      * @maxLength 512
      */
   image?: string;
+  /**
+     * The stored registry credential the pull authenticates with (`reg_...`). It answers "where do this application's bits come from": the image itself for kind `image`, and the private base image a Dockerfile `FROM` names for a git kind. Must belong to the application's own team and allow pulling; null is the ordinary public case. Nothing in the deploy path requires one (ADR-008).
+     * @nullable
+     */
+  registry_id?: string | null;
 }

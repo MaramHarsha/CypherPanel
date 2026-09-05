@@ -95,6 +95,9 @@ const (
 	// also the PUBLIC half of its wire token (`inv_….<secret>`), which is what
 	// lets the lookup be an indexed primary-key read while only the secret's
 	// hash is stored.
+	// ADR-008 path 3: an optional registry credential, never a requirement.
+	PrefixRegistry = "reg"
+
 	PrefixTeamInvite    = "inv"
 	PrefixAccessRequest = "acr"
 )

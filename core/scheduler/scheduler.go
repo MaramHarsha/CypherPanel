@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 
 	"github.com/MaramHarsha/cypherpanel/core/dns"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
+	"github.com/MaramHarsha/cypherpanel/core/registries"
 	"github.com/MaramHarsha/cypherpanel/core/sharedvars"
 	"github.com/MaramHarsha/cypherpanel/core/store"
 	"github.com/MaramHarsha/cypherpanel/pkg/ids"
@@ -184,6 +186,17 @@ type Gate interface {
 	Park(ctx context.Context, dep domain.Deployment, environmentID, requestedBy, requiredRole string) error
 }
 
+// RegistryCredentials resolves a stored registry credential at work-build time
+// (consumer-defined; *registries.Service satisfies it — registries.md §5).
+//
+// The scheduler holds the credential for exactly as long as it takes to put it
+// on one mTLS-carried work item; nothing about a registry is cached, so
+// rotating or deleting one takes effect on the next deploy rather than at some
+// expiry nobody can see.
+type RegistryCredentials interface {
+	Credential(ctx context.Context, id string) (registries.Credential, error)
+}
+
 type Scheduler struct {
 	store  Store
 	bus    Bus
@@ -204,6 +217,12 @@ type Scheduler struct {
 	// wired, which admit() treats as "every deploy is clear" — the behaviour
 	// of every panel before this feature existed.
 	gate Gate
+
+	// registries resolves the sealed credential for a private registry
+	// (registries.md). nil is the ordinary panel: no application can name a
+	// registry it has not stored, so nothing changes for one that never used
+	// the feature.
+	registries RegistryCredentials
 
 	// mu serializes pipeline transitions: deploy requests and event handlers
 	// race on the per-app queue, and the transitions are read-modify-write.
@@ -719,6 +738,17 @@ func (s *Scheduler) buildWork(ctx context.Context, dep domain.Deployment, app do
 		}
 		deployKeyPem = string(priv)
 	}
+	// The base image a private Dockerfile FROM names comes from the same place
+	// the app's image source would: one credential, one answer to "where do
+	// this application's bits come from".
+	sourceAuth, err := s.registryAuth(ctx, app.Source.RegistryID)
+	if err != nil {
+		return nil, err
+	}
+	push, err := s.pushTarget(ctx, app, rev)
+	if err != nil {
+		return nil, err
+	}
 	return &agentv1.BuildWork{
 		DeploymentId:   dep.ID,
 		AppId:          app.ID,
@@ -732,6 +762,8 @@ func (s *Scheduler) buildWork(ctx context.Context, dep domain.Deployment, app do
 		// A synthesized static image must listen where the route and health
 		// check already expect it, not on whatever its base image defaults to.
 		RuntimePort: uint32(app.Runtime.Port), //nolint:gosec // validated 1–65535
+		SourceAuth:  sourceAuth,
+		Push:        push,
 	}, nil
 }
 
@@ -952,6 +984,15 @@ func (s *Scheduler) buildSpec(ctx context.Context, app domain.Application, rev d
 	if err != nil {
 		return nil, err
 	}
+	// Only a pulling spec carries a credential: an image that arrived by local
+	// build or relay has nothing to authenticate to, and putting a token on
+	// that work item would be a secret travelling for no reason (rule 20).
+	var pullAuth *agentv1.RegistryAuth
+	if cs.Pull {
+		if pullAuth, err = s.registryAuth(ctx, app.Source.RegistryID); err != nil {
+			return nil, err
+		}
+	}
 	return &agentv1.AppSpec{
 		AppId:         app.ID,
 		EnvironmentId: app.EnvironmentID,
@@ -974,6 +1015,7 @@ func (s *Scheduler) buildSpec(ctx context.Context, app domain.Application, rev d
 		},
 		ScheduledTasks: tasks,
 		Pull:           cs.Pull,
+		RegistryAuth:   pullAuth,
 		// Resource limits are current app state (not per-revision snapshot),
 		// applied at rollout like env vars; nil = 0 = no limit on the wire.
 		CpuLimit:      cpuLimitValue(app.Runtime.CPULimit),
@@ -1719,3 +1761,75 @@ func (s *Scheduler) SetDomainVerifier(v DomainVerifier) { s.dns = v }
 // admitted, which is exactly how the panel behaved before the feature existed
 // (deploy-protection.md §4).
 func (s *Scheduler) SetGate(g Gate) { s.gate = g }
+
+// SetRegistries wires private-registry credentials. Optional: an application
+// can only name a registry the panel stored, so a panel without this never has
+// one to resolve (registries.md §5).
+func (s *Scheduler) SetRegistries(r RegistryCredentials) { s.registries = r }
+
+// registryAuth resolves one credential into the wire form, unsealing it here —
+// at work-build time — exactly as the deploy key is, and for the same reason:
+// the plaintext exists only inside the mTLS-carried work item (ENGINEERING
+// rule 23) and is never logged (rule 20).
+//
+// A named registry that cannot be resolved is an error rather than an
+// unauthenticated attempt. A silent fall back to anonymous fails later at the
+// daemon, with a "manifest unknown" nobody can act on, and would turn a
+// revoked credential into a mystery instead of a message.
+func (s *Scheduler) registryAuth(ctx context.Context, id *string) (*agentv1.RegistryAuth, error) {
+	if id == nil || *id == "" {
+		return nil, nil
+	}
+	if s.registries == nil {
+		return nil, fmt.Errorf("scheduler: application names registry %s but no registry service is wired", *id)
+	}
+	c, err := s.registries.Credential(ctx, *id)
+	if err != nil {
+		return nil, fmt.Errorf("scheduler: resolving registry credential: %w", err)
+	}
+	return &agentv1.RegistryAuth{ServerAddress: c.URL, Username: c.Username, Token: c.Token}, nil
+}
+
+// pushTarget is where a completed build is also sent (ADR-008 path 3). Nil when
+// the application has not asked for one, which is every application by default.
+func (s *Scheduler) pushTarget(ctx context.Context, app domain.Application, rev domain.Revision) (*agentv1.RegistryPush, error) {
+	auth, err := s.registryAuth(ctx, app.Build.PushRegistryID)
+	if err != nil || auth == nil {
+		return nil, err
+	}
+	repo := app.Build.PushRepository
+	if repo == "" {
+		repo = pushRepository(app)
+	}
+	return &agentv1.RegistryPush{
+		// The registry URL may already carry a namespace (ghcr.io/acme), so the
+		// reference is host-and-namespace, then repository, then the revision —
+		// the tag is the revision id because that is what a rollback names.
+		Image: strings.TrimSuffix(auth.GetServerAddress(), "/") + "/" + repo + ":" + rev.ID,
+		Auth:  auth,
+	}, nil
+}
+
+// pushRepository is the default repository within the push registry: the
+// application's name, reduced to what an OCI reference actually accepts. An
+// application named "My API" pushes to "my-api"; one whose name survives
+// nothing (all punctuation) falls back to its id, which always does.
+func pushRepository(app domain.Application) string {
+	var b strings.Builder
+	lastSep := true // suppress a leading separator
+	for _, r := range strings.ToLower(app.Name) {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+			lastSep = false
+		case !lastSep:
+			b.WriteByte('-')
+			lastSep = true
+		}
+	}
+	name := strings.Trim(b.String(), "-")
+	if name == "" {
+		return app.ID
+	}
+	return name
+}

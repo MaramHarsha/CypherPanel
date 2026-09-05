@@ -67,6 +67,13 @@ type apiError struct {
 }
 
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body io.Reader, contentType string) (*http.Response, error) {
+	return c.doAuth(ctx, method, path, query, body, contentType, "")
+}
+
+// doAuth is do with a registry credential attached. The credential rides in a
+// header rather than the query so it stays out of anything that logs a URL —
+// the daemon's own request log included (ENGINEERING rule 20).
+func (c *Client) doAuth(ctx context.Context, method, path string, query url.Values, body io.Reader, contentType, registryAuth string) (*http.Response, error) {
 	u := c.base + path
 	if len(query) > 0 {
 		u += "?" + query.Encode()
@@ -77,6 +84,9 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	}
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
+	}
+	if registryAuth != "" {
+		req.Header.Set("X-Registry-Auth", registryAuth)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -90,6 +100,38 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 			msg = e.Message
 		}
 		return nil, &StatusError{Code: resp.StatusCode, Message: fmt.Sprintf("engine: %s %s: %s", method, path, msg)}
+	}
+	return resp, nil
+}
+
+// doBuild posts a build context. /build reads its credentials from
+// X-Registry-Config rather than X-Registry-Auth, because one build may pull
+// from several registries.
+func (c *Client) doBuild(ctx context.Context, query url.Values, body io.Reader, registryConfig string) (*http.Response, error) {
+	u := c.base + "/build"
+	if len(query) > 0 {
+		u += "?" + query.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, body)
+	if err != nil {
+		return nil, fmt.Errorf("engine: building request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-tar")
+	if registryConfig != "" {
+		req.Header.Set("X-Registry-Config", registryConfig)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("engine: POST /build: %w", err)
+	}
+	if resp.StatusCode >= 400 {
+		defer func() { _ = resp.Body.Close() }()
+		var e apiError
+		msg := resp.Status
+		if json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&e) == nil && e.Message != "" {
+			msg = e.Message
+		}
+		return nil, &StatusError{Code: resp.StatusCode, Message: fmt.Sprintf("engine: POST /build: %s", msg)}
 	}
 	return resp, nil
 }
@@ -514,7 +556,9 @@ type buildLine struct {
 // result and stamping the managed labels. Every progress line is handed to
 // onLog (verbose by default — no hidden progress, feature-matrix row); a
 // build error in the stream is returned as the error.
-func (c *Client) BuildImage(ctx context.Context, buildContext io.Reader, tag, dockerfile string, labels map[string]string, onLog func(line string)) error {
+// registryConfig is the encoded credential map for private base images
+// (pkg/registryauth.EncodeConfig); empty builds with anonymous pulls.
+func (c *Client) BuildImage(ctx context.Context, buildContext io.Reader, tag, dockerfile string, labels map[string]string, registryConfig string, onLog func(line string)) error {
 	q := url.Values{}
 	q.Set("t", tag)
 	if dockerfile != "" {
@@ -523,7 +567,7 @@ func (c *Client) BuildImage(ctx context.Context, buildContext io.Reader, tag, do
 	lbl, _ := json.Marshal(labels)
 	q.Set("labels", string(lbl))
 
-	resp, err := c.do(ctx, http.MethodPost, "/build", q, buildContext, "application/x-tar")
+	resp, err := c.doBuild(ctx, q, buildContext, registryConfig)
 	if err != nil {
 		return err
 	}

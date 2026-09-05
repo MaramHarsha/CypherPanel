@@ -143,6 +143,12 @@ const (
 	ActionWebhookDeleted       = "webhook_endpoint.deleted"
 	ActionWebhookSecretRotated = "webhook_endpoint.secret_rotated"
 
+	// Container registry credentials. The token is never in a detail — only
+	// whether it was rotated (registries.md §6).
+	ActionRegistryCreated = "registry.created"
+	ActionRegistryUpdated = "registry.updated"
+	ActionRegistryDeleted = "registry.deleted"
+
 	// Panel-wide settings. Each one changes how the whole panel behaves, and
 	// none belongs to a team — these are the rows a panel admin reads.
 	ActionPanelSetupCompleted = "panel.setup_completed"
@@ -176,6 +182,7 @@ const (
 	ResourceSharedVariable  = "shared_variable"
 	ResourceNotifier        = "notifier"
 	ResourceWebhookEndpoint = "webhook_endpoint"
+	ResourceRegistry        = "registry"
 	ResourcePanel           = "panel"
 )
 
@@ -234,6 +241,9 @@ var actions = map[string]bool{
 	ActionNotifierDeleted: true, ActionWebhookCreated: true,
 	ActionWebhookUpdated: true, ActionWebhookDeleted: true,
 	ActionWebhookSecretRotated: true,
+
+	ActionRegistryCreated: true, ActionRegistryUpdated: true,
+	ActionRegistryDeleted: true,
 
 	ActionPanelSetupCompleted: true, ActionPanelMailUpdated: true,
 	ActionPanelMailDeleted: true, ActionPanelDNSUpdated: true,

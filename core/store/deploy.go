@@ -271,6 +271,9 @@ func appParams(a domain.Application) db.CreateApplicationParams {
 		MemoryLimitMb:         int4FromPtr(a.Runtime.MemoryLimitMB),
 		Volumes:               volumesJSON(a.Volumes),
 		Ports:                 portsJSON(a.Ports),
+		SourceRegistryID:      textFromPtr(a.Source.RegistryID),
+		BuildPushRegistryID:   textFromPtr(a.Build.PushRegistryID),
+		BuildPushRepository:   a.Build.PushRepository,
 	}
 }
 
@@ -383,6 +386,9 @@ func (s *Store) UpdateApplicationConfig(ctx context.Context, a domain.Applicatio
 		MemoryLimitMb:         int4FromPtr(a.Runtime.MemoryLimitMB),
 		Volumes:               volumesJSON(a.Volumes),
 		Ports:                 portsJSON(a.Ports),
+		SourceRegistryID:      textFromPtr(a.Source.RegistryID),
+		BuildPushRegistryID:   textFromPtr(a.Build.PushRegistryID),
+		BuildPushRepository:   a.Build.PushRepository,
 	})
 	if err != nil {
 		return domain.Application{}, wrapUpdate("updating application", err)
@@ -782,11 +788,14 @@ func applicationFromRow(r db.Application) domain.Application {
 			Branch:      r.SourceBranch,
 			DeployKeyID: ptrFromText(r.SourceDeployKeyID),
 			Image:       r.SourceImage,
+			RegistryID:  ptrFromText(r.SourceRegistryID),
 		},
 		Build: domain.AppBuild{
 			Kind:           r.BuildKind,
 			DockerfilePath: r.BuildDockerfilePath,
 			Context:        r.BuildContext,
+			PushRegistryID: ptrFromText(r.BuildPushRegistryID),
+			PushRepository: r.BuildPushRepository,
 		},
 		Runtime: domain.AppRuntime{
 			ServerID:      r.RuntimeServerID,

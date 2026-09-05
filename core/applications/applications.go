@@ -130,6 +130,12 @@ type Store interface {
 	// Phase 4: shared variables (shared-variables.md §3). Keys only — the
 	// write-time reference check never unseals a value.
 	ListSharedVariableKeysInScope(ctx context.Context, projectID, environmentID string) ([]string, error)
+
+	// V1.x: registry credentials, for validating what an application may
+	// attach (registries.md §5). GetProject resolves the owning team, which is
+	// the boundary a credential may not cross.
+	GetRegistry(ctx context.Context, id string) (domain.Registry, error)
+	GetProject(ctx context.Context, id string) (domain.Project, error)
 }
 
 // Sealer seals plaintext for storage at rest. *secret.Box satisfies it.
@@ -178,6 +184,9 @@ func (s *Service) Create(ctx context.Context, envID string, in CreateInput) (app
 	}
 	in, err = validateAndDefault(in)
 	if err != nil {
+		return domain.Application{}, "", err
+	}
+	if err := s.checkRegistries(ctx, env, in.Source, in.Build); err != nil {
 		return domain.Application{}, "", err
 	}
 	srv, err := s.store.GetServer(ctx, in.Runtime.ServerID)
@@ -355,6 +364,16 @@ func (s *Service) Update(ctx context.Context, appID string, in UpdateInput) (dom
 	if err != nil {
 		return domain.Application{}, err
 	}
+	// Checked on the MERGED result, not the patch: attaching a push registry
+	// and switching to an image source in one PATCH must be refused as the
+	// combination it is, whichever half of it was sent.
+	env, err := s.store.GetEnvironment(ctx, app.EnvironmentID)
+	if err != nil {
+		return domain.Application{}, fmt.Errorf("applications: getting environment: %w", err)
+	}
+	if err := s.checkRegistries(ctx, env, merged.Source, merged.Build); err != nil {
+		return domain.Application{}, err
+	}
 	app.Name, app.Source, app.Build, app.Runtime, app.Route, app.Health, app.Volumes, app.Ports =
 		merged.Name, merged.Source, merged.Build, merged.Runtime, merged.Route, merged.Health, merged.Volumes, merged.Ports
 	app.PreviewEnabled, app.PreviewBaseDomain, app.PreviewTTLHours =
@@ -491,6 +510,62 @@ func (s *Service) DeleteEnvVar(ctx context.Context, appID, key string) error {
 	return nil
 }
 
+// checkRegistries refuses a registry an application may not use.
+//
+// Three things are checked, and each one is a failure an operator would
+// otherwise meet mid-deploy as an unexplained 401 from a registry:
+//
+//   - the registry exists;
+//   - it belongs to the same team as the application, because a credential is
+//     a team's, and one project borrowing another team's push token is exactly
+//     the tenancy hole the team boundary exists to close;
+//   - it is allowed to do the thing it is being attached for — a pull-only
+//     credential named as a push target is refused here rather than discovered
+//     as a 403 after a five-minute build.
+//
+// A registry in another team answers the same "no such registry" as one that
+// does not exist: an application's config screen must not become a way to
+// enumerate other teams' credentials.
+func (s *Service) checkRegistries(ctx context.Context, env domain.Environment, src domain.AppSource, build domain.AppBuild) error {
+	if src.RegistryID == nil && build.PushRegistryID == nil {
+		return nil // the overwhelming majority: no lookup, no cost
+	}
+	proj, err := s.store.GetProject(ctx, env.ProjectID)
+	if err != nil {
+		return fmt.Errorf("applications: getting project: %w", err)
+	}
+	if src.RegistryID != nil {
+		if err := s.checkRegistry(ctx, proj.TeamID, *src.RegistryID, "source.registry_id", func(r domain.Registry) bool { return r.CanPull },
+			"that registry is not allowed to pull"); err != nil {
+			return err
+		}
+	}
+	if build.PushRegistryID != nil {
+		if err := s.checkRegistry(ctx, proj.TeamID, *build.PushRegistryID, "build.push_registry_id", func(r domain.Registry) bool { return r.CanPush },
+			"that registry is not allowed to push"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) checkRegistry(ctx context.Context, teamID, id, field string, allows func(domain.Registry) bool, refusal string) error {
+	reg, err := s.store.GetRegistry(ctx, id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return invalid(field + ": no such registry")
+		}
+		return fmt.Errorf("applications: getting registry: %w", err)
+	}
+	if reg.TeamID != teamID {
+		return invalid(field + ": no such registry")
+	}
+	if !allows(reg) {
+		return invalid(field + ": " + refusal)
+	}
+	return nil
+}
+
 // validImageRef bounds an OCI image reference to its legal alphabet
 // (registry/repository[:tag][@digest]). The engine's own reference parser is
 // the real gate at pull time; this keeps junk (whitespace, shell metacharacters)
@@ -505,6 +580,48 @@ func validImageRef(ref string) bool {
 		}
 	}
 	return true
+}
+
+// validRepositoryPath bounds the repository half of an image reference: the
+// lowercase path components an OCI name allows, and nothing else. Empty is
+// valid — it means "use the application's name".
+//
+// Uppercase is rejected rather than folded. A registry treats `Acme/Web` as a
+// name it has never heard of, and quietly lowercasing it here would push to a
+// repository the operator did not type.
+func validRepositoryPath(path string) bool {
+	if path == "" {
+		return true
+	}
+	if len(path) > 255 || strings.HasPrefix(path, "/") || strings.HasSuffix(path, "/") {
+		return false
+	}
+	for _, part := range strings.Split(path, "/") {
+		if part == "" || !validRepositoryComponent(part) {
+			return false
+		}
+	}
+	return true
+}
+
+// validRepositoryComponent is one path segment: lowercase alphanumerics, with
+// single separators between them and never at either end.
+func validRepositoryComponent(part string) bool {
+	prevSep := true // a leading separator is not allowed
+	for i, r := range part {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			prevSep = false
+		case r == '.' || r == '_' || r == '-':
+			if prevSep || i == len(part)-1 {
+				return false
+			}
+			prevSep = true
+		default:
+			return false
+		}
+	}
+	return !prevSep
 }
 
 func validateAndDefault(in CreateInput) (CreateInput, error) {
@@ -563,6 +680,20 @@ func validateAndDefault(in CreateInput) (CreateInput, error) {
 	}
 	if in.Build.Context == "" {
 		in.Build.Context = "."
+	}
+	// Push-after-build (registries.md; ADR-008 path 3). A repository with
+	// nowhere to push it does nothing, and a push configured on a source that
+	// is never built does nothing either — both are refused rather than stored
+	// and silently ignored, which is the failure an operator cannot see.
+	in.Build.PushRepository = strings.TrimSpace(in.Build.PushRepository)
+	if in.Build.PushRepository != "" && in.Build.PushRegistryID == nil {
+		return in, invalid("build.push_repository needs build.push_registry_id")
+	}
+	if in.Build.PushRegistryID != nil && in.Source.Kind == "image" {
+		return in, invalid("an image source is not built, so it has nothing to push")
+	}
+	if !validRepositoryPath(in.Build.PushRepository) {
+		return in, invalid("build.push_repository must be a lowercase image path such as acme/web")
 	}
 
 	if strings.TrimSpace(in.Runtime.ServerID) == "" {

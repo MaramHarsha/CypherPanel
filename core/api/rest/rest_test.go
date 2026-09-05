@@ -670,6 +670,17 @@ func (f *fakeAppsStore) GetEnvironment(_ context.Context, id string) (domain.Env
 	return domain.Environment{ID: id, ProjectID: "prj_test", Name: "production"}, nil
 }
 
+func (f *fakeAppsStore) GetProject(_ context.Context, id string) (domain.Project, error) {
+	return domain.Project{ID: id, TeamID: "team_test", Name: "acme"}, nil
+}
+
+// GetRegistry backs the application-side registry check (registries.md §5).
+// This fake knows of none, so any attached registry is a 400 — the tests that
+// care about a real one seed it themselves.
+func (f *fakeAppsStore) GetRegistry(_ context.Context, _ string) (domain.Registry, error) {
+	return domain.Registry{}, store.ErrNotFound
+}
+
 // ListSharedVariableKeysInScope backs the write-time {{shared.KEY}} check
 // (shared-variables.md §3). Empty: no shared variable resolves in these tests,
 // so any reference an env-var write carries is a 400.

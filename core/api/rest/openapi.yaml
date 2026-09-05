@@ -35,6 +35,7 @@ tags:
   - name: applications
   - name: deployments
   - name: deploy-keys
+  - name: registries
   - name: databases
   - name: backups
   - name: previews
@@ -1855,6 +1856,317 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DeployKeyInUse"
+
+  /api/v1/registries:
+    get:
+      operationId: listRegistries
+      tags: [registries]
+      summary: List the container registries your teams can use
+      description: >-
+        Filtered to the teams you belong to rather than refused, so a caller in
+        no teams gets an empty list. The token is never returned — `token_set`
+        says only that one exists.
+      responses:
+        "200":
+          description: The registries visible to you.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Registry"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "501":
+          description: Registries are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: createRegistry
+      tags: [registries]
+      summary: Store a container registry credential
+      description: >-
+        Team admin or above. `team_id` may be omitted when you belong to exactly
+        one team. Nothing in the deploy path requires a registry (ADR-008); this
+        is for pulling a private base image and for pushing builds somewhere the
+        operator already runs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRegistryRequest"
+      responses:
+        "201":
+          description: Registry created. The token is sealed and is never returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Registry"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: A registry with that name already exists in the team.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Registries are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/registries/test:
+    post:
+      operationId: testRegistryConfig
+      tags: [registries]
+      summary: Prove a credential before saving it
+      description: >-
+        Authenticates against the registry's `/v2/` endpoint and stores nothing.
+        A rejected credential is a `200` with `ok:false` — the request
+        succeeded, the authentication did not. Team admin or above, because it
+        makes an outbound request to a host the caller chose.
+      parameters:
+        - name: team_id
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >-
+            Which team's admin rank to check. May be omitted when you belong to
+            exactly one team.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TestRegistryRequest"
+      responses:
+        "200":
+          description: Tested. `ok` is the verdict.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionTest"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "501":
+          description: Registries are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/registries/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Registry ID (reg_... prefix).
+    get:
+      operationId: getRegistry
+      tags: [registries]
+      summary: Get one registry
+      responses:
+        "200":
+          description: The registry, without its token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Registry"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: >-
+            No such registry — the same answer given for a registry in a team
+            you do not belong to, so membership is not probeable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Registries are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    patch:
+      operationId: updateRegistry
+      tags: [registries]
+      summary: Edit a registry, or rotate its token
+      description: >-
+        Team admin or above. Every field is optional; an omitted field is left
+        alone, so rotating the token does not mean re-sending the URL. The
+        merged result is validated exactly as a create would be.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRegistryRequest"
+      responses:
+        "200":
+          description: The updated registry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Registry"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such registry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: A registry with that name already exists in the team.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Registries are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteRegistry
+      tags: [registries]
+      summary: Delete a registry (refused while applications use it)
+      description: >-
+        Team admin or above. Deleting a credential that applications depend on
+        would break their next deploy at the moment nobody is looking, so it is
+        refused; `GET /api/v1/registries/{id}/used-by` names what is holding it.
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such registry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Applications still use this registry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Registries are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/registries/{id}/test:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Registry ID.
+    post:
+      operationId: testRegistry
+      tags: [registries]
+      summary: Re-authenticate a stored registry and record the outcome
+      description: >-
+        Team admin or above. The result is stored on the registry as
+        `last_test_at` / `last_test_ok`, so a list can show whether a credential
+        is known-good without re-authenticating on every page render.
+      responses:
+        "200":
+          description: Tested. `ok` is the verdict.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionTest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such registry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Registries are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/registries/{id}/used-by:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Registry ID.
+    get:
+      operationId: listRegistryUses
+      tags: [registries]
+      summary: The applications that would break if this registry went away
+      description: >-
+        Named rather than counted, because "3 applications" is not something an
+        operator can act on.
+      responses:
+        "200":
+          description: What pulls through, and what pushes to, this registry.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RegistryUse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such registry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Registries are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /api/v1/applications/{id}/env:
     parameters:
@@ -4494,6 +4806,135 @@ components:
             What the far end said, verbatim on failure. "connection refused" is
             the whole answer, and paraphrasing it makes an operator guess.
 
+    Registry:
+      type: object
+      required: [id, team_id, name, url, can_pull, can_push, token_set, last_test_ok, created_at]
+      properties:
+        id:
+          type: string
+          example: reg_2m9K4pQ
+        team_id:
+          type: string
+        name:
+          type: string
+        url:
+          type: string
+          description: >-
+            The registry host, optionally with a namespace — `ghcr.io`,
+            `ghcr.io/acme`, `registry:5000`. No scheme: a registry reference
+            carries none, and accepting one would produce image names nothing
+            can pull.
+          example: ghcr.io/acme
+        username:
+          type: string
+        can_pull:
+          type: boolean
+          description: >-
+            Whether this credential may be attached to an application as its
+            image source.
+        can_push:
+          type: boolean
+          description: >-
+            Whether builds may push their result here. A pull-only credential
+            attached to a pushing build is refused at validation rather than
+            discovered as a 403 from the registry mid-deploy.
+        token_set:
+          type: boolean
+          description: >-
+            That a credential exists — never what it is (ENGINEERING rule 20).
+        last_test_at:
+          type: string
+          format: date-time
+        last_test_ok:
+          type: boolean
+        last_test_detail:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    RegistryUse:
+      type: object
+      required: [application_id, application_name, environment_name, project_name, pulls, pushes]
+      properties:
+        application_id:
+          type: string
+        application_name:
+          type: string
+        environment_name:
+          type: string
+        project_name:
+          type: string
+        pulls:
+          type: boolean
+          description: The application's image source is this registry.
+        pushes:
+          type: boolean
+          description: The application's builds push here.
+
+    CreateRegistryRequest:
+      type: object
+      required: [name, url, token]
+      properties:
+        team_id:
+          type: string
+          description: >-
+            Optional when you belong to exactly one team; required otherwise.
+        name:
+          type: string
+          maxLength: 100
+        url:
+          type: string
+          description: Registry host, without a scheme.
+          example: ghcr.io
+        username:
+          type: string
+          description: >-
+            Omit for a registry that takes a bearer token rather than a
+            username and password.
+        token:
+          type: string
+          description: >-
+            The password or access token. Sealed under the master key on the
+            way in and never returned.
+        can_pull:
+          type: boolean
+          default: true
+        can_push:
+          type: boolean
+          default: false
+
+    UpdateRegistryRequest:
+      type: object
+      description: Every field optional; an omitted field is left alone.
+      properties:
+        name:
+          type: string
+          maxLength: 100
+        url:
+          type: string
+        username:
+          type: string
+        token:
+          type: string
+          description: Send only to rotate; omitting it keeps the stored credential.
+        can_pull:
+          type: boolean
+        can_push:
+          type: boolean
+
+    TestRegistryRequest:
+      type: object
+      required: [url, token]
+      properties:
+        url:
+          type: string
+          description: Registry host, without a scheme.
+        username:
+          type: string
+        token:
+          type: string
+
     TestNotifierConfigRequest:
       type: object
       required: [channel, config]
@@ -4913,6 +5354,15 @@ components:
             build stage runs, and deploys go straight to rollout. A digest is
             immutable and fetched once; a tag is re-fetched on every deploy, so
             redeploying a moved tag runs the new image rather than a cached one.
+        registry_id:
+          type: [string, "null"]
+          description: >-
+            The stored registry credential the pull authenticates with
+            (`reg_...`). It answers "where do this application's bits come
+            from": the image itself for kind `image`, and the private base
+            image a Dockerfile `FROM` names for a git kind. Must belong to the
+            application's own team and allow pulling; null is the ordinary
+            public case. Nothing in the deploy path requires one (ADR-008).
 
     DomainCheck:
       type: object
@@ -4957,6 +5407,23 @@ components:
           description: Ignored for a `static` build.
         context:
           type: string
+        push_registry_id:
+          type: [string, "null"]
+          description: >-
+            Push the completed image to this stored registry (`reg_...`) in
+            addition to keeping it locally — ADR-008 path 3. Must belong to the
+            application's own team and allow pushing, and cannot be set on an
+            image source, which is never built. The rollout never reads this
+            copy: it runs the local build or the relayed one, so no registry is
+            required even for an application that configures one. A failed push
+            fails the deployment.
+        push_repository:
+          type: string
+          maxLength: 255
+          description: >-
+            Repository within the push registry, e.g. `acme/web`. Lowercase
+            path components only. Empty uses the application's own name reduced
+            to a legal repository path. Requires `push_registry_id`.
 
     AppVolume:
       type: object

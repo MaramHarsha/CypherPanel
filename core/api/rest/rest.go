@@ -304,7 +304,11 @@ type Deps struct {
 	Notifiers        NotifierService
 	NotifyDelivery   NotifierDelivery
 	WebhookEndpoints WebhookEndpointService
-	Inbox            InboxService
+	// Registries are the team's container registry credentials
+	// (registries.md); nil answers 501 on every registry route, which is what
+	// a panel that has not wired them looked like before they existed.
+	Registries RegistryService
+	Inbox      InboxService
 	// Audit records every sensitive action and serves the log back
 	// (audit-log.md). nil records nothing and serves an empty log.
 	Audit           AuditRecorder
@@ -679,6 +683,24 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/access-requests/{id}/grant", a.sessionOnly(a.handleGrantAccessRequest))
 	mux.HandleFunc("POST /api/v1/access-requests/{id}/deny", a.sessionOnly(a.handleDenyAccessRequest))
 
+	// V1.x: container registry credentials (registries.md §7; ADR-008 path 3).
+	//
+	// Team-scoped rather than project-scoped, like deploy keys and backup
+	// targets: one credential for ghcr.io serves every project the team runs,
+	// and duplicating it per project would mean rotating it in n places.
+	//
+	// The test routes are POSTs because they make an outbound request the
+	// caller chose the destination of — the notifier tests' precedent, and the
+	// reason both are behind admin rank rather than membership.
+	mux.HandleFunc("GET /api/v1/registries", a.authed(a.handleListRegistries))
+	mux.HandleFunc("POST /api/v1/registries", a.authed(a.handleCreateRegistry))
+	mux.HandleFunc("POST /api/v1/registries/test", a.authed(a.handleTestRegistryConfig))
+	mux.HandleFunc("GET /api/v1/registries/{id}", a.authed(a.handleGetRegistry))
+	mux.HandleFunc("PATCH /api/v1/registries/{id}", a.authed(a.handlePatchRegistry))
+	mux.HandleFunc("DELETE /api/v1/registries/{id}", a.authed(a.handleDeleteRegistry))
+	mux.HandleFunc("POST /api/v1/registries/{id}/test", a.authed(a.handleTestRegistry))
+	mux.HandleFunc("GET /api/v1/registries/{id}/used-by", a.authed(a.handleRegistryUsedBy))
+
 	mux.HandleFunc("POST /api/v1/users", a.authed(a.handleCreateUser))
 	mux.HandleFunc("GET /api/v1/users", a.authed(a.handleListUsers))
 	mux.HandleFunc("PATCH /api/v1/users/{id}", a.authed(a.handleSetUserRole))
@@ -821,6 +843,13 @@ var adminRoutes = map[string]bool{
 	"PUT /api/v1/panel/dns":                   true,
 	"DELETE /api/v1/panel/dns":                true,
 	"PUT /api/v1/panel/tls":                   true,
+	// A registry credential can pull and push images for every project the
+	// team runs; minting one is administration, not deployment.
+	"POST /api/v1/registries":           true,
+	"PATCH /api/v1/registries/{id}":     true,
+	"DELETE /api/v1/registries/{id}":    true,
+	"POST /api/v1/registries/test":      true,
+	"POST /api/v1/registries/{id}/test": true,
 }
 
 // requiredAbility maps a request to the ability a token must carry for it.

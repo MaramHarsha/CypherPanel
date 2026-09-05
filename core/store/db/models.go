@@ -83,6 +83,9 @@ type Application struct {
 	HealthKind            string
 	SourceImage           string
 	EnvAppliedAt          pgtype.Timestamptz
+	SourceRegistryID      pgtype.Text
+	BuildPushRegistryID   pgtype.Text
+	BuildPushRepository   string
 }
 
 type AuditEvent struct {
@@ -405,6 +408,23 @@ type Project struct {
 	Slug                 string
 	DefaultEnvironmentID pgtype.Text
 	LastActivityAt       pgtype.Timestamptz
+}
+
+type Registry struct {
+	ID             string
+	TeamID         string
+	Name           string
+	Url            string
+	Username       string
+	TokenCt        []byte
+	TokenNonce     []byte
+	CanPull        bool
+	CanPush        bool
+	LastTestAt     pgtype.Timestamptz
+	LastTestOk     bool
+	LastTestDetail string
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
 }
 
 type Revision struct {

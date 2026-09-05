@@ -13,6 +13,7 @@ import (
 
 	"github.com/MaramHarsha/cypherpanel/agent/driver"
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
+	"github.com/MaramHarsha/cypherpanel/pkg/registryauth"
 )
 
 // gitEnv hardens git invocations: never prompt for credentials (a private
@@ -27,9 +28,13 @@ var gitEnv = append(os.Environ(),
 	"GIT_ALLOW_PROTOCOL=https:http:git:ssh:file",
 )
 
-// EngineClient is the interface needed from the docker engine client to build images.
+// EngineClient is the interface needed from the docker engine client to build
+// images — and, when the deploy asked for it, to push the result somewhere the
+// operator already runs a registry (ADR-008 path 3).
 type EngineClient interface {
-	BuildImage(ctx context.Context, buildContext io.Reader, tag, dockerfile string, labels map[string]string, onLog func(line string)) error
+	BuildImage(ctx context.Context, buildContext io.Reader, tag, dockerfile string, labels map[string]string, registryConfig string, onLog func(line string)) error
+	TagImage(ctx context.Context, source, target string) error
+	PushImage(ctx context.Context, ref, registryAuth string) error
 }
 
 type Builder struct {
@@ -243,13 +248,66 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 		driver.LabelRevisionID: revID,
 	}
 
+	// A private base image authenticates through the same credential the app's
+	// image source would use. The plane sends it per work item; nothing is
+	// written to disk, so there is no daemon-level `docker login` state on the
+	// builder for a later build to inherit by accident.
+	buildAuth, err := registryauth.EncodeConfig(
+		work.GetSourceAuth().GetServerAddress(),
+		work.GetSourceAuth().GetUsername(),
+		work.GetSourceAuth().GetToken(),
+	)
+	if err != nil {
+		return "", err
+	}
+
 	defer func() { _ = tarPipeR.Close() }()
-	if err := b.engine.BuildImage(ctx, tarPipeR, work.Image, dockerfilePath, labels, onLog); err != nil {
+	if err := b.engine.BuildImage(ctx, tarPipeR, work.Image, dockerfilePath, labels, buildAuth, onLog); err != nil {
 		return "", fmt.Errorf("build failed: %w", err)
+	}
+
+	if err := b.push(ctx, work, onLog); err != nil {
+		return "", err
 	}
 
 	onLog("Build completed successfully.")
 	return resolvedCommitSha, nil
+}
+
+// push sends the built image to the registry the application asked for, in
+// addition to leaving it in the local daemon (ADR-008 path 3).
+//
+// A failure here fails the deployment. The alternative — warn and roll out
+// anyway — would report success for an image that is not where the operator
+// was told it would be, and the next thing to look for it (a rollback on
+// another host, something outside the panel) finds nothing.
+//
+// The rollout itself never reads this copy: it runs the local build or the
+// relayed one, so the ADR-008 contract that no registry is required is intact
+// even for an application that has configured one.
+func (b *Builder) push(ctx context.Context, work *agentv1.BuildWork, onLog func(string)) error {
+	target := work.GetPush()
+	if target.GetImage() == "" {
+		return nil
+	}
+	auth, err := registryauth.Encode(
+		target.GetAuth().GetServerAddress(),
+		target.GetAuth().GetUsername(),
+		target.GetAuth().GetToken(),
+	)
+	if err != nil {
+		return err
+	}
+	onLog(fmt.Sprintf("Pushing %s...", target.GetImage()))
+	if err := b.engine.TagImage(ctx, work.Image, target.GetImage()); err != nil {
+		return fmt.Errorf("tagging for push: %w", err)
+	}
+	if err := b.engine.PushImage(ctx, target.GetImage(), auth); err != nil {
+		// The registry's own words; the credential is not in them.
+		return fmt.Errorf("pushing %s: %w", target.GetImage(), err)
+	}
+	onLog("Pushed successfully.")
+	return nil
 }
 
 func parseDockerIgnore(contextDir string) []string {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/MaramHarsha/cypherpanel/agent/driver"
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
+	"github.com/MaramHarsha/cypherpanel/pkg/registryauth"
 )
 
 // ── recording fakes ─────────────────────────────────────────────────────────
@@ -33,6 +34,7 @@ type fakeClient struct {
 	pulledImages   []string          // refs EnsureImage actually fetched
 	localImages    map[string]bool   // refs EnsureImage treats as already present
 	pullErr        error             // injected EnsureImage failure
+	pullAuth       string            // encoded credential the last EnsureImage saw
 	digests        map[string]string // explicit ref → digest overrides
 	digestErr      error             // injected ImageDigest failure
 	tagged         []string          // "source -> target" per TagImage call
@@ -151,7 +153,8 @@ func (f *fakeClient) ContainerIP(_ context.Context, id, _ string) (string, error
 
 // EnsureImage models the real engine's contract: a digest is immutable, so a
 // local copy is accepted; a tag is mutable and always re-fetched.
-func (f *fakeClient) EnsureImage(_ context.Context, ref string) error {
+func (f *fakeClient) EnsureImage(_ context.Context, ref, registryAuth string) error {
+	f.pullAuth = registryAuth
 	if f.pullErr != nil {
 		return f.pullErr
 	}
@@ -1413,5 +1416,41 @@ func TestConvergeTwiceUnaffectedByReferenceRetry(t *testing.T) {
 	}
 	if after := c.mutations + r.mutations; after != baseline {
 		t.Fatalf("second converge mutated state: %d calls (want 0)", after-baseline)
+	}
+}
+
+// ── private registries (registries.md; ADR-008 path 3) ──────────────────────
+
+// A pull against a private registry carries the credential the plane sent,
+// assembled per rollout and held nowhere else on this host.
+func TestPullSpecCarriesTheCredentialToTheDaemon(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	sp := pullSpec("app1", "rev1", "ghcr.io/acme/web:1")
+	sp.RegistryAuth = &agentv1.RegistryAuth{ServerAddress: "ghcr.io", Username: "acme", Token: "ghp_s3cret"}
+
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{sp}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	want, err := registryauth.Encode("ghcr.io", "acme", "ghp_s3cret")
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	if c.pullAuth != want {
+		t.Fatalf("pull credential = %q, want the encoded credential", c.pullAuth)
+	}
+}
+
+// A public image pulls anonymously, exactly as it did before the feature.
+func TestPullSpecWithoutACredentialPullsAnonymously(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if c.pullAuth != "" {
+		t.Fatalf("pull credential = %q, want none", c.pullAuth)
 	}
 }

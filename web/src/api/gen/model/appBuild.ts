@@ -15,4 +15,14 @@ export interface AppBuild {
   /** Ignored for a `static` build. */
   dockerfile_path: string;
   context: string;
+  /**
+     * Push the completed image to this stored registry (`reg_...`) in addition to keeping it locally — ADR-008 path 3. Must belong to the application's own team and allow pushing, and cannot be set on an image source, which is never built. The rollout never reads this copy: it runs the local build or the relayed one, so no registry is required even for an application that configures one. A failed push fails the deployment.
+     * @nullable
+     */
+  push_registry_id?: string | null;
+  /**
+     * Repository within the push registry, e.g. `acme/web`. Lowercase path components only. Empty uses the application's own name reduced to a legal repository path. Requires `push_registry_id`.
+     * @maxLength 255
+     */
+  push_repository?: string;
 }

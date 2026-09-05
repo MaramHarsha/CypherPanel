@@ -54,6 +54,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/previews"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
 	"github.com/MaramHarsha/cypherpanel/core/protection"
+	"github.com/MaramHarsha/cypherpanel/core/registries"
 	"github.com/MaramHarsha/cypherpanel/core/relay"
 	"github.com/MaramHarsha/cypherpanel/core/scheduledtasks"
 	"github.com/MaramHarsha/cypherpanel/core/scheduler"
@@ -235,6 +236,10 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 	projectSvc := projects.NewService(st)
 	appSvc := applications.NewService(st, box)
 	deployKeySvc := deploykeys.NewService(st, box)
+	// Container registry credentials (registries.md; ADR-008 path 3). Nothing
+	// in the deploy path requires one — this is for pulling a private base
+	// image and pushing builds somewhere the operator already runs.
+	registrySvc := registries.NewService(st, box)
 	teamSvc := teams.NewService(st)
 	// Two throttle dimensions on sign-in: per client address (5 failures / 15
 	// min) and per account (10 / 15 min, derived). One attacker behind a shared
@@ -251,6 +256,9 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 	// and every domain routes, exactly as before this feature existed.
 	dnsSvc := dns.New(st, box)
 	sched.SetDomainVerifier(dnsSvc)
+	// Private-registry credentials are unsealed per work item, never cached, so
+	// rotating one takes effect on the next deploy (registries.md §5).
+	sched.SetRegistries(registrySvc)
 
 	// The panel's ACME account (agent-identity-and-tls.md §4): one setting,
 	// carried to every node in its desired state. The scheduler is the fleet
@@ -545,6 +553,7 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		Projects:         projectSvc,
 		Applications:     appSvc,
 		DeployKeys:       deployKeySvc,
+		Registries:       registrySvc,
 		Databases:        dbSvc,
 		BackupTargets:    backupTargetSvc,
 		BackupSchedules:  backupScheduleSvc,

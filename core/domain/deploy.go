@@ -74,6 +74,10 @@ type AppSource struct {
 	Branch      string
 	DeployKeyID *string
 	Image       string // OCI reference; set iff Kind == "image"
+	// RegistryID is the credential the agent authenticates the pull with, when
+	// the image lives in a private registry (registries.md; ADR-008 path 3).
+	// nil is the ordinary case — a public image, or a built one.
+	RegistryID *string
 }
 
 // AppBuild is how the image is produced (Phase 2: dockerfile only).
@@ -81,6 +85,13 @@ type AppBuild struct {
 	Kind           string // "dockerfile"
 	DockerfilePath string
 	Context        string
+	// PushRegistryID and PushRepository are ADR-008 path 3: after a successful
+	// build, also push the image somewhere the operator already runs. Nothing
+	// in the deploy path depends on it — the rollout still uses the local image
+	// or the relay, and a failed push fails the deployment rather than
+	// silently shipping an image that is not where it was promised to be.
+	PushRegistryID *string
+	PushRepository string
 }
 
 // AppRuntime is where and how the container runs.

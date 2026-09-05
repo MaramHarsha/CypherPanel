@@ -22,6 +22,7 @@ import (
 
 	"github.com/MaramHarsha/cypherpanel/agent/driver"
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
+	"github.com/MaramHarsha/cypherpanel/pkg/registryauth"
 )
 
 // driverName identifies this driver in labels, heartbeats, and work routing.
@@ -132,7 +133,9 @@ type Client interface {
 	// pick up whatever that tag points at now rather than silently reusing the
 	// cached image. Only pull-marked specs reach it (AppSpec.pull — deploy from
 	// container image); built images keep the ADR-008 local/relay contract.
-	EnsureImage(ctx context.Context, image string) error
+	// registryAuth is the encoded credential for a private registry
+	// (pkg/registryauth); empty is the anonymous pull every public image does.
+	EnsureImage(ctx context.Context, image, registryAuth string) error
 	// ImageDigest returns the immutable digest reference (repo@sha256:…) of a
 	// local image, or "" when it has none (a locally-built image never pushed
 	// anywhere). This is what lets the plane pin a revision to the artifact it
@@ -334,7 +337,18 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 			hadSource = true
 			d.log.Warn("checking image provenance", "image", image, "error", hasErr)
 		}
-		if err := d.client.EnsureImage(ctx, image); err != nil {
+		// The credential is assembled per rollout and lives only for this call:
+		// nothing about a registry is written to the agent's disk, so revoking
+		// one on the plane revokes it here at the next work item.
+		auth, authErr := registryauth.Encode(
+			spec.GetRegistryAuth().GetServerAddress(),
+			spec.GetRegistryAuth().GetUsername(),
+			spec.GetRegistryAuth().GetToken(),
+		)
+		if authErr != nil {
+			return status(spec.GetAppId(), currentRevision(existing), stateError, "registry credential: "+authErr.Error())
+		}
+		if err := d.client.EnsureImage(ctx, image, auth); err != nil {
 			return status(spec.GetAppId(), currentRevision(existing), stateError, "pull: "+err.Error())
 		}
 		// Record that the reference is ours before anything else can fail.

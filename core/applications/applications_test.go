@@ -28,6 +28,11 @@ type fakeStore struct {
 	// sharedKeys are the shared-variable keys in force for every environment
 	// this fake knows about (shared-variables.md §3).
 	sharedKeys []string
+	// registries the panel knows about, by id (registries.md §5).
+	registries map[string]domain.Registry
+	// registryLookups counts GetRegistry calls, so "an application that names
+	// no registry pays no lookup" is provable rather than assumed.
+	registryLookups int
 }
 
 func newFakeStore() *fakeStore {
@@ -36,6 +41,13 @@ func newFakeStore() *fakeStore {
 		servers: map[string]bool{"srv_1": true, "srv_builder": true},
 		apps:    map[string]domain.Application{},
 		envVars: map[string][]domain.EnvVar{},
+		// Two credentials in the fake's own team and one in another, so the
+		// capability check and the tenancy check are each provable.
+		registries: map[string]domain.Registry{
+			"reg_pull":  {ID: "reg_pull", TeamID: "team_1", Name: "ghcr", URL: "ghcr.io", CanPull: true},
+			"reg_push":  {ID: "reg_push", TeamID: "team_1", Name: "push", URL: "ghcr.io", CanPull: true, CanPush: true},
+			"reg_other": {ID: "reg_other", TeamID: "team_other", Name: "theirs", URL: "ghcr.io", CanPull: true, CanPush: true},
+		},
 	}
 }
 
@@ -90,6 +102,22 @@ func (f *fakeStore) GetEnvironment(_ context.Context, id string) (domain.Environ
 		return domain.Environment{}, store.ErrNotFound
 	}
 	return domain.Environment{ID: id, ProjectID: "prj_1", Name: "production"}, nil
+}
+
+func (f *fakeStore) GetProject(_ context.Context, id string) (domain.Project, error) {
+	return domain.Project{ID: id, TeamID: "team_1", Name: "acme"}, nil
+}
+
+// GetRegistry backs the check that an attached registry exists, is the team's
+// and allows what it is being attached for (registries.md §5). Seeded per test
+// via fakeStore.registries; an unseeded id is not found.
+func (f *fakeStore) GetRegistry(_ context.Context, id string) (domain.Registry, error) {
+	f.registryLookups++
+	reg, ok := f.registries[id]
+	if !ok {
+		return domain.Registry{}, store.ErrNotFound
+	}
+	return reg, nil
 }
 
 func (f *fakeStore) ListSharedVariableKeysInScope(_ context.Context, _, _ string) ([]string, error) {
@@ -522,5 +550,153 @@ func TestCreateAcceptsResolvableEnvReference(t *testing.T) {
 	}
 	if got := view.SharedRefs["SENTRY_DSN"]; len(got) != 1 || got[0] != "SENTRY_DSN" {
 		t.Fatalf("shared_refs = %v, want [SENTRY_DSN]", got)
+	}
+}
+
+// ─── registries (registries.md §5) ──────────────────────────────────────────
+//
+// Every refusal below is one an operator would otherwise meet mid-deploy, as
+// an unexplained 401 or 403 from a registry after a five-minute build.
+
+func ptr[T any](v T) *T { return &v }
+
+func TestAttachingAPullRegistryIsAccepted(t *testing.T) {
+	s := NewService(newFakeStore(), fakeSealer{})
+	in := validInput()
+	in.Source.RegistryID = ptr("reg_pull")
+
+	app, _, err := s.Create(context.Background(), "env_1", in)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if app.Source.RegistryID == nil || *app.Source.RegistryID != "reg_pull" {
+		t.Fatalf("source.registry_id = %v, want it stored", app.Source.RegistryID)
+	}
+}
+
+// A pull-only credential named as a push target fails at the registry after
+// the build, not before it. Refusing here turns a wasted build into a message.
+func TestAPullOnlyRegistryCannotBeAPushTarget(t *testing.T) {
+	s := NewService(newFakeStore(), fakeSealer{})
+	in := validInput()
+	in.Build.PushRegistryID = ptr("reg_pull")
+
+	_, _, err := s.Create(context.Background(), "env_1", in)
+	var ve *ValidationError
+	if !errors.As(err, &ve) || !strings.Contains(ve.Msg, "not allowed to push") {
+		t.Fatalf("err = %v, want a refusal naming the missing capability", err)
+	}
+}
+
+// A credential belongs to a team. One project borrowing another team's push
+// token is exactly what the team boundary exists to stop — and the refusal
+// says "no such registry", so the config screen is not a way to enumerate
+// other teams' credentials.
+func TestARegistryInAnotherTeamIsNotFound(t *testing.T) {
+	s := NewService(newFakeStore(), fakeSealer{})
+	in := validInput()
+	in.Source.RegistryID = ptr("reg_other")
+
+	_, _, err := s.Create(context.Background(), "env_1", in)
+	var ve *ValidationError
+	if !errors.As(err, &ve) || !strings.Contains(ve.Msg, "no such registry") {
+		t.Fatalf("err = %v, want the same answer a missing registry gets", err)
+	}
+}
+
+func TestAnUnknownRegistryIsRefused(t *testing.T) {
+	s := NewService(newFakeStore(), fakeSealer{})
+	in := validInput()
+	in.Build.PushRegistryID = ptr("reg_nope")
+
+	_, _, err := s.Create(context.Background(), "env_1", in)
+	var ve *ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("err = %v, want a ValidationError", err)
+	}
+}
+
+// An image source is never built, so a push target on one silently does
+// nothing — the failure an operator cannot see.
+func TestAnImageSourceCannotPush(t *testing.T) {
+	s := NewService(newFakeStore(), fakeSealer{})
+	in := validInput()
+	in.Source = domain.AppSource{Kind: "image", Image: "ghcr.io/acme/web:1"}
+	in.Build.PushRegistryID = ptr("reg_push")
+
+	_, _, err := s.Create(context.Background(), "env_1", in)
+	var ve *ValidationError
+	if !errors.As(err, &ve) || !strings.Contains(ve.Msg, "nothing to push") {
+		t.Fatalf("err = %v, want the combination refused", err)
+	}
+}
+
+func TestAPushRepositoryNeedsARegistry(t *testing.T) {
+	s := NewService(newFakeStore(), fakeSealer{})
+	in := validInput()
+	in.Build.PushRepository = "acme/web"
+
+	_, _, err := s.Create(context.Background(), "env_1", in)
+	var ve *ValidationError
+	if !errors.As(err, &ve) || !strings.Contains(ve.Msg, "push_registry_id") {
+		t.Fatalf("err = %v, want the orphaned repository refused", err)
+	}
+}
+
+// Uppercase is refused rather than folded: a registry treats `Acme/Web` as a
+// name it has never heard of, and lowercasing it here would push somewhere the
+// operator did not type.
+func TestPushRepositoryMustBeALegalImagePath(t *testing.T) {
+	bad := []string{"Acme/Web", "acme//web", "/acme", "acme/", "acme/web:tag", "acme/-web", "acme/web-", "acme/_web"}
+	good := []string{"", "web", "acme/web", "acme/team/web", "acme.io/web-1", "a_b/c.d-e"}
+	for _, p := range bad {
+		if validRepositoryPath(p) {
+			t.Errorf("validRepositoryPath(%q) = true, want it refused", p)
+		}
+	}
+	for _, p := range good {
+		if !validRepositoryPath(p) {
+			t.Errorf("validRepositoryPath(%q) = false, want it accepted", p)
+		}
+	}
+}
+
+// The check runs on the MERGED result, so attaching a push registry and
+// switching to an image source across two PATCHes is refused just as the
+// single-request form is.
+func TestUpdateChecksTheMergedResult(t *testing.T) {
+	fs := newFakeStore()
+	s := NewService(fs, fakeSealer{})
+	in := validInput()
+	in.Build.PushRegistryID = ptr("reg_push")
+	app, _, err := s.Create(context.Background(), "env_1", in)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	_, err = s.Update(context.Background(), app.ID, UpdateInput{
+		Source: &domain.AppSource{Kind: "image", Image: "ghcr.io/acme/web:1"},
+	})
+	var ve *ValidationError
+	if !errors.As(err, &ve) || !strings.Contains(ve.Msg, "nothing to push") {
+		t.Fatalf("err = %v, want the merged combination refused", err)
+	}
+}
+
+// The overwhelming majority of applications name no registry, and must not pay
+// a lookup for one.
+func TestNoRegistryMeansNoLookup(t *testing.T) {
+	fs := newFakeStore()
+	s := NewService(fs, fakeSealer{})
+
+	app, _, err := s.Create(context.Background(), "env_1", validInput())
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := s.Update(context.Background(), app.ID, UpdateInput{Name: ptr("web2")}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if fs.registryLookups != 0 {
+		t.Fatalf("registry lookups = %d, want none for an application that names none", fs.registryLookups)
 	}
 }
