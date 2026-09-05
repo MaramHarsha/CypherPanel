@@ -101,6 +101,47 @@ connection test's failure detail is the registry's own words — but a failed
 dial is unwrapped from its `*url.Error` first, because that type stringifies
 the whole request URL and a bearer token can live in one.
 
+### 3.1 Where the probe is allowed to connect
+
+The connection test is the panel's most careful outbound request, because the
+destination is chosen in a request body and — unlike a notifier's webhook —
+cannot be held to a known set of hosts: pointing at an arbitrary registry *is*
+the feature. Two independent defences, neither substituting for the other
+(threat-model §5.14):
+
+**The URL is built from components.** The value is held to one regular
+expression covering the whole host — DNS labels, or a bracketed IPv6 literal,
+with an optional port — and it is that *checked* value which becomes
+`url.URL.Host`. A scheme, credentials before an `@`, a path, a query, a
+fragment, a backslash, whitespace or a control character are outside the
+alphabet, so there is nothing to strip and nothing to get subtly wrong. A
+namespace (`ghcr.io/acme`) belongs to the image path and is dropped: the host
+alone answers `/v2/`.
+
+**The connection is guarded at dial time**, by `core/egress`, which refuses any
+address that is not publicly routable — loopback, RFC1918, IPv6 unique-local,
+link-local (where cloud metadata lives), unspecified and multicast, and their
+IPv4-mapped forms. The check runs in the dialer's `Control` hook, on the
+**resolved** IP the socket is about to use, so a name that answers publicly once
+and privately the next time is refused the next time. A validation-time string
+check cannot do that.
+
+The guard is on the service's own client, so it covers **both** test routes. The
+stored path reaches the same capability with one extra step, and two policies
+for "test this credential" would only mean the weaker one is the one people
+reach for.
+
+The scheme is therefore always `https`. Every address the Docker daemon treats
+as insecure-by-default is refused before it is dialled, so no case remains in
+which a credential would go out in the clear.
+
+**The cost, stated plainly:** a registry on the operator's own private network
+cannot be *tested* from the panel. It can still be stored, attached and pulled
+from, because the **agent** does the pulling and the agent is already on that
+network. The refusal says exactly that — "save the registry anyway, the agent
+that pulls is already on that network" — rather than reporting a connection
+error, so nobody is left believing their credential is wrong.
+
 ## 4. Validation, and what it buys
 
 Checked when a registry is attached to an application, not when it is spent:
@@ -201,8 +242,8 @@ two costs the caller the distinction.
 The test probes `GET /v2/`, the OCI distribution spec's own liveness-and-auth
 endpoint, rather than the catalog: many registries disable catalog listing for
 non-admin credentials, and a working credential must not look broken because it
-cannot enumerate every repository on the host. TLS always, except `localhost`
-and `127.0.0.0/8` — the same exception the Docker daemon itself makes.
+cannot enumerate every repository on the host. Where it is allowed to connect,
+and why the answer is not "anywhere", is §3.1.
 
 With no registry service wired, every route answers `501`, which is what a
 panel that never had this feature looked like.

@@ -113,6 +113,18 @@ func newService() (*Service, *fakeStore, *fakeBox) {
 	return NewService(st, box), st, box
 }
 
+// newProbeService is newService pointed at a test registry: the guard is
+// lifted so the probe can reach loopback, and the server's own client is used
+// so its certificate is trusted. What these tests exercise is how the service
+// READS a registry's answer; that the real client refuses loopback in the
+// first place is asserted separately, against the client NewService installs.
+func newProbeService(srv *httptest.Server) (*Service, *fakeStore, *fakeBox) {
+	svc, st, box := newService()
+	svc.http = srv.Client()
+	svc.http.Timeout = testTimeout
+	return svc, st, box
+}
+
 func TestCreateSealsTheTokenAndKeepsItOutOfTheRecord(t *testing.T) {
 	svc, _, box := newService()
 	reg, err := svc.Create(context.Background(), "team_1", Input{
@@ -282,7 +294,7 @@ func TestProbeDistinguishesTheRegistrysThreeAnswers(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path != "/v2/" {
 					t.Errorf("path = %q, want /v2/ — the spec's own auth endpoint", r.URL.Path)
 				}
@@ -293,8 +305,8 @@ func TestProbeDistinguishesTheRegistrysThreeAnswers(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			svc, _, _ := newService()
-			res := svc.probe(context.Background(), strings.TrimPrefix(srv.URL, "http://"), "acme", "s3cret")
+			svc, _, _ := newProbeService(srv)
+			res := svc.probe(context.Background(), strings.TrimPrefix(srv.URL, "https://"), "acme", "s3cret")
 			if res.OK != tc.wantOK {
 				t.Fatalf("ok = %v, want %v (detail %q)", res.OK, tc.wantOK, res.Detail)
 			}
@@ -309,14 +321,14 @@ func TestProbeDistinguishesTheRegistrysThreeAnswers(t *testing.T) {
 // would authenticate as the user "" rather than with the token.
 func TestProbeSendsABearerTokenWhenThereIsNoUsername(t *testing.T) {
 	var got string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got = r.Header.Get("Authorization")
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 
-	svc, _, _ := newService()
-	svc.probe(context.Background(), strings.TrimPrefix(srv.URL, "http://"), "", "tok")
+	svc, _, _ := newProbeService(srv)
+	svc.probe(context.Background(), strings.TrimPrefix(srv.URL, "https://"), "", "tok")
 	if got != "Bearer tok" {
 		t.Fatalf("Authorization = %q, want a bearer token", got)
 	}
@@ -325,14 +337,14 @@ func TestProbeSendsABearerTokenWhenThereIsNoUsername(t *testing.T) {
 // The namespace is part of an image path, not of the host that answers /v2/.
 func TestProbeAsksTheHostNotTheNamespace(t *testing.T) {
 	var path string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path = r.URL.Path
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 
-	svc, _, _ := newService()
-	host := strings.TrimPrefix(srv.URL, "http://")
+	svc, _, _ := newProbeService(srv)
+	host := strings.TrimPrefix(srv.URL, "https://")
 	res := svc.probe(context.Background(), host+"/acme/team", "u", "p")
 	if !res.OK || path != "/v2/" {
 		t.Fatalf("ok = %v path = %q, want the namespace stripped", res.OK, path)
@@ -343,6 +355,7 @@ func TestProbeAsksTheHostNotTheNamespace(t *testing.T) {
 // stringifies the whole request URL, and a bearer token can live in one.
 func TestProbeDoesNotEchoTheURLOnADialFailure(t *testing.T) {
 	svc, _, _ := newService()
+	svc.http = &http.Client{Timeout: testTimeout} // unguarded: the point is the dial failure
 	res := svc.probe(context.Background(), "127.0.0.1:1", "u", "p")
 	if res.OK {
 		t.Fatal("ok = true, want a failure against a closed port")
@@ -353,14 +366,14 @@ func TestProbeDoesNotEchoTheURLOnADialFailure(t *testing.T) {
 }
 
 func TestTestRecordsTheOutcome(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 
-	svc, st, _ := newService()
+	svc, st, _ := newProbeService(srv)
 	reg, _ := svc.Create(context.Background(), "team_1", Input{
-		Name: "local", URL: strings.TrimPrefix(srv.URL, "http://"), Token: "t", CanPull: true,
+		Name: "local", URL: strings.TrimPrefix(srv.URL, "https://"), Token: "t", CanPull: true,
 	})
 	res, err := svc.Test(context.Background(), reg.ID)
 	if err != nil {
@@ -374,14 +387,14 @@ func TestTestRecordsTheOutcome(t *testing.T) {
 // TestConfig proves a credential before anything is stored: a dialog that can
 // only test what it already saved teaches operators to save broken ones.
 func TestTestConfigStoresNothing(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 
-	svc, st, _ := newService()
+	svc, st, _ := newProbeService(srv)
 	res, err := svc.TestConfig(context.Background(), Input{
-		Name: "probe", URL: strings.TrimPrefix(srv.URL, "http://"), Username: "u", Token: "p", CanPull: true,
+		Name: "probe", URL: strings.TrimPrefix(srv.URL, "https://"), Username: "u", Token: "p", CanPull: true,
 	})
 	if err != nil || !res.OK {
 		t.Fatalf("res = %+v err = %v", res, err)
@@ -391,19 +404,86 @@ func TestTestConfigStoresNothing(t *testing.T) {
 	}
 }
 
-// A credential must not go on the wire in the clear to a host nobody vouched
-// for; localhost is the exception the Docker daemon itself makes.
-func TestIsPlainHTTPHostOnlyAcceptsLoopback(t *testing.T) {
-	plain := []string{"localhost", "localhost:5000", "127.0.0.1", "127.0.0.1:5000", "127.5.5.5:5000"}
-	tls := []string{"ghcr.io", "registry.example.com", "registry:5000", "10.0.0.1:5000", "notlocalhost"}
-	for _, h := range plain {
-		if !isPlainHTTPHost(h) {
-			t.Errorf("isPlainHTTPHost(%q) = false, want true", h)
+// ── destination policy (threat-model §5.11) ────────────────────────────────
+
+// The client NewService installs must refuse the addresses a request-forgery
+// would aim at, whichever probe path reaches it.
+func TestTheRealClientRefusesPrivateDestinations(t *testing.T) {
+	svc, _, _ := newService()
+	for _, host := range []string{"127.0.0.1:5000", "10.0.0.1:5000", "169.254.169.254", "[::1]:5000"} {
+		res := svc.probe(context.Background(), host, "u", "p")
+		if res.OK {
+			t.Errorf("probe(%s) succeeded, want it refused", host)
+		}
+		if !strings.Contains(res.Detail, "inside its own network") {
+			t.Errorf("probe(%s) detail = %q, want the refusal explained", host, res.Detail)
 		}
 	}
-	for _, h := range tls {
-		if isPlainHTTPHost(h) {
-			t.Errorf("isPlainHTTPHost(%q) = true, want TLS", h)
+}
+
+// The refusal has to be distinguishable from "nothing answered": an operator
+// with a registry on their own network must be told to save it anyway rather
+// than left believing the credential is wrong.
+func TestPrivateDestinationRefusalPointsAtTheAgent(t *testing.T) {
+	svc, _, _ := newService()
+	res := svc.probe(context.Background(), "10.0.0.1:5000", "u", "p")
+	if !strings.Contains(res.Detail, "the agent that pulls is already on that network") {
+		t.Fatalf("detail = %q, want it to say the registry still works", res.Detail)
+	}
+}
+
+// hostPort is a whitelist, not a scrub: the URL is rebuilt from the parts it
+// recognised, so anything that could steer the request elsewhere must not be
+// recognised at all.
+func TestHostPortRefusesAnythingThatIsNotAHost(t *testing.T) {
+	bad := []string{
+		"",
+		"https://ghcr.io",          // a scheme would become part of the host
+		"user@evil.test",           // credentials steer the request
+		"ghcr.io?x=1",              // a query
+		"ghcr.io#frag",             // a fragment
+		"ghcr.io\\evil.test",       // a backslash some parsers read as a separator
+		"ghcr .io",                 // whitespace
+		"ghcr.io:",                 // an empty port
+		"ghcr.io:0",                // a port outside the range
+		"ghcr.io:99999",            // ditto
+		"ghcr.io:notaport",         // a non-numeric port
+		"-ghcr.io",                 // a label may not start with a hyphen
+		"ghcr-.io",                 // nor end with one
+		"ghcr..io",                 // nor be empty
+		"ghcr.io\nHost: evil.test", // header injection through a newline
+		"::1",                      // a bare IPv6 literal needs brackets
+	}
+	for _, ref := range bad {
+		if got, ok := hostPort(ref); ok {
+			t.Errorf("hostPort(%q) = %q, true; want it refused", ref, got)
 		}
+	}
+}
+
+func TestHostPortKeepsARealRegistryReference(t *testing.T) {
+	good := map[string]string{
+		"ghcr.io":                   "ghcr.io",
+		"ghcr.io/acme":              "ghcr.io", // the namespace is part of the image path
+		"ghcr.io/acme/team":         "ghcr.io",
+		"registry.example.com:5000": "registry.example.com:5000",
+		"registry:5000":             "registry:5000",
+		"192.0.2.10:5000":           "192.0.2.10:5000",
+		"[2001:db8::1]:5000":        "[2001:db8::1]:5000",
+	}
+	for ref, want := range good {
+		got, ok := hostPort(ref)
+		if !ok || got != want {
+			t.Errorf("hostPort(%q) = %q, %v; want %q, true", ref, got, ok, want)
+		}
+	}
+}
+
+// A reference the host parser refuses never reaches the network at all.
+func TestProbeRefusesAMalformedHostWithoutDialing(t *testing.T) {
+	svc, _, _ := newService()
+	res := svc.probe(context.Background(), "user@evil.test", "u", "p")
+	if res.OK || !strings.Contains(res.Detail, "not a registry host") {
+		t.Fatalf("result = %+v, want a refusal naming the problem", res)
 	}
 }

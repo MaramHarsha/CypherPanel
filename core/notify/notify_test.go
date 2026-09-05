@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/MaramHarsha/cypherpanel/core/domain"
+	"github.com/MaramHarsha/cypherpanel/core/egress"
 )
 
 func quietLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -435,18 +436,18 @@ func TestPubliclyRoutable(t *testing.T) {
 		"::ffff:10.0.0.7",  // IPv4-mapped RFC1918
 	}
 	for _, s := range refused {
-		if publiclyRoutable(net.ParseIP(s)) {
-			t.Fatalf("publiclyRoutable(%s) = true, want false", s)
+		if egress.PubliclyRoutable(net.ParseIP(s)) {
+			t.Fatalf("egress.PubliclyRoutable(%s) = true, want false", s)
 		}
 	}
 	for _, s := range []string{"1.1.1.1", "93.184.216.34", "2606:4700:4700::1111"} {
-		if !publiclyRoutable(net.ParseIP(s)) {
-			t.Fatalf("publiclyRoutable(%s) = false, want true", s)
+		if !egress.PubliclyRoutable(net.ParseIP(s)) {
+			t.Fatalf("egress.PubliclyRoutable(%s) = false, want true", s)
 		}
 	}
 	// An unparseable address is refused rather than assumed safe.
-	if publiclyRoutable(nil) {
-		t.Fatal("publiclyRoutable(nil) = true, want false")
+	if egress.PubliclyRoutable(nil) {
+		t.Fatal("egress.PubliclyRoutable(nil) = true, want false")
 	}
 }
 
@@ -454,18 +455,18 @@ func TestPubliclyRoutable(t *testing.T) {
 // the socket is about to use — which is what makes it proof against a name that
 // resolves publicly once and privately the next time.
 func TestGuardControlRefusesPrivateAddresses(t *testing.T) {
-	if err := guardControl("tcp", "127.0.0.1:8080", nil); !errors.Is(err, ErrPrivateDestination) {
-		t.Fatalf("guardControl(loopback) = %v, want ErrPrivateDestination", err)
+	if err := egress.Control("tcp", "127.0.0.1:8080", nil); !errors.Is(err, ErrPrivateDestination) {
+		t.Fatalf("egress.Control(loopback) = %v, want ErrPrivateDestination", err)
 	}
-	if err := guardControl("tcp", "169.254.169.254:80", nil); !errors.Is(err, ErrPrivateDestination) {
-		t.Fatalf("guardControl(metadata) = %v, want ErrPrivateDestination", err)
+	if err := egress.Control("tcp", "169.254.169.254:80", nil); !errors.Is(err, ErrPrivateDestination) {
+		t.Fatalf("egress.Control(metadata) = %v, want ErrPrivateDestination", err)
 	}
-	if err := guardControl("tcp", "1.1.1.1:443", nil); err != nil {
-		t.Fatalf("guardControl(public) = %v, want nil", err)
+	if err := egress.Control("tcp", "1.1.1.1:443", nil); err != nil {
+		t.Fatalf("egress.Control(public) = %v, want nil", err)
 	}
 	// A malformed address is refused, not passed through.
-	if err := guardControl("tcp", "not-an-address", nil); !errors.Is(err, ErrPrivateDestination) {
-		t.Fatalf("guardControl(malformed) = %v, want ErrPrivateDestination", err)
+	if err := egress.Control("tcp", "not-an-address", nil); !errors.Is(err, ErrPrivateDestination) {
+		t.Fatalf("egress.Control(malformed) = %v, want ErrPrivateDestination", err)
 	}
 }
 

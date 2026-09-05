@@ -2085,6 +2085,13 @@ paths:
         A rejected credential is a `200` with `ok:false` — the request
         succeeded, the authentication did not. Team admin or above, because it
         makes an outbound request to a host the caller chose.
+
+
+        The panel will not connect to an address inside its own network
+        (loopback, RFC1918, link-local and the rest, checked against the
+        RESOLVED address). A registry on a private network therefore cannot be
+        tested from here — `detail` says so, and says to save it anyway, because
+        the agent that does the pulling is already on that network.
       parameters:
         - name: team_id
           in: query
@@ -2252,6 +2259,11 @@ paths:
         Team admin or above. The result is stored on the registry as
         `last_test_at` / `last_test_ok`, so a list can show whether a credential
         is known-good without re-authenticating on every page render.
+
+
+        Subject to the same egress rule as testing an unsaved configuration: the
+        panel will not connect to an address inside its own network, and a
+        private registry is pulled by the agent rather than reached from here.
       responses:
         "200":
           description: Tested. `ok` is the verdict.

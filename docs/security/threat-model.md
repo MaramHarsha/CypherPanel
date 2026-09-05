@@ -339,7 +339,7 @@ addresses, and their IPv4-mapped forms. Before anything is dialled the URL must
 also be `https` with a dotted hostname — no cleartext, no userinfo, no IP
 literal, the shape that skips DNS entirely. Because the hook sees the address the
 socket is about to use, a name that resolves publicly on the first lookup and
-privately on the second is refused on the second. `[core/notify/egress.go]`
+privately on the second is refused on the second. `[core/egress]`
 
 **Addresses are parsed, not merely non-empty.** A notifier's `from` and every
 recipient in `to` must parse as an address before the config can be stored, so a
@@ -460,6 +460,59 @@ displayed to owners as text — a hijacked feed can therefore advertise a
 plausible-looking version and a notes URL that is not ours. It cannot make the
 panel fetch, install or run anything, which is the property that matters.
 
+### 5.14 The panel as an HTTP client: the registry probe
+
+**Attack.** A **Registry** ([registries.md](../features/registries.md)) stores a
+credential for a container registry the operator names, and two routes test it —
+`POST /registries/test` for an unsaved one and `POST /registries/{id}/test` for
+a stored one. Both make the plane connect to a host chosen in a request body,
+and both return the outcome synchronously. That is §5.11's unsaved-notifier
+problem again, with one difference that makes it harder: a notifier's webhook
+URL can be held to a known set of provider hostnames, and a registry's cannot —
+pointing at an arbitrary registry *is* the feature. `169.254.169.254`,
+`10.0.0.7:5432` and the plane's own loopback are all reachable from where
+`cypherd` runs, and "the registry answered 404" versus "connection refused"
+versus a timeout separates a listening port from a closed one from a filtered
+one.
+
+**Property that must hold.** Testing a credential may prove reachability of a
+registry on the public internet. It may not become a way to learn what is
+listening inside the panel's network.
+
+**Controls.**
+- **The URL is built from components, never concatenated.** The operator's value
+  is held to one regular expression covering the whole host — DNS labels or a
+  bracketed IPv6 literal, with an optional port — and it is that *checked* value
+  which becomes `url.URL.Host`. A scheme, credentials before an `@`, a path, a
+  query, a fragment, a backslash, whitespace or a control character are outside
+  the alphabet, so there is nothing to strip and nothing to get subtly wrong.
+  `[registries.hostPort]`
+- **The destination is checked at dial time, not at validation time.** The same
+  `Control`-hook guard §5.11 introduced, now shared: loopback, RFC1918, IPv6
+  unique-local, link-local, unspecified and multicast are refused, along with
+  their IPv4-mapped forms, on the address the socket is about to use. A name
+  that resolves publicly once and privately the next time is refused the next
+  time. `[core/egress]`
+- **Both test paths, not just the unsaved one.** Unlike §5.11, the guard is on
+  the service's own client rather than a second client built for one route. The
+  stored path reaches the same capability with one extra step, and two policies
+  for "test this credential" would only mean the weaker one is the one people
+  reach for.
+- **Always TLS.** With every address the Docker daemon would call
+  insecure-by-default now refused, no case remains in which a credential would
+  go out in the clear, so the scheme is fixed rather than chosen.
+- **Team admin, not member.** Making an outbound request to a host you chose is
+  administration; the rank matches creating the credential itself.
+
+**What this costs, and why it is the right trade.** A registry on the operator's
+own private network cannot be *tested* from the panel. It can still be stored,
+attached to an application and pulled from — because the **agent** does the
+pulling, and the agent is already on that network. The refusal says exactly that
+rather than reporting a connection error, so the operator is not left believing
+their credential is wrong. This is deliberately stricter than §5.11's accepted
+risk for a saved notifier: that one rests on the destination being fixed at
+save time, and a registry's is not.
+
 ## 6. Cross-cutting controls (apply everywhere)
 
 - **Secrets never in logs, errors, or API responses** — mask by default (ENGINEERING rule 20). Every log line carries resource IDs, never secret values (rule 4).
@@ -506,6 +559,7 @@ These are the concrete, checkable requirements the Phase 1 handshake code must s
 | §5.8 Web/API | No SSR framework; auth+object-authz default; two-dimension rate limit with trusted-proxy client addressing; unforgeable trace ids; expired-session purge; owner+session-only log tail; **session-only deploy approval, rejection, break glass and deploy-protection policy writes**; **hashed single-use invitation tokens on the two public invite routes, and session-only access-request decisions**; masking | ADR-001, rules 20–21, control-plane-hardening.md §§2, 4, 5, 7, deploy-protection.md §5, invitations-and-access-requests.md §8 |
 | §5.9 Disk exhaustion/self-DoS | Desired-state GC; self-headroom guard; bounded retention; alerts | ADR-003, ADR-005, matrix V1 |
 | §5.10 Mailbox-as-identity | Two factors to move an address; old address always notified; single-use hashed token; sessionOnly + rate limited; an invitation to a known address requires that account's current password and second factor | panel-mail.md §4–5, invitations-and-access-requests.md §4, rules 20–21 |
+| §5.14 Registry probe egress | Host held to one grammar and rebuilt from it; dial-time destination guard on both test paths; TLS always; team-admin rank | registries.md §3, §7, `core/egress` |
 | §5.11 Outbound webhook egress | Metadata-only payload; HMAC over raw bytes; sealed secret; no redirects; project-scoped authz; bounded retries | outbound-webhooks.md §4, §6, rule 20 |
 | §5.13 Update check (outbound HTTP) | Opt-out; no private-range redirects (post-resolution); bounded body and timeout; last-good-on-failure; once-per-version inbox item; never self-updates | control-plane-hardening.md §3, ADR-010 |
 | §5.12 DNS control / ownership | Sealed token; only records we created; derived content; verification recomputed not stored; panel-admin gated; request host pinned and path segments validated | dns-automation.md §3.1, §4.1, §4.4, rule 20 |

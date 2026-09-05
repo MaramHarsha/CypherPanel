@@ -251,6 +251,8 @@ export const useCreateRegistry = <TError = BadRequestResponse | UnauthorizedResp
 
 /**
  * Authenticates against the registry's `/v2/` endpoint and stores nothing. A rejected credential is a `200` with `ok:false` — the request succeeded, the authentication did not. Team admin or above, because it makes an outbound request to a host the caller chose.
+ *
+ * The panel will not connect to an address inside its own network (loopback, RFC1918, link-local and the rest, checked against the RESOLVED address). A registry on a private network therefore cannot be tested from here — `detail` says so, and says to save it anyway, because the agent that does the pulling is already on that network.
  * @summary Prove a credential before saving it
  */
 export const testRegistryConfig = async (testRegistryRequest: TestRegistryRequest,
@@ -566,6 +568,8 @@ export const useDeleteRegistry = <TError = UnauthorizedResponse | ForbiddenRespo
 
 /**
  * Team admin or above. The result is stored on the registry as `last_test_at` / `last_test_ok`, so a list can show whether a credential is known-good without re-authenticating on every page render.
+ *
+ * Subject to the same egress rule as testing an unsaved configuration: the panel will not connect to an address inside its own network, and a private registry is pulled by the agent rather than reached from here.
  * @summary Re-authenticate a stored registry and record the outcome
  */
 export const testRegistry = async (id: string, options?: RequestInit): Promise<ConnectionTest> => {
