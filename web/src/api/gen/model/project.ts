@@ -15,4 +15,18 @@ export interface Project {
   /** tm_… prefixed ID of the owning team. */
   team_id: string;
   created_at: string;
+  /** Stable handle for URLs and the CLI. Derived from the name at creation and immutable after: renaming must not break a bookmark or a script. Unique within the team. */
+  slug?: string;
+  /** Where "open this project" lands. Absent only if the project has no environments. */
+  default_environment_id?: string;
+  /** Last deploy, resource change or setting change here. The list orders by it. */
+  last_activity_at?: string;
+  /** List view only. */
+  application_count?: number;
+  /** List view only. */
+  database_count?: number;
+  /** List view only. */
+  error_count?: number;
+  /** List view only. The most severe observed status among the project's applications and managed databases, so a page can be ordered worst-first. Empty when the project holds nothing. */
+  worst_status?: string;
 }

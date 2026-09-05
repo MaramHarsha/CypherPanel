@@ -48,8 +48,8 @@ func (f *fakeStore) GetEnvironment(_ context.Context, id string) (domain.Environ
 	}
 	return e, nil
 }
-func (f *fakeStore) CreateEnvironment(_ context.Context, id, projectID, name string) (domain.Environment, error) {
-	e := domain.Environment{ID: id, ProjectID: projectID, Name: name}
+func (f *fakeStore) CreateEnvironmentOfKind(_ context.Context, id, projectID, name, kind string) (domain.Environment, error) {
+	e := domain.Environment{ID: id, ProjectID: projectID, Name: name, Kind: kind}
 	f.envs[id] = e
 	return e, nil
 }

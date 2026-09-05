@@ -9,11 +9,38 @@ import "time"
 
 // Project groups environments for one product or customer.
 type Project struct {
-	ID        string
-	Name      string
-	TeamID    string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID     string
+	Name   string
+	TeamID string
+	// Slug is the stable handle used in URLs and by the CLI. Derived from the
+	// name at creation and immutable after: renaming a project must not break a
+	// bookmark or a script, which is why the two are separate fields.
+	Slug string
+	// DefaultEnvironmentID is where "open this project" lands and what a deploy
+	// targets when none is named. Empty when the project has no environments.
+	DefaultEnvironmentID string
+	// LastActivityAt is the last time anything happened here — a deploy, a
+	// resource created or removed, a setting changed. The projects list orders
+	// by it, so it is maintained on those paths rather than derived at read
+	// time from a scan of everything underneath.
+	LastActivityAt time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+// ProjectRollup is what a project looks like from the list: how much is in it
+// and the worst thing happening. Counted across applications and managed
+// databases together, because an operator scanning the page does not care which
+// kind of resource is broken.
+type ProjectRollup struct {
+	ProjectID        string
+	ApplicationCount int64
+	DatabaseCount    int64
+	ErrorCount       int64
+	// WorstStatus is the most severe observed status among the project's
+	// resources, in the shared vocabulary (error, degraded, deploying, running,
+	// unknown). Empty when the project holds nothing.
+	WorstStatus string
 }
 
 // Environment is a named context inside a project (production, staging, a
@@ -22,9 +49,21 @@ type Environment struct {
 	ID        string
 	ProjectID string
 	Name      string
+	// Kind separates a preview from a standing environment. Previews are
+	// created and destroyed by the PR lifecycle, so they must never be renamed
+	// or deleted by hand — a rule that needs a column, not a guess from the
+	// name.
+	Kind      string
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
+
+// Environment kinds.
+const (
+	EnvProduction = "production"
+	EnvStandard   = "standard"
+	EnvPreview    = "preview"
+)
 
 // AppSource is where an Application's code comes from. Kind "image" deploys a
 // prebuilt OCI image reference directly (feature-matrix V1: deploy from

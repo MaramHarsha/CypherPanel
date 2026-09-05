@@ -342,6 +342,9 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/projects", a.authed(a.handleCreateProject))
 	mux.HandleFunc("GET /api/v1/projects/{id}", a.authed(a.handleGetProject))
 	mux.HandleFunc("DELETE /api/v1/projects/{id}", a.authed(a.handleDeleteProject))
+	mux.HandleFunc("PATCH /api/v1/projects/{id}", a.authed(a.handlePatchProject))
+	mux.HandleFunc("PATCH /api/v1/environments/{id}", a.authed(a.handlePatchEnvironment))
+	mux.HandleFunc("DELETE /api/v1/environments/{id}", a.authed(a.handleDeleteEnvironment))
 	mux.HandleFunc("GET /api/v1/projects/{id}/environments", a.authed(a.handleListEnvironments))
 	mux.HandleFunc("POST /api/v1/projects/{id}/environments", a.authed(a.handleCreateEnvironment))
 

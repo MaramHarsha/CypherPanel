@@ -21,6 +21,10 @@ import (
 	"github.com/MaramHarsha/cypherpanel/pkg/ids"
 )
 
+// projSlug gives each seeded project a unique slug: the unique index is per
+// team, and these tests seed many projects into tm_default.
+func projSlug(name string) string { return name + "-" + ids.Secret()[:8] }
+
 func testStore(t *testing.T) *Store {
 	t.Helper()
 	dsn := os.Getenv("CYPHERD_TEST_DATABASE_URL")
@@ -49,7 +53,7 @@ func seedApp(t *testing.T, s *Store) (domain.Server, domain.Project, domain.Envi
 	if err != nil {
 		t.Fatalf("CreateServerWithToken: %v", err)
 	}
-	proj, env, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject), "proj", "tm_default", ids.New(ids.PrefixEnvironment), "production")
+	proj, env, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject), "proj", "tm_default", projSlug("proj"), ids.New(ids.PrefixEnvironment), "production")
 	if err != nil {
 		t.Fatalf("CreateProjectWithEnvironment: %v", err)
 	}
@@ -79,7 +83,7 @@ func TestStoreProjectEnvironmentTx(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 
-	proj, env, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject), "shop", "tm_default", ids.New(ids.PrefixEnvironment), "production")
+	proj, env, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject), "shop", "tm_default", projSlug("shop"), ids.New(ids.PrefixEnvironment), "production")
 	if err != nil {
 		t.Fatalf("CreateProjectWithEnvironment: %v", err)
 	}
@@ -92,7 +96,7 @@ func TestStoreProjectEnvironmentTx(t *testing.T) {
 		t.Fatalf("duplicate env err = %v, want ErrConflict", err)
 	}
 	// The same name in another project is fine.
-	proj2, _, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject), "other", "tm_default", ids.New(ids.PrefixEnvironment), "production")
+	proj2, _, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject), "other", "tm_default", projSlug("other"), ids.New(ids.PrefixEnvironment), "production")
 	if err != nil {
 		t.Fatalf("second project: %v", err)
 	}
@@ -349,7 +353,7 @@ func TestStoreTeamsAndAuthz(t *testing.T) {
 	if _, err := s.UpsertTeamMember(ctx, tm.ID, member.ID, domain.RoleAdmin); err != nil {
 		t.Fatalf("UpsertTeamMember: %v", err)
 	}
-	proj, _, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject), "p", tm.ID, ids.New(ids.PrefixEnvironment), "production")
+	proj, _, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject), "p", tm.ID, projSlug("p"), ids.New(ids.PrefixEnvironment), "production")
 	if err != nil {
 		t.Fatalf("CreateProjectWithEnvironment: %v", err)
 	}
@@ -545,7 +549,7 @@ func TestStoreDatabaseLifecycle(t *testing.T) {
 		t.Fatalf("CreateServerWithToken: %v", err)
 	}
 
-	_, env, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject), "db-project", "tm_default", ids.New(ids.PrefixEnvironment), "prod")
+	_, env, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject), "db-project", "tm_default", projSlug("db-project"), ids.New(ids.PrefixEnvironment), "prod")
 	if err != nil {
 		t.Fatalf("CreateProjectWithEnvironment: %v", err)
 	}
@@ -803,7 +807,7 @@ func TestStoreBackupRetentionPrune(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateServerWithToken: %v", err)
 	}
-	_, env, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject), "bk-project", "tm_default", ids.New(ids.PrefixEnvironment), "prod")
+	_, env, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject), "bk-project", "tm_default", projSlug("bk-project"), ids.New(ids.PrefixEnvironment), "prod")
 	if err != nil {
 		t.Fatalf("CreateProjectWithEnvironment: %v", err)
 	}
@@ -1169,7 +1173,7 @@ func TestStoreInboxRoundtrip(t *testing.T) {
 		}
 	}
 	projA, _, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject),
-		"inbox-proj-"+ids.Secret()[:8], teamA.ID, ids.New(ids.PrefixEnvironment), "production")
+		"inbox-proj-"+ids.Secret()[:8], teamA.ID, projSlug("inbox"), ids.New(ids.PrefixEnvironment), "production")
 	if err != nil {
 		t.Fatalf("CreateProjectWithEnvironment: %v", err)
 	}

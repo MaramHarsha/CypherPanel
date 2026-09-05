@@ -10,7 +10,7 @@ import (
 )
 
 const createEnvironment = `-- name: CreateEnvironment :one
-INSERT INTO environments (id, project_id, name) VALUES ($1, $2, $3) RETURNING id, project_id, name, created_at, updated_at
+INSERT INTO environments (id, project_id, name) VALUES ($1, $2, $3) RETURNING id, project_id, name, created_at, updated_at, kind
 `
 
 type CreateEnvironmentParams struct {
@@ -28,6 +28,37 @@ func (q *Queries) CreateEnvironment(ctx context.Context, arg CreateEnvironmentPa
 		&i.Name,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Kind,
+	)
+	return i, err
+}
+
+const createEnvironmentOfKind = `-- name: CreateEnvironmentOfKind :one
+INSERT INTO environments (id, project_id, name, kind) VALUES ($1, $2, $3, $4) RETURNING id, project_id, name, created_at, updated_at, kind
+`
+
+type CreateEnvironmentOfKindParams struct {
+	ID        string
+	ProjectID string
+	Name      string
+	Kind      string
+}
+
+func (q *Queries) CreateEnvironmentOfKind(ctx context.Context, arg CreateEnvironmentOfKindParams) (Environment, error) {
+	row := q.db.QueryRow(ctx, createEnvironmentOfKind,
+		arg.ID,
+		arg.ProjectID,
+		arg.Name,
+		arg.Kind,
+	)
+	var i Environment
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Kind,
 	)
 	return i, err
 }
@@ -42,7 +73,7 @@ func (q *Queries) DeleteEnvironment(ctx context.Context, id string) error {
 }
 
 const getEnvironment = `-- name: GetEnvironment :one
-SELECT id, project_id, name, created_at, updated_at FROM environments WHERE id = $1
+SELECT id, project_id, name, created_at, updated_at, kind FROM environments WHERE id = $1
 `
 
 func (q *Queries) GetEnvironment(ctx context.Context, id string) (Environment, error) {
@@ -54,12 +85,13 @@ func (q *Queries) GetEnvironment(ctx context.Context, id string) (Environment, e
 		&i.Name,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Kind,
 	)
 	return i, err
 }
 
 const listEnvironmentsByProject = `-- name: ListEnvironmentsByProject :many
-SELECT id, project_id, name, created_at, updated_at FROM environments WHERE project_id = $1 ORDER BY created_at
+SELECT id, project_id, name, created_at, updated_at, kind FROM environments WHERE project_id = $1 ORDER BY created_at
 `
 
 func (q *Queries) ListEnvironmentsByProject(ctx context.Context, projectID string) ([]Environment, error) {
@@ -77,6 +109,7 @@ func (q *Queries) ListEnvironmentsByProject(ctx context.Context, projectID strin
 			&i.Name,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Kind,
 		); err != nil {
 			return nil, err
 		}
@@ -86,4 +119,27 @@ func (q *Queries) ListEnvironmentsByProject(ctx context.Context, projectID strin
 		return nil, err
 	}
 	return items, nil
+}
+
+const renameEnvironment = `-- name: RenameEnvironment :one
+UPDATE environments SET name = $2, updated_at = now() WHERE id = $1 RETURNING id, project_id, name, created_at, updated_at, kind
+`
+
+type RenameEnvironmentParams struct {
+	ID   string
+	Name string
+}
+
+func (q *Queries) RenameEnvironment(ctx context.Context, arg RenameEnvironmentParams) (Environment, error) {
+	row := q.db.QueryRow(ctx, renameEnvironment, arg.ID, arg.Name)
+	var i Environment
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Kind,
+	)
+	return i, err
 }

@@ -21,7 +21,7 @@ import (
 type Store interface {
 	GetApplication(ctx context.Context, id string) (domain.Application, error)
 	GetEnvironment(ctx context.Context, id string) (domain.Environment, error)
-	CreateEnvironment(ctx context.Context, id, projectID, name string) (domain.Environment, error)
+	CreateEnvironmentOfKind(ctx context.Context, id, projectID, name, kind string) (domain.Environment, error)
 	DeleteEnvironment(ctx context.Context, id string) error
 	CreatePreview(ctx context.Context, p domain.Preview) (domain.Preview, error)
 	GetPreview(ctx context.Context, id string) (domain.Preview, error)
@@ -110,7 +110,10 @@ func (m *Manager) ensureAndDeploy(ctx context.Context, source domain.Application
 		return fmt.Errorf("previews: loading source environment: %w", err)
 	}
 	domainName := previewDomain(prNumber, source.PreviewBaseDomain)
-	childEnv, err := m.store.CreateEnvironment(ctx, ids.New(ids.PrefixEnvironment), env.ProjectID, previewEnvName(prNumber, source.ID))
+	// Marked as a preview so the operator-facing lifecycle refuses to rename or
+	// delete it by hand: this environment belongs to the pull request.
+	childEnv, err := m.store.CreateEnvironmentOfKind(ctx, ids.New(ids.PrefixEnvironment), env.ProjectID,
+		previewEnvName(prNumber, source.ID), domain.EnvPreview)
 	if err != nil {
 		return fmt.Errorf("previews: creating child environment: %w", err)
 	}

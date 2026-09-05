@@ -1166,6 +1166,29 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+    patch:
+      operationId: patchProject
+      tags: [projects]
+      summary: Rename a project, set its default environment, or transfer it
+      description: >
+        Rename and default-environment need team admin. A transfer is different
+        in kind — it changes who can see everything inside — so it needs
+        ownership of both the source and the destination team, and an
+        interactive session: an API token that leaked must not be able to hand a
+        project to a team the attacker controls. The slug is not editable; it is
+        chosen once so URLs and scripts keep working. On transfer the slug is
+        kept when free in the destination and otherwise reassigned, because a
+        clash between two teams is not the operator's mistake to fix.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PatchProjectRequest" } } }
+      responses:
+        "200": { description: Updated., content: { application/json: { schema: { $ref: "#/components/schemas/Project" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: The name is taken in the team., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
     delete:
       operationId: deleteProject
       tags: [projects]
@@ -1239,6 +1262,41 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+
+  /api/v1/environments/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Environment ID. }
+    patch:
+      operationId: patchEnvironment
+      tags: [projects]
+      summary: Rename a standing environment (team admin)
+      description: >
+        A preview environment belongs to its pull request and is refused —
+        renaming one by hand desynchronises it from the PR that made it.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PatchEnvironmentRequest" } } }
+      responses:
+        "200": { description: Renamed., content: { application/json: { schema: { $ref: "#/components/schemas/Environment" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: "A preview, or the name is taken in the project.", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      operationId: deleteEnvironment
+      tags: [projects]
+      summary: Remove a standing environment (team admin)
+      description: >
+        Refused for a preview (its pull request owns it), for the last standing
+        environment a project has, and while resources remain inside — the same
+        protection deleting a project gets.
+      responses:
+        "204": { description: Removed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: "A preview, the last environment, or resources remain.", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   /api/v1/environments/{id}/applications:
     parameters:
@@ -3416,6 +3474,24 @@ components:
         domain: { type: string }
         zone_name: { type: string }
 
+    PatchProjectRequest:
+      type: object
+      description: Every field optional; omitted means "leave it alone".
+      properties:
+        name: { type: string, maxLength: 100 }
+        team_id:
+          type: string
+          description: Transfer. Needs owner of both teams and an interactive session.
+        default_environment_id:
+          type: string
+          description: Must belong to this project. Empty string clears it.
+
+    PatchEnvironmentRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, maxLength: 100 }
+
     ConnectionTest:
       type: object
       required: [ok, detail]
@@ -3707,6 +3783,28 @@ components:
         created_at:
           type: string
           format: date-time
+        slug:
+          type: string
+          description: >-
+            Stable handle for URLs and the CLI. Derived from the name at
+            creation and immutable after: renaming must not break a bookmark or
+            a script. Unique within the team.
+        default_environment_id:
+          type: string
+          description: Where "open this project" lands. Absent only if the project has no environments.
+        last_activity_at:
+          type: string
+          format: date-time
+          description: Last deploy, resource change or setting change here. The list orders by it.
+        application_count: { type: integer, format: int64, description: "List view only." }
+        database_count: { type: integer, format: int64, description: "List view only." }
+        error_count: { type: integer, format: int64, description: "List view only." }
+        worst_status:
+          type: string
+          description: >-
+            List view only. The most severe observed status among the project's
+            applications and managed databases, so a page can be ordered
+            worst-first. Empty when the project holds nothing.
 
     Environment:
       type: object
@@ -3722,6 +3820,13 @@ components:
         created_at:
           type: string
           format: date-time
+        kind:
+          type: string
+          enum: [production, standard, preview]
+          description: >-
+            A preview is created and destroyed by its pull request and cannot be
+            renamed or deleted by hand.
+        is_default: { type: boolean }
 
     CreateProjectRequest:
       type: object

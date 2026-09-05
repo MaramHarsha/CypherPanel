@@ -7,15 +7,8 @@
  * Every response — success, error and SSE stream alike — carries an `X-Request-Id` header (`components/headers/RequestId`), and every JSON error body repeats it as `trace_id`. It is the value to quote in a bug report and the key to search for in `GET /api/v1/panel/logs`. Individual responses reference the header only where a generated client benefits; it is present on all of them.
  * OpenAPI spec version: 0.3.0
  */
-import type { EnvironmentKind } from './environmentKind.ts';
 
-export interface Environment {
-  /** env_… prefixed ID. */
-  id: string;
-  project_id: string;
+export interface PatchEnvironmentRequest {
+  /** @maxLength 100 */
   name: string;
-  created_at: string;
-  /** A preview is created and destroyed by its pull request and cannot be renamed or deleted by hand. */
-  kind?: EnvironmentKind;
-  is_default?: boolean;
 }

@@ -219,6 +219,7 @@ type Environment struct {
 	Name      string
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
+	Kind      string
 }
 
 type InboxItem struct {
@@ -306,11 +307,14 @@ type Preview struct {
 }
 
 type Project struct {
-	ID        string
-	Name      string
-	CreatedAt pgtype.Timestamptz
-	UpdatedAt pgtype.Timestamptz
-	TeamID    string
+	ID                   string
+	Name                 string
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+	TeamID               string
+	Slug                 string
+	DefaultEnvironmentID pgtype.Text
+	LastActivityAt       pgtype.Timestamptz
 }
 
 type Revision struct {

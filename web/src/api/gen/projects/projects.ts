@@ -34,6 +34,9 @@ import type {
   Environment,
   Error,
   ForbiddenResponse,
+  NotFoundResponse,
+  PatchEnvironmentRequest,
+  PatchProjectRequest,
   Project,
   ProjectDetail,
   UnauthorizedResponse
@@ -331,7 +334,79 @@ export function useGetProject<TData = Awaited<ReturnType<typeof getProject>>, TE
 
 
 
-export const getDeleteProjectUrl = (id: string,) => {
+export const getPatchProjectUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/projects/${id}`
+}
+
+/**
+ * Rename and default-environment need team admin. A transfer is different in kind — it changes who can see everything inside — so it needs ownership of both the source and the destination team, and an interactive session: an API token that leaked must not be able to hand a project to a team the attacker controls. The slug is not editable; it is chosen once so URLs and scripts keep working. On transfer the slug is kept when free in the destination and otherwise reassigned, because a clash between two teams is not the operator's mistake to fix.
+ * @summary Rename a project, set its default environment, or transfer it
+ */
+export const patchProject = async (id: string,
+    patchProjectRequest: PatchProjectRequest, options?: RequestInit): Promise<Project> => {
+
+  return apiFetch<Project>(getPatchProjectUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(patchProjectRequest)
+  }
+);}
+
+
+
+
+
+export const getPatchProjectMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof patchProject>>, TError,{id: string;data: PatchProjectRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof patchProject>>, TError,{id: string;data: PatchProjectRequest}, TContext> => {
+
+const mutationKey = ['patchProject'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof patchProject>>, {id: string;data: PatchProjectRequest}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  patchProject(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PatchProjectMutationResult = NonNullable<Awaited<ReturnType<typeof patchProject>>>
+    export type PatchProjectMutationBody = PatchProjectRequest
+    export type PatchProjectMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error
+
+    /**
+ * @summary Rename a project, set its default environment, or transfer it
+ */
+export const usePatchProject = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof patchProject>>, TError,{id: string;data: PatchProjectRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof patchProject>>,
+        TError,
+        {id: string;data: PatchProjectRequest},
+        TContext
+      > => {
+      return useMutation(getPatchProjectMutationOptions(options), queryClient);
+    }
+    export const getDeleteProjectUrl = (id: string,) => {
 
 
 
@@ -572,4 +647,147 @@ export const useCreateEnvironment = <TError = BadRequestResponse | UnauthorizedR
         TContext
       > => {
       return useMutation(getCreateEnvironmentMutationOptions(options), queryClient);
+    }
+    export const getPatchEnvironmentUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/environments/${id}`
+}
+
+/**
+ * A preview environment belongs to its pull request and is refused — renaming one by hand desynchronises it from the PR that made it.
+ * @summary Rename a standing environment (team admin)
+ */
+export const patchEnvironment = async (id: string,
+    patchEnvironmentRequest: PatchEnvironmentRequest, options?: RequestInit): Promise<Environment> => {
+
+  return apiFetch<Environment>(getPatchEnvironmentUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(patchEnvironmentRequest)
+  }
+);}
+
+
+
+
+
+export const getPatchEnvironmentMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof patchEnvironment>>, TError,{id: string;data: PatchEnvironmentRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof patchEnvironment>>, TError,{id: string;data: PatchEnvironmentRequest}, TContext> => {
+
+const mutationKey = ['patchEnvironment'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof patchEnvironment>>, {id: string;data: PatchEnvironmentRequest}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  patchEnvironment(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PatchEnvironmentMutationResult = NonNullable<Awaited<ReturnType<typeof patchEnvironment>>>
+    export type PatchEnvironmentMutationBody = PatchEnvironmentRequest
+    export type PatchEnvironmentMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error
+
+    /**
+ * @summary Rename a standing environment (team admin)
+ */
+export const usePatchEnvironment = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof patchEnvironment>>, TError,{id: string;data: PatchEnvironmentRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof patchEnvironment>>,
+        TError,
+        {id: string;data: PatchEnvironmentRequest},
+        TContext
+      > => {
+      return useMutation(getPatchEnvironmentMutationOptions(options), queryClient);
+    }
+    export const getDeleteEnvironmentUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/environments/${id}`
+}
+
+/**
+ * Refused for a preview (its pull request owns it), for the last standing environment a project has, and while resources remain inside — the same protection deleting a project gets.
+ * @summary Remove a standing environment (team admin)
+ */
+export const deleteEnvironment = async (id: string, options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getDeleteEnvironmentUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteEnvironmentMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteEnvironment>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteEnvironment>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['deleteEnvironment'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteEnvironment>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteEnvironment(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteEnvironmentMutationResult = NonNullable<Awaited<ReturnType<typeof deleteEnvironment>>>
+
+    export type DeleteEnvironmentMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error
+
+    /**
+ * @summary Remove a standing environment (team admin)
+ */
+export const useDeleteEnvironment = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteEnvironment>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteEnvironment>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getDeleteEnvironmentMutationOptions(options), queryClient);
     }

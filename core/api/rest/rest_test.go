@@ -462,13 +462,76 @@ func newFakeProjectsStore() *fakeProjectsStore {
 	}
 }
 
-func (f *fakeProjectsStore) CreateProjectWithEnvironment(_ context.Context, pid, name, teamID, eid, ename string) (domain.Project, domain.Environment, error) {
-	_ = teamID
-	p := domain.Project{ID: pid, Name: name, CreatedAt: time.Now()}
-	e := domain.Environment{ID: eid, ProjectID: pid, Name: ename, CreatedAt: time.Now()}
+func (f *fakeProjectsStore) CreateProjectWithEnvironment(_ context.Context, pid, name, teamID, slug, eid, ename string) (domain.Project, domain.Environment, error) {
+	p := domain.Project{
+		ID: pid, Name: name, TeamID: teamID, Slug: slug,
+		DefaultEnvironmentID: eid, LastActivityAt: time.Now(), CreatedAt: time.Now(),
+	}
+	e := domain.Environment{ID: eid, ProjectID: pid, Name: ename, Kind: domain.EnvProduction, CreatedAt: time.Now()}
 	f.projects[pid] = p
 	f.envs[pid] = append(f.envs[pid], e)
 	return p, e, nil
+}
+
+func (f *fakeProjectsStore) UpdateProject(_ context.Context, id string, fields store.UpdateProjectFields) (domain.Project, error) {
+	p, ok := f.projects[id]
+	if !ok {
+		return domain.Project{}, store.ErrNotFound
+	}
+	if fields.Name != nil {
+		p.Name = *fields.Name
+	}
+	if fields.TeamID != nil {
+		p.TeamID = *fields.TeamID
+	}
+	if fields.Slug != nil {
+		p.Slug = *fields.Slug
+	}
+	switch {
+	case fields.ClearDefaultEnvironment:
+		p.DefaultEnvironmentID = ""
+	case fields.DefaultEnvironmentID != nil:
+		p.DefaultEnvironmentID = *fields.DefaultEnvironmentID
+	}
+	f.projects[id] = p
+	return p, nil
+}
+
+func (f *fakeProjectsStore) SlugTakenInTeam(_ context.Context, teamID, slug string) (bool, error) {
+	for _, p := range f.projects {
+		if p.TeamID == teamID && p.Slug == slug {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (f *fakeProjectsStore) ProjectRollups(context.Context) (map[string]domain.ProjectRollup, error) {
+	return map[string]domain.ProjectRollup{}, nil
+}
+
+func (f *fakeProjectsStore) RenameEnvironment(_ context.Context, id, name string) (domain.Environment, error) {
+	for pid, list := range f.envs {
+		for i, e := range list {
+			if e.ID == id {
+				f.envs[pid][i].Name = name
+				return f.envs[pid][i], nil
+			}
+		}
+	}
+	return domain.Environment{}, store.ErrNotFound
+}
+
+func (f *fakeProjectsStore) DeleteEnvironment(_ context.Context, id string) error {
+	for pid, list := range f.envs {
+		for i, e := range list {
+			if e.ID == id {
+				f.envs[pid] = append(list[:i], list[i+1:]...)
+				return nil
+			}
+		}
+	}
+	return store.ErrNotFound
 }
 
 func (f *fakeProjectsStore) GetProject(_ context.Context, id string) (domain.Project, error) {
