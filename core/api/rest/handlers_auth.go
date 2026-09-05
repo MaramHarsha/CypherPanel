@@ -105,10 +105,12 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	token, user, err := a.deps.Auth.Login(r.Context(), req.Email, req.Password, req.TOTPCode, clientIP(r))
+	token, user, err := a.deps.Auth.Login(r.Context(), req.Email, req.Password, req.TOTPCode, a.clientIP(r))
 	switch {
 	case errors.Is(err, auth.ErrRateLimited):
-		writeError(w, http.StatusTooManyRequests, "too many attempts, try again in a moment")
+		// The countdown, not a shrug: canvas 13t shows the seconds, and a
+		// client that cannot read headers finds them in the body too.
+		rateLimited(w, err, "too many attempts — wait before trying again")
 		return
 	case errors.Is(err, auth.ErrTOTPRequired):
 		// Password was correct; the client must supply a second factor and

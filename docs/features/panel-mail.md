@@ -163,9 +163,12 @@ scenario lands there in the same PR, per that document's own header.
   when the change is legitimate.
 - **Other sessions are revoked on success**, on the same reasoning as a password
   change: the address that can recover the account has moved.
-- **Rate limiting.** Only `Login` is throttled today. Both new routes are
-  brute-force surfaces — the confirm most obviously — so both take a limiter,
-  keyed as `Login`'s is.
+- **Rate limiting.** Both routes are brute-force surfaces — the confirm most
+  obviously — so both take the same limiters `Login` does, keyed by the client
+  address *and* by the account
+  ([control-plane-hardening.md](control-plane-hardening.md) §5). A wrong
+  current password or a wrong confirmation secret spends the budget, and the
+  `429` carries `Retry-After` and `retry_after_seconds`.
 - **Enumeration.** Requesting a change to an address that already exists returns
   409. This differs from login, which deliberately hides whether an address
   exists: the caller here is authenticated, rate-limited, and probing one address

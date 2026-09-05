@@ -3,6 +3,8 @@
  * Do not edit manually.
  * CypherPanel API
  * Operator-facing control-plane API covering Phases 1–3: authentication and teams/roles, the server lifecycle, projects/environments, applications and the deploy pipeline, managed databases with S3 backups/restore, preview environments, notifications, and scheduled tasks. Authentication is a bearer session token from /api/v1/auth/login; the GitHub webhook authenticates by per-application HMAC instead. Every project-scoped route is authorized by team membership (a non-member sees 404, insufficient rank 403).
+ *
+ * Every response — success, error and SSE stream alike — carries an `X-Request-Id` header (`components/headers/RequestId`), and every JSON error body repeats it as `trace_id`. It is the value to quote in a bug report and the key to search for in `GET /api/v1/panel/logs`. Individual responses reference the header only where a generated client benefits; it is present on all of them.
  * OpenAPI spec version: 0.3.0
  */
 import type { InboxItemKind } from './inboxItemKind.ts';
@@ -11,9 +13,9 @@ import type { InboxItemSeverity } from './inboxItemSeverity.ts';
 export interface InboxItem {
   /** inb_… prefixed ID. */
   id: string;
-  /** The project the event happened in. */
+  /** The project the event happened in — **empty for a panel-level kind** (`panel.update_available`), which belongs to the panel rather than to any project. */
   project_id: string;
-  /** An event key from the notification taxonomy — the same closed set notifiers and webhook endpoints subscribe to. */
+  /** An inbox kind: an event key from the notification taxonomy — the same closed set notifiers and webhook endpoints subscribe to — or a panel-level kind, which only the inbox ever carries. */
   kind: InboxItemKind;
   /** The event's level, not a resource status. `error` is immediate and individual; `info` is rolled into the day's digest. */
   severity: InboxItemSeverity;

@@ -224,7 +224,7 @@ type Environment struct {
 type InboxItem struct {
 	ID         string
 	UserID     string
-	ProjectID  string
+	ProjectID  pgtype.Text
 	Kind       string
 	Severity   string
 	Digest     bool

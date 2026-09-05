@@ -3,6 +3,8 @@
  * Do not edit manually.
  * CypherPanel API
  * Operator-facing control-plane API covering Phases 1–3: authentication and teams/roles, the server lifecycle, projects/environments, applications and the deploy pipeline, managed databases with S3 backups/restore, preview environments, notifications, and scheduled tasks. Authentication is a bearer session token from /api/v1/auth/login; the GitHub webhook authenticates by per-application HMAC instead. Every project-scoped route is authorized by team membership (a non-member sees 404, insufficient rank 403).
+ *
+ * Every response — success, error and SSE stream alike — carries an `X-Request-Id` header (`components/headers/RequestId`), and every JSON error body repeats it as `trace_id`. It is the value to quote in a bug report and the key to search for in `GET /api/v1/panel/logs`. Individual responses reference the header only where a generated client benefits; it is present on all of them.
  * OpenAPI spec version: 0.3.0
  */
 import {
@@ -49,6 +51,7 @@ import type {
   TOTPEnrollResponse,
   TOTPStatus,
   TOTPVerifyResponse,
+  TooManyRequestsResponse,
   UnauthorizedResponse,
   UpdateProfileRequest,
   User
@@ -274,7 +277,7 @@ export const login = async (loginRequest: LoginRequest, options?: RequestInit): 
 
 
 
-export const getLoginMutationOptions = <TError = BadRequestResponse | Error,
+export const getLoginMutationOptions = <TError = BadRequestResponse | Error | TooManyRequestsResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof login>>, TError,{data: LoginRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof login>>, TError,{data: LoginRequest}, TContext> => {
 
@@ -303,12 +306,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type LoginMutationResult = NonNullable<Awaited<ReturnType<typeof login>>>
     export type LoginMutationBody = LoginRequest
-    export type LoginMutationError = BadRequestResponse | Error
+    export type LoginMutationError = BadRequestResponse | Error | TooManyRequestsResponse
 
     /**
  * @summary Sign in with email and password
  */
-export const useLogin = <TError = BadRequestResponse | Error,
+export const useLogin = <TError = BadRequestResponse | Error | TooManyRequestsResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof login>>, TError,{data: LoginRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof login>>,
@@ -896,7 +899,7 @@ export const requestEmailChange = async (requestEmailChangeRequest: RequestEmail
 
 
 
-export const getRequestEmailChangeMutationOptions = <TError = BadRequestResponse | Error | ForbiddenResponse,
+export const getRequestEmailChangeMutationOptions = <TError = BadRequestResponse | Error | ForbiddenResponse | TooManyRequestsResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof requestEmailChange>>, TError,{data: RequestEmailChangeRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof requestEmailChange>>, TError,{data: RequestEmailChangeRequest}, TContext> => {
 
@@ -925,12 +928,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type RequestEmailChangeMutationResult = NonNullable<Awaited<ReturnType<typeof requestEmailChange>>>
     export type RequestEmailChangeMutationBody = RequestEmailChangeRequest
-    export type RequestEmailChangeMutationError = BadRequestResponse | Error | ForbiddenResponse
+    export type RequestEmailChangeMutationError = BadRequestResponse | Error | ForbiddenResponse | TooManyRequestsResponse
 
     /**
  * @summary Ask to move your account to a new sign-in address (session only)
  */
-export const useRequestEmailChange = <TError = BadRequestResponse | Error | ForbiddenResponse,
+export const useRequestEmailChange = <TError = BadRequestResponse | Error | ForbiddenResponse | TooManyRequestsResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof requestEmailChange>>, TError,{data: RequestEmailChangeRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof requestEmailChange>>,
@@ -967,7 +970,7 @@ export const confirmEmailChange = async (confirmEmailChangeRequest: ConfirmEmail
 
 
 
-export const getConfirmEmailChangeMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
+export const getConfirmEmailChangeMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error | TooManyRequestsResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmEmailChange>>, TError,{data: ConfirmEmailChangeRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof confirmEmailChange>>, TError,{data: ConfirmEmailChangeRequest}, TContext> => {
 
@@ -996,12 +999,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type ConfirmEmailChangeMutationResult = NonNullable<Awaited<ReturnType<typeof confirmEmailChange>>>
     export type ConfirmEmailChangeMutationBody = ConfirmEmailChangeRequest
-    export type ConfirmEmailChangeMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error
+    export type ConfirmEmailChangeMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error | TooManyRequestsResponse
 
     /**
  * @summary Finish moving your account, using the emailed token (session only)
  */
-export const useConfirmEmailChange = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
+export const useConfirmEmailChange = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error | TooManyRequestsResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmEmailChange>>, TError,{data: ConfirmEmailChangeRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof confirmEmailChange>>,

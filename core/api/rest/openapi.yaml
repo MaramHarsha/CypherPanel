@@ -13,6 +13,14 @@ info:
     session token from /api/v1/auth/login; the GitHub webhook authenticates by
     per-application HMAC instead. Every project-scoped route is authorized by
     team membership (a non-member sees 404, insufficient rank 403).
+
+
+    Every response — success, error and SSE stream alike — carries an
+    `X-Request-Id` header (`components/headers/RequestId`), and every JSON
+    error body repeats it as `trace_id`. It is the value to quote in a bug
+    report and the key to search for in `GET /api/v1/panel/logs`. Individual
+    responses reference the header only where a generated client benefits;
+    it is present on all of them.
   version: 0.3.0
 servers:
   - url: /
@@ -147,11 +155,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "429":
-          description: Too many failed attempts from this client; retry later.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
+          $ref: "#/components/responses/TooManyRequests"
 
   /api/v1/auth/logout:
     post:
@@ -276,6 +280,7 @@ paths:
         "401": { description: The current password is wrong., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { description: That address is already in use., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "502": { description: The panel could not send the mail., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   /api/v1/auth/email/confirm:
@@ -295,6 +300,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { description: That address was taken while confirming., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /api/v1/panel/dns:
     get:
@@ -383,6 +389,80 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/panel/version:
+    get:
+      operationId: getPanelVersion
+      tags: [panel]
+      summary: The running build, and any newer release
+      description: >
+        What build of cypherd is serving this request, and — when the update
+        check is on and has found one — the newest release beyond it. Readable
+        by any authenticated principal: the version appears in every startup log
+        line and the report-issue dialog needs it for every user.
+
+
+        `latest` is `null` whenever there is nothing to say: the panel is up to
+        date, the check is off (`CYPHERD_UPDATE_CHECK=off`), it has not
+        completed yet, or this is not a release build. CypherPanel never updates
+        itself (ADR-010); this only tells the operator.
+      responses:
+        "200":
+          description: The running build, and the newer release if there is one.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PanelVersion"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /api/v1/panel/logs:
+    get:
+      operationId: getPanelLogs
+      tags: [panel]
+      summary: A bounded tail of the panel's own log (panel owner, session only)
+      description: >
+        The most recent lines of cypherd's structured log, oldest first, from an
+        in-memory ring — no shell, no file, no log shipper. Meant to be attached
+        to a bug report alongside a trace id.
+
+
+        Panel **owner** only, and only from an interactive session: the log
+        names hosts, resources and users, so an API token — which may live in a
+        CI runner — must never be able to lift it. Secrets never reach any log
+        line (ENGINEERING rule 20), which the API's tests assert rather than
+        assume.
+      parameters:
+        - name: tail
+          in: query
+          required: false
+          description: How many lines to return, newest last. 1–500; default 50.
+          schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+      responses:
+        "200":
+          description: The tail, oldest line first.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PanelLogs"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: >-
+            The caller is not a panel owner, or authenticated with an API token
+            rather than an interactive session.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503": { $ref: "#/components/responses/Unavailable" }
 
   /api/v1/panel/mail:
     get:
@@ -705,8 +785,9 @@ paths:
         via the API on connect, then refetches a resource when this stream names
         it as changed (ui-principles §10). Scoped to the caller's visible
         resources (a panel owner sees all). Two event types: `connected` (once,
-        empty) and `invalidate` (data: {resource, id}). The response media type
-        is text/event-stream.
+        carrying `{"trace_id": "..."}` — the same correlation id the response
+        headers give, so a misbehaving stream is diagnosable) and `invalidate`
+        (data: {resource, id}). The response media type is text/event-stream.
       responses:
         "200":
           description: The event stream (never closes until the client disconnects).
@@ -1557,11 +1638,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Deploy key is still in use by one or more applications.
+          description: >-
+            Deploy key is still in use. The body names the blocking
+            applications so the operator can go detach them.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                $ref: "#/components/schemas/DeployKeyInUse"
 
   /api/v1/applications/{id}/env:
     parameters:
@@ -2621,27 +2704,47 @@ components:
       scheme: bearer
       description: Session token from /api/v1/auth/login.
 
+  headers:
+    RequestId:
+      description: >-
+        Correlation id for this request, minted by the API's outermost
+        middleware and present on every response. It is repeated as `trace_id`
+        in every JSON error body, and it is the key to search for in
+        `GET /api/v1/panel/logs`. An inbound `X-Request-Id` is honoured only
+        when the peer is a configured trusted proxy and the value is a short
+        printable token; otherwise a fresh id is minted.
+      schema: { type: string }
+      example: trace_9f3a-11bd-4c02-7e51
+
   responses:
     BadRequest:
       description: Malformed or invalid request body.
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/RequestId" }
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
     Unauthorized:
       description: Missing, invalid, or expired session token.
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/RequestId" }
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
     Unavailable:
       description: A backing dependency is unavailable.
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/RequestId" }
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
     Forbidden:
       description: Authenticated but the caller's role is insufficient for this action.
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/RequestId" }
       content:
         application/json:
           schema:
@@ -2650,6 +2753,21 @@ components:
       description: >-
         No such resource — also returned when the caller is not a member of the
         owning team, so resource existence never leaks across tenants.
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/RequestId" }
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TooManyRequests:
+      description: >-
+        Throttled. The `Retry-After` header and the body's
+        `retry_after_seconds` both give the whole seconds to wait.
+      headers:
+        Retry-After:
+          description: Seconds until another attempt is accepted.
+          schema: { type: integer, minimum: 1 }
+        X-Request-Id: { $ref: "#/components/headers/RequestId" }
       content:
         application/json:
           schema:
@@ -2671,6 +2789,102 @@ components:
         error:
           type: string
           description: Human-readable message; never contains secrets.
+        trace_id:
+          type: string
+          description: >-
+            The value of this response's `X-Request-Id` header, repeated in the
+            body so a screenshot of a failure carries it. Paste it into a bug
+            report or `GET /api/v1/panel/logs` to find the request. Present on
+            every response served through the API's middleware.
+          example: trace_9f3a-11bd-4c02-7e51
+        retry_after_seconds:
+          type: integer
+          minimum: 1
+          description: >-
+            Present only on `429`: whole seconds until the throttle lifts, the
+            same value as the `Retry-After` header. Count down against it rather
+            than guessing.
+
+    DeployKeyInUse:
+      type: object
+      description: >-
+        The `Error` envelope plus the applications blocking a deploy-key
+        delete. Additive: a client that reads only `error` is unaffected.
+      required: [error, applications]
+      properties:
+        error: { type: string }
+        trace_id: { type: string }
+        applications:
+          type: array
+          description: The applications that still reference the key.
+          items:
+            type: object
+            required: [id, name]
+            properties:
+              id: { type: string }
+              name: { type: string }
+
+    PanelVersion:
+      type: object
+      required: [version, commit, built_at, go_version, latest]
+      properties:
+        version:
+          type: string
+          description: The release this binary was built from; `dev` for a local build.
+          example: v0.4.0
+        commit:
+          type: string
+          description: The commit it was built from; `dev` for a local build.
+          example: 0c7a08b
+        built_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When it was built, or null when the build carried no date.
+        go_version:
+          type: string
+          description: The Go toolchain the binary was compiled with.
+          example: go1.25.12
+        latest:
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/PanelRelease" }]
+          description: The newest release beyond the running one, or null.
+
+    PanelRelease:
+      type: object
+      required: [version, kind, notes_url, published_at]
+      properties:
+        version:
+          type: string
+          example: v0.5.0
+        kind:
+          type: string
+          enum: [patch, minor, major]
+          description: >-
+            The semver class of the delta from the running build — what a
+            release badge shows, and how urgent the read is.
+        notes_url:
+          type: string
+          description: Where the release notes live.
+        published_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    PanelLogs:
+      type: object
+      required: [lines, capacity]
+      properties:
+        lines:
+          type: array
+          description: >-
+            Structured log records rendered as `key=value` text, oldest first.
+          items: { type: string }
+          example: ["time=2026-09-05T10:00:00.000Z level=INFO msg=\"http request\" method=GET path=/api/v1/servers status=200 duration_ms=3 trace_id=trace_9f3a-11bd-4c02-7e51"]
+        capacity:
+          type: integer
+          description: How many lines the ring holds in total.
+          example: 500
 
     SetupStatus:
       type: object
@@ -3815,7 +4029,17 @@ components:
       type: object
       required: [host, port, password_hint, internal_host]
       properties:
-        host: { type: string }
+        host:
+          type: string
+          description: >-
+            The address to dial from outside the environment's private network,
+            when the database exposes a port: the server's public address, or
+            the hostname its agent reported if no public address is set. Empty
+            (`""`) when the database exposes no port, or when the panel knows
+            no address for its server — an honest "we do not know where this
+            is" rather than a plausible value that is not an address. Use
+            `internal_host` for in-network access, which always works.
+          example: db1.example.com
         port: { type: integer }
         user: { type: string }
         password_hint: { type: string, description: Never the password itself. }
@@ -4161,11 +4385,19 @@ components:
       required: [id, project_id, kind, severity, digest, title, body, link, link_label, created_at, updated_at]
       properties:
         id: { type: string, description: inb_… prefixed ID. }
-        project_id: { type: string, description: The project the event happened in. }
+        project_id:
+          type: string
+          description: >-
+            The project the event happened in — **empty for a panel-level kind**
+            (`panel.update_available`), which belongs to the panel rather than
+            to any project.
         kind:
           type: string
-          enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed]
-          description: An event key from the notification taxonomy — the same closed set notifiers and webhook endpoints subscribe to.
+          enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed, panel.update_available]
+          description: >-
+            An inbox kind: an event key from the notification taxonomy — the
+            same closed set notifiers and webhook endpoints subscribe to — or a
+            panel-level kind, which only the inbox ever carries.
         severity:
           type: string
           enum: [info, error]
@@ -4225,14 +4457,17 @@ components:
         available_kinds:
           type: array
           items: { type: string }
-          description: Every kind this plane can emit — served rather than hardcoded, so a new taxonomy entry needs no client change.
+          description: >-
+            Every inbox kind this plane can emit — the subscribable event
+            taxonomy plus the panel-level kinds — served rather than hardcoded,
+            so a new entry needs no client change.
     SetInboxPreferencesRequest:
       type: object
       required: [muted_kinds]
       properties:
         muted_kinds:
           type: array
-          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed] }
+          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed, panel.update_available] }
           description: The complete muted set; this replaces the previous one. A kind outside available_kinds is a 400.
 
     # ─── Project shared variables (shared-variables.md §7) ────────────────

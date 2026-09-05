@@ -150,14 +150,6 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	return s.store.DeleteNotifier(ctx, id)
 }
 
-// validEvents is the v1 event taxonomy (notifications.md §3).
-var validEvents = map[string]bool{
-	domain.EventDeploySucceeded: true,
-	domain.EventDeployFailed:    true,
-	domain.EventBackupSucceeded: true,
-	domain.EventBackupFailed:    true,
-}
-
 // validateMeta checks name, channel, and the event selection, returning the
 // deduplicated events.
 func validateMeta(name, channel string, events []string) ([]string, error) {
@@ -172,7 +164,9 @@ func validateMeta(name, channel string, events []string) ([]string, error) {
 	seen := map[string]bool{}
 	out := make([]string, 0, len(events))
 	for _, e := range events {
-		if !validEvents[e] {
+		// One vocabulary in one place: the domain taxonomy notifiers, webhook
+		// endpoints and the inbox all validate against (notifications.md §3).
+		if !domain.ValidEventType(e) {
 			return nil, invalid("unknown event: " + e)
 		}
 		if !seen[e] {

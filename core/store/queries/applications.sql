@@ -36,6 +36,12 @@ SELECT * FROM applications WHERE environment_id = $1 ORDER BY created_at DESC;
 -- name: ListApplicationsByServer :many
 SELECT * FROM applications WHERE runtime_server_id = $1 ORDER BY created_at DESC;
 
+-- ListApplicationsByDeployKey names the applications still referencing a
+-- deploy key, so a refused delete can say which (deploy-key-private-repos.md
+-- §3; control-plane-hardening.md §8).
+-- name: ListApplicationsByDeployKey :many
+SELECT id, name FROM applications WHERE source_deploy_key_id = $1 ORDER BY name, id;
+
 -- name: SetApplicationDesiredRevision :one
 UPDATE applications
 SET desired_revision_id = $2, updated_at = now()

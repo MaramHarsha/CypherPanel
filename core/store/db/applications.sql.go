@@ -267,6 +267,38 @@ func (q *Queries) GetApplicationByWebhookID(ctx context.Context, webhookID strin
 	return i, err
 }
 
+const listApplicationsByDeployKey = `-- name: ListApplicationsByDeployKey :many
+SELECT id, name FROM applications WHERE source_deploy_key_id = $1 ORDER BY name, id
+`
+
+type ListApplicationsByDeployKeyRow struct {
+	ID   string
+	Name string
+}
+
+// ListApplicationsByDeployKey names the applications still referencing a
+// deploy key, so a refused delete can say which (deploy-key-private-repos.md
+// §3; control-plane-hardening.md §8).
+func (q *Queries) ListApplicationsByDeployKey(ctx context.Context, sourceDeployKeyID pgtype.Text) ([]ListApplicationsByDeployKeyRow, error) {
+	rows, err := q.db.Query(ctx, listApplicationsByDeployKey, sourceDeployKeyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListApplicationsByDeployKeyRow{}
+	for rows.Next() {
+		var i ListApplicationsByDeployKeyRow
+		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listApplicationsByEnvironment = `-- name: ListApplicationsByEnvironment :many
 SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at FROM applications WHERE environment_id = $1 ORDER BY created_at DESC
 `

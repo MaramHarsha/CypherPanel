@@ -39,6 +39,7 @@ type Store interface {
 	CreateSession(ctx context.Context, id, userID string, tokenHash []byte, expiresAt time.Time) error
 	UserForSessionToken(ctx context.Context, tokenHash []byte) (domain.User, error)
 	DeleteSession(ctx context.Context, tokenHash []byte) error
+	DeleteExpiredSessions(ctx context.Context, before time.Time) (int64, error)
 
 	SessionForToken(ctx context.Context, tokenHash []byte) (domain.User, string, error)
 	ListSessionsByUser(ctx context.Context, userID string) ([]domain.Session, error)
@@ -87,43 +88,81 @@ func init() {
 
 // Authenticator verifies credentials and manages sessions.
 type Authenticator struct {
-	store      Store
-	box        SecretBox
+	store Store
+	box   SecretBox
+	// limiter throttles by client address; accounts throttles by the account
+	// being attacked, so one attacker behind a shared proxy cannot lock
+	// everyone out and a distributed guess at one account is still bounded
+	// (control-plane-hardening.md §5). Either may be nil (never throttles).
 	limiter    *Limiter
+	accounts   *Limiter
 	sessionTTL time.Duration
 	now        func() time.Time
 }
 
-// NewAuthenticator wires the authenticator. limiter throttles failed logins;
-// sessionTTL is how long an issued session stays valid; box seals the TOTP
-// secret at rest.
-func NewAuthenticator(s Store, box SecretBox, limiter *Limiter, sessionTTL time.Duration) *Authenticator {
-	return &Authenticator{store: s, box: box, limiter: limiter, sessionTTL: sessionTTL, now: time.Now}
+// Option tunes an Authenticator at construction (ENGINEERING rule 5: no
+// setters after the fact).
+type Option func(*Authenticator)
+
+// WithAccountLimiter sets the per-account limiter. Without it, one is derived
+// from the address limiter with twice its failure budget over the same
+// window: an account throttle that trips as easily as the address one would
+// let a stranger lock an account with five wrong guesses.
+func WithAccountLimiter(l *Limiter) Option { return func(a *Authenticator) { a.accounts = l } }
+
+// WithClock injects the clock session expiry and the purge read (rule 9).
+func WithClock(now func() time.Time) Option { return func(a *Authenticator) { a.now = now } }
+
+// NewAuthenticator wires the authenticator. limiter throttles failed logins by
+// client address; sessionTTL is how long an issued session stays valid; box
+// seals the TOTP secret at rest.
+func NewAuthenticator(s Store, box SecretBox, limiter *Limiter, sessionTTL time.Duration, opts ...Option) *Authenticator {
+	a := &Authenticator{store: s, box: box, limiter: limiter, sessionTTL: sessionTTL, now: time.Now}
+	for _, o := range opts {
+		o(a)
+	}
+	if a.accounts == nil && limiter != nil {
+		a.accounts = NewLimiter(limiter.max*2, limiter.window)
+	}
+	return a
 }
+
+// accountKey is the per-account throttle key for a sign-in: the address as
+// typed, folded so "Sam@Example.com" and "sam@example.com" share one budget.
+func accountKey(email string) string { return "login:" + strings.ToLower(strings.TrimSpace(email)) }
 
 // Login verifies credentials and, on success, creates a session and returns its
 // raw bearer token (shown to the client once, never stored). throttleKey scopes
-// rate limiting — typically the client IP. totpCode is the optional second
-// factor: for a 2FA-enabled account it must be a valid authenticator code or an
-// unused recovery code, otherwise Login returns ErrTOTPRequired (or, for a wrong
-// code, ErrInvalidCredentials).
+// rate limiting by client — the client address as the API resolved it (behind a
+// trusted proxy, the forwarded one). The account is throttled on its own key
+// besides. totpCode is the optional second factor: for a 2FA-enabled account it
+// must be a valid authenticator code or an unused recovery code, otherwise
+// Login returns ErrTOTPRequired (or, for a wrong code, ErrInvalidCredentials).
+// A throttled attempt returns a *RateLimitedError (errors.Is ErrRateLimited).
 func (a *Authenticator) Login(ctx context.Context, email, password, totpCode, throttleKey string) (rawToken string, user domain.User, err error) {
-	if !a.limiter.Allow(throttleKey) {
-		return "", domain.User{}, ErrRateLimited
+	limiters := []*Limiter{a.limiter, a.accounts}
+	keys := []string{throttleKey, accountKey(email)}
+	if err := throttle(limiters, keys); err != nil {
+		return "", domain.User{}, err
+	}
+	fail := func() {
+		for i, l := range limiters {
+			l.Fail(keys[i])
+		}
 	}
 
 	user, err = a.store.GetUserByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			CheckPassword(dummyHash, password) // spend comparable time; ignore result
-			a.limiter.Fail(throttleKey)
+			fail()
 			return "", domain.User{}, ErrInvalidCredentials
 		}
 		return "", domain.User{}, fmt.Errorf("auth: looking up user: %w", err)
 	}
 
 	if !CheckPassword(user.PasswordHash, password) {
-		a.limiter.Fail(throttleKey)
+		fail()
 		return "", domain.User{}, ErrInvalidCredentials
 	}
 
@@ -138,11 +177,13 @@ func (a *Authenticator) Login(ctx context.Context, email, password, totpCode, th
 			return "", domain.User{}, err
 		}
 		if !ok {
-			a.limiter.Fail(throttleKey)
+			fail()
 			return "", domain.User{}, ErrInvalidCredentials
 		}
 	}
-	a.limiter.Reset(throttleKey)
+	for i, l := range limiters {
+		l.Reset(keys[i])
+	}
 
 	token, err := a.StartSession(ctx, user.ID)
 	if err != nil {

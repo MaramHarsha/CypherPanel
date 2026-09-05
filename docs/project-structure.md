@@ -37,8 +37,13 @@ cypherpanel/
 │   ├── scheduler/               # deploy pipeline: work-item producers, deployment state
 │   │                            #   machine, observed-outcome assertion (Phase 2)
 │   ├── store/                   # Postgres access (sqlc: db/, queries/), migrations/
-│   ├── bus/                     # embedded NATS: mTLS, per-agent authz, revocation;
+│   ├── bus/                     # embedded NATS: mTLS, per-agent authz (subjects AND
+│   │                            #   per-identity reply inboxes), revocation;
 │   │                            #   memory STATE + file-backed WORK streams (Phase 2)
+│   ├── logring/                 # bounded in-memory tail of the panel's own slog output,
+│   │                            #   served by GET /panel/logs (control-plane-hardening.md §4)
+│   ├── updates/                 # what build is running + an opt-out release-feed check;
+│   │                            #   never self-updates (ADR-010, control-plane-hardening.md §3)
 │   └── notify/                  # (planned, Phase 3+) email, Discord, Telegram, webhooks
 │
 ├── agent/                       # ── data plane (single binary: cypher-agent) ──

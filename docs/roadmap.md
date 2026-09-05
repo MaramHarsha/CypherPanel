@@ -52,6 +52,20 @@ including the WordPress/Ghost/Nextcloud class) and **Compose Stack resources**,
 already in this phase's scope, for the ~130 that need a command override, a
 host mount, or privileged access.
 
+**Control-plane hardening** has landed alongside it
+([control-plane-hardening.md](features/control-plane-hardening.md)): the bus
+now grants each agent its own reply-inbox prefix, closing a cross-agent read of
+plaintext desired state that a shared `_INBOX.>` grant allowed (threat-model
+§5.2 — the one deliberate agent/plane compatibility break, and the fix itself);
+every response carries a trace id and a handler panic answers with the ordinary
+error envelope; `GET /panel/version` reports the running build and an opt-out
+release check that tells owners once per version; `GET /panel/logs` hands an
+owner a bounded tail of the panel's own log; sign-in throttling gained a
+per-account dimension, an honest `Retry-After`, and a client address that is
+only read from `X-Forwarded-For` behind a configured proxy; `CYPHERD_PUBLIC_URL`
+puts the right scheme on every link the panel writes to itself; and expired
+sessions are finally purged.
+
 ## Post-v1 directions (recorded, not scheduled)
 
 Deliberate **Later** items from the [feature matrix](product/feature-matrix.md), captured so v1 work doesn't preempt or accidentally foreclose them:

@@ -3,12 +3,14 @@
  * Do not edit manually.
  * CypherPanel API
  * Operator-facing control-plane API covering Phases 1–3: authentication and teams/roles, the server lifecycle, projects/environments, applications and the deploy pipeline, managed databases with S3 backups/restore, preview environments, notifications, and scheduled tasks. Authentication is a bearer session token from /api/v1/auth/login; the GitHub webhook authenticates by per-application HMAC instead. Every project-scoped route is authorized by team membership (a non-member sees 404, insufficient rank 403).
+ *
+ * Every response — success, error and SSE stream alike — carries an `X-Request-Id` header (`components/headers/RequestId`), and every JSON error body repeats it as `trace_id`. It is the value to quote in a bug report and the key to search for in `GET /api/v1/panel/logs`. Individual responses reference the header only where a generated client benefits; it is present on all of them.
  * OpenAPI spec version: 0.3.0
  */
 
 export interface InboxPreferences {
   /** Kinds this account does NOT want. Stored as mutes rather than subscriptions, so an empty array means "everything on" and a kind added later is on by default for everyone. */
   muted_kinds: string[];
-  /** Every kind this plane can emit — served rather than hardcoded, so a new taxonomy entry needs no client change. */
+  /** Every inbox kind this plane can emit — the subscribable event taxonomy plus the panel-level kinds — served rather than hardcoded, so a new entry needs no client change. */
   available_kinds: string[];
 }

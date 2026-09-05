@@ -3,6 +3,8 @@
  * Do not edit manually.
  * CypherPanel API
  * Operator-facing control-plane API covering Phases 1–3: authentication and teams/roles, the server lifecycle, projects/environments, applications and the deploy pipeline, managed databases with S3 backups/restore, preview environments, notifications, and scheduled tasks. Authentication is a bearer session token from /api/v1/auth/login; the GitHub webhook authenticates by per-application HMAC instead. Every project-scoped route is authorized by team membership (a non-member sees 404, insufficient rank 403).
+ *
+ * Every response — success, error and SSE stream alike — carries an `X-Request-Id` header (`components/headers/RequestId`), and every JSON error body repeats it as `trace_id`. It is the value to quote in a bug report and the key to search for in `GET /api/v1/panel/logs`. Individual responses reference the header only where a generated client benefits; it is present on all of them.
  * OpenAPI spec version: 0.3.0
  */
 
@@ -73,6 +75,8 @@ export * from './databaseDesiredState.ts';
 export * from './databaseEngine.ts';
 export * from './databaseStatus.ts';
 export * from './deployKey.ts';
+export * from './deployKeyInUse.ts';
+export * from './deployKeyInUseApplicationsItem.ts';
 export * from './deployKeysList.ts';
 export * from './deployment.ts';
 export * from './deploymentStatus.ts';
@@ -90,6 +94,7 @@ export * from './error.ts';
 export * from './firstLogin.ts';
 export * from './firstLoginKind.ts';
 export * from './forbiddenResponse.ts';
+export * from './getPanelLogsParams.ts';
 export * from './health.ts';
 export * from './healthStatus.ts';
 export * from './inboxItem.ts';
@@ -112,7 +117,11 @@ export * from './notFoundResponse.ts';
 export * from './notifier.ts';
 export * from './notifierChannel.ts';
 export * from './notifierEventsItem.ts';
+export * from './panelLogs.ts';
 export * from './panelMailSettings.ts';
+export * from './panelRelease.ts';
+export * from './panelReleaseKind.ts';
+export * from './panelVersion.ts';
 export * from './patchApplicationRequest.ts';
 export * from './patchApplicationRequestRuntime.ts';
 export * from './patchDatabaseRequest.ts';
@@ -168,6 +177,7 @@ export * from './templateDatabase.ts';
 export * from './templateDatabaseEngine.ts';
 export * from './templateResources.ts';
 export * from './templateSchema.ts';
+export * from './tooManyRequestsResponse.ts';
 export * from './tOTPCodeRequest.ts';
 export * from './tOTPEnrollResponse.ts';
 export * from './tOTPStatus.ts';

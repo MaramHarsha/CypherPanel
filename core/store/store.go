@@ -344,6 +344,18 @@ func (s *Store) DeleteSession(ctx context.Context, tokenHash []byte) error {
 	return nil
 }
 
+// DeleteExpiredSessions removes every session whose expiry is at or before
+// the cutoff and reports how many it removed (control-plane-hardening.md §7).
+// The cutoff is the caller's clock, not now(), so the purge is deterministic
+// under test.
+func (s *Store) DeleteExpiredSessions(ctx context.Context, before time.Time) (int64, error) {
+	n, err := s.q.DeleteExpiredSessions(ctx, tsFromTime(before))
+	if err != nil {
+		return 0, fmt.Errorf("store: deleting expired sessions: %w", err)
+	}
+	return n, nil
+}
+
 // ListSessionsByUser returns a user's live sessions, newest first.
 func (s *Store) ListSessionsByUser(ctx context.Context, userID string) ([]domain.Session, error) {
 	rows, err := s.q.ListSessionsByUser(ctx, userID)

@@ -98,6 +98,12 @@ func (f *fakeAuthStore) DeleteRecoveryCodes(_ context.Context, _ string) error {
 	return nil
 }
 
+// DeleteExpiredSessions is the session purge (control-plane-hardening.md §7);
+// handler tests never run it, so the fake reports that nothing was expired.
+func (f *fakeAuthStore) DeleteExpiredSessions(context.Context, time.Time) (int64, error) {
+	return 0, nil
+}
+
 func (f *fakeAuthStore) GetUserByEmail(_ context.Context, email string) (domain.User, error) {
 	if email != f.user.Email {
 		return domain.User{}, store.ErrNotFound
@@ -702,13 +708,21 @@ func (okPinger) Ping(context.Context) error { return nil }
 // fakeDeployKeysStore is an in-memory deploykeys.Store; marking an id in
 // inUse simulates the applications FK RESTRICT on delete.
 type fakeDeployKeysStore struct {
-	mu    sync.Mutex
-	keys  map[string]domain.DeployKey
-	inUse map[string]bool
+	mu   sync.Mutex
+	keys map[string]domain.DeployKey
+	// inUse maps a key id to the applications referencing it — what the 409
+	// names (deploy-key-private-repos.md §3).
+	inUse map[string][]domain.ApplicationRef
 }
 
 func newFakeDeployKeysStore() *fakeDeployKeysStore {
-	return &fakeDeployKeysStore{keys: map[string]domain.DeployKey{}, inUse: map[string]bool{}}
+	return &fakeDeployKeysStore{keys: map[string]domain.DeployKey{}, inUse: map[string][]domain.ApplicationRef{}}
+}
+
+func (f *fakeDeployKeysStore) ListApplicationsByDeployKey(_ context.Context, keyID string) ([]domain.ApplicationRef, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.inUse[keyID], nil
 }
 
 func (f *fakeDeployKeysStore) CreateDeployKey(_ context.Context, dk domain.DeployKey) (domain.DeployKey, error) {
@@ -741,17 +755,29 @@ func (f *fakeDeployKeysStore) ListDeployKeys(context.Context) ([]domain.DeployKe
 func (f *fakeDeployKeysStore) DeleteDeployKey(_ context.Context, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.inUse[id] {
+	if len(f.inUse[id]) > 0 {
 		return store.ErrInUse
 	}
 	delete(f.keys, id)
 	return nil
 }
 
-func (f *fakeDeployKeysStore) markInUse(id string) {
+// sealedPrivateKey returns the ciphertext the store holds for a key, so a test
+// can assert that value never reaches a log or a response.
+func (f *fakeDeployKeysStore) sealedPrivateKey(id string) ([]byte, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.inUse[id] = true
+	dk, ok := f.keys[id]
+	return dk.PrivateKeyCT, ok
+}
+
+func (f *fakeDeployKeysStore) markInUse(id string, apps ...domain.ApplicationRef) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(apps) == 0 {
+		apps = []domain.ApplicationRef{{ID: "app_blocker", Name: "blocker"}}
+	}
+	f.inUse[id] = apps
 }
 
 // ─── harness ────────────────────────────────────────────────────────────────

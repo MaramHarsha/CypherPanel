@@ -132,6 +132,47 @@ func (q *Queries) InsertInboxItems(ctx context.Context, arg InsertInboxItemsPara
 	return err
 }
 
+const insertPanelInboxItems = `-- name: InsertPanelInboxItems :exec
+WITH recipients AS (
+    SELECT unnest($6::text[]) AS id, unnest($7::text[]) AS user_id
+)
+INSERT INTO inbox_items (
+    id, user_id, project_id, kind, severity, digest,
+    title, body, link, link_label, count_ok, count_total, sources, dedupe_key
+)
+SELECT r.id, r.user_id, NULL, $1::text, $2::text, false,
+       $3::text, $4::text, '', '',
+       1, 1, '{}'::text[], $5::text
+FROM recipients r
+ON CONFLICT (user_id, dedupe_key) DO NOTHING
+`
+
+type InsertPanelInboxItemsParams struct {
+	Kind      string
+	Severity  string
+	Title     string
+	Body      string
+	DedupeKey string
+	Ids       []string
+	UserIds   []string
+}
+
+// InsertPanelInboxItems is InsertInboxItems for a panel-level kind: identical
+// fan-out, NULL project (migration 0028), no link. The (user_id, dedupe_key)
+// conflict clause is what makes "once per version" hold across restarts.
+func (q *Queries) InsertPanelInboxItems(ctx context.Context, arg InsertPanelInboxItemsParams) error {
+	_, err := q.db.Exec(ctx, insertPanelInboxItems,
+		arg.Kind,
+		arg.Severity,
+		arg.Title,
+		arg.Body,
+		arg.DedupeKey,
+		arg.Ids,
+		arg.UserIds,
+	)
+	return err
+}
+
 const listInboxItems = `-- name: ListInboxItems :many
 SELECT id, user_id, project_id, kind, severity, digest, title, body, link, link_label, count_ok, count_total, sources, dedupe_key, read_at, created_at, updated_at FROM inbox_items
 WHERE user_id = $1
@@ -282,6 +323,41 @@ type ListInboxRecipientsParams struct {
 // receives everything.
 func (q *Queries) ListInboxRecipients(ctx context.Context, arg ListInboxRecipientsParams) ([]string, error) {
 	rows, err := q.db.Query(ctx, listInboxRecipients, arg.ProjectID, arg.Kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var user_id string
+		if err := rows.Scan(&user_id); err != nil {
+			return nil, err
+		}
+		items = append(items, user_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPanelInboxRecipients = `-- name: ListPanelInboxRecipients :many
+SELECT DISTINCT u.id AS user_id
+FROM users u
+LEFT JOIN team_members m ON m.user_id = u.id AND m.role = 'owner'
+LEFT JOIN inbox_preferences pr ON pr.user_id = u.id
+WHERE (u.role = 'owner' OR m.user_id IS NOT NULL)
+  AND NOT ($1::text = ANY(COALESCE(pr.muted_kinds, '{}'::text[])))
+ORDER BY u.id
+`
+
+// ListPanelInboxRecipients resolves a panel-level kind — one with no project,
+// such as panel.update_available (control-plane-hardening.md §3) — to the
+// people who steer the panel: every panel owner plus every team owner, minus
+// anyone who muted the kind. DISTINCT because a panel owner is usually a team
+// owner too, and one person gets one item.
+func (q *Queries) ListPanelInboxRecipients(ctx context.Context, kind string) ([]string, error) {
+	rows, err := q.db.Query(ctx, listPanelInboxRecipients, kind)
 	if err != nil {
 		return nil, err
 	}

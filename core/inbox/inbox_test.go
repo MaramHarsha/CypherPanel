@@ -610,10 +610,12 @@ func TestSetPreferencesValidatesAndDeduplicates(t *testing.T) {
 	}
 }
 
+// The preference list names the whole inbox taxonomy: the subscribable events
+// plus the panel-level kinds (control-plane-hardening.md §3).
 func TestAvailableKindsIsTheTaxonomy(t *testing.T) {
 	got := AvailableKinds()
-	if len(got) != len(domain.EventTypes()) {
-		t.Fatalf("AvailableKinds = %v, want the taxonomy %v", got, domain.EventTypes())
+	if len(got) != len(domain.InboxKinds()) || len(got) != len(domain.EventTypes())+1 {
+		t.Fatalf("AvailableKinds = %v, want the inbox taxonomy %v", got, domain.InboxKinds())
 	}
 }
 
@@ -640,4 +642,88 @@ func utf8Valid(s string) bool {
 		}
 	}
 	return true
+}
+
+// --- panel-level kinds (control-plane-hardening.md §3) ---
+
+// TestPanelUpdateReachesOwnersOncePerVersion: a newer release writes one item
+// per owner, honours a mute, and a second sighting of the same version — the
+// next poll, a restart — writes nothing; a later version writes one more.
+func TestPanelUpdateReachesOwnersOncePerVersion(t *testing.T) {
+	st := newFakeStore()
+	st.owners = []string{"usr_owner", "usr_quiet"}
+	st.prefs["usr_quiet"] = []string{domain.InboxKindPanelUpdateAvailable}
+	svc := New(st, quietLog())
+	ctx := context.Background()
+
+	u := PanelUpdate{Current: "v0.4.0", Latest: "v0.5.0", Kind: "minor", NotesURL: "https://example.test/notes"}
+	for range 3 {
+		if err := svc.RecordPanelUpdate(ctx, u); err != nil {
+			t.Fatalf("RecordPanelUpdate: %v", err)
+		}
+	}
+	items := st.items["usr_owner"]
+	if len(items) != 1 {
+		t.Fatalf("owner holds %d items after three sightings, want 1", len(items))
+	}
+	it := items[0]
+	if it.Kind != domain.InboxKindPanelUpdateAvailable || it.ProjectID != "" || it.Digest || it.Link != "" {
+		t.Fatalf("item = %+v, want an immediate, project-less, link-less panel item", *it)
+	}
+	if it.Title != "CypherPanel v0.5.0 is available" {
+		t.Fatalf("title = %q", it.Title)
+	}
+	for _, want := range []string{"You're on v0.4.0", "MINOR release", "read the notes", "https://example.test/notes"} {
+		if !strings.Contains(it.Body, want) {
+			t.Errorf("body %q lacks %q", it.Body, want)
+		}
+	}
+	if len(st.items["usr_quiet"]) != 0 {
+		t.Fatal("an owner who muted panel.update_available received the item")
+	}
+
+	if err := svc.RecordPanelUpdate(ctx, PanelUpdate{Current: "v0.4.0", Latest: "v0.6.0", Kind: "minor"}); err != nil {
+		t.Fatalf("RecordPanelUpdate(v0.6.0): %v", err)
+	}
+	if n := len(st.items["usr_owner"]); n != 2 {
+		t.Fatalf("owner holds %d items after a second version, want 2", n)
+	}
+	if err := svc.RecordPanelUpdate(ctx, PanelUpdate{}); err != nil {
+		t.Fatalf("an empty update must be a no-op, got %v", err)
+	}
+}
+
+// TestPanelKindsAreMutableButNotSubscribable: the preference list accepts the
+// panel kind (it is served in AvailableKinds), while Record — the
+// project-scoped path — still ignores anything outside the event taxonomy.
+func TestPanelKindsAreMutableButNotSubscribable(t *testing.T) {
+	st := newFakeStore()
+	svc := New(st, quietLog())
+	ctx := context.Background()
+
+	if !containsKind(AvailableKinds(), domain.InboxKindPanelUpdateAvailable) {
+		t.Fatalf("AvailableKinds %v lacks the panel kind", AvailableKinds())
+	}
+	if _, err := svc.SetPreferences(ctx, "usr_1", []string{domain.InboxKindPanelUpdateAvailable}); err != nil {
+		t.Fatalf("muting the panel kind: %v", err)
+	}
+	if domain.ValidEventType(domain.InboxKindPanelUpdateAvailable) {
+		t.Fatal("the panel kind must not be a subscribable notifier/webhook event")
+	}
+	st.members["prj_1"] = []string{"usr_1"}
+	if err := svc.Record(ctx, domain.NotifyEvent{Type: domain.InboxKindPanelUpdateAvailable, ProjectID: "prj_1", Level: domain.NotifyError}); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	if len(st.items["usr_1"]) != 0 {
+		t.Fatal("Record wrote a panel kind through the project-scoped path")
+	}
+}
+
+func containsKind(xs []string, x string) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }

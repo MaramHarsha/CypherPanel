@@ -35,6 +35,39 @@ func (s *Store) ListInboxRecipients(ctx context.Context, projectID, kind string)
 	return out, nil
 }
 
+// ListPanelInboxRecipients returns the users a panel-level kind reaches: every
+// panel owner and every team owner who has not muted kind
+// (control-plane-hardening.md §3). Distinct — one person, one item.
+func (s *Store) ListPanelInboxRecipients(ctx context.Context, kind string) ([]string, error) {
+	out, err := s.q.ListPanelInboxRecipients(ctx, kind)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing panel inbox recipients: %w", err)
+	}
+	return out, nil
+}
+
+// InsertPanelInboxItems writes one immediate, project-less item per recipient.
+// The (user_id, dedupe_key) conflict is dropped, which is what makes "once per
+// version" hold across restarts. ProjectID, Link and LinkLabel on f are
+// ignored: a panel-level item has none.
+func (s *Store) InsertPanelInboxItems(ctx context.Context, f InboxFanout) error {
+	if len(f.IDs) == 0 {
+		return nil
+	}
+	if err := s.q.InsertPanelInboxItems(ctx, db.InsertPanelInboxItemsParams{
+		Ids:       f.IDs,
+		UserIds:   f.UserIDs,
+		Kind:      f.Kind,
+		Severity:  f.Severity,
+		Title:     f.Title,
+		Body:      f.Body,
+		DedupeKey: f.DedupeKey,
+	}); err != nil {
+		return wrapCreate("inserting panel inbox items", err)
+	}
+	return nil
+}
+
 // InboxFanout is the shared half of one fan-out write: the columns every
 // recipient's row holds identically. IDs and UserIDs are positional pairs —
 // IDs[i] is the id minted for UserIDs[i].
@@ -252,7 +285,7 @@ func inboxItemFromRow(r db.InboxItem) domain.InboxItem {
 	return domain.InboxItem{
 		ID:         r.ID,
 		UserID:     r.UserID,
-		ProjectID:  r.ProjectID,
+		ProjectID:  r.ProjectID.String, // NULL for a panel-level kind (0028)
 		Kind:       r.Kind,
 		Severity:   domain.NotifyLevel(r.Severity),
 		Digest:     r.Digest,

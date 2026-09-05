@@ -40,7 +40,18 @@ agent observation ──▶ scheduler transition ──▶ status row          (
 The consequences are the point. The bell and the Slack message say the same
 words, because both render one `domain.NotifyEvent`. A new event key costs
 nothing here: the inbox subscribes to the taxonomy, not to individual
-transitions, so notifications.md §8's follow-ons render unchanged. Nothing new
+transitions, so notifications.md §8's follow-ons render unchanged.
+
+**One exception, added later: panel-level kinds.** Some news is about the panel
+rather than about a project's resources, and has no `NotifyEvent` behind it —
+today just `panel.update_available`
+([control-plane-hardening.md](control-plane-hardening.md) §3), written by the
+update check straight to owners. Those items have no project (`project_id` is
+nullable from migration `0028`), so the team-removal sweep never touches them,
+and they are *inbox* kinds only: `domain.InboxKinds()` is `EventTypes()` plus
+the panel kinds, preferences validate against `ValidInboxKind`, and notifiers
+and webhook endpoints keep subscribing to `EventTypes()` alone. Nothing emits a
+panel kind to a channel. Nothing new
 reaches an agent — like notifiers, this is a plane-internal reaction to state
 that already exists (ADR-005): no work item, no subject, no proto change, no
 imperative path (CLAUDE.md rule 3). And unlike channel delivery, the inbox write
@@ -266,8 +277,9 @@ The `InboxItem` DTO carries a **composed** `title` (`"Deploy failed: web"`,
 out of the contract: a client rendering them into English would be a second home
 for copy, and a CLI would get it subtly different (CLAUDE.md rule 4).
 `available_kinds` is served rather than hardcoded, so canvas 13i's checkbox list
-shows exactly what this plane can emit and a new taxonomy entry needs no
-front-end change; `PUT` replaces the whole set and 400s on a kind outside it.
+shows exactly what this plane can emit — the event taxonomy plus the panel-level
+kinds (§1) — and a new entry needs no front-end change; `PUT` replaces the whole
+set and 400s on a kind outside it. `project_id` is `""` for a panel-level item.
 Contract lands in `openapi.yaml` first (rule 19) under a new `inbox` tag; the
 client is regenerated with `make generate-web`.
 

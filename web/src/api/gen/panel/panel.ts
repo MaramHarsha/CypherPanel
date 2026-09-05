@@ -3,6 +3,8 @@
  * Do not edit manually.
  * CypherPanel API
  * Operator-facing control-plane API covering Phases 1–3: authentication and teams/roles, the server lifecycle, projects/environments, applications and the deploy pipeline, managed databases with S3 backups/restore, preview environments, notifications, and scheduled tasks. Authentication is a bearer session token from /api/v1/auth/login; the GitHub webhook authenticates by per-application HMAC instead. Every project-scoped route is authorized by team membership (a non-member sees 404, insufficient rank 403).
+ *
+ * Every response — success, error and SSE stream alike — carries an `X-Request-Id` header (`components/headers/RequestId`), and every JSON error body repeats it as `trace_id`. It is the value to quote in a bug report and the key to search for in `GET /api/v1/panel/logs`. Individual responses reference the header only where a generated client benefits; it is present on all of them.
  * OpenAPI spec version: 0.3.0
  */
 import {
@@ -31,10 +33,14 @@ import type {
   DNSZone,
   Error,
   ForbiddenResponse,
+  GetPanelLogsParams,
+  PanelLogs,
   PanelMailSettings,
+  PanelVersion,
   SetPanelDNSRequest,
   SetPanelMailRequest,
-  UnauthorizedResponse
+  UnauthorizedResponse,
+  UnavailableResponse
 } from '../model';
 
 import { apiFetch } from '../../client.ts';
@@ -542,7 +548,220 @@ export const useRefreshDNSZones = <TError = BadRequestResponse | UnauthorizedRes
       > => {
       return useMutation(getRefreshDNSZonesMutationOptions(options), queryClient);
     }
-    export const getGetPanelMailUrl = () => {
+    export const getGetPanelVersionUrl = () => {
+
+
+
+
+  return `/api/v1/panel/version`
+}
+
+/**
+ * What build of cypherd is serving this request, and — when the update check is on and has found one — the newest release beyond it. Readable by any authenticated principal: the version appears in every startup log line and the report-issue dialog needs it for every user.
+ *
+ * `latest` is `null` whenever there is nothing to say: the panel is up to date, the check is off (`CYPHERD_UPDATE_CHECK=off`), it has not completed yet, or this is not a release build. CypherPanel never updates itself (ADR-010); this only tells the operator.
+ * @summary The running build, and any newer release
+ */
+export const getPanelVersion = async ( options?: RequestInit): Promise<PanelVersion> => {
+
+  return apiFetch<PanelVersion>(getGetPanelVersionUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPanelVersionQueryKey = () => {
+    return [
+    `/api/v1/panel/version`
+    ] as const;
+    }
+
+
+export const getGetPanelVersionQueryOptions = <TData = Awaited<ReturnType<typeof getPanelVersion>>, TError = UnauthorizedResponse | ForbiddenResponse | UnavailableResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelVersion>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPanelVersionQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPanelVersion>>> = ({ signal }) => getPanelVersion({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPanelVersion>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetPanelVersionQueryResult = NonNullable<Awaited<ReturnType<typeof getPanelVersion>>>
+export type GetPanelVersionQueryError = UnauthorizedResponse | ForbiddenResponse | UnavailableResponse
+
+
+export function useGetPanelVersion<TData = Awaited<ReturnType<typeof getPanelVersion>>, TError = UnauthorizedResponse | ForbiddenResponse | UnavailableResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelVersion>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getPanelVersion>>,
+          TError,
+          Awaited<ReturnType<typeof getPanelVersion>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetPanelVersion<TData = Awaited<ReturnType<typeof getPanelVersion>>, TError = UnauthorizedResponse | ForbiddenResponse | UnavailableResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelVersion>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getPanelVersion>>,
+          TError,
+          Awaited<ReturnType<typeof getPanelVersion>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetPanelVersion<TData = Awaited<ReturnType<typeof getPanelVersion>>, TError = UnauthorizedResponse | ForbiddenResponse | UnavailableResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelVersion>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary The running build, and any newer release
+ */
+
+export function useGetPanelVersion<TData = Awaited<ReturnType<typeof getPanelVersion>>, TError = UnauthorizedResponse | ForbiddenResponse | UnavailableResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelVersion>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetPanelVersionQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getGetPanelLogsUrl = (params?: GetPanelLogsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/panel/logs?${stringifiedParams}` : `/api/v1/panel/logs`
+}
+
+/**
+ * The most recent lines of cypherd's structured log, oldest first, from an in-memory ring — no shell, no file, no log shipper. Meant to be attached to a bug report alongside a trace id.
+ *
+ * Panel **owner** only, and only from an interactive session: the log names hosts, resources and users, so an API token — which may live in a CI runner — must never be able to lift it. Secrets never reach any log line (ENGINEERING rule 20), which the API's tests assert rather than assume.
+ * @summary A bounded tail of the panel's own log (panel owner, session only)
+ */
+export const getPanelLogs = async (params?: GetPanelLogsParams, options?: RequestInit): Promise<PanelLogs> => {
+
+  return apiFetch<PanelLogs>(getGetPanelLogsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPanelLogsQueryKey = (params?: GetPanelLogsParams,) => {
+    return [
+    `/api/v1/panel/logs`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetPanelLogsQueryOptions = <TData = Awaited<ReturnType<typeof getPanelLogs>>, TError = BadRequestResponse | UnauthorizedResponse | Error | UnavailableResponse>(params?: GetPanelLogsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelLogs>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPanelLogsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPanelLogs>>> = ({ signal }) => getPanelLogs(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPanelLogs>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetPanelLogsQueryResult = NonNullable<Awaited<ReturnType<typeof getPanelLogs>>>
+export type GetPanelLogsQueryError = BadRequestResponse | UnauthorizedResponse | Error | UnavailableResponse
+
+
+export function useGetPanelLogs<TData = Awaited<ReturnType<typeof getPanelLogs>>, TError = BadRequestResponse | UnauthorizedResponse | Error | UnavailableResponse>(
+ params: undefined |  GetPanelLogsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelLogs>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getPanelLogs>>,
+          TError,
+          Awaited<ReturnType<typeof getPanelLogs>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetPanelLogs<TData = Awaited<ReturnType<typeof getPanelLogs>>, TError = BadRequestResponse | UnauthorizedResponse | Error | UnavailableResponse>(
+ params?: GetPanelLogsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelLogs>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getPanelLogs>>,
+          TError,
+          Awaited<ReturnType<typeof getPanelLogs>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetPanelLogs<TData = Awaited<ReturnType<typeof getPanelLogs>>, TError = BadRequestResponse | UnauthorizedResponse | Error | UnavailableResponse>(
+ params?: GetPanelLogsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelLogs>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary A bounded tail of the panel's own log (panel owner, session only)
+ */
+
+export function useGetPanelLogs<TData = Awaited<ReturnType<typeof getPanelLogs>>, TError = BadRequestResponse | UnauthorizedResponse | Error | UnavailableResponse>(
+ params?: GetPanelLogsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelLogs>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetPanelLogsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getGetPanelMailUrl = () => {
 
 
 

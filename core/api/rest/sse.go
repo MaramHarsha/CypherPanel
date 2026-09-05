@@ -46,14 +46,17 @@ func (a *API) streamSSE(w http.ResponseWriter, r *http.Request, subject string,
 		}
 	})
 	if err != nil {
-		a.deps.Log.Error("subscribing to logs", "subject", subject, "error", err)
+		a.deps.Log.Error("subscribing to logs", "subject", subject, "trace_id", traceIDFromContext(ctx), "error", err)
 		writeError(w, http.StatusInternalServerError, "could not subscribe to logs")
 		return
 	}
 	defer stop()
 
 	// Notify the client that the stream is open (there may be no lines yet).
-	if _, err := fmt.Fprintf(w, "event: connected\ndata: {}\n\n"); err != nil {
+	// The opening frame carries the request's correlation id: a stream that
+	// misbehaves is diagnosed from the same id every other response gives
+	// (control-plane-hardening.md §2).
+	if _, err := fmt.Fprintf(w, "event: connected\ndata: {\"trace_id\":%q}\n\n", traceIDFromContext(ctx)); err != nil {
 		return
 	}
 	flusher.Flush()

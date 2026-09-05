@@ -20,6 +20,8 @@ import (
 type fakeStore struct {
 	// members maps a project id to the users of the team that owns it.
 	members map[string][]string
+	// owners are the panel/team owners a panel-level kind reaches.
+	owners []string
 	// items maps a user id to their rows, in insertion order.
 	items map[string][]*domain.InboxItem
 	prefs map[string][]string
@@ -72,6 +74,31 @@ func (f *fakeStore) ListInboxRecipients(_ context.Context, projectID, kind strin
 		}
 	}
 	return out, nil
+}
+
+// owners lists the users a panel-level kind reaches (panel or team owners).
+func (f *fakeStore) ListPanelInboxRecipients(_ context.Context, kind string) ([]string, error) {
+	if f.failRecipients {
+		return nil, fmt.Errorf("boom")
+	}
+	out := []string{}
+	for _, u := range f.owners {
+		muted := false
+		for _, m := range f.prefs[u] {
+			if m == kind {
+				muted = true
+			}
+		}
+		if !muted {
+			out = append(out, u)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) InsertPanelInboxItems(ctx context.Context, fo store.InboxFanout) error {
+	fo.ProjectID, fo.Link, fo.LinkLabel = "", "", ""
+	return f.InsertInboxItems(ctx, fo)
 }
 
 func (f *fakeStore) InsertInboxItems(_ context.Context, fo store.InboxFanout) error {

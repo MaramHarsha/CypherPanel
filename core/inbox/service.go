@@ -96,8 +96,9 @@ func (s *Service) MarkAllRead(ctx context.Context, userID string) (int64, error)
 
 // AvailableKinds is the taxonomy a preference list may name — served rather
 // than hardcoded in the front end, so a new event key needs no client change
-// (spec §6).
-func AvailableKinds() []string { return domain.EventTypes() }
+// (spec §6). It is the inbox taxonomy, which is the subscribable event set
+// plus the panel-level kinds (control-plane-hardening.md §3).
+func AvailableKinds() []string { return domain.InboxKinds() }
 
 // Preferences returns the caller's mutes. An account that has never set any
 // gets an empty set, which means "everything on" (spec §2).
@@ -119,7 +120,7 @@ func (s *Service) SetPreferences(ctx context.Context, userID string, muted []str
 	seen := map[string]bool{}
 	clean := make([]string, 0, len(muted))
 	for _, k := range muted {
-		if !domain.ValidEventType(k) {
+		if !domain.ValidInboxKind(k) {
 			return domain.InboxPreferences{}, invalid("unknown notification kind: " + k)
 		}
 		if !seen[k] {

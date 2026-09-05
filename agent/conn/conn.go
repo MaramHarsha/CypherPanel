@@ -6,6 +6,7 @@ package conn
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net"
@@ -19,6 +20,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/agent/identity"
 	"github.com/MaramHarsha/cypherpanel/pkg/pki"
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
+	"github.com/MaramHarsha/cypherpanel/pkg/subjects"
 )
 
 // Enroll performs the one-time enrollment handshake and returns the agent's new
@@ -74,11 +76,27 @@ func ConnectBus(id *identity.Identity, log *slog.Logger) (*nats.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	nc, err := nats.Connect(id.NATSURL,
+	nc, err := nats.Connect(id.NATSURL, busOptions(id, tlsCfg, log)...)
+	if err != nil {
+		return nil, fmt.Errorf("conn: connecting to bus: %w", err)
+	}
+	return nc, nil
+}
+
+// busOptions is the connection contract with the plane's authorizer, kept
+// separate so a test can assert it without a server. The inbox prefix is
+// load-bearing: the bus grants this identity Subscribe on
+// subjects.InboxForServer(id) and nothing under the shared "_INBOX", so every
+// request/reply — the desired-state sync, the JetStream pull and API calls —
+// must reply into the agent's own scope (threat-model §5.2;
+// control-plane-hardening.md §1).
+func busOptions(id *identity.Identity, tlsCfg *tls.Config, log *slog.Logger) []nats.Option {
+	return []nats.Option{
 		nats.Secure(tlsCfg),
-		nats.Name("cypher-agent/"+id.ServerID),
+		nats.Name("cypher-agent/" + id.ServerID),
+		nats.CustomInboxPrefix(subjects.InboxPrefix(id.ServerID)),
 		nats.MaxReconnects(-1),
-		nats.ReconnectWait(2*time.Second),
+		nats.ReconnectWait(2 * time.Second),
 		nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
 			if err != nil {
 				log.Warn("bus disconnected, will retry", "error", err)
@@ -92,11 +110,7 @@ func ConnectBus(id *identity.Identity, log *slog.Logger) (*nats.Conn, error) {
 		nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, err error) {
 			log.Error("bus error", "error", err)
 		}),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("conn: connecting to bus: %w", err)
 	}
-	return nc, nil
 }
 
 func hostOf(addr string) (string, error) {

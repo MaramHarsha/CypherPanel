@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/MaramHarsha/cypherpanel/core/domain"
 )
 
 // The deploy-key endpoints expose only the public half of the key: the sealed
@@ -115,9 +117,37 @@ func TestDeployKeyDeleteInUseConflicts(t *testing.T) {
 	if err := json.Unmarshal(body, &created); err != nil {
 		t.Fatalf("unmarshal create response: %v", err)
 	}
-	dkStore.markInUse(created.DeployKey.ID)
+	dkStore.markInUse(created.DeployKey.ID,
+		domain.ApplicationRef{ID: "app_web", Name: "web"},
+		domain.ApplicationRef{ID: "app_api", Name: "api"},
+	)
 
-	if status, _, _ = doJSON(t, "DELETE", ts.URL+"/api/v1/deploy-keys/"+created.DeployKey.ID, token, ""); status != http.StatusConflict {
+	status, _, body = doJSON(t, "DELETE", ts.URL+"/api/v1/deploy-keys/"+created.DeployKey.ID, token, "")
+	if status != http.StatusConflict {
 		t.Fatalf("delete of in-use key = %d, want 409", status)
+	}
+	// "In use" without saying by what leaves the operator clicking through
+	// every application (deploy-key-private-repos.md §3).
+	var conflict struct {
+		Error        string `json:"error"`
+		TraceID      string `json:"trace_id"`
+		Applications []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"applications"`
+	}
+	if err := json.Unmarshal(body, &conflict); err != nil {
+		t.Fatalf("unmarshal conflict body %s: %v", body, err)
+	}
+	if len(conflict.Applications) != 2 ||
+		conflict.Applications[0].ID != "app_web" || conflict.Applications[0].Name != "web" ||
+		conflict.Applications[1].ID != "app_api" || conflict.Applications[1].Name != "api" {
+		t.Fatalf("409 applications = %+v, want both blockers by id and name", conflict.Applications)
+	}
+	if !strings.Contains(conflict.Error, "web") || !strings.Contains(conflict.Error, "api") {
+		t.Errorf("409 message %q does not name the blocking applications", conflict.Error)
+	}
+	if conflict.TraceID == "" {
+		t.Error("the 409 envelope carries no trace id")
 	}
 }

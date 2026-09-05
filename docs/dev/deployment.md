@@ -93,7 +93,52 @@ extra termination. Simplest options:
 - **A cloud/load-balancer** terminating 443 → 8080.
 
 Point `CYPHERD_PUBLIC_HOST` at the same hostname so the join command the UI
-generates is correct.
+generates is correct, and set **`CYPHERD_PUBLIC_URL`** to the URL a browser
+actually types:
+
+```
+CYPHERD_PUBLIC_URL=https://panel.example.com
+```
+
+It is scheme + host + an optional port and nothing else (a path, query or
+unknown scheme is refused at boot). Every link the panel writes to itself is
+built from it — the email-change confirmation link, the GitHub webhook URL
+shown when an application is created, and the agent join command's installer
+fetch and `CYPHER_PLANE_HTTP`. Without it those links carry
+`http://<public host>:8080`, which a browser behind TLS cannot follow and
+GitHub will not call.
+
+Set **`CYPHERD_TRUSTED_PROXIES`** to the proxy's address or CIDR at the same
+time:
+
+```
+CYPHERD_TRUSTED_PROXIES=10.0.0.0/8
+```
+
+Only from a peer inside that list does the panel read `X-Forwarded-For`,
+`X-Real-IP` or an inbound `X-Request-Id`. Left empty behind a proxy, every
+client looks like the proxy — so one attacker's failed sign-ins throttle
+everybody at that address (the per-account limit still bounds a brute force
+against any one account). Set too wide, a client picks its own throttle key.
+
+## Version, update check and diagnostics
+
+`GET /api/v1/panel/version` (any signed-in user) reports the running build and,
+when the update check has found one, the newest release beyond it — the same
+three stamps `cypherd version` prints. The check polls a release feed every
+6 hours, writes **one** inbox item to owners per new version, and never updates
+the panel itself (ADR-010):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `CYPHERD_UPDATE_CHECK` | `on` | `off` makes no outbound request at all |
+| `CYPHERD_UPDATE_FEED_URL` | GitHub releases/latest for this project | The feed to poll |
+
+`GET /api/v1/panel/logs?tail=N` (panel owner, interactive session only, N ≤ 500)
+returns the last N lines of cypherd's own log from an in-memory ring — enough
+to attach to a bug report without shell access to the host. Every response also
+carries an `X-Request-Id`, repeated as `trace_id` in every error body: that is
+the value to quote when reporting a fault.
 
 ## Upgrades
 
@@ -102,9 +147,66 @@ generates is correct.
   cypherd`.
 
 Migrations are additive and run automatically on start. Keep the same
-`CYPHERD_MASTER_KEY` across upgrades. Agents auto-reconnect; agent
-self-update is a separate mechanism (ADR-010), landing with the release
-pipeline.
+`CYPHERD_MASTER_KEY` across upgrades.
+
+### Upgrade every agent in the same window
+
+**There is no agent self-update yet** (ADR-010 is not implemented), and this
+release changes the agent↔plane bus contract, so a plane upgraded on its own
+leaves a fleet that connects but does nothing. Plan the two together:
+
+1. Upgrade the plane.
+2. On **every** server listed under **Servers**, replace the agent binary with
+   the build from this release and restart it:
+
+   ```sh
+   # on a build machine, from this checkout:
+   cd agent && CGO_ENABLED=0 go build -o cypher-agent ./cmd/cypher-agent
+
+   # on each server:
+   sudo install -m 0755 ./cypher-agent /usr/local/bin/cypher-agent
+   sudo systemctl reset-failed cypher-agent   # only if it already gave up
+   sudo systemctl restart cypher-agent
+   ```
+
+   The identity in `/var/lib/cypher-agent` is untouched: the server keeps its
+   id, certificate and role, and is **not** re-enrolled. Re-running the panel's
+   join command does *not* upgrade an agent —
+   [install/agent.sh](../../install/agent.sh) reuses the binary already on the
+   host unless `CYPHER_AGENT_URL` points at a new one.
+
+**Why.** Reply inboxes on the bus are now scoped per agent identity — an agent
+subscribes to `_INBOX_<server-id>.>` and nothing else, so one agent can no
+longer read another's desired state (plaintext environment variables) off a
+shared `_INBOX.>` wildcard. An older agent still uses the shared prefix, which
+the plane no longer grants.
+
+**What it looks like.** On the server, `journalctl -u cypher-agent -f` shows a
+NATS permissions violation for a subscription to `_INBOX.…`, then a failure to
+bind the work consumer or complete the initial sync, and the process exits.
+`systemd` restarts it five times and gives up
+(`systemctl status cypher-agent` → `failed`, "start request repeated too
+quickly"). In the panel the server flickers green — an out-of-date agent still
+heartbeats on each short-lived start — and then goes offline; nothing it is
+asked to deploy ever leaves **queued**. The **Servers** list shows each agent's
+version, which is how you find the ones still to do.
+
+The plane itself is quiet here: its embedded NATS server does not log
+permission refusals. The one plane-side line you may see is a warning naming
+the server —
+
+```
+bus: dropping desired-state sync whose reply subject is outside the agent's
+inbox scope; upgrade cypher-agent on this server to match the plane
+  server_id=srv_… reply_subject=_INBOX.…
+```
+
+— which appears once per server per plane process, and in
+`GET /api/v1/panel/logs`.
+
+**Recovery** is only the reinstall above; nothing is lost and no data migration
+is involved. Applications keep running throughout, because an agent that is not
+converging still leaves the containers it already started in place.
 
 ## Back up
 

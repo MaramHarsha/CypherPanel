@@ -19,6 +19,37 @@ WHERE p.id = @project_id
   AND NOT (@kind::text = ANY(COALESCE(pr.muted_kinds, '{}'::text[])))
 ORDER BY m.user_id;
 
+-- ListPanelInboxRecipients resolves a panel-level kind — one with no project,
+-- such as panel.update_available (control-plane-hardening.md §3) — to the
+-- people who steer the panel: every panel owner plus every team owner, minus
+-- anyone who muted the kind. DISTINCT because a panel owner is usually a team
+-- owner too, and one person gets one item.
+-- name: ListPanelInboxRecipients :many
+SELECT DISTINCT u.id AS user_id
+FROM users u
+LEFT JOIN team_members m ON m.user_id = u.id AND m.role = 'owner'
+LEFT JOIN inbox_preferences pr ON pr.user_id = u.id
+WHERE (u.role = 'owner' OR m.user_id IS NOT NULL)
+  AND NOT (@kind::text = ANY(COALESCE(pr.muted_kinds, '{}'::text[])))
+ORDER BY u.id;
+
+-- InsertPanelInboxItems is InsertInboxItems for a panel-level kind: identical
+-- fan-out, NULL project (migration 0028), no link. The (user_id, dedupe_key)
+-- conflict clause is what makes "once per version" hold across restarts.
+-- name: InsertPanelInboxItems :exec
+WITH recipients AS (
+    SELECT unnest(@ids::text[]) AS id, unnest(@user_ids::text[]) AS user_id
+)
+INSERT INTO inbox_items (
+    id, user_id, project_id, kind, severity, digest,
+    title, body, link, link_label, count_ok, count_total, sources, dedupe_key
+)
+SELECT r.id, r.user_id, NULL, @kind::text, @severity::text, false,
+       @title::text, @body::text, '', '',
+       1, 1, '{}'::text[], @dedupe_key::text
+FROM recipients r
+ON CONFLICT (user_id, dedupe_key) DO NOTHING;
+
 -- InsertInboxItems writes one immediate item per recipient in a single
 -- statement: the shared columns are scalars, the per-recipient id/user pairs
 -- arrive through unnest. ON CONFLICT DO NOTHING is the redelivery guard — the

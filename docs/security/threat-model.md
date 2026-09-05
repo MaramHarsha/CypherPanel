@@ -96,6 +96,8 @@ Each scenario states the attack, the property that must hold, the controls, and 
 
 **Controls.**
 - **Agent identity is scoped to its own server.** The plane authorizes `state.*`/`work.*` per-agent; one agent's certificate does not let it subscribe to another server's work or publish another server's state. NATS subject authorization is per-identity. `[Phase 1: bus authz]`
+- **Reply inboxes are per-identity too.** Request/reply on core NATS answers on the requester's reply subject, and the desired-state sync's answer carries the resolved `DesiredState` — plaintext `env` for every app and database on that server. Core NATS delivers a publication to *every* matching subscription, so a shared `_INBOX.>` Subscribe grant meant any agent could read any other agent's secrets: exactly the lateral movement this scenario forbids. Each agent now connects with `nats.CustomInboxPrefix("_INBOX_<cn>")` and is granted `_INBOX_<cn>.>` and nothing else, so a sync reply reaches its requester alone. **Compatibility:** an agent built before this change keeps the default `_INBOX` prefix, which is no longer granted, so its first request/reply (the JetStream work-consumer bind) times out and it converges nothing until it is upgraded — a deliberate break, because it *is* the fix. Operators are told to upgrade agents in the same window in [deployment.md §Upgrades](../dev/deployment.md#upgrades). `[Phase 4: control-plane-hardening.md §1; proven by core/bus TestAgentInboxIsIsolatedPerIdentity]`
+- **The plane validates the reply subject before it answers.** The grant above says who may *subscribe*; it does not say where the plane may *publish*. The requester picks `msg.Reply`, and NATS does not permission-check a publisher's reply subject under plain publish/subscribe allow lists (only `Responses` permissions do — verified against nats-server v2.14.5). The plane's own client is in-process and **unrestricted**, so an unvalidated `msg.Respond` was an arbitrary-subject publish primitive: any enrolled agent could request a sync on its own (permission-pinned) subject while naming `work.<other-server>.rollout`, `state.*.deploy` or `logs.*.>` as the reply, and the plane would publish there from its trusted connection. Not a cross-agent read — the payload is keyed off the request subject, so it is always the requester's own state — but injection into plane-internal subjects. `RespondDesiredState` now requires the reply to sit under `_INBOX_<cn>.` and otherwise drops the request and logs at warn with the server id (once per server: it also names an agent that is older than the plane). `[Phase 4: control-plane-hardening.md §1; proven by core/bus TestSyncReplySubjectMustBeInTheRequestersInbox]`
 - **The plane trusts observed state as a *report*, not a command.** A lying agent can misreport *its own* status (causing the scheduler to redeploy, at worst) but cannot mutate desired state or another server's reconciliation. Desired state is written only by the Core API behind user auth (ADR-005). `[Phase 1]`
 - **Certificate revocation** — a burned agent's cert can be revoked at the plane, cutting it off; enrollment of its replacement is a fresh join token. `[Phase 1: mint short-lived certs; revocation list design]`
 - **Short-lived agent certificates with rotation** (renew over the authenticated channel) bound the window a stolen cert is useful. `[Phase 1: cert TTL decision]`
@@ -186,6 +188,10 @@ Each scenario states the attack, the property that must hold, the controls, and 
 - **Auth on every endpoint by default**; the framework denies unauthenticated access unless a route is explicitly public (login, agent enrollment). `[Phase 1: middleware]`
 - **Object-level authorization** — every resource read/write checks team ownership and role, not just authentication. This is the multi-tenant isolation P2/P3 depend on. `[Phase 1 for the admin/server surface; enforced per-resource as resources land]`
 - **Login rate limiting and session management** (matrix V1, threat-model deliverable): brute-force protection, lockout, session revocation. `[Phase 1: admin login]`
+- **Throttling in two dimensions, keyed by an address the client cannot choose.** Sign-in is counted per client address *and* per account, so one attacker behind a shared proxy cannot lock every account out and a guess spread across a botnet is still bounded by the account's own budget. The client address is the TCP peer unless the peer is inside `CYPHERD_TRUSTED_PROXIES` (a CIDR list, **empty by default**), and then it is the right-most `X-Forwarded-For` hop that is not itself a trusted proxy — so prepending addresses buys nothing. The same limiter guards the email-change request and confirm routes (§5.10). A `429` says how long to wait (`Retry-After` and `retry_after_seconds`), which is honesty, not a hint: the window is fixed and public. `[Phase 4: control-plane-hardening.md §5]`
+- **Correlation ids the client cannot forge.** Every response carries `X-Request-Id`, repeated as `trace_id` in every error body, and every 5xx is logged at error level with it. An inbound `X-Request-Id` is honoured only from a trusted proxy and only when it is a short printable token, so a client can neither file its requests under someone else's id nor inject a newline into a log line. A handler panic becomes the same envelope with `500` rather than a dropped connection. `[Phase 4: control-plane-hardening.md §2]`
+- **Expired sessions are deleted, not merely ignored.** An hourly sweep removes rows past `expires_at`; an unbounded `sessions` table was a slow disk-growth path (§5.9) and a larger pool of hashes for an attacker who reaches the database. `[Phase 4: control-plane-hardening.md §7]`
+- **The panel's own log tail is owner-and-session-only.** `GET /api/v1/panel/logs` names hosts, resources and users, so an API token — which lives in CI — may never read it, and it holds no secrets by construction (rule 20, asserted by a test that seals a value through the API and greps the tail). `[Phase 4: control-plane-hardening.md §4]`
 - **2FA / TOTP** (matrix V1): because panel account takeover is fleet *command* (bounded by §5.1 but still serious), strong account security is not optional. `[Phase 1 admin account supports it; enforcement per matrix]`
 - **Secrets masked in all API responses** (rule 20, Coolify's `ApiSensitiveData` idea) — the API never returns a secret it doesn't have to, and masks by default. `[Phase 1]`
 - **Constant-time comparison** of tokens and secrets (rule 21). `[Phase 1]`
@@ -382,6 +388,39 @@ do not choose, visible and attributable in the UI — but an operator running
 untrusted members should scope the token to a zone they do not mind sharing.
 **Per-team providers are the control if that assumption ever stops holding.**
 
+### 5.13 The panel as an HTTP client: the update check
+
+**Attack.** The plane polls a release feed (`CYPHERD_UPDATE_FEED_URL`, GitHub's
+`releases/latest` by default) every six hours to tell owners a newer version
+exists ([control-plane-hardening.md §3](../features/control-plane-hardening.md)).
+That is an outbound request the plane makes on its own schedule, to a host it
+does not control, and the answer becomes text an owner reads in their inbox.
+Three ways it bites. **(a)** A hostile or hijacked feed can redirect the request
+inward — `http://169.254.169.254/`, `http://127.0.0.1:5432/` — turning the plane
+into an SSRF probe of its own network from inside the trust boundary. **(b)** It
+can answer with an unbounded body and make the plane eat memory. **(c)** The
+strings it returns (a tag, a notes URL) reach an inbox item, so an unvalidated
+one is content injection into an operator-facing surface.
+
+**Property that must hold.** The check is optional, bounded, and can never be
+steered into the plane's own network or made to consume it. Nothing it returns
+is trusted beyond being displayed as text.
+
+**Controls.**
+- **Opt out entirely.** `CYPHERD_UPDATE_CHECK=off` makes no outbound request at all — for an air-gapped install this is the whole answer. A `dev` build also performs no request: there is nothing to compare against.
+- **No redirect into private space.** `http`/`https` only, at most three redirects, and a redirect is refused when its target is loopback, private, link-local, unspecified or multicast — **checked after resolving the hostname**, so a name that points inward is caught as surely as a literal address (`ErrPrivateRedirect`). This is §5.11's webhook-sender posture applied to the one other place the plane dials out.
+- **Bounded in time and size.** A 10 s timeout per request; the body is read through a 256 KiB limit and a larger one is an error (`ErrBodyTooLarge`), never a partial parse.
+- **The failure mode is silence.** A feed that errors leaves the last good answer in place and logs at warn level with the feed *host* only — never the body, which is attacker-controlled text.
+- **Nothing is executed and nothing is fetched twice.** The panel never updates itself (ADR-010); it renders a version, a class (patch/minor/major) and a notes URL. Drafts and pre-releases are ignored. The inbox item is written once per version (dedupe key `panel.update_available:<version>`), so a restart or a hostile feed flapping cannot flood owners.
+- **Only owners hear it**, and only those who have not muted the kind.
+
+**Residual risk.** The feed learns the panel's IP and its version (the
+`User-Agent`), which is the minimum a version check can cost; an operator who
+will not pay it sets `CYPHERD_UPDATE_CHECK=off`. The feed's *content* is
+displayed to owners as text — a hijacked feed can therefore advertise a
+plausible-looking version and a notes URL that is not ours. It cannot make the
+panel fetch, install or run anything, which is the property that matters.
+
 ## 6. Cross-cutting controls (apply everywhere)
 
 - **Secrets never in logs, errors, or API responses** — mask by default (ENGINEERING rule 20). Every log line carries resource IDs, never secret values (rule 4).
@@ -419,16 +458,17 @@ These are the concrete, checkable requirements the Phase 1 handshake code must s
 | Scenario | Primary control | Anchored in |
 |---|---|---|
 | §5.1 Plane compromise → fleet | No stored server creds; no exec verb; secrets encrypted outside updater | ADR-002, ADR-005, rule 20 |
-| §5.2 Agent compromise → lateral | Per-identity subject authz; state-as-report; cert revocation | ADR-002, ADR-003, rule 12 |
+| §5.2 Agent compromise → lateral | Per-identity subject authz **including reply inboxes** (`_INBOX_<cn>.>`) **and reply-subject validation on the plane's answer**; state-as-report; cert revocation | ADR-002, ADR-003, rule 12, control-plane-hardening.md §1 |
 | §5.3 Join-token leak | Single-use, short-TTL, observable, constant-time check | ADR-002, rules 21–22 |
 | §5.4 Channel MITM/replay | mTLS 1.3 pinned CA; outbound-only; idempotency | ADR-002, ADR-003, rule 23 |
 | §5.5 Malicious template | Declarative data; CI gate; consent for privileged constructs; generated secrets | project-structure, dev/ci, ADR-007 (pending) |
 | §5.6 Fork-PR secret exfil | Env-scoped preview secrets; untrusted-source policy; TTL | glossary (previews), Phase 3 spec |
 | §5.7 Build/exec | Builds off the plane; resource caps; terminal audited & authorized | vision NN-5, ADR-001, ADR-002 |
-| §5.8 Web/API | No SSR framework; auth+object-authz default; rate limit; masking | ADR-001, rules 20–21 |
+| §5.8 Web/API | No SSR framework; auth+object-authz default; two-dimension rate limit with trusted-proxy client addressing; unforgeable trace ids; expired-session purge; owner+session-only log tail; masking | ADR-001, rules 20–21, control-plane-hardening.md §§2, 4, 5, 7 |
 | §5.9 Disk exhaustion/self-DoS | Desired-state GC; self-headroom guard; bounded retention; alerts | ADR-003, ADR-005, matrix V1 |
 | §5.10 Mailbox-as-identity | Two factors to move an address; old address always notified; single-use hashed token; sessionOnly + rate limited | panel-mail.md §4–5, rules 20–21 |
 | §5.11 Outbound webhook egress | Metadata-only payload; HMAC over raw bytes; sealed secret; no redirects; project-scoped authz; bounded retries | outbound-webhooks.md §4, §6, rule 20 |
+| §5.13 Update check (outbound HTTP) | Opt-out; no private-range redirects (post-resolution); bounded body and timeout; last-good-on-failure; once-per-version inbox item; never self-updates | control-plane-hardening.md §3, ADR-010 |
 | §5.12 DNS control / ownership | Sealed token; only records we created; derived content; verification recomputed not stored; panel-admin gated; request host pinned and path segments validated | dns-automation.md §3.1, §4.1, §4.4, rule 20 |
 
 ---

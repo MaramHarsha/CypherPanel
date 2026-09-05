@@ -20,6 +20,7 @@ import (
 // satisfies it).
 type Store interface {
 	GetEnvironment(ctx context.Context, id string) (domain.Environment, error)
+	GetProject(ctx context.Context, id string) (domain.Project, error)
 	ListEnabledNotifiersForEvent(ctx context.Context, projectID, eventType string) ([]domain.Notifier, error)
 }
 
@@ -118,10 +119,18 @@ func (m *Manager) dispatch(ctx context.Context, envID string, ev domain.NotifyEv
 
 		env, err := m.store.GetEnvironment(c, envID)
 		if err != nil {
-			m.log.Error("notify: resolving project", "env_id", envID, "error", err)
+			m.log.Error("notify: resolving environment", "env_id", envID, "error", err)
 			return
 		}
-		ev.Project, ev.ProjectID = env.Name, env.ProjectID
+		// Both are resolved so Project carries the project's name — the
+		// environment's used to land there, which webhooks.resolve did not
+		// inherit (outbound-webhooks.md §4; control-plane-hardening.md §8).
+		proj, err := m.store.GetProject(c, env.ProjectID)
+		if err != nil {
+			m.log.Error("notify: resolving project", "env_id", envID, "project_id", env.ProjectID, "error", err)
+			return
+		}
+		ev.Project, ev.ProjectID = proj.Name, proj.ID
 
 		// The inbox write comes FIRST, before the notifier lookup — which
 		// returns early on error. Recording first is what makes the bell work

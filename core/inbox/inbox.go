@@ -43,7 +43,9 @@ func invalid(msg string) error { return &ValidationError{Msg: msg} }
 // satisfies it — ENGINEERING rule 6).
 type Store interface {
 	ListInboxRecipients(ctx context.Context, projectID, kind string) ([]string, error)
+	ListPanelInboxRecipients(ctx context.Context, kind string) ([]string, error)
 	InsertInboxItems(ctx context.Context, f store.InboxFanout) error
+	InsertPanelInboxItems(ctx context.Context, f store.InboxFanout) error
 	UpsertInboxDigests(ctx context.Context, f store.InboxFanout) error
 	BumpInboxDigestTotals(ctx context.Context, dedupeKey, focusID string) error
 	PruneInboxItems(ctx context.Context, userIDs []string, keep int64) error
@@ -111,6 +113,70 @@ func (s *Service) Record(ctx context.Context, ev domain.NotifyEvent) error {
 		return fmt.Errorf("inbox: pruning: %w", err)
 	}
 	return nil
+}
+
+// PanelUpdate is what the update check tells the inbox when it first sees a
+// release newer than the running one (control-plane-hardening.md §3).
+type PanelUpdate struct {
+	Current  string // the running version, e.g. v0.4.0
+	Latest   string // the newer release, e.g. v0.5.0
+	Kind     string // patch | minor | major
+	NotesURL string // where to read about it; carried in the body, never as a link
+}
+
+// RecordPanelUpdate writes one panel.update_available item to every panel
+// owner and team owner who has not muted the kind — once per version: the
+// dedupe key is the version, so seeing the same release again (a restart, the
+// next poll) writes nothing. Severity info, but immediate rather than digested:
+// a rollup of "releases seen today" would say nothing useful. The item has no
+// project and no link — there is no in-panel changelog route yet — so the
+// notes URL rides in the body.
+func (s *Service) RecordPanelUpdate(ctx context.Context, u PanelUpdate) error {
+	if u.Latest == "" {
+		return nil
+	}
+	recipients, err := s.store.ListPanelInboxRecipients(ctx, domain.InboxKindPanelUpdateAvailable)
+	if err != nil {
+		return fmt.Errorf("inbox: resolving panel recipients: %w", err)
+	}
+	if len(recipients) == 0 {
+		return nil
+	}
+	f := store.InboxFanout{
+		IDs:       mintIDs(len(recipients)),
+		UserIDs:   recipients,
+		Kind:      domain.InboxKindPanelUpdateAvailable,
+		Severity:  string(domain.NotifyInfo),
+		Title:     fmt.Sprintf("CypherPanel %s is available", u.Latest),
+		Body:      clampBody(panelUpdateBody(u)),
+		DedupeKey: domain.InboxKindPanelUpdateAvailable + ":" + u.Latest,
+	}
+	if err := s.store.InsertPanelInboxItems(ctx, f); err != nil {
+		return fmt.Errorf("inbox: inserting panel items: %w", err)
+	}
+	if err := s.store.PruneInboxItems(ctx, recipients, domain.InboxRetention); err != nil {
+		return fmt.Errorf("inbox: pruning: %w", err)
+	}
+	return nil
+}
+
+// panelUpdateBody composes the update item's body: what you run, what the
+// delta means (canvas 16a's badge legend, in words), and where the notes are.
+// Composed here so a CLI prints the same sentence the drawer does.
+func panelUpdateBody(u PanelUpdate) string {
+	meaning := map[string]string{
+		"patch": "fixes only — update anytime",
+		"minor": "new features — read the notes",
+		"major": "breaking changes — plan a window",
+	}[u.Kind]
+	body := "You're on " + u.Current + "."
+	if meaning != "" {
+		body += " " + strings.ToUpper(u.Kind) + " release: " + meaning + "."
+	}
+	if u.NotesURL != "" {
+		body += "\nRelease notes: " + u.NotesURL
+	}
+	return body
 }
 
 // recordImmediate writes one row per recipient and then raises the day's digest

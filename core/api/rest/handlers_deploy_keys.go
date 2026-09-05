@@ -3,6 +3,7 @@ package rest
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/MaramHarsha/cypherpanel/core/deploykeys"
@@ -92,6 +93,19 @@ func (a *API) handleGetDeployKey(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toDeployKeyDTO(dk))
 }
 
+// deployKeyInUseResponse is the Error envelope plus the blockers — additive,
+// so a client that only reads `error` is unaffected (ENGINEERING rule 17).
+type deployKeyInUseResponse struct {
+	Error        string             `json:"error"`
+	TraceID      string             `json:"trace_id,omitempty"`
+	Applications []deployKeyBlocker `json:"applications"`
+}
+
+type deployKeyBlocker struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 func (a *API) handleDeleteDeployKey(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
 	if !a.requirePanelRole(w, user, domain.RoleAdmin) {
@@ -102,7 +116,10 @@ func (a *API) handleDeleteDeployKey(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, store.ErrNotFound):
 			writeError(w, http.StatusNotFound, "deploy key not found")
 		case errors.Is(err, store.ErrInUse):
-			writeError(w, http.StatusConflict, "deploy key is in use by one or more applications")
+			// Name the blockers: "in use" without saying by what leaves the
+			// operator clicking through every application
+			// (deploy-key-private-repos.md §3).
+			writeDeployKeyInUse(w, err)
 		default:
 			a.deps.Log.Error("deleting deploy key", "error", err)
 			writeError(w, http.StatusInternalServerError, "could not delete deploy key")
@@ -110,4 +127,25 @@ func (a *API) handleDeleteDeployKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// writeDeployKeyInUse answers 409 listing the applications that still
+// reference the key, so the operator can go detach them.
+func writeDeployKeyInUse(w http.ResponseWriter, err error) {
+	var inUse *deploykeys.InUseError
+	if !errors.As(err, &inUse) || len(inUse.Applications) == 0 {
+		writeError(w, http.StatusConflict, "deploy key is in use by one or more applications")
+		return
+	}
+	apps := make([]deployKeyBlocker, 0, len(inUse.Applications))
+	names := make([]string, 0, len(inUse.Applications))
+	for _, app := range inUse.Applications {
+		apps = append(apps, deployKeyBlocker{ID: app.ID, Name: app.Name})
+		names = append(names, app.Name)
+	}
+	writeJSON(w, http.StatusConflict, deployKeyInUseResponse{
+		Error:        "deploy key is in use by " + strings.Join(names, ", "),
+		TraceID:      w.Header().Get(TraceIDHeader),
+		Applications: apps,
+	})
 }

@@ -10,6 +10,7 @@ package subjects
 //	state.<server-id>.*  — agent status/heartbeat/deploy events + sync requests
 //	work.<server-id>.*   — work items to agents (rollout/remove/build)
 //	logs.<server-id>.*   — build/runtime log streams
+//	_INBOX_<server-id>.* — the agent's own request/reply inboxes (InboxPrefix)
 //
 // Every per-server subject lives under its server's segment, so one wildcard
 // per family covers a server's entire scope — the authorization grants in
@@ -109,6 +110,21 @@ func Sync(serverID string) string { return StatePrefix + serverID + ".sync" }
 // TaskState is where an agent reports ScheduledTaskRun observations
 // (scheduled-tasks.md §3), per-server like the database backup/restore states.
 func TaskState(serverID string) string { return StatePrefix + serverID + ".task" }
+
+// InboxPrefix is the reply-inbox prefix an agent MUST configure on its NATS
+// connection (nats.CustomInboxPrefix). Request/reply — the desired-state sync
+// and every JetStream API call — answers on a subject under this prefix, and
+// the bus grants an agent Subscribe on exactly its own inbox scope
+// (InboxForServer). With the default shared "_INBOX" prefix every agent could
+// read every other agent's sync reply, which carries plaintext env
+// (threat-model §5.2; control-plane-hardening.md §1). The prefix carries no
+// dot so it is one subject token, and it is built here on both sides so the
+// grant and the client can never drift (rule 14).
+func InboxPrefix(serverID string) string { return "_INBOX_" + serverID }
+
+// InboxForServer is the wildcard covering one agent's reply inboxes — its
+// Subscribe grant for request/reply.
+func InboxForServer(serverID string) string { return InboxPrefix(serverID) + ".>" }
 
 // WorkConsumer names the durable JetStream consumer holding one server's
 // work-item cursor. The plane creates it (agents only read from it); the name

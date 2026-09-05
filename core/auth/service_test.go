@@ -3,6 +3,9 @@ package auth
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
+	"strconv"
 	"testing"
 	"time"
 
@@ -23,6 +26,8 @@ type fakeStore struct {
 	avatars           map[string]domain.Avatar      // userID → profile photo
 	emailChanges      map[string]domain.EmailChange // pending address moves
 	emailChangeHashes map[string][]byte             // change id → token hash
+	expiries          map[string]time.Time          // token-hash → session expiry
+	purgeErr          error                         // DeleteExpiredSessions failure, when set
 }
 
 func newFakeStore() *fakeStore {
@@ -312,8 +317,12 @@ func (f *fakeStore) UpdateUserPassword(_ context.Context, userID, passwordHash s
 	return store.ErrNotFound
 }
 
-func (f *fakeStore) CreateSession(_ context.Context, _, userID string, tokenHash []byte, _ time.Time) error {
+func (f *fakeStore) CreateSession(_ context.Context, _, userID string, tokenHash []byte, expiresAt time.Time) error {
 	f.sessions[string(tokenHash)] = userID
+	if f.expiries == nil {
+		f.expiries = map[string]time.Time{}
+	}
+	f.expiries[string(tokenHash)] = expiresAt
 	return nil
 }
 
@@ -333,6 +342,23 @@ func (f *fakeStore) UserForSessionToken(_ context.Context, tokenHash []byte) (do
 func (f *fakeStore) DeleteSession(_ context.Context, tokenHash []byte) error {
 	delete(f.sessions, string(tokenHash))
 	return nil
+}
+
+// DeleteExpiredSessions drops the sessions whose recorded expiry is at or
+// before the cutoff (expiries maps token-hash → expiry; unrecorded = never).
+func (f *fakeStore) DeleteExpiredSessions(_ context.Context, before time.Time) (int64, error) {
+	if f.purgeErr != nil {
+		return 0, f.purgeErr
+	}
+	var n int64
+	for hash, exp := range f.expiries {
+		if !exp.After(before) {
+			delete(f.sessions, hash)
+			delete(f.expiries, hash)
+			n++
+		}
+	}
+	return n, nil
 }
 
 func newAuthWithUser(t *testing.T, email, password string) (*Authenticator, *fakeStore) {
@@ -432,5 +458,156 @@ func TestLogoutRevokesSession(t *testing.T) {
 	}
 	if _, err := a.Authenticate(ctx, token); !errors.Is(err, ErrInvalidSession) {
 		t.Fatalf("expected ErrInvalidSession after logout, got %v", err)
+	}
+}
+
+// TestLoginThrottleCarriesRetryAfter: the throttled answer says how long, and
+// still matches the sentinel callers already map to 429.
+func TestLoginThrottleCarriesRetryAfter(t *testing.T) {
+	fs := newFakeStore()
+	hash, _ := HashPassword("right")
+	fs.users["sam@example.com"] = domain.User{ID: "usr_1", Email: "sam@example.com", PasswordHash: hash}
+	now := time.Now()
+	l := NewLimiter(2, time.Minute)
+	l.now = func() time.Time { return now }
+	a := NewAuthenticator(fs, fakeBox{}, l, time.Hour)
+
+	for range 2 {
+		_, _, _ = a.Login(context.Background(), "sam@example.com", "wrong", "", "ip1")
+	}
+	_, _, err := a.Login(context.Background(), "sam@example.com", "wrong", "", "ip1")
+	var rl *RateLimitedError
+	if !errors.As(err, &rl) || !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("err = %v, want a *RateLimitedError matching ErrRateLimited", err)
+	}
+	if rl.RetryAfter != time.Minute || rl.RetryAfterSeconds() != 60 {
+		t.Fatalf("RetryAfter = %v (%ds), want the full window from the oldest failure", rl.RetryAfter, rl.RetryAfterSeconds())
+	}
+}
+
+// TestLoginThrottlesPerAccountAcrossAddresses: a guess spread over many
+// addresses is bounded by the account's own budget (twice the address one by
+// default), while another account — and the same account from a fresh address
+// once its budget resets — is untouched. This is what stops a botnet from
+// enjoying five free guesses per address (control-plane-hardening.md §5).
+func TestLoginThrottlesPerAccountAcrossAddresses(t *testing.T) {
+	fs := newFakeStore()
+	hash, _ := HashPassword("right")
+	fs.users["sam@example.com"] = domain.User{ID: "usr_1", Email: "sam@example.com", PasswordHash: hash}
+	fs.users["ann@example.com"] = domain.User{ID: "usr_2", Email: "ann@example.com", PasswordHash: hash}
+	a := NewAuthenticator(fs, fakeBox{}, NewLimiter(3, time.Minute), time.Hour)
+	ctx := context.Background()
+
+	// Six failures from six addresses: each address is within its own budget
+	// of three, yet the account's budget of six is spent. Case-folded, so a
+	// seventh guess with different capitalisation shares the same budget.
+	for i := range 6 {
+		if _, _, err := a.Login(ctx, "Sam@Example.com", "wrong", "", "ip"+strconv.Itoa(i)); !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatalf("attempt %d: err = %v, want ErrInvalidCredentials", i, err)
+		}
+	}
+	if _, _, err := a.Login(ctx, "sam@example.com", "right", "", "ip-fresh"); !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("seventh attempt from a fresh address: err = %v, want ErrRateLimited (account budget spent)", err)
+	}
+	// Another account behind the same proxy address is not locked out.
+	if _, _, err := a.Login(ctx, "ann@example.com", "right", "", "ip0"); err != nil {
+		t.Fatalf("another account from a used address: %v, want success", err)
+	}
+}
+
+// TestLoginPerAddressThrottleSparesOtherAccounts: exhausting one address does
+// not reach an account signing in from elsewhere.
+func TestLoginPerAddressThrottleSparesOtherAccounts(t *testing.T) {
+	fs := newFakeStore()
+	hash, _ := HashPassword("right")
+	fs.users["sam@example.com"] = domain.User{ID: "usr_1", Email: "sam@example.com", PasswordHash: hash}
+	fs.users["ann@example.com"] = domain.User{ID: "usr_2", Email: "ann@example.com", PasswordHash: hash}
+	a := NewAuthenticator(fs, fakeBox{}, NewLimiter(2, time.Minute), time.Hour)
+	ctx := context.Background()
+	for range 2 {
+		_, _, _ = a.Login(ctx, "nobody@example.com", "wrong", "", "attacker")
+	}
+	if _, _, err := a.Login(ctx, "sam@example.com", "right", "", "attacker"); !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("from the exhausted address: err = %v, want ErrRateLimited", err)
+	}
+	if _, _, err := a.Login(ctx, "sam@example.com", "right", "", "home"); err != nil {
+		t.Fatalf("same account from another address: %v, want success", err)
+	}
+	if _, _, err := a.Login(ctx, "ann@example.com", "right", "", "home"); err != nil {
+		t.Fatalf("another account from another address: %v, want success", err)
+	}
+}
+
+// TestPurgeExpiredSessionsUsesTheInjectedClock: rows at or before the clock go,
+// later ones stay, and the purge reports the count (control-plane-hardening.md §7).
+func TestPurgeExpiredSessionsUsesTheInjectedClock(t *testing.T) {
+	fs := newFakeStore()
+	hash, _ := HashPassword("right")
+	fs.users["sam@example.com"] = domain.User{ID: "usr_1", Email: "sam@example.com", PasswordHash: hash}
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	a := NewAuthenticator(fs, fakeBox{}, nil, time.Hour, WithClock(func() time.Time { return now }))
+	ctx := context.Background()
+
+	early, _, err := a.Login(ctx, "sam@example.com", "right", "", "ip1")
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	now = now.Add(30 * time.Minute)
+	late, _, err := a.Login(ctx, "sam@example.com", "right", "", "ip1")
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	now = now.Add(31 * time.Minute) // the first session expired a minute ago
+	n, err := a.PurgeExpiredSessions(ctx)
+	if err != nil || n != 1 {
+		t.Fatalf("PurgeExpiredSessions = %d, %v; want 1, nil", n, err)
+	}
+	if _, err := a.Authenticate(ctx, early); !errors.Is(err, ErrInvalidSession) {
+		t.Fatalf("expired session still authenticates: %v", err)
+	}
+	if _, err := a.Authenticate(ctx, late); err != nil {
+		t.Fatalf("the live session was purged: %v", err)
+	}
+	fs.purgeErr = errors.New("db down")
+	if _, err := a.PurgeExpiredSessions(ctx); err == nil {
+		t.Fatal("a store failure was swallowed")
+	}
+}
+
+// TestRunSessionPurgeStopsWithItsContext: the sweep goroutine ticks and returns
+// on cancellation (ENGINEERING rule 7: every goroutine has an owner).
+func TestRunSessionPurgeStopsWithItsContext(t *testing.T) {
+	fs := newFakeStore()
+	hash, _ := HashPassword("right")
+	fs.users["sam@example.com"] = domain.User{ID: "usr_1", Email: "sam@example.com", PasswordHash: hash}
+	now := time.Now()
+	a := NewAuthenticator(fs, fakeBox{}, nil, time.Hour, WithClock(func() time.Time { return now }))
+	ctx, cancel := context.WithCancel(context.Background())
+	token, _, err := a.Login(ctx, "sam@example.com", "right", "", "ip1")
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	now = now.Add(2 * time.Hour)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		a.RunSessionPurge(ctx, 5*time.Millisecond, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := a.Authenticate(context.Background(), token); errors.Is(err, ErrInvalidSession) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the purge never ran")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunSessionPurge did not return after cancellation")
 	}
 }

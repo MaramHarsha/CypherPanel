@@ -8,11 +8,12 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
-	"net"
 	"net/http"
+	"net/netip"
+	"strconv"
 	"strings"
-	"time"
 
 	"github.com/MaramHarsha/cypherpanel/core/api/rest/webui"
 	"github.com/MaramHarsha/cypherpanel/core/applications"
@@ -231,7 +232,17 @@ type Deps struct {
 	NATSURL         string // advertised data-plane URL
 	Logs            LogSubscriber
 	ConsoleURL      string // advertised HTTP base URL (installer + CA fetch)
-	Log             *slog.Logger
+	// TrustedProxies are the peer CIDRs allowed to speak for a client through
+	// X-Forwarded-For / X-Real-IP / X-Request-Id. Empty means nothing is
+	// trusted and the TCP peer is always the client (§5).
+	TrustedProxies []netip.Prefix
+	// Panel is the build the process is running and what the update check has
+	// found; nil serves 503 on GET /panel/version (§3).
+	Panel PanelInfo
+	// PanelLogs is the in-memory tail of the panel's own log; nil serves 503
+	// on GET /panel/logs (§4).
+	PanelLogs PanelLogTail
+	Log       *slog.Logger
 }
 
 // API holds the HTTP handlers and their dependencies.
@@ -373,6 +384,14 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/panel/mail", a.authed(a.handleDeletePanelMail))
 	mux.HandleFunc("POST /api/v1/panel/mail/test", a.authed(a.handleTestPanelMail))
 
+	// Panel build, update check and diagnostics (control-plane-hardening.md
+	// §§3–4). The version is readable by any authenticated principal — the
+	// report-issue dialog needs it for every user; the log tail is owner-only
+	// and session-only, because it names hosts and resources and an API token
+	// must never be able to lift it.
+	mux.HandleFunc("GET /api/v1/panel/version", a.authed(a.handleGetPanelVersion))
+	mux.HandleFunc("GET /api/v1/panel/logs", a.sessionOnly(a.handleGetPanelLogs))
+
 	// DNS automation (dns-automation.md §5). Panel-scoped like mail: a
 	// Cloudflare account is an operator-level asset, not a team's.
 	mux.HandleFunc("GET /api/v1/panel/dns", a.authed(a.handleGetPanelDNS))
@@ -485,7 +504,11 @@ func (a *API) Handler() http.Handler {
 		app.ServeHTTP(w, r)
 	}))
 
-	return a.recoverer(a.securityHeaders(a.logRequests(mux)))
+	// Outermost first: every response gets a trace id before anything can
+	// fail, the log line sees the final status (a recovered panic included),
+	// and the recoverer sits innermost so it can still write the envelope
+	// (control-plane-hardening.md §2).
+	return a.requestID(a.logRequests(a.securityHeaders(a.recoverer(mux))))
 }
 
 // ─── middleware ─────────────────────────────────────────────────────────────
@@ -495,6 +518,7 @@ type ctxKey int
 const (
 	principalKey ctxKey = iota
 	rawTokenKey
+	traceIDKey
 )
 
 // authed wraps a handler so it runs only for an authenticated caller, whose
@@ -568,62 +592,6 @@ func requiredAbility(r *http.Request) domain.Ability {
 	return domain.AbilityWrite
 }
 
-func (a *API) logRequests(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(sw, r)
-		a.deps.Log.Info("http request",
-			"method", r.Method,
-			"path", r.URL.Path,
-			"status", sw.status,
-			"duration_ms", time.Since(start).Milliseconds(),
-		)
-	})
-}
-
-func (a *API) securityHeaders(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h := w.Header()
-		h.Set("X-Content-Type-Options", "nosniff")
-		h.Set("X-Frame-Options", "DENY")
-		h.Set("Referrer-Policy", "no-referrer")
-		next.ServeHTTP(w, r)
-	})
-}
-
-func (a *API) recoverer(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer func() {
-			if rec := recover(); rec != nil {
-				a.deps.Log.Error("panic in handler", "path", r.URL.Path, "panic", rec)
-				writeError(w, http.StatusInternalServerError, "internal error")
-			}
-		}()
-		next.ServeHTTP(w, r)
-	})
-}
-
-type statusWriter struct {
-	http.ResponseWriter
-	status int
-}
-
-func (w *statusWriter) WriteHeader(code int) {
-	w.status = code
-	w.ResponseWriter.WriteHeader(code)
-}
-
-// Flush forwards to the underlying writer so the SSE log endpoints can stream:
-// embedding http.ResponseWriter does not promote Flush (it is not part of that
-// interface), so without this the http.Flusher assertion in a streaming
-// handler would fail and event streaming would be silently unavailable.
-func (w *statusWriter) Flush() {
-	if f, ok := w.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
-	}
-}
-
 // ─── helpers ────────────────────────────────────────────────────────────────
 
 // userFromContext returns the authenticated caller's user record. Handlers that
@@ -656,14 +624,6 @@ func bearerToken(r *http.Request) (string, bool) {
 	return h[len(prefix):], true
 }
 
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
-
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
@@ -672,12 +632,40 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	}
 }
 
+// errorBody is the one fault envelope every non-2xx answer uses. TraceID is
+// the response's X-Request-Id, repeated in the body so a screenshot of a 500
+// carries it (canvas 13s); RetryAfterSeconds appears only on a 429, where it
+// is the countdown the sign-in screen shows (canvas 13t). Both are optional —
+// rule 17: additive only.
 type errorBody struct {
-	Error string `json:"error"`
+	Error             string `json:"error"`
+	TraceID           string `json:"trace_id,omitempty"`
+	RetryAfterSeconds int    `json:"retry_after_seconds,omitempty"`
 }
 
+// writeError answers with the fault envelope, carrying the trace id the
+// request-id middleware already stamped on the response headers.
 func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, errorBody{Error: msg})
+	writeJSON(w, status, errorBody{Error: msg, TraceID: w.Header().Get(TraceIDHeader)})
+}
+
+// rateLimited answers 429 with how long to wait — the standard Retry-After
+// header and the same number in the body, so a client counts down instead of
+// guessing (control-plane-hardening.md §5). The delay comes from
+// *auth.RateLimitedError; an error that carries none is one second, never zero,
+// because "wait 0" is not a throttle.
+func rateLimited(w http.ResponseWriter, err error, msg string) {
+	secs := 1
+	var rl *auth.RateLimitedError
+	if errors.As(err, &rl) {
+		secs = rl.RetryAfterSeconds()
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	writeJSON(w, http.StatusTooManyRequests, errorBody{
+		Error:             msg,
+		TraceID:           w.Header().Get(TraceIDHeader),
+		RetryAfterSeconds: secs,
+	})
 }
 
 func decodeJSON(r *http.Request, dst any) error {

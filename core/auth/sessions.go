@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"time"
 
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 )
@@ -48,4 +50,39 @@ func (a *Authenticator) RevokeOtherSessions(ctx context.Context, userID, rawToke
 		return 0, fmt.Errorf("auth: revoking other sessions: %w", err)
 	}
 	return n, nil
+}
+
+// PurgeExpiredSessions deletes every session whose expiry is at or before the
+// authenticator's clock and reports how many went (control-plane-hardening.md
+// §7). An expired row was already invisible to every lookup; purging it is
+// what stops the table growing by one row per sign-in forever.
+func (a *Authenticator) PurgeExpiredSessions(ctx context.Context) (int64, error) {
+	n, err := a.store.DeleteExpiredSessions(ctx, a.now())
+	if err != nil {
+		return 0, fmt.Errorf("auth: purging expired sessions: %w", err)
+	}
+	return n, nil
+}
+
+// RunSessionPurge purges on each tick until ctx is done. It owns its ticker's
+// lifecycle (ENGINEERING rule 7) and returns when ctx is cancelled; a failed
+// sweep is logged and the next tick tries again.
+func (a *Authenticator) RunSessionPurge(ctx context.Context, interval time.Duration, log *slog.Logger) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			n, err := a.PurgeExpiredSessions(ctx)
+			if err != nil {
+				log.Error("expired session purge failed", "error", err)
+				continue
+			}
+			if n > 0 {
+				log.Info("purged expired sessions", "count", n)
+			}
+		}
+	}
 }

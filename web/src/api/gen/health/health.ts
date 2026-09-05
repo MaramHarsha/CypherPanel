@@ -3,6 +3,8 @@
  * Do not edit manually.
  * CypherPanel API
  * Operator-facing control-plane API covering Phases 1–3: authentication and teams/roles, the server lifecycle, projects/environments, applications and the deploy pipeline, managed databases with S3 backups/restore, preview environments, notifications, and scheduled tasks. Authentication is a bearer session token from /api/v1/auth/login; the GitHub webhook authenticates by per-application HMAC instead. Every project-scoped route is authorized by team membership (a non-member sees 404, insufficient rank 403).
+ *
+ * Every response — success, error and SSE stream alike — carries an `X-Request-Id` header (`components/headers/RequestId`), and every JSON error body repeats it as `trace_id`. It is the value to quote in a bug report and the key to search for in `GET /api/v1/panel/logs`. Individual responses reference the header only where a generated client benefits; it is present on all of them.
  * OpenAPI spec version: 0.3.0
  */
 import {
@@ -258,7 +260,7 @@ export const getStreamEventsUrl = () => {
 }
 
 /**
- * An SSE stream of "invalidate" events — the caller fetches current state via the API on connect, then refetches a resource when this stream names it as changed (ui-principles §10). Scoped to the caller's visible resources (a panel owner sees all). Two event types: `connected` (once, empty) and `invalidate` (data: {resource, id}). The response media type is text/event-stream.
+ * An SSE stream of "invalidate" events — the caller fetches current state via the API on connect, then refetches a resource when this stream names it as changed (ui-principles §10). Scoped to the caller's visible resources (a panel owner sees all). Two event types: `connected` (once, carrying `{"trace_id": "..."}` — the same correlation id the response headers give, so a misbehaving stream is diagnosable) and `invalidate` (data: {resource, id}). The response media type is text/event-stream.
  * @summary Live resource-change stream (Server-Sent Events)
  */
 export const streamEvents = async ( options?: RequestInit): Promise<string> => {

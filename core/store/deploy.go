@@ -590,6 +590,20 @@ func (s *Store) ListDeployKeys(ctx context.Context) ([]domain.DeployKey, error) 
 	return out, nil
 }
 
+// ListApplicationsByDeployKey names the applications still referencing a
+// deploy key — the blockers a refused delete reports.
+func (s *Store) ListApplicationsByDeployKey(ctx context.Context, keyID string) ([]domain.ApplicationRef, error) {
+	rows, err := s.q.ListApplicationsByDeployKey(ctx, pgtype.Text{String: keyID, Valid: true})
+	if err != nil {
+		return nil, fmt.Errorf("store: listing applications by deploy key: %w", err)
+	}
+	out := make([]domain.ApplicationRef, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, domain.ApplicationRef{ID: r.ID, Name: r.Name})
+	}
+	return out, nil
+}
+
 func (s *Store) DeleteDeployKey(ctx context.Context, id string) error {
 	if err := s.q.DeleteDeployKey(ctx, id); err != nil {
 		return wrapDelete("deleting deploy key", err)

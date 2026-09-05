@@ -331,7 +331,10 @@ func TestStoreTeamsAndAuthz(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 
-	tm, err := s.CreateTeam(ctx, ids.New(ids.PrefixTeam), "authz-team")
+	// The name is unique in the schema and this suite migrates in place, so a
+	// fixed one made the second run against the same database fail
+	// ("already exists") — the other team tests here already suffix theirs.
+	tm, err := s.CreateTeam(ctx, ids.New(ids.PrefixTeam), "authz-team-"+ids.Secret()[:8])
 	if err != nil {
 		t.Fatalf("CreateTeam: %v", err)
 	}

@@ -314,10 +314,33 @@ func (a *API) handleDatabaseConnectionInfo(w http.ResponseWriter, r *http.Reques
 		PasswordHint: "[use the password from create or reset-password]",
 	}
 	if db.ExposePort != nil {
-		resp.Host = db.ServerID // The operator needs the server's address
+		// The operator needs an address they can dial, which is the server's
+		// public address (what DNS for its applications points at), falling
+		// back to the hostname the agent reported. The server id was never an
+		// address at all (control-plane-hardening.md §8).
+		resp.Host = a.serverAddress(r.Context(), db.ServerID)
 		resp.Port = *db.ExposePort
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// serverAddress is the address an operator dials to reach a server: the
+// public address they set for DNS, else the hostname the agent reported. Empty
+// when neither is known — an honest "we do not know where this is" rather than
+// a plausible value that is not an address.
+func (a *API) serverAddress(ctx context.Context, serverID string) string {
+	if a.deps.Servers == nil {
+		return ""
+	}
+	srv, err := a.deps.Servers.Get(ctx, serverID)
+	if err != nil {
+		a.deps.Log.Error("resolving server address for connection info", "server_id", serverID, "error", err)
+		return ""
+	}
+	if srv.PublicAddress != "" {
+		return srv.PublicAddress
+	}
+	return srv.Hostname
 }
 
 // defaultPort returns the well-known port for a database engine.

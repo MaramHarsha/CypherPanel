@@ -11,6 +11,33 @@
 // revocation for connections that were already open. The control plane's own
 // connection is in-process (no TLS, never on the network).
 //
+// Subject contract (pkg/subjects; ENGINEERING rule 14). Each agent identity
+// cn is granted exactly:
+//
+//	publish   state.<cn>.>  logs.<cn>.>  and the JS API subjects of its own
+//	          work consumer (INFO, MSG.NEXT, ACK)
+//	subscribe work.<cn>.>   _INBOX_<cn>.>
+//
+// The inbox grant is per identity because the sync reply (RespondDesiredState)
+// carries the resolved DesiredState — plaintext env — to the requester's reply
+// subject, and core NATS delivers a publication to EVERY matching
+// subscription. A shared "_INBOX.>" grant let one agent read another's
+// secrets (threat-model §5.2; control-plane-hardening.md §1). Agents therefore
+// connect with nats.CustomInboxPrefix(subjects.InboxPrefix(cn)); an agent
+// built before that change keeps the default "_INBOX" prefix, which is no
+// longer granted, so every request/reply it makes — the JetStream
+// work-consumer bind first, then the desired-state sync — is answered onto a
+// subject it may not subscribe to and times out. Such an agent must be
+// upgraded with the plane (docs/dev/deployment.md, §Upgrades).
+//
+// The plane's own in-process client keeps the default prefix and default
+// (unrestricted) permissions — which is why RespondDesiredState validates the
+// requester's reply subject against that same per-identity scope before it
+// publishes anything: NATS does not permission-check a publisher's reply
+// subject under plain pub/sub allow lists, so the plane, not the server, is
+// what keeps an agent from aiming a trusted publication at an arbitrary
+// subject.
+//
 // Storage: the STATE stream is memory-backed with a short max age —
 // heartbeats and status reports are transient and re-sent, and this avoids
 // the continuous disk write-churn the Dokploy baseline measured at 22.76 GiB
@@ -30,6 +57,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	natsserver "github.com/nats-io/nats-server/v2/server"
@@ -107,9 +135,15 @@ type Options struct {
 
 // Bus owns the embedded NATS server and the control plane's in-process client.
 type Bus struct {
-	ns *natsserver.Server
-	nc *nats.Conn
-	js jetstream.JetStream
+	ns  *natsserver.Server
+	nc  *nats.Conn
+	js  jetstream.JetStream
+	log *slog.Logger
+	// staleReplies remembers which server ids have already been reported for
+	// an out-of-scope sync reply subject, so warnOutOfScopeReply logs once per
+	// server. Bounded by the enrolled fleet: the id is pinned by the client
+	// certificate, so a caller cannot grow this map.
+	staleReplies sync.Map
 }
 
 // Start boots the embedded NATS server, connects the plane in-process, and
@@ -287,7 +321,7 @@ func Start(ctx context.Context, opts Options) (*Bus, error) {
 		return nil, fmt.Errorf("bus: creating RUNTIME_LOGS stream: %w", err)
 	}
 
-	return &Bus{ns: ns, nc: nc, js: js}, nil
+	return &Bus{ns: ns, nc: nc, js: js, log: opts.Log}, nil
 }
 
 // SubscribeLogs delivers the retained history of one build-log subject and
@@ -449,13 +483,31 @@ func (b *Bus) consumeState(ctx context.Context, durable, filter string, handle f
 // RespondDesiredState answers agents' desired-state sync requests: resolve
 // receives the requesting server's id and returns the marshaled DesiredState.
 // The subscription lives until the bus closes.
+//
+// The reply subject is validated before anything is published on it. A
+// requester chooses its own msg.Reply, and NATS does not permission-check a
+// publisher's reply subject under the plain publish/subscribe allow lists this
+// bus grants (only "responses" permissions do that) — so an unvalidated
+// Respond would let any enrolled agent aim the plane's own in-process client,
+// which is unrestricted, at an arbitrary subject: work.<other-server>.rollout,
+// state.*.deploy, logs.*.>. The payload would still be the requester's own
+// desired state (the id comes from the permission-pinned request subject, not
+// from the reply), so this is not a cross-agent read — but it is an
+// arbitrary-subject publish primitive into plane-internal subjects, and the
+// per-identity subscribe grant only closes the other half
+// (threat-model §5.2; control-plane-hardening.md §1).
 func (b *Bus) RespondDesiredState(resolve func(serverID string) ([]byte, error)) error {
 	_, err := b.nc.Subscribe(subjects.SyncAll, func(msg *nats.Msg) {
 		parts := strings.SplitN(msg.Subject, ".", 3)
 		if len(parts) < 3 || msg.Reply == "" {
 			return
 		}
-		data, err := resolve(parts[1])
+		serverID := parts[1]
+		if !strings.HasPrefix(msg.Reply, subjects.InboxPrefix(serverID)+".") {
+			b.warnOutOfScopeReply(serverID, msg.Reply)
+			return
+		}
+		data, err := resolve(serverID)
 		if err != nil {
 			// No reply → the agent times out and retries; the plane logs via
 			// resolve's own error path.
@@ -467,6 +519,26 @@ func (b *Bus) RespondDesiredState(resolve func(serverID string) ([]byte, error))
 		return fmt.Errorf("bus: subscribing to sync requests: %w", err)
 	}
 	return nil
+}
+
+// warnOutOfScopeReply reports a sync request whose reply subject sits outside
+// the requester's granted inbox scope, once per server id per process. Once is
+// the right cadence: the cause is a static property of the agent build (an
+// agent older than the per-identity inbox prefix, or one that ignores the
+// subject contract) and the agent retries forever, so repeating the line would
+// evict the rest of the diagnostic ring (core/logring) without adding
+// information. The reply subject is attacker-chosen, so it is logged as a
+// value, truncated, never interpolated into the message.
+func (b *Bus) warnOutOfScopeReply(serverID, reply string) {
+	if _, seen := b.staleReplies.LoadOrStore(serverID, struct{}{}); seen {
+		return
+	}
+	const maxReplyLog = 128
+	if len(reply) > maxReplyLog {
+		reply = reply[:maxReplyLog] + "…"
+	}
+	b.log.Warn("bus: dropping desired-state sync whose reply subject is outside the agent's inbox scope; upgrade cypher-agent on this server to match the plane",
+		"server_id", serverID, "reply_subject", reply, "want_prefix", subjects.InboxPrefix(serverID)+".")
 }
 
 // ConsumeHeartbeats delivers each heartbeat payload to handle. It returns a
@@ -569,7 +641,9 @@ func (a *certAuth) Check(c natsserver.ClientAuthentication) bool {
 	// app statuses and sync requests all live inside the server's state
 	// scope; logs inside its logs scope. The JetStream API grants cover
 	// exactly this server's work consumer — reading or acknowledging another
-	// server's work is impossible by construction (threat-model §5.2).
+	// server's work is impossible by construction (threat-model §5.2). The
+	// reply-inbox grant is the agent's own prefix only (package doc): a
+	// sync reply published to srv_a's inbox must be unreadable by srv_b.
 	c.RegisterUser(&natsserver.User{
 		Username: cn,
 		Permissions: &natsserver.Permissions{
@@ -583,7 +657,7 @@ func (a *certAuth) Check(c natsserver.ClientAuthentication) bool {
 				},
 			},
 			Subscribe: &natsserver.SubjectPermission{
-				Allow: []string{subjects.WorkForServer(cn), "_INBOX.>"},
+				Allow: []string{subjects.WorkForServer(cn), subjects.InboxForServer(cn)},
 			},
 		},
 	})

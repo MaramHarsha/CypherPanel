@@ -19,12 +19,49 @@ const (
 	InboxBodyMax = 2 << 10
 )
 
+// Panel-level inbox kinds (control-plane-hardening.md §3): events about the
+// panel itself rather than about a project's resources. They are inbox kinds
+// only — never a notifier or webhook subscription — because nothing emits
+// them to a channel; the inbox is their one audience.
+const (
+	// InboxKindPanelUpdateAvailable: a newer cypherd release was seen by the
+	// update check. Written once per version to owners.
+	InboxKindPanelUpdateAvailable = "panel.update_available"
+)
+
+// panelInboxKinds is the panel-level half of the inbox taxonomy.
+var panelInboxKinds = []string{InboxKindPanelUpdateAvailable}
+
+// InboxKinds returns every kind an inbox item may carry and a preference list
+// may mute: the subscribable event taxonomy first, then the panel-level kinds.
+// A copy — callers may not mutate the taxonomy.
+func InboxKinds() []string {
+	out := EventTypes()
+	return append(out, panelInboxKinds...)
+}
+
+// ValidInboxKind reports whether key is an inbox kind (ValidEventType or a
+// panel-level kind).
+func ValidInboxKind(key string) bool {
+	if ValidEventType(key) {
+		return true
+	}
+	for _, k := range panelInboxKinds {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
+
 // InboxItem is one persisted notification for one user. Severity is a
 // NotifyLevel — the inbox subscribes to the existing event taxonomy and does
 // not introduce a third status vocabulary (spec §3).
 type InboxItem struct {
-	ID        string
-	UserID    string
+	ID     string
+	UserID string
+	// ProjectID is empty for a panel-level kind (InboxKinds beyond
+	// EventTypes): the item belongs to the panel, not to a project.
 	ProjectID string
 	Kind      string
 	Severity  NotifyLevel

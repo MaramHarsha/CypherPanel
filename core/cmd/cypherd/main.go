@@ -35,6 +35,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/guard"
 	"github.com/MaramHarsha/cypherpanel/core/identity"
 	"github.com/MaramHarsha/cypherpanel/core/inbox"
+	"github.com/MaramHarsha/cypherpanel/core/logring"
 	"github.com/MaramHarsha/cypherpanel/core/mail"
 	"github.com/MaramHarsha/cypherpanel/core/notify"
 	"github.com/MaramHarsha/cypherpanel/core/onboarding"
@@ -50,23 +51,65 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/store"
 	"github.com/MaramHarsha/cypherpanel/core/teams"
 	"github.com/MaramHarsha/cypherpanel/core/templates"
+	"github.com/MaramHarsha/cypherpanel/core/updates"
 	"github.com/MaramHarsha/cypherpanel/core/webhooks"
 	"github.com/MaramHarsha/cypherpanel/pkg/pki"
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
 )
 
-// version is stamped at build time via -ldflags; "dev" in local builds.
-var version = "dev"
+// Build stamps, set at link time with -ldflags "-X main.version=... -X
+// main.commit=... -X main.buildDate=..." (release.yml, Dockerfile). "dev" is
+// what a local build reports, and what tells the update check there is nothing
+// to compare against (control-plane-hardening.md §3).
+var (
+	version   = "dev"
+	commit    = "dev"
+	buildDate = ""
+)
+
+// panelLogLines is how many of the panel's own log lines stay in memory for
+// GET /api/v1/panel/logs. 500 short lines is well under a megabyte, which the
+// footprint budget (vision.md) will not notice.
+const panelLogLines = 500
+
+// sessionPurgeInterval is how often expired sessions are swept. Hourly: an
+// expired row is already unusable, so the only cost of leaving one a while
+// longer is a row, and a tighter loop would query for nothing all day
+// (control-plane-hardening.md §7).
+const sessionPurgeInterval = time.Hour
 
 func main() {
-	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	if err := run(log); err != nil {
+	// The panel's log has two audiences: stderr, where the operator's
+	// journal/docker logs collect it, and a bounded in-memory ring the owner
+	// can read back through the API without a shell (§4). One pipeline, so
+	// both see exactly the same records.
+	ring := logring.New(panelLogLines)
+	log := slog.New(logring.Fanout(
+		slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}),
+		ring.Handler(&slog.HandlerOptions{Level: slog.LevelInfo}),
+	))
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		printVersion()
+		return
+	}
+	if err := run(log, ring); err != nil {
 		log.Error("cypherd exited", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(log *slog.Logger) error {
+// printVersion mirrors `cypher-agent version`: the three build stamps and the
+// toolchain, on stdout, for an operator pasting into a bug report.
+func printVersion() {
+	info := updates.RuntimeInfo(version, commit, buildDate)
+	built := "unknown"
+	if !info.BuiltAt.IsZero() {
+		built = info.BuiltAt.Format(time.RFC3339)
+	}
+	fmt.Printf("cypherd %s (commit %s, built %s, %s)\n", info.Version, info.Commit, built, info.GoVersion)
+}
+
+func run(log *slog.Logger, panelLogs *logring.Ring) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -74,7 +117,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	log.Info("starting cypherd", "version", version, "public_host", cfg.PublicHost)
+	log.Info("starting cypherd", "version", version, "commit", commit, "public_host", cfg.PublicHost, "console_url", cfg.AdvertisedConsoleURL())
 
 	// Self-protection: refuse to boot into a nearly-full disk rather than run
 	// until Postgres can no longer write (threat-model §8 req 10).
@@ -173,6 +216,10 @@ func run(log *slog.Logger) error {
 	appSvc := applications.NewService(st, box)
 	deployKeySvc := deploykeys.NewService(st, box)
 	teamSvc := teams.NewService(st)
+	// Two throttle dimensions on sign-in: per client address (5 failures / 15
+	// min) and per account (10 / 15 min, derived). One attacker behind a shared
+	// proxy therefore cannot lock every account out, and a distributed guess at
+	// one account is still bounded (control-plane-hardening.md §5).
 	authr := auth.NewAuthenticator(st, box, auth.NewLimiter(5, 15*time.Minute), cfg.SessionTTL)
 
 	// Deploy pipeline: the scheduler publishes work items and advances
@@ -262,6 +309,36 @@ func run(log *slog.Logger) error {
 	go func() {
 		defer wg.Done()
 		dnsSvc.RunSweeper(ctx, cfg.SweepInterval, log)
+	}()
+
+	// Expired sessions were invisible but never deleted, so the table grew by a
+	// row per sign-in forever (control-plane-hardening.md §7). One owned
+	// goroutine sweeps them hourly — an expired row is already unusable, so
+	// nothing is gained by looking more often.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		authr.RunSessionPurge(ctx, sessionPurgeInterval, log.With("component", "session-purge"))
+	}()
+
+	// The update check: one owned goroutine polling a release feed, off by a
+	// single environment variable, telling owners once per version through the
+	// inbox (control-plane-hardening.md §3). ADR-010 keeps the plane from
+	// updating itself — this only tells the operator.
+	updateChecker, err := updates.New(updates.Options{
+		Current:   updates.RuntimeInfo(version, commit, buildDate),
+		FeedURL:   cfg.UpdateFeedURL,
+		Enabled:   cfg.UpdateCheck,
+		Announcer: panelUpdateAnnouncer{inbox: inboxSvc},
+		Log:       log.With("component", "updates"),
+	})
+	if err != nil {
+		return err
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		updateChecker.Run(ctx)
 	}()
 
 	if err := sched.Recover(ctx); err != nil {
@@ -421,6 +498,9 @@ func run(log *slog.Logger) error {
 		NATSURL:          cfg.AdvertisedNATSURL(),
 		Logs:             b,
 		ConsoleURL:       cfg.AdvertisedConsoleURL(),
+		TrustedProxies:   cfg.TrustedProxies,
+		Panel:            updateChecker,
+		PanelLogs:        panelLogs,
 		Log:              log,
 	})
 	httpSrv := &http.Server{
@@ -456,6 +536,22 @@ func run(log *slog.Logger) error {
 	wg.Wait()
 	log.Info("cypherd stopped")
 	return nil
+}
+
+// panelUpdateAnnouncer turns "a newer release exists" into one inbox item per
+// owner, once per version (control-plane-hardening.md §3). It lives here, in
+// the wiring, because it is the only place that knows both halves.
+type panelUpdateAnnouncer struct {
+	inbox *inbox.Service
+}
+
+func (p panelUpdateAnnouncer) AnnounceUpdate(ctx context.Context, current updates.Info, latest updates.Release) error {
+	return p.inbox.RecordPanelUpdate(ctx, inbox.PanelUpdate{
+		Current:  current.Version,
+		Latest:   latest.Version,
+		Kind:     latest.Kind,
+		NotesURL: latest.NotesURL,
+	})
 }
 
 func startEnrollmentServer(cfg config.Config, certPEM, keyPEM, caPEM []byte, svc *enroll.Service, relaySrv *grpcapi.RelayServer, log *slog.Logger) (*grpc.Server, error) {

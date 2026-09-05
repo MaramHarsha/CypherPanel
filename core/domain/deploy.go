@@ -248,3 +248,10 @@ type DeployKey struct {
 	PrivateKeyNonce []byte
 	CreatedAt       time.Time
 }
+
+// ApplicationRef names an application without loading it — what a refused
+// deploy-key delete reports as the blockers (deploy-key-private-repos.md §3).
+type ApplicationRef struct {
+	ID   string
+	Name string
+}

@@ -34,6 +34,12 @@ type mgrStore struct {
 func (s *mgrStore) GetEnvironment(_ context.Context, id string) (domain.Environment, error) {
 	return s.env, nil
 }
+
+// GetProject answers with a name that differs from the environment's, so a
+// test can tell which one landed in NotifyEvent.Project.
+func (s *mgrStore) GetProject(_ context.Context, id string) (domain.Project, error) {
+	return domain.Project{ID: id, Name: "shop"}, nil
+}
 func (s *mgrStore) ListEnabledNotifiersForEvent(_ context.Context, projectID, eventType string) ([]domain.Notifier, error) {
 	var out []domain.Notifier
 	for _, n := range s.notifiers {
@@ -264,6 +270,11 @@ func TestDispatchRecordsToTheInboxWithZeroNotifiers(t *testing.T) {
 		}
 		if ev.ProjectID != "prj_1" {
 			t.Fatalf("project_id = %q, want the resolved project", ev.ProjectID)
+		}
+		// The project's NAME, not the environment's: "production" is where it
+		// happened, "shop" is whose it is (control-plane-hardening.md §8).
+		if ev.Project != "shop" {
+			t.Fatalf("project = %q, want the project name \"shop\", not the environment name", ev.Project)
 		}
 		// The four additive fields are what let the item carry a deep link.
 		if ev.ResourceKind != domain.WebhookResourceApplication || ev.ResourceID != "app_web" || ev.FocusID != "dep_9" {

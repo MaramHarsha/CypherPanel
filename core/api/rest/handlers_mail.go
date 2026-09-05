@@ -157,9 +157,14 @@ func (a *API) handleRequestEmailChange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	change, err := a.deps.Auth.RequestEmailChange(r.Context(), p.User.ID, req.NewEmail, req.CurrentPassword)
+	change, err := a.deps.Auth.RequestEmailChange(r.Context(), p.User.ID, req.NewEmail, req.CurrentPassword, a.clientIP(r))
 	switch {
 	case err == nil:
+	case errors.Is(err, auth.ErrRateLimited):
+		// Throttled like sign-in: the current password is a guessing surface
+		// here too (panel-mail.md §5; control-plane-hardening.md §5).
+		rateLimited(w, err, "too many attempts — wait before trying again")
+		return
 	case errors.Is(err, auth.ErrInvalidCredentials):
 		writeError(w, http.StatusUnauthorized, "that is not your current password")
 		return
@@ -217,10 +222,12 @@ func (a *API) handleConfirmEmailChange(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "could not read the request body")
 		return
 	}
-	user, revoked, err := a.deps.Auth.ConfirmEmailChange(r.Context(), p.User.ID, req.Token, rawTokenFromContext(r.Context()))
+	user, revoked, err := a.deps.Auth.ConfirmEmailChange(r.Context(), p.User.ID, req.Token, rawTokenFromContext(r.Context()), a.clientIP(r))
 	switch {
 	case err == nil:
 		writeJSON(w, http.StatusOK, confirmEmailChangeResponse{Email: user.Email, Revoked: revoked})
+	case errors.Is(err, auth.ErrRateLimited):
+		rateLimited(w, err, "too many attempts — wait before trying again")
 	case errors.Is(err, auth.ErrEmailInUse):
 		writeError(w, http.StatusConflict, "that address was taken while you were confirming")
 	case errors.Is(err, auth.ErrInvalidEmailChange):

@@ -53,10 +53,22 @@ type PendingChange struct {
 	OldEmail string
 }
 
+// emailChangeKey is the per-account throttle key for both email-change routes:
+// the account whose address is being moved, whatever address is proposed.
+func emailChangeKey(userID string) string { return "emailchange:" + userID }
+
 // RequestEmailChange proves the caller owns the account, records a pending
 // change, and returns what is needed to mail both addresses — the new one its
-// confirmation, the old one its warning (threat-model §5.10).
-func (a *Authenticator) RequestEmailChange(ctx context.Context, userID, newEmail, currentPassword string) (PendingChange, error) {
+// confirmation, the old one its warning (threat-model §5.10). throttleKey is
+// the client address, as for Login: a wrong current password is a failed
+// attempt against both the address and the account, and a throttled call
+// returns a *RateLimitedError before anything is checked (panel-mail.md §5).
+func (a *Authenticator) RequestEmailChange(ctx context.Context, userID, newEmail, currentPassword, throttleKey string) (PendingChange, error) {
+	limiters := []*Limiter{a.limiter, a.accounts}
+	keys := []string{throttleKey, emailChangeKey(userID)}
+	if err := throttle(limiters, keys); err != nil {
+		return PendingChange{}, err
+	}
 	addr, parseErr := mail.ParseAddress(strings.TrimSpace(newEmail))
 	if parseErr != nil {
 		return PendingChange{}, invalid(fmt.Sprintf("%q is not a valid email address", newEmail))
@@ -72,7 +84,13 @@ func (a *Authenticator) RequestEmailChange(ctx context.Context, userID, newEmail
 	}
 	// Possession of a session never weakens a credential on its own.
 	if !CheckPassword(user.PasswordHash, currentPassword) {
+		for i, l := range limiters {
+			l.Fail(keys[i])
+		}
 		return PendingChange{}, ErrInvalidCredentials
+	}
+	for i, l := range limiters {
+		l.Reset(keys[i])
 	}
 	if strings.EqualFold(newEmail, user.Email) {
 		return PendingChange{}, ErrSameEmail
@@ -85,7 +103,7 @@ func (a *Authenticator) RequestEmailChange(ctx context.Context, userID, newEmail
 
 	secret := ids.Secret()
 	id := ids.New(ids.PrefixEmailChange)
-	change, err := a.store.CreateEmailChange(ctx, id, userID, newEmail, HashToken(secret), time.Now().Add(emailChangeTTL))
+	change, err := a.store.CreateEmailChange(ctx, id, userID, newEmail, HashToken(secret), a.now().Add(emailChangeTTL))
 	if err != nil {
 		return PendingChange{}, err
 	}
@@ -96,34 +114,26 @@ func (a *Authenticator) RequestEmailChange(ctx context.Context, userID, newEmail
 
 // ConfirmEmailChange spends a pending change and moves the address. It also
 // reports how many other sessions it revoked: the address that can recover this
-// account has moved, so every other sign-in is now suspect.
-func (a *Authenticator) ConfirmEmailChange(ctx context.Context, userID, token, rawSessionToken string) (domain.User, int64, error) {
-	id, secret, ok := splitEmailChangeToken(token)
-	if !ok {
-		return domain.User{}, 0, ErrInvalidEmailChange
+// account has moved, so every other sign-in is now suspect. It is the guessing
+// surface of the pair, so it is throttled like Login (threat-model §5.10):
+// throttleKey is the client address, every invalid token counts as a failure
+// against it and against the account, and a throttled call is refused with a
+// *RateLimitedError before the token is even parsed.
+func (a *Authenticator) ConfirmEmailChange(ctx context.Context, userID, token, rawSessionToken, throttleKey string) (domain.User, int64, error) {
+	limiters := []*Limiter{a.limiter, a.accounts}
+	keys := []string{throttleKey, emailChangeKey(userID)}
+	if err := throttle(limiters, keys); err != nil {
+		return domain.User{}, 0, err
 	}
-	pending, hash, err := a.store.EmailChangeTokenHash(ctx, id)
+	spent, err := a.spendEmailChange(ctx, userID, token)
 	if err != nil {
-		return domain.User{}, 0, ErrInvalidEmailChange
+		for i, l := range limiters {
+			l.Fail(keys[i])
+		}
+		return domain.User{}, 0, err
 	}
-	// Compared before anything is spent, so a wrong guess against a real id
-	// cannot consume a valid change.
-	if !ConstantTimeEqual(hash, HashToken(secret)) {
-		return domain.User{}, 0, ErrInvalidEmailChange
-	}
-	// A change belongs to the account that asked for it. Without this, a link
-	// mailed to one operator could be confirmed from another's session.
-	if pending.UserID != userID {
-		return domain.User{}, 0, ErrInvalidEmailChange
-	}
-	if pending.ConsumedAt != nil || !time.Now().Before(pending.ExpiresAt) {
-		return domain.User{}, 0, ErrInvalidEmailChange
-	}
-
-	// The authoritative guard: no row back means someone else spent it first.
-	spent, err := a.store.ConsumeEmailChange(ctx, id)
-	if err != nil {
-		return domain.User{}, 0, ErrInvalidEmailChange
+	for i, l := range limiters {
+		l.Reset(keys[i])
 	}
 
 	user, err := a.store.UpdateUserEmail(ctx, userID, spent.NewEmail)
@@ -139,6 +149,39 @@ func (a *Authenticator) ConfirmEmailChange(ctx context.Context, userID, token, r
 		revoked = 0
 	}
 	return user, revoked, nil
+}
+
+// spendEmailChange validates a wire token against the pending change it names
+// and spends it. Every failure is ErrInvalidEmailChange — one undifferentiated
+// answer, so a guess learns nothing about which changes exist.
+func (a *Authenticator) spendEmailChange(ctx context.Context, userID, token string) (domain.EmailChange, error) {
+	id, secret, ok := splitEmailChangeToken(token)
+	if !ok {
+		return domain.EmailChange{}, ErrInvalidEmailChange
+	}
+	pending, hash, err := a.store.EmailChangeTokenHash(ctx, id)
+	if err != nil {
+		return domain.EmailChange{}, ErrInvalidEmailChange
+	}
+	// Compared before anything is spent, so a wrong guess against a real id
+	// cannot consume a valid change.
+	if !ConstantTimeEqual(hash, HashToken(secret)) {
+		return domain.EmailChange{}, ErrInvalidEmailChange
+	}
+	// A change belongs to the account that asked for it. Without this, a link
+	// mailed to one operator could be confirmed from another's session.
+	if pending.UserID != userID {
+		return domain.EmailChange{}, ErrInvalidEmailChange
+	}
+	if pending.ConsumedAt != nil || !a.now().Before(pending.ExpiresAt) {
+		return domain.EmailChange{}, ErrInvalidEmailChange
+	}
+	// The authoritative guard: no row back means someone else spent it first.
+	spent, err := a.store.ConsumeEmailChange(ctx, id)
+	if err != nil {
+		return domain.EmailChange{}, ErrInvalidEmailChange
+	}
+	return spent, nil
 }
 
 func splitEmailChangeToken(t string) (id, secret string, ok bool) {

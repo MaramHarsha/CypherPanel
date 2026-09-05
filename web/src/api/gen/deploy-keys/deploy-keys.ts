@@ -3,6 +3,8 @@
  * Do not edit manually.
  * CypherPanel API
  * Operator-facing control-plane API covering Phases 1–3: authentication and teams/roles, the server lifecycle, projects/environments, applications and the deploy pipeline, managed databases with S3 backups/restore, preview environments, notifications, and scheduled tasks. Authentication is a bearer session token from /api/v1/auth/login; the GitHub webhook authenticates by per-application HMAC instead. Every project-scoped route is authorized by team membership (a non-member sees 404, insufficient rank 403).
+ *
+ * Every response — success, error and SSE stream alike — carries an `X-Request-Id` header (`components/headers/RequestId`), and every JSON error body repeats it as `trace_id`. It is the value to quote in a bug report and the key to search for in `GET /api/v1/panel/logs`. Individual responses reference the header only where a generated client benefits; it is present on all of them.
  * OpenAPI spec version: 0.3.0
  */
 import {
@@ -29,6 +31,7 @@ import type {
   CreateDeployKeyRequest,
   CreateDeployKeyResponse,
   DeployKey,
+  DeployKeyInUse,
   DeployKeysList,
   Error,
   ForbiddenResponse,
@@ -353,7 +356,7 @@ export const deleteDeployKey = async (id: string, options?: RequestInit): Promis
 
 
 
-export const getDeleteDeployKeyMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | Error,
+export const getDeleteDeployKeyMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | Error | DeployKeyInUse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteDeployKey>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof deleteDeployKey>>, TError,{id: string}, TContext> => {
 
@@ -382,12 +385,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type DeleteDeployKeyMutationResult = NonNullable<Awaited<ReturnType<typeof deleteDeployKey>>>
 
-    export type DeleteDeployKeyMutationError = UnauthorizedResponse | ForbiddenResponse | Error
+    export type DeleteDeployKeyMutationError = UnauthorizedResponse | ForbiddenResponse | Error | DeployKeyInUse
 
     /**
  * @summary Delete a deploy key (RESTRICT-gated by application references)
  */
-export const useDeleteDeployKey = <TError = UnauthorizedResponse | ForbiddenResponse | Error,
+export const useDeleteDeployKey = <TError = UnauthorizedResponse | ForbiddenResponse | Error | DeployKeyInUse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteDeployKey>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof deleteDeployKey>>,
