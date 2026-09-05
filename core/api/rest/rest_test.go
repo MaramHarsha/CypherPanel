@@ -45,6 +45,7 @@ type fakeAuthStore struct {
 	avatars           map[string]domain.Avatar      // userID → profile photo
 	emailChanges      map[string]domain.EmailChange // pending address moves
 	emailChangeHashes map[string][]byte             // change id → token hash
+	emailChangeSeq    int                           // orders creations, as created_at does
 }
 
 // fakeBox is an identity SecretBox for handler tests.
@@ -147,7 +148,14 @@ func (f *fakeAuthStore) CreateEmailChange(_ context.Context, id, userID, newEmai
 	if f.emailChangeHashes == nil {
 		f.emailChangeHashes = map[string][]byte{}
 	}
-	ec := domain.EmailChange{ID: id, UserID: userID, NewEmail: newEmail, ExpiresAt: expiresAt}
+	// The real column carries a default now(), and the pending-change lookup
+	// orders by it. A fake that leaves it zero makes "newest wins" depend on Go
+	// map iteration order, which is exactly the bug this models away.
+	f.emailChangeSeq++
+	ec := domain.EmailChange{
+		ID: id, UserID: userID, NewEmail: newEmail, ExpiresAt: expiresAt,
+		CreatedAt: time.Now().Add(time.Duration(f.emailChangeSeq) * time.Millisecond),
+	}
 	f.emailChanges[id] = ec
 	f.emailChangeHashes[id] = tokenHash
 	return ec, nil
@@ -170,6 +178,40 @@ func (f *fakeAuthStore) ConsumeEmailChange(_ context.Context, id string) (domain
 	ec.ConsumedAt = &now
 	f.emailChanges[id] = ec
 	return ec, nil
+}
+
+// PendingEmailChange implements the pending-change lookup the profile screen uses: newest
+// live row wins, matching the SQL's ORDER BY created_at DESC.
+func (f *fakeAuthStore) PendingEmailChange(_ context.Context, userID string) (domain.EmailChange, error) {
+	var newest domain.EmailChange
+	found := false
+	for _, ec := range f.emailChanges {
+		if ec.UserID != userID || ec.ConsumedAt != nil || !ec.ExpiresAt.After(time.Now()) {
+			continue
+		}
+		if !found || ec.CreatedAt.After(newest.CreatedAt) {
+			newest, found = ec, true
+		}
+	}
+	if !found {
+		return domain.EmailChange{}, store.ErrNotFound
+	}
+	return newest, nil
+}
+
+// CancelPendingEmailChanges spends every live change for the user, as the UPDATE does.
+func (f *fakeAuthStore) CancelPendingEmailChanges(_ context.Context, userID string) (int64, error) {
+	var n int64
+	now := time.Now()
+	for id, ec := range f.emailChanges {
+		if ec.UserID != userID || ec.ConsumedAt != nil || !ec.ExpiresAt.After(now) {
+			continue
+		}
+		ec.ConsumedAt = &now
+		f.emailChanges[id] = ec
+		n++
+	}
+	return n, nil
 }
 
 func (f *fakeAuthStore) GetUserByID(_ context.Context, id string) (domain.User, error) {

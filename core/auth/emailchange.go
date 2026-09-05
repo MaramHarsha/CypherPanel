@@ -57,6 +57,27 @@ type PendingChange struct {
 // the account whose address is being moved, whatever address is proposed.
 func emailChangeKey(userID string) string { return "emailchange:" + userID }
 
+// PendingEmailChange reports the change the user can still confirm. The caller
+// gets the address as it was parsed at request time and the two timestamps that
+// let a screen say when the link dies; there is no token here, because a caller
+// holding a session must not be able to complete a change without the link that
+// went to the new address (threat-model §5.10).
+//
+// store.ErrNotFound means there is nothing pending — an answer, not a failure.
+func (a *Authenticator) PendingEmailChange(ctx context.Context, userID string) (domain.EmailChange, error) {
+	return a.store.PendingEmailChange(ctx, userID)
+}
+
+// CancelEmailChange is "this wasn't me": it spends every outstanding change for
+// the account without applying any, and reports how many died. Requesting a
+// change needs the current password, so cancelling one deliberately does not —
+// the person who can undo a move they did not ask for is the person holding the
+// session, and making them find their password first is how a hijacked request
+// stays live longer than it should.
+func (a *Authenticator) CancelEmailChange(ctx context.Context, userID string) (int64, error) {
+	return a.store.CancelPendingEmailChanges(ctx, userID)
+}
+
 // RequestEmailChange proves the caller owns the account, records a pending
 // change, and returns what is needed to mail both addresses — the new one its
 // confirmation, the old one its warning (threat-model §5.10). throttleKey is

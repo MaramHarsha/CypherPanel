@@ -263,6 +263,35 @@ paths:
         "404": { description: That user has no photo., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   /api/v1/auth/email/change:
+    get:
+      operationId: getPendingEmailChange
+      tags: [auth]
+      summary: The address move already in flight, if any (session only)
+      description: >
+        Lets the confirm step show "old → new" rather than asking someone to
+        trust a link. Never returns the token: holding a session is enough to
+        start or abandon a change, never to complete one. 404 is the ordinary
+        answer — most visits have nothing pending.
+      responses:
+        "200": { description: A change is pending., content: { application/json: { schema: { $ref: "#/components/schemas/PendingEmailChange" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: Nothing is pending., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      operationId: cancelEmailChange
+      tags: [auth]
+      summary: Abandon a pending address move — "this wasn't me" (session only)
+      description: >
+        Spends every outstanding change for the account without applying one, so
+        a second link requested in the same breath cannot survive the cancel of
+        the first. Deliberately does not require the password: the person who can
+        undo a move they did not ask for is the person holding the session, and
+        making them find a password first only keeps a hijacked request alive
+        longer.
+      responses:
+        "200": { description: Cancelled., content: { application/json: { schema: { $ref: "#/components/schemas/EmailChangeCancelled" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
     post:
       operationId: requestEmailChange
       tags: [auth]
@@ -3240,6 +3269,45 @@ components:
           type: string
           description: Non-secret summary, e.g. "smtp.acme.com → ops@acme.com". Never the password.
         updated_at: { type: string, format: date-time }
+        smtp_host:
+          type: string
+          description: >-
+            Present only when configured. The saved settings are read back so the
+            form can be edited rather than retyped; the password is the one field
+            that never comes back.
+        smtp_port: { type: integer, minimum: 1, maximum: 65535 }
+        username: { type: string }
+        from: { type: string }
+        tls:
+          type: string
+          enum: [starttls, implicit, none]
+          description: >-
+            Transport security in use. Settings saved before this field existed
+            read back as starttls, which is how they are sent.
+
+    PendingEmailChange:
+      type: object
+      required: [new_email, requested_at, expires_at]
+      properties:
+        new_email:
+          type: string
+          description: The address the account is moving to, as the panel parsed it.
+        requested_at: { type: string, format: date-time }
+        expires_at:
+          type: string
+          format: date-time
+          description: When the confirmation link stops working.
+
+    EmailChangeCancelled:
+      type: object
+      required: [cancelled]
+      properties:
+        cancelled:
+          type: integer
+          format: int64
+          description: >-
+            How many pending changes were spent. 0 means there was nothing to
+            undo, which is a different answer from having undone something.
 
     SetPanelMailRequest:
       type: object
@@ -3252,6 +3320,15 @@ components:
           type: string
           description: Write-only. Never returned by any route.
         from: { type: string }
+        tls:
+          type: string
+          enum: [starttls, implicit, none]
+          default: starttls
+          description: >-
+            Transport security. starttls (port 587) upgrades the connection and
+            refuses to send if the server will not offer STARTTLS — no silent
+            downgrade. implicit (port 465) is TLS from the first byte. none sends
+            in the clear and is only defensible for a relay you control.
 
     ChangePasswordResponse:
       type: object

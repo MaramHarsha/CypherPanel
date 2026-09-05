@@ -62,6 +62,8 @@ type Store interface {
 	CreateEmailChange(ctx context.Context, id, userID, newEmail string, tokenHash []byte, expiresAt time.Time) (domain.EmailChange, error)
 	EmailChangeTokenHash(ctx context.Context, id string) (domain.EmailChange, []byte, error)
 	ConsumeEmailChange(ctx context.Context, id string) (domain.EmailChange, error)
+	PendingEmailChange(ctx context.Context, userID string) (domain.EmailChange, error)
+	CancelPendingEmailChanges(ctx context.Context, userID string) (int64, error)
 	UpdateUserPassword(ctx context.Context, userID, passwordHash string) error
 
 	SetTOTPSecret(ctx context.Context, userID string, ct, nonce []byte) error

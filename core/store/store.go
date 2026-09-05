@@ -641,6 +641,29 @@ func (s *Store) ConsumeEmailChange(ctx context.Context, id string) (domain.Email
 	return emailChangeFromRow(row), nil
 }
 
+// PendingEmailChange returns the change the user can still confirm. ErrNotFound
+// means there is none, which is an answer rather than a failure: the profile
+// screen asks on every visit and usually gets exactly that.
+func (s *Store) PendingEmailChange(ctx context.Context, userID string) (domain.EmailChange, error) {
+	row, err := s.q.PendingEmailChangeForUser(ctx, userID)
+	if err != nil {
+		return domain.EmailChange{}, wrap("reading pending email change", err)
+	}
+	return emailChangeFromRow(row), nil
+}
+
+// CancelPendingEmailChanges spends every outstanding change for the user without
+// applying it, and reports how many died. Cancelling one link must kill them all:
+// otherwise "this wasn't me" leaves a second link, requested in the same breath,
+// still live.
+func (s *Store) CancelPendingEmailChanges(ctx context.Context, userID string) (int64, error) {
+	n, err := s.q.CancelPendingEmailChanges(ctx, userID)
+	if err != nil {
+		return 0, wrap("cancelling email changes", err)
+	}
+	return n, nil
+}
+
 func emailChangeFromRow(r db.EmailChange) domain.EmailChange {
 	ec := domain.EmailChange{
 		ID: r.ID, UserID: r.UserID, NewEmail: r.NewEmail,

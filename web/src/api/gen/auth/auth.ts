@@ -36,12 +36,14 @@ import type {
   ConfirmEmailChangeResponse,
   CreateTokenRequest,
   CreateTokenResponse,
+  EmailChangeCancelled,
   Error,
   ForbiddenResponse,
   LoginRequest,
   LoginResponse,
   Me,
   NotFoundResponse,
+  PendingEmailChange,
   RequestEmailChangeRequest,
   RevokeOtherSessions200,
   Session,
@@ -872,7 +874,179 @@ export function useGetAvatar<TData = Awaited<ReturnType<typeof getAvatar>>, TErr
 
 
 
-export const getRequestEmailChangeUrl = () => {
+export const getGetPendingEmailChangeUrl = () => {
+
+
+
+
+  return `/api/v1/auth/email/change`
+}
+
+/**
+ * Lets the confirm step show "old → new" rather than asking someone to trust a link. Never returns the token: holding a session is enough to start or abandon a change, never to complete one. 404 is the ordinary answer — most visits have nothing pending.
+ * @summary The address move already in flight, if any (session only)
+ */
+export const getPendingEmailChange = async ( options?: RequestInit): Promise<PendingEmailChange> => {
+
+  return apiFetch<PendingEmailChange>(getGetPendingEmailChangeUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPendingEmailChangeQueryKey = () => {
+    return [
+    `/api/v1/auth/email/change`
+    ] as const;
+    }
+
+
+export const getGetPendingEmailChangeQueryOptions = <TData = Awaited<ReturnType<typeof getPendingEmailChange>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPendingEmailChange>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPendingEmailChangeQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPendingEmailChange>>> = ({ signal }) => getPendingEmailChange({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPendingEmailChange>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetPendingEmailChangeQueryResult = NonNullable<Awaited<ReturnType<typeof getPendingEmailChange>>>
+export type GetPendingEmailChangeQueryError = UnauthorizedResponse | ForbiddenResponse | Error
+
+
+export function useGetPendingEmailChange<TData = Awaited<ReturnType<typeof getPendingEmailChange>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPendingEmailChange>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getPendingEmailChange>>,
+          TError,
+          Awaited<ReturnType<typeof getPendingEmailChange>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetPendingEmailChange<TData = Awaited<ReturnType<typeof getPendingEmailChange>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPendingEmailChange>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getPendingEmailChange>>,
+          TError,
+          Awaited<ReturnType<typeof getPendingEmailChange>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetPendingEmailChange<TData = Awaited<ReturnType<typeof getPendingEmailChange>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPendingEmailChange>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary The address move already in flight, if any (session only)
+ */
+
+export function useGetPendingEmailChange<TData = Awaited<ReturnType<typeof getPendingEmailChange>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPendingEmailChange>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetPendingEmailChangeQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getCancelEmailChangeUrl = () => {
+
+
+
+
+  return `/api/v1/auth/email/change`
+}
+
+/**
+ * Spends every outstanding change for the account without applying one, so a second link requested in the same breath cannot survive the cancel of the first. Deliberately does not require the password: the person who can undo a move they did not ask for is the person holding the session, and making them find a password first only keeps a hijacked request alive longer.
+ * @summary Abandon a pending address move — "this wasn't me" (session only)
+ */
+export const cancelEmailChange = async ( options?: RequestInit): Promise<EmailChangeCancelled> => {
+
+  return apiFetch<EmailChangeCancelled>(getCancelEmailChangeUrl(),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getCancelEmailChangeMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelEmailChange>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof cancelEmailChange>>, TError,void, TContext> => {
+
+const mutationKey = ['cancelEmailChange'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof cancelEmailChange>>, void> = () => {
+
+
+          return  cancelEmailChange(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CancelEmailChangeMutationResult = NonNullable<Awaited<ReturnType<typeof cancelEmailChange>>>
+
+    export type CancelEmailChangeMutationError = UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary Abandon a pending address move — "this wasn't me" (session only)
+ */
+export const useCancelEmailChange = <TError = UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelEmailChange>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof cancelEmailChange>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getCancelEmailChangeMutationOptions(options), queryClient);
+    }
+    export const getRequestEmailChangeUrl = () => {
 
 
 

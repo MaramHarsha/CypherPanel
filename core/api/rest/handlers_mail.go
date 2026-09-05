@@ -11,6 +11,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/mail"
 	"github.com/MaramHarsha/cypherpanel/core/notify"
+	"github.com/MaramHarsha/cypherpanel/core/store"
 )
 
 // MailService is the panel's own transport (consumer-defined, rule 6).
@@ -26,6 +27,14 @@ type mailSettingsDTO struct {
 	Configured bool       `json:"configured"`
 	ConfigHint string     `json:"config_hint"`
 	UpdatedAt  *time.Time `json:"updated_at,omitempty"`
+
+	// Everything that is not the password, so the settings form can be edited
+	// rather than retyped. Omitted entirely when nothing is configured.
+	SMTPHost string `json:"smtp_host,omitempty"`
+	SMTPPort int    `json:"smtp_port,omitempty"`
+	Username string `json:"username,omitempty"`
+	From     string `json:"from,omitempty"`
+	TLS      string `json:"tls,omitempty"`
 }
 
 // The password goes in and is never read back — the notifier contract, for the
@@ -37,6 +46,7 @@ type setMailRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 	From     string `json:"from"`
+	TLS      string `json:"tls"`
 }
 
 func mailDTO(s mail.Settings) mailSettingsDTO {
@@ -44,6 +54,13 @@ func mailDTO(s mail.Settings) mailSettingsDTO {
 	if !s.UpdatedAt.IsZero() {
 		u := s.UpdatedAt
 		dto.UpdatedAt = &u
+	}
+	if s.Configured {
+		dto.SMTPHost = s.SMTPHost
+		dto.SMTPPort = s.SMTPPort
+		dto.Username = s.Username
+		dto.From = s.From
+		dto.TLS = s.TLS
 	}
 	return dto
 }
@@ -75,6 +92,7 @@ func (a *API) handleSetPanelMail(w http.ResponseWriter, r *http.Request) {
 	s, err := a.deps.Mail.Set(r.Context(), mail.Config{
 		SMTPHost: req.SMTPHost, SMTPPort: req.SMTPPort,
 		Username: req.Username, Password: req.Password, From: req.From,
+		TLS: req.TLS,
 	})
 	if err != nil {
 		var ve *mail.ValidationError
@@ -135,6 +153,54 @@ type confirmEmailChangeRequest struct {
 type confirmEmailChangeResponse struct {
 	Email   string `json:"email"`
 	Revoked int64  `json:"revoked"`
+}
+
+// pendingEmailChangeDTO is what the profile screen needs to describe a move
+// already in flight: which address it goes to, when it was asked for, and when
+// the link dies. Never the token — holding a session must not be enough to
+// complete a change, only to start or abandon one.
+type pendingEmailChangeDTO struct {
+	NewEmail    string    `json:"new_email"`
+	RequestedAt time.Time `json:"requested_at"`
+	ExpiresAt   time.Time `json:"expires_at"`
+}
+
+// handleGetPendingEmailChange answers what the account is currently moving to,
+// so the confirm step can show "old → new" instead of asking someone to trust a
+// link. 404 is the ordinary answer: most visits have nothing pending.
+func (a *API) handleGetPendingEmailChange(w http.ResponseWriter, r *http.Request) {
+	p, _ := principalFromContext(r.Context())
+	change, err := a.deps.Auth.PendingEmailChange(r.Context(), p.User.ID)
+	switch {
+	case err == nil:
+	case errors.Is(err, store.ErrNotFound):
+		writeError(w, http.StatusNotFound, "no email change is pending")
+		return
+	default:
+		a.deps.Log.Error("reading pending email change", "user_id", p.User.ID, "error", err)
+		writeError(w, http.StatusInternalServerError, "could not read the pending change")
+		return
+	}
+	writeJSON(w, http.StatusOK, pendingEmailChangeDTO{
+		NewEmail:    change.NewEmail,
+		RequestedAt: change.CreatedAt,
+		ExpiresAt:   change.ExpiresAt,
+	})
+}
+
+// handleCancelEmailChange is the "this wasn't me" path. It spends every pending
+// change without applying one, and says how many it killed so the caller can
+// tell the difference between undoing something and finding nothing to undo.
+func (a *API) handleCancelEmailChange(w http.ResponseWriter, r *http.Request) {
+	p, _ := principalFromContext(r.Context())
+	n, err := a.deps.Auth.CancelEmailChange(r.Context(), p.User.ID)
+	if err != nil {
+		a.deps.Log.Error("cancelling email change", "user_id", p.User.ID, "error", err)
+		writeError(w, http.StatusInternalServerError, "could not cancel the change")
+		return
+	}
+	a.deps.Log.Info("email change cancelled", "user_id", p.User.ID, "cancelled", n)
+	writeJSON(w, http.StatusOK, map[string]int64{"cancelled": n})
 }
 
 // handleRequestEmailChange mails a confirmation to the new address, and a notice

@@ -40,6 +40,9 @@ type Config struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 	From     string `json:"from"`
+	// TLS is starttls (default), implicit or none — see core/notify. Stored so
+	// the mode is the operator's decision rather than a guess from the port.
+	TLS string `json:"tls,omitempty"`
 }
 
 // Store is the persistence this needs (consumer-defined, ENGINEERING rule 6).
@@ -62,12 +65,24 @@ type Service struct {
 
 func New(st Store, box SecretBox) *Service { return &Service{store: st, box: box} }
 
-// Settings is what the API may say about the configuration: whether one exists
-// and a hint naming it. Never the credentials.
+// Settings is what the API may say about the configuration: whether one exists,
+// a hint naming it, and every field that is not a credential.
+//
+// Reading the non-secret half back is what makes the settings screen editable:
+// without it, changing a port means retyping the host, the username and the
+// from address from memory, and an operator who mistypes one has silently
+// reconfigured the panel. The password is the one field that never comes back —
+// Configured plus Hint say that one is set without saying what it is.
 type Settings struct {
 	Configured bool
 	Hint       string
 	UpdatedAt  time.Time
+
+	SMTPHost string
+	SMTPPort int
+	Username string
+	From     string
+	TLS      string
 }
 
 // Hint renders the non-secret half — "smtp.acme.com → ops@acme.com" — the same
@@ -92,7 +107,33 @@ func (s *Service) Get(ctx context.Context) (Settings, error) {
 	if err != nil {
 		return Settings{}, err
 	}
-	return Settings{Configured: true, Hint: Hint(c), UpdatedAt: updated}, nil
+	return settingsOf(c, updated), nil
+}
+
+// settingsOf projects a Config onto what the API may say about it. One place,
+// so a field added to Config is either deliberately exposed here or deliberately
+// not — never accidentally either way.
+func settingsOf(c Config, updated time.Time) Settings {
+	return Settings{
+		Configured: true,
+		Hint:       Hint(c),
+		UpdatedAt:  updated,
+		SMTPHost:   c.SMTPHost,
+		SMTPPort:   c.SMTPPort,
+		Username:   c.Username,
+		From:       c.From,
+		TLS:        tlsOrDefault(c.TLS),
+	}
+}
+
+// tlsOrDefault names the mode a stored config actually uses. Rows sealed before
+// the mode existed carry an empty string and are sent with STARTTLS, so that is
+// what the settings screen must show for them.
+func tlsOrDefault(v string) string {
+	if v == "" {
+		return notify.TLSStartTLS
+	}
+	return v
 }
 
 // Set replaces the configuration wholesale. There is no partial update: merging
@@ -119,6 +160,10 @@ func (s *Service) Set(ctx context.Context, c Config) (Settings, error) {
 	if strings.ContainsAny(c.From+c.Username+c.SMTPHost, "\r\n") {
 		return Settings{}, invalid("a line break is not allowed in these fields")
 	}
+	if !notify.ValidMailTLS(c.TLS) {
+		return Settings{}, invalid(fmt.Sprintf("%q is not a transport security mode — use starttls, implicit or none", c.TLS))
+	}
+	c.TLS = tlsOrDefault(c.TLS)
 
 	// Canonical JSON of known fields only, so an unknown key cannot ride along
 	// into the sealed blob.
@@ -133,7 +178,7 @@ func (s *Service) Set(ctx context.Context, c Config) (Settings, error) {
 	if err := s.store.SetPanelMail(ctx, ct, nonce); err != nil {
 		return Settings{}, err
 	}
-	return Settings{Configured: true, Hint: Hint(c), UpdatedAt: time.Now()}, nil
+	return settingsOf(c, time.Now()), nil
 }
 
 func (s *Service) Delete(ctx context.Context) error { return s.store.DeletePanelMail(ctx) }
@@ -152,6 +197,7 @@ func (s *Service) Send(ctx context.Context, to []string, subject, body string) e
 	return notify.SendMail(notify.MailConfig{
 		SMTPHost: c.SMTPHost, SMTPPort: c.SMTPPort,
 		Username: c.Username, From: c.From, Password: c.Password,
+		TLS: tlsOrDefault(c.TLS),
 	}, to, subject, body)
 }
 

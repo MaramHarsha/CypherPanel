@@ -286,6 +286,40 @@ func (f *fakeStore) ConsumeEmailChange(_ context.Context, id string) (domain.Ema
 	return ec, nil
 }
 
+// PendingEmailChange implements the pending-change lookup the profile screen uses: newest
+// live row wins, matching the SQL's ORDER BY created_at DESC.
+func (f *fakeStore) PendingEmailChange(_ context.Context, userID string) (domain.EmailChange, error) {
+	var newest domain.EmailChange
+	found := false
+	for _, ec := range f.emailChanges {
+		if ec.UserID != userID || ec.ConsumedAt != nil || !ec.ExpiresAt.After(time.Now()) {
+			continue
+		}
+		if !found || ec.CreatedAt.After(newest.CreatedAt) {
+			newest, found = ec, true
+		}
+	}
+	if !found {
+		return domain.EmailChange{}, store.ErrNotFound
+	}
+	return newest, nil
+}
+
+// CancelPendingEmailChanges spends every live change for the user, as the UPDATE does.
+func (f *fakeStore) CancelPendingEmailChanges(_ context.Context, userID string) (int64, error) {
+	var n int64
+	now := time.Now()
+	for id, ec := range f.emailChanges {
+		if ec.UserID != userID || ec.ConsumedAt != nil || !ec.ExpiresAt.After(now) {
+			continue
+		}
+		ec.ConsumedAt = &now
+		f.emailChanges[id] = ec
+		n++
+	}
+	return n, nil
+}
+
 func (f *fakeStore) GetUserByID(_ context.Context, id string) (domain.User, error) {
 	for _, u := range f.users {
 		if u.ID == id {

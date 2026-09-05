@@ -7,10 +7,22 @@
  * Every response — success, error and SSE stream alike — carries an `X-Request-Id` header (`components/headers/RequestId`), and every JSON error body repeats it as `trace_id`. It is the value to quote in a bug report and the key to search for in `GET /api/v1/panel/logs`. Individual responses reference the header only where a generated client benefits; it is present on all of them.
  * OpenAPI spec version: 0.3.0
  */
+import type { PanelMailSettingsTls } from './panelMailSettingsTls.ts';
 
 export interface PanelMailSettings {
   configured: boolean;
   /** Non-secret summary, e.g. "smtp.acme.com → ops@acme.com". Never the password. */
   config_hint: string;
   updated_at?: string;
+  /** Present only when configured. The saved settings are read back so the form can be edited rather than retyped; the password is the one field that never comes back. */
+  smtp_host?: string;
+  /**
+     * @minimum 1
+     * @maximum 65535
+     */
+  smtp_port?: number;
+  username?: string;
+  from?: string;
+  /** Transport security in use. Settings saved before this field existed read back as starttls, which is how they are sent. */
+  tls?: PanelMailSettingsTls;
 }

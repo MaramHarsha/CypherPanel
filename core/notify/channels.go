@@ -3,6 +3,7 @@ package notify
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -108,31 +109,128 @@ func redactURL(err error) error {
 // exported because the panel now has mail of its own to send — account mail,
 // which belongs to no project (docs/features/panel-mail.md) — and that must go
 // through this sender rather than a second copy of it.
+// Transport security for an SMTP conversation. The zero value is STARTTLS
+// because that is what the panel did before the mode was configurable, and a
+// silent downgrade on upgrade would be the worst possible default.
+const (
+	// TLSStartTLS upgrades a plaintext connection with STARTTLS and refuses to
+	// send if the server will not offer it. Port 587.
+	TLSStartTLS = "starttls"
+	// TLSImplicit wraps the connection in TLS from the first byte. Port 465.
+	TLSImplicit = "implicit"
+	// TLSNone sends in the clear. Only defensible for a relay on localhost or
+	// a private network the operator controls.
+	TLSNone = "none"
+)
+
+// ValidMailTLS reports whether v names a transport-security mode. The empty
+// string is valid and means STARTTLS.
+func ValidMailTLS(v string) bool {
+	switch v {
+	case "", TLSStartTLS, TLSImplicit, TLSNone:
+		return true
+	}
+	return false
+}
+
 type MailConfig struct {
 	SMTPHost string
 	SMTPPort int
 	Username string
 	From     string
 	Password string
+	// TLS is one of the constants above; empty means TLSStartTLS.
+	TLS string
 }
 
-// SendMail delivers one message over SMTP (stdlib net/smtp). smtp.SendMail
-// issues STARTTLS when the server advertises it; auth is used only when a
-// username is set.
+// SendMail delivers one message over SMTP.
+//
+// The three modes are driven explicitly rather than inferred from the port,
+// because inference is what makes a misconfigured panel fail at the moment it
+// matters. STARTTLS is *required* in that mode: stdlib smtp.SendMail upgrades
+// only when the server advertises STARTTLS and otherwise sends the credential
+// in the clear, which is a downgrade an operator who chose STARTTLS did not
+// agree to. Auth is used only when a username is set.
 func SendMail(c MailConfig, to []string, subject, body string) error {
 	if len(to) == 0 {
 		return fmt.Errorf("no recipients")
 	}
+	if !ValidMailTLS(c.TLS) {
+		return fmt.Errorf("unknown TLS mode %q", c.TLS)
+	}
 	msg := buildMessage(c.From, to, subject, body)
 	addr := fmt.Sprintf("%s:%d", c.SMTPHost, c.SMTPPort)
-	var auth smtp.Auth
-	if c.Username != "" {
-		auth = smtp.PlainAuth("", c.Username, c.Password, c.SMTPHost)
+
+	client, err := dialSMTP(c, addr)
+	if err != nil {
+		return err
 	}
-	if err := smtp.SendMail(addr, auth, c.From, to, msg); err != nil {
-		return fmt.Errorf("smtp send: %w", err)
+	defer func() { _ = client.Close() }()
+
+	if c.Username != "" {
+		if err := client.Auth(smtp.PlainAuth("", c.Username, c.Password, c.SMTPHost)); err != nil {
+			return fmt.Errorf("smtp auth: %w", err)
+		}
+	}
+	if err := client.Mail(c.From); err != nil {
+		return fmt.Errorf("smtp from: %w", err)
+	}
+	for _, rcpt := range to {
+		if err := client.Rcpt(rcpt); err != nil {
+			return fmt.Errorf("smtp recipient: %w", err)
+		}
+	}
+	wc, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("smtp data: %w", err)
+	}
+	if _, err := wc.Write(msg); err != nil {
+		_ = wc.Close()
+		return fmt.Errorf("smtp write: %w", err)
+	}
+	if err := wc.Close(); err != nil {
+		return fmt.Errorf("smtp write: %w", err)
+	}
+	if err := client.Quit(); err != nil {
+		return fmt.Errorf("smtp quit: %w", err)
 	}
 	return nil
+}
+
+// dialSMTP opens the connection in the requested transport security mode and
+// returns a client that has already greeted the server.
+func dialSMTP(c MailConfig, addr string) (*smtp.Client, error) {
+	if c.TLS == TLSImplicit {
+		conn, err := tls.Dial("tcp", addr, &tls.Config{ServerName: c.SMTPHost, MinVersion: tls.VersionTLS12})
+		if err != nil {
+			return nil, fmt.Errorf("smtp dial (implicit TLS): %w", err)
+		}
+		client, err := smtp.NewClient(conn, c.SMTPHost)
+		if err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("smtp greet: %w", err)
+		}
+		return client, nil
+	}
+
+	client, err := smtp.Dial(addr)
+	if err != nil {
+		return nil, fmt.Errorf("smtp dial: %w", err)
+	}
+	if c.TLS == TLSNone {
+		return client, nil
+	}
+	// STARTTLS, and it is not optional: a server that will not upgrade is a
+	// server this configuration must not talk to.
+	if ok, _ := client.Extension("STARTTLS"); !ok {
+		_ = client.Close()
+		return nil, fmt.Errorf("smtp: the server does not offer STARTTLS — choose implicit TLS (port 465) or none if this relay is trusted")
+	}
+	if err := client.StartTLS(&tls.Config{ServerName: c.SMTPHost, MinVersion: tls.VersionTLS12}); err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("smtp starttls: %w", err)
+	}
+	return client, nil
 }
 
 // sendEmail delivers a notifier's event through the same sender.

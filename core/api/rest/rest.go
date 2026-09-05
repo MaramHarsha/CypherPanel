@@ -283,7 +283,9 @@ func (a *API) Handler() http.Handler {
 	// Session-only — an API token must not be able to cut off the operator.
 	mux.HandleFunc("PATCH /api/v1/auth/me", a.sessionOnly(a.handleUpdateProfile))
 	mux.HandleFunc("POST /api/v1/auth/password", a.sessionOnly(a.handleChangePassword))
+	mux.HandleFunc("GET /api/v1/auth/email/change", a.sessionOnly(a.handleGetPendingEmailChange))
 	mux.HandleFunc("POST /api/v1/auth/email/change", a.sessionOnly(a.handleRequestEmailChange))
+	mux.HandleFunc("DELETE /api/v1/auth/email/change", a.sessionOnly(a.handleCancelEmailChange))
 	mux.HandleFunc("POST /api/v1/auth/email/confirm", a.sessionOnly(a.handleConfirmEmailChange))
 	mux.HandleFunc("PUT /api/v1/auth/me/avatar", a.sessionOnly(a.handleSetAvatar))
 	mux.HandleFunc("DELETE /api/v1/auth/me/avatar", a.sessionOnly(a.handleDeleteAvatar))

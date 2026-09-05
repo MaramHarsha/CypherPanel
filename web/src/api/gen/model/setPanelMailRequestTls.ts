@@ -7,19 +7,15 @@
  * Every response — success, error and SSE stream alike — carries an `X-Request-Id` header (`components/headers/RequestId`), and every JSON error body repeats it as `trace_id`. It is the value to quote in a bug report and the key to search for in `GET /api/v1/panel/logs`. Individual responses reference the header only where a generated client benefits; it is present on all of them.
  * OpenAPI spec version: 0.3.0
  */
-import type { SetPanelMailRequestTls } from './setPanelMailRequestTls.ts';
 
-export interface SetPanelMailRequest {
-  smtp_host: string;
-  /**
-     * @minimum 1
-     * @maximum 65535
-     */
-  smtp_port: number;
-  username?: string;
-  /** Write-only. Never returned by any route. */
-  password?: string;
-  from: string;
-  /** Transport security. starttls (port 587) upgrades the connection and refuses to send if the server will not offer STARTTLS — no silent downgrade. implicit (port 465) is TLS from the first byte. none sends in the clear and is only defensible for a relay you control. */
-  tls?: SetPanelMailRequestTls;
-}
+/**
+ * Transport security. starttls (port 587) upgrades the connection and refuses to send if the server will not offer STARTTLS — no silent downgrade. implicit (port 465) is TLS from the first byte. none sends in the clear and is only defensible for a relay you control.
+ */
+export type SetPanelMailRequestTls = typeof SetPanelMailRequestTls[keyof typeof SetPanelMailRequestTls];
+
+
+export const SetPanelMailRequestTls = {
+  starttls: 'starttls',
+  implicit: 'implicit',
+  none: 'none',
+} as const;

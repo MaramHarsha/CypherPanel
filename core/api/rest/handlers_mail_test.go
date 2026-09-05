@@ -7,6 +7,7 @@ package rest
 // countdown, exactly as sign-in does.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -128,4 +129,112 @@ func TestEmailChangeConfirmIsThrottledOverHTTP(t *testing.T) {
 		t.Fatalf("after three guesses = %d, want 429 (body %s)", status, body)
 	}
 	assertThrottled(t, header, body, "email-change confirm")
+}
+
+// ─── pending email change: read it back, and abandon it ─────────────────────
+
+// TestPendingEmailChangeLifecycleOverHTTP walks the three answers the profile
+// screen needs: nothing pending, something pending, and nothing again after the
+// person says "this wasn't me". The token never appears in any of them — a
+// session may start or abandon a move, never complete one.
+func TestPendingEmailChangeLifecycleOverHTTP(t *testing.T) {
+	ts := newEmailChangeServer(t, 50)
+	token := login(t, ts)
+
+	// Nothing pending is the ordinary answer, and it is a 404 rather than an
+	// empty object so the client is not left comparing zero values.
+	if status, _, body := doJSON(t, "GET", ts.URL+"/api/v1/auth/email/change", token, ""); status != http.StatusNotFound {
+		t.Fatalf("with nothing pending = %d, want 404 (body %s)", status, body)
+	}
+
+	// Cancelling nothing is honest about having cancelled nothing.
+	status, _, body := doJSON(t, "DELETE", ts.URL+"/api/v1/auth/email/change", token, "")
+	if status != http.StatusOK {
+		t.Fatalf("cancel with nothing pending = %d, want 200 (body %s)", status, body)
+	}
+	var cancelled struct {
+		Cancelled int64 `json:"cancelled"`
+	}
+	if err := json.Unmarshal(body, &cancelled); err != nil {
+		t.Fatalf("unmarshal %s: %v", body, err)
+	}
+	if cancelled.Cancelled != 0 {
+		t.Fatalf("cancelled = %d with nothing pending, want 0", cancelled.Cancelled)
+	}
+
+	// Ask for a real move.
+	req := `{"new_email":"moved@example.com","current_password":"` + testPassword + `"}`
+	if status, _, body := doJSON(t, "POST", ts.URL+"/api/v1/auth/email/change", token, req); status != http.StatusAccepted {
+		t.Fatalf("requesting the change = %d, want 202 (body %s)", status, body)
+	}
+
+	status, _, body = doJSON(t, "GET", ts.URL+"/api/v1/auth/email/change", token, "")
+	if status != http.StatusOK {
+		t.Fatalf("with a change pending = %d, want 200 (body %s)", status, body)
+	}
+	var pending pendingEmailChangeDTO
+	if err := json.Unmarshal(body, &pending); err != nil {
+		t.Fatalf("unmarshal %s: %v", body, err)
+	}
+	if pending.NewEmail != "moved@example.com" {
+		t.Fatalf("new_email = %q, want moved@example.com", pending.NewEmail)
+	}
+	if !pending.ExpiresAt.After(pending.RequestedAt) {
+		t.Fatalf("expires_at %v is not after requested_at %v", pending.ExpiresAt, pending.RequestedAt)
+	}
+	// The wire token is the one thing this route must never carry.
+	if bytes.Contains(body, []byte("token")) {
+		t.Fatalf("the pending-change body mentions a token: %s", body)
+	}
+
+	// "This wasn't me" spends it, and the next read is 404 again.
+	status, _, body = doJSON(t, "DELETE", ts.URL+"/api/v1/auth/email/change", token, "")
+	if status != http.StatusOK {
+		t.Fatalf("cancel = %d, want 200 (body %s)", status, body)
+	}
+	if err := json.Unmarshal(body, &cancelled); err != nil {
+		t.Fatalf("unmarshal %s: %v", body, err)
+	}
+	if cancelled.Cancelled != 1 {
+		t.Fatalf("cancelled = %d, want 1", cancelled.Cancelled)
+	}
+	if status, _, body := doJSON(t, "GET", ts.URL+"/api/v1/auth/email/change", token, ""); status != http.StatusNotFound {
+		t.Fatalf("after cancelling = %d, want 404 (body %s)", status, body)
+	}
+}
+
+// TestCancelEmailChangeKillsEveryOutstandingLink: a second request supersedes
+// the first in the UI, but both links are live until they expire. Cancelling
+// must kill both, or "this wasn't me" leaves the attacker's second link working.
+func TestCancelEmailChangeKillsEveryOutstandingLink(t *testing.T) {
+	ts := newEmailChangeServer(t, 50)
+	token := login(t, ts)
+
+	for _, addr := range []string{"first@example.com", "second@example.com"} {
+		body := `{"new_email":"` + addr + `","current_password":"` + testPassword + `"}`
+		if status, _, b := doJSON(t, "POST", ts.URL+"/api/v1/auth/email/change", token, body); status != http.StatusAccepted {
+			t.Fatalf("requesting %s = %d, want 202 (body %s)", addr, status, b)
+		}
+	}
+
+	// Newest wins in the read-back.
+	_, _, body := doJSON(t, "GET", ts.URL+"/api/v1/auth/email/change", token, "")
+	var pending pendingEmailChangeDTO
+	if err := json.Unmarshal(body, &pending); err != nil {
+		t.Fatalf("unmarshal %s: %v", body, err)
+	}
+	if pending.NewEmail != "second@example.com" {
+		t.Fatalf("new_email = %q, want the newest request", pending.NewEmail)
+	}
+
+	_, _, body = doJSON(t, "DELETE", ts.URL+"/api/v1/auth/email/change", token, "")
+	var cancelled struct {
+		Cancelled int64 `json:"cancelled"`
+	}
+	if err := json.Unmarshal(body, &cancelled); err != nil {
+		t.Fatalf("unmarshal %s: %v", body, err)
+	}
+	if cancelled.Cancelled != 2 {
+		t.Fatalf("cancelled = %d, want both outstanding links", cancelled.Cancelled)
+	}
 }

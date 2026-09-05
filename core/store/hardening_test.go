@@ -192,3 +192,107 @@ func TestStoreDeployKeyBlockers(t *testing.T) {
 		t.Fatal("deleting a referenced deploy key succeeded; the FK should RESTRICT")
 	}
 }
+
+// TestStorePendingEmailChange: the lookup returns the newest live change, and
+// ignores rows that are spent, expired or another user's. "Newest wins" is what
+// makes a second request supersede the first on screen.
+func TestStorePendingEmailChange(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	user, err := s.CreateUser(ctx, ids.New(ids.PrefixUser), "pending-"+ids.Secret()[:8]+"@example.test", "hash", domain.RoleMember)
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	other, err := s.CreateUser(ctx, ids.New(ids.PrefixUser), "other-"+ids.Secret()[:8]+"@example.test", "hash", domain.RoleMember)
+	if err != nil {
+		t.Fatalf("CreateUser(other): %v", err)
+	}
+	now := time.Now()
+
+	// Nothing pending is ErrNotFound, not an empty row.
+	if _, err := s.PendingEmailChange(ctx, user.ID); err == nil {
+		t.Fatal("PendingEmailChange with nothing pending returned no error")
+	}
+
+	// Already expired: never a candidate.
+	if _, err := s.CreateEmailChange(ctx, ids.New(ids.PrefixEmailChange), user.ID, "expired@example.test", []byte("h1"), now.Add(-time.Minute)); err != nil {
+		t.Fatalf("CreateEmailChange(expired): %v", err)
+	}
+	// Spent: created, then consumed.
+	spent, err := s.CreateEmailChange(ctx, ids.New(ids.PrefixEmailChange), user.ID, "spent@example.test", []byte("h2"), now.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("CreateEmailChange(spent): %v", err)
+	}
+	if _, err := s.ConsumeEmailChange(ctx, spent.ID); err != nil {
+		t.Fatalf("ConsumeEmailChange: %v", err)
+	}
+	// Another user's live change must not leak into this user's answer.
+	if _, err := s.CreateEmailChange(ctx, ids.New(ids.PrefixEmailChange), other.ID, "theirs@example.test", []byte("h3"), now.Add(time.Hour)); err != nil {
+		t.Fatalf("CreateEmailChange(other): %v", err)
+	}
+
+	if _, err := s.PendingEmailChange(ctx, user.ID); err == nil {
+		t.Fatal("expired and spent rows were treated as pending")
+	}
+
+	// Two live changes: the newest is the answer.
+	if _, err := s.CreateEmailChange(ctx, ids.New(ids.PrefixEmailChange), user.ID, "first@example.test", []byte("h4"), now.Add(time.Hour)); err != nil {
+		t.Fatalf("CreateEmailChange(first): %v", err)
+	}
+	time.Sleep(5 * time.Millisecond) // created_at is the tiebreak; make it decidable
+	if _, err := s.CreateEmailChange(ctx, ids.New(ids.PrefixEmailChange), user.ID, "second@example.test", []byte("h5"), now.Add(time.Hour)); err != nil {
+		t.Fatalf("CreateEmailChange(second): %v", err)
+	}
+	got, err := s.PendingEmailChange(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("PendingEmailChange: %v", err)
+	}
+	if got.NewEmail != "second@example.test" {
+		t.Fatalf("pending change = %q, want the newest request", got.NewEmail)
+	}
+}
+
+// TestStoreCancelPendingEmailChanges: "this wasn't me" spends every live link
+// for the account and nobody else's, and says how many it spent.
+func TestStoreCancelPendingEmailChanges(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	user, err := s.CreateUser(ctx, ids.New(ids.PrefixUser), "cancel-"+ids.Secret()[:8]+"@example.test", "hash", domain.RoleMember)
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	other, err := s.CreateUser(ctx, ids.New(ids.PrefixUser), "keep-"+ids.Secret()[:8]+"@example.test", "hash", domain.RoleMember)
+	if err != nil {
+		t.Fatalf("CreateUser(other): %v", err)
+	}
+	now := time.Now()
+
+	if n, err := s.CancelPendingEmailChanges(ctx, user.ID); err != nil || n != 0 {
+		t.Fatalf("cancelling nothing = (%d, %v), want (0, nil)", n, err)
+	}
+
+	for _, addr := range []string{"one@example.test", "two@example.test"} {
+		if _, err := s.CreateEmailChange(ctx, ids.New(ids.PrefixEmailChange), user.ID, addr, []byte("h-"+addr), now.Add(time.Hour)); err != nil {
+			t.Fatalf("CreateEmailChange(%s): %v", addr, err)
+		}
+	}
+	theirs, err := s.CreateEmailChange(ctx, ids.New(ids.PrefixEmailChange), other.ID, "theirs@example.test", []byte("h-theirs"), now.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("CreateEmailChange(other): %v", err)
+	}
+
+	n, err := s.CancelPendingEmailChanges(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("CancelPendingEmailChanges: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("cancelled = %d, want both outstanding links", n)
+	}
+	if _, err := s.PendingEmailChange(ctx, user.ID); err == nil {
+		t.Fatal("a change survived the cancel")
+	}
+	// The other account is untouched, and its link still works.
+	if _, err := s.ConsumeEmailChange(ctx, theirs.ID); err != nil {
+		t.Fatalf("another user's change was cancelled too: %v", err)
+	}
+}
