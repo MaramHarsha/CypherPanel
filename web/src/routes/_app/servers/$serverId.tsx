@@ -2,7 +2,6 @@
 // revoking a server is a typed-name delete (ui-principles §2).
 import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { toast } from "sonner";
 import { getGetServerQueryKey, getListServersQueryKey, useDeleteServer, useGetServer } from "@/api/gen/servers/servers";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
 import { Fact, FactCard } from "@/components/fact-card";
@@ -14,6 +13,7 @@ import { StatusBadge, StatusDot } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { useCrumbs } from "@/lib/crumbs";
 import { absoluteTime, relativeTime } from "@/lib/time";
+import { toastFailed, toastSuccess } from "@/lib/toast";
 
 export const Route = createFileRoute("/_app/servers/$serverId")({ component: ServerDetail });
 
@@ -36,10 +36,10 @@ function ServerDetail() {
         // vouch for.
         void qc.invalidateQueries({ queryKey: getListServersQueryKey() });
         void qc.invalidateQueries({ queryKey: getGetServerQueryKey(serverId) });
-        toast.success("Server removed — its agent certificate is revoked");
+        toastSuccess("Server removed — its agent certificate is revoked");
         void navigate({ to: "/servers" });
       },
-      onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Could not remove the server"),
+      onError: (e: unknown, vars) => toastFailed("Could not remove the server", e, { retry: () => del.mutate(vars) }),
     },
   });
 
@@ -108,17 +108,25 @@ function ServerDetail() {
                       Revokes its agent's certificate immediately. Its workloads must be moved or deleted first.
                     </p>
                   </div>
+                  {/* Canvas 13af: the kind in the title, and the blast radius
+                      as what DELETE /servers/{id} actually does (servers.go
+                      Delete, openapi deleteServer) — nothing it cannot do.
+                      The one survival is stated where it applies: the plane
+                      refuses the remove while apps still run here (409), so
+                      no workload is ever taken down by it. */}
                   <ConfirmDestructive
                     trigger={<Button variant="danger">Remove</Button>}
-                    title={`Remove ${srv.name}?`}
-                    lead="Removing this server:"
+                    title={`Remove server ${srv.name}?`}
+                    lead="Removing this server, immediately:"
                     blastRadius={[
-                      "revokes its agent certificate immediately — the agent is disconnected",
-                      "is refused while any app is still placed here — move or delete them first",
+                      "its agent's identity — the live connection is cut and the certificate is refused on any reconnect",
+                      "its pending join tokens — an install still in progress can't complete",
+                      "its place in the fleet (its apps survive: the remove is refused while any still runs here — move or delete them first)",
                     ]}
                     confirmName={srv.name}
                     actionLabel="Remove server"
                     pending={del.isPending}
+                    pendingLabel="Removing…"
                     onConfirm={() => del.mutate({ id: srv.id })}
                   />
                 </div>

@@ -7,11 +7,11 @@
 // what it is for rather than leaving the operator to guess why it is asked for.
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { toast } from "sonner";
 import { ApiError } from "@/api/client";
 import { getGetServerQueryKey, getListServersQueryKey, useUpdateServer } from "@/api/gen/servers/servers";
 import { ActionButton } from "@/components/ui/action-button";
 import { Input } from "@/components/ui/input";
+import { toastSuccess } from "@/lib/toast";
 
 export function ServerPublicAddress({ serverId, value }: { serverId: string; value: string }) {
   const qc = useQueryClient();
@@ -26,7 +26,7 @@ export function ServerPublicAddress({ serverId, value }: { serverId: string; val
         void qc.invalidateQueries({ queryKey: getListServersQueryKey() });
         setEditing(false);
         setError(null);
-        toast.success("Public address saved");
+        toastSuccess("Public address saved");
       },
       onError: (e: unknown) => setError(e instanceof ApiError ? e.message : "Could not save the address"),
     },
@@ -82,7 +82,7 @@ export function ServerPublicAddress({ serverId, value }: { serverId: string; val
         </span>
       ) : (
         <span className="text-[11.5px] text-text-faint">
-          The IP DNS records point at. Leave empty and no records are written for this server's apps.
+          Where DNS records for this server's apps point. Leave it empty and no records are written for them.
         </span>
       )}
     </span>

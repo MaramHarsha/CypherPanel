@@ -1,10 +1,15 @@
-// Project settings: who hears about this project's events, what its
-// applications share, and the project's own danger zone. Three tabs because
-// each answers a different question — Notifiers reach people in prose, Webhooks
-// reach machines as a signed JSON contract (outbound-webhooks.md §7), and
-// Shared variables are the values every app in the project reads
+// Project settings: what the project is, who hears about its events, what its
+// applications share, and the project's own danger zone. Four tabs because
+// each answers a different question — General is the project's own facts and
+// its delete (canvas 12c), Notifiers reach people in prose, Webhooks reach
+// machines as a signed JSON contract (outbound-webhooks.md §7), and Shared
+// variables are the values every app in the project reads
 // (shared-variables.md §8). The board datelines each screen
 // ATLAS-CRM / SETTINGS / <TAB>, which is a route, not an anchor.
+//
+// 12c's strip also draws Quotas, Protection and Status page. None of the three
+// has an API, so none is drawn here: a tab that opens onto nothing is a dead
+// end, and each arrives with its endpoint.
 import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
 import { PageBody, PageHeader } from "@/components/page-header";
 
@@ -13,7 +18,8 @@ export const Route = createFileRoute("/_app/projects/$projectId/settings")({
 });
 
 const TABS = [
-  { to: ".", label: "Notifiers", exact: true },
+  { to: ".", label: "General", exact: true },
+  { to: "notifiers", label: "Notifiers", exact: false },
   { to: "webhooks", label: "Webhooks", exact: false },
   { to: "shared-variables", label: "Shared variables", exact: false },
 ] as const;
@@ -27,14 +33,14 @@ function ProjectSettingsLayout() {
       <PageHeader
         title="Project settings"
         below={
-          <nav className="-mb-px flex gap-5 overflow-x-auto" aria-label="Project settings">
+          <nav className="-mb-px flex gap-[18px] overflow-x-auto" aria-label="Project settings">
             {TABS.map((t) => (
               <Link
                 key={t.label}
                 from={Route.fullPath}
                 to={t.to}
                 activeOptions={{ exact: t.exact }}
-                className="whitespace-nowrap border-b-2 border-transparent px-0.5 py-2.5 text-[13px] text-text-mid hover:text-text"
+                className="whitespace-nowrap border-b-2 border-transparent px-0.5 py-2 text-[13px] text-text-mid hover:text-text"
                 activeProps={{ className: "border-border-strong font-semibold text-text" }}
               >
                 {t.label}
@@ -43,7 +49,7 @@ function ProjectSettingsLayout() {
           </nav>
         }
       />
-      {/* The layout owns the page gutters so both tabs are inset identically. */}
+      {/* The layout owns the page gutters so every tab is inset identically. */}
       <PageBody>
         <Outlet />
       </PageBody>

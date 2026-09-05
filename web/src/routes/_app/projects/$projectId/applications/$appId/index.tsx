@@ -122,12 +122,17 @@ function OverviewTab() {
                 <Fact label="Domain">
                   <DomainLink applicationId={appId} domain={a.route.domain ?? ""} https={a.route.https} />
                 </Fact>
-                {a.route.domain && a.route.path_prefix !== "/" && (
+                {a.route.domain && a.route.path_prefix && a.route.path_prefix !== "/" && (
                   <Fact label="Path">{a.route.path_prefix}</Fact>
                 )}
+                {/* What is requested, not what was issued: the certificate
+                    lives in the serving node's acme.json and the plane never
+                    sees it (routing-and-tls.md §7), so a green tick here would
+                    be the panel asserting a thing it cannot check. The route
+                    row in Settings carries the fuller condition (13c). */}
                 <Fact label="TLS">
                   {!a.route.domain ? "—" : a.route.https ? (
-                    <span className="text-status-running">✓ auto-renews</span>
+                    "https · Let's Encrypt"
                   ) : (
                     <span className="text-status-degraded-text">off · plain http</span>
                   )}
@@ -153,7 +158,7 @@ function OverviewTab() {
               </FactCard>
             </div>
 
-            {a.route.domain && <DomainCheck appId={appId} domain={a.route.domain} />}
+            {a.route.domain && <DomainCheck appId={appId} domain={a.route.domain} serverId={a.runtime.server_id} />}
 
             {/* An image-source app has no repository to hang a webhook on, and
                 telling its operator to open GitHub → Settings → Webhooks is a
@@ -208,8 +213,13 @@ function ServerFact({ serverId }: { serverId: string }) {
  *  and still be answered by another program on port 80, which nothing in the
  *  panel could see before. Checked on demand rather than polled: it makes an
  *  outbound request to the public internet. */
-function DomainCheck({ appId, domain }: { appId: string; domain: string }) {
+function DomainCheck({ appId, domain, serverId }: { appId: string; domain: string; serverId: string }) {
   const check = useCheckApplicationDomain(appId, { query: { enabled: false, retry: false } });
+  // The server's public address is the thing an A record should point at, and
+  // the plane already stores it — so a "no DNS" verdict can name the address
+  // (canvas 13c) instead of leaving "your server's public IP" to be looked up.
+  const server = useGetServer(serverId, { query: { retry: false } });
+  const address = server.data?.public_address;
   const r = check.data;
   const ok = r?.verdict === "ok";
   const answered = Boolean(r) || check.isError;
@@ -249,7 +259,17 @@ function DomainCheck({ appId, domain }: { appId: string; domain: string }) {
             <StatusDot status={ok ? "running" : "degraded"} className="mt-[5px]" />
             {r.summary}
           </p>
-          {r.remedy && <p className="pl-[18px] text-[12.5px] leading-relaxed text-text-dim">{r.remedy}</p>}
+          {r.remedy && (
+            <p className="pl-[18px] text-[12.5px] leading-relaxed text-text-dim">
+              {r.remedy}
+              {r.verdict === "no_dns" && address && (
+                <>
+                  {" "}
+                  Here, that is <span className="font-mono text-[12px] text-text">{address}</span>.
+                </>
+              )}
+            </p>
+          )}
           {(r.resolved_ips.length > 0 || r.http_status || r.served_by) && (
             <p className="pl-[18px] font-mono text-[11.5px] text-text-faint">
               {[

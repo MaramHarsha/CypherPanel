@@ -11,16 +11,29 @@ import {
   useNavigate,
   useRouterState,
 } from "@tanstack/react-router";
-import { Boxes, Check, ChevronDown, LayoutTemplate, LogOut, Moon, Search, Server, Settings, Sun, UserRound } from "lucide-react";
+import {
+  Boxes,
+  Check,
+  ChevronDown,
+  Inbox,
+  LayoutTemplate,
+  LogOut,
+  Moon,
+  Search,
+  Server,
+  Settings,
+  Sun,
+  UserRound,
+} from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ApiError } from "@/api/client";
 import { useGetMe, useLogout } from "@/api/gen/auth/auth";
 import { PlaneOfflinePage } from "@/components/error-page";
 import { CommandPalette, openCommandPalette } from "@/components/command-palette";
 import { InboxBell } from "@/components/inbox-bell";
+import { ShortcutsOverlay } from "@/components/shortcuts-overlay";
 import { SSEBanner } from "@/components/sse-banner";
 import { UserAvatar } from "@/components/user-avatar";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
 import {
   Dropdown,
   DropdownContent,
@@ -30,9 +43,10 @@ import {
 } from "@/components/ui/dropdown";
 import { clearToken, isAuthenticated } from "@/lib/auth";
 import { CrumbsProvider } from "@/lib/crumbs";
+import { APP_ROUTE, APP_TABS, requestDeploy, shouldIgnoreKey } from "@/lib/keys";
 import { LiveProvider, useLiveStatus } from "@/lib/live";
 import { relativeTime } from "@/lib/time";
-import { setTheme, useTheme } from "@/lib/theme";
+import { toggleTheme, useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import { TeamProvider, useTeamScope } from "@/lib/team";
 
@@ -45,13 +59,12 @@ export const Route = createFileRoute("/_app")({
   component: AppShell,
 });
 
-// The glyph is only worn on the mobile tab bar (14b), but it belongs to the
-// item rather than to that one surface — the palette names the same four.
+/** The top bar's four destinations (ui-principles §4 fixes the count). */
 const NAV = [
-  { to: "/projects", label: "Projects", icon: Boxes },
-  { to: "/servers", label: "Servers", icon: Server },
-  { to: "/templates", label: "Templates", icon: LayoutTemplate },
-  { to: "/settings", label: "Settings", icon: Settings },
+  { to: "/projects", label: "Projects" },
+  { to: "/servers", label: "Servers" },
+  { to: "/templates", label: "Templates" },
+  { to: "/settings", label: "Settings" },
 ] as const;
 
 function AppShell() {
@@ -61,14 +74,21 @@ function AppShell() {
         <LiveProvider>
           <CrumbsProvider>
             <div className="flex min-h-dvh flex-col bg-bg">
+              <SkipLink />
               <CommandPalette />
               <AppShortcuts />
               <TopBar />
               <LiveBanner />
               {/* The bottom bar is fixed, so the last rows of any page would
                   sit under it without this — and it grows by the notch inset on
-                  a phone that has one, so the reserve has to grow with it. */}
-              <main className="mx-auto w-full max-w-[1400px] flex-1 pb-[calc(4rem+env(safe-area-inset-bottom))] sm:pb-0">
+                  a phone that has one, so the reserve has to grow with it.
+                  `tabIndex={-1}` lets the skip link land focus here without
+                  putting the region itself in the tab order. */}
+              <main
+                id="main"
+                tabIndex={-1}
+                className="mx-auto w-full max-w-[1400px] flex-1 pb-[calc(4rem+env(safe-area-inset-bottom))] outline-none sm:pb-0"
+              >
                 <Outlet />
               </main>
               <BottomTabs />
@@ -77,6 +97,28 @@ function AppShell() {
         </LiveProvider>
       </TeamProvider>
     </PlaneGate>
+  );
+}
+
+/**
+ * Canvas 14g, TAB ORDER: the sequence starts at the top bar, and WCAG 2.4.1
+ * asks for a way past it. The link is the first stop on every page, invisible
+ * until it has focus, and drawn as the ink pill so it is unmistakably a
+ * control when it appears. It focuses <main> itself rather than relying on
+ * the hash so the router's history is not touched.
+ */
+function SkipLink() {
+  return (
+    <a
+      href="#main"
+      onClick={(e) => {
+        e.preventDefault();
+        document.getElementById("main")?.focus();
+      }}
+      className="sr-only z-50 rounded-full bg-primary px-[18px] py-2 text-[12.5px] font-semibold text-primary-fg focus:not-sr-only focus:fixed focus:left-4 focus:top-3"
+    >
+      Skip to content
+    </a>
   );
 }
 
@@ -208,34 +250,58 @@ function TopBar() {
  * the active item carries the same accent rule as the top bar, pulled up onto
  * the bar's own hairline.
  *
- * The canvas draws Projects · Servers · Inbox · Profile; the last two have no
- * backend, so the bar carries the four places this panel can actually go. The
- * tab set is worth a product decision rather than a silent substitution.
+ * The canvas draws Projects · Servers · Inbox · Profile, and that is what the
+ * bar carries: Templates and Settings stay reachable through ⌘K (the search
+ * circle) and the account menu, which is where a phone puts the things it
+ * does not visit every hour.
  */
+const BOTTOM_TABS = [
+  { to: "/projects", label: "Projects", icon: Boxes },
+  { to: "/servers", label: "Servers", icon: Server },
+  { to: "/inbox", label: "Inbox", icon: Inbox },
+  { to: "/settings/profile", label: "Profile", icon: UserRound },
+] as const;
+
+const TAB_CLASS =
+  // The bottom of a notched phone belongs to the home indicator, which would
+  // otherwise be drawn straight through these labels.
+  "-mt-px flex flex-1 flex-col items-center gap-[3px] border-t-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2.5 text-[10.5px]";
+const TAB_ACTIVE = "border-accent font-semibold text-text";
+const TAB_INACTIVE = "border-transparent text-text-faint";
+
 function BottomTabs() {
   return (
     <nav
       aria-label="Main"
       className="fixed inset-x-0 bottom-0 z-30 flex border-t border-border bg-surface sm:hidden"
     >
-      {NAV.map(({ to, label, icon: Icon }) => (
-        <Link
-          key={to}
-          to={to}
-          // The bottom of a notched phone belongs to the home indicator, which
-          // would otherwise be drawn straight through these labels.
-          className="-mt-px flex flex-1 flex-col items-center gap-[3px] border-t-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2.5 text-[10.5px]"
-          activeProps={{ className: "border-accent font-semibold text-text" }}
-          inactiveProps={{ className: "border-transparent text-text-faint" }}
-        >
-          <Icon className="h-4 w-4" aria-hidden />
-          {label}
-        </Link>
+      {BOTTOM_TABS.map((t) => (
+        <BottomTab key={t.to} {...t} />
       ))}
     </nav>
   );
 }
 
+function BottomTab({ to, label, icon: Icon }: (typeof BOTTOM_TABS)[number]) {
+  return (
+    <Link
+      to={to}
+      className={TAB_CLASS}
+      activeProps={{ className: TAB_ACTIVE }}
+      inactiveProps={{ className: TAB_INACTIVE }}
+    >
+      <Icon className="h-4 w-4" aria-hidden />
+      {label}
+    </Link>
+  );
+}
+
+/**
+ * ☾/☀ at the far right of the top bar (canvas 12g/14b). Hidden below `sm`: the
+ * phone's header carries only search and the bell, and the Profile tab's
+ * Light/Dark/Auto field is where a phone changes theme. Both write the same
+ * preference (lib/theme.ts), so neither can disagree with the other.
+ */
 function ThemeToggle() {
   const theme = useTheme();
   const next = theme === "dark" ? "light" : "dark";
@@ -244,12 +310,12 @@ function ThemeToggle() {
       type="button"
       aria-label={`Switch to ${next} theme`}
       title={`Switch to ${next} theme`}
-      onClick={() => setTheme(next)}
+      onClick={toggleTheme}
       // 34px on `border-border-input`, matching the search circle and the team
       // chip it sits between: one control line, one height, across the cluster.
-      className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-full border border-border-input bg-surface text-text-mid hover:border-border-strong hover:text-text"
+      className="hidden h-[34px] w-[34px] shrink-0 items-center justify-center rounded-full border border-border-input bg-surface text-text-mid hover:border-border-strong hover:text-text sm:flex"
     >
-      {theme === "dark" ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+      {theme === "dark" ? <Sun className="h-3.5 w-3.5" aria-hidden /> : <Moon className="h-3.5 w-3.5" aria-hidden />}
     </button>
   );
 }
@@ -281,6 +347,9 @@ function AccountMenu() {
   return (
     <Dropdown>
       <DropdownTrigger asChild>
+        {/* 14b's phone header has no account chip — Profile is a tab there —
+            but the chip is still the only way to sign out or change team
+            scope, so it stays until the profile page carries both. */}
         <button
           type="button"
           aria-label={`Account menu for ${displayName || email}`}
@@ -324,6 +393,20 @@ function AccountMenu() {
           </>
         )}
         <DropdownSeparator />
+        {/* Below `sm` the bar carries Projects/Servers/Inbox/Profile (14b), so
+            the two places it dropped are reachable from here. */}
+        <DropdownItem
+          onSelect={() => void navigate({ to: "/templates" })}
+          className="flex items-center gap-2 sm:hidden"
+        >
+          <LayoutTemplate className="h-3.5 w-3.5" aria-hidden /> Templates
+        </DropdownItem>
+        <DropdownItem
+          onSelect={() => void navigate({ to: "/settings" })}
+          className="flex items-center gap-2 sm:hidden"
+        >
+          <Settings className="h-3.5 w-3.5" aria-hidden /> Settings
+        </DropdownItem>
         {/* The menu already names who you are, so the next question it should
             answer is where to change that (canvas 13i). */}
         <DropdownItem
@@ -340,39 +423,16 @@ function AccountMenu() {
   );
 }
 
-// The application tabs, in the order 1–7 addresses them. They are declared a
-// second time here because the layout that owns them lives three routes down
-// and the shell cannot reach into it; if that strip gains a tab, this list has
-// to gain it too.
-const APP_TABS = [
-  "Overview",
-  "Deployments",
-  "Logs",
-  "Env vars",
-  "Previews",
-  "Tasks",
-  "Settings",
-] as const;
-
-const LOGS_TAB = APP_TABS.indexOf("Logs") + 1;
-
-/** `/projects/p_…/applications/app_…` — the only route the 1–7 keys apply to. */
-const APP_ROUTE = /^\/projects\/([^/]+)\/applications\/([^/]+)/;
-
-/** A key pressed into a field is text, not a command. */
-function isTyping(target: EventTarget | null): boolean {
-  const el = target as HTMLElement | null;
-  if (!el || typeof el.tagName !== "string") return false;
-  const tag = el.tagName.toLowerCase();
-  return tag === "input" || tag === "textarea" || tag === "select" || el.isContentEditable === true;
-}
+const LOGS_TAB = APP_TABS.findIndex((t) => t.segment === "logs") + 1;
 
 /**
- * 14f. Two rules shape which of the canvas's shortcuts are wired here: a key
- * listed in the overlay must actually work — a printed shortcut that does
- * nothing is worse than none — and, in the card's own words, "no shortcut
- * triggers anything destructive", which is why `d` (deploy) is not among them.
- * `j`/`k` wait for a row-focus model the lists do not have yet.
+ * 14f. Every key the overlay prints is wired here or in lib/keys.ts, and every
+ * key wired is printed there — a printed shortcut that does nothing is worse
+ * than none. In the card's own words, "no shortcut triggers anything
+ * destructive": `d` starts a deploy through the same busy-guarded button a
+ * click uses, and deletes and rollbacks are not on the list at all. `j`/`k`
+ * belong to the page's own row model (useRowNavigation) rather than to the
+ * shell, because only the list knows what a row is.
  */
 function AppShortcuts() {
   const [helpOpen, setHelpOpen] = useState(false);
@@ -398,36 +458,28 @@ function AppShortcuts() {
       const target = app.current;
       if (!target) return;
       const params = { projectId: target.projectId, appId: target.appId };
-      switch (index) {
-        case 1:
+      // The switch names each route literally so the router can type it; the
+      // order is APP_TABS's, which the tab strip draws from too.
+      switch (APP_TABS[index - 1]?.segment) {
+        case "":
           return void navigate({ to: "/projects/$projectId/applications/$appId", params });
-        case 2:
+        case "deployments":
           return void navigate({ to: "/projects/$projectId/applications/$appId/deployments", params });
-        case 3:
+        case "logs":
           return void navigate({ to: "/projects/$projectId/applications/$appId/logs", params });
-        case 4:
+        case "env":
           return void navigate({ to: "/projects/$projectId/applications/$appId/env", params });
-        case 5:
+        case "previews":
           return void navigate({ to: "/projects/$projectId/applications/$appId/previews", params });
-        case 6:
+        case "tasks":
           return void navigate({ to: "/projects/$projectId/applications/$appId/tasks", params });
-        case 7:
+        case "settings":
           return void navigate({ to: "/projects/$projectId/applications/$appId/settings", params });
       }
     };
 
     const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      if (isTyping(e.target)) return;
-      // An open overlay owns the keyboard; a `1` behind a confirm dialog must
-      // not move the page the operator is confirming against. A menu counts:
-      // its own typeahead answers to the same letters, and it does not stop
-      // the event on its way past.
-      if (
-        document.querySelector('[data-state="open"]:is([role="dialog"],[role="menu"],[role="alertdialog"])')
-      ) {
-        return;
-      }
+      if (shouldIgnoreKey(e)) return;
 
       const wasChord = chord;
       chord = false;
@@ -451,10 +503,20 @@ function AppShortcuts() {
         void navigate({ to: "/servers" });
         return;
       }
+      if (wasChord && e.key === "i") {
+        e.preventDefault();
+        void navigate({ to: "/inbox" });
+        return;
+      }
       if (!app.current) return;
       if (e.key === "l") {
         e.preventDefault();
         goTab(LOGS_TAB);
+        return;
+      }
+      if (e.key === "d") {
+        e.preventDefault();
+        requestDeploy();
         return;
       }
       const tab = Number(e.key);
@@ -472,60 +534,4 @@ function AppShortcuts() {
   }, [navigate]);
 
   return <ShortcutsOverlay open={helpOpen} onOpenChange={setHelpOpen} />;
-}
-
-const SHORTCUTS: readonly (readonly [string, string])[] = [
-  ["⌘K", "jump to anything"],
-  ["g p", "go to projects"],
-  ["g s", "go to servers"],
-  ["l", "logs (on an app)"],
-  ["1–7", "app tabs"],
-];
-
-function ShortcutsOverlay({
-  open,
-  onOpenChange,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      {/* 14f draws its own head — the title and the "esc closes" hint share one
-          baseline, and there is no ✕ — so the card's masthead is carried for
-          the accessible name only. Zeroing the padding it keeps while hidden
-          is what lets this head sit where the canvas puts it. */}
-      <DialogContent
-        title="Keyboard shortcuts"
-        hideTitle
-        hideClose
-        className="max-w-[480px] [&>div]:p-0"
-      >
-        <div className="px-[26px] py-[22px]">
-          <div className="mb-4 flex items-baseline">
-            <span className="text-[17px] font-bold tracking-[-0.02em] text-text">
-              Keyboard shortcuts
-            </span>
-            <span className="ml-auto font-mono text-[11px] text-text-faint">
-              ? anywhere · esc closes
-            </span>
-          </div>
-          <div className="grid grid-cols-1 gap-x-7 gap-y-1.5 sm:grid-cols-2">
-            {SHORTCUTS.map(([keys, what]) => (
-              <div key={keys} className="flex items-center gap-2.5 py-1.5">
-                <kbd className="rounded border border-border-input bg-surface px-[7px] py-0.5 font-mono text-[11px] font-normal text-text">
-                  {keys}
-                </kbd>
-                <span className="text-[13px] text-text-dim">{what}</span>
-              </div>
-            ))}
-          </div>
-          <p className="mt-3.5 text-[12px] text-text-faint">
-            No shortcut triggers anything destructive — deletes and rollbacks always go through their
-            confirms.
-          </p>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
 }

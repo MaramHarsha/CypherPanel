@@ -1,56 +1,47 @@
-// Project settings · Notifiers: on these events, deliver to this channel. Config
-// is write-only (masked hint after saving); the Test button is first-class —
-// a notifier that silently never fires is the common footgun (notifications.md).
+// Project settings · General (canvas 12c): the project's own facts, and the one
+// destructive act that belongs to the project rather than to anything in it.
 //
-// This is the first tab of the project-settings layout; the masthead and the
-// page gutters belong to settings.tsx, so the tab renders only its own section.
-import { useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Plus, Send, Trash2 } from "lucide-react";
-import { useState, type FormEvent } from "react";
-import { toast } from "sonner";
-import {
-  getListNotifiersQueryKey,
-  useCreateNotifier,
-  useDeleteNotifier,
-  useListNotifiers,
-  useTestNotifier,
-} from "@/api/gen/notifiers/notifiers";
-import {
-  getGetProjectQueryKey,
-  getListProjectsQueryKey,
-  useDeleteProject,
-  useGetProject,
-} from "@/api/gen/projects/projects";
-import type { Notifier } from "@/api/gen/model";
+// The board draws this tab as a form — Name, Slug, Team, Default environment,
+// an ink Save. The API has no way to change any of it: /projects/{id} is GET
+// and DELETE only, Project carries no slug, and no environment is marked as
+// the default. A form whose every field is disabled is a dead end dressed as
+// a control, so until an update operation exists the facts are read-only
+// facts, in the read-only vocabulary the rest of the panel uses.
+//
+// The danger zone is where the board and the backend disagree most, and the
+// backend wins. 12c's card says the confirm will list "3 apps, 1 database, 2
+// previews" — a cascade. handleDeleteProject refuses with 409 while any
+// application or database remains, because a managed database is torn down by
+// a two-phase flow keyed on its own row and cascading it away would leave the
+// container and its data volume running with nothing that knows they exist.
+// So the card counts what is inside, names it, links to it, and only offers
+// the typed-name confirm once the project is empty.
+import { useQueries, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useState } from "react";
 import { ApiError } from "@/api/client";
+import { getListApplicationsQueryOptions } from "@/api/gen/applications/applications";
+import { useGetMe } from "@/api/gen/auth/auth";
+import { getListDatabasesQueryOptions } from "@/api/gen/databases/databases";
+import { getGetProjectQueryKey, getListProjectsQueryKey, useDeleteProject, useGetProject } from "@/api/gen/projects/projects";
+import type { ProjectDetail } from "@/api/gen/model";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
-import { EmptyState } from "@/components/empty-state";
-import { Eyebrow } from "@/components/eyebrow";
-import { InlineHint } from "@/components/inline-hint";
+import { Fact, FactCard } from "@/components/fact-card";
 import { PageState } from "@/components/page-state";
+import { ActionButton } from "@/components/ui/action-button";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
-import { Field } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
+import { Skeleton, SkeletonForm, useSkeletonDelay } from "@/components/ui/skeleton";
 import { useCrumbs } from "@/lib/crumbs";
+import { atLeast, type Role } from "@/lib/roles";
+import { absoluteTime, relativeTime } from "@/lib/time";
+import { toastFailed, toastSuccess } from "@/lib/toast";
 
-export const Route = createFileRoute("/_app/projects/$projectId/settings/")({ component: NotifiersTab });
+export const Route = createFileRoute("/_app/projects/$projectId/settings/")({ component: GeneralTab });
 
-const EVENTS = [
-  { key: "deploy.succeeded", label: "Deploy succeeded" },
-  { key: "deploy.failed", label: "Deploy failed" },
-  { key: "backup.succeeded", label: "Backup succeeded" },
-  { key: "backup.failed", label: "Backup failed" },
-] as const;
-
-const CHANNELS = ["discord", "slack", "telegram", "email"] as const;
-type Channel = (typeof CHANNELS)[number];
-
-function NotifiersTab() {
+function GeneralTab() {
   const { projectId } = Route.useParams();
   const project = useGetProject(projectId);
-  const notifiers = useListNotifiers(projectId);
+  const me = useGetMe();
 
   // Canvas 12c datelines this page from the project, not from the projects
   // list: the trail names where you are inside the project, and PROJECTS is
@@ -60,48 +51,82 @@ function NotifiersTab() {
     { label: "settings" },
   ]);
 
+  // Deleting needs admin on the project's team; a panel owner has it
+  // everywhere (teams.RoleForProject). Resolved here so the pill can say so
+  // instead of letting the server's 403 explain it afterwards.
+  const team = me.data?.teams.find((t) => t.id === project.data?.project.team_id);
+  const role: Role | undefined = me.data?.role === "owner" ? "owner" : team?.role;
+
+  // The single-resource skeleton (10e), behind the same 200 ms gate every list
+  // gets — PageState paints a custom `loading` immediately, so the gate is
+  // applied here.
+  const showSkeleton = useSkeletonDelay(project.isPending);
+
   return (
-    <div className="max-w-2xl space-y-2">
-      <div className="flex items-center justify-between gap-3">
-        <Eyebrow>Notifiers</Eyebrow>
-        <NewNotifierDialog projectId={projectId} />
-      </div>
-      <InlineHint>
-        Get a message when a deploy or backup in this project succeeds or fails — on Discord, Slack, Telegram, or email.
-      </InlineHint>
-      <PageState
-        query={notifiers}
-        empty={
-          <EmptyState
-            title="No notifiers"
-            hint="Add one to hear about failures without watching the panel."
-            action={<NewNotifierDialog projectId={projectId} primary />}
-          />
-        }
-      >
-        {(list) => (
-          <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-surface">
-            {list.map((n) => (
-              <NotifierRow key={n.id} projectId={projectId} notifier={n} />
-            ))}
-          </ul>
+    <div className="max-w-2xl">
+      <PageState query={project} loading={showSkeleton ? <SkeletonForm fields={4} columns={1} /> : null}>
+        {(detail) => (
+          <>
+            <ProjectFacts detail={detail} teamName={team?.name} />
+            <DangerZone projectId={projectId} detail={detail} canDelete={atLeast(role, "admin")} />
+          </>
         )}
       </PageState>
-
-      <DangerZone projectId={projectId} name={project.data?.project.name ?? ""} />
     </div>
   );
 }
 
-/** Deleting a project takes its environments, applications and databases with
- *  it, so the API refuses while any remain — a managed database's container and
- *  data volume are torn down from its own row, which the cascade would remove
- *  first. The refusal is surfaced here rather than as a toast, because it is an
- *  instruction, not a notification. */
-function DangerZone({ projectId, name }: { projectId: string; name: string }) {
+function ProjectFacts({ detail, teamName }: { detail: ProjectDetail; teamName: string | undefined }) {
+  const p = detail.project;
+  const envs = detail.environments;
+  return (
+    <>
+      <FactCard title="Project">
+        <Fact label="Name">{p.name}</Fact>
+        <Fact label="Team">{teamName ?? p.team_id}</Fact>
+        <Fact label="Environments">{envs.map((e) => e.name).join(" · ") || "none yet"}</Fact>
+        <Fact label="Created">
+          <span title={absoluteTime(p.created_at)}>{relativeTime(p.created_at)}</span>
+        </Fact>
+        <Fact label="ID">{p.id}</Fact>
+      </FactCard>
+      <p className="mt-2 text-xs leading-relaxed text-text-faint">Name and team are fixed once a project is created.</p>
+    </>
+  );
+}
+
+/** "3 apps", "1 database" — the counts the card and the pill both speak in. */
+function count(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+function DangerZone({
+  projectId,
+  detail,
+  canDelete,
+}: {
+  projectId: string;
+  detail: ProjectDetail;
+  canDelete: boolean;
+}) {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [blocked, setBlocked] = useState<string | null>(null);
+  const name = detail.project.name;
+  const envs = detail.environments;
+  const envName = (id: string) => envs.find((e) => e.id === id)?.name ?? "";
+
+  // The same per-environment fan-out the projects list uses to count a row's
+  // resources — the API has no project-level "what is inside" call.
+  const appQueries = useQueries({ queries: envs.map((e) => getListApplicationsQueryOptions(e.id)) });
+  const dbQueries = useQueries({ queries: envs.map((e) => getListDatabasesQueryOptions(e.id)) });
+  const all = [...appQueries, ...dbQueries];
+  const apps = appQueries.flatMap((q) => q.data ?? []);
+  const dbs = dbQueries.flatMap((q) => q.data ?? []);
+  const counting = all.some((q) => q.isPending);
+  const countFailed = !counting && all.some((q) => q.isError);
+  const showCounting = useSkeletonDelay(counting);
+  const inUse = apps.length + dbs.length > 0;
 
   const del = useDeleteProject({
     mutation: {
@@ -112,260 +137,135 @@ function DangerZone({ projectId, name }: { projectId: string; name: string }) {
         // navigate, so the page we arrive at is one we can vouch for.
         void qc.invalidateQueries({ queryKey: getListProjectsQueryKey() });
         void qc.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
-        toast.success(`Deleted ${name}`);
+        toastSuccess(`Deleted ${name}`);
         void navigate({ to: "/projects" });
       },
       onError: (e: unknown) => {
+        // The refusal is an instruction, not a notification: it stays on the
+        // card. It only reaches here when the counts above were stale — a
+        // teammate added something between the count and the click.
         if (e instanceof ApiError && e.status === 409) {
           setBlocked(e.message);
+          all.forEach((q) => void q.refetch());
           return;
         }
-        toast.error(e instanceof Error ? e.message : "Could not delete the project");
+        toastFailed("Could not delete the project", e);
       },
     },
   });
+
+  const reason = !canDelete
+    ? "Deleting a project needs admin on its team — ask an owner"
+    : inUse
+      ? "Delete the applications and databases inside first"
+      : undefined;
+
+  const inside = [apps.length > 0 && count(apps.length, "app", "apps"), dbs.length > 0 && count(dbs.length, "database", "databases")]
+    .filter(Boolean)
+    .join(" and ");
 
   return (
     // 12c draws this as one plain white card behind a heavy red rule — no
     // eyebrow: "Delete this project" already says which zone this is, and a
     // second heading only pushes the sentence that matters further down.
-    <section className="mt-8 rounded-lg border-[1.5px] border-status-error/40 bg-surface px-4 py-3.5">
+    <section className="mt-6 rounded-lg border-[1.5px] border-status-error/40 bg-surface px-4 py-3.5">
       <div className="flex flex-wrap items-center justify-between gap-3.5">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="text-[13.5px] font-semibold text-text">Delete this project</p>
-          <p className="mt-[3px] text-xs leading-relaxed text-text-mid">
-            Removes the project and its environments. Delete its applications and databases first.
-          </p>
+          <div className="mt-[3px] text-xs leading-relaxed text-text-mid" aria-live="polite">
+            {counting ? (
+              showCounting ? (
+                <Skeleton className="h-3 w-56 max-w-full" />
+              ) : null
+            ) : countFailed ? (
+              <span className="flex flex-wrap items-center gap-2">
+                Couldn't check what's inside this project.
+                <ActionButton
+                  size="sm"
+                  variant="ghost"
+                  state={all.some((q) => q.isFetching) ? "busy" : "idle"}
+                  busyLabel="Checking…"
+                  onClick={() => all.forEach((q) => void q.refetch())}
+                >
+                  Retry
+                </ActionButton>
+              </span>
+            ) : inUse ? (
+              <>
+                {inside} {apps.length + dbs.length === 1 ? "is" : "are"} still inside — delete them first, so their containers
+                and data volumes are torn down properly.
+              </>
+            ) : envs.length === 0 ? (
+              <>Removes the project. It has no environments yet, so nothing else goes with it.</>
+            ) : (
+              <>
+                Removes the project and its {count(envs.length, "environment", "environments")}. No applications or databases
+                are left inside.
+              </>
+            )}
+          </div>
         </div>
         <ConfirmDestructive
-          trigger={<Button variant="danger">Delete</Button>}
+          trigger={
+            <Button variant="danger" disabledReason={reason}>
+              Delete
+            </Button>
+          }
           title={`Delete ${name}?`}
-          blastRadius="Deletes this project and every environment in it, along with their notifiers and webhook endpoints. It cannot be undone. Applications and databases must be deleted first — their containers and data volumes are torn down individually."
+          blastRadius={[
+            envs.length === 0
+              ? "This project (it has no environments)"
+              : `This project and its ${count(envs.length, "environment", "environments")} (${envs.map((e) => e.name).join(", ")})`,
+            "Its notifiers, webhook endpoints and their delivery history, shared variables, and inbox items",
+            "Cannot be undone",
+          ]}
           confirmName={name}
           actionLabel="Delete project"
           pending={del.isPending}
+          pendingLabel="Deleting…"
           onConfirm={() => del.mutate({ id: projectId })}
         />
       </div>
+
+      {/* What stands in the way, each a link to the page it is deleted from.
+          The list is the next verb — a count alone would send the operator
+          hunting through every environment for the one database left behind. */}
+      {inUse && (
+        <ul className="mt-3 divide-y divide-border-subtle overflow-hidden rounded-md border border-border">
+          {apps.map((a) => (
+            <li key={a.id}>
+              <Link
+                to="/projects/$projectId/applications/$appId"
+                params={{ projectId, appId: a.id }}
+                className="flex items-center justify-between gap-3 px-3 py-2 hover:bg-raised"
+              >
+                <span className="mono min-w-0 truncate text-[12.5px] text-text">{a.name}</span>
+                <span className="mono shrink-0 text-[11px] text-text-faint">application · {envName(a.environment_id)}</span>
+              </Link>
+            </li>
+          ))}
+          {dbs.map((d) => (
+            <li key={d.id}>
+              <Link
+                to="/projects/$projectId/databases/$dbId"
+                params={{ projectId, dbId: d.id }}
+                className="flex items-center justify-between gap-3 px-3 py-2 hover:bg-raised"
+              >
+                <span className="mono min-w-0 truncate text-[12.5px] text-text">{d.name}</span>
+                <span className="mono shrink-0 text-[11px] text-text-faint">
+                  {d.engine} database · {envName(d.environment_id)}
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+
       {blocked && (
         <p role="alert" className="mt-3 rounded-md border border-danger/35 bg-danger/[0.06] px-3 py-2 text-[13px] text-danger">
           {blocked}
         </p>
       )}
     </section>
-  );
-}
-
-function NotifierRow({ projectId, notifier: n }: { projectId: string; notifier: Notifier }) {
-  const qc = useQueryClient();
-  const test = useTestNotifier({
-    mutation: {
-      onSuccess: () => toast.success("Test sent — check the channel"),
-      onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Test failed to send"),
-    },
-  });
-  const del = useDeleteNotifier({
-    mutation: {
-      onSuccess: () => {
-        void qc.invalidateQueries({ queryKey: getListNotifiersQueryKey(projectId) });
-        toast.success(`Deleted ${n.name}`);
-      },
-      onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Could not delete the notifier"),
-    },
-  });
-
-  return (
-    <li className="flex items-center justify-between gap-3 px-4 py-3">
-      <span className="flex min-w-0 flex-col">
-        <span className="flex items-center gap-2">
-          <span className="text-[13px] font-medium text-text">{n.name}</span>
-          <span className="mono text-[11px] text-text-faint">{n.channel}</span>
-          {!n.enabled && <span className="mono text-[11px] text-text-faint">off</span>}
-        </span>
-        <span className="mono truncate text-xs text-text-faint">
-          {n.config_hint} · {n.events.length} event{n.events.length > 1 ? "s" : ""}
-        </span>
-      </span>
-      <span className="flex shrink-0 items-center gap-1.5">
-        <Button size="sm" variant="ghost" disabled={test.isPending} onClick={() => test.mutate({ id: n.id })}>
-          <Send className="h-3.5 w-3.5" /> Test
-        </Button>
-        <ConfirmDestructive
-          trigger={
-            <Button size="sm" variant="ghost" aria-label={`Delete ${n.name}`}>
-              <Trash2 className="h-3.5 w-3.5 text-danger" />
-            </Button>
-          }
-          title={`Delete ${n.name}?`}
-          blastRadius="Stops these notifications. Nothing else is affected."
-          actionLabel="Delete notifier"
-          pending={del.isPending}
-          onConfirm={() => del.mutate({ id: n.id })}
-        />
-      </span>
-    </li>
-  );
-}
-
-function NewNotifierDialog({ projectId, primary }: { projectId: string; primary?: boolean }) {
-  const qc = useQueryClient();
-  const [name, setName] = useState("");
-  const [channel, setChannel] = useState<Channel>("discord");
-  const [events, setEvents] = useState<Set<string>>(new Set(["deploy.failed"]));
-  const [cfg, setCfg] = useState<Record<string, string>>({});
-  const [error, setError] = useState<string | null>(null);
-
-  const setField = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) => setCfg((c) => ({ ...c, [k]: e.target.value }));
-
-  const create = useCreateNotifier({
-    mutation: {
-      onSuccess: () => {
-        void qc.invalidateQueries({ queryKey: getListNotifiersQueryKey(projectId) });
-        toast.success("Notifier added");
-        setError(null);
-      },
-      onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not add the notifier"),
-    },
-  });
-
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    if (events.size === 0) {
-      setError("Pick at least one event to notify on");
-      return;
-    }
-    const config = channel === "email" ? { ...cfg, smtp_port: Number(cfg.smtp_port ?? "587") } : cfg;
-    create.mutate({
-      id: projectId,
-      data: {
-        name,
-        channel: channel as "discord" | "slack" | "telegram" | "email",
-        events: [...events] as ("deploy.succeeded" | "deploy.failed" | "backup.succeeded" | "backup.failed")[],
-        config,
-        enabled: true,
-      },
-    });
-  };
-
-  return (
-    <Dialog>
-      <DialogTrigger asChild>
-        <Button variant="primary" size={primary ? "lg" : "sm"}>
-          <Plus className="h-3.5 w-3.5" /> New notifier
-        </Button>
-      </DialogTrigger>
-      <DialogContent title="Add a notifier" description="Where to send it, and which events matter.">
-        <form onSubmit={submit} className="space-y-4">
-          <Field label="Name">
-            {(id) => <Input id={id} required autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="team-alerts" />}
-          </Field>
-          <Field label="Channel">
-            {(id) => (
-              <select
-                id={id}
-                value={channel}
-                onChange={(e) => {
-                  setChannel(e.target.value as Channel);
-                  setCfg({});
-                }}
-                className="h-8 w-full rounded-lg border border-border bg-surface px-2 text-sm text-text"
-              >
-                {CHANNELS.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            )}
-          </Field>
-
-          <ChannelFields channel={channel} value={cfg} onField={setField} />
-
-          <fieldset className="space-y-1.5">
-            <legend className="text-[13px] font-medium text-text">Notify on</legend>
-            {EVENTS.map((ev) => (
-              <label key={ev.key} className="flex items-center gap-2 text-[13px] text-text-mid">
-                <input
-                  type="checkbox"
-                  checked={events.has(ev.key)}
-                  onChange={(e) =>
-                    setEvents((prev) => {
-                      const next = new Set(prev);
-                      if (e.target.checked) next.add(ev.key);
-                      else next.delete(ev.key);
-                      return next;
-                    })
-                  }
-                />
-                {ev.label}
-              </label>
-            ))}
-          </fieldset>
-
-          {error && (
-            <p role="alert" className="text-[13px] text-danger">
-              {error}
-            </p>
-          )}
-          <div className="flex justify-end gap-2">
-            <DialogClose asChild>
-              <Button variant="ghost">Cancel</Button>
-            </DialogClose>
-            <Button type="submit" variant="primary" disabled={create.isPending}>
-              {create.isPending ? "Adding…" : "Add notifier"}
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function ChannelFields({
-  channel,
-  value,
-  onField,
-}: {
-  channel: Channel;
-  value: Record<string, string>;
-  onField: (k: string) => (e: React.ChangeEvent<HTMLInputElement>) => void;
-}) {
-  if (channel === "discord" || channel === "slack") {
-    return (
-      <Field label="Webhook URL" hint={`Create an incoming webhook in ${channel} and paste its URL.`}>
-        {(id) => (
-          <Input id={id} required value={value.webhook_url ?? ""} onChange={onField("webhook_url")} className="mono" placeholder="https://…" />
-        )}
-      </Field>
-    );
-  }
-  if (channel === "telegram") {
-    return (
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Bot token" hint="From @BotFather.">
-          {(id) => <Input id={id} required value={value.bot_token ?? ""} onChange={onField("bot_token")} className="mono" />}
-        </Field>
-        <Field label="Chat ID">
-          {(id) => <Input id={id} required value={value.chat_id ?? ""} onChange={onField("chat_id")} className="mono" />}
-        </Field>
-      </div>
-    );
-  }
-  // email
-  return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="SMTP host">{(id) => <Input id={id} required value={value.smtp_host ?? ""} onChange={onField("smtp_host")} className="mono" />}</Field>
-        <Field label="SMTP port">{(id) => <Input id={id} value={value.smtp_port ?? "587"} onChange={onField("smtp_port")} className="mono" inputMode="numeric" />}</Field>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Username">{(id) => <Input id={id} value={value.username ?? ""} onChange={onField("username")} className="mono" autoComplete="off" />}</Field>
-        <Field label="Password">{(id) => <Input id={id} type="password" value={value.password ?? ""} onChange={onField("password")} className="mono" autoComplete="off" />}</Field>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="From">{(id) => <Input id={id} required value={value.from ?? ""} onChange={onField("from")} className="mono" placeholder="alerts@acme.com" />}</Field>
-        <Field label="To" hint="Comma-separated.">{(id) => <Input id={id} required value={value.to ?? ""} onChange={onField("to")} className="mono" />}</Field>
-      </div>
-    </div>
   );
 }

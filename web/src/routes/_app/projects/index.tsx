@@ -3,30 +3,26 @@
 // the room. Mission Control renders it as a broadsheet table: an ink rule
 // above the first row, hairlines between the rest, and a tint bleeding off the
 // left edge of anything broken.
-import { useQueries, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { Plus } from "lucide-react";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+//
+// On a phone (canvas 14b) the same list is the on-call subset: no masthead, an
+// eyebrow that says how it is sorted, and one card per project with the status
+// word on the name row and a single mono line under it. Same data, same order.
+import { useQueries } from "@tanstack/react-query";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useEffect, useMemo, useState } from "react";
 import { useGetMe } from "@/api/gen/auth/auth";
 import { getListApplicationsQueryOptions } from "@/api/gen/applications/applications";
 import { getListDatabasesQueryOptions } from "@/api/gen/databases/databases";
-import {
-  getListProjectsQueryKey,
-  useCreateProject,
-  useListEnvironments,
-  useListProjects,
-} from "@/api/gen/projects/projects";
+import { useListEnvironments, useListProjects } from "@/api/gen/projects/projects";
 import type { Project } from "@/api/gen/model";
+import { CreateProjectDialog } from "@/components/create-project-dialog";
 import { EmptyState } from "@/components/empty-state";
+import { Eyebrow } from "@/components/eyebrow";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { PageState } from "@/components/page-state";
-import { normalizeStatus, StatusDot, StatusPill, type Status } from "@/components/status-badge";
-import { ActionButton } from "@/components/ui/action-button";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
-import { Field } from "@/components/ui/field";
-import { Input, Select } from "@/components/ui/input";
+import { normalizeStatus, StatusDot, StatusPill, StatusWord, type Status } from "@/components/status-badge";
 import { useCrumbs } from "@/lib/crumbs";
+import { useRowNavigation } from "@/lib/keys";
 import { useTeamScope } from "@/lib/team";
 import { cn } from "@/lib/utils";
 
@@ -42,9 +38,10 @@ const SEVERITY: Record<Status, number> = {
   stopped: 0,
 };
 
-// Below `sm` the table collapses to a stacked card (ui-principles §7); the
-// column header row hides with it, since headers over a stack are noise.
-const GRID = "flex flex-col gap-2 sm:grid sm:grid-cols-[2fr_1.2fr_1fr] sm:items-center sm:gap-4";
+// The three broadsheet columns, from `sm` up. Below it every row is a card
+// and the column header row hides with the grid, since headers over a stack
+// of cards are noise.
+const GRID = "sm:grid sm:grid-cols-[2fr_1.2fr_1fr] sm:items-center sm:gap-4";
 
 function ProjectsPage() {
   const projects = useListProjects();
@@ -57,13 +54,22 @@ function ProjectsPage() {
   // Each row computes its own worst status from its own queries and reports the
   // severity up, so the page can order the list without duplicating the fetch.
   const [ranks, setRanks] = useState<Record<string, number>>({});
+  // Canvas 14g TAB ORDER: one stop per row; j/k and ↑↓ walk the list, Enter opens.
+  const rowNav = useRowNavigation();
 
   return (
     <>
-      <PageHeader title="Projects" actions={<CreateProjectDialog />} />
+      {/* 14b draws no masthead on a phone: the eyebrow below is the title, and
+          creating a project is not what an on-call glance is for — the empty
+          state still offers it, so a fresh panel is never a dead end. */}
+      <PageHeader className="max-sm:hidden" title="Projects" actions={<CreateProjectDialog />} />
       {/* 1a hangs the first row close under the masthead rule — the ink line
           above it is the separator, so a full 24px band would read as a gap. */}
-      <PageBody className="pt-2 pb-9">
+      <PageBody className="pt-0 pb-9 sm:pt-2">
+        <div className="pb-2.5 pt-4 sm:hidden">
+          <h1 className="sr-only">Projects</h1>
+          <Eyebrow>Projects · worst first</Eyebrow>
+        </div>
         <PageState
           query={projects}
           // The skeleton mirrors this page's own grid (10e), so nothing moves
@@ -85,12 +91,12 @@ function ProjectsPage() {
             const sorted = [...scoped].sort((a, b) => (ranks[b.id] ?? 0) - (ranks[a.id] ?? 0));
             return (
               <div>
-                <div className={cn(GRID, "eyebrow hidden px-2 pb-2.5 sm:grid")}>
+                <div className={cn(GRID, "eyebrow hidden px-2 pb-2.5")}>
                   <span>Project</span>
                   <span>Status rollup</span>
                   <span>Resources</span>
                 </div>
-                <ul>
+                <ul ref={rowNav} className="max-sm:space-y-2.5">
                   {sorted.map((p, i) => (
                     <ProjectRow
                       key={p.id}
@@ -146,6 +152,10 @@ function ProjectRow({
     apps.find((a) => normalizeStatus(a.status) === worst && a.status_detail)?.status_detail ??
     dbs.find((d) => normalizeStatus(d.status) === worst && d.status_detail)?.status_detail;
 
+  // The rollup, said two ways: the pill's sentence for the broadsheet ("all
+  // running", "2 deploying") and the bare word 14b sets on a phone card's name
+  // row ("RUNNING", "DEPLOYING"), where a count beside a healthy word is noise
+  // and only a problem earns its number.
   const label = (() => {
     if (statuses.length === 0) return "empty";
     if (errors > 0) return `${errors} ${errors === 1 ? "error" : "errors"}`;
@@ -154,38 +164,72 @@ function ProjectRow({
     if (stopped === statuses.length) return `${stopped} stopped`;
     return "all running";
   })();
+  const word =
+    statuses.length === 0 || errors > 0 || degraded > 0
+      ? label
+      : deploying > 0
+        ? "deploying"
+        : stopped === statuses.length
+          ? "stopped"
+          : "running";
+
+  const resources = `${apps.length} app${apps.length === 1 ? "" : "s"}${
+    dbs.length > 0 ? ` · ${dbs.length} db${dbs.length === 1 ? "" : "s"}` : ""
+  }`;
+  const rollup = statuses.length === 0 ? "unknown" : worst;
 
   return (
-    <li>
+    <li data-row>
       <Link
         to="/projects/$projectId"
         params={{ projectId: project.id }}
         className={cn(
+          // A phone card (14b): 10px corners, the surface colour, 14px of
+          // padding, and a red-tinted 1.5px line when something is broken.
+          "block max-sm:rounded-[10px] max-sm:bg-surface max-sm:p-3.5",
+          errors > 0 ? "max-sm:border-[1.5px] max-sm:border-status-error/40" : "max-sm:border max-sm:border-border",
+          // The broadsheet row (1a) from `sm` up.
           GRID,
-          "border-t rounded-md px-2 py-5 hover:bg-raised",
-          first ? "border-t-[1.5px] border-border-strong" : "border-border",
-          errors > 0 && "bg-linear-to-r from-status-error/[0.06] to-transparent to-60%",
+          "sm:rounded-md sm:border-t sm:px-2 sm:py-5 sm:hover:bg-raised",
+          first ? "sm:border-t-[1.5px] sm:border-border-strong" : "sm:border-border",
+          errors > 0 && "sm:bg-linear-to-r sm:from-status-error/[0.06] sm:to-transparent sm:to-60%",
         )}
       >
-        <span className="flex min-w-0 items-center gap-3.5">
-          {statuses.length > 0 ? <StatusDot status={worst} /> : <span className="w-2.5" aria-hidden />}
-          <span className="min-w-0">
-            <span className="block truncate text-[19px] font-semibold tracking-tight">{project.name}</span>
-            <span className="mt-0.5 block truncate font-mono text-[11.5px] text-text-faint">
+        <span className="flex min-w-0 items-center gap-[9px] sm:gap-3.5">
+          {statuses.length > 0 ? (
+            <StatusDot status={worst} className="max-sm:size-[9px]" />
+          ) : (
+            <span className="w-2.5" aria-hidden />
+          )}
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-[15px] font-semibold sm:text-[19px] sm:tracking-tight">
+              {project.name}
+            </span>
+            <span className="mt-0.5 hidden truncate font-mono text-[11.5px] text-text-faint sm:block">
               {(envs.data ?? []).map((e) => e.name).join(" · ") || "no environments"}
             </span>
           </span>
+          {/* 14b: the status word rides the name row; the marker at the row's
+              start gives it its shape, so the word needs no pill. */}
+          <StatusWord status={rollup} className="ml-auto shrink-0 sm:hidden">
+            {word}
+          </StatusWord>
         </span>
 
-        <span className="min-w-0">
-          <StatusPill status={statuses.length === 0 ? "unknown" : worst}>{label}</StatusPill>
+        {/* 14b's one mono line: what is wrong, in the agent's words, or what
+            is here. The canvas adds an age ("18 min", "2 h ago") and the live
+            deploy stage — neither exists on the project list yet, and a made
+            up timestamp is worse than none. */}
+        <span className="mt-[5px] block truncate font-mono text-[11px] text-text-faint sm:hidden">
+          {detail || resources}
+        </span>
+
+        <span className="hidden min-w-0 sm:block">
+          <StatusPill status={rollup}>{label}</StatusPill>
           {detail && <span className="mt-1.5 block truncate text-[11.5px] text-text-faint">{detail}</span>}
         </span>
 
-        <span className="font-mono text-xs text-text-dim">
-          {apps.length} app{apps.length === 1 ? "" : "s"}
-          {dbs.length > 0 && ` · ${dbs.length} db${dbs.length === 1 ? "" : "s"}`}
-        </span>
+        <span className="hidden font-mono text-xs text-text-dim sm:block">{resources}</span>
       </Link>
     </li>
   );
@@ -202,109 +246,4 @@ function useScopedTeamName(): string | undefined {
   const { teamId } = useTeamScope();
   const teams = me.data?.teams ?? [];
   return teams.find((t) => t.id === teamId)?.name ?? (teams.length === 1 ? teams[0]?.name : undefined);
-}
-
-function CreateProjectDialog() {
-  const navigate = useNavigate();
-  const qc = useQueryClient();
-  const me = useGetMe();
-  const { teamId } = useTeamScope();
-  const teams = me.data?.teams ?? [];
-  const [name, setName] = useState("");
-  const [team, setTeam] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
-  const create = useCreateProject({
-    mutation: {
-      // The list this dialog was opened from is server state TanStack Query
-      // owns (web-ui-design.md §5), and no SSE stream carries projects — so it
-      // stays as it was until we say otherwise. Mark it stale before leaving,
-      // or coming back shows a list without the project just created.
-      onSuccess: (res) => {
-        void qc.invalidateQueries({ queryKey: getListProjectsQueryKey() });
-        void navigate({ to: "/projects/$projectId", params: { projectId: res.project.id } });
-      },
-      onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not create the project"),
-    },
-  });
-
-  // Which team a project lands in is not recoverable by renaming it later, so
-  // the choice is on screen rather than inferred from the current scope; the
-  // scope is only the default. A scope left over from a team the user has since
-  // left is ignored, or the select would show one team and submit another.
-  const scoped = teams.some((t) => t.id === teamId) ? teamId : undefined;
-  const chosen = team || scoped || teams[0]?.id;
-
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    create.mutate({ data: { name, ...(chosen ? { team_id: chosen } : {}) } });
-  };
-
-  return (
-    <Dialog>
-      <DialogTrigger asChild>
-        <Button variant="primary" size="lg">
-          <Plus className="h-3.5 w-3.5" /> New project
-        </Button>
-      </DialogTrigger>
-      <DialogContent
-        className="max-w-[400px]"
-        title="New project"
-        description="A project groups apps and databases that ship together. Every project starts with a production environment."
-      >
-        <form onSubmit={submit} className="space-y-4">
-          {/* A project name is prose, not a machine value — the one place the
-              mono default is wrong (input.tsx). */}
-          <Field label="Name" error={error ?? undefined}>
-            {(id) => (
-              <Input
-                id={id}
-                required
-                autoFocus
-                className="font-sans"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Atlas CRM"
-              />
-            )}
-          </Field>
-          {teams.length > 0 && (
-            <Field label="Team">
-              {(id) => (
-                <Select
-                  id={id}
-                  className="font-sans"
-                  value={chosen ?? ""}
-                  onChange={(e) => setTeam(e.target.value)}
-                >
-                  {teams.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </Field>
-          )}
-          <div className="flex items-center justify-end gap-2.5 pt-1">
-            <DialogClose asChild>
-              <Button variant="ghost" size="lg">
-                Cancel
-              </Button>
-            </DialogClose>
-            <ActionButton
-              type="submit"
-              variant="accent"
-              size="lg"
-              state={create.isPending ? "busy" : "idle"}
-              busyLabel="Creating…"
-              disabledReason={name.trim() === "" ? "Name the project first" : undefined}
-            >
-              Create project →
-            </ActionButton>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
 }

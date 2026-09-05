@@ -1,23 +1,25 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Database, Package, Search, ShieldCheck, X } from "lucide-react";
-import { useMemo, useState, type FormEvent } from "react";
+import { useQueryClient, type UseQueryResult } from "@tanstack/react-query";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { Database, Package, Search, X } from "lucide-react";
+import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { getListApplicationsQueryKey } from "@/api/gen/applications/applications";
 import { getListDatabasesQueryKey } from "@/api/gen/databases/databases";
 import type { FirstLogin, Template } from "@/api/gen/model";
 import { useListEnvironments, useListProjects } from "@/api/gen/projects/projects";
 import { useListServers } from "@/api/gen/servers/servers";
 import { useInstallTemplate, useListTemplates } from "@/api/gen/templates/templates";
+import { AdvancedSection } from "@/components/advanced-section";
 import { EmptyState } from "@/components/empty-state";
 import { FirstLoginNotice } from "@/components/first-login-notice";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { PageState } from "@/components/page-state";
-import { ActionButton } from "@/components/ui/action-button";
+import { ActionButton, useMutationActionState } from "@/components/ui/action-button";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { Input, Select } from "@/components/ui/input";
 import { useCrumbs } from "@/lib/crumbs";
-import { useQueryClient } from "@tanstack/react-query";
+import { toastFailed } from "@/lib/toast";
 
 export const Route = createFileRoute("/_app/templates/")({ component: TemplatesPage });
 
@@ -72,7 +74,13 @@ function TemplatesPage() {
       <PageBody>
         <div className="relative mb-4 max-w-md">
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-text-faint" aria-hidden />
-          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search templates…" className="pl-9" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search templates…"
+            aria-label="Search templates"
+            className="pl-9"
+          />
         </div>
         {categories.length > 1 && (
           <div className="mb-5 flex flex-wrap gap-1.5" role="group" aria-label="Filter by category">
@@ -219,65 +227,165 @@ function TemplateCard({ template }: { template: Template }) {
   );
 }
 
-// Nothing installs blind (ui-principles: show what will happen). Every
-// resource, mount, and configuration key this template creates is listed
-// before the operator commits — the data is already in the catalog response.
+// Nothing installs blind (ui-principles: show what will happen). Canvas 12b
+// heads the box with an eyebrow and lists what the operator ends up with as
+// three outcome-shaped lines — the containers, the volumes, and the things
+// nobody has to type. The mechanism behind them (images, ports, every variable
+// the template sets) is still here, one click deeper, for whoever wants it
+// (ui-principles §11: outcomes in the headline, mechanism in the expander).
 //
-// Canvas 12b heads the box with an eyebrow and closes it with the promise the
-// whole modal rests on: the things nobody has to type. That closing line is
-// assembled from what this template actually does, because "TLS + subdomain"
-// is a lie on a template that publishes nothing.
+// The closing promise is assembled from what this template actually does,
+// because "TLS + subdomain" is a lie on a template that publishes nothing.
 function TemplateContents({ template }: { template: Template }) {
+  const apps = template.resources.applications;
+  const dbs = template.resources.databases;
   const handled = [
     needsDomain(template) && "TLS + subdomain",
-    template.resources.databases.length > 0 && "generated secrets",
+    dbs.length > 0 && "generated secrets",
   ].filter(Boolean) as string[];
+
+  // "app container (n8n) + postgresql 16 sidecar"
+  const brings = [
+    apps.length > 0 && `app container (${apps.map((app) => app.name).join(", ")})`,
+    ...dbs.map((db) => `${db.engine}${db.version ? ` ${db.version}` : ""} sidecar`),
+  ].filter(Boolean) as string[];
+  const lines = [
+    brings.length > 0 && brings.join(" + "),
+    ...apps.flatMap((app) => (app.volumes ?? []).map((v) => `volume ${v.name} → ${v.path}`)),
+    handled.length > 0 && `${handled.join(" + ")} — nothing to fill in`,
+  ].filter(Boolean) as string[];
+
   return (
     <div className="rounded-lg border border-border bg-surface px-3.5 py-[11px] text-[12px] leading-[1.8] text-text-dim">
       <div className="eyebrow mb-1">The template brings</div>
-      {template.resources.databases.map((db) => (
-        <div key={db.name} className="flex items-baseline gap-2">
-          <Database className="h-3 w-3 shrink-0 text-text-faint" aria-hidden />
-          <span className="font-medium">{db.name}</span>
-          <span className="font-mono text-[11px] text-text-faint">
-            {db.engine}
-            {db.version ? ` ${db.version}` : ""} · generated password
-          </span>
-        </div>
-      ))}
-      {template.resources.applications.map((app) => {
-        const envKeys = Object.keys(app.env ?? {});
-        return (
-          <div key={app.name}>
-            <div className="flex items-baseline gap-2">
-              <Package className="h-3 w-3 shrink-0 text-text-faint" aria-hidden />
-              <span className="font-medium">{app.name}</span>
-              <span className="truncate font-mono text-[11px] text-text-faint">
-                {app.image} · port {app.port}
-                {app.route ? " · routed" : ""}
-              </span>
-            </div>
-            {(app.volumes ?? []).map((v) => (
-              <p key={v.path} className="pl-5 font-mono text-[11px] text-text-faint">
-                volume {v.name} → {v.path}
-              </p>
-            ))}
-            {envKeys.length > 0 && (
-              <p className="pl-5 font-mono text-[11px] text-text-faint">
-                sets {count(envKeys.length, "variable")}: {envKeys.slice(0, 4).join(", ")}
-                {envKeys.length > 4 ? `, +${envKeys.length - 4} more` : ""}
-              </p>
-            )}
-          </div>
-        );
-      })}
-      {handled.length > 0 && (
-        <div className="flex items-baseline gap-2">
-          <ShieldCheck className="h-3 w-3 shrink-0 text-text-faint" aria-hidden />
-          <span>{handled.join(" + ")} — nothing to fill in</span>
-        </div>
-      )}
+      <ul>
+        {lines.map((line) => (
+          <li key={line} className="flex gap-2">
+            <span aria-hidden>●</span>
+            <span className="min-w-0 break-words">{line}</span>
+          </li>
+        ))}
+      </ul>
+      <details className="group mt-1">
+        <summary className="cursor-pointer list-none font-mono text-[10.5px] text-text-faint hover:text-text-mid [&::-webkit-details-marker]:hidden">
+          exactly what it creates <span className="group-open:hidden">▾</span>
+          <span className="hidden group-open:inline">▴</span>
+        </summary>
+        <ul className="mt-1 space-y-0.5 font-mono text-[11px] text-text-faint">
+          {dbs.map((db) => (
+            <li key={db.name} className="truncate">
+              {db.name} · {db.engine}
+              {db.version ? ` ${db.version}` : ""} · generated password
+            </li>
+          ))}
+          {apps.map((app) => {
+            const envKeys = Object.keys(app.env ?? {});
+            return (
+              <li key={app.name} className="min-w-0">
+                <span className="block truncate">
+                  {app.name} · {app.image} · port {app.port}
+                  {app.route ? " · routed" : ""}
+                </span>
+                {envKeys.length > 0 && (
+                  <span className="block truncate">
+                    sets {count(envKeys.length, "variable")}: {envKeys.join(", ")}
+                  </span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </details>
     </div>
+  );
+}
+
+/**
+ * One select over one list query, with the four states the list can be in
+ * (ui-principles §1) drawn in the control's own footprint: a disabled,
+ * `aria-busy` select while the list loads; the failure with its retry beside
+ * it; an empty list with the remedy under it — "Join a server first" — rather
+ * than a placeholder that looks like a choice nobody made; and the options.
+ */
+function ListSelect<T extends { id: string; name: string }, E>({
+  id,
+  describedBy,
+  query,
+  items,
+  value,
+  onChange,
+  noun,
+  remedy,
+}: {
+  id: string;
+  describedBy: string | undefined;
+  query: UseQueryResult<T[], E>;
+  /** The options — the query's rows, possibly narrowed by the caller. */
+  items: T[];
+  value: string;
+  onChange: (id: string) => void;
+  noun: string;
+  /** What to do about an empty list — a Link to where the first one is made. */
+  remedy: ReactNode;
+}) {
+  if (query.isPending) {
+    return (
+      <Select id={id} disabled aria-busy aria-describedby={describedBy} className="font-sans">
+        <option>Loading {noun}s…</option>
+      </Select>
+    );
+  }
+  if (query.isError) {
+    return (
+      <div
+        role="alert"
+        className="flex h-9 items-center justify-between gap-2 rounded-md border border-danger/35 bg-danger/[0.06] pl-3 pr-1 text-[12px] text-danger"
+      >
+        <span className="truncate">{capitalize(noun)}s could not be loaded</span>
+        <ActionButton
+          size="sm"
+          variant="ghost"
+          state={query.isFetching ? "busy" : "idle"}
+          busyLabel="Retrying…"
+          onClick={() => void query.refetch()}
+        >
+          Retry
+        </ActionButton>
+      </div>
+    );
+  }
+  if (items.length === 0) {
+    return (
+      <>
+        <Select id={id} disabled aria-describedby={describedBy} className="font-sans">
+          <option>No {noun}s yet</option>
+        </Select>
+        <p className="text-xs leading-relaxed text-text-faint">{remedy}</p>
+      </>
+    );
+  }
+  return (
+    <Select id={id} required value={value} onChange={(e) => onChange(e.target.value)} aria-describedby={describedBy} className="font-sans">
+      <option value="">Select a {noun}</option>
+      {items.map((item) => (
+        <option key={item.id} value={item.id}>
+          {item.name}
+        </option>
+      ))}
+    </Select>
+  );
+}
+
+function capitalize(s: string) {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/** The link that closes an empty list's dead end (ui-principles §11). */
+function RemedyLink({ to, children }: { to: "/projects" | "/servers"; children: ReactNode }) {
+  return (
+    <Link to={to} className="font-medium text-text-mid underline-offset-2 hover:text-text hover:underline">
+      {children} →
+    </Link>
   );
 }
 
@@ -286,58 +394,112 @@ function InstallDialog({ template }: { template: Template }) {
   const navigate = useNavigate();
   const projects = useListProjects();
   const servers = useListServers();
+  const [open, setOpen] = useState(false);
   const [projectID, setProjectID] = useState("");
   const [environmentID, setEnvironmentID] = useState("");
   const [serverID, setServerID] = useState("");
   const [name, setName] = useState("");
   const [domain, setDomain] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [firstLogin, setFirstLogin] = useState<FirstLogin | null>(null);
-  const [afterNotice, setAfterNotice] = useState<() => void>(() => () => {});
-  const environments = useListEnvironments(projectID, { query: { enabled: projectID !== "" } });
+  // What the 202 handed back, held until the first-login notice is dismissed.
+  const [installed, setInstalled] = useState<{ first: FirstLogin; appID: string | undefined } | null>(null);
+
+  // 12b asks only where: Project and Server. With exactly one project there
+  // was never a choice to make, and the first enrolled server is the working
+  // default every create form shows filled in (ui-principles §6). A builder-
+  // only agent rejects rollout work, so it is never offered.
+  const projectList = projects.data ?? [];
+  const chosenProjectID = projectID || (projectList.length === 1 ? (projectList[0]?.id ?? "") : "");
+  const enrolled = (servers.data ?? []).filter((s) => s.enrolled && s.role !== "builder");
+  const chosenServerID = serverID || enrolled[0]?.id || "";
+
+  // The environment defaults to production — the one every project starts
+  // with — else the first; it is a real choice only on a project that has
+  // grown a staging, which is why it lives under Advanced.
+  const environments = useListEnvironments(chosenProjectID, { query: { enabled: chosenProjectID !== "" } });
+  const envList = environments.data ?? [];
+  const defaultEnv = envList.find((env) => env.name === "production") ?? envList[0];
+  const chosenEnvID = environmentID || defaultEnv?.id || "";
+  const chosenEnv = envList.find((env) => env.id === chosenEnvID);
+
+  const goTo = (appID: string | undefined) => {
+    if (appID) void navigate({ to: "/projects/$projectId/applications/$appId", params: { projectId: chosenProjectID, appId: appID } });
+  };
+
   const install = useInstallTemplate({ mutation: {
-    onSuccess: (result) => {
+    onSuccess: (result, vars) => {
       // An install drops whole resources into the environment, and the project
       // page renders those lists from cache — so they are marked stale before
       // the navigation that lands on them, not after.
-      void qc.invalidateQueries({ queryKey: getListApplicationsQueryKey(environmentID) });
-      void qc.invalidateQueries({ queryKey: getListDatabasesQueryKey(environmentID) });
+      void qc.invalidateQueries({ queryKey: getListApplicationsQueryKey(vars.data.environment_id) });
+      void qc.invalidateQueries({ queryKey: getListDatabasesQueryKey(vars.data.environment_id) });
       const appID = result.applications[0];
-      const go = () => {
-        if (appID) void navigate({ to: "/projects/$projectId/applications/$appId", params: { projectId: projectID, appId: appID } });
-      };
       // A generated password appears in this response and nowhere else ever, so
       // navigating straight past it would destroy it. Hold the navigation until
       // the notice is dismissed; with nothing to say, go as before.
       if (result.first_login) {
-        setFirstLogin(result.first_login);
-        setAfterNotice(() => go);
+        setInstalled({ first: result.first_login, appID });
         return;
       }
-      go();
+      goTo(appID);
     },
-    onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not install template"),
+    // The pill turns to "✕ Retry" and the toast carries the why (10b/10c); the
+    // inline line keeps the server's sentence beside the form it is about.
+    onError: (e: unknown, vars) => {
+      setError(e instanceof Error ? e.message : "Could not install the template");
+      toastFailed(`Could not install ${template.name}`, e, { retry: () => install.mutate(vars) });
+    },
   }});
+  const state = useMutationActionState(install);
+
   const routed = needsDomain(template);
 
   // A gated button that does not say what is missing is a dead end (10b), and
-  // the answers here are always one specific empty select.
+  // the answer here is always one specific control above it.
   const blocked =
-    !projectID ? "Pick a project first"
-    : !environmentID ? "Pick an environment"
-    : !serverID ? "Pick a server"
+    projects.isPending ? "Loading projects…"
+    : projects.isError ? "Projects could not be loaded — retry above"
+    : projectList.length === 0 ? "Create a project first"
+    : !chosenProjectID ? "Pick a project first"
+    : servers.isPending ? "Loading servers…"
+    : servers.isError ? "Servers could not be loaded — retry above"
+    : enrolled.length === 0 ? "Join a server first"
+    : !chosenServerID ? "Pick a server"
+    : environments.isPending ? "Loading environments…"
+    : environments.isError ? "Environments could not be loaded — retry under Advanced"
+    : !chosenEnvID ? "This project has no environment yet"
     : routed && domain.trim() === "" ? "This template publishes a public URL, so it needs a domain"
     : undefined;
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
     setError(null);
-    install.mutate({ slug: template.slug, data: { environment_id: environmentID, server_id: serverID, name: name || undefined, domain: domain || undefined } });
+    install.mutate({
+      slug: template.slug,
+      data: { environment_id: chosenEnvID, server_id: chosenServerID, name: name.trim() || undefined, domain: domain.trim() || undefined },
+    });
+  };
+
+  // Opening resets the mutation as well as the fields, so a reopened modal
+  // never inherits the last attempt's "✕ Retry" pill or its error line.
+  const onOpenChange = (next: boolean) => {
+    setOpen(next);
+    if (next) {
+      install.reset();
+      return;
+    }
+    setProjectID("");
+    setEnvironmentID("");
+    setServerID("");
+    setName("");
+    setDomain("");
+    setError(null);
   };
 
   // `automation · postgresql · v1.94` — 12b's identity line. Every segment is
   // optional in the catalog schema, so each is dropped rather than emitting a
-  // dangling separator, exactly as the card does with the version.
+  // dangling separator, exactly as the card does with the version. (The canvas
+  // names the runtime — "node + postgres" — which the schema does not carry.)
   const meta = [
     template.category,
     [...new Set(template.resources.databases.map((db) => db.engine))].join(" + "),
@@ -345,85 +507,151 @@ function InstallDialog({ template }: { template: Template }) {
   ].filter(Boolean).join(" · ");
 
   return (
-    <Dialog>
-      <DialogTrigger asChild><Button variant="primary" className="w-full">Install {template.name}</Button></DialogTrigger>
-      {/* 12b/13au opens on the template's own identity rather than on a form:
-          the monogram tile and the mono meta line are what make this read as
-          "installing n8n". The shared masthead is zeroed and rebuilt here for
-          that — the accessible name still comes from `title`. */}
-      <DialogContent title={`Install ${template.name}`} hideTitle size="alert" className="[&>div:first-child]:p-0">
-        <div className="pt-6">
-          <div className="mb-3.5 flex items-center gap-3">
-            <span className="flex size-[38px] flex-none items-center justify-center rounded-[9px] bg-accent font-mono text-[15px] font-normal text-accent-fg" aria-hidden>
-              {template.slug.slice(0, 2)}
-            </span>
-            <div className="min-w-0">
-              <div className="text-[17px] font-bold tracking-[-0.02em] text-text">Install {template.name}</div>
-              <div className="truncate font-mono text-[11px] text-text-faint">{meta}</div>
+    <>
+      {/* The first-login notice is its own dialog, so this one yields to it
+          rather than stacking underneath (ui-principles §4: modal depth is 1).
+          The form's state survives the swap because this component does. */}
+      <Dialog open={open && !installed} onOpenChange={onOpenChange}>
+        <DialogTrigger asChild><Button variant="primary" className="w-full">Install {template.name}</Button></DialogTrigger>
+        {/* 12b/13au opens on the template's own identity rather than on a form:
+            the monogram tile and the mono meta line are what make this read as
+            "installing n8n". The shared masthead is zeroed and rebuilt here for
+            that — the accessible name still comes from `title`. */}
+        <DialogContent title={`Install ${template.name}`} hideTitle size="alert" className="[&>div:first-child]:p-0">
+          <div className="pt-6">
+            <div className="mb-3.5 flex items-center gap-3">
+              <span className="flex size-[38px] flex-none items-center justify-center rounded-[9px] bg-accent font-mono text-[15px] font-normal text-accent-fg" aria-hidden>
+                {template.slug.slice(0, 2)}
+              </span>
+              <div className="min-w-0">
+                <div className="text-[17px] font-bold tracking-[-0.02em] text-text">Install {template.name}</div>
+                <div className="truncate font-mono text-[11px] text-text-faint">{meta}</div>
+              </div>
+              <DialogClose aria-label="Close" className="ml-auto shrink-0 rounded p-0.5 text-text-faint hover:text-text">
+                <X className="h-4 w-4" />
+              </DialogClose>
             </div>
-            <DialogClose aria-label="Close" className="ml-auto shrink-0 rounded p-0.5 text-text-faint hover:text-text">
-              <X className="h-4 w-4" />
-            </DialogClose>
-          </div>
 
-          {firstLogin && (
-            <FirstLoginNotice
-              first={firstLogin}
-              templateName={template.name}
-              onContinue={() => {
-                setFirstLogin(null);
-                afterNotice();
-              }}
-            />
-          )}
-
-          <form onSubmit={submit} className="space-y-3">
-            {/* Two columns at the canvas's 430px, one on a phone: paired
-                selects in a 360px-wide sheet are narrower than their own
-                option labels. */}
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Project">{(id) => <Select id={id} required value={projectID} onChange={(e) => { setProjectID(e.target.value); setEnvironmentID(""); }} className="font-sans"><option value="">Select a project</option>{(projects.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</Select>}</Field>
-              <Field label="Server">{(id) => <Select id={id} required value={serverID} onChange={(e) => setServerID(e.target.value)} className="font-sans"><option value="">Select a server</option>{(servers.data ?? []).filter((s) => s.enrolled && s.role !== "builder").map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</Select>}</Field>
-              <Field label="Environment">{(id) => <Select id={id} required disabled={!projectID} value={environmentID} onChange={(e) => setEnvironmentID(e.target.value)} className="font-sans"><option value="">Select an environment</option>{(environments.data ?? []).map((env) => <option key={env.id} value={env.id}>{env.name}</option>)}</Select>}</Field>
-              <Field label="Name" hint={`Defaults to ${template.slug}`}>{(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} placeholder={template.slug} />}</Field>
-            </div>
-            {/* Every routed template needs a domain — the server refuses without
-                one, because resolving {{domain}} to "" would write settings like
-                https:/// into the container. Ask for it as required rather than
-                letting the form advertise a default that always fails. */}
-            {routed && (
-              <Field label="Domain" hint="Required — this template publishes a public URL. TLS is automatic.">
-                {(id) => (
-                  <Input
-                    id={id}
-                    required
-                    value={domain}
-                    onChange={(e) => setDomain(e.target.value)}
-                    placeholder={`${template.slug}.example.com`}
-                  />
+            <form onSubmit={submit} className="space-y-3">
+              {/* Locked while the install is in flight: a second submit would
+                  install a second copy (10a). */}
+              <fieldset disabled={install.isPending} className="min-w-0 space-y-3">
+                {/* Two columns at the canvas's 430px, one on a phone: paired
+                    selects in a 360px-wide sheet are narrower than their own
+                    option labels. */}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Project">
+                    {(id, describedBy) => (
+                      <ListSelect
+                        id={id}
+                        describedBy={describedBy}
+                        query={projects}
+                        items={projectList}
+                        value={chosenProjectID}
+                        onChange={(next) => { setProjectID(next); setEnvironmentID(""); }}
+                        noun="project"
+                        remedy={<RemedyLink to="/projects">Create a project first</RemedyLink>}
+                      />
+                    )}
+                  </Field>
+                  <Field label="Server">
+                    {(id, describedBy) => (
+                      <ListSelect
+                        id={id}
+                        describedBy={describedBy}
+                        query={servers}
+                        items={enrolled}
+                        value={chosenServerID}
+                        onChange={setServerID}
+                        noun="server"
+                        remedy={<RemedyLink to="/servers">Join a server first</RemedyLink>}
+                      />
+                    )}
+                  </Field>
+                </div>
+                {/* Every routed template needs a domain — the server refuses without
+                    one, because resolving {{domain}} to "" would write settings like
+                    https:/// into the container. Ask for it as required rather than
+                    letting the form advertise a default that always fails. */}
+                {routed && (
+                  <Field label="Domain" hint="Required — this template publishes a public URL. TLS is automatic.">
+                    {(id, describedBy) => (
+                      <Input
+                        id={id}
+                        required
+                        aria-describedby={describedBy}
+                        value={domain}
+                        onChange={(e) => setDomain(e.target.value)}
+                        placeholder={`${template.slug}.example.com`}
+                      />
+                    )}
+                  </Field>
                 )}
-              </Field>
-            )}
-            {/* The summary sits last, immediately above the commit: it is what
-                the operator re-reads with a finger on the button, not preamble. */}
-            <TemplateContents template={template} />
-            {error && <p className="text-sm text-danger">{error}</p>}
-            <div className="flex justify-end gap-2.5 pt-1">
-              <DialogClose asChild><Button variant="ghost" size="lg">Cancel</Button></DialogClose>
-              <ActionButton
-                type="submit"
-                variant="accent"
-                size="lg"
-                state={install.isPending ? "busy" : "idle"}
-                busyLabel="Installing…"
-                disabledReason={blocked}
-              >
-                Install →
-              </ActionButton>
-            </div>
-          </form>
-        </div>
-      </DialogContent>
-    </Dialog>
+                {/* Both have a working default — production, and the template's
+                    own slug — so they fold (ui-principles §6); the note says what
+                    the fold will do if left alone. */}
+                <AdvancedSection note={`${chosenEnv?.name ?? "…"} · ${name.trim() || template.slug}`}>
+                  <Field label="Environment" hint="Defaults to production.">
+                    {(id, describedBy) =>
+                      chosenProjectID === "" ? (
+                        <Select id={id} disabled aria-describedby={describedBy} className="font-sans">
+                          <option>Pick a project first</option>
+                        </Select>
+                      ) : (
+                        <ListSelect
+                          id={id}
+                          describedBy={describedBy}
+                          query={environments}
+                          items={envList}
+                          value={chosenEnvID}
+                          onChange={setEnvironmentID}
+                          noun="environment"
+                          remedy="Every project starts with one — this one has none. Open the project to add an environment."
+                        />
+                      )
+                    }
+                  </Field>
+                  <Field label="Name" hint={`Defaults to ${template.slug}`}>
+                    {(id, describedBy) => (
+                      <Input id={id} aria-describedby={describedBy} value={name} onChange={(e) => setName(e.target.value)} placeholder={template.slug} />
+                    )}
+                  </Field>
+                </AdvancedSection>
+                {/* The summary sits last, immediately above the commit: it is what
+                    the operator re-reads with a finger on the button, not preamble. */}
+                <TemplateContents template={template} />
+              </fieldset>
+              {error && <p className="text-sm text-danger" aria-live="polite">{error}</p>}
+              <div className="flex justify-end gap-2.5 pt-1">
+                <DialogClose asChild><Button variant="ghost" size="lg">Cancel</Button></DialogClose>
+                <ActionButton
+                  type="submit"
+                  variant="accent"
+                  size="lg"
+                  state={state}
+                  busyLabel="Installing…"
+                  successLabel="Installed"
+                  disabledReason={blocked}
+                >
+                  Install →
+                </ActionButton>
+              </div>
+            </form>
+          </div>
+        </DialogContent>
+      </Dialog>
+      {installed && (
+        <FirstLoginNotice
+          first={installed.first}
+          templateName={template.name}
+          onContinue={() => {
+            const { appID } = installed;
+            setInstalled(null);
+            setOpen(false);
+            goTo(appID);
+          }}
+        />
+      )}
+    </>
   );
 }

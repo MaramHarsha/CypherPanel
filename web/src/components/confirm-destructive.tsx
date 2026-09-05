@@ -15,6 +15,7 @@
 //   · "audit-logged with your name", stated before the click rather than
 //     discovered afterwards.
 import { useId, useState, type ReactNode } from "react";
+import { ActionButton } from "@/components/ui/action-button";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
@@ -35,6 +36,8 @@ interface ConfirmDestructiveProps {
   actionLabel: string;
   onConfirm: () => void;
   pending?: boolean;
+  /** The verb in progress while `pending` — "Deleting…", "Removing…" (10b). */
+  pendingLabel?: string;
 }
 
 export function ConfirmDestructive({
@@ -46,6 +49,7 @@ export function ConfirmDestructive({
   actionLabel,
   onConfirm,
   pending,
+  pendingLabel = "Working…",
 }: ConfirmDestructiveProps) {
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState("");
@@ -125,18 +129,24 @@ export function ConfirmDestructive({
           {/* Filled red at .45 opacity until armed. This is the one place the
               system's grey disabled pill is overridden: 13af keeps the button
               red so the shape of the decision stays visible while it is still
-              refused, rather than swapping in a different-looking object. */}
-          <Button
+              refused, rather than swapping in a different-looking object. The
+              overrides are marked important because Button's grey fill is
+              written with a `:not([aria-busy])` selector that outweighs a
+              plain `disabled:` variant. An ActionButton, so the pill holds
+              its width when the label becomes the verb in progress. */}
+          <ActionButton
             type="submit"
             variant="primary"
-            disabled={!armed || pending}
+            state={pending ? "busy" : "idle"}
+            busyLabel={pendingLabel}
+            disabled={!armed}
             className={cn(
-              "bg-status-error text-white hover:bg-danger-hover",
-              "disabled:bg-status-error disabled:text-white disabled:opacity-45",
+              "bg-status-error text-white hover:bg-danger-hover aria-busy:hover:bg-status-error",
+              "disabled:bg-status-error! disabled:text-white! disabled:opacity-45",
             )}
           >
-            {pending ? "Working…" : actionLabel}
-          </Button>
+            {actionLabel}
+          </ActionButton>
         </div>
         </form>
       </DialogContent>

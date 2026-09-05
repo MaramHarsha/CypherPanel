@@ -11,7 +11,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Check, Plus } from "lucide-react";
 import { useState, type FormEvent } from "react";
-import { toast } from "sonner";
 import {
   getGetTotpStatusQueryKey,
   getListSessionsQueryKey,
@@ -29,19 +28,21 @@ import {
   useVerifyTotp,
 } from "@/api/gen/auth/auth";
 import { Ability } from "@/api/gen/model";
+import { ChoiceChip } from "@/components/connection-dialog";
 import { CopyButton, CopyField } from "@/components/copy-field";
 import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
 import { PageState } from "@/components/page-state";
 import { QRCode } from "@/components/qr-code";
 import { StatusPill } from "@/components/status-badge";
-import { ActionButton } from "@/components/ui/action-button";
+import { ActionButton, useMutationActionState } from "@/components/ui/action-button";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { Input, Select } from "@/components/ui/input";
 import { useCrumbs } from "@/lib/crumbs";
 import { relativeTime, timeUntil } from "@/lib/time";
+import { toastFailed, toastSuccess } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -121,7 +122,9 @@ function TwoFactorSection() {
   const spent = enabled && left === 0;
 
   return (
-    <section className="space-y-2">
+    // Addressable, so the profile's "Manage" lands here rather than at the top
+    // of the tab; the scroll margin clears the sticky top bar.
+    <section id="two-factor" className="scroll-mt-20 space-y-2">
       <Eyebrow>Security</Eyebrow>
       {/* The lead states the account's own posture, not a generic warning: once
           2FA is on, telling the operator their password alone holds the fleet
@@ -337,7 +340,7 @@ function DisableTotpDialog() {
   const disable = useDisableTotp({
     mutation: {
       onSuccess: () => {
-        toast.success("Two-factor authentication turned off");
+        toastSuccess("Two-factor authentication turned off");
         void qc.invalidateQueries({ queryKey: getGetTotpStatusQueryKey() });
       },
       onError: (e: unknown) => setError(e instanceof Error ? e.message : "That code was not accepted"),
@@ -406,21 +409,24 @@ function SessionsSection() {
   const revokeOthers = useRevokeOtherSessions({
     mutation: {
       onSuccess: (res) => {
-        toast.success(res.revoked === 0 ? "No other sessions to sign out" : `Signed out ${res.revoked} other session(s)`);
+        toastSuccess(res.revoked === 0 ? "No other sessions to sign out" : `Signed out ${res.revoked} other session(s)`);
         invalidate();
       },
-      onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Could not sign the others out"),
+      onError: (e: unknown, vars) => toastFailed("Could not sign the others out", e, { retry: () => revokeOthers.mutate(vars) }),
     },
   });
+  const revokeState = useMutationActionState(revokeOthers);
 
   const others = (sessions.data ?? []).filter((s) => !s.current).length;
 
   return (
-    <section className="space-y-2">
+    // Addressable: the profile's "Review" and canvas 13a's SESSIONS crumb both
+    // mean this list, not the top of the tab.
+    <section id="sessions" className="scroll-mt-20 space-y-2">
       <Eyebrow>Sessions</Eyebrow>
       <p className="text-[12.5px] leading-[1.5] text-text-mid">
-        Every live sign-in on this account. Sits right under two-factor — sign the others out if anything looks
-        unfamiliar.
+        Every live sign-in on this account. Sits right under two-factor — change your password, then sign everything
+        else out.
       </p>
       <PageState query={sessions} empty={<EmptyState title="No active sessions" hint="Sign in to create one." />}>
         {(list) => (
@@ -457,14 +463,17 @@ function SessionsSection() {
                 of what it will take beside it — a pill labelled "everywhere
                 else" is otherwise a number you cannot see before clicking. */}
             <div className="mt-3.5 flex items-center gap-3">
-              <Button
+              <ActionButton
                 variant="secondary"
                 size="md"
-                disabled={others === 0 || revokeOthers.isPending}
+                state={revokeState}
+                busyLabel="Signing out…"
+                successLabel="Signed out"
+                disabledReason={others === 0 ? "No other sessions to sign out" : undefined}
                 onClick={() => revokeOthers.mutate()}
               >
                 Sign out everywhere else
-              </Button>
+              </ActionButton>
               <span className="text-[11.5px] text-text-faint">
                 {others === 0 ? "no other sessions" : `revokes ${others} session${others === 1 ? "" : "s"}`}
               </span>
@@ -472,6 +481,11 @@ function SessionsSection() {
           </>
         )}
       </PageState>
+      {/* What the list deliberately leaves out, said on the page rather than
+          left for the operator to wonder about (session-management.md §2). */}
+      <p className="pt-1 text-[12px] leading-[1.5] text-text-faint">
+        No IP or user-agent shown — deliberately. API tokens can't call these routes at all.
+      </p>
     </section>
   );
 }
@@ -492,12 +506,13 @@ function SessionRow({
   const revoke = useRevokeSession({
     mutation: {
       onSuccess: () => {
-        toast.success("Session signed out");
+        toastSuccess("Session signed out");
         onRevoked();
       },
-      onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Could not sign that session out"),
+      onError: (e: unknown, vars) => toastFailed("Could not sign that session out", e, { retry: () => revoke.mutate(vars) }),
     },
   });
+  const state = useMutationActionState(revoke);
   return (
     // The current row is the one you must not revoke by accident, so it is the
     // one lifted onto the highlight surface — and it carries no action at all.
@@ -521,15 +536,18 @@ function SessionRow({
         </span>
       </span>
       {!current && (
-        <button
-          type="button"
+        <ActionButton
+          size="sm"
+          variant="ghost"
           aria-label={`Revoke session ${id}`}
-          disabled={revoke.isPending}
+          state={state}
+          busyLabel="Revoking…"
+          successLabel="Revoked"
           onClick={() => revoke.mutate({ id })}
-          className={cn(rowAction, "text-danger")}
+          className={cn(rowAction, "h-auto px-0 text-danger hover:bg-transparent hover:text-danger")}
         >
-          {revoke.isPending ? "Revoking…" : "Revoke"}
-        </button>
+          Revoke
+        </ActionButton>
       )}
     </li>
   );
@@ -558,12 +576,13 @@ function TokenRow({
       // Nothing pushes token changes down the live stream, so the revoked row
       // sits there looking usable until the list is asked for again.
       onSuccess: () => {
-        toast.success(`Revoked ${name}`);
+        toastSuccess(`Revoked ${name}`);
         void qc.invalidateQueries({ queryKey: getListTokensQueryKey() });
       },
-      onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Could not revoke the token"),
+      onError: (e: unknown, vars) => toastFailed("Could not revoke the token", e, { retry: () => del.mutate(vars) }),
     },
   });
+  const state = useMutationActionState(del);
   return (
     <li className="flex items-center gap-3 px-4 py-3">
       <span className="flex min-w-0 flex-1 flex-col">
@@ -581,23 +600,29 @@ function TokenRow({
           {expires ? ` · expires ${timeUntil(expires)}` : " · never expires"}
         </span>
       </span>
-      <button
-        type="button"
+      <ActionButton
+        size="sm"
+        variant="ghost"
         aria-label={`Revoke ${name}`}
-        disabled={del.isPending}
+        state={state}
+        busyLabel="Revoking…"
+        successLabel="Revoked"
         onClick={() => del.mutate({ id })}
-        className={cn(rowAction, "text-danger")}
+        className={cn(rowAction, "h-auto px-0 text-danger hover:bg-transparent hover:text-danger")}
       >
-        {del.isPending ? "Revoking…" : "Revoke"}
-      </button>
+        Revoke
+      </ActionButton>
     </li>
   );
 }
 
+// In the order canvas 13ac draws the chips — the two a CI credential usually
+// needs first. The set is the API's (read / write / deploy); the canvas's env
+// vars, servers and admin chips wait on the ability enum growing.
 const ABILITY_HELP: Record<Ability, string> = {
+  [Ability.deploy]: "Trigger deploys and rollbacks",
   [Ability.read]: "View everything you can see",
   [Ability.write]: "Create and change resources",
-  [Ability.deploy]: "Trigger deploys and rollbacks",
 };
 
 /** Canvas 13ac offers a lifetime, not a checkbox — 90 days is its default. */
@@ -629,6 +654,7 @@ function CreateTokenDialog({ primary }: { primary?: boolean }) {
       onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not create the token"),
     },
   });
+  const createState = useMutationActionState(create);
 
   const toggle = (a: Ability) =>
     setAbilities((cur) => (cur.includes(a) ? cur.filter((x) => x !== a) : [...cur, a]));
@@ -654,6 +680,7 @@ function CreateTokenDialog({ primary }: { primary?: boolean }) {
           setAbilities([Ability.read, Ability.deploy]);
           setExpiryDays(90);
           setError(null);
+          create.reset();
         }
       }}
     >
@@ -691,26 +718,11 @@ function CreateTokenDialog({ primary }: { primary?: boolean }) {
             <fieldset className="space-y-1.5">
               <legend className="text-[12px] font-semibold text-text">Abilities</legend>
               <div className="flex flex-wrap gap-[7px]">
-                {(Object.keys(ABILITY_HELP) as Ability[]).map((ability) => {
-                  const on = abilities.includes(ability);
-                  return (
-                    <button
-                      key={ability}
-                      type="button"
-                      aria-pressed={on}
-                      onClick={() => toggle(ability)}
-                      className={cn(
-                        "rounded-full px-3 py-1 text-[12px] transition-colors",
-                        on
-                          ? "border-[1.5px] border-border-strong bg-surface font-semibold text-text"
-                          : "border border-border-input bg-surface text-text-mid hover:border-border-strong hover:text-text",
-                      )}
-                    >
-                      {ability}
-                      {on ? " ✓" : ""}
-                    </button>
-                  );
-                })}
+                {(Object.keys(ABILITY_HELP) as Ability[]).map((ability) => (
+                  <ChoiceChip key={ability} selected={abilities.includes(ability)} onToggle={() => toggle(ability)}>
+                    {ability}
+                  </ChoiceChip>
+                ))}
               </div>
               <p className="text-[12px] leading-relaxed text-text-mid">{abilityHelp}</p>
             </fieldset>
@@ -739,9 +751,16 @@ function CreateTokenDialog({ primary }: { primary?: boolean }) {
               <ActionButton
                 type="submit"
                 variant="primary"
-                state={create.isPending ? "busy" : "idle"}
+                state={createState}
                 busyLabel="Creating…"
-                disabled={name.trim() === "" || abilities.length === 0}
+                successLabel="Created"
+                disabledReason={
+                  name.trim() === ""
+                    ? "Name what will use it first"
+                    : abilities.length === 0
+                      ? "Pick at least one ability"
+                      : undefined
+                }
               >
                 Create token
               </ActionButton>

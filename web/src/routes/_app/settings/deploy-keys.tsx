@@ -11,7 +11,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
 import { useState, type FormEvent } from "react";
-import { toast } from "sonner";
 import {
   getListDeployKeysQueryKey,
   useCreateDeployKey,
@@ -30,6 +29,7 @@ import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { useCrumbs } from "@/lib/crumbs";
 import { relativeTime } from "@/lib/time";
+import { toastFailed, toastSuccess } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -112,11 +112,11 @@ function DeleteKeyDialog({ k }: { k: DeployKey }) {
       // carry no live stream — and a row still showing a copyable public key
       // the panel has thrown away is exactly the state §10 forbids.
       onSuccess: () => {
-        toast.success(`Deleted ${k.name}`);
+        toastSuccess(`Deleted ${k.name}`);
         void qc.invalidateQueries({ queryKey: getListDeployKeysQueryKey() });
         setOpen(false);
       },
-      onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Could not delete the key"),
+      onError: (e: unknown, vars) => toastFailed("Could not delete the key", e, { retry: () => del.mutate(vars) }),
     },
   });
 
