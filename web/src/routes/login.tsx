@@ -7,10 +7,11 @@
 // the one form. The ink half is decoration only in the sense that a masthead
 // is — it tells a first-time self-hoster what they just installed.
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { ApiError } from "@/api/client";
 import { useGetSetupStatus, useLogin, useSetup } from "@/api/gen/auth/auth";
-import { Button } from "@/components/ui/button";
+import { ThrottledPage, useSecondsLeft } from "@/components/error-page";
+import { ActionButton, useMutationActionState } from "@/components/ui/action-button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -107,6 +108,7 @@ function SetupForm() {
       },
     },
   });
+  const setupState = useMutationActionState(setup);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -171,9 +173,18 @@ function SetupForm() {
         )}
       </Field>
       {error && <FormError message={error} />}
-      <Button type="submit" variant="accent" size="lg" className="w-full" disabled={setup.isPending}>
-        {setup.isPending ? "Creating…" : "Create account & sign in →"}
-      </Button>
+      <ActionButton
+        type="submit"
+        variant="accent"
+        size="lg"
+        className="w-full"
+        state={setupState}
+        busyLabel="Creating…"
+        successLabel="Signed in"
+        failedLabel="Try again"
+      >
+        Create account & sign in →
+      </ActionButton>
     </form>
   );
 }
@@ -186,6 +197,16 @@ function LoginForm() {
   const [totp, setTotp] = useState("");
   const [needsTotp, setNeedsTotp] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Canvas 8e. cypherd throttles failed sign-ins per client (core/auth/
+  // ratelimit.go); a 429 replaces the form with the paused state. The deadline
+  // comes from a Retry-After header when the server sends one — it does not
+  // yet, and then the page says "in a moment" and offers the form back on
+  // request rather than counting down a number it invented.
+  const [throttle, setThrottle] = useState<{ until: number | null; total: number | undefined } | null>(null);
+  const secondsLeft = useSecondsLeft(throttle?.until);
+  useEffect(() => {
+    if (throttle?.until && secondsLeft === 0) setThrottle(null);
+  }, [throttle, secondsLeft]);
 
   const login = useLogin({
     mutation: {
@@ -200,6 +221,11 @@ function LoginForm() {
             setError(totp ? err.message : null);
             return;
           }
+          if (err.status === 429) {
+            const s = err.retryAfterSeconds;
+            setThrottle({ until: s ? Date.now() + s * 1000 : null, total: s });
+            return;
+          }
           setError(err.message);
         } else {
           setError("Could not reach the server — check that cypherd is running");
@@ -207,6 +233,18 @@ function LoginForm() {
       },
     },
   });
+  const loginState = useMutationActionState(login);
+
+  if (throttle) {
+    return (
+      <ThrottledPage
+        embedded
+        secondsLeft={throttle.until ? secondsLeft : undefined}
+        totalSeconds={throttle.total}
+        onTryAgain={() => setThrottle(null)}
+      />
+    );
+  }
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -268,9 +306,21 @@ function LoginForm() {
           <FormError message={error} />
         </div>
       )}
-      <Button type="submit" variant="accent" size="lg" className="w-full" disabled={login.isPending}>
-        {login.isPending ? "Signing in…" : "Sign in →"}
-      </Button>
+      {/* A 401 that asks for the second factor is a question, not a failure:
+          the pill goes back to idle over the code field and only a wrong code
+          turns it red. */}
+      <ActionButton
+        type="submit"
+        variant="accent"
+        size="lg"
+        className="w-full"
+        state={loginState === "failed" && needsTotp && !error ? "idle" : loginState}
+        busyLabel="Signing in…"
+        successLabel="Signed in"
+        failedLabel="Try again"
+      >
+        Sign in →
+      </ActionButton>
     </form>
   );
 }

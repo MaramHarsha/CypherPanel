@@ -90,8 +90,14 @@ export function DialogContent({
               </DialogPrimitive.Close>
             )}
           </div>
+          {/* A hidden masthead hides its description too: the text still
+              reaches a screen reader as the dialog's aria-describedby, but a
+              card that draws its own head (14f, ⌘K) must not grow a stray
+              line of prose above it. */}
           {description ? (
-            <DialogPrimitive.Description className="mt-1.5 text-[12.5px] leading-relaxed text-text-mid">
+            <DialogPrimitive.Description
+              className={hideTitle ? "sr-only" : "mt-1.5 text-[12.5px] leading-relaxed text-text-mid"}
+            >
               {description}
             </DialogPrimitive.Description>
           ) : (

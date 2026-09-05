@@ -6,6 +6,13 @@
 // operating system, which is what a panel read in daylight and at 2am wants by
 // default once someone thinks to ask for it (canvas 13i). Everything that only
 // cares what is on screen keeps asking for the resolved theme.
+//
+// Two controls write the preference — the ☾/☀ toggle at the far right of the
+// top bar and the Light/Dark/Auto field on the profile page (13i) — and they
+// stay in step because both go through `setTheme` and this one storage key;
+// every subscriber is told on each write. Persistence is per browser: the API
+// has no per-user appearance field yet, so the key is not scoped to an
+// account. Should one arrive, this module is the only place that changes.
 import { useSyncExternalStore } from "react";
 
 const STORAGE_KEY = "cypher.theme";
@@ -53,6 +60,18 @@ export function setTheme(preference: ThemePreference): void {
   }
   applyTheme(preference === "auto" ? systemTheme() : preference);
   notify();
+}
+
+/**
+ * The top-bar toggle: flips what is on screen and stores the result as an
+ * explicit choice. A toggle has two positions, so it cannot express `auto`;
+ * pressing it while on auto pins the opposite of what the system is showing,
+ * and the profile page's field reflects that the moment it happens.
+ */
+export function toggleTheme(): Theme {
+  const next: Theme = storedTheme() === "dark" ? "light" : "dark";
+  setTheme(next);
+  return next;
 }
 
 // While the preference is `auto` the system can change under us — at sunset, or

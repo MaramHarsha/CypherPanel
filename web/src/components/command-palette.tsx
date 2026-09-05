@@ -123,7 +123,11 @@ export function CommandPalette() {
         hideClose
         className="top-[14%] max-w-lg translate-y-0 bg-surface [&>div]:p-0"
       >
-        <div className="flex items-center gap-2.5 border-b-[1.5px] border-border-strong px-[15px] py-3">
+        {/* The row is the field, so the row carries the focus indicator: the
+            ink rule under it turns to the focus orange while the input has
+            keyboard focus (canvas 14g: ":focus-visible only"), in place of an
+            outline that would box a borderless input inside a bordered row. */}
+        <div className="flex items-center gap-2.5 border-b-[1.5px] border-border-strong px-[15px] py-3 transition-colors has-[:focus-visible]:border-focus">
           <Search className="h-4 w-4 shrink-0 text-text-faint" aria-hidden />
           <input
             autoFocus
@@ -143,7 +147,7 @@ export function CommandPalette() {
               }
             }}
             placeholder="Jump to a project, server, or page…"
-            className="w-full bg-transparent font-mono text-[13.5px] leading-6 text-text caret-accent placeholder:text-text-faint focus:outline-none"
+            className="w-full bg-transparent font-mono text-[13.5px] leading-6 text-text caret-accent placeholder:text-text-faint focus-visible:outline-none"
             aria-label="Search"
           />
         </div>

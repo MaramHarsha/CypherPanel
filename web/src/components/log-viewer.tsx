@@ -102,9 +102,10 @@ export function LogViewer({
       )}
     >
       <SSEBanner status={status} tone="ink" />
-      <div className="flex items-center justify-between border-b border-pane-border px-2.5 py-1">
+      <div className="flex items-center justify-between gap-2 border-b border-pane-border px-2.5 py-1">
         <span className="eyebrow text-pane-faint">log</span>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5">
+          <LiveChip live={live} open={status === "open"} following={follow} />
           <button
             type="button"
             aria-pressed={wrap}
@@ -171,5 +172,31 @@ export function LogViewer({
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * The word for the caret (canvas 14d: "● LIVE"). The caret alone says the
+ * stream is open only to someone who knows what a caret means; this says it
+ * in a word, and says the other thing too — PAUSED, once the operator has
+ * scrolled up to read something and the tail has stopped following them. It
+ * is absent when the source cannot write: a finished deploy's replay is
+ * neither live nor paused, it is just done — and absent while the stream is
+ * down, when the amber banner above is already the louder, truer word.
+ * `role="status"` so the change is announced when the tail stops or resumes.
+ */
+function LiveChip({ live, open, following }: { live: boolean; open: boolean; following: boolean }) {
+  if (!live || !open) return null;
+  return (
+    <span
+      role="status"
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-md border px-2 py-[3px] font-mono text-[10px] font-medium uppercase tracking-wider",
+        following ? "border-pane-ok text-pane-ok" : "border-pane-border text-pane-dim",
+      )}
+    >
+      <span aria-hidden className={cn("h-1.5 w-1.5 rounded-full", following ? "bg-pane-ok" : "bg-pane-dim")} />
+      {following ? "Live" : "Paused"}
+    </span>
   );
 }

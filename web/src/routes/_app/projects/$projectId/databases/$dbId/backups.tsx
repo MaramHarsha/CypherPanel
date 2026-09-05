@@ -1,11 +1,11 @@
 // Database · Backups: schedules (create/run-now/delete), their run history,
 // and restore — the loudest destructive action in the product, gated on a
-// blast-radius confirm (ui-principles §2).
+// blast-radius confirm (ui-principles §2) and followed by the blocking popup
+// of canvas 10d.
 import { useQueryClient } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { History, Play, Plus, RotateCcw, Trash2 } from "lucide-react";
-import { useState, type FormEvent } from "react";
-import { toast } from "sonner";
+import { useEffect, useState, type FormEvent } from "react";
 import {
   getListBackupHistoryQueryKey,
   getListDatabaseBackupsQueryKey,
@@ -20,17 +20,21 @@ import { useListBackupTargets } from "@/api/gen/backups/backups";
 import { getGetDatabaseQueryKey, useGetDatabase } from "@/api/gen/databases/databases";
 import type { BackupRecord, DatabaseBackup } from "@/api/gen/model";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
+import { formatBytes, startRestoreWatch } from "@/components/db-restore-progress";
 import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
 import { InlineHint } from "@/components/inline-hint";
 import { PageState } from "@/components/page-state";
 import { StatusBadge } from "@/components/status-badge";
+import { ActionButton, useMutationActionState } from "@/components/ui/action-button";
 import { Button } from "@/components/ui/button";
 import { CronField } from "@/components/cron-field";
 import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { SkeletonRows, useSkeletonDelay } from "@/components/ui/skeleton";
 import { relativeTime, absoluteTime } from "@/lib/time";
+import { toastError, toastFailed, toastSuccess, toastWorking, type ToastId } from "@/lib/toast";
 
 export const Route = createFileRoute("/_app/projects/$projectId/databases/$dbId/backups")({
   component: BackupsTab,
@@ -57,6 +61,10 @@ function BackupsTab() {
 
       <PageState
         query={schedules}
+        // A schedule card is one row: the cron and its meta on the left, the
+        // three controls on the right.
+        skeletonColumns="1fr auto"
+        skeletonRows={2}
         empty={
           hasTargets ? (
             <EmptyState
@@ -68,6 +76,13 @@ function BackupsTab() {
             <EmptyState
               title="Add a backup target first"
               hint="Backups need somewhere to go. Add an S3-compatible target in Settings → Backup targets, then schedule backups here."
+              // The prerequisite lives on another page, so the verb is the
+              // way there (15a): a sentence naming a tab is not a next step.
+              action={
+                <Link to="/settings/backup-targets">
+                  <Button variant="primary">Add a backup target</Button>
+                </Link>
+              }
             />
           )
         }
@@ -87,6 +102,8 @@ function BackupsTab() {
 function ScheduleCard({ dbId, dbName, schedule }: { dbId: string; dbName: string; schedule: DatabaseBackup }) {
   const qc = useQueryClient();
   const [showHistory, setShowHistory] = useState(false);
+  // The run "Back up now" started, while its working toast is up (10c).
+  const [running, setRunning] = useState<{ recordId: string; toastId: ToastId } | null>(null);
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: getListDatabaseBackupsQueryKey(dbId) });
@@ -95,20 +112,60 @@ function ScheduleCard({ dbId, dbName, schedule }: { dbId: string; dbName: string
 
   const runNow = useRunBackupNow({
     mutation: {
-      onSuccess: () => {
+      onSuccess: (res) => {
         invalidate();
-        toast.success("Backup started");
+        // The 202 carries the record it created, in `running`; the agent's
+        // terminal event flips it to succeeded/failed. A working toast is the
+        // honest shape for that — it morphs in place when the record does.
+        setRunning({ recordId: res.record.id, toastId: toastWorking(`Backing up ${dbName || "the database"}…`) });
       },
-      onError: mutErr,
+      onError: (e: unknown, vars) => toastFailed("Backup didn't start", e, { retry: () => runNow.mutate(vars) }),
     },
   });
+  const runState = useMutationActionState(runNow);
+
+  // A second observer on the history, polling only while a run is owed an
+  // outcome: SSE has no event for backup records, so the fallback poll is the
+  // only way the toast finds out.
+  const watched = useListBackupHistory(dbId, schedule.id, {
+    query: { enabled: running !== null, refetchInterval: 2_000 },
+  });
+  const { mutate: runAgain } = runNow;
+  useEffect(() => {
+    if (!running) return;
+    const rec = watched.data?.find((r) => r.id === running.recordId);
+    if (!rec || rec.status === "running") return;
+    setRunning(null);
+    // The schedule's own last-run line and the open history both change.
+    void qc.invalidateQueries({ queryKey: getListDatabaseBackupsQueryKey(dbId) });
+    void qc.invalidateQueries({ queryKey: getListBackupHistoryQueryKey(dbId, schedule.id) });
+    if (rec.status === "succeeded") {
+      toastSuccess(
+        {
+          title: `Backed up ${dbName || "the database"}`,
+          detail: rec.size_bytes > 0 ? `${formatBytes(rec.size_bytes)} uploaded to the target.` : undefined,
+        },
+        running.toastId,
+      );
+    } else {
+      toastError(
+        {
+          title: `Backup of ${dbName || "the database"} failed`,
+          detail: rec.detail || "The agent reported a failure.",
+          actions: [{ label: "Retry", onClick: () => runAgain({ id: dbId, bakId: schedule.id }) }],
+        },
+        running.toastId,
+      );
+    }
+  }, [running, watched.data, qc, runAgain, dbId, dbName, schedule.id]);
+
   const del = useDeleteDatabaseBackup({
     mutation: {
       onSuccess: () => {
         void qc.invalidateQueries({ queryKey: getListDatabaseBackupsQueryKey(dbId) });
-        toast.success("Schedule removed");
+        toastSuccess("Schedule removed");
       },
-      onError: mutErr,
+      onError: (e: unknown, vars) => toastFailed("Could not remove the schedule", e, { retry: () => del.mutate(vars) }),
     },
   });
 
@@ -133,9 +190,17 @@ function ScheduleCard({ dbId, dbName, schedule }: { dbId: string; dbName: string
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          <Button size="sm" variant="secondary" disabled={runNow.isPending} onClick={() => runNow.mutate({ id: dbId, bakId: schedule.id })}>
+          <ActionButton
+            size="sm"
+            variant="secondary"
+            state={runState}
+            busyLabel="Starting…"
+            successLabel="Started"
+            disabledReason={running ? "A backup is already running" : undefined}
+            onClick={() => runNow.mutate({ id: dbId, bakId: schedule.id })}
+          >
             <Play className="h-3.5 w-3.5" /> Back up now
-          </Button>
+          </ActionButton>
           <Button size="sm" variant="ghost" aria-pressed={showHistory} onClick={() => setShowHistory((v) => !v)}>
             <History className="h-3.5 w-3.5" /> History
           </Button>
@@ -149,6 +214,7 @@ function ScheduleCard({ dbId, dbName, schedule }: { dbId: string; dbName: string
             blastRadius="Stops future automatic backups on this schedule. Backup files already in your S3 target are not deleted."
             actionLabel="Delete schedule"
             pending={del.isPending}
+            pendingLabel="Deleting…"
             onConfirm={() => del.mutate({ id: dbId, bakId: schedule.id })}
           />
         </div>
@@ -160,12 +226,24 @@ function ScheduleCard({ dbId, dbName, schedule }: { dbId: string; dbName: string
 
 function HistoryList({ dbId, dbName, bakId }: { dbId: string; dbName: string; bakId: string }) {
   const history = useListBackupHistory(dbId, bakId);
+  // The shape of a history row — status, stamp · size, the restore control —
+  // and only past 200 ms (canvas 10e), not a sentence that flashes.
+  const showSkeleton = useSkeletonDelay(history.isPending);
   return (
-    <div className="border-t border-border">
+    <div className="border-t border-border px-4">
       <PageState
         query={history}
-        loading={<div className="px-4 py-3 text-xs text-text-faint">Loading history…</div>}
-        empty={<div className="px-4 py-3 text-xs text-text-faint">No backups have run yet.</div>}
+        loading={showSkeleton ? <SkeletonRows columns="auto 1fr auto" rows={2} /> : null}
+        empty={
+          // Nested evidence, not a page: no glyph, and the verb it points at
+          // — "Back up now" — is already on the card head above it.
+          <EmptyState
+            glyph={null}
+            className="py-3"
+            title="No backups have run yet"
+            hint="Back up now runs one immediately; the schedule takes care of the rest."
+          />
+        }
       >
         {(records) => (
           <ul className="divide-y divide-border">
@@ -183,27 +261,26 @@ function RecordRow({ dbId, dbName, record: r }: { dbId: string; dbName: string; 
   const qc = useQueryClient();
   const restore = useRestoreDatabase({
     mutation: {
-      // The panel gets no progress from a restore — the agent reports one
-      // terminal event to the control plane and nothing to the browser — so
-      // the toast has to carry the whole consequence up front: the database
-      // is down while the dump applies, and nobody can call it back.
+      // The 202 is the whole answer the panel gets: the agent reports one
+      // terminal event to the control plane and nothing to the browser. The
+      // layout's restore watch turns that into 10d's popup — the source
+      // backup, the offline consequence, why there is no cancel — and holds
+      // it until the agent's next status report says where the database is.
       onSuccess: () => {
-        // The container restarts under the dump, so the status the overview is
-        // holding is stale the instant this returns. Ask for it again rather
-        // than trusting the event stream to say so — it may be reconnecting,
-        // and a database shown as running while it is offline is exactly the
-        // state we must not display.
+        startRestoreWatch(dbId, r);
+        // The container may restart under the dump, so the status the
+        // overview is holding is stale the instant this returns. Ask for it
+        // again rather than trusting the event stream to say so — it may be
+        // reconnecting, and a database shown as running while it is offline
+        // is exactly the state we must not display.
         void qc.invalidateQueries({ queryKey: getGetDatabaseQueryKey(dbId) });
-        toast.success(`Restoring ${dbName}…`, {
-          description: "The database is offline while the dump is applied, and the restore can't be stopped.",
-        });
       },
-      onError: mutErr,
+      onError: (e: unknown, vars) => toastFailed("Restore didn't start", e, { retry: () => restore.mutate(vars) }),
     },
   });
   const succeeded = r.status === "succeeded";
   return (
-    <li className="flex items-center justify-between gap-3 px-4 py-2">
+    <li className="flex items-center justify-between gap-3 py-2">
       <span className="flex min-w-0 items-center gap-2">
         <StatusBadge status={succeeded ? "running" : r.status === "failed" ? "error" : "deploying"} />
         <span className="mono text-xs text-text-faint" title={absoluteTime(r.started_at)}>
@@ -232,6 +309,7 @@ function RecordRow({ dbId, dbName, record: r }: { dbId: string; dbName: string; 
           confirmName={dbName}
           actionLabel="Restore database"
           pending={restore.isPending}
+          pendingLabel="Restoring…"
           onConfirm={() => restore.mutate({ id: dbId, data: { backup_record_id: r.id, confirm: true } })}
         />
       )}
@@ -242,6 +320,7 @@ function RecordRow({ dbId, dbName, record: r }: { dbId: string; dbName: string; 
 function NewScheduleDialog({ dbId, primary }: { dbId: string; primary?: boolean }) {
   const qc = useQueryClient();
   const targets = useListBackupTargets();
+  const [open, setOpen] = useState(false);
   const [targetId, setTargetId] = useState("");
   const [schedule, setSchedule] = useState("0 3 * * *");
   const [retention, setRetention] = useState("7");
@@ -253,20 +332,24 @@ function NewScheduleDialog({ dbId, primary }: { dbId: string; primary?: boolean 
     mutation: {
       onSuccess: () => {
         void qc.invalidateQueries({ queryKey: getListDatabaseBackupsQueryKey(dbId) });
-        toast.success("Backup schedule created");
+        toastSuccess("Backup schedule created");
         setError(null);
+        // The card it made is the thing to look at now, not the form again.
+        setOpen(false);
       },
       onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not create the schedule"),
     },
   });
+  const createState = useMutationActionState(create);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
+    if (chosen === "" || create.isPending) return;
     create.mutate({ id: dbId, data: { target_id: chosen, schedule, retention_count: Number(retention), enabled: true } });
   };
 
   return (
-    <Dialog>
+    <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button variant="primary" size={primary ? "lg" : "md"}>
           <Plus className="h-3.5 w-3.5" /> New schedule
@@ -309,28 +392,19 @@ function NewScheduleDialog({ dbId, primary }: { dbId: string; primary?: boolean 
             <DialogClose asChild>
               <Button variant="ghost">Cancel</Button>
             </DialogClose>
-            <Button type="submit" variant="primary" disabled={create.isPending || chosen === ""}>
-              {create.isPending ? "Creating…" : "Create schedule"}
-            </Button>
+            <ActionButton
+              type="submit"
+              variant="primary"
+              state={createState}
+              busyLabel="Creating…"
+              successLabel="Created"
+              disabledReason={chosen === "" ? "Add a backup target first" : undefined}
+            >
+              Create schedule
+            </ActionButton>
           </div>
         </form>
       </DialogContent>
     </Dialog>
   );
-}
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  const units = ["KB", "MB", "GB", "TB"];
-  let v = n / 1024;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i += 1;
-  }
-  return `${v.toFixed(1)} ${units[i]}`;
-}
-
-function mutErr(e: unknown) {
-  toast.error(e instanceof Error ? e.message : "Something went wrong");
 }

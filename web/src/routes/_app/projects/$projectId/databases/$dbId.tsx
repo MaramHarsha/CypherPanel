@@ -4,6 +4,7 @@
 import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
 import { useGetDatabase } from "@/api/gen/databases/databases";
 import { useGetProject } from "@/api/gen/projects/projects";
+import { DatabaseRestoreWatch, restoreSourceLabel, useRestoreInFlight } from "@/components/db-restore-progress";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { ResourceGone } from "@/components/resource-gone";
 import { StatusBadge } from "@/components/status-badge";
@@ -24,6 +25,7 @@ function DatabaseLayout() {
   const { projectId, dbId } = Route.useParams();
   const project = useGetProject(projectId);
   const db = useGetDatabase(dbId);
+  const restoring = useRestoreInFlight(dbId);
 
   useCrumbs([
     { label: "projects", to: "/projects" },
@@ -53,11 +55,27 @@ function DatabaseLayout() {
           // across the room, and a neutral word next to a red dot argues with
           // itself. StatusBadge also speaks the shared vocabulary, so a
           // provisioning database says "deploying" like everything else.
-          <span className="flex items-center gap-2">
+          <span className="flex flex-wrap items-center gap-2">
             <StatusBadge status={db.data?.status} />
             {db.data && (
               <span className="ml-1.5 font-mono text-[12px] text-text-faint">
                 {db.data.engine} {db.data.version}
+              </span>
+            )}
+            {/* 10d's footer promises "progress continues on the database
+                card". The badge stays the agent's observed status — a SQL
+                restore runs inside a container that keeps reporting running,
+                and the badge must not pretend otherwise — so the restore gets
+                its own words beside it until the agent's next report. */}
+            {restoring && (
+              <span
+                role="status"
+                className="ml-1.5 flex items-center gap-1.5 font-mono text-[11.5px] text-status-deploying"
+              >
+                <span aria-hidden className="animate-status-pulse">
+                  ▸
+                </span>
+                restoring from {restoreSourceLabel(restoring.backup)} · offline during the restore · no cancel
               </span>
             )}
           </span>
@@ -83,6 +101,10 @@ function DatabaseLayout() {
       <PageBody>
         <Outlet />
       </PageBody>
+      {/* One restore watch per database, whichever tab started it: it holds
+          the 10d popup open until the agent reports, and clears the line in
+          the masthead above when it does. */}
+      <DatabaseRestoreWatch projectId={projectId} dbId={dbId} />
     </>
   );
 }

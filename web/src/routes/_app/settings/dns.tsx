@@ -1,5 +1,5 @@
 // Settings · DNS — the panel's DNS provider, and the zones it can manage
-// (docs/features/dns-automation.md §6).
+// (docs/features/dns-automation.md §6, design canvas 17a).
 //
 // The same shape every other "connection with credentials" screen uses —
 // notifiers, registries, mail — because it is the same object: a credential you
@@ -11,8 +11,8 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
-import { toast } from "sonner";
 import { ApiError } from "@/api/client";
+import type { DNSSettings } from "@/api/gen/model";
 import {
   getGetPanelDNSQueryKey,
   getListDNSZonesQueryKey,
@@ -28,12 +28,15 @@ import { ConfirmDestructive } from "@/components/confirm-destructive";
 import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
 import { PageState } from "@/components/page-state";
-import { ActionButton } from "@/components/ui/action-button";
+import { StatusDot } from "@/components/status-badge";
+import { ActionButton, useMutationActionState } from "@/components/ui/action-button";
 import { Field } from "@/components/ui/field";
 import { Input, Select } from "@/components/ui/input";
 import { useCrumbs } from "@/lib/crumbs";
 import { atLeast, type Role } from "@/lib/roles";
-import { relativeTime } from "@/lib/time";
+import { absoluteTime, relativeTime } from "@/lib/time";
+import { toastFailed, toastSuccess } from "@/lib/toast";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_app/settings/dns")({ component: DNSTab });
 
@@ -54,24 +57,12 @@ function DNSTab() {
   }
 
   return (
-    <div className="max-w-xl space-y-4">
-      <section className="space-y-2">
-        <Eyebrow>DNS provider</Eyebrow>
-        <p className="text-[12.5px] leading-[1.5] text-text-mid">
-          Connect Cloudflare and two things become true: a domain only routes if it is inside a zone this token can
-          see, and the record that makes it resolve is created, updated and removed for you.
-        </p>
-        <p className="text-[12.5px] leading-[1.5] text-text-faint">
-          Until you connect one, nothing changes — domains route exactly as they do today.
-        </p>
-      </section>
-      <PageState query={dns}>{(settings) => (
-          <DNSForm
-            configured={settings.configured}
-            hint={settings.config_hint}
-            accountName={settings.account_name}
-          />
-        )}</PageState>
+    <div className="max-w-xl space-y-3.5">
+      <p className="text-[12.5px] leading-[1.55] text-text-mid">
+        Connect Cloudflare and domains verify by ownership: a domain is only routed if it falls inside a zone this
+        token can see, and the panel creates — and deletes — the A records itself.
+      </p>
+      <PageState query={dns}>{(settings) => <DNSForm settings={settings} />}</PageState>
       {dns.data?.configured && <ZoneList />}
     </div>
   );
@@ -80,15 +71,8 @@ function DNSTab() {
 /** One Cloudflare account, as returned in the 400 that asks which to use. */
 type AccountChoice = { id: string; name: string };
 
-function DNSForm({
-  configured,
-  hint,
-  accountName,
-}: {
-  configured: boolean;
-  hint: string;
-  accountName?: string;
-}) {
+function DNSForm({ settings }: { settings: DNSSettings }) {
+  const { configured, account_id: accountIdSaved, account_name: accountName, zone_count: zoneCount } = settings;
   const qc = useQueryClient();
   const [token, setToken] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -109,7 +93,7 @@ function DNSForm({
         setToken("");
         setChoices([]);
         setAccountId("");
-        toast.success("Cloudflare connected");
+        toastSuccess(configured ? "Token replaced — zones re-read" : "Cloudflare connected");
       },
       // Two different failures land here. "This token reaches several accounts"
       // is a question — it arrives with the choices, and turns into a picker
@@ -129,19 +113,24 @@ function DNSForm({
       },
     },
   });
+  // The account question is a 400 to the client but not a failure to the
+  // operator: the pill goes back to idle and the picker asks it.
+  const saveMachine = useMutationActionState(save);
+  const saveState = saveMachine === "failed" && choices.length > 0 ? "idle" : saveMachine;
 
   const test = useTestPanelDNS({
     mutation: {
-      onSuccess: () => toast.success("Cloudflare answered — the token still works"),
+      onSuccess: () => setError(null),
       onError: (e: unknown) => setError(e instanceof ApiError ? e.message : "Cloudflare could not be reached"),
     },
   });
+  const testState = useMutationActionState(test);
 
   const disconnect = useDeletePanelDNS({
     mutation: {
       onSuccess: () => {
         invalidate();
-        toast.success("Cloudflare disconnected — no records were removed");
+        toastSuccess("Cloudflare disconnected — no records were removed");
       },
       onError: (e: unknown) => setError(e instanceof ApiError ? e.message : "Could not disconnect"),
     },
@@ -153,98 +142,125 @@ function DNSForm({
     save.mutate({ data: { api_token: token, ...(accountId ? { account_id: accountId } : {}) } });
   };
 
+  // An account-owned token is scoped to one account; a classic user-owned
+  // token has none, and that difference is the whole of the guidance below.
+  const accountLabel = accountIdSaved ? `${accountName || accountIdSaved} (account-owned)` : "user-owned token";
+  const meta = configured ? `${accountName || "user-owned token"} · ${zoneCount} ${zoneCount === 1 ? "zone" : "zones"}` : null;
+
   return (
-    <form onSubmit={submit} className="space-y-4">
-      {configured && (
-        <div className="rounded-lg border border-border bg-surface px-4 py-3">
-          <p className="text-[13px] font-semibold text-text">Connected</p>
-          {accountName && <p className="mt-0.5 text-[12px] text-text-mid">{accountName}</p>}
-          <p className="mono mt-0.5 truncate text-[12px] text-text-faint">{hint}</p>
-          <p className="mt-1.5 text-[11.5px] leading-relaxed text-text-faint">
-            Saving again replaces the token, which is never shown back.
-          </p>
-        </div>
-      )}
-
-      <Field label="API token" qualifier="· write-only">
-        {(id) => (
-          <Input
-            id={id}
-            required
-            type="password"
-            autoComplete="off"
-            placeholder={configured ? "••••••••" : "Cloudflare API token"}
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-          />
-        )}
-      </Field>
-      {choices.length > 0 && (
-        <Field label="Cloudflare account" qualifier="· this token reaches more than one">
-          {(id) => (
-            <Select id={id} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-              {choices.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </Select>
+    <form onSubmit={submit} className="rounded-lg border border-border bg-surface px-[18px] py-4">
+      <div className="mb-3 flex items-center gap-2.5">
+        <span className="text-[14px] font-semibold text-text">Cloudflare</span>
+        <span
+          className={cn(
+            "inline-flex items-center gap-1.5 font-mono text-[10.5px] font-medium uppercase tracking-wide",
+            configured ? "text-status-running" : "text-text-faint",
           )}
-        </Field>
-      )}
-
-      <div className="rounded-lg border border-border-subtle bg-bg px-3.5 py-3 text-[11.5px] leading-relaxed text-text-mid">
-        <p className="font-semibold text-text">Which token to create</p>
-        <p className="mt-1">
-          In Cloudflare, go to <span className="mono">Manage Account → API Tokens → Create Token</span> and make an{" "}
-          <strong className="font-semibold">account-owned</strong> token. Cloudflare recommends these for durable
-          integrations because they belong to the account rather than to you — the panel keeps working after you leave.
-          A personal token from <span className="mono">My Profile → API Tokens</span> also works.
-        </p>
-        <p className="mt-1.5">
-          Give it two permissions: <span className="mono">Zone → Zone → Read</span> and{" "}
-          <span className="mono">Zone → DNS → Edit</span>. Under <em>Zone Resources</em>, include only the zones
-          CypherPanel should manage — this token can repoint any zone it covers, including MX records, so give it no
-          more than it needs.
-        </p>
-        <p className="mt-1.5 text-text-faint">
-          You do not need to find your account ID. Paste the token and the panel resolves it; if the token reaches
-          several accounts, it will ask which one.
-        </p>
+        >
+          <StatusDot status={configured ? "running" : "unknown"} className="h-2 w-2" />
+          {configured ? "connected" : "not connected"}
+        </span>
+        {meta && (
+          <span className="ml-auto truncate font-mono text-[11.5px] text-text-faint" title={settings.config_hint}>
+            {meta}
+          </span>
+        )}
       </div>
 
+      <div className="mb-3 grid gap-3 sm:grid-cols-2">
+        <Field label="API token" qualifier="· write-only">
+          {(id) => (
+            <Input
+              id={id}
+              required
+              type="password"
+              autoComplete="off"
+              placeholder={configured ? "•••••••• set" : "Cloudflare API token"}
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+            />
+          )}
+        </Field>
+        {choices.length > 0 ? (
+          <Field label="Account" qualifier="· this token reaches more than one">
+            {(id) => (
+              <Select id={id} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+                {choices.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name} (account-owned)
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+        ) : (
+          <Field label="Account" qualifier={configured ? undefined : "· resolved from the token"}>
+            {(id) => (
+              <Input
+                id={id}
+                readOnly
+                value={configured ? accountLabel : ""}
+                placeholder="picked when you connect"
+                className="text-text-dim"
+              />
+            )}
+          </Field>
+        )}
+      </div>
+
+      <p className="mb-3 text-[11.5px] leading-[1.5] text-text-faint">
+        Use an <b className="font-semibold text-text-dim">account-owned</b> token (Manage Account → API Tokens) with
+        Zone:Read + DNS:Edit, scoped to the zones CypherPanel should manage — a personal token dies when its owner
+        leaves.
+      </p>
+
       {error && (
-        <p role="alert" className="rounded-md border border-danger/35 bg-danger/[0.06] px-3 py-2 text-[13px] text-danger">
+        <p role="alert" className="mb-3 rounded-md border border-danger/35 bg-danger/[0.06] px-3 py-2 text-[13px] text-danger">
           {error}
         </p>
       )}
 
-      <div className="flex flex-wrap items-center gap-3">
-        <ActionButton type="submit" variant="primary" state={save.isPending ? "busy" : "idle"} busyLabel="Connecting…">
+      <div className="flex flex-wrap items-center gap-2">
+        <ActionButton
+          type="submit"
+          variant="primary"
+          state={saveState}
+          busyLabel="Connecting…"
+          successLabel={configured ? "Token replaced" : "Connected"}
+          // Scoped to idle: the grey reasoned fill would otherwise paint over
+          // the green success pill the moment the token field is cleared.
+          disabledReason={
+            saveState === "idle" && configured && !token ? "Paste a new token to replace the current one" : undefined
+          }
+        >
           {configured ? "Replace token" : "Connect"}
         </ActionButton>
         <ActionButton
           variant="secondary"
-          state={test.isPending ? "busy" : "idle"}
+          state={testState}
           busyLabel="Checking…"
+          successLabel="Cloudflare answered"
           disabledReason={configured ? undefined : "Connect a provider first"}
           onClick={() => {
             setError(null);
             test.mutate();
           }}
         >
-          Test connection
+          ↗ Test connection
         </ActionButton>
         {configured && (
           <ConfirmDestructive
-            trigger={<ActionButton variant="ghost">Disconnect</ActionButton>}
+            trigger={<ActionButton variant="danger">Disconnect…</ActionButton>}
             title="Disconnect Cloudflare?"
-            lead="This does not remove any DNS record — they stay exactly as they are in Cloudflare. What it does:"
+            lead="Nothing is deleted at Cloudflare — the records stay exactly as they are. What changes:"
             blastRadius={[
               "Every domain becomes unverified, which stops the panel routing traffic at those hostnames",
               "The zone list is cleared, so nothing verifies until you reconnect",
+              "Records the panel created stay at Cloudflare, now unmanaged — nothing updates or removes them",
             ]}
+            confirmName={accountName || "cloudflare"}
             actionLabel="Disconnect"
+            pendingLabel="Disconnecting…"
             pending={disconnect.isPending}
             onConfirm={() => disconnect.mutate()}
           />
@@ -262,63 +278,68 @@ function ZoneList() {
       onSuccess: () => {
         void qc.invalidateQueries({ queryKey: getListDNSZonesQueryKey() });
         void qc.invalidateQueries({ queryKey: getGetPanelDNSQueryKey() });
-        toast.success("Zones refreshed");
       },
-      onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Could not refresh the zones"),
+      onError: (e: unknown, vars) =>
+        toastFailed("Could not refresh the zones", e, { retry: () => refresh.mutate(vars), id: "dns-zones-refresh" }),
     },
   });
+  const refreshState = useMutationActionState(refresh);
 
   return (
-    <section className="space-y-2">
+    <section className="space-y-2.5">
       <div className="flex items-center justify-between gap-3">
-        <Eyebrow>Zones this panel can manage</Eyebrow>
+        <Eyebrow>Zones — what this token can manage</Eyebrow>
         <ActionButton
-          variant="ghost"
-          state={refresh.isPending ? "busy" : "idle"}
+          size="sm"
+          variant="secondary"
+          state={refreshState}
           busyLabel="Refreshing…"
+          successLabel="Refreshed"
           onClick={() => refresh.mutate()}
         >
-          Refresh
+          ↻ Refresh zones
         </ActionButton>
       </div>
       <PageState query={zones}>
         {(list) =>
           list.length === 0 ? (
             <p className="rounded-lg border border-border bg-surface px-4 py-3 text-[12.5px] text-text-mid">
-              This token can see no zones. Check it is scoped to the zones CypherPanel should manage.
+              This token can see no zones. Scope it to the zones CypherPanel should manage, then refresh.
             </p>
           ) : (
             <ul className="divide-y divide-border-subtle overflow-hidden rounded-lg border border-border bg-surface">
-              {list.map((z) => (
-                <li key={z.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
-                  <span className="flex min-w-0 items-center gap-2">
+              {list.map((z) => {
+                const active = z.status === "active";
+                return (
+                  <li key={z.id} className="flex items-center gap-3 px-4 py-[11px]">
+                    <StatusDot status={active ? "running" : "degraded"} className="h-2 w-2" />
+                    <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] font-medium text-text">{z.name}</span>
+                    {/* A zone that is not active is still yours and still
+                        verifies a domain; the nameserver step is the only
+                        thing between it and resolving. Said on the row,
+                        where the amber dot asks the question. */}
                     <span
-                      aria-hidden
-                      className={`size-[6px] shrink-0 rounded-full ${
-                        z.status === "active" ? "bg-status-running" : "bg-status-degraded"
-                      }`}
-                    />
-                    <span className="mono truncate text-[12.5px] text-text">{z.name}</span>
-                  </span>
-                  <span className="shrink-0 text-[11px] text-text-faint">
-                    {z.status === "active" ? `checked ${relativeTime(z.refreshed_at)}` : z.status}
-                  </span>
-                </li>
-              ))}
+                      className={cn(
+                        "shrink-0 font-mono text-[11px]",
+                        active ? "text-text-faint" : "text-status-degraded-text",
+                      )}
+                      title={absoluteTime(z.refreshed_at)}
+                    >
+                      {active
+                        ? `active · checked ${relativeTime(z.refreshed_at)}`
+                        : `${z.status} — point nameservers at Cloudflare · still verifies domains`}
+                    </span>
+                  </li>
+                );
+              })}
             </ul>
           )
         }
       </PageState>
-      <p className="text-[11.5px] leading-relaxed text-text-faint">
-        A domain is verified when it falls inside one of these. Add a zone in Cloudflare, refresh, and it becomes
-        usable — no need to re-enter the domain.
+      <p className="text-[12px] leading-[1.5] text-text-faint">
+        Records are grey-cloud (DNS only), so Let's Encrypt keeps working unchanged. The panel only ever touches
+        records it created; disconnecting deletes nothing at Cloudflare but unverifies every domain.
       </p>
-      {(zones.data ?? []).some((z) => z.status !== "active") && (
-        <p className="text-[11.5px] leading-relaxed text-status-degraded-text">
-          A zone that is not <span className="mono">active</span> is still yours and still verifies a domain — but the
-          domain will not resolve until you point your registrar's nameservers at the ones Cloudflare gave you.
-        </p>
-      )}
     </section>
   );
 }

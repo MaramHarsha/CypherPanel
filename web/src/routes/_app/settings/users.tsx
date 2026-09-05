@@ -5,7 +5,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
 import { useState, type FormEvent } from "react";
-import { toast } from "sonner";
 import { useGetMe } from "@/api/gen/auth/auth";
 import {
   getListUsersQueryKey,
@@ -18,12 +17,14 @@ import { CopyField } from "@/components/copy-field";
 import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
 import { PageState } from "@/components/page-state";
+import { ActionButton, useMutationActionState } from "@/components/ui/action-button";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { Input, Select } from "@/components/ui/input";
 import { useCrumbs } from "@/lib/crumbs";
 import { atLeast, type Role } from "@/lib/roles";
+import { toastFailed, toastSuccess } from "@/lib/toast";
 
 export const Route = createFileRoute("/_app/settings/users")({ component: UsersTab });
 
@@ -53,7 +54,7 @@ function UsersTab() {
       </p>
       <PageState
         query={users}
-        empty={<EmptyState title="No other users" hint="Invite teammates by creating their account here." action={<CreateUserDialog primary />} />}
+        empty={<EmptyState title="No other users" hint="Create an account for each teammate here, then add them to a team under Settings → Teams." action={<CreateUserDialog primary />} />}
       >
         {(list) => (
           <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-surface">
@@ -73,9 +74,9 @@ function UserRow({ user, isSelf }: { user: User; isSelf: boolean }) {
     mutation: {
       onSuccess: () => {
         void qc.invalidateQueries({ queryKey: getListUsersQueryKey() });
-        toast.success("Role updated");
+        toastSuccess("Role updated");
       },
-      onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Could not update the role"),
+      onError: (e: unknown, vars) => toastFailed("Could not update the role", e, { retry: () => update.mutate(vars) }),
     },
   });
 
@@ -116,11 +117,17 @@ function CreateUserDialog({ primary }: { primary?: boolean }) {
       onSuccess: () => {
         void qc.invalidateQueries({ queryKey: getListUsersQueryKey() });
         setCreated(true);
-        toast.success("User created");
+        toastSuccess("User created");
       },
-      onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not create the user"),
+      // The pill turns to "✕ Retry" and the toast carries the why (10b/10c);
+      // the inline line keeps the server's sentence beside the field.
+      onError: (e: unknown, vars) => {
+        setError(e instanceof Error ? e.message : "Could not create the user");
+        toastFailed("Could not create the user", e, { retry: () => create.mutate(vars) });
+      },
     },
   });
+  const state = useMutationActionState(create);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -131,12 +138,15 @@ function CreateUserDialog({ primary }: { primary?: boolean }) {
   return (
     <Dialog
       onOpenChange={(open) => {
-        if (!open) {
-          setEmail("");
-          setPassword("");
-          setCreated(false);
-          setError(null);
+        if (open) {
+          // A reopened modal never inherits the last attempt's "✕ Retry" pill.
+          create.reset();
+          return;
         }
+        setEmail("");
+        setPassword("");
+        setCreated(false);
+        setError(null);
       }}
     >
       <DialogTrigger asChild>
@@ -181,9 +191,18 @@ function CreateUserDialog({ primary }: { primary?: boolean }) {
               <DialogClose asChild>
                 <Button variant="ghost">Cancel</Button>
               </DialogClose>
-              <Button type="submit" variant="primary" disabled={create.isPending}>
+              <ActionButton
+                type="submit"
+                variant="primary"
+                state={state}
+                busyLabel="Creating…"
+                successLabel="Created"
+                disabledReason={
+                  email.trim() === "" ? "Enter their email first" : password === "" ? "Set a temporary password first" : undefined
+                }
+              >
                 Create user
-              </Button>
+              </ActionButton>
             </div>
           </form>
         </DialogContent>

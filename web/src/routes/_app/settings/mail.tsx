@@ -1,10 +1,10 @@
 // Settings · Mail — the panel's own outbound transport
-// (docs/features/panel-mail.md §6).
+// (docs/features/panel-mail.md §6, design canvas 17c).
 //
-// There is no canvas card for this screen; it is inferred from the shape every
-// other "connection with credentials" screen uses — notifiers (2m), registries
-// (6d/9l) — because they are the same object: a host, a credential you write but
-// never read back, and a Test that proves it before you rely on it.
+// The same shape every other "connection with credentials" screen uses —
+// notifiers (2m), registries (6d/9l) — because they are the same object: a
+// host, a credential you write but never read back, and a Test that proves it
+// before you rely on it.
 //
 // The password is write-only. Saved settings come back as a hint naming the host
 // and the from address, never the credential, which is what makes it safe for
@@ -12,28 +12,29 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
-import { toast } from "sonner";
 import { ApiError } from "@/api/client";
 import { getGetPanelMailQueryKey, useGetPanelMail, useSetPanelMail, useTestPanelMail } from "@/api/gen/panel/panel";
 import { useGetMe } from "@/api/gen/auth/auth";
 import { EmptyState } from "@/components/empty-state";
-import { Eyebrow } from "@/components/eyebrow";
 import { PageState } from "@/components/page-state";
-import { ActionButton } from "@/components/ui/action-button";
+import { ActionButton, useMutationActionState } from "@/components/ui/action-button";
 import { Field } from "@/components/ui/field";
-import { Input, Select } from "@/components/ui/input";
+import { Input } from "@/components/ui/input";
 import { useCrumbs } from "@/lib/crumbs";
 import { atLeast, type Role } from "@/lib/roles";
+import { toastSuccess } from "@/lib/toast";
 
 export const Route = createFileRoute("/_app/settings/mail")({ component: MailTab });
 
-/** The ports people actually use, named — 587 is the one to reach for. */
-const PORTS = [
-  { value: 587, label: "587 · STARTTLS (usual)" },
-  { value: 465, label: "465 · implicit TLS" },
-  { value: 25, label: "25 · plain (unauthenticated relays)" },
-  { value: 2525, label: "2525 · alternate submission" },
-];
+/**
+ * The hint is the non-secret half, "smtp.acme.com → ops@acme.com" (core/mail
+ * Hint). Split, it names the saved host and the address a test is sent to —
+ * the only way this page learns either, since GET never returns the config.
+ */
+function parseHint(hint: string): { host: string; from: string } | null {
+  const [host, from] = hint.split(" → ");
+  return host && from ? { host, from } : null;
+}
 
 function MailTab() {
   useCrumbs([{ label: "settings", to: "/settings" }, { label: "mail" }]);
@@ -52,14 +53,11 @@ function MailTab() {
   }
 
   return (
-    <div className="max-w-xl space-y-4">
-      <section className="space-y-2">
-        <Eyebrow>Panel mail</Eyebrow>
-        <p className="text-[12.5px] leading-[1.5] text-text-mid">
-          How the panel sends its own email — confirming an address change, warning the address being moved away from.
-          Separate from a project's notifiers, which tell people about that project's events.
-        </p>
-      </section>
+    <div className="max-w-xl space-y-3.5">
+      <p className="text-[12.5px] leading-[1.55] text-text-mid">
+        One SMTP transport for mail the panel sends in its own name — email-change confirmations today, invites and
+        digests later. Project notifiers keep their own.
+      </p>
       <PageState query={mail}>{(settings) => <MailForm hint={settings.config_hint} configured={settings.configured} />}</PageState>
     </div>
   );
@@ -67,78 +65,116 @@ function MailTab() {
 
 function MailForm({ hint, configured }: { hint: string; configured: boolean }) {
   const qc = useQueryClient();
+  const saved = configured ? parseHint(hint) : null;
   const [host, setHost] = useState("");
-  const [port, setPort] = useState(587);
+  const [port, setPort] = useState("587");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [from, setFrom] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Who the last test went to. The banner outlives the pill's 2s success hold
+  // because "check the inbox" is an instruction, not a flash.
+  const [testedTo, setTestedTo] = useState<string | null>(null);
 
   const save = useSetPanelMail({
     mutation: {
       onSuccess: () => {
         void qc.invalidateQueries({ queryKey: getGetPanelMailQueryKey() });
         setPassword("");
-        toast.success("Mail settings saved");
+        setTestedTo(null);
+        toastSuccess("Mail settings saved");
       },
       onError: (e: unknown) => setError(e instanceof ApiError ? e.message : "Could not save the mail settings"),
     },
   });
+  const saveState = useMutationActionState(save);
 
   // The test reports the server's own words on failure: "connection refused" is
   // the whole answer, and paraphrasing it would only make the operator guess.
+  // It is sent to the saved from address (core/mail Test), so that is who the
+  // banner names.
   const test = useTestPanelMail({
     mutation: {
-      onSuccess: () => toast.success("Test message sent — check the from address"),
-      onError: (e: unknown) => setError(e instanceof ApiError ? e.message : "The test message could not be sent"),
+      onSuccess: () => {
+        setError(null);
+        setTestedTo(saved?.from ?? "the from address");
+      },
+      onError: (e: unknown) => {
+        setTestedTo(null);
+        setError(e instanceof ApiError ? e.message : "The test message could not be sent");
+      },
     },
   });
+  const testState = useMutationActionState(test);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
+    const portNumber = Number(port);
+    // The API rejects this too; catching it here keeps the operator's typing
+    // instead of bouncing them off an alert (ui-principles §1).
+    if (!Number.isInteger(portNumber) || portNumber < 1 || portNumber > 65535) {
+      setError("The port is a number between 1 and 65535 — 587 is the usual submission port.");
+      return;
+    }
     setError(null);
-    save.mutate({ data: { smtp_host: host, smtp_port: port, username, password, from } });
+    save.mutate({ data: { smtp_host: host, smtp_port: portNumber, username, password, from } });
   };
 
   return (
-    <form onSubmit={submit} className="space-y-4">
-      {configured && (
-        <div className="rounded-lg border border-border bg-surface px-4 py-3">
-          <p className="text-[13px] font-semibold text-text">Configured</p>
-          <p className="mono mt-0.5 truncate text-[12px] text-text-faint">{hint}</p>
-          <p className="mt-1.5 text-[11.5px] leading-relaxed text-text-faint">
-            Saving again replaces all of it — including the password, which is never shown back.
-          </p>
-        </div>
-      )}
+    <form onSubmit={submit} className="space-y-3">
+      {/* Saved values are never read back (GET returns only the hint), so the
+          saved host and from address ride as placeholders — what is there now,
+          not what will be sent. Saving replaces the configuration wholesale. */}
+      <div className="grid gap-3 sm:grid-cols-[2fr_1fr]">
+        <Field label="SMTP host">
+          {(id) => (
+            <Input
+              id={id}
+              required
+              autoComplete="off"
+              spellCheck={false}
+              placeholder={saved?.host ?? "smtp.example.com"}
+              value={host}
+              onChange={(e) => setHost(e.target.value)}
+            />
+          )}
+        </Field>
+        {/* No TLS picker: the sender is net/smtp, which issues STARTTLS when the
+            server offers it and has no implicit-TLS mode to choose. A control
+            that could not change that would be a lie. */}
+        <Field label="Port" qualifier="· STARTTLS when offered">
+          {(id) => (
+            <Input
+              id={id}
+              required
+              inputMode="numeric"
+              autoComplete="off"
+              value={port}
+              onChange={(e) => setPort(e.target.value)}
+            />
+          )}
+        </Field>
+      </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="SMTP host" qualifier="· where mail is handed over">
+        <Field label="Username" qualifier="· empty for an open relay">
           {(id) => (
-            <Input id={id} required placeholder="smtp.example.com" value={host} onChange={(e) => setHost(e.target.value)} />
+            <Input
+              id={id}
+              autoComplete="off"
+              spellCheck={false}
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+            />
           )}
         </Field>
-        <Field label="Port">
-          {(id) => (
-            <Select id={id} className="font-sans" value={port} onChange={(e) => setPort(Number(e.target.value))}>
-              {PORTS.map((p) => (
-                <option key={p.value} value={p.value}>
-                  {p.label}
-                </option>
-              ))}
-            </Select>
-          )}
-        </Field>
-        <Field label="Username" qualifier="· leave empty for an open relay">
-          {(id) => <Input id={id} value={username} onChange={(e) => setUsername(e.target.value)} />}
-        </Field>
-        <Field label="Password" qualifier="· write-only">
+        <Field label="Password" qualifier="· write-only, replaced on save">
           {(id) => (
             <Input
               id={id}
               type="password"
               autoComplete="new-password"
-              placeholder={configured ? "••••••••" : ""}
+              placeholder={configured ? "•••••••• set" : ""}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
@@ -146,9 +182,17 @@ function MailForm({ hint, configured }: { hint: string; configured: boolean }) {
         </Field>
       </div>
 
-      <Field label="From address" qualifier="· what recipients see, and reply to">
+      <Field label="From address" qualifier="· what recipients see, and reply to" className="max-w-[320px]">
         {(id) => (
-          <Input id={id} required placeholder="panel@example.com" value={from} onChange={(e) => setFrom(e.target.value)} />
+          <Input
+            id={id}
+            required
+            autoComplete="off"
+            spellCheck={false}
+            placeholder={saved?.from ?? "panel@example.com"}
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+          />
         )}
       </Field>
 
@@ -158,23 +202,38 @@ function MailForm({ hint, configured }: { hint: string; configured: boolean }) {
         </p>
       )}
 
-      <div className="flex items-center gap-3">
-        <ActionButton type="submit" variant="primary" state={save.isPending ? "busy" : "idle"} busyLabel="Saving…">
-          {configured ? "Replace settings" : "Save settings"}
+      <div className="flex flex-wrap items-center gap-2.5">
+        <ActionButton type="submit" variant="primary" state={saveState} busyLabel="Saving…" successLabel="Saved">
+          Save
         </ActionButton>
         <ActionButton
           variant="secondary"
-          state={test.isPending ? "busy" : "idle"}
+          state={testState}
           busyLabel="Sending…"
+          successLabel="Sent"
           disabledReason={configured ? undefined : "Save the settings first — a test sends through them"}
           onClick={() => {
             setError(null);
             test.mutate();
           }}
         >
-          Send test email
+          ↗ Send test email
         </ActionButton>
+        {configured && (
+          <span className="min-w-0 truncate font-mono text-[11.5px] text-text-faint" title={hint}>
+            saved: {hint}
+          </span>
+        )}
       </div>
+
+      {testedTo && (
+        <p
+          role="status"
+          className="flex items-center gap-2 rounded-md border border-status-running/35 bg-status-running/[0.06] px-[13px] py-[9px] text-[12.5px] text-status-running"
+        >
+          ✓ Test sent to <span className="font-mono">{testedTo}</span> — check the inbox.
+        </p>
+      )}
     </form>
   );
 }

@@ -29,17 +29,33 @@ export interface RevisionSummary {
   rev: string;
   /** Commit subject, or whatever the deployment recorded as its detail. */
   detail?: string;
+  /**
+   * How long this revision was (or has been) the one serving — "6 days"
+   * (13ae: "served 6 days"). The canvas adds ", healthy"; nothing in the
+   * deployment record can vouch for that, so the app does not say it.
+   */
+  served?: string;
 }
 
 export function ConfirmRollback({
   trigger,
+  open: controlledOpen,
+  onOpenChange,
   appName,
   now,
   target,
   onConfirm,
   pending,
 }: {
-  trigger: ReactNode;
+  /**
+   * The element that opens the confirm. Leave it out to drive the dialog from
+   * your own control through `open`/`onOpenChange` — the row's ActionButton
+   * does this, because a 6-state pill is a fragment of two elements and a
+   * radix trigger can only wear one.
+   */
+  trigger?: ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   appName: string;
   /** What is serving right now. */
   now: RevisionSummary;
@@ -48,10 +64,15 @@ export function ConfirmRollback({
   onConfirm: () => void;
   pending?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const open = controlledOpen ?? ownOpen;
+  const setOpen = (o: boolean) => {
+    setOwnOpen(o);
+    onOpenChange?.(o);
+  };
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>{trigger}</DialogTrigger>
+      {trigger !== undefined && <DialogTrigger asChild>{trigger}</DialogTrigger>}
       {/* No ✕ on confirms (canvas 9g/9h) — Cancel is the way out. */}
       <DialogContent size="alert" hideClose title={`Roll back ${appName}?`}>
         {/* The comparison table is the one white surface inside the paper card:
@@ -77,10 +98,11 @@ export function ConfirmRollback({
             busyLabel="Rolling back…"
             onClick={() => {
               onConfirm();
-              // The modal steps aside immediately and the toast (10c: "Rolled
-              // back to 9be04d1 · no rebuild · env vars unchanged") carries the
-              // outcome — the deployment list underneath is where the rollback
-              // then plays out, and holding a card over it hides that.
+              // The modal steps aside immediately: the working toast (10c,
+              // "Rolling back to 9be04d1…" → "Rolled back · no rebuild · env
+              // vars unchanged") carries the outcome, and the deployment list
+              // underneath is where the rollback then plays out — holding a
+              // card over it hides that.
               setOpen(false);
             }}
           >
@@ -92,7 +114,7 @@ export function ConfirmRollback({
   );
 }
 
-function Row({ label, rev, detail, target }: RevisionSummary & { label: string; target?: boolean }) {
+function Row({ label, rev, detail, served, target }: RevisionSummary & { label: string; target?: boolean }) {
   return (
     <div
       className={cn(
@@ -112,7 +134,13 @@ function Row({ label, rev, detail, target }: RevisionSummary & { label: string; 
         {label}
       </span>
       <span className="flex-none font-mono text-[12.5px] font-medium text-text">{rev}</span>
-      {detail && <span className="min-w-0 truncate text-text-dim">{detail}</span>}
+      {(detail || served) && (
+        <span className="min-w-0 truncate text-text-dim">
+          {detail}
+          {detail && served && " · "}
+          {served && `served ${served}`}
+        </span>
+      )}
     </div>
   );
 }
