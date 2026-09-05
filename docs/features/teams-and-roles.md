@@ -147,5 +147,6 @@ a password by an admin; SMTP-based invites can reuse core/notify later) · TOTP
 fine-grained per-token abilities (API
 tokens themselves ship separately, [api-tokens.md](api-tokens.md) — they inherit
 their owner's role/teams; per-token read/write/deploy narrowing is the follow-on
-here) · audit log
+here) · audit log (landed separately as [audit-log.md](audit-log.md); membership
+and role changes are recorded there against the team)
 · team switching UI state · hostile multi-tenant isolation (§1).

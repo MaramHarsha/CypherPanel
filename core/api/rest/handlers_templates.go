@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/templates"
 )
@@ -110,6 +111,22 @@ func (a *API) handleInstallTemplate(w http.ResponseWriter, r *http.Request) {
 		a.deps.Log.Error("installing template", "slug", r.PathValue("slug"), "environment_id", req.EnvironmentID, "error", err)
 		writeError(w, http.StatusInternalServerError, "could not install template")
 	default:
+		// One row for the install, naming what it created: a template install
+		// is several creates in one action, and the operator who wonders where
+		// six applications came from should find one entry, not six silent
+		// ones.
+		a.audit(r, audit.Entry{
+			Action:        audit.ActionTemplateInstalled,
+			Resource:      audit.Resource(audit.ResourceEnvironment, req.EnvironmentID, req.Name),
+			ProjectID:     projectID,
+			EnvironmentID: req.EnvironmentID,
+			Detail: map[string]any{
+				"template":     r.PathValue("slug"),
+				"server_id":    req.ServerID,
+				"applications": result.ApplicationIDs,
+				"databases":    result.DatabaseIDs,
+			},
+		})
 		writeJSON(w, http.StatusAccepted, installTemplateResponse{
 			Applications: result.ApplicationIDs, Databases: result.DatabaseIDs,
 			FirstLogin: firstLoginToDTO(result.FirstLogin),

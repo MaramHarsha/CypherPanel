@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/protection"
 	"github.com/MaramHarsha/cypherpanel/core/scheduler"
@@ -216,6 +217,20 @@ func (a *API) handleSetEnvironmentProtection(w http.ResponseWriter, r *http.Requ
 		a.writeProtectionError(w, "set deploy protection", err)
 		return
 	}
+	// The whole document in one row: switching approval or the freeze OFF is
+	// strictly more powerful than any single deploy it would have gated, so the
+	// record has to say what the policy became.
+	a.audit(r, audit.Entry{
+		Action:        audit.ActionProtectionSet,
+		Resource:      audit.Resource(audit.ResourceEnvironment, envID, ""),
+		EnvironmentID: envID,
+		Detail: map[string]any{
+			"require_approval":  p.RequireApproval,
+			"min_approver_role": p.MinApproverRole,
+			"freeze_enabled":    p.FreezeEnabled,
+			"windows":           len(p.Windows),
+		},
+	})
 	writeJSON(w, http.StatusOK, toProtectionDTO(p))
 }
 
@@ -280,7 +295,13 @@ func (a *API) handleGetDeployApproval(w http.ResponseWriter, r *http.Request) {
 // deployment exists), and then must rank at or above the role the approval
 // SNAPSHOTTED — not the environment's current policy, which may have been
 // relaxed since the deploy parked.
-func (a *API) authorizeDecision(w http.ResponseWriter, r *http.Request, user domain.User) (domain.DeployApproval, bool) {
+//
+// It returns the project id as well as the approval, because the decision is
+// also an audit row and the row needs the ownership chain: without it the entry
+// resolves to a NULL team_id and becomes PANEL-scoped, so the team that owns
+// the deploy could not read who approved it while a panel admin outside the
+// team could (audit-log.md §5).
+func (a *API) authorizeDecision(w http.ResponseWriter, r *http.Request, user domain.User) (domain.DeployApproval, string, bool) {
 	depID := r.PathValue("id")
 	// Resolved once and reused for both rank checks: the membership gate that
 	// makes a stranger's request a 404, and the snapshotted-rank gate after the
@@ -289,33 +310,34 @@ func (a *API) authorizeDecision(w http.ResponseWriter, r *http.Request, user dom
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "deployment not found")
-			return domain.DeployApproval{}, false
+			return domain.DeployApproval{}, "", false
 		}
 		a.deps.Log.Error("resolving deployment project", "deployment_id", depID, "error", err)
 		writeError(w, http.StatusInternalServerError, "could not authorize request")
-		return domain.DeployApproval{}, false
+		return domain.DeployApproval{}, "", false
 	}
 	if !a.requireProjectRole(w, r, user, projectID, domain.RoleMember) {
-		return domain.DeployApproval{}, false
+		return domain.DeployApproval{}, "", false
 	}
 	if a.deps.Protection == nil {
 		writeError(w, http.StatusNotFound, "this deployment was not gated")
-		return domain.DeployApproval{}, false
+		return domain.DeployApproval{}, "", false
 	}
 	ap, err := a.deps.Protection.ApprovalFor(r.Context(), depID)
 	if err != nil {
 		a.writeProtectionError(w, "get deploy approval", err)
-		return domain.DeployApproval{}, false
+		return domain.DeployApproval{}, "", false
 	}
 	if !a.requireProjectRole(w, r, user, projectID, ap.RequiredRole) {
-		return domain.DeployApproval{}, false
+		return domain.DeployApproval{}, "", false
 	}
-	return ap, true
+	return ap, projectID, true
 }
 
 func (a *API) handleApproveDeployment(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
-	if _, ok := a.authorizeDecision(w, r, user); !ok {
+	_, projectID, ok := a.authorizeDecision(w, r, user)
+	if !ok {
 		return
 	}
 	dep, _, err := a.deps.Protection.Approve(r.Context(), r.PathValue("id"), user)
@@ -329,6 +351,15 @@ func (a *API) handleApproveDeployment(w http.ResponseWriter, r *http.Request) {
 		a.writeProtectionError(w, "approve deployment", err)
 		return
 	}
+	// The decision deploy-protection.md §10 deferred to this log. It is scoped
+	// to the project the deploy lives in, not left panel-level: "who approved
+	// this?" is a question for the team that owns the deploy.
+	a.audit(r, audit.Entry{
+		Action:    audit.ActionDeployApproved,
+		Resource:  audit.Resource(audit.ResourceDeployment, dep.ID, ""),
+		ProjectID: projectID,
+		Detail:    map[string]any{"application_id": dep.ApplicationID, "status": string(dep.Status)},
+	})
 	writeJSON(w, http.StatusAccepted, a.withApproval(r.Context(), dep))
 }
 
@@ -338,7 +369,8 @@ type rejectDeploymentRequest struct {
 
 func (a *API) handleRejectDeployment(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
-	if _, ok := a.authorizeDecision(w, r, user); !ok {
+	_, projectID, ok := a.authorizeDecision(w, r, user)
+	if !ok {
 		return
 	}
 	var req rejectDeploymentRequest
@@ -351,6 +383,12 @@ func (a *API) handleRejectDeployment(w http.ResponseWriter, r *http.Request) {
 		a.writeProtectionError(w, "reject deployment", err)
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:    audit.ActionDeployRejected,
+		Resource:  audit.Resource(audit.ResourceDeployment, dep.ID, ""),
+		ProjectID: projectID,
+		Detail:    map[string]any{"application_id": dep.ApplicationID, "reason": req.Reason},
+	})
 	writeJSON(w, http.StatusOK, a.withApproval(r.Context(), dep))
 }
 
@@ -382,6 +420,14 @@ func (a *API) handleOpenBreakGlass(w http.ResponseWriter, r *http.Request) {
 		a.writeProtectionError(w, "open break glass", err)
 		return
 	}
+	// Break glass is already a recorded grant of its own; the audit row is what
+	// puts it in the SAME timeline as the deploys it let through.
+	a.audit(r, audit.Entry{
+		Action:        audit.ActionBreakGlassOpened,
+		Resource:      audit.Resource(audit.ResourceEnvironment, envID, ""),
+		EnvironmentID: envID,
+		Detail:        map[string]any{"grant_id": g.ID, "reason": g.Reason, "expires_at": g.ExpiresAt.UTC().Format(time.RFC3339)},
+	})
 	writeJSON(w, http.StatusCreated, a.toGrantDTO(g))
 }
 

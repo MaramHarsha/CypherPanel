@@ -22,6 +22,11 @@ cypherpanel/
 │   │   ├── rest/                # HTTP handlers, middleware, OpenAPI spec, SSE log streams
 │   │   │   └── console/         # interim Phase 1 console (replaced by web/ in Phase 4)
 │   │   └── grpc/                # agent-facing services (proto in /proto)
+│   ├── audit/                   # the audit log: the closed verb vocabulary, the
+│   │                            #   single write path (validation, secret-key
+│   │                            #   stripping, bounds) and the read path whose
+│   │                            #   visibility comes from the viewer's own
+│   │                            #   record, never the request (audit-log.md)
 │   ├── auth/                    # sessions, token hashing; OIDC/RBAC (planned)
 │   ├── config/                  # fail-closed env config for cypherd
 │   ├── domain/                  # resource model (Server, User, JoinToken; Phase 2:

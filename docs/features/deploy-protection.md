@@ -410,8 +410,11 @@ taxonomy is fed by *terminal* observed transitions, and a parked deploy has not
 finished; announcing a rejection down those channels would also misreport a
 governance decision as an infrastructure failure — see §9.1 for the in-panel
 audience that *is* in scope) · commit message and git author on the pending card
-(nothing persists them today) · a general audit log (**V1.x**, feature-matrix — approval decisions
-and break-glass grants are first-class rows here, not log lines) · early
+(nothing persists them today) · a general audit log — landed since, as
+[audit-log.md](audit-log.md): approval decisions and break-glass grants remain
+first-class rows *here*, and are additionally recorded there as
+`protection.approved`, `protection.rejected` and `protection.break_glass_opened`
+so they appear in the same timeline as the deploys they gated · early
 revocation of a break-glass grant · protection on Managed Databases and Compose
 Stacks (they have no Deployment record to park) · inherited protection for
 preview environments (previews are ordinary environments with a TTL and get no

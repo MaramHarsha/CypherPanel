@@ -70,6 +70,26 @@ type Application struct {
 	EnvAppliedAt          pgtype.Timestamptz
 }
 
+type AuditEvent struct {
+	ID            string
+	At            pgtype.Timestamptz
+	Action        string
+	Outcome       string
+	ActorKind     string
+	ActorUserID   pgtype.Text
+	ActorTokenID  pgtype.Text
+	ActorLabel    string
+	ResourceKind  string
+	ResourceID    string
+	ResourceName  string
+	TeamID        pgtype.Text
+	ProjectID     pgtype.Text
+	EnvironmentID pgtype.Text
+	Detail        []byte
+	TraceID       string
+	ClientIp      string
+}
+
 type BackupRecord struct {
 	ID               string
 	DatabaseBackupID string

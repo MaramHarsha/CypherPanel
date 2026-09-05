@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/auth"
 	"github.com/MaramHarsha/cypherpanel/core/store"
 )
@@ -73,10 +74,19 @@ func (a *API) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		r.Context(), p.User.ID, req.CurrentPassword, req.NewPassword,
 		rawTokenFromContext(r.Context()), req.RevokeOtherSessions,
 	)
+	entry := audit.Entry{
+		Action:   audit.ActionPasswordChanged,
+		Resource: audit.Resource(audit.ResourceUser, p.User.ID, p.User.Email),
+	}
 	switch {
 	case err == nil:
+		a.audit(r, entry)
 		writeJSON(w, http.StatusOK, changePasswordResponse{Revoked: n})
 	case errors.Is(err, auth.ErrInvalidCredentials):
+		// A wrong current password on this route is a guess at a credential
+		// from inside a session — exactly the failure the log exists to show
+		// (canvas 13t).
+		a.auditFailed(r, entry, "invalid current password")
 		// 401 rather than 400: the current password is a credential, and this
 		// is the same answer a wrong one gets at the login form.
 		writeError(w, http.StatusUnauthorized, "that is not your current password")

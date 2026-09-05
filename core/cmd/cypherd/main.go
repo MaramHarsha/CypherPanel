@@ -34,6 +34,7 @@ import (
 	grpcapi "github.com/MaramHarsha/cypherpanel/core/api/grpc"
 	"github.com/MaramHarsha/cypherpanel/core/api/rest"
 	"github.com/MaramHarsha/cypherpanel/core/applications"
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/auth"
 	"github.com/MaramHarsha/cypherpanel/core/bus"
 	"github.com/MaramHarsha/cypherpanel/core/config"
@@ -88,6 +89,13 @@ const panelLogLines = 500
 // longer is a row, and a tighter loop would query for nothing all day
 // (control-plane-hardening.md §7).
 const sessionPurgeInterval = time.Hour
+
+// auditPurgeInterval is how often the audit-log retention sweep runs. Hourly,
+// like the session purge and for the same reason: the horizon is measured in
+// days (CYPHERD_AUDIT_RETENTION, 90d by default), so a tighter loop would query
+// for nothing all day, and each sweep drains in bounded batches anyway
+// (audit-log.md §8).
+const auditPurgeInterval = time.Hour
 
 func main() {
 	// The panel's log has two audiences: stderr, where the operator's
@@ -249,6 +257,12 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 	// state instead of waiting for its next reconnect.
 	panelTLS := paneltls.NewService(st, sched, log.With("component", "paneltls"))
 
+	// The audit log: one immutable row per sensitive action, written by the
+	// handler that performed it and queryable per team (audit-log.md). It is a
+	// dependency of the REST layer and of gRPC enrollment, and nothing else —
+	// no bus subject, no agent path, no reconciler.
+	auditSvc := audit.NewService(st, cfg.AuditRetention, log.With("component", "audit"))
+
 	// The notification inbox: the same observed outcomes, persisted per user and
 	// counted on a bell (notification-inbox.md). It is the one channel that
 	// needs no configuration, no webhook and no secret, so it hangs off the
@@ -305,7 +319,7 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 	// Preview environments: PR events (via the app webhook) spawn/destroy
 	// templated child environments; a sweeper reclaims any past their TTL
 	// (preview-environments.md).
-	previewMgr := previews.New(st, appSvc, sched, log)
+	previewMgr := previews.New(st, appSvc, sched, log, previews.WithAudit(auditSvc))
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -346,6 +360,16 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 	go func() {
 		defer wg.Done()
 		authr.RunSessionPurge(ctx, sessionPurgeInterval, log.With("component", "session-purge"))
+	}()
+
+	// Audit retention: one owned goroutine deleting events past the horizon in
+	// bounded batches (audit-log.md §8). With CYPHERD_AUDIT_RETENTION=0 it
+	// returns immediately and events are kept forever — "keep everything"
+	// should cost nothing.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		auditSvc.RunRetention(ctx, auditPurgeInterval, log.With("component", "audit-retention"))
 	}()
 
 	// The update check: one owned goroutine polling a release feed, off by a
@@ -486,7 +510,7 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 	// (first contact, join-token gated); the relay RPCs require a verified
 	// agent certificate on the same listener (builder-role-and-relay.md §3).
 	relaySrv := grpcapi.NewRelayServer(relay.New(0), st, log)
-	grpcSrv, err := startEnrollmentServer(cfg, planeCert, planeKey, ca.CertPEM(), enrollSvc, relaySrv, log)
+	grpcSrv, err := startEnrollmentServer(cfg, planeCert, planeKey, ca.CertPEM(), enrollSvc, auditSvc, relaySrv, log)
 	if err != nil {
 		return err
 	}
@@ -509,6 +533,7 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		ScheduledTasks:   scheduledTaskSvc,
 		WebhookEndpoints: webhookSvc,
 		Inbox:            inboxSvc,
+		Audit:            auditSvc,
 		Protection:       protectionSvc,
 		SharedVariables:  sharedVarSvc,
 		Templates:        templateSvc,
@@ -583,7 +608,7 @@ func (p panelUpdateAnnouncer) AnnounceUpdate(ctx context.Context, current update
 	})
 }
 
-func startEnrollmentServer(cfg config.Config, certPEM, keyPEM, caPEM []byte, svc *enroll.Service, relaySrv *grpcapi.RelayServer, log *slog.Logger) (*grpc.Server, error) {
+func startEnrollmentServer(cfg config.Config, certPEM, keyPEM, caPEM []byte, svc *enroll.Service, rec grpcapi.AuditRecorder, relaySrv *grpcapi.RelayServer, log *slog.Logger) (*grpc.Server, error) {
 	tlsCfg, err := pki.ServerBootstrapTLSConfig(certPEM, keyPEM)
 	if err != nil {
 		return nil, fmt.Errorf("building enrollment TLS: %w", err)
@@ -602,7 +627,7 @@ func startEnrollmentServer(cfg config.Config, certPEM, keyPEM, caPEM []byte, svc
 		return nil, fmt.Errorf("listening on enroll addr: %w", err)
 	}
 	srv := grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsCfg)))
-	agentv1.RegisterEnrollmentServiceServer(srv, grpcapi.NewEnrollmentServer(svc, log))
+	agentv1.RegisterEnrollmentServiceServer(srv, grpcapi.NewEnrollmentServer(svc, rec, log))
 	agentv1.RegisterImageRelayServiceServer(srv, relaySrv)
 	go func() {
 		log.Info("enrollment endpoint listening", "addr", cfg.EnrollAddr, "advertised", cfg.AdvertisedEnrollAddr())

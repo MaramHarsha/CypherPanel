@@ -22,6 +22,7 @@ func setBaseEnv(t *testing.T) {
 		"CYPHERD_MIN_DISK_FREE", "CYPHERD_JOIN_TOKEN_TTL",
 		"CYPHERD_PUBLIC_URL", "CYPHERD_TRUSTED_PROXIES",
 		"CYPHERD_UPDATE_CHECK", "CYPHERD_UPDATE_FEED_URL",
+		"CYPHERD_AUDIT_RETENTION",
 	} {
 		t.Setenv(k, "")
 	}
@@ -207,5 +208,36 @@ func TestUpdateCheckIsOnUnlessTurnedOff(t *testing.T) {
 	t.Setenv("CYPHERD_UPDATE_FEED_URL", "https://feed.example.test/latest")
 	if c, err := Load(); err != nil || c.UpdateFeedURL != "https://feed.example.test/latest" {
 		t.Fatalf("feed url = %q, %v", c.UpdateFeedURL, err)
+	}
+}
+
+// The audit-log horizon: 90 days by default, and "0" means keep everything
+// (audit-log.md §8). The zero case matters — an operator with a compliance
+// requirement sets it, and a value silently replaced by the default would
+// delete evidence they asked to keep.
+func TestAuditRetention(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		set  string
+		want time.Duration
+	}{
+		{"default", "", 90 * 24 * time.Hour},
+		{"explicit", "720h", 720 * time.Hour},
+		{"disabled", "0", 0},
+		{"unparseable falls back to the default", "ninety days", 90 * 24 * time.Hour},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setBaseEnv(t)
+			if tc.set != "" {
+				t.Setenv("CYPHERD_AUDIT_RETENTION", tc.set)
+			}
+			c, err := Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if c.AuditRetention != tc.want {
+				t.Errorf("AuditRetention = %v, want %v", c.AuditRetention, tc.want)
+			}
+		})
 	}
 }

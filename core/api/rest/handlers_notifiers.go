@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/notify"
 	"github.com/MaramHarsha/cypherpanel/core/store"
@@ -84,6 +85,14 @@ func (a *API) handleCreateNotifier(w http.ResponseWriter, r *http.Request) {
 		a.writeNotifierError(w, "creating notifier", err)
 		return
 	}
+	// The channel and the events it subscribes to, never the config that holds
+	// the webhook URL or the bot token (§6).
+	a.audit(r, audit.Entry{
+		Action:    audit.ActionNotifierCreated,
+		Resource:  audit.Resource(audit.ResourceNotifier, n.ID, n.Name),
+		ProjectID: n.ProjectID,
+		Detail:    map[string]any{"channel": n.Channel, "events": n.Events, "enabled": n.Enabled},
+	})
 	writeJSON(w, http.StatusCreated, a.toNotifierDTO(n))
 }
 
@@ -182,6 +191,12 @@ func (a *API) handlePatchNotifier(w http.ResponseWriter, r *http.Request) {
 		a.writeNotifierError(w, "updating notifier", err)
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:    audit.ActionNotifierUpdated,
+		Resource:  audit.Resource(audit.ResourceNotifier, n.ID, n.Name),
+		ProjectID: n.ProjectID,
+		Detail:    map[string]any{"enabled": n.Enabled, "events": n.Events, "config_replaced": req.Config != nil},
+	})
 	writeJSON(w, http.StatusOK, a.toNotifierDTO(n))
 }
 
@@ -196,6 +211,7 @@ func (a *API) handleDeleteNotifier(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "notifier not found")
 		return
 	}
+	before, _ := a.deps.Notifiers.Get(r.Context(), r.PathValue("id"))
 	if err := a.deps.Notifiers.Delete(r.Context(), r.PathValue("id")); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "notifier not found")
@@ -205,6 +221,12 @@ func (a *API) handleDeleteNotifier(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not delete notifier")
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:    audit.ActionNotifierDeleted,
+		Resource:  audit.Resource(audit.ResourceNotifier, r.PathValue("id"), before.Name),
+		ProjectID: before.ProjectID,
+		Detail:    map[string]any{"channel": before.Channel},
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 

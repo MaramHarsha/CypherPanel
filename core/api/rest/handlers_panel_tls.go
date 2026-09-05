@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/paneltls"
 )
@@ -108,6 +109,14 @@ func (a *API) handleSetPanelTLS(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not save the TLS settings")
 		return
 	}
+	// This one setting decides how every routed application on every server is
+	// served to the public internet, and it registers an ACME account in the
+	// operator's name — so it is recorded with what it became.
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionPanelTLSUpdated,
+		Resource: audit.Resource(audit.ResourcePanel, "tls", "panel tls"),
+		Detail:   map[string]any{"acme_email": t.ACMEEmail, "acme_ca_server": t.ACMECAServer},
+	})
 	writeJSON(w, http.StatusOK, panelTLSToDTO(t))
 }
 

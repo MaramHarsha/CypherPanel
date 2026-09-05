@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/previews"
 	"github.com/MaramHarsha/cypherpanel/core/scheduler"
@@ -125,10 +126,20 @@ func (a *API) handleDeployApplication(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// The entry is built BEFORE the call: a refusal returns a zero deployment,
+	// and a row that names no application is not worth writing.
+	entry := a.appAuditEntry(r.Context(), audit.ActionDeployStarted, r.PathValue("id"),
+		map[string]any{"trigger": "manual", "ref": req.Ref})
 	dep, err := a.deps.Scheduler.DeployAs(r.Context(), r.PathValue("id"), "manual", req.Ref, user.ID)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "application not found")
 		return
+	}
+	// A deploy refused by a freeze window is a first-class row: "why did
+	// nothing ship on Friday?" is answered by the log, not by guessing
+	// (deploy-protection.md §6, canvas 13t).
+	if frozen := frozenDetail(err); frozen != "" {
+		a.auditFailed(r, entry, frozen)
 	}
 	if writeIfFrozen(w, err) {
 		return
@@ -137,7 +148,11 @@ func (a *API) handleDeployApplication(w http.ResponseWriter, r *http.Request) {
 		if dep.ID != "" {
 			// The pipeline started and failed fast (no builder available, a
 			// dangling deploy key): the deployment record carries the reason
-			// in its detail — return it rather than an opaque 500.
+			// in its detail — return it rather than an opaque 500. It is
+			// recorded as a failed deploy, because it is one.
+			entry.Resource = audit.Resource(audit.ResourceDeployment, dep.ID, entry.Resource.Name)
+			entry.Detail["application_id"] = dep.ApplicationID
+			a.auditFailed(r, entry, string(dep.Status))
 			writeJSON(w, http.StatusAccepted, a.withApproval(r.Context(), dep))
 			return
 		}
@@ -145,7 +160,45 @@ func (a *API) handleDeployApplication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not start deployment")
 		return
 	}
+	// A deployment that parked for approval is still a deploy that was asked
+	// for; its status is on the deployment record.
+	entry.Resource = audit.Resource(audit.ResourceDeployment, dep.ID, entry.Resource.Name)
+	entry.Detail["application_id"] = dep.ApplicationID
+	entry.Detail["status"] = string(dep.Status)
+	a.audit(r, entry)
 	writeJSON(w, http.StatusAccepted, a.withApproval(r.Context(), dep))
+}
+
+// appAuditEntry builds an entry scoped to an application, resolving its name
+// and environment for the snapshot before the action runs — which matters for
+// the deploy path, where the resource is the DEPLOYMENT and the application is
+// only its context.
+func (a *API) appAuditEntry(ctx context.Context, action, appID string, detail map[string]any) audit.Entry {
+	var app domain.Application
+	if a.deps.Applications != nil {
+		app, _ = a.deps.Applications.Get(ctx, appID)
+	}
+	if detail == nil {
+		detail = map[string]any{}
+	}
+	detail["application"] = app.Name
+	return audit.Entry{
+		Action:        action,
+		Resource:      audit.Resource(audit.ResourceApplication, appID, app.Name),
+		EnvironmentID: app.EnvironmentID,
+		Detail:        detail,
+	}
+}
+
+// frozenDetail returns a freeze refusal's explanation, or "" when err is not
+// one. It is the audit half of writeIfFrozen, kept separate so the response and
+// the record cannot drift apart.
+func frozenDetail(err error) string {
+	var frozen *scheduler.FrozenError
+	if errors.As(err, &frozen) {
+		return frozen.Detail
+	}
+	return ""
 }
 
 // writeIfFrozen answers 409 when a deploy was refused by a freeze window,
@@ -244,14 +297,25 @@ func (a *API) handleRollback(w http.ResponseWriter, r *http.Request) {
 	}) {
 		return
 	}
+	// Resolved from the SOURCE deployment, before the call: every refusal path
+	// below returns a zero deployment, so this is the only point at which the
+	// application behind a failed rollback is still knowable.
+	src, _ := a.deps.Deployments.GetDeployment(r.Context(), r.PathValue("id"))
+	rollback := a.appAuditEntry(r.Context(), audit.ActionRollback, src.ApplicationID,
+		map[string]any{"rolled_back_from": r.PathValue("id")})
+
 	dep, err := a.deps.Scheduler.RollbackAs(r.Context(), r.PathValue("id"), user.ID)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "deployment not found")
 		return
 	}
 	if errors.Is(err, scheduler.ErrRevisionNotBuilt) {
+		a.auditFailed(r, rollback, "the revision was never built")
 		writeError(w, http.StatusConflict, "that deployment's revision was never built — nothing to roll back to")
 		return
+	}
+	if frozen := frozenDetail(err); frozen != "" {
+		a.auditFailed(r, rollback, frozen)
 	}
 	if writeIfFrozen(w, err) {
 		return
@@ -261,6 +325,10 @@ func (a *API) handleRollback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not start rollback")
 		return
 	}
+	rollback.Resource = audit.Resource(audit.ResourceDeployment, dep.ID, rollback.Resource.Name)
+	rollback.Detail["application_id"] = dep.ApplicationID
+	rollback.Detail["status"] = string(dep.Status)
+	a.audit(r, rollback)
 	writeJSON(w, http.StatusAccepted, a.withApproval(r.Context(), dep))
 }
 
@@ -335,6 +403,19 @@ func (a *API) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	// a NULL requested_by and its approval card says "pushed via webhook"
 	// (deploy-protection.md §2).
 	dep, err := a.deps.Scheduler.DeployAs(r.Context(), app.ID, "webhook", push.After, "")
+	// A push is not a person, so the actor is the mechanism: kind `system`,
+	// labelled by the channel that carried it. That is honest, and it keeps
+	// "which deploys had no human behind them" a one-filter question.
+	hook := audit.Entry{
+		Action:        audit.ActionDeployStarted,
+		Actor:         domain.AuditActor{Kind: domain.AuditActorSystem, Label: "github webhook"},
+		Resource:      audit.Resource(audit.ResourceApplication, app.ID, app.Name),
+		EnvironmentID: app.EnvironmentID,
+		Detail:        map[string]any{"trigger": "webhook", "ref": push.After, "application": app.Name},
+	}
+	if frozen := frozenDetail(err); frozen != "" {
+		a.auditFailed(r, hook, frozen)
+	}
 	if writeIfFrozen(w, err) {
 		return
 	}
@@ -343,6 +424,10 @@ func (a *API) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not start deployment")
 		return
 	}
+	hook.Resource = audit.Resource(audit.ResourceDeployment, dep.ID, app.Name)
+	hook.Detail["application_id"] = app.ID
+	hook.Detail["status"] = string(dep.Status)
+	a.audit(r, hook)
 	writeJSON(w, http.StatusAccepted, a.withApproval(r.Context(), dep))
 }
 

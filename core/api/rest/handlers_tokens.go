@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/auth"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 )
@@ -113,6 +114,13 @@ func (a *API) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not create token")
 		return
 	}
+	// The abilities and the expiry, never the token itself (§6). A minted
+	// credential is the row a later leak is traced back from.
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionTokenCreated,
+		Resource: audit.Resource(audit.ResourceAPIToken, tok.ID, tok.Name),
+		Detail:   map[string]any{"abilities": abilityNames(tok.Abilities), "expires_in_days": req.ExpiresInDays},
+	})
 	writeJSON(w, http.StatusCreated, createTokenResponse{tokenDTO: toTokenDTO(tok), Token: raw})
 }
 
@@ -151,5 +159,19 @@ func (a *API) handleDeleteToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not delete token")
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionTokenRevoked,
+		Resource: audit.Resource(audit.ResourceAPIToken, r.PathValue("id"), ""),
+	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// abilityNames renders a token's abilities for an audit detail. The audit row
+// stores plain JSON, so the closed ability vocabulary crosses as strings.
+func abilityNames(in []domain.Ability) []string {
+	out := make([]string, 0, len(in))
+	for _, ab := range in {
+		out = append(out, string(ab))
+	}
+	return out
 }

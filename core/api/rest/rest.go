@@ -18,6 +18,7 @@ import (
 
 	"github.com/MaramHarsha/cypherpanel/core/api/rest/webui"
 	"github.com/MaramHarsha/cypherpanel/core/applications"
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/auth"
 	"github.com/MaramHarsha/cypherpanel/core/databases"
 	"github.com/MaramHarsha/cypherpanel/core/deploykeys"
@@ -166,6 +167,24 @@ type SharedVariableService interface {
 	PendingInEnvironment(ctx context.Context, envID string) (map[string]bool, error)
 }
 
+// AuditRecorder is the audit log (consumer-defined; *audit.Service satisfies
+// it — audit-log.md §4, §5). One write verb and two reads: this package records
+// what its handlers did and reads the log back, and knows nothing about how
+// either is stored.
+//
+// nil when the feature is not wired, which every call site treats as "record
+// nothing" and both read routes answer as an empty log. A panel with no audit
+// service therefore behaves exactly as it did before this feature — it does not
+// fail requests because it cannot record them.
+type AuditRecorder interface {
+	Record(ctx context.Context, e audit.Entry) (domain.AuditEvent, error)
+	// List and Get take the VIEWER, not a scope: the service resolves what
+	// that user may see from their own panel role and team memberships, so no
+	// query parameter can widen it (§5).
+	List(ctx context.Context, viewer domain.User, q audit.Query) (audit.Page, error)
+	Get(ctx context.Context, viewer domain.User, id string) (domain.AuditEvent, error)
+}
+
 // InboxService is the notification inbox (consumer-defined; *inbox.Service
 // satisfies it — notification-inbox.md §6). Every method takes the caller's own
 // user id as its first argument and none accepts anyone else's: tenancy in this
@@ -250,11 +269,14 @@ type Deps struct {
 	NotifyDelivery   NotifierDelivery
 	WebhookEndpoints WebhookEndpointService
 	Inbox            InboxService
-	SharedVariables  SharedVariableService
-	ScheduledTasks   ScheduledTaskService
-	Templates        *templates.Service
-	Teams            TeamService
-	Mail             MailService
+	// Audit records every sensitive action and serves the log back
+	// (audit-log.md). nil records nothing and serves an empty log.
+	Audit           AuditRecorder
+	SharedVariables SharedVariableService
+	ScheduledTasks  ScheduledTaskService
+	Templates       *templates.Service
+	Teams           TeamService
+	Mail            MailService
 	// PanelTLS is the panel's ACME account (agent-identity-and-tls.md §4); nil
 	// when it is not wired, which every handler treats as "no certificate
 	// resolver" — the honest default rather than an assumed one.
@@ -512,6 +534,20 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/inbox/{id}/read", a.authed(a.handleMarkInboxItemRead))
 	mux.HandleFunc("GET /api/v1/inbox/preferences", a.authed(a.handleGetInboxPreferences))
 	mux.HandleFunc("PUT /api/v1/inbox/preferences", a.authed(a.handlePutInboxPreferences))
+
+	// V1.x: the audit log (audit-log.md §7). Two reads and no writes — a row
+	// is minted by the handler that performed the action, never by a request
+	// to this collection, which is what makes the log evidence rather than a
+	// place anyone can write to.
+	//
+	// Neither route carries a role gate: the SCOPE is the authorization. The
+	// service resolves what the caller may see (their teams, plus panel-level
+	// rows for a panel admin, plus their own actions wherever those landed) and
+	// every query parameter narrows inside it. A team_id the caller does not
+	// belong to therefore returns an empty page, not a 403 — the log must not
+	// become a way to probe for the existence of another tenant.
+	mux.HandleFunc("GET /api/v1/audit", a.authed(a.handleListAuditEvents))
+	mux.HandleFunc("GET /api/v1/audit/{id}", a.authed(a.handleGetAuditEvent))
 
 	// Phase 4: project shared variables (shared-variables.md §7). The
 	// collection hangs off the project because that is the scope that owns

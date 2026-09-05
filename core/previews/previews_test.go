@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/MaramHarsha/cypherpanel/core/applications"
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/store"
 )
@@ -158,12 +159,39 @@ func (f *fakeSched) RemoveApp(_ context.Context, _, appID string) error {
 	return nil
 }
 
-func newManager() (*Manager, *fakeStore, *fakeApps, *fakeSched) {
+func newManager(opts ...Option) (*Manager, *fakeStore, *fakeApps, *fakeSched) {
 	fs := newFakeStore()
 	fa := &fakeApps{store: fs}
 	fsch := &fakeSched{}
-	m := New(fs, fa, fsch, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	m := New(fs, fa, fsch, slog.New(slog.NewTextHandler(io.Discard, nil)), opts...)
 	return m, fs, fa, fsch
+}
+
+// fakeRecorder collects the audit entries the manager writes. A preview
+// environment appears and disappears with nobody signed in, so these rows are
+// the only record that it ever existed.
+type fakeRecorder struct{ entries []audit.Entry }
+
+func (f *fakeRecorder) Record(_ context.Context, e audit.Entry) (domain.AuditEvent, error) {
+	f.entries = append(f.entries, e)
+	return domain.AuditEvent{ID: "aud_" + e.Action}, nil
+}
+
+func (f *fakeRecorder) find(action string) (audit.Entry, bool) {
+	for _, e := range f.entries {
+		if e.Action == action {
+			return e, true
+		}
+	}
+	return audit.Entry{}, false
+}
+
+// failingRecorder proves the promise in §9: a record that cannot be written
+// must not undo the thing it describes.
+type failingRecorder struct{}
+
+func (failingRecorder) Record(context.Context, audit.Entry) (domain.AuditEvent, error) {
+	return domain.AuditEvent{}, errors.New("the audit table is unavailable")
 }
 
 func sourceApp() domain.Application {
@@ -335,4 +363,106 @@ func firstPreviewID(fs *fakeStore) string {
 		return id
 	}
 	return ""
+}
+
+// ─── audit (audit-log.md §3) ────────────────────────────────────────────────
+
+// A preview environment is created and destroyed with no operator in the loop.
+// Without these two rows the `environment.created`/`environment.deleted` verbs
+// would be true only of the environments a person made by hand.
+func TestPreviewLifecycleIsAudited(t *testing.T) {
+	rec := &fakeRecorder{}
+	m, fs, _, _ := newManager(WithAudit(rec))
+	src := sourceApp()
+	fs.apps[src.ID] = src
+	fs.envs["env_prod"] = domain.Environment{ID: "env_prod", ProjectID: "prj_1"}
+
+	if err := m.OnPullRequest(context.Background(), src, ActionOpened, 42, "feature/x", "sha1"); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	created, ok := rec.find(audit.ActionEnvironmentCreated)
+	if !ok {
+		t.Fatalf("no environment.created row for a preview: %+v", rec.entries)
+	}
+	childEnv := fs.previews[firstPreviewID(fs)].EnvironmentID
+	if created.EnvironmentID != childEnv {
+		t.Errorf("created row scope = %q, want the child environment %q", created.EnvironmentID, childEnv)
+	}
+	if created.Actor.Kind != domain.AuditActorSystem {
+		t.Errorf("actor = %+v, want the panel itself — nobody was signed in", created.Actor)
+	}
+	if created.Detail["pr"] != 42 || created.Detail["kind"] != domain.EnvPreview {
+		t.Errorf("created detail = %+v, want the PR and the preview kind", created.Detail)
+	}
+
+	if err := m.OnPullRequest(context.Background(), src, ActionClosed, 42, "feature/x", ""); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	deleted, ok := rec.find(audit.ActionEnvironmentDeleted)
+	if !ok {
+		t.Fatalf("no environment.deleted row for a torn-down preview: %+v", rec.entries)
+	}
+	// The environment is gone, so the row must carry the project it hung
+	// under: there is nothing left for the INSERT to resolve the team from.
+	if deleted.ProjectID != "prj_1" {
+		t.Errorf("deleted row project = %q, want the chain snapshotted before the delete", deleted.ProjectID)
+	}
+	if deleted.Detail["reason"] != "pull request closed" {
+		t.Errorf("deleted detail = %+v, want the reason it went away", deleted.Detail)
+	}
+}
+
+// The TTL sweeper is the other automated teardown, and it must say so: an
+// environment that vanished on a timer is exactly the disappearance an operator
+// would otherwise have no record of.
+func TestSweptPreviewIsAuditedWithItsReason(t *testing.T) {
+	rec := &fakeRecorder{}
+	m, fs, _, _ := newManager(WithAudit(rec))
+	src := sourceApp()
+	fs.apps[src.ID] = src
+	fs.envs["env_prod"] = domain.Environment{ID: "env_prod", ProjectID: "prj_1"}
+	_ = m.OnPullRequest(context.Background(), src, ActionOpened, 7, "feature/x", "sha1")
+	m.now = func() time.Time { return time.Now().Add(200 * time.Hour) }
+
+	m.SweepExpired(context.Background())
+	deleted, ok := rec.find(audit.ActionEnvironmentDeleted)
+	if !ok {
+		t.Fatalf("the sweeper tore an environment down without a row: %+v", rec.entries)
+	}
+	if deleted.Detail["reason"] != "ttl expired" {
+		t.Errorf("swept row reason = %v, want \"ttl expired\"", deleted.Detail["reason"])
+	}
+	if len(fs.previews) != 0 {
+		t.Fatalf("preview survived the sweep: %+v", fs.previews)
+	}
+}
+
+// A failed audit write must not undo the teardown that already happened (§9).
+func TestAFailingAuditWriteDoesNotFailTheTeardown(t *testing.T) {
+	m, fs, _, _ := newManager(WithAudit(failingRecorder{}))
+	src := sourceApp()
+	fs.apps[src.ID] = src
+	fs.envs["env_prod"] = domain.Environment{ID: "env_prod", ProjectID: "prj_1"}
+	_ = m.OnPullRequest(context.Background(), src, ActionOpened, 3, "feature/x", "sha1")
+
+	if err := m.OnPullRequest(context.Background(), src, ActionClosed, 3, "feature/x", ""); err != nil {
+		t.Fatalf("close with a failing audit write = %v, want it to still succeed", err)
+	}
+	if len(fs.previews) != 0 {
+		t.Fatalf("the preview survived a close that reported success: %+v", fs.previews)
+	}
+}
+
+// A panel wired without the audit log keeps working, and pays for no lookups.
+func TestPreviewsWorkWithoutAnAuditRecorder(t *testing.T) {
+	m, fs, _, _ := newManager()
+	src := sourceApp()
+	fs.apps[src.ID] = src
+	fs.envs["env_prod"] = domain.Environment{ID: "env_prod", ProjectID: "prj_1"}
+	if err := m.OnPullRequest(context.Background(), src, ActionOpened, 5, "feature/x", "sha1"); err != nil {
+		t.Fatalf("open without a recorder: %v", err)
+	}
+	if err := m.OnPullRequest(context.Background(), src, ActionClosed, 5, "feature/x", ""); err != nil {
+		t.Fatalf("close without a recorder: %v", err)
+	}
 }

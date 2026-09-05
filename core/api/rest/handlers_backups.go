@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/databases"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/scheduler"
@@ -93,6 +94,12 @@ func (a *API) handleCreateBackupTarget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not create backup target")
 		return
 	}
+	// The bucket and endpoint, never the access key beside them (§6).
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionBackupTargetCreated,
+		Resource: audit.Resource(audit.ResourceBackupTarget, t.ID, t.Name),
+		Detail:   map[string]any{"endpoint": t.Endpoint, "bucket": t.Bucket, "region": t.Region},
+	})
 	writeJSON(w, http.StatusCreated, toBackupTargetDTO(t))
 }
 
@@ -156,6 +163,10 @@ func (a *API) handlePatchBackupTarget(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionBackupTargetUpdated,
+		Resource: audit.Resource(audit.ResourceBackupTarget, t.ID, t.Name),
+	})
 	writeJSON(w, http.StatusOK, toBackupTargetDTO(t))
 }
 
@@ -176,6 +187,10 @@ func (a *API) handleDeleteBackupTarget(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionBackupTargetDeleted,
+		Resource: audit.Resource(audit.ResourceBackupTarget, r.PathValue("id"), ""),
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -280,6 +295,12 @@ func (a *API) handleCreateDatabaseBackup(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "could not create backup schedule")
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:        audit.ActionBackupScheduleCreated,
+		Resource:      audit.Resource(audit.ResourceBackupSchedule, b.ID, b.Schedule),
+		EnvironmentID: a.auditScopeForDatabase(r.Context(), b.DatabaseID),
+		Detail:        map[string]any{"database_id": b.DatabaseID, "target_id": b.TargetID, "retention_count": b.RetentionCount},
+	})
 	writeJSON(w, http.StatusCreated, toDatabaseBackupDTO(b))
 }
 
@@ -344,6 +365,12 @@ func (a *API) handlePatchDatabaseBackup(w http.ResponseWriter, r *http.Request) 
 		}
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:        audit.ActionBackupScheduleUpdated,
+		Resource:      audit.Resource(audit.ResourceBackupSchedule, b.ID, b.Schedule),
+		EnvironmentID: a.auditScopeForDatabase(r.Context(), b.DatabaseID),
+		Detail:        map[string]any{"database_id": b.DatabaseID, "enabled": b.Enabled},
+	})
 	writeJSON(w, http.StatusOK, toDatabaseBackupDTO(b))
 }
 
@@ -364,6 +391,12 @@ func (a *API) handleDeleteDatabaseBackup(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "could not delete backup schedule")
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:        audit.ActionBackupScheduleDeleted,
+		Resource:      audit.Resource(audit.ResourceBackupSchedule, bakID, ""),
+		EnvironmentID: a.auditScopeForDatabase(r.Context(), r.PathValue("id")),
+		Detail:        map[string]any{"database_id": r.PathValue("id")},
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -411,6 +444,12 @@ func (a *API) handleRunBackup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not start backup")
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:        audit.ActionBackupRunRequested,
+		Resource:      audit.Resource(audit.ResourceBackupSchedule, r.PathValue("bak_id"), ""),
+		EnvironmentID: a.auditScopeForDatabase(r.Context(), r.PathValue("id")),
+		Detail:        map[string]any{"database_id": r.PathValue("id"), "record_id": rec.ID},
+	})
 	writeJSON(w, http.StatusAccepted, runBackupResponse{Record: toBackupRecordDTO(rec)})
 }
 
@@ -439,6 +478,9 @@ func (a *API) handleRestoreDatabase(w http.ResponseWriter, r *http.Request) {
 	err := a.deps.Backups.RunRestore(r.Context(), r.PathValue("id"), req.BackupRecordID, req.Confirm)
 	switch {
 	case err == nil:
+		// The most destructive verb the API has: it overwrites live data from a
+		// snapshot. Who asked, and from which record.
+		a.auditDatabaseRestore(r, req.BackupRecordID)
 		w.WriteHeader(http.StatusAccepted)
 	case errors.Is(err, scheduler.ErrRestoreNotConfirmed):
 		writeError(w, http.StatusBadRequest, "restore is destructive: set confirm=true to proceed")
@@ -448,4 +490,19 @@ func (a *API) handleRestoreDatabase(w http.ResponseWriter, r *http.Request) {
 		a.deps.Log.Error("restoring database", "error", err)
 		writeError(w, http.StatusInternalServerError, "could not start restore")
 	}
+}
+
+// auditDatabaseRestore records a restore against the database it overwrites,
+// resolving the name and environment for the snapshot.
+func (a *API) auditDatabaseRestore(r *http.Request, recordID string) {
+	if a.deps.Audit == nil || a.deps.Databases == nil {
+		return
+	}
+	db, _ := a.deps.Databases.Get(r.Context(), r.PathValue("id"))
+	a.audit(r, audit.Entry{
+		Action:        audit.ActionDatabaseRestored,
+		Resource:      audit.Resource(audit.ResourceDatabase, r.PathValue("id"), db.Name),
+		EnvironmentID: db.EnvironmentID,
+		Detail:        map[string]any{"backup_record_id": recordID},
+	})
 }

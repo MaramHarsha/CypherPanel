@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/dns"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/store"
@@ -163,6 +164,14 @@ func (a *API) handleSetPanelDNS(w http.ResponseWriter, r *http.Request) {
 		a.writeDNSError(w, "saving dns provider", err)
 		return
 	}
+	// The provider and its masked hint, never the API token (§6). A token that
+	// can write an operator's zones is the highest-value secret the panel
+	// holds after the master key.
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionPanelDNSUpdated,
+		Resource: audit.Resource(audit.ResourcePanel, "dns", "dns provider"),
+		Detail:   map[string]any{"provider": s.Kind, "account_id": s.AccountID, "config_hint": s.Hint},
+	})
 	writeJSON(w, http.StatusOK, dnsSettingsToDTO(s))
 }
 
@@ -179,6 +188,12 @@ func (a *API) handleDeletePanelDNS(w http.ResponseWriter, r *http.Request) {
 		a.writeDNSError(w, "deleting dns provider", err)
 		return
 	}
+	// Disconnecting stops every managed record being maintained, which is a
+	// blast radius the disconnect-preview route already spells out.
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionPanelDNSDeleted,
+		Resource: audit.Resource(audit.ResourcePanel, "dns", "dns provider"),
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/MaramHarsha/cypherpanel/core/applications"
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/auth"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
@@ -144,6 +145,13 @@ func (a *API) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not create project")
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:    audit.ActionProjectCreated,
+		Resource:  audit.Resource(audit.ResourceProject, proj.ID, proj.Name),
+		ProjectID: proj.ID,
+		TeamID:    proj.TeamID,
+		Detail:    map[string]any{"slug": proj.Slug, "default_environment_id": env.ID},
+	})
 	writeJSON(w, http.StatusCreated, createProjectResponse{
 		Project:            toProjectDTO(proj),
 		DefaultEnvironment: toEnvironmentDTO(env),
@@ -223,6 +231,9 @@ func (a *API) handlePatchProject(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Read the project before the update so a transfer can record where it came
+	// FROM: the row after the write only knows where it went.
+	before, _ := a.deps.Projects.Get(r.Context(), id)
 	proj, err := a.deps.Projects.Update(r.Context(), id, projects.UpdateInput{
 		Name:                 req.Name,
 		TeamID:               req.TeamID,
@@ -247,6 +258,22 @@ func (a *API) handlePatchProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not update the project")
 		return
 	}
+	// A transfer gets its OWN verb: moving a project between teams moves who
+	// can see everything inside it — including, from this moment on, the
+	// project's own audit trail (§5). A rename does not.
+	entry := audit.Entry{
+		Action:    audit.ActionProjectUpdated,
+		Resource:  audit.Resource(audit.ResourceProject, proj.ID, proj.Name),
+		ProjectID: proj.ID,
+		TeamID:    proj.TeamID,
+		Detail:    map[string]any{"previous_name": before.Name},
+	}
+	if before.TeamID != "" && before.TeamID != proj.TeamID {
+		entry.Action = audit.ActionProjectTransferred
+		entry.Detail["from_team_id"] = before.TeamID
+		entry.Detail["to_team_id"] = proj.TeamID
+	}
+	a.audit(r, entry)
 	writeJSON(w, http.StatusOK, toProjectDTO(proj))
 }
 
@@ -293,6 +320,12 @@ func (a *API) handlePatchEnvironment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not rename the environment")
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:        audit.ActionEnvironmentRenamed,
+		Resource:      audit.Resource(audit.ResourceEnvironment, env.ID, env.Name),
+		ProjectID:     env.ProjectID,
+		EnvironmentID: env.ID,
+	})
 	writeJSON(w, http.StatusOK, toEnvironmentDTO(env))
 }
 
@@ -307,6 +340,9 @@ func (a *API) handleDeleteEnvironment(w http.ResponseWriter, r *http.Request) {
 	}) {
 		return
 	}
+	// The environment row is about to vanish, and with it the link the insert
+	// would resolve the project from (§4) — so both are read first.
+	before, _ := a.deps.Projects.GetEnvironment(r.Context(), id)
 	err := a.deps.Projects.DeleteEnvironment(r.Context(), id)
 	switch {
 	case err == nil:
@@ -327,6 +363,11 @@ func (a *API) handleDeleteEnvironment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not delete the environment")
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:    audit.ActionEnvironmentDeleted,
+		Resource:  audit.Resource(audit.ResourceEnvironment, id, before.Name),
+		ProjectID: before.ProjectID,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -378,11 +419,20 @@ func (a *API) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, detail)
 		return
 	}
+	// Read the project first: after the delete there is no row to resolve the
+	// team from, and an entry that lost its team_id would be invisible to
+	// exactly the person who made it (§4).
+	before, _ := a.deps.Projects.Get(r.Context(), id)
 	if err := a.deps.Projects.Delete(r.Context(), id); err != nil {
 		a.deps.Log.Error("deleting project", "error", err)
 		writeError(w, http.StatusInternalServerError, "could not delete project")
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionProjectDeleted,
+		Resource: audit.Resource(audit.ResourceProject, id, before.Name),
+		TeamID:   before.TeamID,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -437,6 +487,12 @@ func (a *API) handleCreateEnvironment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not create environment")
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:        audit.ActionEnvironmentCreated,
+		Resource:      audit.Resource(audit.ResourceEnvironment, env.ID, env.Name),
+		ProjectID:     env.ProjectID,
+		EnvironmentID: env.ID,
+	})
 	writeJSON(w, http.StatusCreated, toEnvironmentDTO(env))
 }
 

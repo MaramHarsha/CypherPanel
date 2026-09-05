@@ -371,8 +371,10 @@ stream) · personal **email** digests (canvas 13i's other half — it reuses thi
 preference row when it ships) · per-team or per-project preference overrides ·
 quiet hours, snooze, and any grouping beyond the daily digest · item-level
 actions (approve, retry, redeploy — an item links, it never acts) · search and
-filters beyond `?unread` · an audit log (different artifact, different
-retention: this one caps at 200 rows and prunes) · unread counts broken out per
+filters beyond `?unread` · an audit log — a different artifact with a different
+retention (this one caps at 200 rows per user and prunes; the log keeps 90 days
+and records what a *principal did* rather than what happened to your resources
+— [audit-log.md](audit-log.md)) · unread counts broken out per
 project · a keyboard shortcut for the bell (the shortcut table in `_app.tsx` is
 a shared surface) · desktop, web-push or mobile notifications · real-time
 cross-device read sync · localised relative timestamps.

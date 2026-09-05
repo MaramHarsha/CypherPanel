@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/deploykeys"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/store"
@@ -62,6 +63,11 @@ func (a *API) handleCreateDeployKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not create deploy key")
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionDeployKeyCreated,
+		Resource: audit.Resource(audit.ResourceDeployKey, dk.ID, dk.Name),
+		Detail:   map[string]any{"fingerprint": dk.Fingerprint},
+	})
 	writeJSON(w, http.StatusCreated, createDeployKeyResponse{DeployKey: toDeployKeyDTO(dk)})
 }
 
@@ -126,6 +132,10 @@ func (a *API) handleDeleteDeployKey(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionDeployKeyDeleted,
+		Resource: audit.Resource(audit.ResourceDeployKey, r.PathValue("id"), ""),
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 

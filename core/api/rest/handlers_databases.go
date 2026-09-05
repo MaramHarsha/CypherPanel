@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/databases"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/store"
@@ -146,6 +147,15 @@ func (a *API) handleCreateDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The engine and where it runs, never the generated root password beside it
+	// (§6) — it is shown once to the operator and the audit log is not a second
+	// place to find it.
+	a.audit(r, audit.Entry{
+		Action:        audit.ActionDatabaseCreated,
+		Resource:      audit.Resource(audit.ResourceDatabase, db.ID, db.Name),
+		EnvironmentID: db.EnvironmentID,
+		Detail:        map[string]any{"engine": db.Engine, "version": db.Version, "server_id": db.ServerID},
+	})
 	dto := toDatabaseDTO(db)
 	dto.RootPassword = rootPwd // show once
 	writeJSON(w, http.StatusCreated, createDatabaseResponse{
@@ -219,6 +229,11 @@ func (a *API) handlePatchDatabase(w http.ResponseWriter, r *http.Request) {
 		handleDatabaseError(a, w, err, "updating database")
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:        audit.ActionDatabaseUpdated,
+		Resource:      audit.Resource(audit.ResourceDatabase, db.ID, db.Name),
+		EnvironmentID: db.EnvironmentID,
+	})
 	writeJSON(w, http.StatusOK, toDatabaseDTO(db))
 }
 
@@ -230,6 +245,7 @@ func (a *API) handleDeleteDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	deleteVolume := r.URL.Query().Get("delete_volume") == "true"
+	before, _ := a.deps.Databases.Get(r.Context(), r.PathValue("id"))
 	if err := a.deps.Databases.Delete(r.Context(), r.PathValue("id"), deleteVolume); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "database not found")
@@ -239,6 +255,14 @@ func (a *API) handleDeleteDatabase(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not delete database")
 		return
 	}
+	// delete_volume is the difference between "the container is gone" and "the
+	// data is gone", so it belongs in the record of the decision.
+	a.audit(r, audit.Entry{
+		Action:        audit.ActionDatabaseDeleted,
+		Resource:      audit.Resource(audit.ResourceDatabase, r.PathValue("id"), before.Name),
+		EnvironmentID: before.EnvironmentID,
+		Detail:        map[string]any{"delete_volume": deleteVolume},
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -253,6 +277,7 @@ func (a *API) handleStopDatabase(w http.ResponseWriter, r *http.Request) {
 		handleDatabaseError(a, w, err, "stopping database")
 		return
 	}
+	a.auditDatabase(r, audit.ActionDatabaseStopped, r.PathValue("id"))
 	w.WriteHeader(http.StatusAccepted)
 }
 
@@ -267,6 +292,7 @@ func (a *API) handleStartDatabase(w http.ResponseWriter, r *http.Request) {
 		handleDatabaseError(a, w, err, "starting database")
 		return
 	}
+	a.auditDatabase(r, audit.ActionDatabaseStarted, r.PathValue("id"))
 	w.WriteHeader(http.StatusAccepted)
 }
 
@@ -282,6 +308,7 @@ func (a *API) handleResetDatabasePassword(w http.ResponseWriter, r *http.Request
 		handleDatabaseError(a, w, err, "resetting password")
 		return
 	}
+	a.auditDatabase(r, audit.ActionDatabasePasswordReset, r.PathValue("id"))
 	writeJSON(w, http.StatusOK, resetPasswordResponse{RootPassword: pwd})
 }
 
@@ -379,3 +406,35 @@ func handleDatabaseError(a *API, w http.ResponseWriter, err error, action string
 
 // strconv import needed by other handlers in this package.
 var _ = strconv.Itoa
+
+// auditDatabase records a lifecycle action on a database the handler addressed
+// by id, resolving its name and environment for the snapshot.
+func (a *API) auditDatabase(r *http.Request, action, dbID string) {
+	if a.deps.Audit == nil || a.deps.Databases == nil {
+		return
+	}
+	db, _ := a.deps.Databases.Get(r.Context(), dbID)
+	a.audit(r, audit.Entry{
+		Action:        action,
+		Resource:      audit.Resource(audit.ResourceDatabase, dbID, db.Name),
+		EnvironmentID: db.EnvironmentID,
+	})
+}
+
+// auditScopeForDatabase resolves the environment a database lives in, for the
+// actions that happen NEAR a database rather than to it — its backup schedules
+// and backup runs. Without it the row carries no ownership chain at all, so
+// team_id resolves to NULL and the entry becomes PANEL-scoped: unreadable by
+// the team that owns the database and readable by every panel admin, which is
+// the opposite of what §5 promises. A failed lookup returns "" and the row is
+// still written; a mis-scoped entry is better than a missing one.
+func (a *API) auditScopeForDatabase(ctx context.Context, dbID string) string {
+	if a.deps.Databases == nil {
+		return ""
+	}
+	db, err := a.deps.Databases.Get(ctx, dbID)
+	if err != nil {
+		return ""
+	}
+	return db.EnvironmentID
+}

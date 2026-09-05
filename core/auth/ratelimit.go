@@ -20,6 +20,11 @@ type Limiter struct {
 	window   time.Duration
 	now      func() time.Time
 	attempts map[string][]time.Time
+	// refused marks keys whose current throttle episode has already been
+	// reported, so a caller that records the refusal durably (the audit log)
+	// writes one row per episode rather than one per packet. Cleared by prune
+	// the moment the key drops back below max, and by Reset.
+	refused map[string]bool
 }
 
 // NewLimiter allows up to max failures per key within window before Allow
@@ -30,6 +35,7 @@ func NewLimiter(max int, window time.Duration) *Limiter {
 		window:   window,
 		now:      time.Now,
 		attempts: make(map[string][]time.Time),
+		refused:  make(map[string]bool),
 	}
 }
 
@@ -80,6 +86,34 @@ func (l *Limiter) Reset(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	delete(l.attempts, key)
+	delete(l.refused, key)
+}
+
+// Refuse records that an attempt was turned away because key is throttled, and
+// reports whether this is the FIRST refusal of the current episode.
+//
+// It exists so that turning a refusal into a durable record — an audit row —
+// costs one write per throttle episode rather than one per request. Without
+// it, an unauthenticated caller could drive unbounded inserts at their own
+// request rate, which is precisely the work the throttle exists to bound
+// (control-plane-hardening.md §5, audit-log.md §9).
+func (l *Limiter) Refuse(key string) bool {
+	if l == nil {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.prune(key)) < l.max {
+		// Not throttled: nothing was turned away, so there is no episode.
+		// Self-guarding rather than trusting the caller to have asked Allow
+		// first, so the method means the same thing wherever it is called.
+		return false
+	}
+	if l.refused[key] {
+		return false
+	}
+	l.refused[key] = true
+	return true
 }
 
 // prune drops entries older than the window and returns the survivors. Callers
@@ -91,6 +125,11 @@ func (l *Limiter) prune(key string) []time.Time {
 		if t.After(cutoff) {
 			kept = append(kept, t)
 		}
+	}
+	if len(kept) < l.max {
+		// Below the threshold the episode is over: the next time this key is
+		// throttled it is a new event and worth recording again.
+		delete(l.refused, key)
 	}
 	if len(kept) == 0 {
 		delete(l.attempts, key)
@@ -105,6 +144,10 @@ func (l *Limiter) prune(key string) []time.Time {
 // only map the status keep working; handlers use errors.As to read the delay.
 type RateLimitedError struct {
 	RetryAfter time.Duration
+	// FirstRefusal is true only for the refusal that opened this throttle
+	// episode. A caller that records refusals durably uses it to write once
+	// per episode; a caller that only answers 429 ignores it.
+	FirstRefusal bool
 }
 
 func (e *RateLimitedError) Error() string { return ErrRateLimited.Error() }
@@ -127,12 +170,18 @@ func (e *RateLimitedError) RetryAfterSeconds() int {
 // RateLimitedError carrying the longest wait among the blocked keys.
 func throttle(limiters []*Limiter, keys []string) error {
 	var wait time.Duration
-	blocked := false
+	blocked, first := false, false
 	for i, l := range limiters {
 		if l.Allow(keys[i]) {
 			continue
 		}
 		blocked = true
+		// Asked of every blocked limiter, not just the first: an episode that
+		// begins on the account key is as much a new event as one that begins
+		// on the address key.
+		if l.Refuse(keys[i]) {
+			first = true
+		}
 		if d := l.RetryAfter(keys[i]); d > wait {
 			wait = d
 		}
@@ -140,5 +189,5 @@ func throttle(limiters []*Limiter, keys []string) error {
 	if !blocked {
 		return nil
 	}
-	return &RateLimitedError{RetryAfter: wait}
+	return &RateLimitedError{RetryAfter: wait, FirstRefusal: first}
 }

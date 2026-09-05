@@ -39,6 +39,7 @@ tags:
   - name: notifiers
   - name: webhooks
   - name: inbox
+  - name: audit
   - name: shared-variables
   - name: scheduled-tasks
   - name: protection
@@ -2712,6 +2713,134 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { description: The endpoint is disabled. }
+
+  # ─── Audit log (audit-log.md §7) ──────────────────────────────────────────
+  #
+  # One immutable row per sensitive action: who did what to which resource, from
+  # where, and whether it worked. It is what makes the destructive-confirm
+  # dialog's promise ("audit-logged with your name") true, what the threat model
+  # relies on to make a compromise reconstructable, and the answer to "who
+  # deleted this?" after the resource itself is gone.
+  #
+  # There is no write route. A row is minted by the handler that performed the
+  # action, never by a request to this collection — a log anyone can POST to is
+  # not evidence.
+  #
+  # SCOPE IS THE AUTHORIZATION. Neither route carries a role gate; the service
+  # resolves what the caller may see and every filter narrows inside it:
+  #   * a panel owner sees every row (the same superadmin bypass team roles
+  #     already grant);
+  #   * anyone sees the rows of the teams they belong to;
+  #   * a panel admin also sees PANEL-scoped rows — a server, a user, the
+  #     mail/DNS/TLS settings — which belong to no team;
+  #   * everyone sees their own actions, whatever scope those landed in.
+  # A `team_id` the caller does not belong to therefore returns an EMPTY page,
+  # not 403: the log must not become a way to probe for another tenant.
+  /api/v1/audit:
+    get:
+      operationId: listAuditEvents
+      tags: [audit]
+      summary: Page the audit log, newest first
+      description: >-
+        Seek pagination on `(at, id)` descending: pass the previous page's
+        `next_before` as `before`. An empty `next_before` is the end of the log.
+        Every filter is optional and narrows within what the caller may already
+        see.
+      parameters:
+        - name: team_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: >-
+            Only this team's rows. A team the caller does not belong to yields
+            an empty page rather than 403.
+        - name: project_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: Only rows scoped to this project.
+        - name: resource_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: >-
+            One resource's whole timeline — every action ever recorded against
+            this id, including the one that deleted it.
+        - name: action
+          in: query
+          required: false
+          schema: { type: string }
+          description: >-
+            An exact verb (`deploy.started`) or a whole family by prefix
+            (`deploy` selects every `deploy.*`). The vocabulary is closed and
+            documented in `AuditEvent.action`.
+          example: deploy
+        - name: actor
+          in: query
+          required: false
+          schema: { type: string }
+          description: >-
+            A user id (`usr_…`) or the email label recorded at the time, so
+            "priya@example.com" works without resolving it to an id first.
+        - name: outcome
+          in: query
+          required: false
+          schema: { type: string, enum: [success, failure] }
+          description: >-
+            `failure` is every refused action — a wrong password, a deploy a
+            freeze window turned away, a rejected approval.
+        - name: since
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: RFC 3339 lower bound on `at`. Omitted means unbounded.
+        - name: before
+          in: query
+          required: false
+          schema: { type: string }
+          description: >-
+            Cursor: the id of the last event on the previous page. An id the
+            caller may not see yields an empty page rather than restarting at
+            the newest row.
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: One page of the log, newest first.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/audit/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Audit event ID (aud_… prefix). }
+    get:
+      operationId: getAuditEvent
+      tags: [audit]
+      summary: Get one audit entry
+      description: >-
+        The permalink behind an entry — what a trace id in a support
+        conversation resolves to. An entry outside the caller's scope answers
+        404, the same as one that does not exist.
+      responses:
+        "200":
+          description: The audit entry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditEvent"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404": { $ref: "#/components/responses/NotFound" }
 
   # ─── Project shared variables (shared-variables.md §7) ────────────────
   #
@@ -5414,6 +5543,139 @@ components:
           type: array
           items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed, panel.update_available] }
           description: The complete muted set; this replaces the previous one. A kind outside available_kinds is a 400.
+
+    # ─── Audit log (audit-log.md §2, §7) ──────────────────────────────────
+    #
+    # Every id and name below is a SNAPSHOT taken when the action happened, not
+    # a live reference. Renaming an application does not rewrite its history,
+    # and deleting one does not delete the record of the deletion — so an id
+    # here may name something that no longer exists, which is information
+    # rather than an inconsistency.
+
+    AuditActor:
+      type: object
+      required: [kind, user_id, token_id, label]
+      properties:
+        kind:
+          type: string
+          enum: [user, token, agent, system, anonymous]
+          description: >-
+            `user` — an interactive session. `token` — a personal access token
+            acting for its owner (the owner is recorded too; a token is a way to
+            act, not an identity). `agent` — an enrolled agent acting for its
+            server. `system` — the panel itself, such as a signed inbound
+            webhook. `anonymous` — an unauthenticated caller, which is what a
+            refused sign-in is.
+        user_id:
+          type: string
+          description: >-
+            Empty for agent, system and anonymous actors. A snapshot: the
+            account it names may since have been deleted, and the entry stays.
+        token_id:
+          type: string
+          description: The personal access token used, when one was — the credential to revoke. Empty otherwise.
+        label:
+          type: string
+          description: >-
+            The email as it read when the action happened, never re-resolved.
+            For an anonymous actor it is the address the sign-in claimed to be.
+
+    AuditResource:
+      type: object
+      required: [kind, id, name]
+      properties:
+        kind:
+          type: string
+          description: >-
+            The glossary noun acted on — `user`, `session`, `api_token`, `team`,
+            `server`, `deploy_key`, `project`, `environment`, `application`,
+            `database`, `deployment`, `backup_target`, `backup_schedule`,
+            `shared_variable`, `notifier`, `webhook_endpoint`, `panel`. Not a
+            table name: an env-var change names the APPLICATION and a membership
+            change names the TEAM, because that is the timeline they are read
+            from.
+        id: { type: string }
+        name:
+          type: string
+          description: The name at the time. Empty when the action had no name to snapshot.
+
+    AuditEvent:
+      type: object
+      required: [id, at, action, outcome, actor, resource, team_id, project_id, environment_id, detail, trace_id, client_ip]
+      properties:
+        id: { type: string, description: aud_… prefixed ID. }
+        at: { type: string, format: date-time }
+        action:
+          type: string
+          description: >-
+            A dotted verb from the closed vocabulary: the family before the dot,
+            the past-tense event after it. The families are `auth`, `token`,
+            `user`, `team`, `server`, `deploy_key`, `project`, `environment`,
+            `application`, `database`, `deploy`, `protection`, `backup_target`,
+            `backup_schedule`, `backup`, `shared_variable`, `notifier`,
+            `webhook_endpoint` and `panel`. Filter on a family with
+            `?action=deploy`. The list grows additively; a client must treat an
+            unrecognised verb as ordinary text.
+          example: application.deleted
+        outcome:
+          type: string
+          enum: [success, failure]
+          description: >-
+            Failure is an outcome, not a separate verb, so "everything that was
+            refused" is one predicate over the whole vocabulary. A refusal
+            carries its reason in `detail.reason`.
+        actor:
+          $ref: "#/components/schemas/AuditActor"
+        resource:
+          $ref: "#/components/schemas/AuditResource"
+        team_id:
+          type: string
+          description: >-
+            The owning team at the time. EMPTY means the action was
+            panel-level — a server, a user, the mail/DNS/TLS settings — and only
+            panel admins may read it.
+        project_id:
+          type: string
+          description: Empty when the action was not scoped to a project.
+        environment_id:
+          type: string
+          description: Empty when the action was not scoped to an environment.
+        detail:
+          type: object
+          additionalProperties: true
+          description: >-
+            Structured extras: identifiers, key NAMES, counts, and the reason a
+            refusal was refused. Never a secret VALUE — an env-var change
+            records `{"key": "DATABASE_URL"}` and nothing else, and the audit
+            service strips a denylist of secret-shaped key names as a second
+            line of defence.
+        trace_id:
+          type: string
+          description: >-
+            The `X-Request-Id` of the request that performed the action, so a
+            trace id from a screenshot finds what it did as well as what it
+            logged.
+        client_ip:
+          type: string
+          description: >-
+            The address the panel attributed the request to — the same value the
+            sign-in throttle counts against. Empty for actions with no request
+            behind them.
+
+    AuditPage:
+      type: object
+      required: [events, next_before]
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEvent"
+        next_before:
+          type: string
+          description: >-
+            Pass as `before` for the following page. Empty at the end of the
+            log. A full page always returns a cursor, so the last page of an
+            exactly-divisible log costs one extra request that comes back empty.
 
     # ─── Project shared variables (shared-variables.md §7) ────────────────
     # ─── Deploy protection (deploy-protection.md §2, §6) ────────────────────

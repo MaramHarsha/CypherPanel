@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/auth"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/mail"
@@ -104,6 +105,13 @@ func (a *API) handleSetPanelMail(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not save the mail settings")
 		return
 	}
+	// The host and sender, never the password (§6): the detail says which relay
+	// the panel now speaks through, which is the reviewable fact.
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionPanelMailUpdated,
+		Resource: audit.Resource(audit.ResourcePanel, "mail", "panel mail"),
+		Detail:   map[string]any{"smtp_host": s.SMTPHost, "smtp_port": s.SMTPPort, "from": s.From, "tls": s.TLS},
+	})
 	writeJSON(w, http.StatusOK, mailDTO(s))
 }
 
@@ -117,6 +125,10 @@ func (a *API) handleDeletePanelMail(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not remove the mail settings")
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionPanelMailDeleted,
+		Resource: audit.Resource(audit.ResourcePanel, "mail", "panel mail"),
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -200,6 +212,11 @@ func (a *API) handleCancelEmailChange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.deps.Log.Info("email change cancelled", "user_id", p.User.ID, "cancelled", n)
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionEmailChangeCancelled,
+		Resource: audit.Resource(audit.ResourceUser, p.User.ID, p.User.Email),
+		Detail:   map[string]any{"cancelled": n},
+	})
 	writeJSON(w, http.StatusOK, map[string]int64{"cancelled": n})
 }
 
@@ -256,6 +273,17 @@ func (a *API) handleRequestEmailChange(w http.ResponseWriter, r *http.Request) {
 	// email body, and untrusted input in either is how a trusted sender becomes
 	// someone else's relay (CWE-640). The link's host comes from the panel's own
 	// advertised base URL for the same reason — never from a request header.
+	// Recorded the moment the change is created, not when it completes: the
+	// warning mailed to the old address and this row are the two things the
+	// rightful owner has if the session and the password are already lost
+	// (threat-model §5.10). Both addresses are the ones the authenticator
+	// validated, never the string that was typed.
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionEmailChangeRequested,
+		Resource: audit.Resource(audit.ResourceUser, p.User.ID, change.OldEmail),
+		Detail:   map[string]any{"new_email": change.NewEmail},
+	})
+
 	link := a.deps.ConsoleURL + "/settings/profile?confirm=" + change.Token
 	if err := a.deps.Mail.Send(r.Context(), []string{change.NewEmail},
 		"Confirm your new CypherPanel address",
@@ -291,6 +319,11 @@ func (a *API) handleConfirmEmailChange(w http.ResponseWriter, r *http.Request) {
 	user, revoked, err := a.deps.Auth.ConfirmEmailChange(r.Context(), p.User.ID, req.Token, rawTokenFromContext(r.Context()), a.clientIP(r))
 	switch {
 	case err == nil:
+		a.audit(r, audit.Entry{
+			Action:   audit.ActionEmailChangeConfirmed,
+			Resource: audit.Resource(audit.ResourceUser, user.ID, user.Email),
+			Detail:   map[string]any{"revoked_sessions": revoked},
+		})
 		writeJSON(w, http.StatusOK, confirmEmailChangeResponse{Email: user.Email, Revoked: revoked})
 	case errors.Is(err, auth.ErrRateLimited):
 		rateLimited(w, err, "too many attempts — wait before trying again")

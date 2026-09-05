@@ -80,6 +80,11 @@ const (
 	// has to remember.
 	PrefixFreezeWindow = "fzw"
 	PrefixBreakGlass   = "bg"
+
+	// V1.x: the audit log (docs/features/audit-log.md §2). One id per recorded
+	// action. Audit ids are never reused and never renumbered — an id in a
+	// support conversation must keep naming the same event forever.
+	PrefixAuditEvent = "aud"
 )
 
 // New returns a prefixed, URL-safe, collision-resistant identifier such as

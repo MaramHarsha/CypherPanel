@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/MaramHarsha/cypherpanel/core/applications"
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/store"
 	"github.com/MaramHarsha/cypherpanel/pkg/subjects"
@@ -270,6 +272,12 @@ func (a *API) handleCreateApplication(w http.ResponseWriter, r *http.Request) {
 		a.writeAppError(w, err, "could not create application")
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:        audit.ActionApplicationCreated,
+		Resource:      audit.Resource(audit.ResourceApplication, app.ID, app.Name),
+		EnvironmentID: app.EnvironmentID,
+		Detail:        map[string]any{"server_id": app.Runtime.ServerID, "source_kind": app.Source.Kind, "domain": app.Route.Domain},
+	})
 	a.syncApplicationDNS(r.Context(), app)
 	created := toApplicationDTO(app)
 	created.TLSState = domain.RouteTLSState(app.Route, a.acmeConfigured(r.Context()))
@@ -450,6 +458,15 @@ func (a *API) handlePatchApplication(w http.ResponseWriter, r *http.Request) {
 		a.writeAppError(w, err, "could not update application")
 		return
 	}
+	// The changed field NAMES, not their contents: what an operator needs to
+	// see is that the domain moved, and the new domain is on the application
+	// itself (§6).
+	a.audit(r, audit.Entry{
+		Action:        audit.ActionApplicationUpdated,
+		Resource:      audit.Resource(audit.ResourceApplication, app.ID, app.Name),
+		EnvironmentID: app.EnvironmentID,
+		Detail:        map[string]any{"fields": patchedApplicationFields(req)},
+	})
 	a.syncApplicationDNS(r.Context(), app)
 	dto := toApplicationDTO(app)
 	dto.RedeployPending = a.redeployPending(r.Context(), app.ID)
@@ -496,7 +513,41 @@ func (a *API) handleDeleteApplication(w http.ResponseWriter, r *http.Request) {
 		// removal anyway. Degraded immediacy, not failure.
 		a.deps.Log.Error("publishing app removal", "app_id", app.ID, "error", err)
 	}
+	// The environment survives the application, so the ownership chain still
+	// resolves from it — this is the answer to "who deleted notify-svc?" that
+	// the 404 screen promises the log remembers (canvas 13p).
+	a.audit(r, audit.Entry{
+		Action:        audit.ActionApplicationDeleted,
+		Resource:      audit.Resource(audit.ResourceApplication, app.ID, app.Name),
+		EnvironmentID: app.EnvironmentID,
+	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// patchedApplicationFields names the top-level fields a PATCH actually carried,
+// for the audit detail. Names only: the values are on the application, and one
+// of them (an env var) is sealed (§6).
+func patchedApplicationFields(req patchApplicationRequest) []string {
+	fields := []string{}
+	for name, present := range map[string]bool{
+		"name":                req.Name != nil,
+		"source":              req.Source != nil,
+		"build":               req.Build != nil,
+		"runtime":             req.Runtime != nil,
+		"route":               req.Route != nil,
+		"health":              req.Health != nil,
+		"volumes":             req.Volumes != nil,
+		"ports":               req.Ports != nil,
+		"preview_enabled":     req.PreviewEnabled != nil,
+		"preview_base_domain": req.PreviewBaseDomain != nil,
+		"preview_ttl_hours":   req.PreviewTTLHours != nil,
+	} {
+		if present {
+			fields = append(fields, name)
+		}
+	}
+	sort.Strings(fields)
+	return fields
 }
 
 func (a *API) handleListEnvVars(w http.ResponseWriter, r *http.Request) {
@@ -551,6 +602,10 @@ func (a *API) handleSetEnvVar(w http.ResponseWriter, r *http.Request) {
 		a.writeAppError(w, err, "could not set environment variable")
 		return
 	}
+	// The KEY, never the value (§6). `key` is deliberately not on the audit
+	// package's refused-key list: the name of an env var is exactly what this
+	// row is for, and its content is exactly what it must not carry.
+	a.auditApplication(r, audit.ActionEnvVarSet, r.PathValue("id"), map[string]any{"key": r.PathValue("key")})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -571,7 +626,25 @@ func (a *API) handleDeleteEnvVar(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not delete environment variable")
 		return
 	}
+	a.auditApplication(r, audit.ActionEnvVarRemoved, r.PathValue("id"), map[string]any{"key": r.PathValue("key")})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// auditApplication records an action on an application the handler addressed by
+// id alone, resolving its name and environment for the snapshot. A lookup that
+// fails still records the row: an entry that names only the id is worth more
+// than no entry at all.
+func (a *API) auditApplication(r *http.Request, action, appID string, detail map[string]any) {
+	if a.deps.Audit == nil {
+		return
+	}
+	app, _ := a.deps.Applications.Get(r.Context(), appID)
+	a.audit(r, audit.Entry{
+		Action:        action,
+		Resource:      audit.Resource(audit.ResourceApplication, appID, app.Name),
+		EnvironmentID: app.EnvironmentID,
+		Detail:        detail,
+	})
 }
 
 // writeAppError maps applications-service errors to HTTP status codes: client

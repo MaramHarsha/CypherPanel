@@ -211,6 +211,13 @@ neither the plaintext nor its ciphertext appears in the tail.
   everyone out — the per-address counter only ever stops that address — and a
   distributed guess at one account is bounded by the account counter.
   Successful sign-in resets both.
+- **A refusal is recorded once per episode.** A throttled attempt is turned away
+  by the in-memory limiter without touching Postgres, which is the point: it
+  bounds the work an anonymous caller can cause. `auth.Limiter.Refuse(key)`
+  therefore reports the *transition* into a throttle episode (and reopens once
+  the key is allowed again), so the audit log writes one durable row per episode
+  rather than one per refused packet ([audit-log.md](audit-log.md) §6). Canvas
+  13t needs the throttling to be visible, not counted.
 - **Email change is throttled**, as [panel-mail.md](panel-mail.md) §5 has
   promised since it shipped: request and confirm both take the same two keys
   (client address; the caller's user id as the account) and answer `429` with

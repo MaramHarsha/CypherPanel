@@ -108,3 +108,58 @@ func TestRateLimitedErrorRoundsUpAndMatchesTheSentinel(t *testing.T) {
 		}
 	}
 }
+
+// Refuse is what lets a caller record a throttled attempt DURABLY without
+// letting an anonymous caller drive one write per packet: it is true once per
+// throttle episode, and true again only after the key has been allowed back.
+func TestRefuseIsTrueOncePerThrottleEpisode(t *testing.T) {
+	now := time.Now()
+	l := NewLimiter(2, time.Minute)
+	l.now = func() time.Time { return now }
+	key := "1.2.3.4"
+
+	if l.Refuse(key) {
+		t.Fatal("Refuse reported an episode while the key was still allowed")
+	}
+
+	l.Fail(key)
+	l.Fail(key)
+	if l.Allow(key) {
+		t.Fatal("the key should be blocked at the limit")
+	}
+	if !l.Refuse(key) {
+		t.Fatal("the first refusal of an episode must report the transition")
+	}
+	for i := range 5 {
+		if l.Refuse(key) {
+			t.Fatalf("refusal %d reported a second transition inside one episode", i+2)
+		}
+	}
+
+	// The window elapses: the key is allowed again, so the NEXT throttle is a
+	// new event and worth recording again.
+	now = now.Add(2 * time.Minute)
+	if !l.Allow(key) {
+		t.Fatal("the key should be forgiven after the window")
+	}
+	l.Fail(key)
+	l.Fail(key)
+	if l.Allow(key) {
+		t.Fatal("the key should be blocked again")
+	}
+	if !l.Refuse(key) {
+		t.Fatal("a second throttle episode was not reported")
+	}
+
+	// A successful sign-in clears everything, including the episode marker.
+	l.Reset(key)
+	l.Fail(key)
+	l.Fail(key)
+	if !l.Refuse(key) {
+		t.Fatal("an episode after a Reset was not reported")
+	}
+	var nilLimiter *Limiter
+	if nilLimiter.Refuse(key) {
+		t.Fatal("a nil limiter reported a refusal")
+	}
+}

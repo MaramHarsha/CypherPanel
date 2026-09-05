@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/servers"
 	"github.com/MaramHarsha/cypherpanel/core/store"
@@ -119,6 +120,13 @@ func (a *API) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not create server")
 		return
 	}
+	// The server, never the join token beside it (§6): the token is a
+	// single-use credential and an audit row is not where one gets a second
+	// life.
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionServerCreated,
+		Resource: audit.Resource(audit.ResourceServer, srv.ID, srv.Name),
+	})
 	caSum := sha256.Sum256(a.deps.CACertPEM)
 	fingerprint := hex.EncodeToString(caSum[:])
 	writeJSON(w, http.StatusCreated, createServerResponse{
@@ -185,6 +193,7 @@ func (a *API) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
 	if !a.requirePanelRole(w, user, domain.RoleAdmin) {
 		return
 	}
+	before, _ := a.deps.Servers.Get(r.Context(), r.PathValue("id"))
 	if err := a.deps.Servers.Delete(r.Context(), r.PathValue("id")); err != nil {
 		if errors.Is(err, store.ErrInUse) {
 			writeError(w, http.StatusConflict, "server still runs applications — move or delete them first")
@@ -194,6 +203,12 @@ func (a *API) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not delete server")
 		return
 	}
+	// Deleting a server revokes its certificate and disconnects the agent —
+	// the mirror of enrollment, and audited for the same reason (§5.3).
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionServerDeleted,
+		Resource: audit.Resource(audit.ResourceServer, r.PathValue("id"), before.Name),
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -275,5 +290,10 @@ func (a *API) handlePatchServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not update the server")
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionServerUpdated,
+		Resource: audit.Resource(audit.ResourceServer, srv.ID, srv.Name),
+		Detail:   map[string]any{"public_address": srv.PublicAddress},
+	})
 	writeJSON(w, http.StatusOK, toServerDTO(srv))
 }

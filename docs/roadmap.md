@@ -123,6 +123,44 @@ its deploys park. Preview
 environments stay unprotected by construction — freezing them would strand
 every open PR.
 
+**The audit log** has landed ([audit-log.md](features/audit-log.md),
+feature-matrix **V1.x**): one immutable row per sensitive action — who did what
+to which resource, from where, and whether it worked — written by the handler
+that performed it and queryable per team. It closes four commitments made
+elsewhere: threat-model §5.1 ("full audit log of every desired-state mutation,
+so a compromise is reconstructable"), §5.3/§8.1 ("a new server enrollment is an
+**audited**, surfaced event", until now one `slog` line),
+[deploy-protection.md](features/deploy-protection.md) §10, which deferred
+approval and break-glass *decisions* to it, and the UI copy that has been
+promising it since the design work — `ConfirmDestructive`'s "audit-logged with
+your name", the 404 screen's "the audit log remembers", the throttled sign-in's
+"every failure is in the audit log". `audit_events` carries **no foreign
+keys**, deliberately: an entry has to outlive everything it names, and a cascade
+would delete exactly the evidence of a deletion while `SET NULL` would erase the
+team scope that authorizes the read. The ownership chain is snapshotted inside
+the `INSERT` from whichever link the handler knew, so a delete handler that
+destroys its own chain still records where the action belonged. Reading it needs
+no role gate because **scope is the authorization**: a caller sees their teams'
+rows, their own actions wherever those landed, and — for a panel admin — the
+panel-level rows that belong to no team; a `team_id` they do not belong to is an
+empty page, never a `403`, so the log cannot be probed for another tenant.
+Details carry key *names*, identifiers and reasons and never a secret value,
+with a denylist of secret-shaped key names stripped on write as a second line of
+defence, and every snapshot is cut on a rune boundary inside its byte cap —
+Postgres refuses invalid UTF-8, and a refused `INSERT` is a missing entry, so a
+byte-boundary cut would have let an anonymous caller keep their own failed
+sign-ins out of the log. The automated mutations are in it too: a preview
+environment spawned by a pull request and reclaimed by its close or the TTL
+sweeper writes `environment.created`/`environment.deleted` with a `system`
+actor, so an environment cannot come and go unrecorded. A throttled sign-in
+never reaches the database, so it is recorded once per throttle *episode* rather
+than once per refused packet — the throttle still bounds the work an anonymous
+caller can cause. `CYPHERD_AUDIT_RETENTION` (90 days by default, `0` for
+forever) is both the retention horizon and the panel's erasure horizon, swept
+hourly by one owned goroutine in bounded batches. Still open, and recorded in
+the spec: the audit page itself (canvas 3g), export, and tamper-evidence beyond
+"no write route" — a hash chain against a compromised plane needs its own ADR.
+
 ## Post-v1 directions (recorded, not scheduled)
 
 Deliberate **Later** items from the [feature matrix](product/feature-matrix.md), captured so v1 work doesn't preempt or accidentally foreclose them:
