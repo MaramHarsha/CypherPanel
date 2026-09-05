@@ -469,30 +469,77 @@ func TestGuardControlRefusesPrivateAddresses(t *testing.T) {
 	}
 }
 
-// End to end: TestConfig will not reach a local listener, even though the same
-// config would be delivered to if it were saved. That asymmetry is the point —
-// a saved notifier keeps the posture threat-model §5.11 records.
-func TestTestConfigRefusesTheLocalNetwork(t *testing.T) {
+// The unsaved-config test refuses what a saved notifier is allowed to keep
+// doing. Both layers are checked: the URL policy, which runs before anything is
+// dialled, and the dial-time guard for a name that only resolves privately.
+func TestTestConfigRefusesUnsafeWebhookTargets(t *testing.T) {
+	m := New(nil, nil, quietLog(), nil)
+	ctx := context.Background()
+
+	for name, raw := range map[string]string{
+		"cleartext":      `{"webhook_url":"http://hooks.example.com/x"}`,
+		"ip literal":     `{"webhook_url":"https://93.184.216.34/x"}`,
+		"loopback":       `{"webhook_url":"https://127.0.0.1:9/x"}`,
+		"no dot in host": `{"webhook_url":"https://intranet/x"}`,
+		"userinfo":       `{"webhook_url":"https://user:pw@hooks.example.com/x"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := m.TestConfig(ctx, domain.NotifyChannelSlack, json.RawMessage(raw))
+			var ve *ValidationError
+			if !errors.As(err, &ve) {
+				t.Fatalf("TestConfig(%s) = %v, want a ValidationError", raw, err)
+			}
+		})
+	}
+}
+
+// A saved notifier keeps the documented posture and may still point at an
+// internal host — which is what makes a self-hosted receiver work. The
+// asymmetry between the two paths is the point.
+func TestSavedNotifierStillDeliversToTheLocalNetwork(t *testing.T) {
+	var got atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		got.Add(1)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 
-	m := New(nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	m := New(nil, nil, quietLog(), nil)
 	cfg := json.RawMessage(`{"webhook_url":"` + srv.URL + `"}`)
-
-	err := m.TestConfig(context.Background(), domain.NotifyChannelSlack, cfg)
-	if err == nil {
-		t.Fatal("TestConfig reached a loopback address; the egress guard did not hold")
-	}
-	if !strings.Contains(err.Error(), "panel's own network") {
-		t.Fatalf("err = %v, want the refusal to name why", err)
-	}
-
-	// The same address is still deliverable through the ordinary saved-notifier
-	// path, which deliberately keeps the documented posture.
 	if err := m.send(context.Background(), domain.NotifyChannelSlack, cfg, TestEvent()); err != nil {
-		t.Fatalf("saved-notifier delivery to the same address failed: %v", err)
+		t.Fatalf("saved-notifier delivery to a loopback address failed: %v", err)
+	}
+	if got.Load() != 1 {
+		t.Fatalf("receiver saw %d requests, want 1", got.Load())
+	}
+
+	// The same address through the unsaved path is refused.
+	if err := m.TestConfig(context.Background(), domain.NotifyChannelSlack, cfg); err == nil {
+		t.Fatal("the unsaved test reached a loopback address")
+	}
+}
+
+// Email has no unsaved test: it would relay a message through an arbitrary
+// server, with an arbitrary From, to an arbitrary recipient, leaving no record.
+func TestTestConfigRefusesUnsavedEmail(t *testing.T) {
+	m := New(nil, nil, quietLog(), nil)
+	raw := json.RawMessage(`{"smtp_host":"smtp.example.test","smtp_port":587,"from":"a@example.test","to":"b@example.test"}`)
+	if err := m.TestConfig(context.Background(), domain.NotifyChannelEmail, raw); !errors.Is(err, ErrTestRequiresSave) {
+		t.Fatalf("TestConfig(email) = %v, want ErrTestRequiresSave", err)
+	}
+}
+
+// A well-formed provider URL is accepted by the policy — the check must not be
+// so strict that the product stops working.
+func TestTestableWebhookURLAcceptsProviderEndpoints(t *testing.T) {
+	for _, u := range []string{
+		"https://hooks.slack.com/services/T00/B00/XXXX",
+		"https://discord.com/api/webhooks/123/abc",
+		"https://hooks.example.co.uk:8443/path?x=1",
+	} {
+		if !testableWebhookURL.MatchString(u) {
+			t.Fatalf("testableWebhookURL rejected a real endpoint: %s", u)
+		}
 	}
 }
 

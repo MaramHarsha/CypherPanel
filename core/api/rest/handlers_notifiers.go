@@ -285,6 +285,11 @@ func (a *API) handleTestNotifierConfig(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case err == nil:
 		writeJSON(w, http.StatusOK, connectionTestDTO{OK: true, Detail: "Delivered a test message to " + req.Channel + "."})
+	case errors.Is(err, notify.ErrTestRequiresSave):
+		// Not a failed test: there is nothing to retry here, only a different
+		// route to take. Say which one.
+		writeError(w, http.StatusBadRequest,
+			"save the email notifier first, then send a test through it — an unsaved email test would relay a message through an arbitrary server")
 	case errors.As(err, &ve):
 		// A config the panel would refuse to store is a 400, not a failed test:
 		// there is nothing to retry until the operator changes the form.

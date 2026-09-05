@@ -8,9 +8,11 @@ package notify
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"sync"
 	"time"
 
@@ -193,6 +195,32 @@ func TestEvent() domain.NotifyEvent {
 	}
 }
 
+// ErrTestRequiresSave marks a channel whose configuration cannot be tested
+// before it is stored.
+//
+// Email is the only one. Testing an unsaved webhook config POSTs a fixed JSON
+// body to one URL; testing an unsaved email config makes the panel relay a
+// message through an arbitrary SMTP server, with an arbitrary From, to an
+// arbitrary recipient, on a project member's say-so, leaving no record behind.
+// That is a spam and spoofing primitive rather than a connectivity check, so
+// the email channel is tested through its saved notifier — authorized,
+// recorded, and revocable — via POST /notifiers/{id}/test.
+var ErrTestRequiresSave = errors.New("notify: save an email notifier first, then send a test through it")
+
+// testableWebhookURL is the shape an unsaved webhook test is allowed to target.
+//
+// Stricter than what a saved notifier accepts, deliberately: a saved notifier
+// is a row someone created and can be found and deleted, while this path can be
+// aimed anywhere, repeatedly, leaving nothing behind (threat-model §5.11). It
+// requires https, so a payload is not put on the wire in the clear to a host
+// nobody has committed to; forbids userinfo, so a URL cannot smuggle
+// credentials; and requires a dotted name ending in an alphabetic label, which
+// rules out an IP literal — the shape that skips DNS entirely. Addresses that
+// resolve into the panel's own network are refused separately, at dial time,
+// where a second lookup cannot slip past (egress.go).
+var testableWebhookURL = regexp.MustCompile(
+	`^https://[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*\.[A-Za-z]{2,}(:[0-9]{1,5})?(/[^\s]*)?$`)
+
 // TestConfig proves a channel configuration by using it, and persists nothing.
 //
 // It exists so a connection can be tested *before* it is saved: a dialog that
@@ -200,26 +228,49 @@ func TestEvent() domain.NotifyEvent {
 // credentials and find out later, from a notification that never arrived. The
 // config goes through the same validation as Create, so a test that passes is a
 // config that will also store.
+//
+// The request is built here rather than handed to send() so the URL this path
+// dials is visible at the point it is checked.
 func (m *Manager) TestConfig(ctx context.Context, channel string, raw json.RawMessage) error {
 	canonical, err := validateConfig(channel, raw)
 	if err != nil {
 		return err
 	}
-	// A copy of the manager whose egress is guarded (egress.go). Testing an
-	// unsaved config is the one path that can be pointed anywhere, repeatedly,
-	// leaving nothing behind, so it is the one path that refuses to dial the
-	// panel's own network — the control threat-model §5.11 names for exactly
-	// this case.
-	guarded := &Manager{
-		store:  m.store,
-		opener: m.opener,
-		http:   guardedHTTPClient(),
-		log:    m.log,
-		inbox:  m.inbox,
-		// The SMTP leg is dialled through the same guard.
-		restrictEgress: true,
+	// Egress is guarded on this path only; see egress.go for why a saved
+	// notifier keeps the posture threat-model §5.11 records.
+	guarded := &Manager{store: m.store, opener: m.opener, http: guardedHTTPClient(), log: m.log, inbox: m.inbox}
+	ev := TestEvent()
+
+	switch channel {
+	case domain.NotifyChannelEmail:
+		return ErrTestRequiresSave
+
+	case domain.NotifyChannelDiscord, domain.NotifyChannelSlack:
+		var c webhookConfig
+		if err := json.Unmarshal(canonical, &c); err != nil {
+			return fmt.Errorf("decoding webhook config: %w", err)
+		}
+		if !testableWebhookURL.MatchString(c.WebhookURL) {
+			return invalid("an unsaved test needs an https URL with a hostname — save the notifier to use this address")
+		}
+		payload := map[string]string{"text": ev.Title + "\n" + ev.Body}
+		if channel == domain.NotifyChannelDiscord {
+			payload = map[string]string{"content": ev.Title + "\n" + ev.Body}
+		}
+		return guarded.postJSON(ctx, c.WebhookURL, payload)
+
+	case domain.NotifyChannelTelegram:
+		var c telegramConfig
+		if err := json.Unmarshal(canonical, &c); err != nil {
+			return fmt.Errorf("decoding telegram config: %w", err)
+		}
+		// The host is ours: only the bot token varies, in the path.
+		return guarded.postJSON(ctx, telegramAPI+"/bot"+c.BotToken+"/sendMessage",
+			map[string]string{"chat_id": c.ChatID, "text": ev.Title + "\n" + ev.Body})
+
+	default:
+		return invalid("channel must be one of email, discord, slack, telegram")
 	}
-	return guarded.send(ctx, channel, canonical, TestEvent())
 }
 
 // deliver unseals the notifier's config and hands it to the channel sender.

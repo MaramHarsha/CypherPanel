@@ -483,6 +483,8 @@ export const useDeleteNotifier = <TError = UnauthorizedResponse | ForbiddenRespo
 
 /**
  * Validates the configuration exactly as create would, uses it once, and persists nothing. It exists because a dialog that can only test what it has already stored teaches operators to save broken credentials and find out later. A config the panel would refuse to store is a 400 — there is nothing to retry until the form changes — while a config that stores but does not reach its far end is `200 {ok:false, detail}`.
+ *
+ * Two limits apply here that do not apply to a saved notifier, because this path can be aimed anywhere, repeatedly, leaving no row behind. **The `email` channel is refused with 400**: an unsaved email test would relay a message through an arbitrary SMTP server, with an arbitrary From, to an arbitrary recipient — save the notifier and use `POST /notifiers/{id}/test`. **A webhook URL must be `https` with a dotted hostname** (no cleartext, no IP literal, no userinfo), and addresses that resolve into the panel's own network are refused at dial time.
  * @summary Prove a channel configuration before saving it
  */
 export const testNotifierConfig = async (id: string,
