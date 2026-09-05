@@ -36,6 +36,8 @@ import type {
   Error,
   ForbiddenResponse,
   NotFoundResponse,
+  PatchBackupTargetRequest,
+  PatchDatabaseBackupRequest,
   RestoreRequest,
   RunBackupResponse,
   UnauthorizedResponse
@@ -333,7 +335,79 @@ export function useGetBackupTarget<TData = Awaited<ReturnType<typeof getBackupTa
 
 
 
-export const getDeleteBackupTargetUrl = (id: string,) => {
+export const getPatchBackupTargetUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/backup-targets/${id}`
+}
+
+/**
+ * A partial edit: an omitted field is left alone, which is what lets one credential rotate without re-sending the other. The merged result is validated as a whole, so a PATCH cannot leave a target in a state create would have refused. Keys are write-only in both directions and are resealed only when sent.
+ * @summary Edit a backup target (panel admin)
+ */
+export const patchBackupTarget = async (id: string,
+    patchBackupTargetRequest: PatchBackupTargetRequest, options?: RequestInit): Promise<BackupTarget> => {
+
+  return apiFetch<BackupTarget>(getPatchBackupTargetUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(patchBackupTargetRequest)
+  }
+);}
+
+
+
+
+
+export const getPatchBackupTargetMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof patchBackupTarget>>, TError,{id: string;data: PatchBackupTargetRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof patchBackupTarget>>, TError,{id: string;data: PatchBackupTargetRequest}, TContext> => {
+
+const mutationKey = ['patchBackupTarget'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof patchBackupTarget>>, {id: string;data: PatchBackupTargetRequest}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  patchBackupTarget(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PatchBackupTargetMutationResult = NonNullable<Awaited<ReturnType<typeof patchBackupTarget>>>
+    export type PatchBackupTargetMutationBody = PatchBackupTargetRequest
+    export type PatchBackupTargetMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Edit a backup target (panel admin)
+ */
+export const usePatchBackupTarget = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof patchBackupTarget>>, TError,{id: string;data: PatchBackupTargetRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof patchBackupTarget>>,
+        TError,
+        {id: string;data: PatchBackupTargetRequest},
+        TContext
+      > => {
+      return useMutation(getPatchBackupTargetMutationOptions(options), queryClient);
+    }
+    export const getDeleteBackupTargetUrl = (id: string,) => {
 
 
 
@@ -573,6 +647,80 @@ export const useCreateDatabaseBackup = <TError = BadRequestResponse | Unauthoriz
         TContext
       > => {
       return useMutation(getCreateDatabaseBackupMutationOptions(options), queryClient);
+    }
+    export const getPatchDatabaseBackupUrl = (id: string,
+    bakId: string,) => {
+
+
+
+
+  return `/api/v1/databases/${id}/backups/${bakId}`
+}
+
+/**
+ * A partial edit: pause a schedule without forgetting where it wrote, move it to another target, or change the retention window, one at a time. A target that does not exist is a 400 rather than a foreign-key error, and a retention of zero or less falls back to the same default creation uses.
+ * @summary Edit a backup schedule
+ */
+export const patchDatabaseBackup = async (id: string,
+    bakId: string,
+    patchDatabaseBackupRequest: PatchDatabaseBackupRequest, options?: RequestInit): Promise<DatabaseBackup> => {
+
+  return apiFetch<DatabaseBackup>(getPatchDatabaseBackupUrl(id,bakId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(patchDatabaseBackupRequest)
+  }
+);}
+
+
+
+
+
+export const getPatchDatabaseBackupMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof patchDatabaseBackup>>, TError,{id: string;bakId: string;data: PatchDatabaseBackupRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof patchDatabaseBackup>>, TError,{id: string;bakId: string;data: PatchDatabaseBackupRequest}, TContext> => {
+
+const mutationKey = ['patchDatabaseBackup'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof patchDatabaseBackup>>, {id: string;bakId: string;data: PatchDatabaseBackupRequest}> = (props) => {
+          const {id,bakId,data} = props ?? {};
+
+          return  patchDatabaseBackup(id,bakId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PatchDatabaseBackupMutationResult = NonNullable<Awaited<ReturnType<typeof patchDatabaseBackup>>>
+    export type PatchDatabaseBackupMutationBody = PatchDatabaseBackupRequest
+    export type PatchDatabaseBackupMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Edit a backup schedule
+ */
+export const usePatchDatabaseBackup = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof patchDatabaseBackup>>, TError,{id: string;bakId: string;data: PatchDatabaseBackupRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof patchDatabaseBackup>>,
+        TError,
+        {id: string;bakId: string;data: PatchDatabaseBackupRequest},
+        TContext
+      > => {
+      return useMutation(getPatchDatabaseBackupMutationOptions(options), queryClient);
     }
     export const getDeleteDatabaseBackupUrl = (id: string,
     bakId: string,) => {

@@ -2139,6 +2139,25 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: patchBackupTarget
+      tags: [backups]
+      summary: Edit a backup target (panel admin)
+      description: >
+        A partial edit: an omitted field is left alone, which is what lets one
+        credential rotate without re-sending the other. The merged result is
+        validated as a whole, so a PATCH cannot leave a target in a state create
+        would have refused. Keys are write-only in both directions and are
+        resealed only when sent.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PatchBackupTargetRequest" } } }
+      responses:
+        "200": { description: Updated., content: { application/json: { schema: { $ref: "#/components/schemas/BackupTarget" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
     delete:
       operationId: deleteBackupTarget
       tags: [backups]
@@ -2180,6 +2199,24 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Database ID. }
       - { name: bak_id, in: path, required: true, schema: { type: string }, description: Backup schedule ID (bak_… prefix). }
+    patch:
+      operationId: patchDatabaseBackup
+      tags: [backups]
+      summary: Edit a backup schedule
+      description: >
+        A partial edit: pause a schedule without forgetting where it wrote, move
+        it to another target, or change the retention window, one at a time. A
+        target that does not exist is a 400 rather than a foreign-key error, and
+        a retention of zero or less falls back to the same default creation uses.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PatchDatabaseBackupRequest" } } }
+      responses:
+        "200": { description: Updated., content: { application/json: { schema: { $ref: "#/components/schemas/DatabaseBackup" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
     delete:
       operationId: deleteDatabaseBackup
       tags: [backups]
@@ -3316,6 +3353,27 @@ components:
           description: >-
             Transport security in use. Settings saved before this field existed
             read back as starttls, which is how they are sent.
+
+    PatchBackupTargetRequest:
+      type: object
+      description: Every field optional; omitted means "leave it alone".
+      properties:
+        name: { type: string }
+        endpoint: { type: string }
+        bucket: { type: string }
+        region: { type: string }
+        access_key: { type: string, description: Write-only. Resealed only when sent. }
+        secret_key: { type: string, description: Write-only. Resealed only when sent. }
+        path_prefix: { type: string }
+
+    PatchDatabaseBackupRequest:
+      type: object
+      description: Every field optional; omitted means "leave it alone".
+      properties:
+        target_id: { type: string }
+        schedule: { type: string, description: "Cron expression; empty means manual only." }
+        retention_count: { type: integer, description: "Keep the last N backups; zero or less falls back to 7." }
+        enabled: { type: boolean }
 
     ConnectionTest:
       type: object

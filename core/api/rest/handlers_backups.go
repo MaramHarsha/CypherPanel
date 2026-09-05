@@ -49,6 +49,18 @@ type createBackupTargetRequest struct {
 	PathPrefix string `json:"path_prefix"`
 }
 
+// patchBackupTargetRequest is a partial edit: an omitted field is left alone,
+// which is what lets one credential rotate without re-sending the other.
+type patchBackupTargetRequest struct {
+	Name       *string `json:"name"`
+	Endpoint   *string `json:"endpoint"`
+	Bucket     *string `json:"bucket"`
+	Region     *string `json:"region"`
+	AccessKey  *string `json:"access_key"`
+	SecretKey  *string `json:"secret_key"`
+	PathPrefix *string `json:"path_prefix"`
+}
+
 // --- Backup Target Handlers ---
 
 func (a *API) handleCreateBackupTarget(w http.ResponseWriter, r *http.Request) {
@@ -107,6 +119,41 @@ func (a *API) handleGetBackupTarget(w http.ResponseWriter, r *http.Request) {
 		}
 		a.deps.Log.Error("getting backup target", "error", err)
 		writeError(w, http.StatusInternalServerError, "could not get backup target")
+		return
+	}
+	writeJSON(w, http.StatusOK, toBackupTargetDTO(t))
+}
+
+func (a *API) handlePatchBackupTarget(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.requirePanelRole(w, user, domain.RoleAdmin) {
+		return
+	}
+	var req patchBackupTargetRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	t, err := a.deps.BackupTargets.UpdateTarget(r.Context(), r.PathValue("id"), databases.UpdateTargetInput{
+		Name:       req.Name,
+		Endpoint:   req.Endpoint,
+		Bucket:     req.Bucket,
+		Region:     req.Region,
+		AccessKey:  req.AccessKey,
+		SecretKey:  req.SecretKey,
+		PathPrefix: req.PathPrefix,
+	})
+	if err != nil {
+		var ve *databases.ValidationError
+		switch {
+		case errors.As(err, &ve):
+			writeError(w, http.StatusBadRequest, ve.Msg)
+		case errors.Is(err, store.ErrNotFound):
+			writeError(w, http.StatusNotFound, "backup target not found")
+		default:
+			a.deps.Log.Error("updating backup target", "target_id", r.PathValue("id"), "error", err)
+			writeError(w, http.StatusInternalServerError, "could not update backup target")
+		}
 		return
 	}
 	writeJSON(w, http.StatusOK, toBackupTargetDTO(t))
@@ -255,6 +302,49 @@ func (a *API) handleListDatabaseBackups(w http.ResponseWriter, r *http.Request) 
 		out = append(out, toDatabaseBackupDTO(b))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// patchDatabaseBackupRequest is a partial edit of a schedule — pause it, move
+// it to another target, or change the retention window, one at a time.
+type patchDatabaseBackupRequest struct {
+	TargetID       *string `json:"target_id"`
+	Schedule       *string `json:"schedule"`
+	RetentionCount *int    `json:"retention_count"`
+	Enabled        *bool   `json:"enabled"`
+}
+
+func (a *API) handlePatchDatabaseBackup(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForDatabase(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
+	var req patchDatabaseBackupRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	b, err := a.deps.BackupSchedules.UpdateSchedule(r.Context(), r.PathValue("bak_id"), databases.UpdateScheduleInput{
+		TargetID:       req.TargetID,
+		Schedule:       req.Schedule,
+		RetentionCount: req.RetentionCount,
+		Enabled:        req.Enabled,
+	})
+	if err != nil {
+		var ve *databases.ValidationError
+		switch {
+		case errors.As(err, &ve):
+			writeError(w, http.StatusBadRequest, ve.Msg)
+		case errors.Is(err, store.ErrNotFound):
+			writeError(w, http.StatusNotFound, "backup schedule not found")
+		default:
+			a.deps.Log.Error("updating database backup", "backup_id", r.PathValue("bak_id"), "error", err)
+			writeError(w, http.StatusInternalServerError, "could not update backup schedule")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, toDatabaseBackupDTO(b))
 }
 
 func (a *API) handleDeleteDatabaseBackup(w http.ResponseWriter, r *http.Request) {

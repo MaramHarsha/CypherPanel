@@ -129,6 +129,8 @@ export * from './panelTLSSettings.ts';
 export * from './panelVersion.ts';
 export * from './patchApplicationRequest.ts';
 export * from './patchApplicationRequestRuntime.ts';
+export * from './patchBackupTargetRequest.ts';
+export * from './patchDatabaseBackupRequest.ts';
 export * from './patchDatabaseRequest.ts';
 export * from './patchNotifierRequest.ts';
 export * from './patchNotifierRequestConfig.ts';

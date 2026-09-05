@@ -419,10 +419,12 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/backup-targets", a.authed(a.handleCreateBackupTarget))
 	mux.HandleFunc("GET /api/v1/backup-targets", a.authed(a.handleListBackupTargets))
 	mux.HandleFunc("GET /api/v1/backup-targets/{id}", a.authed(a.handleGetBackupTarget))
+	mux.HandleFunc("PATCH /api/v1/backup-targets/{id}", a.authed(a.handlePatchBackupTarget))
 	mux.HandleFunc("DELETE /api/v1/backup-targets/{id}", a.authed(a.handleDeleteBackupTarget))
 
 	mux.HandleFunc("POST /api/v1/databases/{id}/backups", a.authed(a.handleCreateDatabaseBackup))
 	mux.HandleFunc("GET /api/v1/databases/{id}/backups", a.authed(a.handleListDatabaseBackups))
+	mux.HandleFunc("PATCH /api/v1/databases/{id}/backups/{bak_id}", a.authed(a.handlePatchDatabaseBackup))
 	mux.HandleFunc("DELETE /api/v1/databases/{id}/backups/{bak_id}", a.authed(a.handleDeleteDatabaseBackup))
 	mux.HandleFunc("GET /api/v1/databases/{id}/backups/{bak_id}/history", a.authed(a.handleListBackupRecords))
 	mux.HandleFunc("POST /api/v1/databases/{id}/backups/{bak_id}/run", a.authed(a.handleRunBackup))
