@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,6 +29,11 @@ type fakeStore struct {
 	emailChangeHashes map[string][]byte             // change id → token hash
 	expiries          map[string]time.Time          // token-hash → session expiry
 	purgeErr          error                         // DeleteExpiredSessions failure, when set
+
+	// The session purge runs on its own goroutine against the same fake the
+	// test authenticates through, so the maps it touches are shared state.
+	// Postgres serialises this for the real store; here the mutex does.
+	mu sync.Mutex
 }
 
 func newFakeStore() *fakeStore {
@@ -73,6 +79,8 @@ func (f *fakeStore) APITokenByHash(_ context.Context, tokenHash []byte) (domain.
 }
 
 func (f *fakeStore) SessionForToken(_ context.Context, tokenHash []byte) (domain.User, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	userID, ok := f.sessions[string(tokenHash)]
 	if !ok {
 		return domain.User{}, "", store.ErrNotFound
@@ -85,6 +93,8 @@ func (f *fakeStore) SessionForToken(_ context.Context, tokenHash []byte) (domain
 }
 
 func (f *fakeStore) ListSessionsByUser(_ context.Context, userID string) ([]domain.Session, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	var out []domain.Session
 	for hash, uid := range f.sessions {
 		if uid == userID {
@@ -95,6 +105,8 @@ func (f *fakeStore) ListSessionsByUser(_ context.Context, userID string) ([]doma
 }
 
 func (f *fakeStore) DeleteSessionForUser(_ context.Context, sessionID, userID string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for hash, uid := range f.sessions {
 		if "sess_"+hash == sessionID && uid == userID {
 			delete(f.sessions, hash)
@@ -105,6 +117,8 @@ func (f *fakeStore) DeleteSessionForUser(_ context.Context, sessionID, userID st
 }
 
 func (f *fakeStore) DeleteOtherSessionsForUser(_ context.Context, userID string, keepTokenHash []byte) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	var n int64
 	for hash, uid := range f.sessions {
 		if uid == userID && hash != string(keepTokenHash) {
@@ -352,6 +366,8 @@ func (f *fakeStore) UpdateUserPassword(_ context.Context, userID, passwordHash s
 }
 
 func (f *fakeStore) CreateSession(_ context.Context, _, userID string, tokenHash []byte, expiresAt time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.sessions[string(tokenHash)] = userID
 	if f.expiries == nil {
 		f.expiries = map[string]time.Time{}
@@ -361,6 +377,8 @@ func (f *fakeStore) CreateSession(_ context.Context, _, userID string, tokenHash
 }
 
 func (f *fakeStore) UserForSessionToken(_ context.Context, tokenHash []byte) (domain.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	userID, ok := f.sessions[string(tokenHash)]
 	if !ok {
 		return domain.User{}, store.ErrNotFound
@@ -374,6 +392,8 @@ func (f *fakeStore) UserForSessionToken(_ context.Context, tokenHash []byte) (do
 }
 
 func (f *fakeStore) DeleteSession(_ context.Context, tokenHash []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	delete(f.sessions, string(tokenHash))
 	return nil
 }
@@ -381,6 +401,8 @@ func (f *fakeStore) DeleteSession(_ context.Context, tokenHash []byte) error {
 // DeleteExpiredSessions drops the sessions whose recorded expiry is at or
 // before the cutoff (expiries maps token-hash → expiry; unrecorded = never).
 func (f *fakeStore) DeleteExpiredSessions(_ context.Context, before time.Time) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.purgeErr != nil {
 		return 0, f.purgeErr
 	}
