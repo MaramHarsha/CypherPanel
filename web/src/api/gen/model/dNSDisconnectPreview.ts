@@ -7,14 +7,9 @@
  * Every response — success, error and SSE stream alike — carries an `X-Request-Id` header (`components/headers/RequestId`), and every JSON error body repeats it as `trace_id`. It is the value to quote in a bug report and the key to search for in `GET /api/v1/panel/logs`. Individual responses reference the header only where a generated client benefits; it is present on all of them.
  * OpenAPI spec version: 0.3.0
  */
+import type { DNSVerifiedDomain } from './dNSVerifiedDomain.ts';
 
-export interface DNSZone {
-  id: string;
-  /** The zone apex, e.g. example.com. */
-  name: string;
-  /** The provider's activation state (initializing, pending, active). A non-active zone is still yours and still verifies a domain — it will not resolve until its nameservers point at the provider. */
-  status: string;
-  refreshed_at: string;
-  /** How many records the panel still wants to exist in this zone. What a disconnect would orphan, so it is a count of desired state rather than of what the provider currently holds. */
-  managed_record_count?: number;
+export interface DNSDisconnectPreview {
+  verified_domain_count: number;
+  domains: DNSVerifiedDomain[];
 }

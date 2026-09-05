@@ -209,6 +209,21 @@ type DNSZone struct {
 	// to be told that rather than left wondering (§3.2).
 	Status      string
 	RefreshedAt time.Time
+	// ManagedRecords is how many records the panel still wants to exist in this
+	// zone. Derived at read time rather than stored: it is a count of desired
+	// state, and a cached copy would drift the moment a domain moved.
+	ManagedRecords int64
+}
+
+// DNSVerifiedDomain is one application whose domain is verified through the
+// connected provider — that is, one thing that stops being verified if the
+// provider is disconnected. It exists so a confirmation can state its blast
+// radius instead of asking the operator to guess at it.
+type DNSVerifiedDomain struct {
+	ApplicationID   string
+	ApplicationName string
+	Domain          string
+	ZoneName        string
 }
 
 // Zone activation states worth naming (Cloudflare's enum is initializing,

@@ -29,6 +29,7 @@ import type {
 import type {
   BadRequestResponse,
   ChooseAccountError,
+  DNSDisconnectPreview,
   DNSSettings,
   DNSZone,
   Error,
@@ -554,7 +555,108 @@ export const useTestPanelDNS = <TError = BadRequestResponse | UnauthorizedRespon
       > => {
       return useMutation(getTestPanelDNSMutationOptions(options), queryClient);
     }
-    export const getListDNSZonesUrl = () => {
+    export const getGetDNSDisconnectPreviewUrl = () => {
+
+
+
+
+  return `/api/v1/panel/dns/disconnect-preview`
+}
+
+/**
+ * Lists the application domains verified through the connected provider, so the confirmation can state its blast radius with a count instead of generic destructive copy — only the panel knows which domains these are. Reads desired state and changes nothing, so it is safe to call every time the dialog opens.
+ * @summary What stops being verified if the DNS provider is disconnected (panel admin)
+ */
+export const getDNSDisconnectPreview = async ( options?: RequestInit): Promise<DNSDisconnectPreview> => {
+
+  return apiFetch<DNSDisconnectPreview>(getGetDNSDisconnectPreviewUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetDNSDisconnectPreviewQueryKey = () => {
+    return [
+    `/api/v1/panel/dns/disconnect-preview`
+    ] as const;
+    }
+
+
+export const getGetDNSDisconnectPreviewQueryOptions = <TData = Awaited<ReturnType<typeof getDNSDisconnectPreview>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDNSDisconnectPreview>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetDNSDisconnectPreviewQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDNSDisconnectPreview>>> = ({ signal }) => getDNSDisconnectPreview({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDNSDisconnectPreview>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetDNSDisconnectPreviewQueryResult = NonNullable<Awaited<ReturnType<typeof getDNSDisconnectPreview>>>
+export type GetDNSDisconnectPreviewQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useGetDNSDisconnectPreview<TData = Awaited<ReturnType<typeof getDNSDisconnectPreview>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDNSDisconnectPreview>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getDNSDisconnectPreview>>,
+          TError,
+          Awaited<ReturnType<typeof getDNSDisconnectPreview>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDNSDisconnectPreview<TData = Awaited<ReturnType<typeof getDNSDisconnectPreview>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDNSDisconnectPreview>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getDNSDisconnectPreview>>,
+          TError,
+          Awaited<ReturnType<typeof getDNSDisconnectPreview>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDNSDisconnectPreview<TData = Awaited<ReturnType<typeof getDNSDisconnectPreview>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDNSDisconnectPreview>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary What stops being verified if the DNS provider is disconnected (panel admin)
+ */
+
+export function useGetDNSDisconnectPreview<TData = Awaited<ReturnType<typeof getDNSDisconnectPreview>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDNSDisconnectPreview>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetDNSDisconnectPreviewQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getListDNSZonesUrl = () => {
 
 
 

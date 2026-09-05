@@ -296,3 +296,156 @@ func TestStoreCancelPendingEmailChanges(t *testing.T) {
 		t.Fatalf("another user's change was cancelled too: %v", err)
 	}
 }
+
+// TestStoreDNSZoneManagedRecordCounts: the zones list carries a live count of
+// what the panel still wants to exist. Tombstoned records (desired='absent')
+// are on their way out and would overstate what a disconnect orphans.
+func TestStoreDNSZoneManagedRecordCounts(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	_, _, _, app := seedApp(t, s)
+
+	busy, err := s.UpsertDNSZone(ctx, domain.DNSZone{
+		ID: ids.New(ids.PrefixDNSZone), ProviderZoneID: "pz-busy",
+		Name: "busy-" + ids.Secret()[:6] + ".example.test", Status: "active",
+	})
+	if err != nil {
+		t.Fatalf("UpsertDNSZone(busy): %v", err)
+	}
+	quiet, err := s.UpsertDNSZone(ctx, domain.DNSZone{
+		ID: ids.New(ids.PrefixDNSZone), ProviderZoneID: "pz-quiet",
+		Name: "quiet-" + ids.Secret()[:6] + ".example.test", Status: "pending",
+	})
+	if err != nil {
+		t.Fatalf("UpsertDNSZone(quiet): %v", err)
+	}
+
+	// Upsert always means "want this record"; leaving is a separate operation
+	// (TombstoneDNSRecordsForApplication), so the departing row belongs to a
+	// second application that is then reaped.
+	leaving, err := s.CreateApplicationWithEnv(ctx, domain.Application{
+		ID:                 ids.New(ids.PrefixApplication),
+		EnvironmentID:      app.EnvironmentID,
+		Name:               "leaving",
+		Source:             domain.AppSource{Kind: "github", Repo: "acme/leaving", Branch: "main"},
+		Build:              domain.AppBuild{Kind: "dockerfile", DockerfilePath: "./Dockerfile", Context: "."},
+		Runtime:            app.Runtime,
+		Route:              domain.AppRoute{Domain: "leaving.example.com"},
+		Health:             app.Health,
+		WebhookID:          ids.New(ids.PrefixWebhook),
+		WebhookSecretCT:    []byte("ct"),
+		WebhookSecretNonce: []byte("nonce"),
+	}, nil)
+	if err != nil {
+		t.Fatalf("CreateApplicationWithEnv(leaving): %v", err)
+	}
+
+	appID, leavingID := app.ID, leaving.ID
+	for _, r := range []struct {
+		name  string
+		owner *string
+	}{
+		{"web", &appID},
+		{"api", &appID},
+		{"gone", &leavingID},
+	} {
+		if _, err := s.UpsertDNSRecord(ctx, domain.DNSRecord{
+			ID: ids.New(ids.PrefixDNSRecord), ApplicationID: r.owner, ZoneID: busy.ID,
+			Name: r.name + "." + busy.Name, Type: "A", Content: "203.0.113.7",
+		}); err != nil {
+			t.Fatalf("UpsertDNSRecord(%s): %v", r.name, err)
+		}
+	}
+	if err := s.TombstoneDNSRecordsForApplication(ctx, leavingID); err != nil {
+		t.Fatalf("TombstoneDNSRecordsForApplication: %v", err)
+	}
+
+	zones, err := s.ListDNSZones(ctx)
+	if err != nil {
+		t.Fatalf("ListDNSZones: %v", err)
+	}
+	counts := map[string]int64{}
+	for _, z := range zones {
+		counts[z.ID] = z.ManagedRecords
+	}
+	if counts[busy.ID] != 2 {
+		t.Fatalf("busy zone managed records = %d, want 2 (the tombstoned row must not count)", counts[busy.ID])
+	}
+	if counts[quiet.ID] != 0 {
+		t.Fatalf("quiet zone managed records = %d, want 0", counts[quiet.ID])
+	}
+}
+
+// TestStoreListApplicationsWithManagedDNS: the disconnect preview names the
+// domains that stop being verified — the ones still wanted, attached to an
+// application that still exists.
+func TestStoreListApplicationsWithManagedDNS(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	_, _, _, app := seedApp(t, s)
+
+	zone, err := s.UpsertDNSZone(ctx, domain.DNSZone{
+		ID: ids.New(ids.PrefixDNSZone), ProviderZoneID: "pz-1",
+		Name: "preview-" + ids.Secret()[:6] + ".example.test", Status: "active",
+	})
+	if err != nil {
+		t.Fatalf("UpsertDNSZone: %v", err)
+	}
+
+	appID := app.ID
+	live := "live." + zone.Name
+	if _, err := s.UpsertDNSRecord(ctx, domain.DNSRecord{
+		ID: ids.New(ids.PrefixDNSRecord), ApplicationID: &appID, ZoneID: zone.ID,
+		Name: live, Type: "A", Content: "203.0.113.7", Desired: "present",
+	}); err != nil {
+		t.Fatalf("UpsertDNSRecord(live): %v", err)
+	}
+	// Tombstoned: already leaving, so not part of the blast radius. It belongs
+	// to a second application so reaping it does not take the live one too.
+	leaving, err := s.CreateApplicationWithEnv(ctx, domain.Application{
+		ID:                 ids.New(ids.PrefixApplication),
+		EnvironmentID:      app.EnvironmentID,
+		Name:               "leaving",
+		Source:             domain.AppSource{Kind: "github", Repo: "acme/leaving", Branch: "main"},
+		Build:              domain.AppBuild{Kind: "dockerfile", DockerfilePath: "./Dockerfile", Context: "."},
+		Runtime:            app.Runtime,
+		Route:              domain.AppRoute{Domain: "leaving.example.com"},
+		Health:             app.Health,
+		WebhookID:          ids.New(ids.PrefixWebhook),
+		WebhookSecretCT:    []byte("ct"),
+		WebhookSecretNonce: []byte("nonce"),
+	}, nil)
+	if err != nil {
+		t.Fatalf("CreateApplicationWithEnv(leaving): %v", err)
+	}
+	leavingID := leaving.ID
+	if _, err := s.UpsertDNSRecord(ctx, domain.DNSRecord{
+		ID: ids.New(ids.PrefixDNSRecord), ApplicationID: &leavingID, ZoneID: zone.ID,
+		Name: "leaving." + zone.Name, Type: "A", Content: "203.0.113.7",
+	}); err != nil {
+		t.Fatalf("UpsertDNSRecord(leaving): %v", err)
+	}
+	if err := s.TombstoneDNSRecordsForApplication(ctx, leavingID); err != nil {
+		t.Fatalf("TombstoneDNSRecordsForApplication: %v", err)
+	}
+
+	domains, err := s.ListApplicationsWithManagedDNS(ctx)
+	if err != nil {
+		t.Fatalf("ListApplicationsWithManagedDNS: %v", err)
+	}
+	var found *domain.DNSVerifiedDomain
+	for i := range domains {
+		if domains[i].Domain == live {
+			found = &domains[i]
+		}
+		if domains[i].Domain == "leaving."+zone.Name {
+			t.Fatal("a tombstoned record was listed as verified")
+		}
+	}
+	if found == nil {
+		t.Fatalf("the live domain %q was not listed: %+v", live, domains)
+	}
+	if found.ApplicationID != app.ID || found.ApplicationName != app.Name || found.ZoneName != zone.Name {
+		t.Fatalf("the listed domain does not name its application and zone: %+v", *found)
+	}
+}

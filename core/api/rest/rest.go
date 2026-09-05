@@ -413,6 +413,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/panel/dns", a.authed(a.handleSetPanelDNS))
 	mux.HandleFunc("DELETE /api/v1/panel/dns", a.authed(a.handleDeletePanelDNS))
 	mux.HandleFunc("POST /api/v1/panel/dns/test", a.authed(a.handleTestPanelDNS))
+	mux.HandleFunc("GET /api/v1/panel/dns/disconnect-preview", a.authed(a.handleDNSDisconnectPreview))
 	mux.HandleFunc("GET /api/v1/panel/dns/zones", a.authed(a.handleListDNSZones))
 	mux.HandleFunc("POST /api/v1/panel/dns/zones/refresh", a.authed(a.handleRefreshDNSZones))
 

@@ -8,13 +8,9 @@
  * OpenAPI spec version: 0.3.0
  */
 
-export interface DNSZone {
-  id: string;
-  /** The zone apex, e.g. example.com. */
-  name: string;
-  /** The provider's activation state (initializing, pending, active). A non-active zone is still yours and still verifies a domain — it will not resolve until its nameservers point at the provider. */
-  status: string;
-  refreshed_at: string;
-  /** How many records the panel still wants to exist in this zone. What a disconnect would orphan, so it is a count of desired state rather than of what the provider currently holds. */
-  managed_record_count?: number;
+export interface DNSVerifiedDomain {
+  application_id?: string;
+  application_name: string;
+  domain: string;
+  zone_name: string;
 }

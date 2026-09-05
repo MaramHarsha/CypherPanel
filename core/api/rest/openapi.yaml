@@ -432,6 +432,22 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /api/v1/panel/dns/disconnect-preview:
+    get:
+      operationId: getDNSDisconnectPreview
+      tags: [panel]
+      summary: What stops being verified if the DNS provider is disconnected (panel admin)
+      description: >
+        Lists the application domains verified through the connected provider, so
+        the confirmation can state its blast radius with a count instead of
+        generic destructive copy — only the panel knows which domains these are.
+        Reads desired state and changes nothing, so it is safe to call every time
+        the dialog opens.
+      responses:
+        "200": { description: The blast radius., content: { application/json: { schema: { $ref: "#/components/schemas/DNSDisconnectPreview" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /api/v1/panel/dns/zones:
     get:
       operationId: listDNSZones
@@ -3292,6 +3308,13 @@ components:
             zone is still yours and still verifies a domain — it will not resolve until its
             nameservers point at the provider.
         refreshed_at: { type: string, format: date-time }
+        managed_record_count:
+          type: integer
+          format: int64
+          description: >-
+            How many records the panel still wants to exist in this zone. What a
+            disconnect would orphan, so it is a count of desired state rather
+            than of what the provider currently holds.
 
     ApplicationDNS:
       type: object
@@ -3374,6 +3397,24 @@ components:
         schedule: { type: string, description: "Cron expression; empty means manual only." }
         retention_count: { type: integer, description: "Keep the last N backups; zero or less falls back to 7." }
         enabled: { type: boolean }
+
+    DNSDisconnectPreview:
+      type: object
+      required: [verified_domain_count, domains]
+      properties:
+        verified_domain_count: { type: integer }
+        domains:
+          type: array
+          items: { $ref: "#/components/schemas/DNSVerifiedDomain" }
+
+    DNSVerifiedDomain:
+      type: object
+      required: [application_name, domain, zone_name]
+      properties:
+        application_id: { type: string }
+        application_name: { type: string }
+        domain: { type: string }
+        zone_name: { type: string }
 
     ConnectionTest:
       type: object

@@ -281,6 +281,40 @@ func buildMessage(from string, to []string, subject, body string) []byte {
 	b.WriteString("MIME-Version: 1.0\r\n")
 	b.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
 	b.WriteString("\r\n")
-	b.WriteString(strings.ReplaceAll(body, "\n", "\r\n"))
+	b.WriteString(normalizeBody(body))
 	return []byte(b.String())
+}
+
+// normalizeBody makes an arbitrary string safe to carry as the message body.
+//
+// The body sits after the blank line, so it cannot introduce a header — that
+// class is closed by SanitizeHeader above. What is left is line-ending
+// hygiene, and doing it by hand matters for one case the obvious
+// ReplaceAll("\n", "\r\n") gets wrong: a lone CR. SMTP lines are CRLF, a bare
+// CR inside DATA is a protocol violation, and a body assembled from a commit
+// message, a container log line or an operator's own note can contain one.
+// Every line ending — CRLF, lone CR, lone LF — collapses to exactly one CRLF,
+// so what the recipient sees is what the panel meant to say.
+//
+// Dot-stuffing is deliberately NOT done here: net/smtp writes the body through
+// textproto's DotWriter, which escapes a leading "." itself. Doing it twice
+// would put the dot back in the delivered text.
+func normalizeBody(body string) string {
+	var b strings.Builder
+	b.Grow(len(body) + len(body)/16)
+	for i := 0; i < len(body); i++ {
+		switch body[i] {
+		case '\r':
+			b.WriteString("\r\n")
+			// A CRLF pair is one ending, not two.
+			if i+1 < len(body) && body[i+1] == '\n' {
+				i++
+			}
+		case '\n':
+			b.WriteString("\r\n")
+		default:
+			b.WriteByte(body[i])
+		}
+	}
+	return b.String()
 }

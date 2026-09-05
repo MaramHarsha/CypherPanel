@@ -359,3 +359,60 @@ func TestBuildMessageNeutralisesEveryHeader(t *testing.T) {
 		t.Fatalf("body newlines were not normalised: %q", body)
 	}
 }
+
+// A body is assembled from commit messages, container log lines and operator
+// notes, so it can carry any line ending at all. Every one must collapse to
+// exactly one CRLF: a lone CR inside DATA is an SMTP protocol violation, and
+// the obvious ReplaceAll("\n", "\r\n") leaves it in place (CodeQL
+// go/email-injection on the DATA sink).
+func TestNormalizeBodyCollapsesEveryLineEnding(t *testing.T) {
+	cases := map[string]struct{ in, want string }{
+		"lone LF":            {"a\nb", "a\r\nb"},
+		"lone CR":            {"a\rb", "a\r\nb"},
+		"CRLF stays one":     {"a\r\nb", "a\r\nb"},
+		"mixed":              {"a\r\nb\nc\rd", "a\r\nb\r\nc\r\nd"},
+		"trailing CR":        {"a\r", "a\r\n"},
+		"consecutive breaks": {"a\n\nb", "a\r\n\r\nb"},
+		"CR CR":              {"a\r\rb", "a\r\n\r\nb"},
+		"no breaks":          {"plain text", "plain text"},
+		"empty":              {"", ""},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := normalizeBody(c.in); got != c.want {
+				t.Fatalf("normalizeBody(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+// The body cannot introduce a header no matter what it contains: it sits after
+// the blank line, so a header-shaped line in it is body text.
+func TestBuildMessageBodyCannotInjectAHeader(t *testing.T) {
+	msg := string(buildMessage(
+		"from@example.com",
+		[]string{"to@example.com"},
+		"deploy failed",
+		"log said:\r\nBcc: sneaky-body@evil.test\rX-Injected: yes",
+	))
+	headers, body, found := strings.Cut(msg, "\r\n\r\n")
+	if !found {
+		t.Fatal("message has no header/body separator")
+	}
+	for _, line := range strings.Split(headers, "\r\n") {
+		lower := strings.ToLower(line)
+		if strings.HasPrefix(lower, "bcc:") || strings.HasPrefix(lower, "x-injected:") {
+			t.Fatalf("the body reached the header block: %q", line)
+		}
+	}
+	// It is still delivered — as text the recipient can read, on its own line.
+	if !strings.Contains(body, "\r\nBcc: sneaky-body@evil.test\r\nX-Injected: yes") {
+		t.Fatalf("body content was mangled: %q", body)
+	}
+	// And no bare CR survives anywhere in the message.
+	for i := 0; i < len(msg)-1; i++ {
+		if msg[i] == '\r' && msg[i+1] != '\n' {
+			t.Fatalf("a bare CR survived at offset %d: %q", i, msg)
+		}
+	}
+}

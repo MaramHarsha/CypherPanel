@@ -69,6 +69,10 @@ type dnsZoneDTO struct {
 	// saying out loud.
 	Status      string    `json:"status"`
 	RefreshedAt time.Time `json:"refreshed_at"`
+	// ManagedRecords is how many records the panel still wants to exist here.
+	// It is what makes "3 managed records" on the zones list true rather than
+	// decorative, and it is the number a disconnect would orphan.
+	ManagedRecords int64 `json:"managed_record_count"`
 }
 
 // applicationDNSDTO is the one project-scoped view: a member sees whether their
@@ -112,7 +116,10 @@ func dnsSettingsToDTO(s dns.Settings) dnsSettingsDTO {
 func zonesToDTO(zones []domain.DNSZone) []dnsZoneDTO {
 	out := make([]dnsZoneDTO, 0, len(zones))
 	for _, z := range zones {
-		out = append(out, dnsZoneDTO{ID: z.ID, Name: z.Name, Status: z.Status, RefreshedAt: z.RefreshedAt})
+		out = append(out, dnsZoneDTO{
+			ID: z.ID, Name: z.Name, Status: z.Status, RefreshedAt: z.RefreshedAt,
+			ManagedRecords: z.ManagedRecords,
+		})
 	}
 	return out
 }
@@ -326,12 +333,62 @@ func (a *API) writeDNSError(w http.ResponseWriter, op string, err error) {
 	writeError(w, http.StatusInternalServerError, "the DNS provider could not be reached")
 }
 
+// dnsDisconnectPreviewDTO answers "what breaks if I disconnect this?" before
+// the operator has to find out. Generic destructive copy cannot say it, because
+// only the panel knows which domains are verified through the provider.
+type dnsDisconnectPreviewDTO struct {
+	VerifiedDomainCount int                    `json:"verified_domain_count"`
+	Domains             []dnsVerifiedDomainDTO `json:"domains"`
+}
+
+type dnsVerifiedDomainDTO struct {
+	ApplicationID   string `json:"application_id,omitempty"`
+	ApplicationName string `json:"application_name"`
+	Domain          string `json:"domain"`
+	ZoneName        string `json:"zone_name"`
+}
+
+// handleDNSDisconnectPreview lists what disconnecting the provider would leave
+// unverified. It reads desired state only and changes nothing, so it is safe to
+// call every time the confirmation opens.
+func (a *API) handleDNSDisconnectPreview(w http.ResponseWriter, r *http.Request) {
+	user, ok := userFromContext(r.Context())
+	if !ok || !a.requirePanelRole(w, user, domain.RoleAdmin) {
+		return
+	}
+	empty := dnsDisconnectPreviewDTO{Domains: []dnsVerifiedDomainDTO{}}
+	if a.deps.DNSZones == nil {
+		writeJSON(w, http.StatusOK, empty)
+		return
+	}
+	domains, err := a.deps.DNSZones.ListApplicationsWithManagedDNS(r.Context())
+	if err != nil {
+		a.deps.Log.Error("listing managed dns domains", "error", err)
+		writeError(w, http.StatusInternalServerError, "could not read the managed domains")
+		return
+	}
+	out := empty
+	out.VerifiedDomainCount = len(domains)
+	for _, d := range domains {
+		out.Domains = append(out.Domains, dnsVerifiedDomainDTO{
+			ApplicationID:   d.ApplicationID,
+			ApplicationName: d.ApplicationName,
+			Domain:          d.Domain,
+			ZoneName:        d.ZoneName,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // DNSReader is the read-only slice of the store the DNS handlers need: the
 // cached zone list and one application's record. Narrow on purpose — the
 // handlers have no business writing records, which is the service's job.
 type DNSReader interface {
 	ListDNSZones(ctx context.Context) ([]domain.DNSZone, error)
 	GetDNSRecordByApplication(ctx context.Context, appID string) (domain.DNSRecord, error)
+	// ListApplicationsWithManagedDNS is the blast radius of disconnecting the
+	// provider: the domains that stop being verified through it.
+	ListApplicationsWithManagedDNS(ctx context.Context) ([]domain.DNSVerifiedDomain, error)
 }
 
 // ServerAddressWriter is the one write the DNS feature needs on a server.

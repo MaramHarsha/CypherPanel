@@ -22,6 +22,41 @@ func (q *Queries) CountDNSZones(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const countManagedRecordsByZone = `-- name: CountManagedRecordsByZone :many
+SELECT zone_id, count(*)::bigint AS managed_records
+FROM dns_records
+WHERE desired = 'present'
+GROUP BY zone_id
+`
+
+type CountManagedRecordsByZoneRow struct {
+	ZoneID         string
+	ManagedRecords int64
+}
+
+// Managed records per zone, counting only what the panel still wants to exist.
+// A tombstoned row (desired='absent') is on its way out and would overstate
+// what disconnecting the provider affects.
+func (q *Queries) CountManagedRecordsByZone(ctx context.Context) ([]CountManagedRecordsByZoneRow, error) {
+	rows, err := q.db.Query(ctx, countManagedRecordsByZone)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CountManagedRecordsByZoneRow{}
+	for rows.Next() {
+		var i CountManagedRecordsByZoneRow
+		if err := rows.Scan(&i.ZoneID, &i.ManagedRecords); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deleteDNSProvider = `-- name: DeleteDNSProvider :exec
 DELETE FROM dns_providers WHERE id = 1
 `
@@ -211,6 +246,50 @@ func (q *Queries) ListApplicationsWantingDNS(ctx context.Context) ([]ListApplica
 	for rows.Next() {
 		var i ListApplicationsWantingDNSRow
 		if err := rows.Scan(&i.ID, &i.RouteDomain, &i.PublicAddress); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listApplicationsWithManagedDNS = `-- name: ListApplicationsWithManagedDNS :many
+SELECT r.application_id, a.name AS application_name, r.name AS domain, z.name AS zone_name
+FROM dns_records r
+JOIN dns_zones z ON z.id = r.zone_id
+JOIN applications a ON a.id = r.application_id
+WHERE r.desired = 'present' AND r.application_id IS NOT NULL
+ORDER BY z.name, r.name
+`
+
+type ListApplicationsWithManagedDNSRow struct {
+	ApplicationID   pgtype.Text
+	ApplicationName string
+	Domain          string
+	ZoneName        string
+}
+
+// The applications whose domains are verified through the connected provider,
+// which is exactly what stops being verified if it is disconnected. Ordered so
+// a confirmation dialog reads the same way twice.
+func (q *Queries) ListApplicationsWithManagedDNS(ctx context.Context) ([]ListApplicationsWithManagedDNSRow, error) {
+	rows, err := q.db.Query(ctx, listApplicationsWithManagedDNS)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListApplicationsWithManagedDNSRow{}
+	for rows.Next() {
+		var i ListApplicationsWithManagedDNSRow
+		if err := rows.Scan(
+			&i.ApplicationID,
+			&i.ApplicationName,
+			&i.Domain,
+			&i.ZoneName,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
