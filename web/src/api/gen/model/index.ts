@@ -220,6 +220,8 @@ export * from './setUserRoleRequest.ts';
 export * from './setUserRoleRequestRole.ts';
 export * from './sharedVariable.ts';
 export * from './sharedVariableUsage.ts';
+export * from './streamApplicationLogsParams.ts';
+export * from './streamDeploymentLogsParams.ts';
 export * from './team.ts';
 export * from './teamInvite.ts';
 export * from './teamInviteRole.ts';

@@ -76,6 +76,13 @@ message AppSpec {
   // Assembled per work item from the plane's sealed credential, carried only
   // over mTLS (rule 23) and never logged or written to disk (rule 20).
   RegistryAuth registry_auth = 16;
+  // restart_token expresses "restart this container" as desired state rather
+  // than as a verb the agent obeys (deployment-control.md §3; ADR-005). It is
+  // part of the container's config hash, so a NEW value is a difference the
+  // existing recreate path already closes — and converging twice after the
+  // recreate still mutates nothing, because the running container then carries
+  // the token the spec names. Empty is every application's birth value.
+  string restart_token = 17;
 }
 
 // RegistryAuth is one credential for one registry, as the daemon wants it.

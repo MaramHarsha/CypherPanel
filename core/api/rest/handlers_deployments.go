@@ -486,3 +486,82 @@ func (a *API) verifyWebhookSignature(app domain.Application, body []byte, header
 	mac.Write(body)
 	return hmac.Equal(mac.Sum(nil), theirs)
 }
+
+// handleCancelDeployment ends a deployment the operator has stopped waiting on
+// (deployment-control.md §2).
+//
+// A cancel is the panel stopping waiting, not a remote kill: a build already in
+// flight finishes on its builder. The 409 at `rolling_out` is the honest half —
+// desired state has already moved by then, and the recovery is a rollback.
+func (a *API) handleCancelDeployment(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForDeployment(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
+	// Built before the call: every refusal path returns a zero deployment, and
+	// this is the only point at which the application behind one is knowable.
+	src, _ := a.deps.Deployments.GetDeployment(r.Context(), r.PathValue("id"))
+	entry := a.appAuditEntry(r.Context(), audit.ActionDeployCancelled, src.ApplicationID,
+		map[string]any{"deployment_id": r.PathValue("id"), "status": string(src.Status)})
+
+	dep, err := a.deps.Scheduler.Cancel(r.Context(), r.PathValue("id"), user.Email)
+	switch {
+	case err == nil:
+	case errors.Is(err, store.ErrNotFound):
+		writeError(w, http.StatusNotFound, "deployment not found")
+		return
+	case errors.Is(err, scheduler.ErrCannotCancel):
+		a.auditFailed(r, entry, string(dep.Status))
+		if dep.Status == domain.DeployRollingOut {
+			writeError(w, http.StatusConflict,
+				"this deploy is already rolling out — roll back instead of cancelling")
+			return
+		}
+		writeError(w, http.StatusConflict, "this deploy has already finished")
+		return
+	default:
+		a.deps.Log.Error("cancelling deployment", "deployment_id", r.PathValue("id"), "error", err)
+		writeError(w, http.StatusInternalServerError, "could not cancel the deployment")
+		return
+	}
+	entry.Resource = audit.Resource(audit.ResourceDeployment, dep.ID, entry.Resource.Name)
+	a.audit(r, entry)
+	writeJSON(w, http.StatusOK, a.withApproval(r.Context(), dep))
+}
+
+// handleRestartApplication recreates an application's container without
+// shipping a new revision (deployment-control.md §3).
+//
+// It returns the application rather than a deployment, because a restart is not
+// one: no revision is created, no build runs, and desired_revision_id does not
+// move — an operator restarting a wedged container must not silently ship the
+// config they edited an hour ago.
+func (a *API) handleRestartApplication(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForApplication(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
+	entry := a.appAuditEntry(r.Context(), audit.ActionApplicationRestarted, r.PathValue("id"), nil)
+
+	app, err := a.deps.Scheduler.Restart(r.Context(), r.PathValue("id"))
+	switch {
+	case err == nil:
+	case errors.Is(err, store.ErrNotFound):
+		writeError(w, http.StatusNotFound, "application not found")
+		return
+	case errors.Is(err, scheduler.ErrNeverDeployed):
+		a.auditFailed(r, entry, "the application has never deployed")
+		writeError(w, http.StatusConflict, "this application has never deployed — deploy it first")
+		return
+	default:
+		a.deps.Log.Error("restarting application", "app_id", r.PathValue("id"), "error", err)
+		writeError(w, http.StatusInternalServerError, "could not restart the application")
+		return
+	}
+	a.audit(r, entry)
+	writeJSON(w, http.StatusAccepted, toApplicationDTO(app))
+}

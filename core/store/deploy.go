@@ -396,6 +396,17 @@ func (s *Store) UpdateApplicationConfig(ctx context.Context, a domain.Applicatio
 	return applicationFromRow(row), nil
 }
 
+// BumpApplicationRestartToken records a restart (deployment-control.md §3).
+// Separate from UpdateApplicationConfig on purpose: a restart must not carry an
+// unrelated config edit along with it.
+func (s *Store) BumpApplicationRestartToken(ctx context.Context, id, token string) (domain.Application, error) {
+	row, err := s.q.BumpApplicationRestartToken(ctx, db.BumpApplicationRestartTokenParams{ID: id, RestartToken: token})
+	if err != nil {
+		return domain.Application{}, wrapUpdate("restarting application", err)
+	}
+	return applicationFromRow(row), nil
+}
+
 func (s *Store) DeleteApplication(ctx context.Context, id string) error {
 	if err := s.q.DeleteApplication(ctx, id); err != nil {
 		return fmt.Errorf("store: deleting application: %w", err)
@@ -824,6 +835,7 @@ func applicationFromRow(r db.Application) domain.Application {
 		PreviewEnabled:     r.PreviewEnabled,
 		PreviewBaseDomain:  r.PreviewBaseDomain,
 		PreviewTTLHours:    int(r.PreviewTtlHours),
+		RestartToken:       r.RestartToken,
 		DesiredRevisionID:  ptrFromText(r.DesiredRevisionID),
 		Status:             r.Status,
 		StatusDetail:       r.StatusDetail,

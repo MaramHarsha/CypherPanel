@@ -1499,6 +1499,20 @@ paths:
           required: true
           schema:
             type: string
+        - name: since
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >-
+            Where the replay starts. Either a Go duration meaning "that long
+            ago" (`15m`, `2h`, at most `720h`) or an RFC 3339 instant
+            (`2026-09-06T09:00:00Z`). Omitted replays everything the stream
+            still retains, then tails. A `since` older than the retention
+            window yields whatever is retained; one in the future yields an
+            empty replay that then tails. Anything unparseable is a `400`
+            rather than a silent fall back to the whole window.
+          example: 15m
       responses:
         "200":
           description: SSE stream of application logs.
@@ -1506,12 +1520,75 @@ paths:
             text/event-stream:
               schema:
                 type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           description: No such application.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/applications/{id}/restart:
+    post:
+      operationId: restartApplication
+      tags: [applications]
+      summary: Recreate the container without shipping a new revision
+      description: >-
+        Restarts the running application. Expressed as desired state rather than
+        as a verb the agent obeys: the panel issues a new restart token, the
+        reconciler recreates a container whose token does not match, and
+        converging again afterwards changes nothing.
+
+
+        This is NOT a deploy. No revision is created, no build runs, no
+        deployment appears, and the desired revision does not move — restarting
+        a wedged container must not silently ship the configuration someone
+        edited an hour ago. The response is the application.
+
+
+        The replacement starts alongside the container it replaces, passes the
+        same health gate, takes the route, and only then does the old one drain
+        — a restart is zero-downtime for the same reason a deploy is.
+
+
+        A freeze window does NOT block it: a freeze exists to stop new code
+        shipping, and a restart ships none. Refusing to restart a crashed
+        application during a freeze would make the freeze an outage.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          description: >-
+            Accepted. The application, unchanged in everything a client can
+            act on — the restart token itself is internal plumbing and is not
+            part of the response. Watch `status` for the recreate.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Application"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such application.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: >-
+            The application has never deployed, so there is no container to
+            restart. Deploy it first.
           content:
             application/json:
               schema:
@@ -1645,6 +1722,20 @@ paths:
           required: true
           schema:
             type: string
+        - name: since
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >-
+            Where the replay starts. Either a Go duration meaning "that long
+            ago" (`15m`, `2h`, at most `720h`) or an RFC 3339 instant
+            (`2026-09-06T09:00:00Z`). Omitted replays everything the stream
+            still retains, then tails. A `since` older than the retention
+            window yields whatever is retained; one in the future yields an
+            empty replay that then tails. Anything unparseable is a `400`
+            rather than a silent fall back to the whole window.
+          example: 15m
       responses:
         "200":
           description: SSE stream of deployment build logs.
@@ -1652,12 +1743,70 @@ paths:
             text/event-stream:
               schema:
                 type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           description: No such deployment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/deployments/{id}/cancel:
+    post:
+      operationId: cancelDeployment
+      tags: [deployments]
+      summary: Stop waiting on a deploy that is going nowhere
+      description: >-
+        Ends a deployment the operator has stopped waiting on. It is the PANEL
+        stopping waiting, not a remote kill: a build already in flight finishes
+        on its builder, and the image it produces is reclaimed by desired-state
+        garbage collection because nothing desires its revision.
+
+
+        Works while the deploy is `queued`, `awaiting_approval`, `building` or
+        `distributing`. Once it is `rolling_out` the answer is `409` — desired
+        state has already moved and every agent is converging on the new
+        revision, so the honest recovery is a rollback rather than a cancel that
+        would leave the panel claiming it abandoned what the reconciler is still
+        applying.
+
+
+        A cancelled deploy ends as `failed`, with `cancelled by <email>` in its
+        detail. There is no separate `cancelled` status, and nothing is
+        announced to notifiers or outbound webhooks: their taxonomy is
+        infrastructure outcomes, and a cancellation is a person's decision.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Cancelled. The deployment comes back terminal.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deployment"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such deployment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: >-
+            The deploy is already rolling out (roll back instead), or it has
+            already finished. Nothing is written either way.
           content:
             application/json:
               schema:

@@ -52,6 +52,14 @@ var ErrFrozen = errors.New("scheduler: environment is frozen")
 // Handlers map it to 409.
 var ErrNotParked = errors.New("scheduler: deployment is not awaiting approval")
 
+// ErrCannotCancel is returned when a deployment is past the point a cancel can
+// honestly act on it (deployment-control.md §2): rolling out, or finished.
+var ErrCannotCancel = errors.New("scheduler: deployment can no longer be cancelled")
+
+// ErrNeverDeployed is returned when there is no container to restart, because
+// the application has never had a revision roll out.
+var ErrNeverDeployed = errors.New("scheduler: application has never deployed")
+
 // FrozenError carries the sentence the 409 body shows: which environment is
 // frozen and when it lifts, e.g. "production is frozen until Mon 08:00
 // Europe/Berlin". It wraps ErrFrozen, so callers may match either.
@@ -73,6 +81,10 @@ type Store interface {
 	GetApplication(ctx context.Context, id string) (domain.Application, error)
 	ListApplicationsByServer(ctx context.Context, serverID string) ([]domain.Application, error)
 	SetApplicationDesiredRevision(ctx context.Context, appID, revisionID string) (domain.Application, error)
+	// BumpApplicationRestartToken records a restart as desired state
+	// (deployment-control.md §3). Separate from the config update so a restart
+	// cannot carry an unrelated edit along with it.
+	BumpApplicationRestartToken(ctx context.Context, appID, token string) (domain.Application, error)
 	SetApplicationStatus(ctx context.Context, appID, status, detail string) error
 	SetApplicationObservedStatus(ctx context.Context, appID, status, detail, observedRevisionID string, observedAt time.Time) error
 	ListEnvVars(ctx context.Context, appID string) ([]domain.EnvVar, error)
@@ -159,6 +171,9 @@ type Opener interface {
 type EventSink interface {
 	NotifyDeploy(ctx context.Context, app domain.Application, dep domain.Deployment)
 	NotifyBackup(ctx context.Context, db domain.Database, rec domain.BackupRecord)
+	// NotifyAppHealth carries an observed health transition of a running
+	// application — app.crashed and app.recovered (deployment-control.md §5).
+	NotifyAppHealth(ctx context.Context, app domain.Application, eventType, detail string)
 }
 
 // Scheduler owns pipeline state transitions. Construct with New.
@@ -246,6 +261,13 @@ func (s *Scheduler) AddSink(k EventSink) { s.sinks = append(s.sinks, k) }
 func (s *Scheduler) emitDeploy(ctx context.Context, app domain.Application, dep domain.Deployment) {
 	for _, k := range s.sinks {
 		k.NotifyDeploy(ctx, app, dep)
+	}
+}
+
+// emitAppHealth hands an observed health transition to every sink.
+func (s *Scheduler) emitAppHealth(ctx context.Context, app domain.Application, eventType, detail string) {
+	for _, k := range s.sinks {
+		k.NotifyAppHealth(ctx, app, eventType, detail)
 	}
 }
 
@@ -565,6 +587,87 @@ func articleFor(role string) string {
 	default:
 		return "an approver"
 	}
+}
+
+// Cancel ends a deployment the operator has stopped waiting on
+// (deployment-control.md §2).
+//
+// It is the PANEL stopping waiting, not a remote kill: ADR-002 gives the plane
+// no way to reach into a builder and stop a running build, and inventing one
+// for this would be the imperative path hard rule 3 forbids. A build already in
+// flight finishes on the builder; the image it produces references no revision
+// anything desires, so desired-state GC reclaims it on the next reconcile.
+//
+// Refusing once the deployment is ROLLING OUT is the load-bearing rule. By then
+// desired_revision_id names the new revision and every agent is converging on
+// it; "cancelling" would leave desired state pointing at a revision the panel
+// claims it abandoned, and the reconciler would go on converging while the
+// panel lied about it. The honest recovery there is a rollback.
+//
+// It adds no sixth deployment status, for the reason deploy-protection.md
+// already recorded when it declined to add one for a rejection: the terminal
+// set is load-bearing in the queue queries, in Terminal() and in the web's
+// isTerminal(). A cancelled deploy is a deploy that did not ship, and WHY is
+// in its detail.
+func (s *Scheduler) Cancel(ctx context.Context, deploymentID, by string) (domain.Deployment, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	dep, err := s.store.GetDeployment(ctx, deploymentID)
+	if err != nil {
+		return domain.Deployment{}, fmt.Errorf("scheduler: getting deployment: %w", err)
+	}
+	detail := "cancelled by " + by
+	switch dep.Status {
+	case domain.DeployQueued, domain.DeployAwaitingApproval:
+		// Never started: no 'deploying' override to take back, and no pipeline
+		// slot to free — the queue queries exclude both states, so there is
+		// nothing queued behind this one that ending it releases.
+		return s.failParked(ctx, dep, detail)
+	case domain.DeployBuilding, domain.DeployDistributing:
+		return s.endActive(ctx, dep, detail, false)
+	default:
+		return dep, fmt.Errorf("%w: %s", ErrCannotCancel, dep.Status)
+	}
+}
+
+// Restart recreates an application's container without shipping anything new
+// (deployment-control.md §3).
+//
+// Expressed as desired state, not as a verb: a fresh restart token is part of
+// the spec, the reconciler recreates a container whose token does not match,
+// and converging again afterwards mutates nothing. No Revision is created, no
+// build runs, no Deployment row appears and desired_revision_id does not move —
+// an operator restarting a wedged container must not silently ship the config
+// they edited an hour ago.
+//
+// Persisted before published (ENGINEERING rule 15): if the publish fails, the
+// token is still stored, so the agent's next sync converges to it anyway. The
+// error is still returned, because the operator deserves to know it will not be
+// immediate.
+func (s *Scheduler) Restart(ctx context.Context, appID string) (domain.Application, error) {
+	app, err := s.store.GetApplication(ctx, appID)
+	if err != nil {
+		return domain.Application{}, fmt.Errorf("scheduler: getting application: %w", err)
+	}
+	if app.DesiredRevisionID == nil {
+		return domain.Application{}, ErrNeverDeployed
+	}
+	rev, err := s.store.GetRevision(ctx, *app.DesiredRevisionID)
+	if err != nil {
+		return domain.Application{}, fmt.Errorf("scheduler: getting revision: %w", err)
+	}
+	if rev.Image == "" {
+		return domain.Application{}, ErrNeverDeployed
+	}
+	updated, err := s.store.BumpApplicationRestartToken(ctx, appID, ids.New(ids.PrefixRestart))
+	if err != nil {
+		return domain.Application{}, fmt.Errorf("scheduler: recording restart: %w", err)
+	}
+	if err := s.ConvergeApp(ctx, appID); err != nil {
+		return updated, err
+	}
+	return updated, nil
 }
 
 // RemoveApp publishes desired absence for a deleted application. Called after
@@ -1016,6 +1119,10 @@ func (s *Scheduler) buildSpec(ctx context.Context, app domain.Application, rev d
 		ScheduledTasks: tasks,
 		Pull:           cs.Pull,
 		RegistryAuth:   pullAuth,
+		// Current app state, not a per-revision snapshot: a restart asked for
+		// now must survive a rollback, and the token is what the container is
+		// labelled with either way (deployment-control.md §3).
+		RestartToken: app.RestartToken,
 		// Resource limits are current app state (not per-revision snapshot),
 		// applied at rollout like env vars; nil = 0 = no limit on the wire.
 		CpuLimit:      cpuLimitValue(app.Runtime.CPULimit),
@@ -1245,6 +1352,10 @@ func (s *Scheduler) HandleAppStatus(ctx context.Context, serverID string, st *ag
 		s.log.Error("app status: recording observation", "app_id", st.GetAppId(), "error", err)
 		return
 	}
+	// Announce the TRANSITION, from the status that was stored a moment ago —
+	// never the observation, which arrives continuously (deployment-control.md
+	// §5). Persisted first, then announced (ENGINEERING rule 15).
+	s.announceHealth(ctx, app, st.GetState(), st.GetDetail())
 	if st.GetState() != domain.AppRunning {
 		return
 	}
@@ -1318,20 +1429,58 @@ func (s *Scheduler) pinRevisionImage(ctx context.Context, st *agentv1.AppStatus)
 // application's own status stays observation-driven: the previous revision
 // keeps serving and the agent's reports say so. Callers hold s.mu.
 func (s *Scheduler) fail(ctx context.Context, dep domain.Deployment, detail string) {
-	failed, err := s.store.UpdateDeploymentStatus(ctx, dep.ID, domain.DeployFailed, detail)
-	if err != nil {
+	if _, err := s.endActive(ctx, dep, detail, true); err != nil {
 		s.log.Error("failing deployment", "deployment_id", dep.ID, "error", err)
-		return
 	}
-	s.log.Warn("deployment failed", "deployment_id", dep.ID, "app_id", dep.ApplicationID, "detail", detail)
+}
+
+// endActive ends a deployment that had STARTED: it takes back the 'deploying'
+// override start() applied and promotes whatever was queued behind it.
+//
+// announce is what separates a failure from a cancellation. A pipeline failure
+// is an outcome and belongs in the notifier/webhook taxonomy; a cancellation is
+// an operator's decision, and announcing "deploy failed" in Slack would
+// misrepresent it as an infrastructure failure — the same distinction
+// failParked already draws for a rejection (deployment-control.md §2).
+func (s *Scheduler) endActive(ctx context.Context, dep domain.Deployment, detail string, announce bool) (domain.Deployment, error) {
+	ended, err := s.store.UpdateDeploymentStatus(ctx, dep.ID, domain.DeployFailed, detail)
+	if err != nil {
+		return dep, fmt.Errorf("scheduler: ending deployment: %w", err)
+	}
+	s.log.Warn("deployment ended", "deployment_id", dep.ID, "app_id", dep.ApplicationID, "detail", detail)
 	// Load the app for the announcement and to clear the plane-driven
-	// 'deploying' override; a lookup miss just drops the notice (the failure is
+	// 'deploying' override; a lookup miss just drops the notice (the outcome is
 	// already recorded and logged).
 	if app, err := s.store.GetApplication(ctx, dep.ApplicationID); err == nil {
 		s.clearDeployingStatus(ctx, app, detail)
-		s.emitDeploy(ctx, app, failed)
+		if announce {
+			s.emitDeploy(ctx, app, ended)
+		}
 	}
 	s.promoteNext(ctx, dep.ApplicationID)
+	return ended, nil
+}
+
+// announceHealth emits app.crashed / app.recovered on the two transitions that
+// are news, and nothing on any other (deployment-control.md §5). app is the
+// application as it was BEFORE this observation was stored, so app.Status is
+// the previous status.
+//
+// Requiring the previous status to be exactly `running` is what keeps a failed
+// deploy out of this channel: a rollout whose health gate fails reports `error`
+// while the OLD container is still serving, so nothing crashed — and
+// deploy.failed already says the deploy did not land. `degraded` is excluded
+// for the same reason it is excluded from paging anywhere: it means "serving,
+// with something wrong", and a channel that fires on it gets muted.
+func (s *Scheduler) announceHealth(ctx context.Context, app domain.Application, observed, detail string) {
+	switch {
+	case app.Status == domain.AppRunning && observed == domain.AppError:
+		s.log.Warn("application crashed", "app_id", app.ID, "detail", detail)
+		s.emitAppHealth(ctx, app, domain.EventAppCrashed, detail)
+	case app.Status == domain.AppError && observed == domain.AppRunning:
+		s.log.Info("application recovered", "app_id", app.ID)
+		s.emitAppHealth(ctx, app, domain.EventAppRecovered, "")
+	}
 }
 
 // clearDeployingStatus takes back the 'deploying' override start() applied.

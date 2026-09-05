@@ -103,6 +103,20 @@ func newFakeStore() *fakeStore {
 	}
 }
 
+// BumpApplicationRestartToken records a restart as desired state
+// (deployment-control.md §3).
+func (f *fakeStore) BumpApplicationRestartToken(_ context.Context, appID, token string) (domain.Application, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	app, ok := f.apps[appID]
+	if !ok {
+		return domain.Application{}, store.ErrNotFound
+	}
+	app.RestartToken = token
+	f.apps[appID] = app
+	return app, nil
+}
+
 func (f *fakeStore) addApp(id, serverID string) domain.Application {
 	app := domain.Application{
 		ID:            id,
@@ -938,12 +952,18 @@ func TestObservedRunningCompletesDeployment(t *testing.T) {
 // recordingNotifier captures the terminal-outcome calls the scheduler makes.
 type recordingNotifier struct {
 	deploys []domain.Deployment
+	// health records app.crashed / app.recovered as "<event>/<detail>"
+	// (deployment-control.md §5).
+	health []string
 }
 
 func (r *recordingNotifier) NotifyDeploy(_ context.Context, _ domain.Application, dep domain.Deployment) {
 	r.deploys = append(r.deploys, dep)
 }
 func (r *recordingNotifier) NotifyBackup(_ context.Context, _ domain.Database, _ domain.BackupRecord) {
+}
+func (r *recordingNotifier) NotifyAppHealth(_ context.Context, _ domain.Application, eventType, detail string) {
+	r.health = append(r.health, eventType+"/"+detail)
 }
 
 // The notifier fires once, with the succeeded deployment, at the observed-

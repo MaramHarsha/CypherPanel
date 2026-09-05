@@ -18,6 +18,16 @@ const (
 	EventDeployFailed    = "deploy.failed"
 	EventBackupSucceeded = "backup.succeeded"
 	EventBackupFailed    = "backup.failed"
+
+	// EventAppCrashed / EventAppRecovered are the observed health transitions
+	// of a running application (deployment-control.md §5).
+	//
+	// Subscribable rather than inbox-only, unlike the governance kinds: this is
+	// an observed transition of a resource, which is exactly what this taxonomy
+	// is for — and "tell me in Discord when production dies" is the single
+	// most-wanted notification a PaaS has.
+	EventAppCrashed   = "app.crashed"
+	EventAppRecovered = "app.recovered"
 )
 
 // eventTypes is the subscribable taxonomy in one place. Both notifiers
@@ -29,6 +39,8 @@ var eventTypes = []string{
 	EventDeployFailed,
 	EventBackupSucceeded,
 	EventBackupFailed,
+	EventAppCrashed,
+	EventAppRecovered,
 }
 
 // EventTypes returns the subscribable event keys, in documentation order. The

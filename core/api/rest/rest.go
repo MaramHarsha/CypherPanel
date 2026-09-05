@@ -53,6 +53,11 @@ type Deployer interface {
 	DeployAs(ctx context.Context, appID, trigger, ref, requestedBy string) (domain.Deployment, error)
 	RollbackAs(ctx context.Context, deploymentID, requestedBy string) (domain.Deployment, error)
 	RemoveApp(ctx context.Context, serverID, appID string) error
+	// Cancel ends a deployment the operator has stopped waiting on, and
+	// Restart recreates an application's container without shipping anything
+	// new (deployment-control.md §§2-3).
+	Cancel(ctx context.Context, deploymentID, by string) (domain.Deployment, error)
+	Restart(ctx context.Context, appID string) (domain.Application, error)
 }
 
 // ProtectionService is deploy protection (consumer-defined; *protection.Service
@@ -272,8 +277,10 @@ type ScheduledTaskService interface {
 // log subject (consumer-defined; *bus.Bus satisfies it). handle is invoked
 // from the subscriber's goroutine until stop is called.
 type LogSubscriber interface {
-	SubscribeLogs(ctx context.Context, subject string, handle func(data []byte)) (stop func(), err error)
-	SubscribeRuntimeLogs(ctx context.Context, subject string, handle func(data []byte)) (stop func(), err error)
+	// since bounds where the replay starts; the zero time replays everything
+	// the stream still holds (deployment-control.md §4).
+	SubscribeLogs(ctx context.Context, subject string, since time.Time, handle func(data []byte)) (stop func(), err error)
+	SubscribeRuntimeLogs(ctx context.Context, subject string, since time.Time, handle func(data []byte)) (stop func(), err error)
 	// SubscribeStatus delivers new app/database status observations (subject +
 	// payload) — the source for the /events SSE stream (ui-principles §10).
 	SubscribeStatus(ctx context.Context, handle func(subject string, data []byte)) (stop func(), err error)
@@ -478,6 +485,13 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/deployments/{id}", a.authed(a.handleGetDeployment))
 	mux.HandleFunc("GET /api/v1/deployments/{id}/logs", a.authed(a.handleGetDeploymentLogs))
 	mux.HandleFunc("POST /api/v1/deployments/{id}/rollback", a.authed(a.handleRollback))
+	// V1.x: deployment control (deployment-control.md). Cancel ends a deploy
+	// the operator has stopped waiting on; restart recreates a container
+	// without shipping anything new. Both carry the `deploy` ability — the
+	// credential that can start a deploy can stop one — and neither is
+	// session-only: cancelling and restarting from CI is legitimate.
+	mux.HandleFunc("POST /api/v1/deployments/{id}/cancel", a.authed(a.handleCancelDeployment))
+	mux.HandleFunc("POST /api/v1/applications/{id}/restart", a.authed(a.handleRestartApplication))
 
 	// GitHub webhook: authenticated by per-app HMAC secret, not a session
 	// (spec §4) — the only unauthenticated mutating route.
@@ -799,6 +813,8 @@ func (a *API) sessionOnly(next http.HandlerFunc) http.HandlerFunc {
 var deployRoutes = map[string]bool{
 	"POST /api/v1/applications/{id}/deploy":  true,
 	"POST /api/v1/deployments/{id}/rollback": true,
+	"POST /api/v1/deployments/{id}/cancel":   true,
+	"POST /api/v1/applications/{id}/restart": true,
 }
 
 // envRoutes, serverRoutes and adminRoutes carve narrower grants out of `write`,

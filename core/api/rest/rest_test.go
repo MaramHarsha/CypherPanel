@@ -726,6 +726,15 @@ type fakeDeployer struct {
 	frozen string
 	// parked makes an attributed deploy come back awaiting_approval.
 	parked bool
+	// cancelled / restarted record deployment-control calls, and cancelStatus
+	// is the status the fake pretends the deployment was in — the two answers
+	// the handler must tell apart (deployment-control.md §2).
+	cancelled    []string
+	cancelledBy  []string
+	cancelStatus domain.DeploymentStatus
+	cancelErr    error
+	restarted    []string
+	restartErr   error
 }
 
 // Deploy delegates to DeployAs with no requester, exactly as the real
@@ -780,6 +789,27 @@ func (f *fakeDeployer) RemoveApp(_ context.Context, serverID, appID string) erro
 	return nil
 }
 
+// Cancel records the call and returns whatever the test asked it to. The
+// returned deployment carries cancelStatus even on the refusal path, because
+// that is what the handler branches its 409 wording on.
+func (f *fakeDeployer) Cancel(_ context.Context, deploymentID, by string) (domain.Deployment, error) {
+	f.cancelled = append(f.cancelled, deploymentID)
+	f.cancelledBy = append(f.cancelledBy, by)
+	status := f.cancelStatus
+	if f.cancelErr == nil {
+		status = domain.DeployFailed
+	}
+	return domain.Deployment{ID: deploymentID, ApplicationID: "app_test", Status: status, Detail: "cancelled by " + by}, f.cancelErr
+}
+
+func (f *fakeDeployer) Restart(_ context.Context, appID string) (domain.Application, error) {
+	f.restarted = append(f.restarted, appID)
+	if f.restartErr != nil {
+		return domain.Application{}, f.restartErr
+	}
+	return domain.Application{ID: appID, Name: "web", RestartToken: "rst_test"}, nil
+}
+
 type fakeDeploymentReader struct{}
 
 func (fakeDeploymentReader) GetDeployment(_ context.Context, id string) (domain.Deployment, error) {
@@ -802,6 +832,8 @@ type fakeLogs struct {
 	stopped int
 	// status pushes test status observations to the /events subscriber.
 	status func(subject string, data []byte)
+	// lastSince is the replay window the last subscription asked for.
+	lastSince time.Time
 }
 
 func newFakeLogs() *fakeLogs { return &fakeLogs{lines: map[string][]string{}} }
@@ -823,12 +855,22 @@ func (f *fakeLogs) emitStatus(subject string) {
 	}
 }
 
-func (f *fakeLogs) SubscribeLogs(_ context.Context, subject string, handle func(data []byte)) (func(), error) {
+func (f *fakeLogs) SubscribeLogs(_ context.Context, subject string, since time.Time, handle func(data []byte)) (func(), error) {
+	f.recordSince(since)
 	return f.subscribe(subject, handle)
 }
 
-func (f *fakeLogs) SubscribeRuntimeLogs(_ context.Context, subject string, handle func(data []byte)) (func(), error) {
+func (f *fakeLogs) SubscribeRuntimeLogs(_ context.Context, subject string, since time.Time, handle func(data []byte)) (func(), error) {
+	f.recordSince(since)
 	return f.subscribe(subject, handle)
+}
+
+// recordSince keeps the window the handler resolved, so a test can prove a
+// `since` query parameter actually reached the stream (deployment-control.md §4).
+func (f *fakeLogs) recordSince(since time.Time) {
+	f.mu.Lock()
+	f.lastSince = since
+	f.mu.Unlock()
 }
 
 func (f *fakeLogs) subscribe(subject string, handle func(data []byte)) (func(), error) {
@@ -958,6 +1000,18 @@ func newTestServerWithStores(t *testing.T) (*httptest.Server, *fakeServersStore)
 }
 
 func newTestServerFull(t *testing.T) (*httptest.Server, *fakeServersStore, *fakeLogs, *fakeDeployKeysStore) {
+	ts, srvStore, logs, dkStore, _ := newTestServerParts(t)
+	return ts, srvStore, logs, dkStore
+}
+
+// newTestServerControl is newTestServerFull with the deployer handed back, for
+// the tests that drive its answers (deployment-control.md).
+func newTestServerControl(t *testing.T) (*httptest.Server, *fakeDeployer, *fakeLogs) {
+	ts, _, logs, _, deployer := newTestServerParts(t)
+	return ts, deployer, logs
+}
+
+func newTestServerParts(t *testing.T) (*httptest.Server, *fakeServersStore, *fakeLogs, *fakeDeployKeysStore, *fakeDeployer) {
 	t.Helper()
 	hash, err := auth.HashPassword(testPassword)
 	if err != nil {
@@ -1005,7 +1059,7 @@ func newTestServerFull(t *testing.T) (*httptest.Server, *fakeServersStore, *fake
 	})
 	ts := httptest.NewServer(api.Handler())
 	t.Cleanup(ts.Close)
-	return ts, srvStore, logs, dkStore
+	return ts, srvStore, logs, dkStore, deployer
 }
 
 func doJSON(t *testing.T, method, url, token, body string) (int, http.Header, []byte) {

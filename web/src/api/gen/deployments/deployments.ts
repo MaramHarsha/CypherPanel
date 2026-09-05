@@ -27,10 +27,12 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  BadRequestResponse,
   DeployRequest,
   Deployment,
   Error,
   ForbiddenResponse,
+  StreamDeploymentLogsParams,
   UnauthorizedResponse
 } from '../model';
 
@@ -327,20 +329,29 @@ export function useGetDeployment<TData = Awaited<ReturnType<typeof getDeployment
 
 
 
-export const getStreamDeploymentLogsUrl = (id: string,) => {
+export const getStreamDeploymentLogsUrl = (id: string,
+    params?: StreamDeploymentLogsParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/v1/deployments/${id}/logs`
+  return stringifiedParams.length > 0 ? `/api/v1/deployments/${id}/logs?${stringifiedParams}` : `/api/v1/deployments/${id}/logs`
 }
 
 /**
  * @summary Stream build logs (Server-Sent Events)
  */
-export const streamDeploymentLogs = async (id: string, options?: RequestInit): Promise<string> => {
+export const streamDeploymentLogs = async (id: string,
+    params?: StreamDeploymentLogsParams, options?: RequestInit): Promise<string> => {
 
-  return apiFetch<string>(getStreamDeploymentLogsUrl(id),
+  return apiFetch<string>(getStreamDeploymentLogsUrl(id,params),
   {
     ...options,
     method: 'GET'
@@ -353,23 +364,25 @@ export const streamDeploymentLogs = async (id: string, options?: RequestInit): P
 
 
 
-export const getStreamDeploymentLogsQueryKey = (id: string,) => {
+export const getStreamDeploymentLogsQueryKey = (id: string,
+    params?: StreamDeploymentLogsParams,) => {
     return [
-    `/api/v1/deployments/${id}/logs`
+    `/api/v1/deployments/${id}/logs`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getStreamDeploymentLogsQueryOptions = <TData = Awaited<ReturnType<typeof streamDeploymentLogs>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamDeploymentLogs>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getStreamDeploymentLogsQueryOptions = <TData = Awaited<ReturnType<typeof streamDeploymentLogs>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error>(id: string,
+    params?: StreamDeploymentLogsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamDeploymentLogs>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getStreamDeploymentLogsQueryKey(id);
+  const queryKey =  queryOptions?.queryKey ?? getStreamDeploymentLogsQueryKey(id,params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof streamDeploymentLogs>>> = ({ signal }) => streamDeploymentLogs(id, { signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof streamDeploymentLogs>>> = ({ signal }) => streamDeploymentLogs(id,params, { signal, ...requestOptions });
 
 
 
@@ -379,11 +392,12 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type StreamDeploymentLogsQueryResult = NonNullable<Awaited<ReturnType<typeof streamDeploymentLogs>>>
-export type StreamDeploymentLogsQueryError = UnauthorizedResponse | ForbiddenResponse | Error
+export type StreamDeploymentLogsQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error
 
 
-export function useStreamDeploymentLogs<TData = Awaited<ReturnType<typeof streamDeploymentLogs>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
- id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamDeploymentLogs>>, TError, TData>> & Pick<
+export function useStreamDeploymentLogs<TData = Awaited<ReturnType<typeof streamDeploymentLogs>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error>(
+ id: string,
+    params: undefined |  StreamDeploymentLogsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamDeploymentLogs>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof streamDeploymentLogs>>,
           TError,
@@ -392,8 +406,9 @@ export function useStreamDeploymentLogs<TData = Awaited<ReturnType<typeof stream
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useStreamDeploymentLogs<TData = Awaited<ReturnType<typeof streamDeploymentLogs>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamDeploymentLogs>>, TError, TData>> & Pick<
+export function useStreamDeploymentLogs<TData = Awaited<ReturnType<typeof streamDeploymentLogs>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error>(
+ id: string,
+    params?: StreamDeploymentLogsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamDeploymentLogs>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof streamDeploymentLogs>>,
           TError,
@@ -402,20 +417,22 @@ export function useStreamDeploymentLogs<TData = Awaited<ReturnType<typeof stream
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useStreamDeploymentLogs<TData = Awaited<ReturnType<typeof streamDeploymentLogs>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamDeploymentLogs>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export function useStreamDeploymentLogs<TData = Awaited<ReturnType<typeof streamDeploymentLogs>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error>(
+ id: string,
+    params?: StreamDeploymentLogsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamDeploymentLogs>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
  * @summary Stream build logs (Server-Sent Events)
  */
 
-export function useStreamDeploymentLogs<TData = Awaited<ReturnType<typeof streamDeploymentLogs>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamDeploymentLogs>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export function useStreamDeploymentLogs<TData = Awaited<ReturnType<typeof streamDeploymentLogs>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error>(
+ id: string,
+    params?: StreamDeploymentLogsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamDeploymentLogs>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
-  const queryOptions = getStreamDeploymentLogsQueryOptions(id,options)
+  const queryOptions = getStreamDeploymentLogsQueryOptions(id,params,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
@@ -427,7 +444,82 @@ export function useStreamDeploymentLogs<TData = Awaited<ReturnType<typeof stream
 
 
 
-export const getRollbackDeploymentUrl = (id: string,) => {
+export const getCancelDeploymentUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/deployments/${id}/cancel`
+}
+
+/**
+ * Ends a deployment the operator has stopped waiting on. It is the PANEL stopping waiting, not a remote kill: a build already in flight finishes on its builder, and the image it produces is reclaimed by desired-state garbage collection because nothing desires its revision.
+ *
+ * Works while the deploy is `queued`, `awaiting_approval`, `building` or `distributing`. Once it is `rolling_out` the answer is `409` — desired state has already moved and every agent is converging on the new revision, so the honest recovery is a rollback rather than a cancel that would leave the panel claiming it abandoned what the reconciler is still applying.
+ *
+ * A cancelled deploy ends as `failed`, with `cancelled by <email>` in its detail. There is no separate `cancelled` status, and nothing is announced to notifiers or outbound webhooks: their taxonomy is infrastructure outcomes, and a cancellation is a person's decision.
+ * @summary Stop waiting on a deploy that is going nowhere
+ */
+export const cancelDeployment = async (id: string, options?: RequestInit): Promise<Deployment> => {
+
+  return apiFetch<Deployment>(getCancelDeploymentUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getCancelDeploymentMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelDeployment>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof cancelDeployment>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['cancelDeployment'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof cancelDeployment>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  cancelDeployment(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CancelDeploymentMutationResult = NonNullable<Awaited<ReturnType<typeof cancelDeployment>>>
+
+    export type CancelDeploymentMutationError = UnauthorizedResponse | ForbiddenResponse | Error
+
+    /**
+ * @summary Stop waiting on a deploy that is going nowhere
+ */
+export const useCancelDeployment = <TError = UnauthorizedResponse | ForbiddenResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelDeployment>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof cancelDeployment>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getCancelDeploymentMutationOptions(options), queryClient);
+    }
+    export const getRollbackDeploymentUrl = (id: string,) => {
 
 
 

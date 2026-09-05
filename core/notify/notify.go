@@ -99,6 +99,29 @@ func (m *Manager) NotifyDeploy(ctx context.Context, app domain.Application, dep 
 	m.dispatch(ctx, app.EnvironmentID, ev)
 }
 
+// NotifyAppHealth delivers an application's observed health transition
+// (deployment-control.md §5). detail is the container's own last words, which
+// is the whole diagnostic value of a crash notification — an operator woken at
+// 03:00 needs the reason, not a link to go and find it.
+func (m *Manager) NotifyAppHealth(ctx context.Context, app domain.Application, eventType, detail string) {
+	ev := domain.NotifyEvent{Type: eventType, Level: domain.NotifyError}
+	if eventType == domain.EventAppRecovered {
+		ev.Level = domain.NotifyInfo
+		ev.Title = "Recovered: " + app.Name
+		ev.Body = fmt.Sprintf("Application %q is serving again.", app.Name)
+	} else {
+		ev.Title = "Crashed: " + app.Name
+		ev.Body = fmt.Sprintf("Application %q stopped serving.", app.Name)
+	}
+	if detail != "" {
+		ev.Body += "\n" + detail
+	}
+	// FocusID is the application itself: a health transition has no deployment
+	// or backup record to open, and the app's own page is where the logs are.
+	ev.ResourceKind, ev.ResourceID, ev.FocusID = domain.WebhookResourceApplication, app.ID, app.ID
+	m.dispatch(ctx, app.EnvironmentID, ev)
+}
+
 // NotifyBackup delivers a database backup's terminal outcome.
 func (m *Manager) NotifyBackup(ctx context.Context, db domain.Database, rec domain.BackupRecord) {
 	ev := domain.NotifyEvent{Type: domain.EventBackupSucceeded, Level: domain.NotifyInfo}

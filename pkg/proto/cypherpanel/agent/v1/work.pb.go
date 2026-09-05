@@ -340,7 +340,14 @@ type AppSpec struct {
 	// unset unless pull is true, because there is nothing to authenticate to.
 	// Assembled per work item from the plane's sealed credential, carried only
 	// over mTLS (rule 23) and never logged or written to disk (rule 20).
-	RegistryAuth  *RegistryAuth `protobuf:"bytes,16,opt,name=registry_auth,json=registryAuth,proto3" json:"registry_auth,omitempty"`
+	RegistryAuth *RegistryAuth `protobuf:"bytes,16,opt,name=registry_auth,json=registryAuth,proto3" json:"registry_auth,omitempty"`
+	// restart_token expresses "restart this container" as desired state rather
+	// than as a verb the agent obeys (deployment-control.md §3; ADR-005). It is
+	// part of the container's config hash, so a NEW value is a difference the
+	// existing recreate path already closes — and converging twice after the
+	// recreate still mutates nothing, because the running container then carries
+	// the token the spec names. Empty is every application's birth value.
+	RestartToken  string `protobuf:"bytes,17,opt,name=restart_token,json=restartToken,proto3" json:"restart_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -485,6 +492,13 @@ func (x *AppSpec) GetRegistryAuth() *RegistryAuth {
 		return x.RegistryAuth
 	}
 	return nil
+}
+
+func (x *AppSpec) GetRestartToken() string {
+	if x != nil {
+		return x.RestartToken
+	}
+	return ""
 }
 
 // RegistryAuth is one credential for one registry, as the daemon wants it.
@@ -2851,7 +2865,7 @@ var File_cypherpanel_agent_v1_work_proto protoreflect.FileDescriptor
 
 const file_cypherpanel_agent_v1_work_proto_rawDesc = "" +
 	"\n" +
-	"\x1fcypherpanel/agent/v1/work.proto\x12\x14cypherpanel.agent.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf6\x05\n" +
+	"\x1fcypherpanel/agent/v1/work.proto\x12\x14cypherpanel.agent.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\x9b\x06\n" +
 	"\aAppSpec\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12%\n" +
 	"\x0eenvironment_id\x18\x02 \x01(\tR\renvironmentId\x12\x1f\n" +
@@ -2870,7 +2884,8 @@ const file_cypherpanel_agent_v1_work_proto_rawDesc = "" +
 	"\avolumes\x18\r \x03(\v2!.cypherpanel.agent.v1.VolumeMountR\avolumes\x127\n" +
 	"\x05ports\x18\x0e \x03(\v2!.cypherpanel.agent.v1.PortMappingR\x05ports\x12\x12\n" +
 	"\x04pull\x18\x0f \x01(\bR\x04pull\x12G\n" +
-	"\rregistry_auth\x18\x10 \x01(\v2\".cypherpanel.agent.v1.RegistryAuthR\fregistryAuth\x1a6\n" +
+	"\rregistry_auth\x18\x10 \x01(\v2\".cypherpanel.agent.v1.RegistryAuthR\fregistryAuth\x12#\n" +
+	"\rrestart_token\x18\x11 \x01(\tR\frestartToken\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"g\n" +

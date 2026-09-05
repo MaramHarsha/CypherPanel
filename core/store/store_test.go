@@ -1677,3 +1677,42 @@ func TestStorePanelTLSRoundtrip(t *testing.T) {
 		t.Fatalf("second DeletePanelTLS: %v", err)
 	}
 }
+
+// A restart is desired state, not a verb (deployment-control.md §3): the token
+// is stored on the application and nothing else about it moves — least of all
+// the desired revision, which is what would silently ship an unrelated edit.
+func TestStoreRestartTokenIsIsolated(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	_, _, _, app := seedApp(t, s)
+
+	if app.RestartToken != "" {
+		t.Fatalf("restart token = %q, want empty at birth", app.RestartToken)
+	}
+
+	restarted, err := s.BumpApplicationRestartToken(ctx, app.ID, "rst_first")
+	if err != nil {
+		t.Fatalf("BumpApplicationRestartToken: %v", err)
+	}
+	if restarted.RestartToken != "rst_first" {
+		t.Fatalf("restart token = %q", restarted.RestartToken)
+	}
+	if restarted.Name != app.Name || restarted.Route.Domain != app.Route.Domain ||
+		restarted.Runtime.Port != app.Runtime.Port {
+		t.Fatalf("a restart changed configuration: %+v", restarted)
+	}
+	if restarted.DesiredRevisionID != nil {
+		t.Fatalf("desired revision = %v, want a restart to move nothing", restarted.DesiredRevisionID)
+	}
+
+	// It survives an ordinary config update, so an edit does not silently
+	// un-restart a container.
+	restarted.Name = "web-renamed"
+	updated, err := s.UpdateApplicationConfig(ctx, restarted)
+	if err != nil {
+		t.Fatalf("UpdateApplicationConfig: %v", err)
+	}
+	if updated.RestartToken != "rst_first" {
+		t.Fatalf("restart token = %q after a config update, want it kept", updated.RestartToken)
+	}
+}

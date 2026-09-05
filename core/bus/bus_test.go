@@ -634,7 +634,7 @@ func TestSubscribeLogsReplaysThenTails(t *testing.T) {
 	}
 
 	got := make(chan string, 16)
-	stop, err := b.SubscribeLogs(context.Background(), subject, func(data []byte) {
+	stop, err := b.SubscribeLogs(context.Background(), subject, time.Time{}, func(data []byte) {
 		got <- string(data)
 	})
 	if err != nil {

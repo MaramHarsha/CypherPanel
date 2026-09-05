@@ -96,8 +96,11 @@ const (
 	ActionApplicationCreated = "application.created"
 	ActionApplicationUpdated = "application.updated"
 	ActionApplicationDeleted = "application.deleted"
-	ActionEnvVarSet          = "application.env_var_set"
-	ActionEnvVarRemoved      = "application.env_var_removed"
+	// A restart is not a deploy — no revision, no build — but it is a
+	// production action with a visible effect (deployment-control.md §3).
+	ActionApplicationRestarted = "application.restarted"
+	ActionEnvVarSet            = "application.env_var_set"
+	ActionEnvVarRemoved        = "application.env_var_removed"
 
 	// Managed databases.
 	ActionDatabaseCreated       = "database.created"
@@ -111,6 +114,8 @@ const (
 	// The pipeline.
 	ActionDeployStarted = "deploy.started"
 	ActionRollback      = "deploy.rolled_back"
+	// The operator stopped waiting on a deploy (deployment-control.md §2).
+	ActionDeployCancelled = "deploy.cancelled"
 
 	// Deploy protection: the decisions the deploy-protection spec deferred to
 	// this log (deploy-protection.md §10).
@@ -217,7 +222,7 @@ var actions = map[string]bool{
 
 	ActionApplicationCreated: true, ActionApplicationUpdated: true,
 	ActionApplicationDeleted: true, ActionEnvVarSet: true,
-	ActionEnvVarRemoved: true,
+	ActionEnvVarRemoved: true, ActionApplicationRestarted: true,
 
 	ActionDatabaseCreated: true, ActionDatabaseUpdated: true,
 	ActionDatabaseDeleted: true, ActionDatabaseStopped: true,
@@ -225,6 +230,7 @@ var actions = map[string]bool{
 	ActionDatabaseRestored: true,
 
 	ActionDeployStarted: true, ActionRollback: true,
+	ActionDeployCancelled: true,
 
 	ActionProtectionSet: true, ActionDeployApproved: true,
 	ActionDeployRejected: true, ActionBreakGlassOpened: true,

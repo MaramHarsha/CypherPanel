@@ -77,3 +77,13 @@ SET name = $2,
     updated_at = now()
 WHERE id = $1
 RETURNING *;
+
+-- BumpApplicationRestartToken is a restart: a new token is a difference in
+-- desired state the reconciler closes by recreating the container
+-- (deployment-control.md §3). Deliberately NOT part of UpdateApplicationConfig
+-- — a restart must not carry an unrelated config edit along with it.
+-- name: BumpApplicationRestartToken :one
+UPDATE applications
+SET restart_token = $2, updated_at = now()
+WHERE id = $1
+RETURNING *;

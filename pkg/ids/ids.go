@@ -90,14 +90,21 @@ const (
 	// support conversation must keep naming the same event forever.
 	PrefixAuditEvent = "aud"
 
+	// V1.x: an optional container registry credential, never a requirement
+	// (docs/features/registries.md; ADR-008 path 3).
+	PrefixRegistry = "reg"
+
+	// V1.x: a restart token (docs/features/deployment-control.md §3). Not the
+	// id of a row — it is a value on the application that a new container is
+	// labelled with, so a restart is a difference in desired state rather than
+	// a verb the agent obeys.
+	PrefixRestart = "rst"
+
 	// V1.x: team invitations and access requests
 	// (docs/features/invitations-and-access-requests.md §2). An invite id is
 	// also the PUBLIC half of its wire token (`inv_….<secret>`), which is what
 	// lets the lookup be an indexed primary-key read while only the secret's
 	// hash is stored.
-	// ADR-008 path 3: an optional registry credential, never a requirement.
-	PrefixRegistry = "reg"
-
 	PrefixTeamInvite    = "inv"
 	PrefixAccessRequest = "acr"
 )

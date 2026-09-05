@@ -35,6 +35,13 @@ const (
 	LabelAppID = "cypherpanel.app-id"
 	// LabelRevisionID carries the revision the resource was created from.
 	LabelRevisionID = "cypherpanel.revision-id"
+	// LabelRestartToken carries the restart token the container was created
+	// under (deployment-control.md §3). It is part of the container's identity
+	// so a NEW token reads as drift — the same way a new revision does — and
+	// the ordinary recreate path closes it. Absent on containers created
+	// before the feature, and on every application that has never restarted,
+	// which both compare equal to an empty spec token.
+	LabelRestartToken = "cypherpanel.restart-token"
 )
 
 // PullMarkerPrefix is the repository namespace of the marker reference that

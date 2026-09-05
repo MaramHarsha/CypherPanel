@@ -328,15 +328,17 @@ func Start(ctx context.Context, opts Options) (*Bus, error) {
 // then its live tail to handle, until stop is called. Backed by an ephemeral
 // ordered consumer on the LOGS stream, so each SSE client gets its own cursor
 // and nothing is retained on its behalf after stop.
-func (b *Bus) SubscribeLogs(ctx context.Context, subject string, handle func(data []byte)) (stop func(), err error) {
-	return b.subscribeStream(ctx, streamLogs, subject, handle)
+// since bounds where the replay starts: the zero time replays everything the
+// stream still holds, which is what a client that asked for no window gets.
+func (b *Bus) SubscribeLogs(ctx context.Context, subject string, since time.Time, handle func(data []byte)) (stop func(), err error) {
+	return b.subscribeStream(ctx, streamLogs, subject, since, handle)
 }
 
 // SubscribeRuntimeLogs is SubscribeLogs for runtime logs, backed by the
 // file-backed RUNTIME_LOGS stream (bounded-log-retention.md §4) so history
 // within the retention window survives a plane restart.
-func (b *Bus) SubscribeRuntimeLogs(ctx context.Context, subject string, handle func(data []byte)) (stop func(), err error) {
-	return b.subscribeStream(ctx, streamRuntimeLogs, subject, handle)
+func (b *Bus) SubscribeRuntimeLogs(ctx context.Context, subject string, since time.Time, handle func(data []byte)) (stop func(), err error) {
+	return b.subscribeStream(ctx, streamRuntimeLogs, subject, since, handle)
 }
 
 // SubscribeStatus delivers new application/database status observations (the
@@ -363,11 +365,21 @@ func (b *Bus) SubscribeStatus(ctx context.Context, handle func(subject string, d
 	return cc.Stop, nil
 }
 
-func (b *Bus) subscribeStream(ctx context.Context, stream, subject string, handle func(data []byte)) (stop func(), err error) {
-	cons, err := b.js.OrderedConsumer(ctx, stream, jetstream.OrderedConsumerConfig{
+func (b *Bus) subscribeStream(ctx context.Context, stream, subject string, since time.Time, handle func(data []byte)) (stop func(), err error) {
+	cfg := jetstream.OrderedConsumerConfig{
 		FilterSubjects: []string{subject},
 		DeliverPolicy:  jetstream.DeliverAllPolicy,
-	})
+	}
+	// A window the caller asked for (deployment-control.md §4). A `since` older
+	// than the retention window simply yields whatever is retained — there is
+	// no way to promise more, and pretending otherwise would need a second
+	// store — and one in the future yields an empty replay that then tails,
+	// which is what it literally asks for.
+	if !since.IsZero() {
+		cfg.DeliverPolicy = jetstream.DeliverByStartTimePolicy
+		cfg.OptStartTime = &since
+	}
+	cons, err := b.js.OrderedConsumer(ctx, stream, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("bus: creating log consumer for %s: %w", subject, err)
 	}

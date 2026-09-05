@@ -39,6 +39,7 @@ import type {
   NotFoundResponse,
   PatchApplicationRequest,
   SetEnvVarRequest,
+  StreamApplicationLogsParams,
   UnauthorizedResponse
 } from '../model';
 
@@ -677,20 +678,29 @@ export function useCheckApplicationDomain<TData = Awaited<ReturnType<typeof chec
 
 
 
-export const getStreamApplicationLogsUrl = (id: string,) => {
+export const getStreamApplicationLogsUrl = (id: string,
+    params?: StreamApplicationLogsParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/v1/applications/${id}/logs`
+  return stringifiedParams.length > 0 ? `/api/v1/applications/${id}/logs?${stringifiedParams}` : `/api/v1/applications/${id}/logs`
 }
 
 /**
  * @summary Stream runtime logs (Server-Sent Events)
  */
-export const streamApplicationLogs = async (id: string, options?: RequestInit): Promise<string> => {
+export const streamApplicationLogs = async (id: string,
+    params?: StreamApplicationLogsParams, options?: RequestInit): Promise<string> => {
 
-  return apiFetch<string>(getStreamApplicationLogsUrl(id),
+  return apiFetch<string>(getStreamApplicationLogsUrl(id,params),
   {
     ...options,
     method: 'GET'
@@ -703,23 +713,25 @@ export const streamApplicationLogs = async (id: string, options?: RequestInit): 
 
 
 
-export const getStreamApplicationLogsQueryKey = (id: string,) => {
+export const getStreamApplicationLogsQueryKey = (id: string,
+    params?: StreamApplicationLogsParams,) => {
     return [
-    `/api/v1/applications/${id}/logs`
+    `/api/v1/applications/${id}/logs`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getStreamApplicationLogsQueryOptions = <TData = Awaited<ReturnType<typeof streamApplicationLogs>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamApplicationLogs>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getStreamApplicationLogsQueryOptions = <TData = Awaited<ReturnType<typeof streamApplicationLogs>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error>(id: string,
+    params?: StreamApplicationLogsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamApplicationLogs>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getStreamApplicationLogsQueryKey(id);
+  const queryKey =  queryOptions?.queryKey ?? getStreamApplicationLogsQueryKey(id,params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof streamApplicationLogs>>> = ({ signal }) => streamApplicationLogs(id, { signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof streamApplicationLogs>>> = ({ signal }) => streamApplicationLogs(id,params, { signal, ...requestOptions });
 
 
 
@@ -729,11 +741,12 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type StreamApplicationLogsQueryResult = NonNullable<Awaited<ReturnType<typeof streamApplicationLogs>>>
-export type StreamApplicationLogsQueryError = UnauthorizedResponse | ForbiddenResponse | Error
+export type StreamApplicationLogsQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error
 
 
-export function useStreamApplicationLogs<TData = Awaited<ReturnType<typeof streamApplicationLogs>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
- id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamApplicationLogs>>, TError, TData>> & Pick<
+export function useStreamApplicationLogs<TData = Awaited<ReturnType<typeof streamApplicationLogs>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error>(
+ id: string,
+    params: undefined |  StreamApplicationLogsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamApplicationLogs>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof streamApplicationLogs>>,
           TError,
@@ -742,8 +755,9 @@ export function useStreamApplicationLogs<TData = Awaited<ReturnType<typeof strea
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useStreamApplicationLogs<TData = Awaited<ReturnType<typeof streamApplicationLogs>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamApplicationLogs>>, TError, TData>> & Pick<
+export function useStreamApplicationLogs<TData = Awaited<ReturnType<typeof streamApplicationLogs>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error>(
+ id: string,
+    params?: StreamApplicationLogsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamApplicationLogs>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof streamApplicationLogs>>,
           TError,
@@ -752,20 +766,22 @@ export function useStreamApplicationLogs<TData = Awaited<ReturnType<typeof strea
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useStreamApplicationLogs<TData = Awaited<ReturnType<typeof streamApplicationLogs>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamApplicationLogs>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export function useStreamApplicationLogs<TData = Awaited<ReturnType<typeof streamApplicationLogs>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error>(
+ id: string,
+    params?: StreamApplicationLogsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamApplicationLogs>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
  * @summary Stream runtime logs (Server-Sent Events)
  */
 
-export function useStreamApplicationLogs<TData = Awaited<ReturnType<typeof streamApplicationLogs>>, TError = UnauthorizedResponse | ForbiddenResponse | Error>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamApplicationLogs>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export function useStreamApplicationLogs<TData = Awaited<ReturnType<typeof streamApplicationLogs>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error>(
+ id: string,
+    params?: StreamApplicationLogsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamApplicationLogs>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
-  const queryOptions = getStreamApplicationLogsQueryOptions(id,options)
+  const queryOptions = getStreamApplicationLogsQueryOptions(id,params,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
@@ -777,7 +793,84 @@ export function useStreamApplicationLogs<TData = Awaited<ReturnType<typeof strea
 
 
 
-export const getListEnvVarKeysUrl = (id: string,) => {
+export const getRestartApplicationUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/applications/${id}/restart`
+}
+
+/**
+ * Restarts the running application. Expressed as desired state rather than as a verb the agent obeys: the panel issues a new restart token, the reconciler recreates a container whose token does not match, and converging again afterwards changes nothing.
+ *
+ * This is NOT a deploy. No revision is created, no build runs, no deployment appears, and the desired revision does not move — restarting a wedged container must not silently ship the configuration someone edited an hour ago. The response is the application.
+ *
+ * The replacement starts alongside the container it replaces, passes the same health gate, takes the route, and only then does the old one drain — a restart is zero-downtime for the same reason a deploy is.
+ *
+ * A freeze window does NOT block it: a freeze exists to stop new code shipping, and a restart ships none. Refusing to restart a crashed application during a freeze would make the freeze an outage.
+ * @summary Recreate the container without shipping a new revision
+ */
+export const restartApplication = async (id: string, options?: RequestInit): Promise<Application> => {
+
+  return apiFetch<Application>(getRestartApplicationUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRestartApplicationMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof restartApplication>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof restartApplication>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['restartApplication'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof restartApplication>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  restartApplication(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RestartApplicationMutationResult = NonNullable<Awaited<ReturnType<typeof restartApplication>>>
+
+    export type RestartApplicationMutationError = UnauthorizedResponse | ForbiddenResponse | Error
+
+    /**
+ * @summary Recreate the container without shipping a new revision
+ */
+export const useRestartApplication = <TError = UnauthorizedResponse | ForbiddenResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof restartApplication>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof restartApplication>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getRestartApplicationMutationOptions(options), queryClient);
+    }
+    export const getListEnvVarKeysUrl = (id: string,) => {
 
 
 

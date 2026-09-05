@@ -86,6 +86,7 @@ type Application struct {
 	SourceRegistryID      pgtype.Text
 	BuildPushRegistryID   pgtype.Text
 	BuildPushRepository   string
+	RestartToken          string
 }
 
 type AuditEvent struct {

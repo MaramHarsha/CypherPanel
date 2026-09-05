@@ -49,7 +49,11 @@ type Container struct {
 	Name       string
 	AppID      string
 	RevisionID string
-	Running    bool
+	// RestartToken is the token this container was created under. A container
+	// whose token differs from the spec's is not the desired container, even at
+	// the desired revision (deployment-control.md §3).
+	RestartToken string
+	Running      bool
 }
 
 // ContainerSpec is the create request the driver builds from an AppSpec.
@@ -299,7 +303,10 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 	var leftovers []Container // everything else: old revisions, dead duplicates
 	for i := range existing {
 		c := existing[i]
-		if c.RevisionID == spec.GetRevisionId() && c.Running && current == nil {
+		// The desired container is the one at the desired revision AND under the
+		// desired restart token. A restart changes only the second, which is
+		// exactly what makes it a difference the ordinary rollout path closes.
+		if c.RevisionID == spec.GetRevisionId() && c.RestartToken == spec.GetRestartToken() && c.Running && current == nil {
 			current = &existing[i]
 			continue
 		}
@@ -391,9 +398,16 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 
 	// A dead container of the desired revision (crash between create and
 	// start) holds the deterministic name; clear it so create cannot collide.
+	//
+	// Matched on the restart token too, because that is what the name now
+	// carries: a leftover at the same revision under a DIFFERENT token is the
+	// container a restart is replacing, it is very likely still serving, and
+	// discarding it here would turn a zero-downtime restart into an outage. It
+	// stays a leftover and is drained after the replacement is healthy and
+	// routed.
 	remaining := leftovers[:0]
 	for _, c := range leftovers {
-		if c.RevisionID == spec.GetRevisionId() {
+		if c.RevisionID == spec.GetRevisionId() && c.RestartToken == spec.GetRestartToken() {
 			d.discard(ctx, c.ID)
 			continue
 		}
@@ -403,7 +417,7 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 
 	// Start the new revision alongside the old one.
 	newID, err := d.client.CreateContainer(ctx, ContainerSpec{
-		Name:          containerName(spec.GetAppId(), spec.GetRevisionId()),
+		Name:          containerName(spec.GetAppId(), spec.GetRevisionId(), spec.GetRestartToken()),
 		Image:         image,
 		Env:           spec.GetEnv(),
 		Network:       spec.GetNetwork(),
@@ -646,11 +660,17 @@ func (d *Driver) upstreamOf(ctx context.Context, containerID string, spec *agent
 }
 
 func managedLabels(spec *agentv1.AppSpec) map[string]string {
-	return map[string]string{
+	labels := map[string]string{
 		driver.LabelManaged:    driverName,
 		driver.LabelAppID:      spec.GetAppId(),
 		driver.LabelRevisionID: spec.GetRevisionId(),
 	}
+	// Stamped only when there is one, so an application that has never
+	// restarted keeps exactly the labels it had before this feature existed.
+	if t := spec.GetRestartToken(); t != "" {
+		labels[driver.LabelRestartToken] = t
+	}
+	return labels
 }
 
 // networkLabels marks the network as managed without app or revision labels:
@@ -669,8 +689,21 @@ func volumeLabels(spec *agentv1.AppSpec) map[string]string {
 	}
 }
 
-func containerName(appID, revisionID string) string {
-	return "cypher-" + appID + "-" + revisionID
+// containerName is the deterministic name a rollout creates under. The restart
+// token joins it so a restart's replacement does NOT collide with the container
+// it replaces: that is what lets a restart run the ordinary zero-downtime
+// sequence — start alongside, health-gate, flip the route, drain the old —
+// rather than killing the only container that is serving.
+//
+// Identity comes from labels, never from this name (see Container), so the
+// extra segment is cosmetic to everything except collision avoidance. An
+// application that has never restarted keeps the exact name it always had.
+func containerName(appID, revisionID, restartToken string) string {
+	name := "cypher-" + appID + "-" + revisionID
+	if restartToken != "" {
+		name += "-" + restartToken
+	}
+	return name
 }
 
 // managedImageTag is the deterministic reference every managed image lives

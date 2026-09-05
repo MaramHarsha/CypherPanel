@@ -109,11 +109,12 @@ func (f *fakeClient) CreateContainer(_ context.Context, spec ContainerSpec) (str
 	f.nextID++
 	id := "c" + itoa(f.nextID)
 	f.containers[id] = &Container{
-		ID:         id,
-		Name:       spec.Name,
-		AppID:      spec.Labels[driver.LabelAppID],
-		RevisionID: spec.Labels[driver.LabelRevisionID],
-		Running:    false,
+		ID:           id,
+		Name:         spec.Name,
+		AppID:        spec.Labels[driver.LabelAppID],
+		RevisionID:   spec.Labels[driver.LabelRevisionID],
+		RestartToken: spec.Labels[driver.LabelRestartToken],
+		Running:      false,
 	}
 	f.ipByID[id] = "10.1.2.3"
 	return id, nil
@@ -238,14 +239,21 @@ func (f *fakeClient) RemoveImage(_ context.Context, id string) error {
 // addContainer seeds a managed container as if a previous driver run created
 // it (deterministic name included) — the raw material of crash-window tests.
 func (f *fakeClient) addContainer(appID, revID string, running bool) string {
+	return f.addRestartedContainer(appID, revID, "", running)
+}
+
+// addRestartedContainer is addContainer for a container created under a restart
+// token (deployment-control.md §3).
+func (f *fakeClient) addRestartedContainer(appID, revID, restartToken string, running bool) string {
 	f.nextID++
 	id := "c" + itoa(f.nextID)
 	f.containers[id] = &Container{
-		ID:         id,
-		Name:       containerName(appID, revID),
-		AppID:      appID,
-		RevisionID: revID,
-		Running:    running,
+		ID:           id,
+		Name:         containerName(appID, revID, restartToken),
+		AppID:        appID,
+		RevisionID:   revID,
+		RestartToken: restartToken,
+		Running:      running,
 	}
 	f.ipByID[id] = "10.1.2." + itoa(f.nextID)
 	return id
@@ -1452,5 +1460,108 @@ func TestPullSpecWithoutACredentialPullsAnonymously(t *testing.T) {
 	}
 	if c.pullAuth != "" {
 		t.Fatalf("pull credential = %q, want none", c.pullAuth)
+	}
+}
+
+// ── restart as desired state (deployment-control.md §3) ─────────────────────
+
+func restartSpec(appID, revID, image, token string) *agentv1.AppSpec {
+	sp := spec(appID, revID, image)
+	sp.RestartToken = token
+	return sp
+}
+
+// A new restart token is a difference in desired state, closed by the ordinary
+// recreate path — no new branch, and no verb the agent obeys.
+func TestNewRestartTokenRecreatesTheContainer(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	old := c.addRestartedContainer("app1", "rev1", "", true)
+	r.routes["app1"] = "10.1.2.1:8080"
+
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{restartSpec("app1", "rev1", "img", "rst_1")})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	st := statusOf(got, "app1")
+	if st == nil || st.GetState() != stateRunning {
+		t.Fatalf("status = %+v, want running", st)
+	}
+	if _, still := c.containers[old]; still {
+		t.Fatal("the old container survived the restart")
+	}
+	var tokens []string
+	for _, ct := range c.containers {
+		if ct.AppID == "app1" {
+			tokens = append(tokens, ct.RestartToken)
+		}
+	}
+	if len(tokens) != 1 || tokens[0] != "rst_1" {
+		t.Fatalf("containers carry %v, want exactly one under rst_1", tokens)
+	}
+}
+
+// The replacement starts alongside the container it replaces and is
+// health-gated before the old one goes: a restart is zero-downtime for the
+// same reason a deploy is. If the old container were discarded up front, the
+// create would happen with nothing serving.
+func TestRestartHealthGatesBeforeDrainingTheOldContainer(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	old := c.addRestartedContainer("app1", "rev1", "", true)
+	r.routes["app1"] = "10.1.2.1:8080"
+	p.fail = true
+
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{restartSpec("app1", "rev1", "img", "rst_1")})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	st := statusOf(got, "app1")
+	if st == nil || st.GetState() != stateError {
+		t.Fatalf("status = %+v, want error when the replacement never became healthy", st)
+	}
+	if _, still := c.containers[old]; !still {
+		t.Fatal("the serving container was destroyed by a restart that never became healthy")
+	}
+	if !c.containers[old].Running {
+		t.Fatal("the serving container was stopped by a failed restart")
+	}
+}
+
+// Converging twice after a restart must make no mutating call, or the
+// reconciler would recreate the container on every sync.
+func TestRestartConvergeTwiceIsANoOp(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+	specs := []*agentv1.AppSpec{restartSpec("app1", "rev1", "img", "rst_1")}
+
+	if _, err := d.Reconcile(context.Background(), specs); err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+	before := c.mutations
+	if _, err := d.Reconcile(context.Background(), specs); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	if c.mutations != before {
+		t.Fatalf("mutations %d -> %d, want zero on the second converge", before, c.mutations)
+	}
+}
+
+// An application that never restarts keeps exactly the container name and
+// labels it had before this feature existed.
+func TestNoRestartTokenLeavesTheContainerUnchanged(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "img")}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if c.lastCreateSpec.Name != "cypher-app1-rev1" {
+		t.Fatalf("name = %q, want the pre-feature name", c.lastCreateSpec.Name)
+	}
+	if _, stamped := c.lastCreateSpec.Labels[driver.LabelRestartToken]; stamped {
+		t.Fatal("a restart-token label was stamped on an application that has never restarted")
 	}
 }

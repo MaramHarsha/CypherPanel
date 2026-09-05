@@ -176,8 +176,14 @@ type Application struct {
 	PreviewEnabled    bool
 	PreviewBaseDomain string
 	PreviewTTLHours   int
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	// RestartToken is a restart expressed as desired state
+	// (deployment-control.md §3): it rides on the spec, is part of the
+	// container's config hash, and a new value is a difference the reconciler
+	// closes by recreating the container. Empty means no restart has been
+	// asked for, which is every application's birth value.
+	RestartToken string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // Preview status vocabulary (preview-environments.md §3). Orchestration state,
