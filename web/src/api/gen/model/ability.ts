@@ -9,7 +9,13 @@
  */
 
 /**
- * What a personal access token may do. `read` permits safe methods, `write` permits creating and changing resources, `deploy` permits triggering deploys and rollbacks. A token's authority is the intersection of its owner's role and its abilities.
+ * What a personal access token may do. A token's authority is the intersection of its owner's role and its abilities: an ability never grants access to something the owner could not already reach.
+ *
+ * `read` permits safe methods. `deploy` permits triggering deploys and rollbacks. `write` permits every other mutation.
+ *
+ * `env`, `servers` and `admin` carve narrower grants out of `write`, so a credential can be minted for one job rather than for every mutation the API has: `env` sets and removes an application's environment variables, `servers` enrols and removes servers and reads join instructions, and `admin` changes teams, members, invitations, users and panel settings.
+ *
+ * **`write` still satisfies all three.** A token issued before they existed does exactly what it did before; the narrow abilities are for narrowing a new token, not for re-cutting an old one.
  */
 export type Ability = typeof Ability[keyof typeof Ability];
 
@@ -18,4 +24,7 @@ export const Ability = {
   read: 'read',
   write: 'write',
   deploy: 'deploy',
+  env: 'env',
+  servers: 'servers',
+  admin: 'admin',
 } as const;

@@ -15,6 +15,8 @@ export interface ApiToken {
   /** Human-readable label. */
   name: string;
   abilities: Ability[];
+  /** Present when the token is confined to one project. Absent means unscoped, which is what every token was before scoping existed. */
+  project_id?: string;
   /** When the token last authenticated a request; absent if never used. */
   last_used_at?: string;
   /** When the token expires; absent if it never expires. */

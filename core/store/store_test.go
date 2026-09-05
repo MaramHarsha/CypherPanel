@@ -672,11 +672,11 @@ func TestStoreAPITokens(t *testing.T) {
 
 	// A live token (no expiry) resolves to its owner and records last_used.
 	raw := []byte("hash-live-" + ids.Secret())
-	tok, err := s.CreateAPIToken(ctx, ids.New(ids.PrefixAPIToken), user.ID, "ci", domain.AllAbilities(), raw, nil)
+	tok, err := s.CreateAPIToken(ctx, ids.New(ids.PrefixAPIToken), user.ID, "ci", domain.AllAbilities(), raw, nil, "")
 	if err != nil {
 		t.Fatalf("CreateAPIToken: %v", err)
 	}
-	got, _, abilities, err := s.APITokenByHash(ctx, raw)
+	got, _, abilities, _, err := s.APITokenByHash(ctx, raw)
 	if err != nil || got.ID != user.ID {
 		t.Fatalf("APITokenByHash = %+v, %v; want user %s", got, err, user.ID)
 	}
@@ -697,10 +697,10 @@ func TestStoreAPITokens(t *testing.T) {
 	// An expired token yields no user (the SQL filters on expires_at).
 	expRaw := []byte("hash-exp-" + ids.Secret())
 	past := time.Now().Add(-time.Hour)
-	if _, err := s.CreateAPIToken(ctx, ids.New(ids.PrefixAPIToken), user.ID, "old", domain.AllAbilities(), expRaw, &past); err != nil {
+	if _, err := s.CreateAPIToken(ctx, ids.New(ids.PrefixAPIToken), user.ID, "old", domain.AllAbilities(), expRaw, &past, ""); err != nil {
 		t.Fatalf("CreateAPIToken (expired): %v", err)
 	}
-	if _, _, _, err := s.APITokenByHash(ctx, expRaw); !errors.Is(err, ErrNotFound) {
+	if _, _, _, _, err := s.APITokenByHash(ctx, expRaw); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expired token resolved a user: %v", err)
 	}
 
@@ -708,12 +708,12 @@ func TestStoreAPITokens(t *testing.T) {
 	if err := s.DeleteAPIToken(ctx, tok.ID); err != nil {
 		t.Fatalf("DeleteAPIToken: %v", err)
 	}
-	if _, _, _, err := s.APITokenByHash(ctx, raw); !errors.Is(err, ErrNotFound) {
+	if _, _, _, _, err := s.APITokenByHash(ctx, raw); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("deleted token still resolves: %v", err)
 	}
 
 	// Deleting the user cascades to their tokens (ON DELETE CASCADE).
-	if _, err := s.CreateAPIToken(ctx, ids.New(ids.PrefixAPIToken), user.ID, "c", domain.AllAbilities(), []byte("hash-c-"+ids.Secret()), nil); err != nil {
+	if _, err := s.CreateAPIToken(ctx, ids.New(ids.PrefixAPIToken), user.ID, "c", domain.AllAbilities(), []byte("hash-c-"+ids.Secret()), nil, ""); err != nil {
 		t.Fatalf("CreateAPIToken (cascade): %v", err)
 	}
 	if err := s.DeleteUser(ctx, user.ID); err != nil {

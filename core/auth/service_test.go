@@ -55,27 +55,27 @@ func (f *fakeStore) userByID(id string) (domain.User, bool) {
 	return domain.User{}, false
 }
 
-func (f *fakeStore) CreateAPIToken(_ context.Context, id, userID, name string, abilities []domain.Ability, tokenHash []byte, expiresAt *time.Time) (domain.APIToken, error) {
-	tok := domain.APIToken{ID: id, UserID: userID, Name: name, Abilities: abilities, ExpiresAt: expiresAt, CreatedAt: time.Now()}
+func (f *fakeStore) CreateAPIToken(_ context.Context, id, userID, name string, abilities []domain.Ability, tokenHash []byte, expiresAt *time.Time, projectID string) (domain.APIToken, error) {
+	tok := domain.APIToken{ID: id, UserID: userID, Name: name, Abilities: abilities, ProjectID: projectID, ExpiresAt: expiresAt, CreatedAt: time.Now()}
 	f.tokens[id] = tok
 	f.byHash[string(tokenHash)] = id
 	return tok, nil
 }
 
-func (f *fakeStore) APITokenByHash(_ context.Context, tokenHash []byte) (domain.User, string, []domain.Ability, error) {
+func (f *fakeStore) APITokenByHash(_ context.Context, tokenHash []byte) (domain.User, string, []domain.Ability, string, error) {
 	id, ok := f.byHash[string(tokenHash)]
 	if !ok {
-		return domain.User{}, "", nil, store.ErrNotFound
+		return domain.User{}, "", nil, "", store.ErrNotFound
 	}
 	tok := f.tokens[id]
 	if tok.ExpiresAt != nil && !tok.ExpiresAt.After(time.Now()) {
-		return domain.User{}, "", nil, store.ErrNotFound
+		return domain.User{}, "", nil, "", store.ErrNotFound
 	}
 	u, ok := f.userByID(tok.UserID)
 	if !ok {
-		return domain.User{}, "", nil, store.ErrNotFound
+		return domain.User{}, "", nil, "", store.ErrNotFound
 	}
-	return u, tok.ID, tok.Abilities, nil
+	return u, tok.ID, tok.Abilities, tok.ProjectID, nil
 }
 
 func (f *fakeStore) SessionForToken(_ context.Context, tokenHash []byte) (domain.User, string, error) {

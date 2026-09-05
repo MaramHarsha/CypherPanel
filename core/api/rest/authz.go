@@ -35,6 +35,14 @@ func (a *API) requireProjectRole(w http.ResponseWriter, r *http.Request, user do
 		writeError(w, http.StatusInternalServerError, "authorization is not configured")
 		return false
 	}
+	// A project-scoped token reaching another project gets the same answer a
+	// non-member gets: not found. Anything more specific would let one token
+	// enumerate which projects its owner can see, which is exactly the reach
+	// the scope exists to remove.
+	if scope, scoped := principalScope(r.Context()); scoped && scope != projectID {
+		writeError(w, http.StatusNotFound, "not found")
+		return false
+	}
 	role, err := a.deps.Teams.RoleForProject(r.Context(), user, projectID)
 	if err != nil {
 		a.deps.Log.Error("resolving project role", "project_id", projectID, "error", err)
@@ -241,4 +249,15 @@ func (a *API) authorizeResolved(w http.ResponseWriter, r *http.Request, user dom
 		return false
 	}
 	return a.requireProjectRole(w, r, user, projectID, min)
+}
+
+// principalScope returns the project an API token is confined to, if any. Every
+// project-scoped authorization funnels through requireProjectRole, so this is
+// the one place the check has to live.
+func principalScope(ctx context.Context) (string, bool) {
+	p, ok := principalFromContext(ctx)
+	if !ok {
+		return "", false
+	}
+	return p.ScopedToProject()
 }

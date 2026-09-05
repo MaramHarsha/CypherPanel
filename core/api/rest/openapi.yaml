@@ -4521,12 +4521,27 @@ components:
 
     Ability:
       type: string
-      enum: [read, write, deploy]
+      enum: [read, write, deploy, env, servers, admin]
       description: >
-        What a personal access token may do. `read` permits safe methods,
-        `write` permits creating and changing resources, `deploy` permits
-        triggering deploys and rollbacks. A token's authority is the
-        intersection of its owner's role and its abilities.
+        What a personal access token may do. A token's authority is the
+        intersection of its owner's role and its abilities: an ability never
+        grants access to something the owner could not already reach.
+
+
+        `read` permits safe methods. `deploy` permits triggering deploys and
+        rollbacks. `write` permits every other mutation.
+
+
+        `env`, `servers` and `admin` carve narrower grants out of `write`, so a
+        credential can be minted for one job rather than for every mutation the
+        API has: `env` sets and removes an application's environment variables,
+        `servers` enrols and removes servers and reads join instructions, and
+        `admin` changes teams, members, invitations, users and panel settings.
+
+
+        **`write` still satisfies all three.** A token issued before they
+        existed does exactly what it did before; the narrow abilities are for
+        narrowing a new token, not for re-cutting an old one.
 
     ApiToken:
       type: object
@@ -4542,6 +4557,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Ability"
+        project_id:
+          type: string
+          description: >
+            Present when the token is confined to one project. Absent means
+            unscoped, which is what every token was before scoping existed.
         last_used_at:
           type: string
           format: date-time
@@ -4566,6 +4586,15 @@ components:
           description: Lifetime in days; 0 or omitted means the token never expires.
           minimum: 0
           maximum: 3650
+        project_id:
+          type: string
+          description: >
+            Confine the token to one project. Abilities say what a credential
+            may do; this says where. A scoped token answers 404 for any other
+            project — the same answer a non-member gets, so one token cannot be
+            used to enumerate which projects its owner can see — and 403 for
+            panel- and team-level routes, which belong to no project. The caller
+            must be a member of the project named here.
         abilities:
           type: array
           description: >

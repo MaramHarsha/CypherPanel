@@ -46,8 +46,8 @@ type Store interface {
 	DeleteSessionForUser(ctx context.Context, sessionID, userID string) (bool, error)
 	DeleteOtherSessionsForUser(ctx context.Context, userID string, keepTokenHash []byte) (int64, error)
 
-	CreateAPIToken(ctx context.Context, id, userID, name string, abilities []domain.Ability, tokenHash []byte, expiresAt *time.Time) (domain.APIToken, error)
-	APITokenByHash(ctx context.Context, tokenHash []byte) (domain.User, string, []domain.Ability, error)
+	CreateAPIToken(ctx context.Context, id, userID, name string, abilities []domain.Ability, tokenHash []byte, expiresAt *time.Time, projectID string) (domain.APIToken, error)
+	APITokenByHash(ctx context.Context, tokenHash []byte) (domain.User, string, []domain.Ability, string, error)
 	TouchAPIToken(ctx context.Context, tokenHash []byte) error
 	ListAPITokensByUser(ctx context.Context, userID string) ([]domain.APIToken, error)
 	GetAPIToken(ctx context.Context, id string) (domain.APIToken, error)
@@ -232,6 +232,15 @@ type Principal struct {
 	SessionID string
 	// TokenID is set for API-token principals (audit/debug). Empty for sessions.
 	TokenID string
+	// ProjectID narrows an API token to one project. Empty means unscoped,
+	// which is what a session always is: a person is not confined to a project.
+	ProjectID string
+}
+
+// ScopedToProject reports whether this credential may only act inside one
+// project, and which. A session is never scoped.
+func (p Principal) ScopedToProject() (string, bool) {
+	return p.ProjectID, p.ProjectID != ""
 }
 
 // Can reports whether this principal's credential carries an ability.

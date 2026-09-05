@@ -18,6 +18,8 @@ export interface CreateTokenRequest {
      * @maximum 3650
      */
   expires_in_days?: number;
+  /** Confine the token to one project. Abilities say what a credential may do; this says where. A scoped token answers 404 for any other project — the same answer a non-member gets, so one token cannot be used to enumerate which projects its owner can see — and 403 for panel- and team-level routes, which belong to no project. The caller must be a member of the project named here. */
+  project_id?: string;
   /** What this token may do. Omitted means full access (read, write, deploy); an explicit empty list is rejected. */
   abilities?: Ability[];
 }

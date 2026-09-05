@@ -31,6 +31,7 @@ type ApiToken struct {
 	ExpiresAt  pgtype.Timestamptz
 	CreatedAt  pgtype.Timestamptz
 	Abilities  []string
+	ProjectID  pgtype.Text
 }
 
 type AppEnvVar struct {

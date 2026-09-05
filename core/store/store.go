@@ -401,7 +401,11 @@ func (s *Store) DeleteOtherSessionsForUser(ctx context.Context, userID string, k
 
 // CreateAPIToken persists a personal access token (only its hash) and returns
 // the stored record.
-func (s *Store) CreateAPIToken(ctx context.Context, id, userID, name string, abilities []domain.Ability, tokenHash []byte, expiresAt *time.Time) (domain.APIToken, error) {
+func (s *Store) CreateAPIToken(ctx context.Context, id, userID, name string, abilities []domain.Ability, tokenHash []byte, expiresAt *time.Time, projectID string) (domain.APIToken, error) {
+	var scope pgtype.Text
+	if projectID != "" {
+		scope = pgtype.Text{String: projectID, Valid: true}
+	}
 	row, err := s.q.CreateAPIToken(ctx, db.CreateAPITokenParams{
 		ID:        id,
 		UserID:    userID,
@@ -409,6 +413,7 @@ func (s *Store) CreateAPIToken(ctx context.Context, id, userID, name string, abi
 		TokenHash: tokenHash,
 		ExpiresAt: tsFromPtr(expiresAt),
 		Abilities: abilityStrings(abilities),
+		ProjectID: scope,
 	})
 	if err != nil {
 		return domain.APIToken{}, wrapCreate("creating api token", err)
@@ -419,12 +424,16 @@ func (s *Store) CreateAPIToken(ctx context.Context, id, userID, name string, abi
 // APITokenByHash returns the user owning a live (unexpired) token whose secret
 // hashes to tokenHash, together with the token's id and abilities, or
 // ErrNotFound.
-func (s *Store) APITokenByHash(ctx context.Context, tokenHash []byte) (domain.User, string, []domain.Ability, error) {
+func (s *Store) APITokenByHash(ctx context.Context, tokenHash []byte) (domain.User, string, []domain.Ability, string, error) {
 	row, err := s.q.APITokenByHash(ctx, tokenHash)
 	if err != nil {
-		return domain.User{}, "", nil, wrap("getting api token", err)
+		return domain.User{}, "", nil, "", wrap("getting api token", err)
 	}
-	return userFromRow(row.User), row.TokenID, abilitiesFromStrings(row.Abilities), nil
+	var scope string
+	if row.ProjectID.Valid {
+		scope = row.ProjectID.String
+	}
+	return userFromRow(row.User), row.TokenID, abilitiesFromStrings(row.Abilities), scope, nil
 }
 
 // abilityStrings and abilitiesFromStrings convert between the domain vocabulary
@@ -469,6 +478,7 @@ func (s *Store) ListAPITokensByUser(ctx context.Context, userID string) ([]domai
 			UserID:     r.UserID,
 			Name:       r.Name,
 			Abilities:  abilitiesFromStrings(r.Abilities),
+			ProjectID:  textOrEmpty(r.ProjectID),
 			LastUsedAt: ptrTime(r.LastUsedAt),
 			ExpiresAt:  ptrTime(r.ExpiresAt),
 			CreatedAt:  r.CreatedAt.Time,
@@ -488,6 +498,7 @@ func (s *Store) GetAPIToken(ctx context.Context, id string) (domain.APIToken, er
 		UserID:     r.UserID,
 		Name:       r.Name,
 		Abilities:  abilitiesFromStrings(r.Abilities),
+		ProjectID:  textOrEmpty(r.ProjectID),
 		LastUsedAt: ptrTime(r.LastUsedAt),
 		ExpiresAt:  ptrTime(r.ExpiresAt),
 		CreatedAt:  r.CreatedAt.Time,
@@ -879,10 +890,20 @@ func apiTokenFromRow(r db.ApiToken) domain.APIToken {
 		UserID:     r.UserID,
 		Name:       r.Name,
 		Abilities:  abilitiesFromStrings(r.Abilities),
+		ProjectID:  textOrEmpty(r.ProjectID),
 		LastUsedAt: ptrTime(r.LastUsedAt),
 		ExpiresAt:  ptrTime(r.ExpiresAt),
 		CreatedAt:  r.CreatedAt.Time,
 	}
+}
+
+// textOrEmpty renders a nullable text column as a string, with SQL NULL and the
+// empty string meaning the same thing to the caller: absent.
+func textOrEmpty(t pgtype.Text) string {
+	if t.Valid {
+		return t.String
+	}
+	return ""
 }
 
 func joinTokenFromRow(r db.JoinToken) domain.JoinToken {

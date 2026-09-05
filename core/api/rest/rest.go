@@ -726,6 +726,13 @@ func (a *API) authed(next http.HandlerFunc) http.HandlerFunc {
 			writeError(w, http.StatusForbidden, "this token lacks the "+string(need)+" ability")
 			return
 		}
+		// A project-scoped token is refused panel- and team-level routes
+		// outright. Resources that belong to a project are checked where the
+		// project is resolved (authz.go), because only there is it known.
+		if _, scoped := principal.ScopedToProject(); scoped && outsideProjectScope(r.URL.Path) {
+			writeError(w, http.StatusForbidden, "this token is scoped to one project and cannot reach panel-wide routes")
+			return
+		}
 		ctx := context.WithValue(r.Context(), principalKey, principal)
 		ctx = context.WithValue(ctx, rawTokenKey, token)
 		next(w, r.WithContext(ctx))
@@ -760,19 +767,102 @@ var deployRoutes = map[string]bool{
 	"POST /api/v1/deployments/{id}/rollback": true,
 }
 
+// envRoutes, serverRoutes and adminRoutes carve narrower grants out of `write`,
+// listed the same way and for the same reason: a whole pattern, so a new route
+// joins a grant deliberately rather than by resembling one.
+//
+// `write` still satisfies every one of them (domain.Ability.Implies), so a
+// token issued before these existed does exactly what it did before. They are
+// here so a NEW token can be minted for one job — a CI credential that sets env
+// vars, a provisioning script that enrols servers — instead of for every
+// mutation the API has.
+var envRoutes = map[string]bool{
+	"PUT /api/v1/applications/{id}/env/{key}":    true,
+	"DELETE /api/v1/applications/{id}/env/{key}": true,
+}
+
+var serverRoutes = map[string]bool{
+	"POST /api/v1/servers":        true,
+	"DELETE /api/v1/servers/{id}": true,
+	"PATCH /api/v1/servers/{id}":  true,
+}
+
+// adminRoutes change who can reach the panel and how it behaves. Most are
+// session-only already; the ability exists so the few that a token may reach
+// are refused to one that was not minted for administration.
+var adminRoutes = map[string]bool{
+	"POST /api/v1/teams":                      true,
+	"PATCH /api/v1/teams/{id}":                true,
+	"DELETE /api/v1/teams/{id}":               true,
+	"POST /api/v1/teams/{id}/members":         true,
+	"PATCH /api/v1/teams/{id}/members/{uid}":  true,
+	"DELETE /api/v1/teams/{id}/members/{uid}": true,
+	"POST /api/v1/teams/{id}/invites":         true,
+	"DELETE /api/v1/teams/{id}/invites/{inv}": true,
+	"POST /api/v1/access-requests/{id}/grant": true,
+	"POST /api/v1/access-requests/{id}/deny":  true,
+	"POST /api/v1/users":                      true,
+	"PATCH /api/v1/users/{id}":                true,
+	"DELETE /api/v1/users/{id}":               true,
+	"PUT /api/v1/panel/mail":                  true,
+	"DELETE /api/v1/panel/mail":               true,
+	"PUT /api/v1/panel/dns":                   true,
+	"DELETE /api/v1/panel/dns":                true,
+	"PUT /api/v1/panel/tls":                   true,
+}
+
 // requiredAbility maps a request to the ability a token must carry for it.
 // r.Pattern is the route ServeMux matched; when it is empty (a handler invoked
 // outside the mux) the safe default applies — a mutation needs `write`, which
-// no deploy-only credential holds.
+// no narrow credential holds.
 func requiredAbility(r *http.Request) domain.Ability {
 	switch r.Method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		// Reads stay on `read`, including reads of env keys and servers. Making
+		// them need the narrow ability would strip listings from every
+		// read-only token already issued.
 		return domain.AbilityRead
 	}
-	if deployRoutes[r.Pattern] {
+	switch {
+	case deployRoutes[r.Pattern]:
 		return domain.AbilityDeploy
+	case envRoutes[r.Pattern]:
+		return domain.AbilityEnv
+	case serverRoutes[r.Pattern]:
+		return domain.AbilityServers
+	case adminRoutes[r.Pattern]:
+		return domain.AbilityAdmin
 	}
 	return domain.AbilityWrite
+}
+
+// panelScopeRoutes are the route prefixes a project-scoped token may never
+// reach, whatever abilities it holds: they are about the panel or a team rather
+// than about one project's resources, so "which project?" has no answer for
+// them. Everything else resolves to a project and is checked against the scope
+// where that resolution already happens (authz.go).
+var panelScopePrefixes = []string{
+	"/api/v1/teams",
+	"/api/v1/users",
+	"/api/v1/panel/",
+	"/api/v1/servers",
+	"/api/v1/backup-targets",
+	"/api/v1/deploy-keys",
+	"/api/v1/registries",
+	"/api/v1/audit",
+	"/api/v1/invites",
+	"/api/v1/access-requests",
+}
+
+// outsideProjectScope reports whether a project-scoped credential is reaching
+// for something that is not any one project's.
+func outsideProjectScope(path string) bool {
+	for _, p := range panelScopePrefixes {
+		if path == strings.TrimSuffix(p, "/") || strings.HasPrefix(path, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────────

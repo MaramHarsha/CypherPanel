@@ -255,29 +255,29 @@ func (f *fakeAuthStore) DeleteSession(_ context.Context, tokenHash []byte) error
 	return nil
 }
 
-func (f *fakeAuthStore) CreateAPIToken(_ context.Context, id, userID, name string, abilities []domain.Ability, tokenHash []byte, expiresAt *time.Time) (domain.APIToken, error) {
+func (f *fakeAuthStore) CreateAPIToken(_ context.Context, id, userID, name string, abilities []domain.Ability, tokenHash []byte, expiresAt *time.Time, projectID string) (domain.APIToken, error) {
 	if f.tokens == nil {
 		f.tokens, f.byHash = map[string]domain.APIToken{}, map[string]string{}
 	}
-	tok := domain.APIToken{ID: id, UserID: userID, Name: name, Abilities: abilities, ExpiresAt: expiresAt, CreatedAt: time.Now()}
+	tok := domain.APIToken{ID: id, UserID: userID, Name: name, Abilities: abilities, ProjectID: projectID, ExpiresAt: expiresAt, CreatedAt: time.Now()}
 	f.tokens[id] = tok
 	f.byHash[string(tokenHash)] = id
 	return tok, nil
 }
 
-func (f *fakeAuthStore) APITokenByHash(_ context.Context, tokenHash []byte) (domain.User, string, []domain.Ability, error) {
+func (f *fakeAuthStore) APITokenByHash(_ context.Context, tokenHash []byte) (domain.User, string, []domain.Ability, string, error) {
 	id, ok := f.byHash[string(tokenHash)]
 	if !ok {
-		return domain.User{}, "", nil, store.ErrNotFound
+		return domain.User{}, "", nil, "", store.ErrNotFound
 	}
 	tok := f.tokens[id]
 	if tok.ExpiresAt != nil && !tok.ExpiresAt.After(time.Now()) {
-		return domain.User{}, "", nil, store.ErrNotFound
+		return domain.User{}, "", nil, "", store.ErrNotFound
 	}
 	if tok.UserID != f.user.ID {
-		return domain.User{}, "", nil, store.ErrNotFound
+		return domain.User{}, "", nil, "", store.ErrNotFound
 	}
-	return f.user, tok.ID, tok.Abilities, nil
+	return f.user, tok.ID, tok.Abilities, tok.ProjectID, nil
 }
 
 func (f *fakeAuthStore) SessionForToken(_ context.Context, tokenHash []byte) (domain.User, string, error) {
@@ -452,12 +452,17 @@ func newFakeProjectsStore() *fakeProjectsStore {
 	// Seed the project/environment the resource fixtures reference, so the
 	// authz layer's env -> project resolution works for the seeded env_test
 	// (the harness user is a panel owner, so role checks then pass).
+	// prj_other exists so a test can tell "you cannot see this project" apart
+	// from "this project does not exist": both answer 404, and a scope test
+	// that only ever sees the second one would pass with the scope removed.
 	return &fakeProjectsStore{
 		projects: map[string]domain.Project{
-			"prj_test": {ID: "prj_test", Name: "test", TeamID: "tm_default"},
+			"prj_test":  {ID: "prj_test", Name: "test", TeamID: "tm_default", Slug: "test"},
+			"prj_other": {ID: "prj_other", Name: "other", TeamID: "tm_default", Slug: "other"},
 		},
 		envs: map[string][]domain.Environment{
-			"prj_test": {{ID: "env_test", ProjectID: "prj_test", Name: "production"}},
+			"prj_test":  {{ID: "env_test", ProjectID: "prj_test", Name: "production"}},
+			"prj_other": {{ID: "env_other", ProjectID: "prj_other", Name: "production"}},
 		},
 	}
 }
