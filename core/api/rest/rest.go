@@ -88,6 +88,9 @@ type NotifierService interface {
 // endpoint (consumer-defined; *notify.Manager satisfies it).
 type NotifierDelivery interface {
 	Deliver(ctx context.Context, n domain.Notifier, ev domain.NotifyEvent) error
+	// TestConfig proves an unsaved configuration by using it, so a connection
+	// can be tested before it is stored.
+	TestConfig(ctx context.Context, channel string, cfg json.RawMessage) error
 }
 
 // WebhookEndpointService is the outbound webhook surface — endpoint CRUD, the
@@ -433,6 +436,7 @@ func (a *API) Handler() http.Handler {
 	// Phase 3: notifications (notifications.md §7).
 	mux.HandleFunc("POST /api/v1/projects/{id}/notifiers", a.authed(a.handleCreateNotifier))
 	mux.HandleFunc("GET /api/v1/projects/{id}/notifiers", a.authed(a.handleListNotifiers))
+	mux.HandleFunc("POST /api/v1/projects/{id}/notifiers/test", a.authed(a.handleTestNotifierConfig))
 	mux.HandleFunc("GET /api/v1/notifiers/{id}", a.authed(a.handleGetNotifier))
 	mux.HandleFunc("PATCH /api/v1/notifiers/{id}", a.authed(a.handlePatchNotifier))
 	mux.HandleFunc("DELETE /api/v1/notifiers/{id}", a.authed(a.handleDeleteNotifier))

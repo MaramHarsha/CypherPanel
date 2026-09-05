@@ -28,11 +28,14 @@ import type {
 
 import type {
   BadRequestResponse,
+  ConnectionTest,
   CreateNotifierRequest,
+  Error,
   ForbiddenResponse,
   NotFoundResponse,
   Notifier,
   PatchNotifierRequest,
+  TestNotifierConfigRequest,
   UnauthorizedResponse
 } from '../model';
 
@@ -470,6 +473,78 @@ export const useDeleteNotifier = <TError = UnauthorizedResponse | ForbiddenRespo
       > => {
       return useMutation(getDeleteNotifierMutationOptions(options), queryClient);
     }
+    export const getTestNotifierConfigUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/projects/${id}/notifiers/test`
+}
+
+/**
+ * Validates the configuration exactly as create would, uses it once, and persists nothing. It exists because a dialog that can only test what it has already stored teaches operators to save broken credentials and find out later. A config the panel would refuse to store is a 400 — there is nothing to retry until the form changes — while a config that stores but does not reach its far end is `200 {ok:false, detail}`.
+ * @summary Prove a channel configuration before saving it
+ */
+export const testNotifierConfig = async (id: string,
+    testNotifierConfigRequest: TestNotifierConfigRequest, options?: RequestInit): Promise<ConnectionTest> => {
+
+  return apiFetch<ConnectionTest>(getTestNotifierConfigUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(testNotifierConfigRequest)
+  }
+);}
+
+
+
+
+
+export const getTestNotifierConfigMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof testNotifierConfig>>, TError,{id: string;data: TestNotifierConfigRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof testNotifierConfig>>, TError,{id: string;data: TestNotifierConfigRequest}, TContext> => {
+
+const mutationKey = ['testNotifierConfig'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof testNotifierConfig>>, {id: string;data: TestNotifierConfigRequest}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  testNotifierConfig(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type TestNotifierConfigMutationResult = NonNullable<Awaited<ReturnType<typeof testNotifierConfig>>>
+    export type TestNotifierConfigMutationBody = TestNotifierConfigRequest
+    export type TestNotifierConfigMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error
+
+    /**
+ * @summary Prove a channel configuration before saving it
+ */
+export const useTestNotifierConfig = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof testNotifierConfig>>, TError,{id: string;data: TestNotifierConfigRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof testNotifierConfig>>,
+        TError,
+        {id: string;data: TestNotifierConfigRequest},
+        TContext
+      > => {
+      return useMutation(getTestNotifierConfigMutationOptions(options), queryClient);
+    }
     export const getTestNotifierUrl = (id: string,) => {
 
 
@@ -479,11 +554,12 @@ export const useDeleteNotifier = <TError = UnauthorizedResponse | ForbiddenRespo
 }
 
 /**
+ * Answers what happened. This used to return 202 without looking, so a notifier with a stale webhook URL reported success and the operator learned the truth from a notification that never arrived. A channel failure is `200 {ok:false, detail}`, not an error status: the request succeeded and the connection did not, and conflating the two costs the caller the distinction.
  * @summary Send a synthetic test notification through this notifier
  */
-export const testNotifier = async (id: string, options?: RequestInit): Promise<void> => {
+export const testNotifier = async (id: string, options?: RequestInit): Promise<ConnectionTest> => {
 
-  return apiFetch<void>(getTestNotifierUrl(id),
+  return apiFetch<ConnectionTest>(getTestNotifierUrl(id),
   {
     ...options,
     method: 'POST'

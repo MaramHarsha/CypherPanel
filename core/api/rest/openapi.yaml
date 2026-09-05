@@ -2340,6 +2340,31 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/projects/{id}/notifiers/test:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Project ID. }
+    post:
+      operationId: testNotifierConfig
+      tags: [notifiers]
+      summary: Prove a channel configuration before saving it
+      description: >
+        Validates the configuration exactly as create would, uses it once, and
+        persists nothing. It exists because a dialog that can only test what it
+        has already stored teaches operators to save broken credentials and find
+        out later. A config the panel would refuse to store is a 400 — there is
+        nothing to retry until the form changes — while a config that stores but
+        does not reach its far end is `200 {ok:false, detail}`.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/TestNotifierConfigRequest" } } }
+      responses:
+        "200": { description: "Tested. `ok` is the verdict.", content: { application/json: { schema: { $ref: "#/components/schemas/ConnectionTest" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "501": { description: Notifications are not enabled on this panel., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
   /api/v1/notifiers/{id}/test:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Notifier ID. }
@@ -2347,8 +2372,15 @@ paths:
       operationId: testNotifier
       tags: [notifiers]
       summary: Send a synthetic test notification through this notifier
+      description: >
+        Answers what happened. This used to return 202 without looking, so a
+        notifier with a stale webhook URL reported success and the operator
+        learned the truth from a notification that never arrived. A channel
+        failure is `200 {ok:false, detail}`, not an error status: the request
+        succeeded and the connection did not, and conflating the two costs the
+        caller the distinction.
       responses:
-        "202": { description: "Delivery attempted (a channel failure is logged, not surfaced)." }
+        "200": { description: "Tested. `ok` is the verdict.", content: { application/json: { schema: { $ref: "#/components/schemas/ConnectionTest" } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403":
           $ref: "#/components/responses/Forbidden"
@@ -3284,6 +3316,33 @@ components:
           description: >-
             Transport security in use. Settings saved before this field existed
             read back as starttls, which is how they are sent.
+
+    ConnectionTest:
+      type: object
+      required: [ok, detail]
+      properties:
+        ok:
+          type: boolean
+          description: Whether the far end accepted the message.
+        detail:
+          type: string
+          description: >-
+            What the far end said, verbatim on failure. "connection refused" is
+            the whole answer, and paraphrasing it makes an operator guess.
+
+    TestNotifierConfigRequest:
+      type: object
+      required: [channel, config]
+      properties:
+        channel:
+          type: string
+          enum: [email, discord, slack, telegram]
+        config:
+          type: object
+          additionalProperties: true
+          description: >-
+            The same channel-specific shape create takes. Never stored by this
+            route.
 
     PendingEmailChange:
       type: object

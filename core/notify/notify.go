@@ -7,6 +7,7 @@ package notify
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -176,6 +177,32 @@ func (m *Manager) fanOut(base context.Context, notifiers []domain.Notifier, ev d
 // dispatch/fanOut.
 func (m *Manager) Deliver(ctx context.Context, n domain.Notifier, ev domain.NotifyEvent) error {
 	return m.deliver(ctx, n, ev)
+}
+
+// TestEvent is the message both test paths send, so "it worked" looks the same
+// whether the notifier was saved first or not.
+func TestEvent() domain.NotifyEvent {
+	return domain.NotifyEvent{
+		Type:  domain.EventDeploySucceeded,
+		Level: domain.NotifyInfo,
+		Title: "CypherPanel test notification",
+		Body:  "This is a test message confirming your notifier is wired correctly.",
+	}
+}
+
+// TestConfig proves a channel configuration by using it, and persists nothing.
+//
+// It exists so a connection can be tested *before* it is saved: a dialog that
+// can only test what it has already stored teaches operators to save broken
+// credentials and find out later, from a notification that never arrived. The
+// config goes through the same validation as Create, so a test that passes is a
+// config that will also store.
+func (m *Manager) TestConfig(ctx context.Context, channel string, raw json.RawMessage) error {
+	canonical, err := validateConfig(channel, raw)
+	if err != nil {
+		return err
+	}
+	return m.send(ctx, channel, canonical, TestEvent())
 }
 
 // deliver unseals the notifier's config and hands it to the channel sender.

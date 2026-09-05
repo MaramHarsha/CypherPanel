@@ -233,16 +233,66 @@ func (a *API) handleTestNotifier(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not get notifier")
 		return
 	}
-	ev := domain.NotifyEvent{
-		Type:  domain.EventDeploySucceeded,
-		Level: domain.NotifyInfo,
-		Title: "CypherPanel test notification",
-		Body:  "This is a test message confirming your notifier is wired correctly.",
-	}
-	if err := a.deps.NotifyDelivery.Deliver(r.Context(), n, ev); err != nil {
+	// The result is the answer, not a receipt. This used to return 202 without
+	// looking, so a notifier with a stale webhook URL reported success and the
+	// operator learned the truth from a notification that never arrived.
+	if err := a.deps.NotifyDelivery.Deliver(r.Context(), n, notify.TestEvent()); err != nil {
 		a.deps.Log.Warn("test notification failed", "notifier_id", n.ID, "channel", n.Channel, "error", err)
+		writeJSON(w, http.StatusOK, connectionTestDTO{OK: false, Detail: err.Error()})
+		return
 	}
-	w.WriteHeader(http.StatusAccepted)
+	writeJSON(w, http.StatusOK, connectionTestDTO{OK: true, Detail: "Delivered a test message to " + n.Channel + "."})
+}
+
+// connectionTestDTO is the one shape every "test this connection" route answers
+// with. ok is the verdict; detail is what the far end said, verbatim, because
+// "connection refused" is the whole answer and paraphrasing it makes an operator
+// guess. A failed test is a 200 with ok:false — the request succeeded, the
+// connection did not, and conflating the two costs the caller the distinction.
+type connectionTestDTO struct {
+	OK     bool   `json:"ok"`
+	Detail string `json:"detail"`
+}
+
+// testNotifierConfigRequest carries an unsaved channel configuration.
+type testNotifierConfigRequest struct {
+	Channel string          `json:"channel"`
+	Config  json.RawMessage `json:"config"`
+}
+
+// handleTestNotifierConfig proves a configuration before it is saved.
+//
+// A dialog that can only test what it has already stored teaches operators to
+// save broken credentials and find out later. Nothing is persisted here: the
+// config is validated exactly as Create would, used once, and dropped.
+func (a *API) handleTestNotifierConfig(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	projectID := r.PathValue("id")
+	if !a.requireProjectRole(w, r, user, projectID, domain.RoleMember) {
+		return
+	}
+	if a.deps.NotifyDelivery == nil {
+		writeError(w, http.StatusNotImplemented, "notifications are not enabled")
+		return
+	}
+	var req testNotifierConfigRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "could not read the request body")
+		return
+	}
+	err := a.deps.NotifyDelivery.TestConfig(r.Context(), req.Channel, req.Config)
+	var ve *notify.ValidationError
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, connectionTestDTO{OK: true, Detail: "Delivered a test message to " + req.Channel + "."})
+	case errors.As(err, &ve):
+		// A config the panel would refuse to store is a 400, not a failed test:
+		// there is nothing to retry until the operator changes the form.
+		writeError(w, http.StatusBadRequest, ve.Msg)
+	default:
+		a.deps.Log.Warn("test notification failed", "project_id", projectID, "channel", req.Channel, "error", err)
+		writeJSON(w, http.StatusOK, connectionTestDTO{OK: false, Detail: err.Error()})
+	}
 }
 
 // writeNotifierError maps service errors to status codes.
