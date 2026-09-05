@@ -302,7 +302,7 @@ paths:
       tags: [panel]
       summary: The panel's DNS provider, as a hint (panel admin)
       responses:
-        "200": { description: Whether a DNS provider is connected, and a hint naming the zones it can see. Never the token., content: { application/json: { schema: { $ref: "#/components/schemas/DNSSettings" } } } }
+        "200": { description: "Whether a DNS provider is connected, and a hint naming the zones it can see. Never the token.", content: { application/json: { schema: { $ref: "#/components/schemas/DNSSettings" } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
     put:
@@ -390,7 +390,7 @@ paths:
       tags: [panel]
       summary: The panel's mail settings, as a hint (panel admin)
       responses:
-        "200": { description: Whether mail is configured, and a hint naming it. Never the credentials., content: { application/json: { schema: { $ref: "#/components/schemas/PanelMailSettings" } } } }
+        "200": { description: "Whether mail is configured, and a hint naming it. Never the credentials.", content: { application/json: { schema: { $ref: "#/components/schemas/PanelMailSettings" } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
     put:
@@ -1925,7 +1925,7 @@ paths:
       tags: [databases]
       summary: Reset the root password (returned once)
       responses:
-        "200": { description: New password, shown once., content: { application/json: { schema: { $ref: "#/components/schemas/ResetPasswordResponse" } } } }
+        "200": { description: "New password, shown once.", content: { application/json: { schema: { $ref: "#/components/schemas/ResetPasswordResponse" } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403":
           $ref: "#/components/responses/Forbidden"
@@ -2041,7 +2041,7 @@ paths:
       tags: [backups]
       summary: List a schedule's backup run history
       responses:
-        "200": { description: Backup records, newest first., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/BackupRecord" } } } } }
+        "200": { description: "Backup records, newest first.", content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/BackupRecord" } } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403":
           $ref: "#/components/responses/Forbidden"
@@ -2190,7 +2190,7 @@ paths:
       tags: [notifiers]
       summary: Send a synthetic test notification through this notifier
       responses:
-        "202": { description: Delivery attempted (a channel failure is logged, not surfaced). }
+        "202": { description: "Delivery attempted (a channel failure is logged, not surfaced)." }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403":
           $ref: "#/components/responses/Forbidden"
@@ -2607,7 +2607,7 @@ paths:
       tags: [scheduled-tasks]
       summary: List a task's recent run history
       responses:
-        "200": { description: Runs, newest first., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/ScheduledTaskRun" } } } } }
+        "200": { description: "Runs, newest first.", content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/ScheduledTaskRun" } } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403":
           $ref: "#/components/responses/Forbidden"
