@@ -144,6 +144,8 @@ filter menu can offer three coarse choices without enumerating sixty verbs.
 | `token` | `created`, `revoked` |
 | `user` | `created`, `role_changed`, `deleted` |
 | `team` | `created`, `renamed`, `deleted`, `member_added`, `member_role_changed`, `member_removed` |
+| `invite` | `created`, `revoked`, `accepted` |
+| `access` | `requested`, `granted`, `denied` |
 | `server` | `created`, `updated`, `deleted`, `enrolled` |
 | `deploy_key` | `created`, `deleted` |
 | `project` | `created`, `updated`, `transferred`, `deleted` |
@@ -164,6 +166,13 @@ Two deliberate choices in that table:
   inside it — including, from that moment on, the project's own audit trail
   (§5). That is not the same class of event as a rename, and an operator
   reviewing access changes should not have to read details to find it.
+- **`invite` and `access` are their own families, not `team` verbs.** They are
+  recorded against the team like every other membership change
+  ([invitations-and-access-requests.md](invitations-and-access-requests.md) §6),
+  so one timeline still answers "who was let in, by whom, when" whichever door
+  they came through — but "show me every invitation" and "show me every access
+  decision" are questions an operator asks on their own, and a family prefix is
+  how this log answers a question without enumerating verbs.
 - **An env-var change names the APPLICATION, not a synthetic `env_var`
   resource**, with the key in `detail`. `?resource_id=app_…` then returns the
   application's whole story — created, rewired, deployed, deleted — in one

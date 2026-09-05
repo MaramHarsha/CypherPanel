@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MaramHarsha/cypherpanel/core/access"
 	"github.com/MaramHarsha/cypherpanel/core/api/rest/webui"
 	"github.com/MaramHarsha/cypherpanel/core/applications"
 	"github.com/MaramHarsha/cypherpanel/core/audit"
@@ -223,6 +224,31 @@ type TeamService interface {
 	DeleteUser(ctx context.Context, userID string, actor domain.User) error
 }
 
+// InviteService is the team-invitation surface (consumer-defined;
+// *access.Invites satisfies it — invitations-and-access-requests.md §7).
+//
+// Preview and Accept take the CLIENT ADDRESS rather than a principal: they are
+// the two public routes, throttled by address exactly like sign-in, and the
+// service owns that throttle so the handler cannot forget it.
+type InviteService interface {
+	Create(ctx context.Context, teamID string, in access.CreateInput, actor domain.User, actorRole string) (access.Created, error)
+	List(ctx context.Context, teamID string, includeDecided bool) ([]domain.TeamInvite, error)
+	Revoke(ctx context.Context, teamID, id string) (domain.TeamInvite, error)
+	Preview(ctx context.Context, token, clientIP string) (access.Preview, error)
+	Accept(ctx context.Context, token string, in access.AcceptInput, clientIP string) (access.Accepted, error)
+}
+
+// AccessRequestService is the access-request surface (consumer-defined;
+// *access.Requests satisfies it). Get is what the two decision routes resolve
+// their team from, so it stays a plain lookup.
+type AccessRequestService interface {
+	Create(ctx context.Context, teamID string, actor domain.User, actorRole string, in access.RequestInput) (domain.AccessRequest, error)
+	List(ctx context.Context, teamID string, includeDecided bool) ([]domain.AccessRequest, error)
+	Get(ctx context.Context, id string) (domain.AccessRequest, error)
+	Grant(ctx context.Context, id string, actor domain.User, actorRole string) (domain.AccessRequest, error)
+	Deny(ctx context.Context, id, reason string, actor domain.User) (domain.AccessRequest, error)
+}
+
 // ScheduledTaskService is the scheduled-task CRUD surface (consumer-defined;
 // *scheduledtasks.Service satisfies it — scheduled-tasks.md §7).
 type ScheduledTaskService interface {
@@ -276,7 +302,13 @@ type Deps struct {
 	ScheduledTasks  ScheduledTaskService
 	Templates       *templates.Service
 	Teams           TeamService
-	Mail            MailService
+	// Invites and AccessRequests are the two ways into a team from outside it
+	// (invitations-and-access-requests.md). nil disables the routes rather than
+	// changing anyone's rank: a panel without them behaves exactly as it did
+	// before the feature existed.
+	Invites        InviteService
+	AccessRequests AccessRequestService
+	Mail           MailService
 	// PanelTLS is the panel's ACME account (agent-identity-and-tls.md §4); nil
 	// when it is not wired, which every handler treats as "no certificate
 	// resolver" — the honest default rather than an assumed one.
@@ -607,6 +639,34 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/teams/{id}/members", a.authed(a.handleAddTeamMember))
 	mux.HandleFunc("PATCH /api/v1/teams/{id}/members/{uid}", a.authed(a.handleChangeTeamMemberRole))
 	mux.HandleFunc("DELETE /api/v1/teams/{id}/members/{uid}", a.authed(a.handleRemoveTeamMember))
+	// V1.x: invitations and access requests
+	// (invitations-and-access-requests.md §7) — the two ways into a team from
+	// outside it, beside the existing "an admin adds an account that already
+	// exists".
+	//
+	// The two public routes are the only unauthenticated surface this feature
+	// adds. They carry `security: []` in the spec, are gated by the
+	// invitation's own bearer secret, are throttled by client address, and
+	// answer one undifferentiated 404 for everything that is not currently
+	// acceptable.
+	//
+	// grant and deny are sessionOnly, and for the reason deploy protection made
+	// its decisions session-only: an API token inherits its owner's role, so a
+	// leaked `write`-able token belonging to an owner could otherwise promote
+	// an account to owner — durable, panel-wide privilege from one CI
+	// credential (threat-model §5.8). Issuing an INVITATION is deliberately not
+	// session-only: it grants nothing by itself, expires in 7 days, is
+	// revocable, and scripting team setup from CI is legitimate.
+	mux.HandleFunc("POST /api/v1/teams/{id}/invites", a.authed(a.handleCreateInvite))
+	mux.HandleFunc("GET /api/v1/teams/{id}/invites", a.authed(a.handleListInvites))
+	mux.HandleFunc("DELETE /api/v1/teams/{id}/invites/{inv}", a.authed(a.handleRevokeInvite))
+	mux.HandleFunc("GET /api/v1/invites/{token}", a.handleGetInvite)
+	mux.HandleFunc("POST /api/v1/invites/{token}/accept", a.handleAcceptInvite)
+	mux.HandleFunc("POST /api/v1/teams/{id}/access-requests", a.authed(a.handleCreateAccessRequest))
+	mux.HandleFunc("GET /api/v1/teams/{id}/access-requests", a.authed(a.handleListAccessRequests))
+	mux.HandleFunc("POST /api/v1/access-requests/{id}/grant", a.sessionOnly(a.handleGrantAccessRequest))
+	mux.HandleFunc("POST /api/v1/access-requests/{id}/deny", a.sessionOnly(a.handleDenyAccessRequest))
+
 	mux.HandleFunc("POST /api/v1/users", a.authed(a.handleCreateUser))
 	mux.HandleFunc("GET /api/v1/users", a.authed(a.handleListUsers))
 	mux.HandleFunc("PATCH /api/v1/users/{id}", a.authed(a.handleSetUserRole))
@@ -764,6 +824,11 @@ type errorBody struct {
 	Error             string `json:"error"`
 	TraceID           string `json:"trace_id,omitempty"`
 	RetryAfterSeconds int    `json:"retry_after_seconds,omitempty"`
+	// TOTPRequired appears only on the 401 that means "the password was right,
+	// now send the code": sign-in, and accepting an invitation for an address
+	// that already has a 2FA-enabled account. It tells the client to prompt for
+	// the second factor rather than for the password again.
+	TOTPRequired bool `json:"totp_required,omitempty"`
 }
 
 // writeError answers with the fault envelope, carrying the trace id the

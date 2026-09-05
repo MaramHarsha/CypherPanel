@@ -85,6 +85,14 @@ const (
 	// action. Audit ids are never reused and never renumbered — an id in a
 	// support conversation must keep naming the same event forever.
 	PrefixAuditEvent = "aud"
+
+	// V1.x: team invitations and access requests
+	// (docs/features/invitations-and-access-requests.md §2). An invite id is
+	// also the PUBLIC half of its wire token (`inv_….<secret>`), which is what
+	// lets the lookup be an indexed primary-key read while only the secret's
+	// hash is stored.
+	PrefixTeamInvite    = "inv"
+	PrefixAccessRequest = "acr"
 )
 
 // New returns a prefixed, URL-safe, collision-resistant identifier such as

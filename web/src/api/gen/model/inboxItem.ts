@@ -13,8 +13,10 @@ import type { InboxItemSeverity } from './inboxItemSeverity.ts';
 export interface InboxItem {
   /** inb_… prefixed ID. */
   id: string;
-  /** The project the event happened in — **empty for a panel-level kind** (`panel.update_available`), which belongs to the panel rather than to any project. */
+  /** The project the event happened in — **empty for a panel-level kind** (`panel.update_available`) and for a team-scoped one (`access.*`, `invite.accepted`), which belong to the panel and to a team rather than to any project. */
   project_id: string;
+  /** The team the item is about, set only for the team-access kinds (`access.requested`, `access.granted`, `access.denied`, `invite.accepted`). An item is scoped to a project, to a team, or to the panel — never to two of them. */
+  team_id?: string;
   /** An inbox kind: an event key from the notification taxonomy — the same closed set notifiers and webhook endpoints subscribe to — or a panel-level kind, which only the inbox ever carries. */
   kind: InboxItemKind;
   /** The event's level, not a resource status. `error` is immediate and individual; `info` is rolled into the day's digest. */

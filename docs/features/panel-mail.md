@@ -265,8 +265,15 @@ at the Mail tab rather than failing at submit — a dead end is a bug
 
 ## 8. Out of scope
 
-DKIM/SPF verification of the configured sender · Invitations by email · password reset by email (the panel has no anonymous
-recovery path, and adding one is a larger decision than this) · per-person
+DKIM/SPF verification of the configured sender · ~~invitations by email~~
+(**landed** as
+[invitations-and-access-requests.md](invitations-and-access-requests.md), which
+sends its invitation and its access-request notice through this transport and
+skips both silently when none is configured) · password reset by email (the
+panel has no anonymous recovery path, and adding one is a larger decision than
+this — an invitation to an address that already has an account deliberately
+requires that account's *current* password, which is what keeps this decision
+intact) · per-person
 notification digests (the profile page's other placeholder, which this transport
 unblocks but does not implement) · DKIM/SPF guidance · a mail queue with retries
 — a failed send reports its error and the operator retries.

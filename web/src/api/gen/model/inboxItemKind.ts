@@ -20,4 +20,11 @@ export const InboxItemKind = {
   backupsucceeded: 'backup.succeeded',
   backupfailed: 'backup.failed',
   panelupdate_available: 'panel.update_available',
+  deployawaiting_approval: 'deploy.awaiting_approval',
+  deployapproved: 'deploy.approved',
+  deployrejected: 'deploy.rejected',
+  accessrequested: 'access.requested',
+  accessgranted: 'access.granted',
+  accessdenied: 'access.denied',
+  inviteaccepted: 'invite.accepted',
 } as const;

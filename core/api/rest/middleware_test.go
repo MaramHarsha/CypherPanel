@@ -367,3 +367,56 @@ func TestNewTraceIDIsUniqueAndWellShaped(t *testing.T) {
 		seen[id] = true
 	}
 }
+
+// An invitation's wire token travels in the URL — the two public routes take it
+// as a path segment, and the mailed link opens the SPA route this same binary
+// serves. The panel's own log must not keep the secret half: `GET /panel/logs`
+// hands that log to a team owner, and a reverse proxy copies every request line
+// besides (invitations-and-access-requests.md §8, threat-model §5.8).
+func TestRequestLogRedactsInvitationSecrets(t *testing.T) {
+	const secret = "WDJULIAJZY3WXIRIYEP55DMTWK"
+	for _, tc := range []struct{ name, path, want string }{
+		{"preview", "/api/v1/invites/inv_abc." + secret, "/api/v1/invites/inv_abc.…"},
+		{"accept", "/api/v1/invites/inv_abc." + secret + "/accept", "/api/v1/invites/inv_abc.…/accept"},
+		{"the mailed link's SPA route", "/invite/inv_abc." + secret, "/invite/inv_abc.…"},
+		// A malformed token carries no secret to hide, and seeing it is what
+		// makes a bad link diagnosable.
+		{"no secret half", "/api/v1/invites/inv_abc", "/api/v1/invites/inv_abc"},
+		// Everything else is untouched: this is a rule about one credential,
+		// not a general scrubber that would quietly hide the next one.
+		{"an ordinary path", "/api/v1/applications/app_x/env/API_KEY", "/api/v1/applications/app_x/env/API_KEY"},
+		{"a path that merely mentions invites", "/api/v1/teams/tm_1/invites", "/api/v1/teams/tm_1/invites"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := redactPath(tc.path); got != tc.want {
+				t.Fatalf("redactPath(%q) = %q, want %q", tc.path, got, tc.want)
+			}
+			if strings.Contains(redactPath(tc.path), secret) {
+				t.Fatalf("the secret survived redaction: %q", redactPath(tc.path))
+			}
+		})
+	}
+}
+
+// A crash inside the invitation routes must not become the one place a live
+// token lands in the log: the panic line is redacted like the request line.
+func TestPanicLogRedactsInvitationSecrets(t *testing.T) {
+	const secret = "M7JTDRIWDKNC43RSU6LUYEX6IH"
+	var buf strings.Builder
+	api := New(Deps{Log: slog.New(slog.NewTextHandler(&buf, nil))})
+	h := api.recoverer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("boom")
+	}))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/invites/inv_abc."+secret, nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status %d, want 500", rec.Code)
+	}
+	if strings.Contains(buf.String(), secret) {
+		t.Fatalf("the panic log kept an invitation secret: %s", buf.String())
+	}
+	if !strings.Contains(buf.String(), "inv_abc") {
+		t.Fatalf("the panic log lost the public invite id, which is what makes it correlatable: %s", buf.String())
+	}
+}

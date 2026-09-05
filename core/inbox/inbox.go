@@ -49,7 +49,13 @@ type Store interface {
 	// and the one person who asked for it.
 	ListApprovalInboxRecipients(ctx context.Context, projectID, kind, minRole string) ([]string, error)
 	ListInboxRecipientIfMember(ctx context.Context, projectID, kind, userID string) ([]string, error)
+	// Team invitations and access requests address a TEAM rather than a
+	// project (invitations-and-access-requests.md §6): its members at or above
+	// a rank, or one named member of it.
+	ListTeamInboxRecipients(ctx context.Context, teamID, kind, minRole string) ([]string, error)
+	ListTeamInboxRecipientIfMember(ctx context.Context, teamID, kind, userID string) ([]string, error)
 	InsertInboxItems(ctx context.Context, f store.InboxFanout) error
+	InsertTeamInboxItems(ctx context.Context, f store.InboxFanout) error
 	InsertPanelInboxItems(ctx context.Context, f store.InboxFanout) error
 	UpsertInboxDigests(ctx context.Context, f store.InboxFanout) error
 	BumpInboxDigestTotals(ctx context.Context, dedupeKey, focusID string) error
@@ -386,6 +392,199 @@ func panelUpdateBody(u PanelUpdate) string {
 	}
 	if u.NotesURL != "" {
 		body += "\nRelease notes: " + u.NotesURL
+	}
+	return body
+}
+
+// ─── Team access (invitations-and-access-requests.md §6) ────────────────────
+
+// AccessNotice is what the access feature tells the inbox about one request or
+// one decision on it. Every field is already on screen for the people who
+// receive it; the item is DENORMALISED like every other one — it states what
+// happened rather than pointing at current state (notification-inbox.md §2).
+type AccessNotice struct {
+	TeamID   string
+	TeamName string
+	// RequestID is the dedupe token: one item per (user, request, kind), so a
+	// redelivered decision is a no-op (ENGINEERING rule 12).
+	RequestID string
+	// RequesterID is the user a DECISION is addressed to; RequesterEmail names
+	// them in the body an owner reads.
+	RequesterID    string
+	RequesterEmail string
+	CurrentRole    string
+	RequestedRole  string
+	// Message is the requester's own sentence, carried verbatim.
+	Message string
+	// ActorEmail is who decided; Reason is a denial's explanation.
+	ActorEmail string
+	Reason     string
+}
+
+// RecordAccessRequested tells the people who can act — the team's OWNERS, the
+// only rank that may decide a request (spec §3) — that someone has asked.
+//
+// Severity is info, not error: a person asking for access is the control
+// working, not a fault. Immediate rather than digested, for the same reason a
+// parked deploy is: a rollup of "2 people asked today" is unactionable, and the
+// digest windows are defined only for the terminal outcome families
+// (notification-inbox.md §3).
+func (s *Service) RecordAccessRequested(ctx context.Context, n AccessNotice) error {
+	if n.TeamID == "" || n.RequestID == "" {
+		return nil
+	}
+	recipients, err := s.store.ListTeamInboxRecipients(ctx, n.TeamID,
+		domain.InboxKindAccessRequested, domain.RoleOwner)
+	if err != nil {
+		return fmt.Errorf("inbox: resolving access recipients for %s: %w", n.TeamID, err)
+	}
+	return s.writeTeamItems(ctx, recipients, n.TeamID, domain.InboxKindAccessRequested,
+		domain.InboxKindAccessRequested+":"+n.RequestID,
+		"Access requested — "+describeTeam(n), accessRequestBody(n))
+}
+
+// RecordAccessGranted tells the requester they were let in, and by whom.
+func (s *Service) RecordAccessGranted(ctx context.Context, n AccessNotice) error {
+	return s.recordAccessDecision(ctx, n, domain.InboxKindAccessGranted,
+		"Access granted — "+describeTeam(n), accessDecisionBody(n, "Granted "+n.RequestedRole))
+}
+
+// RecordAccessDenied tells the requester they were refused, and why if a reason
+// was given. Still severity info: a governance decision is not a fault.
+func (s *Service) RecordAccessDenied(ctx context.Context, n AccessNotice) error {
+	return s.recordAccessDecision(ctx, n, domain.InboxKindAccessDenied,
+		"Access denied — "+describeTeam(n), accessDecisionBody(n, "Denied"))
+}
+
+// recordAccessDecision writes one item to the requester, if they are still a
+// member who has not muted the kind. A denial does not remove them from the
+// team, so the membership join is the right filter for both verbs.
+func (s *Service) recordAccessDecision(ctx context.Context, n AccessNotice, kind, title, body string) error {
+	if n.TeamID == "" || n.RequestID == "" || n.RequesterID == "" {
+		return nil
+	}
+	recipients, err := s.store.ListTeamInboxRecipientIfMember(ctx, n.TeamID, kind, n.RequesterID)
+	if err != nil {
+		return fmt.Errorf("inbox: resolving requester %s: %w", n.RequesterID, err)
+	}
+	return s.writeTeamItems(ctx, recipients, n.TeamID, kind, kind+":"+n.RequestID, title, body)
+}
+
+// InviteNotice is what an accepted invitation tells the inbox. The audience is
+// the one person who sent it: everybody else on the team learns from the member
+// list, and an invitation each admin issues is each admin's own business.
+type InviteNotice struct {
+	TeamID   string
+	TeamName string
+	InviteID string
+	// InviterID is who sent the invitation; empty for one issued by an account
+	// that has since been deleted, in which case there is nobody to tell.
+	InviterID string
+	// Email and Role describe who joined, and as what.
+	Email string
+	Role  string
+}
+
+// RecordInviteAccepted tells the inviter that their link was used.
+func (s *Service) RecordInviteAccepted(ctx context.Context, n InviteNotice) error {
+	if n.TeamID == "" || n.InviteID == "" || n.InviterID == "" {
+		return nil
+	}
+	recipients, err := s.store.ListTeamInboxRecipientIfMember(ctx, n.TeamID,
+		domain.InboxKindInviteAccepted, n.InviterID)
+	if err != nil {
+		return fmt.Errorf("inbox: resolving inviter %s: %w", n.InviterID, err)
+	}
+	team := n.TeamName
+	if team == "" {
+		team = shortID(n.TeamID)
+	}
+	return s.writeTeamItems(ctx, recipients, n.TeamID, domain.InboxKindInviteAccepted,
+		domain.InboxKindInviteAccepted+":"+n.InviteID,
+		"Invitation accepted — "+team,
+		n.Email+" joined "+team+" as "+n.Role+".")
+}
+
+// writeTeamItems is the team-scoped fan-out: one immediate item per recipient,
+// deduped on (user, kind, subject), then the same prune every other write runs.
+// The link is the team settings screen — the one place both halves of this
+// feature are acted on — validated exactly like every other stored link
+// (notification-inbox.md §5).
+func (s *Service) writeTeamItems(ctx context.Context, recipients []string, teamID, kind, dedupe, title, body string) error {
+	if len(recipients) == 0 {
+		return nil
+	}
+	link, label := teamSettingsLink()
+	f := store.InboxFanout{
+		IDs:       mintIDs(len(recipients)),
+		UserIDs:   recipients,
+		TeamID:    teamID,
+		Kind:      kind,
+		Severity:  string(domain.NotifyInfo),
+		Title:     title,
+		Body:      clampBody(body),
+		Link:      link,
+		LinkLabel: label,
+		DedupeKey: dedupe,
+	}
+	if err := s.store.InsertTeamInboxItems(ctx, f); err != nil {
+		return fmt.Errorf("inbox: inserting team items: %w", err)
+	}
+	if err := s.store.PruneInboxItems(ctx, recipients, domain.InboxRetention); err != nil {
+		return fmt.Errorf("inbox: pruning: %w", err)
+	}
+	return nil
+}
+
+// teamSettingsLink is where both halves of team access are acted on. It carries
+// no id: the teams screen lists every team the reader belongs to, and a path
+// built from an id the reader may no longer be able to see would be a link into
+// a 404.
+func teamSettingsLink() (path, label string) {
+	path = "/settings/teams"
+	if !validPath(path) {
+		return "", ""
+	}
+	return path, "Open team settings"
+}
+
+// describeTeam names the team a team-access item is about, falling back to a
+// short id when the name was not carried.
+func describeTeam(n AccessNotice) string {
+	if n.TeamName != "" {
+		return n.TeamName
+	}
+	return shortID(n.TeamID)
+}
+
+// accessRequestBody is the line an owner reads: who asked, for what, and their
+// own words. Composed here so a CLI prints the same sentence the drawer does
+// (CLAUDE.md rule 4).
+func accessRequestBody(n AccessNotice) string {
+	who := n.RequesterEmail
+	if who == "" {
+		who = shortID(n.RequesterID)
+	}
+	from := n.CurrentRole
+	if from == "" {
+		from = "no role"
+	}
+	body := who + " requests " + from + " → " + n.RequestedRole + " on " + describeTeam(n) + "."
+	if n.Message != "" {
+		body += "\n" + n.Message
+	}
+	return body
+}
+
+// accessDecisionBody names the verdict, the decider and — for a denial — why.
+func accessDecisionBody(n AccessNotice, verdict string) string {
+	body := verdict
+	if n.ActorEmail != "" {
+		body += " by " + n.ActorEmail
+	}
+	body += " on " + describeTeam(n) + "."
+	if n.Reason != "" {
+		body += "\nReason: " + n.Reason
 	}
 	return body
 }

@@ -147,9 +147,10 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 		// Password was correct; the client must supply a second factor and
 		// retry. A distinct flag lets the UI prompt for the code (not the
 		// password) without leaking whether 2FA is on before the password check.
-		writeJSON(w, http.StatusUnauthorized, map[string]any{
-			"error":         "two-factor authentication code required",
-			"totp_required": true,
+		writeJSON(w, http.StatusUnauthorized, errorBody{
+			Error:        "two-factor authentication code required",
+			TraceID:      w.Header().Get(TraceIDHeader),
+			TOTPRequired: true,
 		})
 		return
 	case errors.Is(err, auth.ErrInvalidCredentials):

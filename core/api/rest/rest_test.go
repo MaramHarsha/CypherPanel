@@ -1059,10 +1059,37 @@ func TestProtectedRoutesRequireAuth(t *testing.T) {
 		{"GET", "/api/v1/applications/app_x/env"},
 		{"PUT", "/api/v1/applications/app_x/env/KEY"},
 		{"DELETE", "/api/v1/applications/app_x/env/KEY"},
+		// Invitations and access requests: every route EXCEPT the two public
+		// ones (invitations-and-access-requests.md §3).
+		{"POST", "/api/v1/teams/tm_x/invites"},
+		{"GET", "/api/v1/teams/tm_x/invites"},
+		{"DELETE", "/api/v1/teams/tm_x/invites/inv_x"},
+		{"GET", "/api/v1/teams/tm_x/access-requests"},
+		{"POST", "/api/v1/teams/tm_x/access-requests"},
+		{"POST", "/api/v1/access-requests/acr_x/grant"},
+		{"POST", "/api/v1/access-requests/acr_x/deny"},
 	} {
 		status, _, _ := doJSON(t, route.method, ts.URL+route.path, "", "")
 		if status != http.StatusUnauthorized {
 			t.Errorf("%s %s without token: status %d, want 401", route.method, route.path, status)
+		}
+	}
+}
+
+// The invitation landing routes are the panel's only unauthenticated read and
+// its second unauthenticated mutation (after the GitHub webhook). They must
+// answer WITHOUT a bearer token — the whole point is a link someone opens
+// before they have an account — so a 401 here would be the feature failing
+// closed in the wrong direction.
+func TestPublicInviteRoutesDoNotDemandASession(t *testing.T) {
+	ts := newTestServer(t)
+	for _, route := range []struct{ method, path, body string }{
+		{"GET", "/api/v1/invites/inv_x.SECRET", ""},
+		{"POST", "/api/v1/invites/inv_x.SECRET/accept", `{"password":"correct-horse"}`},
+	} {
+		status, _, body := doJSON(t, route.method, ts.URL+route.path, "", route.body)
+		if status == http.StatusUnauthorized {
+			t.Errorf("%s %s without a token = 401, want it reachable (body %s)", route.method, route.path, body)
 		}
 	}
 }

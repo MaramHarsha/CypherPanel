@@ -75,6 +75,34 @@ func (a *API) requireTeamRole(w http.ResponseWriter, r *http.Request, user domai
 	return true
 }
 
+// teamRoleAtLeast is requireTeamRole that also HANDS BACK the role. Routes
+// which both gate on a minimum rank and then reason about the caller's own rank
+// — issuing an invitation may not exceed it, an access request must ask above
+// it — need one resolution, not two, so the answer they enforce and the answer
+// they act on cannot come from different reads.
+func (a *API) teamRoleAtLeast(w http.ResponseWriter, r *http.Request, user domain.User, teamID, min string) (string, bool) {
+	if a.deps.Teams == nil {
+		writeError(w, http.StatusInternalServerError, "authorization is not configured")
+		return "", false
+	}
+	role, err := a.deps.Teams.RoleInTeam(r.Context(), user, teamID)
+	if err != nil {
+		a.deps.Log.Error("resolving team role", "team_id", teamID, "error", err)
+		writeError(w, http.StatusInternalServerError, "could not authorize request")
+		return "", false
+	}
+	if role == "" {
+		// A team you cannot see does not exist (teams-and-roles.md §3).
+		writeError(w, http.StatusNotFound, "not found")
+		return "", false
+	}
+	if domain.RoleRank(role) < domain.RoleRank(min) {
+		writeError(w, http.StatusForbidden, "insufficient role")
+		return "", false
+	}
+	return role, true
+}
+
 // teamRoleIn returns the caller's effective role in teamID ("" = none) without
 // writing a response — for handlers that branch rather than gate.
 func (a *API) teamRoleIn(ctx context.Context, user domain.User, teamID string) (string, error) {

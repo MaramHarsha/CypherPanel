@@ -25,6 +25,10 @@ type fakeStore struct {
 	roles map[string]string
 	// owners are the panel/team owners a panel-level kind reaches.
 	owners []string
+	// teamMembers maps a team id to its users, for the TEAM-scoped fan-out the
+	// access kinds use (invitations-and-access-requests.md §6). Rank comes from
+	// the same `roles` map the project fan-out narrows by.
+	teamMembers map[string][]string
 	// items maps a user id to their rows, in insertion order.
 	items map[string][]*domain.InboxItem
 	prefs map[string][]string
@@ -39,11 +43,12 @@ type fakeStore struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		members: map[string][]string{},
-		roles:   map[string]string{},
-		items:   map[string][]*domain.InboxItem{},
-		prefs:   map[string][]string{},
-		clock:   time.Date(2026, 8, 21, 4, 2, 0, 0, time.UTC),
+		members:     map[string][]string{},
+		teamMembers: map[string][]string{},
+		roles:       map[string]string{},
+		items:       map[string][]*domain.InboxItem{},
+		prefs:       map[string][]string{},
+		clock:       time.Date(2026, 8, 21, 4, 2, 0, 0, time.UTC),
 	}
 }
 
@@ -132,6 +137,61 @@ func (f *fakeStore) ListPanelInboxRecipients(_ context.Context, kind string) ([]
 		}
 	}
 	return out, nil
+}
+
+// ListTeamInboxRecipients is the team-scoped fan-out, narrowed by rank exactly
+// as the SQL is (invitations-and-access-requests.md §6).
+func (f *fakeStore) ListTeamInboxRecipients(_ context.Context, teamID, kind, minRole string) ([]string, error) {
+	if f.failRecipients {
+		return nil, fmt.Errorf("boom")
+	}
+	out := []string{}
+	for _, u := range f.teamMembers[teamID] {
+		muted := false
+		for _, m := range f.prefs[u] {
+			if m == kind {
+				muted = true
+			}
+		}
+		role := f.roles[u]
+		if role == "" {
+			role = domain.RoleMember
+		}
+		if !muted && domain.RoleRank(role) >= domain.RoleRank(minRole) {
+			out = append(out, u)
+		}
+	}
+	return out, nil
+}
+
+// ListTeamInboxRecipientIfMember resolves one named user to zero or one.
+func (f *fakeStore) ListTeamInboxRecipientIfMember(ctx context.Context, teamID, kind, userID string) ([]string, error) {
+	all, err := f.ListTeamInboxRecipients(ctx, teamID, kind, domain.RoleMember)
+	if err != nil {
+		return nil, err
+	}
+	for _, u := range all {
+		if u == userID {
+			return []string{u}, nil
+		}
+	}
+	return []string{}, nil
+}
+
+func (f *fakeStore) InsertTeamInboxItems(ctx context.Context, fo store.InboxFanout) error {
+	for i, uid := range fo.UserIDs {
+		if f.find(uid, fo.DedupeKey) != nil {
+			continue // ON CONFLICT (user_id, dedupe_key) DO NOTHING
+		}
+		at := f.tick()
+		f.items[uid] = append(f.items[uid], &domain.InboxItem{
+			ID: fo.IDs[i], UserID: uid, TeamID: fo.TeamID, Kind: fo.Kind,
+			Severity: domain.NotifyLevel(fo.Severity), Title: fo.Title, Body: fo.Body,
+			Link: fo.Link, LinkLabel: fo.LinkLabel, CountOK: 1, CountTotal: 1,
+			Sources: []string{}, DedupeKey: fo.DedupeKey, CreatedAt: at, UpdatedAt: at,
+		})
+	}
+	return nil
 }
 
 func (f *fakeStore) InsertPanelInboxItems(ctx context.Context, fo store.InboxFanout) error {

@@ -28,6 +28,8 @@ tags:
   - name: health
   - name: auth
   - name: teams
+  - name: invites
+  - name: access-requests
   - name: servers
   - name: projects
   - name: applications
@@ -2113,6 +2115,312 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  # ─── Invitations and access requests
+  #     (invitations-and-access-requests.md §7) ────────────────────────────────
+  /api/v1/teams/{id}/invites:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Team ID (tm_… prefix). }
+    get:
+      operationId: listTeamInvites
+      tags: [invites]
+      summary: List a team's invitations (team admin+)
+      description: >-
+        Outstanding invitations by default — those that can still be accepted.
+        No response here ever carries the invitation's token or its hash: the
+        accept URL is readable exactly once, in the response that created it.
+      parameters:
+        - name: state
+          in: query
+          required: false
+          schema: { type: string, enum: [pending, all], default: pending }
+          description: >-
+            `pending` (the default) lists only invitations that can still be
+            accepted; `all` adds the accepted, revoked and expired ones.
+      responses:
+        "200":
+          description: The team's invitations, newest first.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/TeamInvite" } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: createTeamInvite
+      tags: [invites]
+      summary: Invite an address to a team (team admin+; inviting an owner needs team owner)
+      description: >-
+        Issues a single-use invitation link that expires in 7 days. The invited
+        role may not exceed the caller's own rank, and the rank is checked HERE
+        rather than at acceptance — the person accepting has none of their own.
+
+
+        Re-inviting an address supersedes: the outstanding invitation for it on
+        this team is revoked and a fresh one issued, so an operator is never
+        stuck behind a link they cannot see. An address that is already a member
+        is refused with 409 — re-ranking an existing member is
+        `PATCH /teams/{id}/members/{uid}`, which has the last-owner guard.
+
+
+        The response's `accept_url` is the ONLY time the invitation's token is
+        readable. It is returned whether or not the panel could mail it, because
+        a self-hosted panel with no SMTP is the common case and an invitation
+        nobody can deliver is worse than a link the operator hands over
+        themselves; `mail_sent` says which of the two happened.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateInviteRequest" }
+      responses:
+        "201":
+          description: Invitation issued. `accept_url` appears here and nowhere else, ever.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreatedInvite" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: That address is already a member of this team.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/teams/{id}/invites/{inv}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Team ID. }
+      - { name: inv, in: path, required: true, schema: { type: string }, description: Invitation ID (inv_… prefix). }
+    delete:
+      operationId: revokeTeamInvite
+      tags: [invites]
+      summary: Revoke an invitation (team admin+)
+      description: >-
+        Kills the link immediately. Any team admin may revoke any of the team's
+        invitations, including one that would have granted owner: revoking is a
+        reduction, so it needs no extra rank. An invitation that was already
+        revoked, already accepted, or never belonged to this team answers 404 —
+        one undifferentiated answer.
+      responses:
+        "204": { description: Revoked. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/invites/{token}:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema: { type: string }
+        description: >-
+          The wire token from the invitation link (`inv_….<secret>`). Only a
+          hash of the secret is stored, and it is compared in constant time.
+    get:
+      operationId: getInvite
+      tags: [invites]
+      summary: Read an invitation by its link (public)
+      description: >-
+        Public — this is the screen someone opens before they have an account.
+        It says who invited them, to which team, as what, and until when.
+
+
+        Unknown, wrong-secret, expired, revoked and already-accepted are ONE
+        answer (404), so a guess learns nothing about which invitations exist.
+        Throttled by client address like sign-in: a refused call answers 429
+        with `Retry-After`.
+      security: []
+      responses:
+        "200":
+          description: The invitation, as much of it as a stranger may see.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InvitePreview" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+  /api/v1/invites/{token}/accept:
+    parameters:
+      - { name: token, in: path, required: true, schema: { type: string }, description: The wire token from the invitation link. }
+    post:
+      operationId: acceptInvite
+      tags: [invites]
+      summary: Accept an invitation and sign in (public)
+      description: >-
+        Spends the invitation, adds the membership at the invited role, and
+        returns a session — the invitee lands inside the panel rather than at a
+        second form.
+
+
+        If the invited address has no account, `password` is the one they are
+        CHOOSING (at least 8 characters, the same floor first-run setup
+        enforces) and the account is created with panel role `member`.
+
+
+        If the address already has an account, `password` is that account's
+        CURRENT password and the call goes through the ordinary sign-in path: an
+        account with two-factor enabled answers 401 with `totp_required` until
+        `totp_code` is supplied. An invitation never resets an existing
+        password — otherwise inviting an address would be an account-takeover
+        primitive for anyone who can invite.
+
+
+        Single-use, enforced by the database: a replay answers 404. An address
+        that became a member between the invitation and the acceptance answers
+        409 and the link is revoked as moot.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AcceptInviteRequest" }
+      responses:
+        "200":
+          description: Joined with an existing account; the session token is returned once.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResponse" }
+        "201":
+          description: Account created and joined; the session token is returned once.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: >-
+            The address already has an account and the password was wrong, or a
+            second factor is required — `totp_required: true` then says to ask
+            for the code rather than the password again.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: That address is already a member of this team — sign in instead.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+  /api/v1/teams/{id}/access-requests:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Team ID. }
+    get:
+      operationId: listAccessRequests
+      tags: [access-requests]
+      summary: List a team's access requests (team admin+)
+      parameters:
+        - name: state
+          in: query
+          required: false
+          schema: { type: string, enum: [pending, all], default: pending }
+          description: "`pending` (the default) is the owners' queue; `all` adds the decided ones."
+      responses:
+        "200":
+          description: The team's access requests, newest first.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/AccessRequest" } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: createAccessRequest
+      tags: [access-requests]
+      summary: Ask this team's owners for a higher role (team member+)
+      description: >-
+        What the 403 screen's "Request access" does. The requested role must
+        rank strictly above the caller's current one, and the caller must
+        already be a member — a team you cannot see answers 404, because a
+        request collection that answered otherwise would be a way to probe for
+        other tenants. The way into a team you are not in is an invitation.
+
+
+        One open request per person per team: a second while one is pending
+        answers 409, so the owners' inbox does not fill with the same ask.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateAccessRequestRequest" }
+      responses:
+        "201":
+          description: Request opened; the team's owners have been told.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessRequest" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: A request from you is already open on this team.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/access-requests/{id}/grant:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Access request ID (acr_… prefix). }
+    post:
+      operationId: grantAccessRequest
+      tags: [access-requests]
+      summary: Grant an access request (team owner; interactive session only)
+      description: >-
+        Applies the requested role through the ordinary member-role path, so the
+        last-owner guard and the grant-rank rule hold unchanged, then records
+        the decision and tells the requester.
+
+
+        Session-only: an API token inherits its owner's role, so a leaked
+        `write`-able token belonging to an owner could otherwise promote an
+        account to owner — durable, panel-wide privilege from one CI credential.
+        A request whose subject has left the team, or that another owner has
+        already decided, answers 409.
+      responses:
+        "200":
+          description: Granted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Already decided, the requester has left the team, or it would leave the team without an owner.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/access-requests/{id}/deny:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Access request ID. }
+    post:
+      operationId: denyAccessRequest
+      tags: [access-requests]
+      summary: Deny an access request (team owner; interactive session only)
+      description: >-
+        Records the refusal, with an optional reason carried verbatim to the
+        requester, and changes no membership. Session-only for the same reason
+        as `grant`: both are decisions about who can do what in the team.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DenyAccessRequestRequest" }
+      responses:
+        "200":
+          description: Denied.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessRequest" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: That request has already been decided.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   # ─── Managed databases (managed-databases.md) ─────────────────────────────
   /api/v1/environments/{id}/databases:
     parameters:
@@ -3626,6 +3934,13 @@ components:
             Present only on `429`: whole seconds until the throttle lifts, the
             same value as the `Retry-After` header. Count down against it rather
             than guessing.
+        totp_required:
+          type: boolean
+          description: >-
+            Present only on the `401` from `POST /api/v1/auth/login` and
+            `POST /api/v1/invites/{token}/accept`: the password was correct and
+            the account has two-factor enabled, so the client should ask for the
+            code rather than the password again.
 
     DeployKeyInUse:
       type: object
@@ -5019,6 +5334,147 @@ components:
       properties:
         role: { type: string, enum: [member, admin, owner] }
 
+    # ─── Invitations and access requests
+    #     (invitations-and-access-requests.md §7) ──────────────────────────────
+    TeamInvite:
+      type: object
+      description: >-
+        One invitation to join a team. It never carries the token or its hash:
+        the accept URL is readable exactly once, in the response that created it.
+      required: [id, team_id, email, role, state, invited_by_label, expires_at, created_at]
+      properties:
+        id: { type: string, description: inv_… prefixed ID. }
+        team_id: { type: string }
+        email: { type: string, format: email, description: The address as the panel parsed and lower-cased it. }
+        role: { type: string, enum: [member, admin, owner], description: The rank accepting will grant. }
+        state:
+          type: string
+          enum: [pending, accepted, revoked, expired]
+          description: >-
+            Derived from the timestamps below, never stored — a stored
+            "expired" would need a sweeper to stay true.
+        invited_by_label:
+          type: string
+          description: >-
+            Who sent it, as their address read at the time. A snapshot: it still
+            names them after their account is deleted.
+        expires_at: { type: string, format: date-time, description: Seven days after it was issued. }
+        accepted_at: { type: [string, "null"], format: date-time }
+        revoked_at: { type: [string, "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+    CreateInviteRequest:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string, format: email }
+        role:
+          type: string
+          enum: [member, admin, owner]
+          default: member
+          description: >-
+            May not exceed the caller's own rank; inviting an owner needs team
+            owner. Checked here rather than at acceptance, because the person
+            accepting has no rank of their own.
+    CreatedInvite:
+      type: object
+      description: A fresh invitation plus the two facts that exist only at this moment.
+      required: [invite, accept_url, mail_sent]
+      properties:
+        invite: { $ref: "#/components/schemas/TeamInvite" }
+        accept_url:
+          type: string
+          description: >-
+            The full link to hand to the invitee. This is the ONLY time it is
+            readable — only a hash of its secret is stored — and it is returned
+            whether or not the panel could mail it, so an operator on a panel
+            with no SMTP can still pass it on themselves.
+        mail_sent:
+          type: boolean
+          description: >-
+            Whether Panel Mail actually delivered the invitation. False means
+            the panel has no mail configured (Settings → Mail) or the send
+            failed; the invitation is valid either way.
+    InvitePreview:
+      type: object
+      description: >-
+        What the unauthenticated landing screen may see about an invitation.
+        Deliberately not the invitation itself: no id, no timestamps beyond the
+        expiry, nothing about the team but its name.
+      required: [team_name, inviter_label, email, role, expires_at, account_exists]
+      properties:
+        team_name: { type: string }
+        inviter_label: { type: string, description: Who invited you, as an address. Empty if the panel no longer knows. }
+        email: { type: string, format: email, description: The address this invitation was issued for; it cannot be changed. }
+        role: { type: string, enum: [member, admin, owner] }
+        expires_at: { type: string, format: date-time }
+        account_exists:
+          type: boolean
+          description: >-
+            True when this address already has an account, so the form asks for
+            the existing password instead of offering to choose one. A
+            disclosure only to whoever already holds a valid invitation for that
+            exact address.
+    AcceptInviteRequest:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+          minLength: 8
+          description: >-
+            For an address with no account, the password being chosen (at least
+            8 characters). For one that already has an account, that account's
+            CURRENT password — accepting an invitation never resets it.
+        display_name:
+          type: string
+          maxLength: 64
+          description: >-
+            Optional, and only used when the account is being created. If the
+            panel cannot accept it — too long, or more than a single line — the
+            account is still created and joined without it, and the person can
+            set one from their profile: a name is not worth failing a join over,
+            and the invitation has already been spent by then.
+        totp_code:
+          type: string
+          description: >-
+            Second factor, required only when the address already has an account
+            with two-factor enabled — an invitation is not a way around one.
+    AccessRequest:
+      type: object
+      description: One member's ask for a higher rank in one team.
+      required: [id, team_id, user_id, user_email, current_role, requested_role, message, state, created_at]
+      properties:
+        id: { type: string, description: acr_… prefixed ID. }
+        team_id: { type: string }
+        user_id: { type: string }
+        user_email: { type: string, format: email, description: Who asked. }
+        current_role:
+          type: string
+          description: >-
+            Their rank in this team as it stands NOW, derived at read time —
+            empty if they have since left, which is why granting then answers
+            409.
+        requested_role: { type: string, enum: [member, admin, owner] }
+        message: { type: string, description: The requester's own words, at most 500 characters. }
+        state: { type: string, enum: [pending, granted, denied] }
+        decided_by_label: { type: string, description: Who decided, as an address read at the time. A snapshot. }
+        decision_reason: { type: string, description: A denial's reason, carried verbatim to the requester. Empty otherwise. }
+        decided_at: { type: [string, "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+    CreateAccessRequestRequest:
+      type: object
+      required: [requested_role]
+      properties:
+        requested_role:
+          type: string
+          enum: [member, admin, owner]
+          description: Must rank strictly above the caller's current role in this team.
+        message: { type: string, maxLength: 500, description: Why you need it — shown to the owners who decide. }
+    DenyAccessRequestRequest:
+      type: object
+      properties:
+        reason: { type: string, maxLength: 500, description: Optional; carried verbatim to the requester. }
+
     # ─── Databases ────────────────────────────────────────────────────────────
     Database:
       type: object
@@ -5463,11 +5919,19 @@ components:
           type: string
           description: >-
             The project the event happened in — **empty for a panel-level kind**
-            (`panel.update_available`), which belongs to the panel rather than
-            to any project.
+            (`panel.update_available`) and for a team-scoped one
+            (`access.*`, `invite.accepted`), which belong to the panel and to a
+            team rather than to any project.
+        team_id:
+          type: string
+          description: >-
+            The team the item is about, set only for the team-access kinds
+            (`access.requested`, `access.granted`, `access.denied`,
+            `invite.accepted`). An item is scoped to a project, to a team, or to
+            the panel — never to two of them.
         kind:
           type: string
-          enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed, panel.update_available]
+          enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed, panel.update_available, deploy.awaiting_approval, deploy.approved, deploy.rejected, access.requested, access.granted, access.denied, invite.accepted]
           description: >-
             An inbox kind: an event key from the notification taxonomy — the
             same closed set notifiers and webhook endpoints subscribe to — or a

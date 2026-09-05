@@ -18,4 +18,6 @@ export interface Error {
      * @minimum 1
      */
   retry_after_seconds?: number;
+  /** Present only on the `401` from `POST /api/v1/auth/login` and `POST /api/v1/invites/{token}/accept`: the password was correct and the account has two-factor enabled, so the client should ask for the code rather than the password again. */
+  totp_required?: boolean;
 }

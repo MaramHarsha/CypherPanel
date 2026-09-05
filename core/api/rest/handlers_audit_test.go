@@ -773,6 +773,184 @@ func TestBackupScheduleActionsAreScopedToTheDatabasesTeam(t *testing.T) {
 	}
 }
 
+// ─── write: invitations and access requests (§4, §5) ────────────────────────
+
+// newAccessAuditServer wires the invitation and access-request routes over the
+// REAL audit service, with usr_test holding teamRole in tm_test. The panel role
+// stays `member` so the team rank is the only thing granting anything — a panel
+// owner would bypass it.
+func newAccessAuditServer(t *testing.T, teamRole string) (*httptest.Server, *memAuditStore, *fakeInviteService, *fakeAccessRequestService) {
+	t.Helper()
+	invites := newFakeInviteService()
+	requests := newFakeAccessRequestService()
+	ts, mem, _ := newAuditServer(t, domain.RoleMember, []string{"tm_test"}, false, func(d *Deps) {
+		ft, ok := d.Teams.(*fakeTeams)
+		if !ok {
+			t.Fatalf("Teams is %T, not the fake this test configures", d.Teams)
+		}
+		ft.teamRoles["usr_test"] = map[string]string{"tm_test": teamRole}
+		d.Invites = invites
+		d.AccessRequests = requests
+	})
+	return ts, mem, invites, requests
+}
+
+// Every verb this feature performs lands as a row scoped to the TEAM it
+// happened in (invitations-and-access-requests.md §6, acceptance 9 and 13).
+//
+// The team scope is the load-bearing part: `team_id` is what authorizes the
+// read, so a row without it is PANEL-scoped — invisible to the owner who
+// approved the promotion and visible to every panel admin outside the team.
+// Each case therefore asserts the scope, the resource, the detail keys an
+// operator reads the row for, and that the team can read it back.
+func TestInvitationAndAccessVerbsAreAuditedAgainstTheirTeam(t *testing.T) {
+	for _, tc := range []struct {
+		teamRole           string
+		public             bool
+		method, path, body string
+		want               int
+		action, resource   string
+		actorID            string
+		detail             map[string]any
+	}{
+		{
+			teamRole: domain.RoleAdmin,
+			method:   "POST", path: "/api/v1/teams/tm_test/invites",
+			body: `{"email":"new@example.test","role":"member"}`, want: http.StatusCreated,
+			action: audit.ActionInviteCreated, resource: audit.ResourceTeamInvite, actorID: "usr_test",
+			detail: map[string]any{"email": "new@example.test", "role": domain.RoleMember, "mail_sent": true},
+		},
+		{
+			teamRole: domain.RoleAdmin,
+			method:   "DELETE", path: "/api/v1/teams/tm_test/invites/" + testInviteID,
+			want:   http.StatusNoContent,
+			action: audit.ActionInviteRevoked, resource: audit.ResourceTeamInvite, actorID: "usr_test",
+			detail: map[string]any{"email": "priya@meridian.dev", "role": domain.RoleAdmin},
+		},
+		{
+			// The public route has no principal, so the row is attributed to the
+			// account that joined — the person who actually did it.
+			teamRole: domain.RoleAdmin, public: true,
+			method: "POST", path: "/api/v1/invites/" + testInviteToken + "/accept",
+			body: `{"password":"correct-horse"}`, want: http.StatusOK,
+			action: audit.ActionInviteAccepted, resource: audit.ResourceTeamInvite, actorID: "usr_priya",
+			detail: map[string]any{"email": "priya@meridian.dev", "role": domain.RoleAdmin, "account_created": false},
+		},
+		{
+			teamRole: domain.RoleAdmin,
+			method:   "POST", path: "/api/v1/teams/tm_test/access-requests",
+			body: `{"requested_role":"owner","message":"Need to add a server."}`, want: http.StatusCreated,
+			action: audit.ActionAccessRequested, resource: audit.ResourceAccessRequest, actorID: "usr_test",
+			detail: map[string]any{"requested_role": domain.RoleOwner, "current_role": domain.RoleAdmin},
+		},
+		{
+			teamRole: domain.RoleOwner,
+			method:   "POST", path: "/api/v1/access-requests/acr_test/grant",
+			want:   http.StatusOK,
+			action: audit.ActionAccessGranted, resource: audit.ResourceAccessRequest, actorID: "usr_test",
+			detail: map[string]any{
+				"requested_role": domain.RoleAdmin,
+				"requester":      "priya@meridian.dev",
+				"member_user_id": "usr_priya",
+			},
+		},
+		{
+			teamRole: domain.RoleOwner,
+			method:   "POST", path: "/api/v1/access-requests/acr_test/deny",
+			body: `{"reason":"ask again after the audit"}`, want: http.StatusOK,
+			action: audit.ActionAccessDenied, resource: audit.ResourceAccessRequest, actorID: "usr_test",
+			detail: map[string]any{
+				"requested_role": domain.RoleAdmin,
+				"requester":      "priya@meridian.dev",
+				"member_user_id": "usr_priya",
+				"reason":         "ask again after the audit",
+			},
+		},
+	} {
+		t.Run(tc.action, func(t *testing.T) {
+			ts, mem, _, _ := newAccessAuditServer(t, tc.teamRole)
+			session := login(t, ts)
+			caller := session
+			if tc.public {
+				caller = ""
+			}
+			if status, _, body := doJSON(t, tc.method, ts.URL+tc.path, caller, tc.body); status != tc.want {
+				t.Fatalf("%s %s = %d, want %d (body %s)", tc.method, tc.path, status, tc.want, body)
+			}
+			ev := lastEvent(t, mem, tc.action)
+			if ev.TeamID != "tm_test" {
+				t.Errorf("team_id = %q — a row with no team is panel-scoped, readable by admins outside the team and not by its owner", ev.TeamID)
+			}
+			if ev.Resource.Kind != tc.resource || ev.Resource.ID == "" {
+				t.Errorf("resource = %+v, want a %s with an id", ev.Resource, tc.resource)
+			}
+			if ev.Outcome != domain.AuditSuccess {
+				t.Errorf("outcome = %q, want success", ev.Outcome)
+			}
+			if ev.Actor.Kind != domain.AuditActorUser || ev.Actor.UserID != tc.actorID {
+				t.Errorf("actor = %+v, want the user %s", ev.Actor, tc.actorID)
+			}
+			for k, want := range tc.detail {
+				if got := ev.Detail[k]; got != want {
+					t.Errorf("detail[%q] = %v, want %v (whole detail %+v)", k, got, want, ev.Detail)
+				}
+			}
+			// The point of the scope: the team reads its own row back.
+			if !auditIDs(listAudit(t, ts, session, "?team_id=tm_test"))[ev.ID] {
+				t.Error("a member of the team cannot read the row their own team produced")
+			}
+		})
+	}
+}
+
+// The accept URL is a bearer credential that grants a membership: it is
+// readable exactly once, in the response that created it. No row this feature
+// writes may carry it — not the creation, and not the accept that spends it —
+// or `GET /api/v1/audit` would hand a live invitation to every admin of the
+// team (spec §8, acceptance 13).
+func TestInvitationAuditRowsCarryNoToken(t *testing.T) {
+	ts, mem, _, _ := newAccessAuditServer(t, domain.RoleAdmin)
+	session := login(t, ts)
+
+	status, _, body := doJSON(t, "POST", ts.URL+"/api/v1/teams/tm_test/invites", session,
+		`{"email":"new@example.test","role":"member"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("create invite = %d (body %s)", status, body)
+	}
+	var created struct {
+		AcceptURL string `json:"accept_url"`
+	}
+	if err := json.Unmarshal(body, &created); err != nil {
+		t.Fatalf("unmarshal %s: %v", body, err)
+	}
+	cut := strings.LastIndexByte(created.AcceptURL, '.')
+	if !strings.Contains(created.AcceptURL, "/invite/") || cut < 0 {
+		t.Fatalf("accept_url %q is not the link the mail sends", created.AcceptURL)
+	}
+	secret := created.AcceptURL[cut+1:]
+
+	// The other place a token is spoken: the public accept that spends one.
+	if status, _, body := doJSON(t, "POST", ts.URL+"/api/v1/invites/"+testInviteToken+"/accept", "",
+		`{"password":"correct-horse"}`); status != http.StatusOK {
+		t.Fatalf("accept = %d (body %s)", status, body)
+	}
+
+	if len(mem.events) < 2 {
+		t.Fatalf("%d rows recorded, want at least the create and the accept", len(mem.events))
+	}
+	for _, ev := range mem.events {
+		encoded, err := json.Marshal(toAuditEventDTO(ev))
+		if err != nil {
+			t.Fatalf("marshal %s: %v", ev.Action, err)
+		}
+		for _, leak := range []string{created.AcceptURL, secret, testInviteToken} {
+			if strings.Contains(string(encoded), leak) {
+				t.Errorf("the %s row carries %q: %s", ev.Action, leak, encoded)
+			}
+		}
+	}
+}
+
 // A throttled sign-in never touches the database, so recording one row per
 // refused packet would let an anonymous caller drive unbounded durable writes
 // at their own request rate — the very work the login throttle bounds

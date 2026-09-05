@@ -31,6 +31,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/MaramHarsha/cypherpanel/core/access"
 	grpcapi "github.com/MaramHarsha/cypherpanel/core/api/grpc"
 	"github.com/MaramHarsha/cypherpanel/core/api/rest"
 	"github.com/MaramHarsha/cypherpanel/core/applications"
@@ -293,6 +294,27 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 	// so this service is CRUD plus the used-by and drift read models.
 	sharedVarSvc := sharedvars.NewService(st, box)
 
+	// Panel Mail: one transport owned by the panel, used by the account mail
+	// the panel itself must send (panel-mail.md). Constructed here rather than
+	// inline in the REST deps because invitations and access requests send
+	// through it too.
+	mailSvc := mail.New(st, box)
+
+	// Team invitations and access requests: the two ways into a team from
+	// outside it (invitations-and-access-requests.md). Neither adds desired
+	// state, a subject or an agent path — they are authorization records, so
+	// this is service wiring and nothing else.
+	//
+	// The invitation limiter throttles the two PUBLIC routes by client address:
+	// 10 failed lookups in 15 minutes, twice sign-in's budget because a
+	// legitimate invitee retrying a link they mistyped is not an attack, and a
+	// guess still has to find ~130 bits of secret.
+	inviteSvc := access.NewInvites(st, authr, mailSvc, inboxSvc,
+		auth.NewLimiter(10, 15*time.Minute), cfg.AdvertisedConsoleURL(),
+		log.With("component", "invites"))
+	accessRequestSvc := access.NewRequests(st, teamSvc, mailSvc, inboxSvc,
+		log.With("component", "access-requests"))
+
 	// Deploy protection: an Environment declares who must approve a deploy
 	// there and when deploys are refused outright (deploy-protection.md). The
 	// gate is consulted once, where a Deployment is born, and BEFORE any work
@@ -538,7 +560,9 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		SharedVariables:  sharedVarSvc,
 		Templates:        templateSvc,
 		Teams:            teamSvc,
-		Mail:             mail.New(st, box),
+		Invites:          inviteSvc,
+		AccessRequests:   accessRequestSvc,
+		Mail:             mailSvc,
 		PanelTLS:         panelTLS,
 		DNS:              dnsSvc,
 		DNSZones:         st,

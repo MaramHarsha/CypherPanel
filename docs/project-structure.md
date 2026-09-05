@@ -22,6 +22,12 @@ cypherpanel/
 │   │   ├── rest/                # HTTP handlers, middleware, OpenAPI spec, SSE log streams
 │   │   │   └── console/         # interim Phase 1 console (replaced by web/ in Phase 4)
 │   │   └── grpc/                # agent-facing services (proto in /proto)
+│   ├── access/                  # getting into a team from outside it: Invitations
+│   │                            #   (a hashed, single-use, 7-day link) and Access
+│   │                            #   Requests (a member asking the owners for a
+│   │                            #   higher rank). Grants nothing itself — a granted
+│   │                            #   request goes through core/teams' member-role
+│   │                            #   path (invitations-and-access-requests.md)
 │   ├── audit/                   # the audit log: the closed verb vocabulary, the
 │   │                            #   single write path (validation, secret-key
 │   │                            #   stripping, bounds) and the read path whose

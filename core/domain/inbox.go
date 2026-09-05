@@ -55,14 +55,45 @@ var protectionInboxKinds = []string{
 	InboxKindDeployRejected,
 }
 
+// Team-access inbox kinds (invitations-and-access-requests.md §6). Like the
+// panel-level and deploy-protection kinds these are inbox kinds ONLY — never a
+// notifier or outbound-webhook subscription: notifications.md §3's taxonomy is
+// fed by terminal observed transitions of resources, and "who is allowed in
+// this team" is governance news for named people, not an outcome to broadcast
+// to a channel.
+//
+// They are also the inbox's first TEAM-scoped items: they belong to a team,
+// not to a project and not to the panel (InboxItem.TeamID).
+const (
+	// InboxKindAccessRequested: a member asked for a higher rank. Addressed to
+	// the team's owners, who are the only people who can decide it.
+	InboxKindAccessRequested = "access.requested"
+	// InboxKindAccessGranted / InboxKindAccessDenied: the decision, back to the
+	// person who asked and nobody else.
+	InboxKindAccessGranted = "access.granted"
+	InboxKindAccessDenied  = "access.denied"
+	// InboxKindInviteAccepted: someone joined on an invitation. Addressed to
+	// the member who sent it.
+	InboxKindInviteAccepted = "invite.accepted"
+)
+
+// accessInboxKinds is the team-access half of the inbox taxonomy.
+var accessInboxKinds = []string{
+	InboxKindAccessRequested,
+	InboxKindAccessGranted,
+	InboxKindAccessDenied,
+	InboxKindInviteAccepted,
+}
+
 // InboxKinds returns every kind an inbox item may carry and a preference list
 // may mute: the subscribable event taxonomy first, then the inbox-only kinds
-// (panel-level, then deploy protection). A copy — callers may not mutate the
-// taxonomy.
+// (panel-level, then deploy protection, then team access). A copy — callers
+// may not mutate the taxonomy.
 func InboxKinds() []string {
 	out := EventTypes()
 	out = append(out, panelInboxKinds...)
-	return append(out, protectionInboxKinds...)
+	out = append(out, protectionInboxKinds...)
+	return append(out, accessInboxKinds...)
 }
 
 // ValidInboxKind reports whether key is an inbox kind (ValidEventType or one of
@@ -81,6 +112,11 @@ func ValidInboxKind(key string) bool {
 			return true
 		}
 	}
+	for _, k := range accessInboxKinds {
+		if k == key {
+			return true
+		}
+	}
 	return false
 }
 
@@ -93,8 +129,12 @@ type InboxItem struct {
 	// ProjectID is empty for a panel-level kind (InboxKinds beyond
 	// EventTypes): the item belongs to the panel, not to a project.
 	ProjectID string
-	Kind      string
-	Severity  NotifyLevel
+	// TeamID is set for the team-access kinds and empty for everything else: an
+	// item is scoped to a project, to a team, or to the panel — never to two of
+	// them (invitations-and-access-requests.md §6).
+	TeamID   string
+	Kind     string
+	Severity NotifyLevel
 	// Digest marks a rollup: one row per (user, project, kind, UTC day), whose
 	// displayed line is composed from the counters at read time.
 	Digest    bool

@@ -179,11 +179,13 @@ WHERE id IN (
 -- DeleteInboxItemsForTeamMember empties a team's items from an ex-member's
 -- inbox (§4). The rule is "never hold an item for a team you do not belong to",
 -- and a stale title naming a project you were just removed from breaks it as
--- surely as a live delivery would.
+-- surely as a live delivery would. Both scopes go: the team's PROJECT items and
+-- the team-scoped items themselves (invitations-and-access-requests.md §6).
 -- name: DeleteInboxItemsForTeamMember :exec
-DELETE FROM inbox_items
-WHERE user_id = @user_id
-  AND project_id IN (SELECT id FROM projects WHERE team_id = @team_id);
+DELETE FROM inbox_items i
+WHERE i.user_id = @user_id
+  AND (i.team_id = @team_id
+       OR i.project_id IN (SELECT p.id FROM projects p WHERE p.team_id = @team_id));
 
 -- name: GetInboxPreferences :one
 SELECT * FROM inbox_preferences WHERE user_id = $1;
@@ -223,3 +225,53 @@ LEFT JOIN inbox_preferences pr ON pr.user_id = m.user_id
 WHERE p.id = @project_id
   AND m.user_id = @user_id
   AND NOT (@kind::text = ANY(COALESCE(pr.muted_kinds, '{}'::text[])));
+
+-- ─── Team-scoped items (invitations-and-access-requests.md §6) ──────────────
+--
+-- The inbox's third scope, after a project's and the panel's: an item about who
+-- is allowed into a TEAM. Recipients still come from team_members, so the rule
+-- "never hold an item for a team you do not belong to" holds by construction,
+-- and DeleteInboxItemsForTeamMember above keeps it holding after someone leaves.
+
+-- ListTeamInboxRecipients resolves a team-scoped kind to the members at or
+-- above min_role who have not muted it — ListApprovalInboxRecipients' rank
+-- narrowing, keyed on the team directly because these items have no project.
+-- name: ListTeamInboxRecipients :many
+SELECT m.user_id
+FROM team_members m
+LEFT JOIN inbox_preferences pr ON pr.user_id = m.user_id
+WHERE m.team_id = @team_id
+  AND NOT (@kind::text = ANY(COALESCE(pr.muted_kinds, '{}'::text[])))
+  AND (CASE m.role WHEN 'owner' THEN 3 WHEN 'admin' THEN 2 WHEN 'member' THEN 1 ELSE 0 END)
+      >= (CASE @min_role::text WHEN 'owner' THEN 3 WHEN 'admin' THEN 2 WHEN 'member' THEN 1 ELSE 0 END)
+ORDER BY m.user_id;
+
+-- ListTeamInboxRecipientIfMember resolves ONE named user to a recipient list of
+-- zero or one: a decision on an access request is news for the person who asked
+-- and nobody else, and an accepted invitation is news for the person who sent
+-- it. A query rather than a bare id, so someone who has since left the team, or
+-- muted the kind, is filtered by the same rule every other fan-out obeys.
+-- name: ListTeamInboxRecipientIfMember :many
+SELECT m.user_id
+FROM team_members m
+LEFT JOIN inbox_preferences pr ON pr.user_id = m.user_id
+WHERE m.team_id = @team_id
+  AND m.user_id = @user_id
+  AND NOT (@kind::text = ANY(COALESCE(pr.muted_kinds, '{}'::text[])));
+
+-- InsertTeamInboxItems is InsertInboxItems with the team as the scope and no
+-- project. Same fan-out, same (user_id, dedupe_key) redelivery guard: granting
+-- the same request twice writes one item (ENGINEERING rule 12).
+-- name: InsertTeamInboxItems :exec
+WITH recipients AS (
+    SELECT unnest(@ids::text[]) AS id, unnest(@user_ids::text[]) AS user_id
+)
+INSERT INTO inbox_items (
+    id, user_id, project_id, team_id, kind, severity, digest,
+    title, body, link, link_label, count_ok, count_total, sources, dedupe_key
+)
+SELECT r.id, r.user_id, NULL, @team_id::text, @kind::text, @severity::text, false,
+       @title::text, @body::text, @link::text, @link_label::text,
+       1, 1, '{}'::text[], @dedupe_key::text
+FROM recipients r
+ON CONFLICT (user_id, dedupe_key) DO NOTHING;

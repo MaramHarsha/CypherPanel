@@ -42,8 +42,8 @@ words, because both render one `domain.NotifyEvent`. A new event key costs
 nothing here: the inbox subscribes to the taxonomy, not to individual
 transitions, so notifications.md §8's follow-ons render unchanged.
 
-**One exception, grown twice: inbox-only kinds.** Some news has no
-`NotifyEvent` behind it, and there are now two families of it.
+**One exception, grown three times: inbox-only kinds.** Some news has no
+`NotifyEvent` behind it, and there are now three families of it.
 
 *Panel-level kinds* are about the panel rather than about a project's resources
 — today just `panel.update_available`
@@ -62,10 +62,24 @@ governance step as an infrastructure event. Their audience is narrower than a
 project's team, too — the awaiting item is rank-narrowed to the members who
 could actually act on it, and the two decisions go to the requester alone.
 
-Both families are *inbox* kinds only: `domain.InboxKinds()` is `EventTypes()`
-plus the panel kinds plus deploy protection's three, preferences validate
-against `ValidInboxKind`, and notifiers and webhook endpoints keep subscribing
-to `EventTypes()` alone. Nothing emits an inbox-only kind to a channel, and
+*Team-access kinds* are the third family: `access.requested`,
+`access.granted`, `access.denied` and `invite.accepted`
+([invitations-and-access-requests.md](invitations-and-access-requests.md) §6).
+They are about a **team** rather than a project or the panel — the inbox's third
+scope — so `inbox_items` gained a nullable `team_id` in migration `0033`, set on
+exactly these rows and NULL on every other. Recipients are still resolved from
+`team_members`, rank-narrowed for the request (only owners decide one) and
+narrowed to a single named person for each decision and for an accepted
+invitation, so §4's rule holds by construction; and
+`DeleteInboxItemsForTeamMember` now sweeps both scopes, so it keeps holding
+after someone leaves. Like the other two families they have no `NotifyEvent`:
+"who is allowed in this team" is governance news for named people, not an
+outcome to broadcast to a channel.
+
+All three families are *inbox* kinds only: `domain.InboxKinds()` is
+`EventTypes()` plus the panel kinds plus deploy protection's three plus team
+access's four, preferences validate against `ValidInboxKind`, and notifiers and
+webhook endpoints keep subscribing to `EventTypes()` alone. Nothing emits an inbox-only kind to a channel, and
 nothing new reaches an agent — like notifiers, this is a plane-internal reaction
 to state that already exists (ADR-005): no work item, no subject, no proto
 change, no imperative path (CLAUDE.md rule 3). And unlike channel delivery, the inbox write

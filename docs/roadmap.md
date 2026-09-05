@@ -161,6 +161,56 @@ hourly by one owned goroutine in bounded batches. Still open, and recorded in
 the spec: the audit page itself (canvas 3g), export, and tamper-evidence beyond
 "no write route" — a hash chain against a compromised plane needs its own ADR.
 
+**Team invitations and access requests** have landed
+([invitations-and-access-requests.md](features/invitations-and-access-requests.md),
+feature-matrix **V1**), closing the "invitations by email" non-goal that
+[teams-and-roles.md](features/teams-and-roles.md) §7,
+[panel-mail.md](features/panel-mail.md) §8 and
+[first-run-setup.md](features/first-run-setup.md) §8 each deferred. Until now
+the only way into a team was for an admin to create an account, choose a
+password for someone else, and then add them by address; and a member who
+lacked the rank for an action had nowhere to ask for more — the 403 screen's
+"Request access" opened a `mailto:`. Both are now first-class records with the
+shape a join token already has: a row that describes a future membership change
+and a single atomic statement that spends it. An **Invitation** is a bearer
+permission, so it is seven days long, single-use, revocable, and stored only as
+`sha256` of its secret; the wire token is `<invite id>.<secret>`, which makes
+the lookup an indexed primary-key read and lets the secret be compared in
+constant time *before* anything is spent, so a wrong guess against a real id can
+never burn a valid link. Its accept URL is readable exactly once — in the
+response that created it, whether or not Panel Mail could deliver it, because a
+self-hosted panel with no SMTP is the common case and an invitation nobody can
+hand over is worse than a link an operator pastes themselves. Accepting an
+invitation for an address the panel does **not** know creates the account with
+the invitee's own password (the first-run floor) and signs them in; for one it
+**does** know, the same form runs the ordinary sign-in path, so the account's
+current password and its second factor are both still required — an invitation
+is never a password reset, and therefore never an account-takeover primitive for
+anyone who can invite. An **Access Request** is the mirror image: no secret, no
+expiry, and it grants nothing until a team owner answers it, at which point the
+role change goes through the existing member-role path so the last-owner guard
+and the grant-rank rule hold without being restated. Grant and deny are
+`sessionOnly` for deploy protection's reason — an API token inherits its owner's
+role, and promoting an account is durable, panel-wide privilege — while issuing
+an invitation deliberately is not, because it grants nothing by itself and
+scripting team setup from CI is legitimate. The rank is checked when a
+permission is *created*, never when it is spent (the person accepting has none
+of their own), the two public routes are throttled by client address and answer
+one undifferentiated `404` for unknown, wrong-secret, expired, revoked and
+already-spent alike, and removing a member now revokes the invitations they
+issued for that team — an invitation outlives its issuer's session, but not
+their membership. The inbox gained its third scope for this: `team_id` beside
+`project_id`, carrying `access.requested` to the owners, `access.granted` /
+`access.denied` to the requester and `invite.accepted` to the inviter, swept
+from an ex-member's inbox by the same rule the project scope already obeys.
+Out of scope and recorded: a read-only `viewer` role, which the design boards
+ask for and which changes every rank comparison in the panel — that belongs to
+granular RBAC behind its own ADR, not to a slice about how people get in. One
+release gate rides with it: the accept link points at `/invite/<token>`, a
+public SPA route the web slice still owes (12d/13aw), so the landing screen must
+ship in the same release as this backend — until it does, the panel would mail a
+link that its own router answers with the not-found page.
+
 ## Post-v1 directions (recorded, not scheduled)
 
 Deliberate **Later** items from the [feature matrix](product/feature-matrix.md), captured so v1 work doesn't preempt or accidentally foreclose them:

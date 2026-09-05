@@ -190,7 +190,7 @@ func (a *API) logRequests(next http.Handler) http.Handler {
 		next.ServeHTTP(sw, r)
 		attrs := []any{
 			"method", r.Method,
-			"path", r.URL.Path,
+			"path", redactPath(r.URL.Path),
 			"status", sw.status,
 			"duration_ms", time.Since(start).Milliseconds(),
 			"trace_id", w.Header().Get(TraceIDHeader),
@@ -201,6 +201,44 @@ func (a *API) logRequests(next http.Handler) http.Handler {
 		}
 		a.deps.Log.Info("http request", attrs...)
 	})
+}
+
+// invitePathPrefixes are the paths whose URL carries a bearer secret: the two
+// public invitation routes, and the SPA route a mailed link opens — which the
+// embedded web app serves from this same binary, so it is logged too.
+//
+// The token is `<invite id>.<secret>` (invitations-and-access-requests.md §2).
+// Its secret must not reach the panel's own log: `GET /panel/logs` hands that
+// log to a team owner, and a reverse proxy in front of the panel copies every
+// request line besides. Redaction here is the only place that can hold, because
+// a URL is logged before any handler decides what it means (ENGINEERING rule 20,
+// threat-model §5.8).
+var invitePathPrefixes = []string{"/api/v1/invites/", "/invite/"}
+
+// redactPath replaces an invitation secret with an ellipsis, keeping the public
+// invite id so a log line is still correlatable to a row. Every other path is
+// returned unchanged — this is a narrow rule about one credential, not a
+// general scrubber that would quietly hide the next one.
+func redactPath(path string) string {
+	for _, prefix := range invitePathPrefixes {
+		if !strings.HasPrefix(path, prefix) {
+			continue
+		}
+		rest := path[len(prefix):]
+		// The token is one segment; anything after it (…/accept) is kept.
+		segment, tail := rest, ""
+		if i := strings.IndexByte(rest, '/'); i >= 0 {
+			segment, tail = rest[:i], rest[i:]
+		}
+		dot := strings.IndexByte(segment, '.')
+		if dot < 0 {
+			// No secret to hide — a malformed token is not a credential, and
+			// seeing it is what makes a bad link diagnosable.
+			return path
+		}
+		return prefix + segment[:dot] + ".…" + tail
+	}
+	return path
 }
 
 func (a *API) securityHeaders(next http.Handler) http.Handler {
@@ -225,7 +263,10 @@ func (a *API) recoverer(next http.Handler) http.Handler {
 				a.deps.Log.Error("panic in handler",
 					"method", r.Method,
 					"route", r.Pattern,
-					"path", r.URL.Path,
+					// Redacted for the same reason the request line is: a
+					// crash inside the invitation routes must not be the one
+					// place a live token lands in the log.
+					"path", redactPath(r.URL.Path),
 					"trace_id", w.Header().Get(TraceIDHeader),
 					"panic", rec,
 				)

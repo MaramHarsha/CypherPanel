@@ -8,6 +8,20 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AccessRequest struct {
+	ID             string
+	TeamID         string
+	UserID         string
+	RequestedRole  string
+	Message        string
+	State          string
+	DecidedBy      pgtype.Text
+	DecidedByLabel string
+	DecisionReason string
+	DecidedAt      pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+}
+
 type ApiToken struct {
 	ID         string
 	UserID     string
@@ -301,6 +315,7 @@ type InboxItem struct {
 	ReadAt     pgtype.Timestamptz
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
+	TeamID     pgtype.Text
 }
 
 type InboxPreference struct {
@@ -448,6 +463,20 @@ type Team struct {
 	Name      string
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
+}
+
+type TeamInvite struct {
+	ID             string
+	TeamID         string
+	Email          string
+	Role           string
+	TokenHash      []byte
+	InvitedBy      pgtype.Text
+	InvitedByLabel string
+	ExpiresAt      pgtype.Timestamptz
+	AcceptedAt     pgtype.Timestamptz
+	RevokedAt      pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
 }
 
 type TeamMember struct {

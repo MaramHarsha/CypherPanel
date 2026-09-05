@@ -5,6 +5,8 @@
 ## Organizational model
 
 - **Team** — the tenancy boundary. Owns servers, projects, tokens, and billing-free everything. Users belong to teams with a role.
+- **Invitation** — a single-use, seven-day link that lets one email address join one Team at one role. Only a hash of its secret is stored, it may be revoked, and it grants nothing until it is accepted — at which point the invitee chooses their own password if the panel does not already know the address. The way *into* a team from outside it; adding a member by address is the way in for an account that already exists.
+- **Access Request** — a Team member asking that team's owners for a higher role, with a message and a recorded decision. The mirror image of an Invitation: no secret, no expiry, and it grants nothing on its own. What the 403 screen's "Request access" opens.
 - **Project** — a group of environments for one product/customer. Belongs to a team.
 - **Environment** — a named context inside a project (`production`, `staging`, or a preview). Holds resources. Previews are ordinary environments with a TTL.
 - **Resource** — anything deployable that lives in an environment: an Application, a Managed Database, or a Compose Stack.

@@ -49,6 +49,20 @@ const (
 	ActionTeamMemberRoleChanged = "team.member_role_changed"
 	ActionTeamMemberRemoved     = "team.member_removed"
 
+	// Getting into a team from outside it
+	// (invitations-and-access-requests.md §6). Recorded against the TEAM like
+	// every other membership change, so one timeline answers "who was let in,
+	// by whom, when" whichever door they came through. The detail carries the
+	// address and the role; it never carries the invitation's token, and the
+	// write path's secret-key stripping refuses a `token` key besides.
+	ActionInviteCreated  = "invite.created"
+	ActionInviteRevoked  = "invite.revoked"
+	ActionInviteAccepted = "invite.accepted"
+
+	ActionAccessRequested = "access.requested"
+	ActionAccessGranted   = "access.granted"
+	ActionAccessDenied    = "access.denied"
+
 	// Servers. `server.enrolled` is the one the threat model names by hand
 	// (§5.3, §8.1): a new server appearing must be a first-class, audited
 	// event, not a log line.
@@ -148,6 +162,8 @@ const (
 	ResourceSession         = "session"
 	ResourceAPIToken        = "api_token"
 	ResourceTeam            = "team"
+	ResourceTeamInvite      = "team_invite"
+	ResourceAccessRequest   = "access_request"
 	ResourceServer          = "server"
 	ResourceDeployKey       = "deploy_key"
 	ResourceProject         = "project"
@@ -177,6 +193,10 @@ var actions = map[string]bool{
 	ActionTeamCreated: true, ActionTeamRenamed: true, ActionTeamDeleted: true,
 	ActionTeamMemberAdded: true, ActionTeamMemberRoleChanged: true,
 	ActionTeamMemberRemoved: true,
+
+	ActionInviteCreated: true, ActionInviteRevoked: true,
+	ActionInviteAccepted: true, ActionAccessRequested: true,
+	ActionAccessGranted: true, ActionAccessDenied: true,
 
 	ActionServerCreated: true, ActionServerUpdated: true,
 	ActionServerDeleted: true, ActionServerEnrolled: true,
