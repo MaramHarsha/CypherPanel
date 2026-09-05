@@ -29,9 +29,38 @@ import (
 	"time"
 )
 
+// releaseRepo is the GitHub repository this project's releases are published
+// from. It is the one place the coordinate lives on the plane side; the
+// installers carry their own copy because they run before there is a plane.
+const releaseRepo = "MaramHarsha/CypherPanel"
+
 // DefaultFeedURL is GitHub's releases/latest endpoint for this project: one
 // JSON document describing the newest non-draft, non-prerelease release.
-const DefaultFeedURL = "https://api.github.com/repos/MaramHarsha/CypherPanel/releases/latest"
+const DefaultFeedURL = "https://api.github.com/repos/" + releaseRepo + "/releases/latest"
+
+// IsRelease reports whether v names a published release rather than a
+// development build. Exported because the join command has to make the same
+// judgement the update check does: a release panel can pin the agent binary to
+// its own version, a "dev" build has no such URL to name.
+func IsRelease(v string) bool {
+	_, ok := parseVersion(v)
+	return ok
+}
+
+// AgentAssetURL is where the cypher-agent binary for a given release lives. The
+// literal "{arch}" is left in place: the installer substitutes amd64/arm64 once
+// it knows what the joining host is, which the plane cannot know.
+//
+// It returns "" for anything that is not a release, so a development panel
+// hands out a join command with no binary URL and the installer falls back to
+// the project's latest release. The plane names a version; it never stores or
+// serves the binary (ADR-010).
+func AgentAssetURL(version string) string {
+	if !IsRelease(version) {
+		return ""
+	}
+	return "https://github.com/" + releaseRepo + "/releases/download/" + version + "/cypher-agent-linux-{arch}"
+}
 
 const (
 	defaultInterval     = 6 * time.Hour

@@ -4,7 +4,9 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"fmt"
 	"net"
+	"sync"
 	"testing"
 	"time"
 )
@@ -235,4 +237,126 @@ func hasClientAuth(cert *x509.Certificate) bool {
 		}
 	}
 	return false
+}
+
+// ClientTLSConfigFunc resolves the client certificate at every handshake, which
+// is what lets an agent's certificate be renewed underneath a long-lived client
+// without reconnecting it (agent-identity-and-tls.md §3.3). The proof is a
+// second handshake through the same tls.Config presenting a different identity.
+func TestClientTLSConfigFuncResolvesPerHandshake(t *testing.T) {
+	ca := newTestCA(t)
+	now := time.Now()
+
+	serverCert, serverKey, err := ca.IssueServerCert([]string{"localhost"}, []net.IP{net.IPv4(127, 0, 0, 1)}, time.Hour, now)
+	if err != nil {
+		t.Fatalf("IssueServerCert: %v", err)
+	}
+	serverCfg, err := ServerTLSConfig(serverCert, serverKey, ca.CertPEM())
+	if err != nil {
+		t.Fatalf("ServerTLSConfig: %v", err)
+	}
+
+	// Two certificates for the same identity, as a renewal produces: different
+	// key, different serial, same CN.
+	issue := func() tls.Certificate {
+		t.Helper()
+		keyPEM, csrPEM, gerr := GenerateAgentKey("agent")
+		if gerr != nil {
+			t.Fatalf("GenerateAgentKey: %v", gerr)
+		}
+		certPEM, serr := ca.SignAgentCSR(csrPEM, "srv_rotating", time.Hour, now)
+		if serr != nil {
+			t.Fatalf("SignAgentCSR: %v", serr)
+		}
+		pair, perr := tls.X509KeyPair(certPEM, keyPEM)
+		if perr != nil {
+			t.Fatalf("X509KeyPair: %v", perr)
+		}
+		return pair
+	}
+	first, second := issue(), issue()
+
+	var mu sync.Mutex
+	current := &first
+	clientCfg, err := ClientTLSConfigFunc(func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return current, nil
+	}, ca.CertPEM(), "localhost")
+	if err != nil {
+		t.Fatalf("ClientTLSConfigFunc: %v", err)
+	}
+
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", serverCfg)
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	defer ln.Close()
+
+	serials := make(chan string, 2)
+	errCh := make(chan error, 2)
+	go func() {
+		for i := 0; i < 2; i++ {
+			conn, aerr := ln.Accept()
+			if aerr != nil {
+				errCh <- aerr
+				return
+			}
+			tc := conn.(*tls.Conn)
+			if herr := tc.Handshake(); herr != nil {
+				errCh <- herr
+				_ = conn.Close()
+				return
+			}
+			peer := tc.ConnectionState().PeerCertificates[0]
+			if peer.Subject.CommonName != "srv_rotating" {
+				errCh <- fmt.Errorf("peer CN = %q", peer.Subject.CommonName)
+			}
+			serials <- peer.SerialNumber.String()
+			_ = conn.Close()
+		}
+	}()
+
+	dial := func() {
+		t.Helper()
+		conn, derr := tls.Dial("tcp", ln.Addr().String(), clientCfg)
+		if derr != nil {
+			t.Fatalf("Dial: %v", derr)
+		}
+		if herr := conn.Handshake(); herr != nil {
+			t.Fatalf("Handshake: %v", herr)
+		}
+		_ = conn.Close()
+	}
+
+	dial()
+	// The renewal: swap the material behind the SAME tls.Config.
+	mu.Lock()
+	current = &second
+	mu.Unlock()
+	dial()
+
+	var got []string
+	for i := 0; i < 2; i++ {
+		select {
+		case s := <-serials:
+			got = append(got, s)
+		case err := <-errCh:
+			t.Fatalf("server side: %v", err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("handshake timed out")
+		}
+	}
+	if got[0] == got[1] {
+		t.Fatalf("both handshakes presented serial %s; the config is not re-reading the certificate", got[0])
+	}
+}
+
+// A config with no certificate source is a programming error, refused at
+// construction rather than at some later handshake.
+func TestClientTLSConfigFuncRequiresASource(t *testing.T) {
+	ca := newTestCA(t)
+	if _, err := ClientTLSConfigFunc(nil, ca.CertPEM(), "localhost"); err == nil {
+		t.Fatal("ClientTLSConfigFunc(nil) succeeded")
+	}
 }

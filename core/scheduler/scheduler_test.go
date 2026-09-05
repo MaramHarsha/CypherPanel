@@ -49,6 +49,18 @@ type fakeStore struct {
 	// scopeReads counts ListSharedVariablesInScope calls, so a test can prove
 	// an application with no references never touches the shared table.
 	scopeReads int
+
+	// panelTLS is the panel's ACME account (agent-identity-and-tls.md §4);
+	// nil models a panel that has never configured TLS.
+	panelTLS *domain.PanelTLS
+	// panelTLSErr models a store that cannot answer the TLS question at all.
+	panelTLSErr error
+
+	// revisionErr / dbRevisionErr model an infrastructure failure — a
+	// connection that dropped mid-read, not a missing row. Desired state must
+	// never read one as "this application is gone" (see DesiredStateFor).
+	revisionErr   error
+	dbRevisionErr error
 }
 
 // latestDeployment returns the most recently created deployment for an app —
@@ -230,6 +242,9 @@ func (f *fakeStore) CreateRevision(_ context.Context, id, appID, sourceCommit st
 func (f *fakeStore) GetRevision(_ context.Context, id string) (domain.Revision, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.revisionErr != nil {
+		return domain.Revision{}, f.revisionErr
+	}
 	r, ok := f.revisions[id]
 	if !ok {
 		return domain.Revision{}, store.ErrNotFound
@@ -341,6 +356,18 @@ func (f *fakeStore) ListServers(context.Context) ([]domain.Server, error) {
 	return f.servers, nil
 }
 
+func (f *fakeStore) GetPanelTLS(context.Context) (domain.PanelTLS, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.panelTLSErr != nil {
+		return domain.PanelTLS{}, f.panelTLSErr
+	}
+	if f.panelTLS == nil {
+		return domain.PanelTLS{}, store.ErrNotFound
+	}
+	return *f.panelTLS, nil
+}
+
 func (f *fakeStore) GetDeployKey(_ context.Context, id string) (domain.DeployKey, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -376,6 +403,9 @@ func (f *fakeStore) ListDatabasesByServer(_ context.Context, serverID string) ([
 func (f *fakeStore) GetDatabaseRevision(_ context.Context, id string) (domain.DatabaseRevision, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.dbRevisionErr != nil {
+		return domain.DatabaseRevision{}, f.dbRevisionErr
+	}
 	r, ok := f.dbRevs[id]
 	if !ok {
 		return domain.DatabaseRevision{}, store.ErrNotFound

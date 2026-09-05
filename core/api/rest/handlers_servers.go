@@ -15,6 +15,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/servers"
 	"github.com/MaramHarsha/cypherpanel/core/store"
+	"github.com/MaramHarsha/cypherpanel/core/updates"
 )
 
 type serverDTO struct {
@@ -134,12 +135,35 @@ func (a *API) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 			),
 			// CYPHER_PLANE_HTTP is passed explicitly: the plane knows its own
 			// advertised URL; the installer must not guess a port.
-			InstallCommand: fmt.Sprintf(
-				"curl -fsSL %s/install/agent.sh | CYPHER_PLANE=%s CYPHER_PLANE_HTTP=%s CYPHER_TOKEN=%s CYPHER_CA_FINGERPRINT=%s sh",
-				a.deps.ConsoleURL, a.deps.EnrollAddr, a.deps.ConsoleURL, token, fingerprint,
-			),
+			InstallCommand: a.installCommand(token, fingerprint),
 		},
 	})
+}
+
+// installCommand builds the ready-to-paste join line.
+//
+// It pins CYPHER_AGENT_URL to this panel's OWN version when the panel is a
+// release build (agent-identity-and-tls.md §6): a server then joins running the
+// agent that matches the plane, which is the version pairing ADR-010 assumes,
+// and the paste works on a host that has never seen the binary. A development
+// build names no URL and the installer falls back to the project's latest
+// release — the plane still stores and serves no binaries either way (ADR-010).
+func (a *API) installCommand(token, fingerprint string) string {
+	agentURL := ""
+	if a.deps.Panel != nil {
+		agentURL = updates.AgentAssetURL(a.deps.Panel.Current().Version)
+	}
+	cmd := fmt.Sprintf(
+		"curl -fsSL %s/install/agent.sh | CYPHER_PLANE=%s CYPHER_PLANE_HTTP=%s CYPHER_TOKEN=%s CYPHER_CA_FINGERPRINT=%s",
+		a.deps.ConsoleURL, a.deps.EnrollAddr, a.deps.ConsoleURL, token, fingerprint,
+	)
+	if agentURL != "" {
+		// Quoted: the URL carries a literal {arch} placeholder the installer
+		// substitutes, and an unquoted brace is at the mercy of whichever shell
+		// the operator pastes into.
+		cmd += fmt.Sprintf(" CYPHER_AGENT_URL='%s'", agentURL)
+	}
+	return cmd + " sh"
 }
 
 func (a *API) handleGetServer(w http.ResponseWriter, r *http.Request) {

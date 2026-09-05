@@ -1606,3 +1606,70 @@ func TestStoreSharedVariableRoundtrip(t *testing.T) {
 		t.Fatalf("project-scoped row after project delete = %v, want ErrNotFound", err)
 	}
 }
+
+// The panel's ACME account (agent-identity-and-tls.md §4). A singleton with a
+// deliberately unusual property: the row exists only when TLS is configured, so
+// "is there a resolver?" has one answer in one place rather than two that can
+// disagree.
+func TestStorePanelTLSRoundtrip(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	// Start from a known state — the table is a singleton, so other tests in
+	// this package share it and order-independence has to be arranged.
+	if err := s.DeletePanelTLS(ctx); err != nil {
+		t.Fatalf("DeletePanelTLS: %v", err)
+	}
+	if _, err := s.GetPanelTLS(ctx); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetPanelTLS on an unconfigured panel = %v, want ErrNotFound", err)
+	}
+
+	tests := []struct {
+		name string
+		in   domain.PanelTLS
+	}{
+		{"production", domain.PanelTLS{ACMEEmail: "ops@example.com"}},
+		{"staging", domain.PanelTLS{
+			ACMEEmail:    "ops@example.com",
+			ACMECAServer: "https://acme-staging-v02.api.letsencrypt.org/directory",
+		}},
+		{"changed account", domain.PanelTLS{ACMEEmail: "platform@example.com"}},
+	}
+	var previous time.Time
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := s.SetPanelTLS(ctx, tc.in); err != nil {
+				t.Fatalf("SetPanelTLS: %v", err)
+			}
+			got, err := s.GetPanelTLS(ctx)
+			if err != nil {
+				t.Fatalf("GetPanelTLS: %v", err)
+			}
+			if got.ACMEEmail != tc.in.ACMEEmail || got.ACMECAServer != tc.in.ACMECAServer {
+				t.Fatalf("round-trip = %+v, want %+v", got, tc.in)
+			}
+			if !got.Configured() {
+				t.Fatalf("stored account does not report configured: %+v", got)
+			}
+			// Wholesale replacement: a second write is an upsert on the same
+			// row, not a second row, and it moves updated_at.
+			if got.UpdatedAt.IsZero() || !got.UpdatedAt.After(previous) {
+				t.Fatalf("updated_at = %s, want it to advance past %s", got.UpdatedAt, previous)
+			}
+			previous = got.UpdatedAt
+		})
+	}
+
+	// Clearing removes the row; the panel is back to "no resolver".
+	if err := s.DeletePanelTLS(ctx); err != nil {
+		t.Fatalf("DeletePanelTLS: %v", err)
+	}
+	if _, err := s.GetPanelTLS(ctx); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetPanelTLS after delete = %v, want ErrNotFound", err)
+	}
+	// Deleting again is a no-op, not a failure: the caller does not have to
+	// know whether an account existed.
+	if err := s.DeletePanelTLS(ctx); err != nil {
+		t.Fatalf("second DeletePanelTLS: %v", err)
+	}
+}

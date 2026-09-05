@@ -302,6 +302,52 @@ paths:
         "409": { description: That address was taken while confirming., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
+  /api/v1/panel/tls:
+    get:
+      operationId: getPanelTLS
+      tags: [panel]
+      summary: The panel's ACME account for routed applications (panel owner)
+      description: >-
+        The one setting that decides whether the managed Proxy on every server can obtain
+        certificates. Nothing here is a secret — an ACME account email is published back by
+        the CA in the registration, and the ACME account key never leaves the serving node —
+        so the values are returned as stored rather than hinted at.
+      responses:
+        "200":
+          description: >-
+            The account, or `configured: false` on a panel that has never set one. An
+            unconfigured panel is a normal state, not an error: routed applications are
+            served over plain HTTP and say so through `Application.tls_state`.
+          content: { application/json: { schema: { $ref: "#/components/schemas/PanelTLSSettings" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: setPanelTLS
+      tags: [panel]
+      summary: Set (or clear) the panel's ACME account (panel owner)
+      description: >-
+        Wholesale replacement: the email and the directory URL are one account, and
+        half-changing them would point an existing account at a different CA. An empty
+        `acme_email` CLEARS the account — "no email" and "no ACME" are the same statement,
+        so there is no separate delete.
+
+
+        The change is desired state: it is carried to every enrolled server inside its
+        desired set, and the fleet is asked to re-read that set immediately, so nodes pick
+        up a new account within a reconcile rather than on their next reconnect. Servers
+        that are offline pick it up when they return. Certificates already issued are held
+        on the serving nodes and keep working regardless.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetPanelTLSRequest" } } }
+      responses:
+        "200":
+          description: Stored (or cleared, when `acme_email` was empty).
+          content: { application/json: { schema: { $ref: "#/components/schemas/PanelTLSSettings" } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /api/v1/panel/dns:
     get:
       operationId: getPanelDNS
@@ -3039,6 +3085,47 @@ components:
           format: int64
           description: Other sessions signed out, because the recovery address moved.
 
+    PanelTLSSettings:
+      type: object
+      required: [configured, acme_email, acme_ca_server]
+      properties:
+        configured:
+          type: boolean
+          description: >-
+            Whether an ACME account exists — the same question as "will a server configure a
+            certificate resolver?". False means every https route is served over plain HTTP
+            until an account is set.
+        acme_email:
+          type: string
+          description: >-
+            The account email registered with the CA. Empty when unconfigured. Not a secret:
+            the CA publishes it back in the account record, and the ACME account KEY — the
+            part that is secret — is generated and kept by the proxy on the serving node,
+            never by the control plane.
+        acme_ca_server:
+          type: string
+          description: >-
+            ACME directory URL. Empty means Let's Encrypt production; point it at the Let's
+            Encrypt staging directory while testing so a misconfigured domain does not burn
+            the production rate limit.
+        updated_at: { type: string, format: date-time }
+
+    SetPanelTLSRequest:
+      type: object
+      required: [acme_email]
+      properties:
+        acme_email:
+          type: string
+          description: >-
+            A plain email address (`ops@example.com`), not a display-name form — the CA
+            registers the address itself. Empty clears the account and turns certificate
+            issuance off fleet-wide.
+        acme_ca_server:
+          type: string
+          description: >-
+            Optional absolute http(s) ACME directory URL. Empty means Let's Encrypt
+            production.
+
     DNSSettings:
       type: object
       required: [configured, kind, config_hint, zone_count]
@@ -3354,7 +3441,12 @@ components:
           description: Manual cypher-agent enroll command (binary preinstalled).
         install_command:
           type: string
-          description: Ready-to-paste curl|sh join line (the acceptance path).
+          description: >-
+            Ready-to-paste curl|sh join line (the acceptance path). It is self-sufficient: on
+            a release build it pins `CYPHER_AGENT_URL` to this panel's own version, so the
+            server joins running the agent that matches the plane. A development build omits
+            it and the installer falls back to the project's latest GitHub release. Either
+            way the plane never stores or serves the binary itself (ADR-010).
 
     CreateServerResponse:
       type: object
@@ -3649,6 +3741,30 @@ components:
           description: >-
             Backstop lifetime for a preview whose PR never closes; defaults to
             72 when unset.
+        tls_state:
+          type: string
+          enum: [https, http_only_no_resolver, http_only]
+          description: >-
+            Derived, never stored (agent-identity-and-tls.md §5): what this application's
+            route is actually served as, given what the panel knows. Omitted entirely when
+            the application has no domain, because then there is no route to describe.
+
+
+            `https` — the route asks for HTTPS and the panel has an ACME account, so the
+            serving node configures a resolver and obtains a certificate.
+            `http_only_no_resolver` — the route asks for HTTPS but the panel has no ACME
+            account, so there is nothing to issue with: the node serves the app over plain
+            HTTP and the deploy is unaffected. Say "serving over HTTP meanwhile", never
+            "HTTPS".
+            `http_only` — HTTPS was not requested; plain HTTP is what was asked for and
+            nothing is missing.
+
+
+            This reports the panel's configuration, not an observed certificate. It cannot
+            see a per-node `CYPHER_ACME_EMAIL` override, and it does not claim a certificate
+            was actually ISSUED — issuance also needs DNS pointing at the server
+            (`GET /applications/{id}/domain-check`). Reporting per-domain certificate state
+            from the node is a later refinement (routing-and-tls.md §10).
         redeploy_pending:
           type: boolean
           description: >-

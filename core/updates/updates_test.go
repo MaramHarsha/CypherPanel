@@ -409,3 +409,31 @@ func TestRuntimeInfoParsesTheBuildDate(t *testing.T) {
 		t.Fatal("a malformed build date was not left zero")
 	}
 }
+
+// AgentAssetURL is what the join command pins the agent binary to
+// (agent-identity-and-tls.md §6). It answers only for real releases: naming a
+// download URL for a build that was never published would hand operators a
+// command that 404s.
+func TestAgentAssetURL(t *testing.T) {
+	tests := []struct {
+		version string
+		want    string
+	}{
+		{"v1.4.2", "https://github.com/MaramHarsha/CypherPanel/releases/download/v1.4.2/cypher-agent-linux-{arch}"},
+		{"1.4.2", "https://github.com/MaramHarsha/CypherPanel/releases/download/1.4.2/cypher-agent-linux-{arch}"},
+		{"dev", ""},
+		{"main", ""},
+		{"0c7a08b", ""},
+		{"", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.version, func(t *testing.T) {
+			if got := AgentAssetURL(tc.version); got != tc.want {
+				t.Fatalf("AgentAssetURL(%q) = %q, want %q", tc.version, got, tc.want)
+			}
+			if IsRelease(tc.version) != (tc.want != "") {
+				t.Fatalf("IsRelease(%q) = %v", tc.version, IsRelease(tc.version))
+			}
+		})
+	}
+}

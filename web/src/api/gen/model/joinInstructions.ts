@@ -21,6 +21,6 @@ export interface JoinInstructions {
   ca_fingerprint: string;
   /** Manual cypher-agent enroll command (binary preinstalled). */
   command: string;
-  /** Ready-to-paste curl|sh join line (the acceptance path). */
+  /** Ready-to-paste curl|sh join line (the acceptance path). It is self-sufficient: on a release build it pins `CYPHER_AGENT_URL` to this panel's own version, so the server joins running the agent that matches the plane. A development build omits it and the installer falls back to the project's latest GitHub release. Either way the plane never stores or serves the binary itself (ADR-010). */
   install_command: string;
 }

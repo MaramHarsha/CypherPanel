@@ -39,6 +39,14 @@ import (
 // never produced an image (its build failed or never ran).
 var ErrRevisionNotBuilt = errors.New("scheduler: revision was never built")
 
+// ErrRevisionDataInvalid marks a revision whose stored data cannot be turned
+// into a container spec at all — today, a config snapshot that will not parse.
+// It is permanent and scoped to one application: no retry can produce a spec,
+// which is what lets DesiredStateFor omit that one application instead of
+// failing a whole node's sync. Every other build failure is treated as
+// infrastructure and fails the sync (see DesiredStateFor).
+var ErrRevisionDataInvalid = errors.New("scheduler: revision data is invalid")
+
 // Store is the persistence the scheduler needs (consumer-defined).
 type Store interface {
 	GetApplication(ctx context.Context, id string) (domain.Application, error)
@@ -62,6 +70,11 @@ type Store interface {
 	ListActiveDeploymentsByApplication(ctx context.Context, appID string) ([]domain.Deployment, error)
 
 	ListServers(ctx context.Context) ([]domain.Server, error)
+
+	// GetPanelTLS is the panel's ACME account, carried to every node inside
+	// DesiredState (agent-identity-and-tls.md §4). store.ErrNotFound means TLS
+	// is not configured, which is a normal state, not a failure.
+	GetPanelTLS(ctx context.Context) (domain.PanelTLS, error)
 
 	GetDeployKey(ctx context.Context, id string) (domain.DeployKey, error)
 
@@ -695,7 +708,10 @@ func (s *Scheduler) routableDomain(ctx context.Context, domainName string) strin
 func (s *Scheduler) buildSpec(ctx context.Context, app domain.Application, rev domain.Revision, pol envPolicy) (*agentv1.AppSpec, error) {
 	var cs configSnapshot
 	if err := json.Unmarshal(rev.ConfigSnapshot, &cs); err != nil {
-		return nil, fmt.Errorf("scheduler: parsing config snapshot of %s: %w", rev.ID, err)
+		// Tagged as permanent and app-scoped: a stored snapshot that will not
+		// parse never will, so DesiredStateFor may omit this one application
+		// rather than fail the node's whole sync.
+		return nil, fmt.Errorf("%w: parsing config snapshot of %s: %w", ErrRevisionDataInvalid, rev.ID, err)
 	}
 	env, err := s.resolveEnv(ctx, app, pol)
 	if err != nil {
@@ -1212,6 +1228,22 @@ func (s *Scheduler) HandleScheduledTaskRun(ctx context.Context, serverID string,
 // DesiredStateFor resolves one server's full desired set — the reply to the
 // agent's sync request. Apps whose desired revision was never built are
 // omitted (nothing can serve them yet).
+//
+// The reply is the COMPLETE desired set and replaces what the agent holds, so
+// under ADR-005 omitting a running application here is an instruction to tear
+// its container down (agent/driver/docker removes what desired state does not
+// name; the same is true of databases). A store read that did not answer must
+// therefore fail the WHOLE sync rather than silently shrink the set: with no
+// reply the agent times out, keeps the desired set it already holds and asks
+// again, which costs one sync cycle instead of the fleet. This matters most for
+// a `work.<id>.resync` nudge, which re-syncs every node while it is up.
+//
+// Only a permanent, application-scoped data problem omits one entry — a
+// revision row that is gone, a config snapshot that will not parse — because
+// there is no spec to send for it and no retry can produce one. The node-wide
+// TLS settings at the end are the one deliberate exception, for the reason
+// recorded there: their absence means "no resolver", which serves HTTP for a
+// cycle rather than removing anything.
 func (s *Scheduler) DesiredStateFor(ctx context.Context, serverID string) ([]byte, error) {
 	apps, err := s.store.ListApplicationsByServer(ctx, serverID)
 	if err != nil {
@@ -1224,7 +1256,11 @@ func (s *Scheduler) DesiredStateFor(ctx context.Context, serverID string) ([]byt
 		}
 		rev, err := s.store.GetRevision(ctx, *app.DesiredRevisionID)
 		if err != nil {
-			s.log.Error("desired state: loading revision", "app_id", app.ID, "error", err)
+			if !errors.Is(err, store.ErrNotFound) {
+				return nil, fmt.Errorf("scheduler: loading revision %s of app %s for %s: %w", *app.DesiredRevisionID, app.ID, serverID, err)
+			}
+			s.log.Error("desired state: omitting an app whose desired revision row is gone",
+				"server_id", serverID, "app_id", app.ID, "revision_id", *app.DesiredRevisionID, "error", err)
 			continue
 		}
 		if rev.Image == "" {
@@ -1236,7 +1272,11 @@ func (s *Scheduler) DesiredStateFor(ctx context.Context, serverID string) ([]byt
 		// logged instead (shared-variables.md §4).
 		spec, err := s.buildSpec(ctx, app, rev, envOmitMissing)
 		if err != nil {
-			s.log.Error("desired state: building spec", "app_id", app.ID, "error", err)
+			if !errors.Is(err, ErrRevisionDataInvalid) {
+				return nil, fmt.Errorf("scheduler: building spec for app %s of %s: %w", app.ID, serverID, err)
+			}
+			s.log.Error("desired state: omitting an app whose revision data cannot be read",
+				"server_id", serverID, "app_id", app.ID, "revision_id", rev.ID, "error", err)
 			continue
 		}
 		ds.Specs = append(ds.Specs, spec)
@@ -1260,7 +1300,11 @@ func (s *Scheduler) DesiredStateFor(ctx context.Context, serverID string) ([]byt
 		}
 		rev, err := s.store.GetDatabaseRevision(ctx, *db.DesiredRevisionID)
 		if err != nil {
-			s.log.Error("desired state: loading db revision", "db_id", db.ID, "error", err)
+			if !errors.Is(err, store.ErrNotFound) {
+				return nil, fmt.Errorf("scheduler: loading revision %s of database %s for %s: %w", *db.DesiredRevisionID, db.ID, serverID, err)
+			}
+			s.log.Error("desired state: omitting a database whose desired revision row is gone",
+				"server_id", serverID, "db_id", db.ID, "revision_id", *db.DesiredRevisionID, "error", err)
 			continue
 		}
 
@@ -1268,13 +1312,66 @@ func (s *Scheduler) DesiredStateFor(ctx context.Context, serverID string) ([]byt
 		// comparing the two, so they must not be able to disagree.
 		spec, err := s.dbSpec(db, rev)
 		if err != nil {
-			s.log.Error("desired state: building db spec", "db_id", db.ID, "error", err)
-			continue
+			// dbSpec fails only when the sealed root password will not open —
+			// a sealing-key problem, not this database's data. Omitting the
+			// database would delete a running one (managed-databases.md §6).
+			return nil, fmt.Errorf("scheduler: building spec for database %s of %s: %w", db.ID, serverID, err)
 		}
 		ds.DbSpecs = append(ds.DbSpecs, spec)
 	}
 
+	// Node-wide TLS settings. A read failure is logged and the field is left
+	// empty rather than failing the whole sync: an agent with no desired state
+	// converges nothing, which is far worse than an agent that serves HTTP for
+	// one sync cycle. The empty value is also the safe one — it makes the node
+	// stop promising HTTPS rather than start.
+	if tls, err := s.store.GetPanelTLS(ctx); err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			s.log.Error("desired state: reading panel tls", "server_id", serverID, "error", err)
+		}
+	} else if tls.Configured() {
+		ds.Tls = &agentv1.TLSSettings{AcmeEmail: tls.ACMEEmail, AcmeCaServer: tls.ACMECAServer}
+	}
+
 	return proto.Marshal(ds)
+}
+
+// RequestResync asks every enrolled server to re-read its desired state
+// (agent-identity-and-tls.md §4). It is how a node-wide setting that belongs to
+// no single Application — the panel's ACME account — reaches the fleet promptly
+// instead of waiting for each agent's next reconnect.
+//
+// Best-effort per server: one unreachable node must not stop the others, and
+// the nudge is only ever an optimization — the setting is already in Postgres,
+// which is what makes it true (rule 15).
+func (s *Scheduler) RequestResync(ctx context.Context, reason string) error {
+	servers, err := s.store.ListServers(ctx)
+	if err != nil {
+		return fmt.Errorf("scheduler: listing servers for resync: %w", err)
+	}
+	data, err := proto.Marshal(&agentv1.ResyncWork{Reason: reason})
+	if err != nil {
+		return fmt.Errorf("scheduler: marshaling resync: %w", err)
+	}
+	var failed int
+	for _, srv := range servers {
+		if srv.EnrolledAt == nil {
+			continue // never joined: nothing is listening on its work subject
+		}
+		// The message id is time-based rather than derived from the reason: two
+		// settings changes a minute apart are two nudges, and JetStream dedup
+		// must not swallow the second.
+		msgID := fmt.Sprintf("%s.resync.%d", srv.ID, s.now().UnixNano())
+		if err := s.bus.PublishWork(ctx, subjects.Resync(srv.ID), msgID, data); err != nil {
+			failed++
+			s.log.Error("resync: publishing", "server_id", srv.ID, "reason", reason, "error", err)
+		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("scheduler: %d of %d servers could not be nudged to resync", failed, len(servers))
+	}
+	s.log.Info("fleet asked to re-read desired state", "reason", reason, "servers", len(servers))
+	return nil
 }
 
 // Recover re-drives every non-terminal deployment after a plane restart:

@@ -41,8 +41,15 @@ type applicationDTO struct {
 	// six-word vocabulary in ui-principles §5 is closed and "needs a redeploy"
 	// is not an observed state — so the UI renders it as a badge beside the
 	// status, never in place of one.
-	RedeployPending bool   `json:"redeploy_pending"`
-	CreatedAt       string `json:"created_at"`
+	RedeployPending bool `json:"redeploy_pending"`
+	// TLSState is DERIVED, never stored (agent-identity-and-tls.md §5): what
+	// this route is actually served as, given what the panel knows. Omitted
+	// when there is no domain — there is then no route to describe. It exists
+	// so the UI can say "serving over HTTP meanwhile" instead of printing
+	// "HTTPS · auto-renews" off the https flag alone, which asserted a
+	// certificate the panel had never seen issued (ui-principles §10).
+	TLSState  string `json:"tls_state,omitempty"`
+	CreatedAt string `json:"created_at"`
 }
 
 type appSourceDTO struct {
@@ -264,8 +271,10 @@ func (a *API) handleCreateApplication(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.syncApplicationDNS(r.Context(), app)
+	created := toApplicationDTO(app)
+	created.TLSState = domain.RouteTLSState(app.Route, a.acmeConfigured(r.Context()))
 	writeJSON(w, http.StatusCreated, createApplicationResponse{
-		Application: toApplicationDTO(app),
+		Application: created,
 		Webhook: webhookInfo{
 			URL:    a.deps.ConsoleURL + "/webhooks/github/" + app.WebhookID,
 			Secret: secret,
@@ -293,10 +302,14 @@ func (a *API) handleListApplications(w http.ResponseWriter, r *http.Request) {
 	// One query for the whole environment rather than one per row
 	// (shared-variables.md §5).
 	pending := a.redeployPendingSet(r.Context(), r.PathValue("id"))
+	// One TLS read for the whole list: the account is panel-wide, so asking
+	// once per application would be the same answer N times.
+	acme := a.acmeConfigured(r.Context())
 	out := make([]applicationDTO, 0, len(list))
 	for _, app := range list {
 		dto := toApplicationDTO(app)
 		dto.RedeployPending = pending[app.ID]
+		dto.TLSState = domain.RouteTLSState(app.Route, acme)
 		out = append(out, dto)
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -321,6 +334,7 @@ func (a *API) handleGetApplication(w http.ResponseWriter, r *http.Request) {
 	}
 	dto := toApplicationDTO(app)
 	dto.RedeployPending = a.redeployPending(r.Context(), app.ID)
+	dto.TLSState = domain.RouteTLSState(app.Route, a.acmeConfigured(r.Context()))
 	writeJSON(w, http.StatusOK, dto)
 }
 
@@ -439,6 +453,7 @@ func (a *API) handlePatchApplication(w http.ResponseWriter, r *http.Request) {
 	a.syncApplicationDNS(r.Context(), app)
 	dto := toApplicationDTO(app)
 	dto.RedeployPending = a.redeployPending(r.Context(), app.ID)
+	dto.TLSState = domain.RouteTLSState(app.Route, a.acmeConfigured(r.Context()))
 	writeJSON(w, http.StatusOK, dto)
 }
 

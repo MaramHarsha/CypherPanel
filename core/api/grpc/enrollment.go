@@ -12,6 +12,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/MaramHarsha/cypherpanel/core/enroll"
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
@@ -52,5 +53,44 @@ func (s *EnrollmentServer) Enroll(ctx context.Context, req *agentv1.EnrollReques
 		CertificatePem: res.CertPEM,
 		CaPem:          res.CACertPEM,
 		NatsUrl:        res.NATSURL,
+	}, nil
+}
+
+// Renew re-signs the caller's own certificate before it expires
+// (agent-identity-and-tls.md §3). Authorization is the verified client
+// certificate on the connection — the same identity NATS trusts — never
+// anything in the request body: callerServerID returns PermissionDenied when
+// the peer presented no verified chain, which is exactly what an agent that has
+// not enrolled (or whose certificate has already expired) looks like.
+func (s *EnrollmentServer) Renew(ctx context.Context, req *agentv1.RenewRequest) (*agentv1.RenewResponse, error) {
+	caller, err := callerServerID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	res, err := s.svc.Renew(ctx, caller, req.GetServerId(), req.GetCsrPem(), req.GetAgentVersion())
+	switch {
+	case errors.Is(err, enroll.ErrUnknownIdentity):
+		// A revoked or deleted server. Logged at warn with the id: an agent
+		// still trying to renew after revocation is worth seeing, and the id is
+		// the plane's own, not a secret.
+		s.log.Warn("certificate renewal refused: unknown or revoked identity", "server_id", caller)
+		return nil, status.Error(codes.PermissionDenied, "unknown or revoked agent identity")
+	case errors.Is(err, enroll.ErrIdentityMismatch):
+		s.log.Warn("certificate renewal refused: identity mismatch",
+			"server_id", caller, "claimed_server_id", req.GetServerId())
+		return nil, status.Error(codes.PermissionDenied, "renewal request does not match the caller's certificate")
+	case err != nil:
+		s.log.Error("certificate renewal failed", "server_id", caller, "error", err)
+		return nil, status.Error(codes.Internal, "certificate renewal failed")
+	}
+	s.log.Info("agent certificate renewed",
+		"server_id", res.ServerID,
+		"agent_version", req.GetAgentVersion(),
+		"not_after", res.NotAfter,
+	)
+	return &agentv1.RenewResponse{
+		CertificatePem: res.CertPEM,
+		CaPem:          res.CACertPEM,
+		NotAfter:       timestamppb.New(res.NotAfter),
 	}, nil
 }

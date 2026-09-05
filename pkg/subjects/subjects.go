@@ -88,6 +88,14 @@ func Build(serverID string) string   { return WorkPrefix + serverID + ".build" }
 // §4). Same work.<id>.> scope, so agent authorization is unchanged.
 func Converge(serverID string) string { return WorkPrefix + serverID + ".converge" }
 
+// Resync tells one agent to re-read its full desired state from Sync and
+// converge on it. It carries no state — the authoritative set is fetched, not
+// pushed — so it is the propagation channel for anything node-wide that is not
+// attached to a single Application (today: the panel's TLS settings,
+// agent-identity-and-tls.md §4). Same work.<id>.> scope, so agent
+// authorization is unchanged (rule 14, additive).
+func Resync(serverID string) string { return WorkPrefix + serverID + ".resync" }
+
 // PushImage and Distribute are the multi-server relay work subjects
 // (builder-role-and-relay.md §2): the builder pushes a built image to the
 // plane's relay, the target obtains it from there. Both sit under their

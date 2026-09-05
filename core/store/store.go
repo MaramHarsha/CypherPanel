@@ -566,6 +566,46 @@ func (s *Store) DeletePanelMail(ctx context.Context) error {
 	return nil
 }
 
+// ─── panel TLS (the panel's ACME account) ───────────────────────────────────
+
+// GetPanelTLS returns the panel's ACME account, or ErrNotFound when TLS has
+// never been configured (which is the same thing as "no certificate resolver
+// on any node" — agent-identity-and-tls.md §4).
+func (s *Store) GetPanelTLS(ctx context.Context) (domain.PanelTLS, error) {
+	row, err := s.q.GetPanelTLS(ctx)
+	if err != nil {
+		return domain.PanelTLS{}, wrap("getting panel tls", err)
+	}
+	return domain.PanelTLS{
+		ACMEEmail:    row.AcmeEmail,
+		ACMECAServer: row.AcmeCaServer,
+		UpdatedAt:    row.UpdatedAt.Time,
+	}, nil
+}
+
+// SetPanelTLS replaces the settings wholesale. There is no partial update: the
+// email and the directory URL are one account, and half-changing them would
+// point an existing account at a different CA.
+func (s *Store) SetPanelTLS(ctx context.Context, t domain.PanelTLS) error {
+	if err := s.q.SetPanelTLS(ctx, db.SetPanelTLSParams{
+		AcmeEmail:    t.ACMEEmail,
+		AcmeCaServer: t.ACMECAServer,
+	}); err != nil {
+		return fmt.Errorf("store: setting panel tls: %w", err)
+	}
+	return nil
+}
+
+// DeletePanelTLS forgets the ACME account. Certificates already issued keep
+// working until they expire — they live on the serving nodes, not here — but no
+// new ones are obtained and new https routes fall back to plain HTTP.
+func (s *Store) DeletePanelTLS(ctx context.Context) error {
+	if err := s.q.DeletePanelTLS(ctx); err != nil {
+		return fmt.Errorf("store: deleting panel tls: %w", err)
+	}
+	return nil
+}
+
 // ─── email changes ──────────────────────────────────────────────────────────
 
 // CreateEmailChange records a pending move and the hash of the secret that will

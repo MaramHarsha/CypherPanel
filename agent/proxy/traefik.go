@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 
@@ -22,6 +23,14 @@ import (
 type Traefik struct {
 	cfg     Config
 	appsDir string // <Dir>/apps — where dynamic fragments live
+
+	// The panel's ACME account, as last carried in desired state
+	// (agent-identity-and-tls.md §4). Guarded because the worker writes it from
+	// the sync path while the reconcile loop reads it; both run on the agent's
+	// own goroutines and neither may block the other.
+	mu              sync.RWMutex
+	desiredEmail    string
+	desiredCAServer string
 }
 
 // New constructs the Traefik proxy driver. A nil Config.Engine selects
@@ -29,6 +38,42 @@ type Traefik struct {
 // lifecycle (EnsureProxy / AttachNetwork) is disabled.
 func New(cfg Config) *Traefik {
 	return &Traefik{cfg: cfg, appsDir: fragmentsDir(cfg.Dir)}
+}
+
+// SetACME records the panel's ACME account as carried in desired state. The
+// host-local override in Config wins per field, so an operator who set
+// CYPHER_ACME_EMAIL on this box keeps it (agent-identity-and-tls.md §4).
+//
+// Idempotent and cheap: the values are only read when a static config or a
+// route fragment is rendered, and both of those already skip an unchanged
+// write, so calling this on every sync converges without churn.
+func (t *Traefik) SetACME(email, caServer string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.desiredEmail, t.desiredCAServer = email, caServer
+}
+
+// acme resolves the effective ACME account: the host-local override if set,
+// otherwise what the panel sent.
+func (t *Traefik) acme() (email, caServer string) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	email, caServer = t.desiredEmail, t.desiredCAServer
+	if t.cfg.ACMEEmail != "" {
+		email = t.cfg.ACMEEmail
+	}
+	if t.cfg.ACMECAServer != "" {
+		caServer = t.cfg.ACMECAServer
+	}
+	return email, caServer
+}
+
+// hasResolver reports whether this node's Proxy actually has a certificate
+// resolver — the single question the fragment writer asks before promising
+// HTTPS for a route.
+func (t *Traefik) hasResolver() bool {
+	email, _ := t.acme()
+	return email != ""
 }
 
 // Name identifies the proxy driver ("traefik"; "caddy" is a later driver).
@@ -107,18 +152,18 @@ func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.Rou
 		rule += fmt.Sprintf(" && PathPrefix(`%s`)", route.PathPrefix)
 	}
 
-	var tlsConf *struct {
-		CertResolver string `yaml:"certResolver,omitempty"`
-	}
-	if route.Https {
-		tlsConf = &struct {
-			CertResolver string `yaml:"certResolver,omitempty"`
-		}{
-			CertResolver: "le", // Traefik's Let's Encrypt resolver name in CypherPanel
-		}
-	}
-
-	if route.Https {
+	// HTTPS is promised only when this node actually has a certificate
+	// resolver. Naming `certResolver: le` when the static config defines no
+	// such resolver was the original bug: Traefik fell back to its own
+	// self-signed default certificate while the HTTP router permanently
+	// redirected every visitor to it, so a domain whose issuance was not
+	// configured served a browser warning instead of the app — and the panel
+	// still called it "HTTPS · auto-renews" (agent-identity-and-tls.md §5).
+	//
+	// With no resolver the route is plain HTTP on `web` only: the app is
+	// reachable, the deploy is unaffected, and the plane reports
+	// http_only_no_resolver so the UI can say so out loud.
+	if route.Https && t.hasResolver() {
 		// The TLS router serves websecure only; a sibling router answers the
 		// same rule on web with a permanent redirect (routing-and-tls.md §5 —
 		// per-app, so HTTP-only apps on this node keep serving plain HTTP).
@@ -129,7 +174,11 @@ func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.Rou
 			EntryPoints: []string{"websecure"},
 			Middlewares: []string{markName},
 			Service:     appID,
-			TLS:         tlsConf,
+			TLS: &struct {
+				CertResolver string `yaml:"certResolver,omitempty"`
+			}{
+				CertResolver: acmeResolver, // defined in the static config (ensure.go)
+			},
 		}
 		doc.HTTP.Routers[appID+"-http"] = Router{
 			Rule:        rule,
@@ -144,11 +193,19 @@ func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.Rou
 		}{Scheme: "https", Permanent: true}
 		doc.HTTP.Middlewares[appID+"-redirect"] = mw
 	} else {
+		// Pinned to `web`, not left to Traefik's "attach to every entrypoint"
+		// default. A router with no TLS configuration has no business on the
+		// TLS entrypoint: bound there it answers `https://` with Traefik's
+		// self-signed default certificate, which is the browser warning this
+		// feature exists to remove — and for a route the operator deliberately
+		// declared HTTP-only it was never asked for either. Both HTTP-only
+		// routes and https routes on a node with no resolver take this branch
+		// and are served over plain HTTP only (routing-and-tls.md §7).
 		doc.HTTP.Routers[appID] = Router{
 			Rule:        rule,
+			EntryPoints: []string{"web"},
 			Middlewares: []string{markName},
 			Service:     appID,
-			TLS:         tlsConf,
 		}
 	}
 

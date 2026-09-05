@@ -29,6 +29,9 @@ cypherpanel/
 │   ├── enroll/                  # agent-facing enrollment: join token → signed cert
 │   ├── guard/                   # boot-time safety checks (disk headroom, threat-model §5.9)
 │   ├── identity/                # plane CA lifecycle: create, seal, load
+│   ├── paneltls/                # the panel's ACME account: one setting, carried to
+│   │                            #   every node as desired state so the Proxy can
+│   │                            #   obtain certificates (agent-identity-and-tls.md)
 │   ├── secret/                  # AES-256-GCM sealing with the master key
 │   ├── servers/                 # operator-facing server lifecycle
 │   ├── projects/               # operator-facing project/environment lifecycle (Phase 2)
@@ -49,7 +52,9 @@ cypherpanel/
 ├── agent/                       # ── data plane (single binary: cypher-agent) ──
 │   ├── cmd/cypher-agent/
 │   ├── conn/                    # dial-home mTLS connection with reconnect
-│   ├── identity/                # join-token enrollment, on-disk key/cert storage
+│   ├── identity/                # join-token enrollment, on-disk key/cert storage,
+│   │                            #   and certificate renewal (expiry awareness, the
+│   │                            #   renewal loop, the atomic swap)
 │   ├── heartbeat/               # periodic status publishing
 │   ├── worker/                  # work-item consumer + reconcile loop; the Bus seam
 │   │                            #   over nats.go, desired-state sync on connect (Phase 2)

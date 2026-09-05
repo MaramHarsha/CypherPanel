@@ -66,6 +66,33 @@ only read from `X-Forwarded-For` behind a configured proxy; `CYPHERD_PUBLIC_URL`
 puts the right scheme on every link the panel writes to itself; and expired
 sessions are finally purged.
 
+**Agent identity and TLS** closes three gaps that were each a half-built
+mechanism ([agent-identity-and-tls.md](features/agent-identity-and-tls.md)).
+Agent certificates now **renew themselves**: an additive `Renew` RPC over the
+mTLS channel the agent already holds, a renewal at two thirds of the
+certificate's life with a fresh key pair each time, an atomic on-disk swap, and
+— because the TLS stacks resolve the certificate per handshake — no reconnection
+and no dropped desired state. Revocation now denies renewal too, so a deleted
+server's identity expires instead of running to its `NotAfter`; the threat
+model's open `[Phase 1: cert TTL decision]` tag is closed at 90 days with the
+reasoning recorded (§5.2). **Let's Encrypt is a panel setting, not a per-host
+environment variable**: `GET`/`PUT /api/v1/panel/tls` (owner) carries one ACME
+account to every node inside `DesiredState`, and a new `work.<server>.resync`
+nudge makes a change land within a reconcile rather than on the next reconnect.
+The proxy stopped promising what it could not keep — with no resolver it writes
+no `certResolver` and no HTTP→HTTPS redirect, serving plain HTTP instead of
+redirecting visitors to a self-signed default certificate — and the plane
+reports `Application.tls_state` so the UI can say "serving over HTTP meanwhile"
+truthfully. Finally, the **join command completes on a fresh host**:
+`install/agent.sh` defaults to the project's latest release asset the way
+`install.sh` always has for `cypherd`, and a release panel pins
+`CYPHER_AGENT_URL` to its own version so a server joins running the agent that
+matches its plane. Verified live against a real plane/agent pair with a short
+certificate TTL: the resolver appears on the node within a second of the setting
+being saved, the certificate rotates at its logged renewal point onto the
+alternate on-disk slot, and the whole rotation costs **zero bus reconnects**
+(evidence in [the spec](features/agent-identity-and-tls.md) §9).
+
 ## Post-v1 directions (recorded, not scheduled)
 
 Deliberate **Later** items from the [feature matrix](product/feature-matrix.md), captured so v1 work doesn't preempt or accidentally foreclose them:

@@ -110,6 +110,7 @@ type Worker struct {
 	log           *slog.Logger
 	driftInterval time.Duration
 	cron          CronRunner
+	proxyTLS      ProxyTLS
 
 	mu      sync.Mutex
 	state   map[string]*agentv1.AppSpec // map[app_id]spec
@@ -122,6 +123,17 @@ type Worker struct {
 type CronRunner interface {
 	Sync(specs []*agentv1.AppSpec)
 	Run(ctx context.Context)
+}
+
+// ProxyTLS receives the panel's ACME account from desired state
+// (consumer-defined; *proxy.Traefik satisfies it — agent-identity-and-tls.md
+// §4). Deliberately not part of driver.Reconciler: the account is node-wide,
+// not per-application, and it is the Proxy — not the orchestrator driver — that
+// acts on it. Optional: nil on builder-role agents, which run no Proxy.
+type ProxyTLS interface {
+	// SetACME records the account. Called on every desired-state sync, so it
+	// must be idempotent and must not block.
+	SetACME(acmeEmail, acmeCAServer string)
 }
 
 // New creates a new Worker. drv is nil on builder-role agents (nothing runs
@@ -147,6 +159,10 @@ func New(bus Bus, serverID string, drv driver.Reconciler, dbRec driver.DbReconci
 // SetCron attaches the scheduled-task runner. Kept out of New so cron stays an
 // opt-in add-on wired only on app-role agents (scheduled-tasks.md §5).
 func (w *Worker) SetCron(c CronRunner) { w.cron = c }
+
+// SetProxyTLS attaches the Proxy's TLS settings sink, wired only on nodes that
+// run a Proxy (agent-identity-and-tls.md §4).
+func (w *Worker) SetProxyTLS(p ProxyTLS) { w.proxyTLS = p }
 
 // Run performs an initial desired-state sync, converges once on boot, then
 // processes work items until the context is canceled. Between work items it
@@ -199,7 +215,32 @@ func (w *Worker) Run(ctx context.Context) error {
 	}
 }
 
+// sync fetches the desired set and converges on it, retrying the convergence
+// until it succeeds. It is the boot path: an agent that cannot reach desired
+// state has nothing else to do, so it keeps trying.
 func (w *Worker) sync(ctx context.Context) error {
+	if err := w.syncState(ctx); err != nil {
+		return err
+	}
+	// Converge once with no trigger to reach desired state on boot.
+	for {
+		if err := w.reconcile(ctx, "", "", agentv1.DeployEvent_STAGE_UNSPECIFIED, ""); err == nil {
+			return nil
+		}
+		w.log.Error("worker: initial reconcile failed, retrying in 2s")
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
+// syncState fetches the authoritative desired set from the plane and replaces
+// what this agent holds. It does not converge — the caller decides whether a
+// failed convergence should be retried in place (boot) or handed back to the
+// work item that asked for it (a resync nudge).
+func (w *Worker) syncState(ctx context.Context) error {
 	data, err := w.bus.Request(ctx, subjects.Sync(w.serverID), nil)
 	if err != nil {
 		return err
@@ -209,28 +250,35 @@ func (w *Worker) sync(ctx context.Context) error {
 		return fmt.Errorf("unmarshaling desired state: %w", err)
 	}
 
-	w.mu.Lock()
+	// The sync reply is the COMPLETE desired set, so it replaces what is held
+	// rather than merging into it (ADR-005: absence means removal). On boot the
+	// maps are empty and the two are the same; on a re-sync — a resync nudge —
+	// merging would resurrect an application the plane has since removed.
+	state := make(map[string]*agentv1.AppSpec, len(ds.Specs))
 	for _, spec := range ds.Specs {
-		w.state[spec.AppId] = spec
+		state[spec.AppId] = spec
 	}
+	dbState := make(map[string]*agentv1.DbSpec, len(ds.DbSpecs))
 	for _, spec := range ds.DbSpecs {
-		w.dbState[spec.DbId] = spec
+		dbState[spec.DbId] = spec
 	}
+	w.mu.Lock()
+	w.state, w.dbState = state, dbState
 	w.mu.Unlock()
 
-	w.log.Info("worker: initial sync complete", "apps", len(ds.Specs), "databases", len(ds.DbSpecs))
-	// Converge once with no trigger to reach desired state on boot.
-	for {
-		if err := w.reconcile(ctx, "", "", agentv1.DeployEvent_STAGE_UNSPECIFIED, ""); err == nil {
-			break
-		}
-		w.log.Error("worker: initial reconcile failed, retrying in 2s")
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(2 * time.Second):
-		}
+	// Node-wide TLS settings ride along with the desired set: one panel, one
+	// ACME account, every node (agent-identity-and-tls.md §4). An empty
+	// acme_email is a meaningful value — "no certificate resolver" — so it is
+	// applied exactly like a non-empty one.
+	if w.proxyTLS != nil {
+		w.proxyTLS.SetACME(ds.GetTls().GetAcmeEmail(), ds.GetTls().GetAcmeCaServer())
 	}
+
+	w.log.Info("worker: desired-state sync complete",
+		"apps", len(ds.Specs),
+		"databases", len(ds.DbSpecs),
+		"tls_configured", ds.GetTls().GetAcmeEmail() != "",
+	)
 	return nil
 }
 
@@ -280,6 +328,42 @@ func (w *Worker) handleMsg(ctx context.Context, msg Message) {
 		w.mu.Unlock()
 		if err := w.reconcile(ctx, "", "", agentv1.DeployEvent_STAGE_UNSPECIFIED, ""); err != nil {
 			w.log.Error("worker: converge reconcile", "error", err)
+			_ = msg.NakWithDelay(5 * time.Second)
+			return
+		}
+		_ = msg.Ack()
+		return
+
+	case strings.HasSuffix(subject, ".resync"):
+		// Re-read the authoritative desired set and converge. Idempotent by
+		// construction: it is the same thing the agent does on connect, so a
+		// redelivered nudge costs one request and changes nothing
+		// (agent-identity-and-tls.md §4).
+		var work agentv1.ResyncWork
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
+			w.log.Error("worker: unmarshaling resync work", "error", err)
+			_ = msg.Term()
+			return
+		}
+		w.log.Info("worker: re-reading desired state", "reason", work.GetReason())
+		if err := w.syncState(ctx); err != nil {
+			w.log.Error("worker: resync failed", "error", err)
+			if msg.NumDelivered() >= maxDeliveries {
+				_ = msg.Term()
+				return
+			}
+			_ = msg.NakWithDelay(5 * time.Second)
+			return
+		}
+		if err := w.reconcile(ctx, "", "", agentv1.DeployEvent_STAGE_UNSPECIFIED, ""); err != nil {
+			// The new desired state is already held; only the convergence
+			// failed, and the drift loop retries that every cycle anyway. NAK
+			// so the nudge is redelivered and the node converges sooner.
+			w.log.Error("worker: resync reconcile", "error", err)
+			if msg.NumDelivered() >= maxDeliveries {
+				_ = msg.Term()
+				return
+			}
 			_ = msg.NakWithDelay(5 * time.Second)
 			return
 		}

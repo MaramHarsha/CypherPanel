@@ -83,6 +83,59 @@ Open `https://panel.example.com` (or `http://<vps>:8080` before you add TLS).
 Then the panel walks you through the golden path: join your first server (one
 copy-paste command), create a project, deploy an app.
 
+## Joining a server
+
+Create the server in the panel and paste the command it gives you onto the host,
+as root. It is self-sufficient: it installs Docker if the host has none, fetches
+and pins the plane CA (verifying the fingerprint that travels in the command),
+enrolls with a single-use join token, and installs a systemd unit that
+reconnects across reboots.
+
+The agent binary comes from this project's **latest GitHub release** by default.
+When the panel is itself running a release build, its join command pins
+`CYPHER_AGENT_URL` to the panel's *own* version, so the server runs the agent
+that matches the plane. Override it for an air-gapped fleet or a private mirror:
+
+```sh
+curl -fsSL https://panel.example.com/install/agent.sh |   CYPHER_PLANE=… CYPHER_TOKEN=… CYPHER_CA_FINGERPRINT=…   CYPHER_AGENT_URL=https://artifacts.internal/cypher-agent-linux-{arch}   CYPHER_AGENT_SHA256=<sum> sh
+```
+
+`{arch}` is replaced with `amd64`/`arm64`. A host that already has
+`/usr/local/bin/cypher-agent` reuses it, so a prepared image needs no download.
+The panel never stores or serves agent binaries itself (ADR-010) — it only names
+a version.
+
+**Certificates renew themselves.** The agent's mTLS identity is a 90-day
+certificate (`CYPHERD_AGENT_CERT_TTL`); the agent re-signs it over the same
+authenticated channel two thirds of the way through, with a fresh key each time,
+and picks up the new material without reconnecting. Nothing to schedule and no
+maintenance window. Deleting a server in the panel refuses both its connection
+and its renewals, so a decommissioned agent expires rather than lingering. The
+agent logs `cert_not_after` at startup if you ever want to see where it stands.
+
+## TLS for applications (Let's Encrypt)
+
+Certificates for your *applications* are obtained by the proxy on each serving
+node, not by the panel. The panel owns one ACME account for the whole fleet:
+
+```sh
+curl -X PUT https://panel.example.com/api/v1/panel/tls   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json'   -d '{"acme_email":"ops@example.com"}'
+```
+
+Owner-only. Every enrolled node picks it up within a reconcile — no per-host
+environment variable, no agent restart — and servers that are offline pick it up
+when they return. Add `"acme_ca_server":"https://acme-staging-v02.api.letsencrypt.org/directory"`
+while testing so a misconfigured domain does not burn the production rate limit.
+Sending an empty `acme_email` clears the account.
+
+**Until you set it, routed applications are served over plain HTTP** and say so:
+their `tls_state` reads `http_only_no_resolver` rather than claiming a
+certificate that was never issued. That is deliberate — with no ACME account
+there is no resolver, and redirecting visitors to `:443` anyway would answer them
+with the proxy's self-signed default certificate. `CYPHER_ACME_EMAIL` /
+`CYPHER_ACME_CASERVER` on an individual agent still override the panel's account
+for that node.
+
 ## TLS for the panel
 
 `cypherd` serves the UI/API over plain HTTP on `:8080` — terminate TLS in

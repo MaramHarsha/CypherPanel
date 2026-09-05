@@ -10,6 +10,7 @@
 import type { AppBuild } from './appBuild.ts';
 import type { AppHealth } from './appHealth.ts';
 import type { ApplicationStatus } from './applicationStatus.ts';
+import type { ApplicationTlsState } from './applicationTlsState.ts';
 import type { AppPort } from './appPort.ts';
 import type { AppRoute } from './appRoute.ts';
 import type { AppRuntime } from './appRuntime.ts';
@@ -48,6 +49,14 @@ export interface Application {
   preview_base_domain?: string;
   /** Backstop lifetime for a preview whose PR never closes; defaults to 72 when unset. */
   preview_ttl_hours?: number;
+  /**
+     * Derived, never stored (agent-identity-and-tls.md §5): what this application's route is actually served as, given what the panel knows. Omitted entirely when the application has no domain, because then there is no route to describe.
+     *
+     * `https` — the route asks for HTTPS and the panel has an ACME account, so the serving node configures a resolver and obtains a certificate. `http_only_no_resolver` — the route asks for HTTPS but the panel has no ACME account, so there is nothing to issue with: the node serves the app over plain HTTP and the deploy is unaffected. Say "serving over HTTP meanwhile", never "HTTPS". `http_only` — HTTPS was not requested; plain HTTP is what was asked for and nothing is missing.
+     *
+     * This reports the panel's configuration, not an observed certificate. It cannot see a per-node `CYPHER_ACME_EMAIL` override, and it does not claim a certificate was actually ISSUED — issuance also needs DNS pointing at the server (`GET /applications/{id}/domain-check`). Reporting per-domain certificate state from the node is a later refinement (routing-and-tls.md §10).
+     */
+  tls_state?: ApplicationTlsState;
   /** Derived, never stored (shared-variables.md §5): a shared variable this application references changed after the environment it is running was frozen onto the wire. It is NOT a status word — the status vocabulary is closed — so render it as a badge beside the status, never in place of one. */
   redeploy_pending?: boolean;
   created_at: string;

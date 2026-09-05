@@ -205,6 +205,40 @@ message DesiredState {
   // Databases whose db_id is absent from db_specs are removed (same
   // absence-means-remove contract as apps).
   repeated DbSpec db_specs = 2;
+  // Node-wide TLS settings for the managed Proxy (agent-identity-and-tls.md
+  // §4). Desired state, not configuration: the panel owns the ACME account and
+  // every node it schedules onto gets the same one, so a fresh install gets
+  // certificates without anyone editing a unit file on each host. Absent (or
+  // an empty acme_email) means "no certificate resolver" — the Proxy then
+  // serves plain HTTP and says so, rather than pointing routes at a resolver
+  // that does not exist.
+  TLSSettings tls = 3;
+}
+
+// TLSSettings is the panel's ACME account as the Proxy driver needs it. It
+// carries no secret: an account email and a directory URL are both public, and
+// the ACME account KEY is generated and kept by Traefik on the serving node,
+// which is what keeps certificate private keys off the control plane (ADR-004).
+message TLSSettings {
+  // ACME account email. Empty means the node configures no resolver.
+  string acme_email = 1;
+  // ACME directory URL override (e.g. Let's Encrypt staging). Empty means
+  // Let's Encrypt production.
+  string acme_ca_server = 2;
+}
+
+// ResyncWork tells one agent to re-read its full desired state from
+// state.<server_id>.sync and converge on it. It carries no state of its own —
+// it is a nudge, published when something node-wide changed that is not
+// attached to any single Application (today: the panel's TLS settings).
+//
+// Idempotent by construction (rule 12): the agent's response is to ask for the
+// authoritative desired set and converge, which is exactly what it does on
+// connect, so a redelivered nudge costs one request and changes nothing.
+message ResyncWork {
+  // Free-text reason, logged by the agent so an operator reading agent logs can
+  // see why the node re-read its desired state. Never load-bearing.
+  string reason = 1;
 }
 
 // AppStatus is one Application's observed state, reported on

@@ -42,13 +42,16 @@ type Client struct {
 
 // New wires a relay client against the plane's enrollment listener at addr
 // (host:port), authenticating with the agent's mTLS identity. The connection
-// is lazy: nothing is dialed until a transfer runs.
-func New(addr string, id *identity.Identity, eng Engine, log *slog.Logger) (*Client, error) {
+// is lazy: nothing is dialed until a transfer runs, and the certificate it
+// presents is read from the Keeper at that moment — so a transfer that starts
+// after a certificate renewal uses the renewed identity with no rewiring
+// (agent-identity-and-tls.md §3).
+func New(addr string, k *identity.Keeper, eng Engine, log *slog.Logger) (*Client, error) {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, fmt.Errorf("relay: invalid plane address %q: %w", addr, err)
 	}
-	tlsCfg, err := pki.ClientTLSConfig(id.CertPEM, id.KeyPEM, id.CACertPEM, host)
+	tlsCfg, err := pki.ClientTLSConfigFunc(k.Certificate, k.CACertPEM(), host)
 	if err != nil {
 		return nil, err
 	}

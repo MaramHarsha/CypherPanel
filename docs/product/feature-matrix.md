@@ -59,7 +59,7 @@
 | Feature | Coolify | Dokploy | CypherPanel | Evidence / notes |
 |---|---|---|---|---|
 | Custom domains per resource | ✅ | ✅ | **V1** | |
-| Auto Let's Encrypt (HTTP-01) | ✅ | ✅ | **V1** | |
+| Auto Let's Encrypt (HTTP-01) | ✅ | ✅ | **V1** | One panel-wide ACME account (`PUT /panel/tls`, owner) carried to every node as desired state, so nothing is configured per host ([agent-identity-and-tls.md](../features/agent-identity-and-tls.md) §4). With no account configured a routed app is served over plain HTTP and the API says so (`tls_state: http_only_no_resolver`) rather than pointing routes at a resolver that does not exist |
 | Wildcard certs (DNS-01) | ⚠️ | ⚠️ | **V1.x** | Key for P4 (Hendrik) |
 | Custom/user certificates | ✅ | ✅ | **V1.x** | `dokploy/.../schema/certificate.ts` |
 | Redirects & middleware | ⚠️ | ✅ | **V1.x** | `schema/redirects.ts`, `schema/forward-auth.ts` |
@@ -78,6 +78,7 @@
 | Cloud provider server provisioning | ⚠️ (partial) | ❌ | **Later** | `coolify/app/Services/HetznerService.php`; join-token enrollment (ADR-002) makes this cheap |
 | Metric-triggered autoscaling | ❌ | ❌ | **Later** | Desired-state controller (ADR-005) + agent metrics; cooldowns and cost caps required |
 | Agent-based, no SSH keys stored | ⚠️ (Sentinel, metrics only) | ❌ | **V1** | Coolify Sentinel validates the direction |
+| Agent identity renews itself (no re-enrollment, no expiry cliff) | n/a (SSH keys, no expiry) | n/a (Swarm join tokens) | **V1** | Neither reference has the problem because neither has short-lived agent identities. Ours does, so it also has the renewal: a `Renew` RPC over the mTLS channel the agent already holds, at two thirds of the certificate's life, fresh key each time, atomic on-disk swap and no reconnection ([agent-identity-and-tls.md](../features/agent-identity-and-tls.md) §3) |
 | Live container logs | ✅ | ✅ | **V1** | |
 | Persistent log retention (bounded, survives crashes/restarts) | ❌ | ❌ | **V1.x** | Logs stream off-box via `logs.*` (ADR-003) as they happen; defined window (e.g. 7 days / N MB per resource), searchable. Fixes the "crashed at 3am, logs gone" gap both references have |
 | Log drains to external systems (Loki, Axiom, syslog, CloudWatch…) | ❌ | ❌ | **V1.x** | Heroku-proven pattern: agent already tails everything, sinks are cheap; long retention and complex queries stay off-platform (vision.md footprint budgets) |

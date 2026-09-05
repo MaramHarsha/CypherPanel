@@ -39,6 +39,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/mail"
 	"github.com/MaramHarsha/cypherpanel/core/notify"
 	"github.com/MaramHarsha/cypherpanel/core/onboarding"
+	"github.com/MaramHarsha/cypherpanel/core/paneltls"
 	"github.com/MaramHarsha/cypherpanel/core/previews"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
 	"github.com/MaramHarsha/cypherpanel/core/relay"
@@ -231,6 +232,12 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 	// and every domain routes, exactly as before this feature existed.
 	dnsSvc := dns.New(st, box)
 	sched.SetDomainVerifier(dnsSvc)
+
+	// The panel's ACME account (agent-identity-and-tls.md §4): one setting,
+	// carried to every node in its desired state. The scheduler is the fleet
+	// seam — a settings change nudges every enrolled server to re-read desired
+	// state instead of waiting for its next reconnect.
+	panelTLS := paneltls.NewService(st, sched, log.With("component", "paneltls"))
 
 	// The notification inbox: the same observed outcomes, persisted per user and
 	// counted on a bell (notification-inbox.md). It is the one channel that
@@ -486,6 +493,7 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		Templates:        templateSvc,
 		Teams:            teamSvc,
 		Mail:             mail.New(st, box),
+		PanelTLS:         panelTLS,
 		DNS:              dnsSvc,
 		DNSZones:         st,
 		ServerAddresses:  st,

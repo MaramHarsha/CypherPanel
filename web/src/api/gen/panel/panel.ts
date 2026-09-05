@@ -36,9 +36,11 @@ import type {
   GetPanelLogsParams,
   PanelLogs,
   PanelMailSettings,
+  PanelTLSSettings,
   PanelVersion,
   SetPanelDNSRequest,
   SetPanelMailRequest,
+  SetPanelTLSRequest,
   UnauthorizedResponse,
   UnavailableResponse
 } from '../model';
@@ -65,7 +67,181 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   return result;
 };
 
-export const getGetPanelDNSUrl = () => {
+export const getGetPanelTLSUrl = () => {
+
+
+
+
+  return `/api/v1/panel/tls`
+}
+
+/**
+ * The one setting that decides whether the managed Proxy on every server can obtain certificates. Nothing here is a secret — an ACME account email is published back by the CA in the registration, and the ACME account key never leaves the serving node — so the values are returned as stored rather than hinted at.
+ * @summary The panel's ACME account for routed applications (panel owner)
+ */
+export const getPanelTLS = async ( options?: RequestInit): Promise<PanelTLSSettings> => {
+
+  return apiFetch<PanelTLSSettings>(getGetPanelTLSUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPanelTLSQueryKey = () => {
+    return [
+    `/api/v1/panel/tls`
+    ] as const;
+    }
+
+
+export const getGetPanelTLSQueryOptions = <TData = Awaited<ReturnType<typeof getPanelTLS>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelTLS>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPanelTLSQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPanelTLS>>> = ({ signal }) => getPanelTLS({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPanelTLS>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetPanelTLSQueryResult = NonNullable<Awaited<ReturnType<typeof getPanelTLS>>>
+export type GetPanelTLSQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useGetPanelTLS<TData = Awaited<ReturnType<typeof getPanelTLS>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelTLS>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getPanelTLS>>,
+          TError,
+          Awaited<ReturnType<typeof getPanelTLS>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetPanelTLS<TData = Awaited<ReturnType<typeof getPanelTLS>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelTLS>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getPanelTLS>>,
+          TError,
+          Awaited<ReturnType<typeof getPanelTLS>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetPanelTLS<TData = Awaited<ReturnType<typeof getPanelTLS>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelTLS>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary The panel's ACME account for routed applications (panel owner)
+ */
+
+export function useGetPanelTLS<TData = Awaited<ReturnType<typeof getPanelTLS>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelTLS>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetPanelTLSQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getSetPanelTLSUrl = () => {
+
+
+
+
+  return `/api/v1/panel/tls`
+}
+
+/**
+ * Wholesale replacement: the email and the directory URL are one account, and half-changing them would point an existing account at a different CA. An empty `acme_email` CLEARS the account — "no email" and "no ACME" are the same statement, so there is no separate delete.
+ *
+ * The change is desired state: it is carried to every enrolled server inside its desired set, and the fleet is asked to re-read that set immediately, so nodes pick up a new account within a reconcile rather than on their next reconnect. Servers that are offline pick it up when they return. Certificates already issued are held on the serving nodes and keep working regardless.
+ * @summary Set (or clear) the panel's ACME account (panel owner)
+ */
+export const setPanelTLS = async (setPanelTLSRequest: SetPanelTLSRequest, options?: RequestInit): Promise<PanelTLSSettings> => {
+
+  return apiFetch<PanelTLSSettings>(getSetPanelTLSUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(setPanelTLSRequest)
+  }
+);}
+
+
+
+
+
+export const getSetPanelTLSMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setPanelTLS>>, TError,{data: SetPanelTLSRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setPanelTLS>>, TError,{data: SetPanelTLSRequest}, TContext> => {
+
+const mutationKey = ['setPanelTLS'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setPanelTLS>>, {data: SetPanelTLSRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  setPanelTLS(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetPanelTLSMutationResult = NonNullable<Awaited<ReturnType<typeof setPanelTLS>>>
+    export type SetPanelTLSMutationBody = SetPanelTLSRequest
+    export type SetPanelTLSMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary Set (or clear) the panel's ACME account (panel owner)
+ */
+export const useSetPanelTLS = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setPanelTLS>>, TError,{data: SetPanelTLSRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setPanelTLS>>,
+        TError,
+        {data: SetPanelTLSRequest},
+        TContext
+      > => {
+      return useMutation(getSetPanelTLSMutationOptions(options), queryClient);
+    }
+    export const getGetPanelDNSUrl = () => {
 
 
 

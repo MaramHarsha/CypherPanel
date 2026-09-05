@@ -276,6 +276,13 @@ type PanelMail struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
+type PanelTl struct {
+	ID           int32
+	AcmeEmail    string
+	AcmeCaServer string
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type PlaneCa struct {
 	ID           int32
 	CertPem      []byte

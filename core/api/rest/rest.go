@@ -217,6 +217,10 @@ type Deps struct {
 	Templates        *templates.Service
 	Teams            TeamService
 	Mail             MailService
+	// PanelTLS is the panel's ACME account (agent-identity-and-tls.md §4); nil
+	// when it is not wired, which every handler treats as "no certificate
+	// resolver" — the honest default rather than an assumed one.
+	PanelTLS PanelTLSService
 	// DNS is the panel's DNS Provider; nil when DNS automation is not wired,
 	// which every handler treats as "nothing is enforced" (dns-automation.md §4.1).
 	DNS      DNSService
@@ -391,6 +395,12 @@ func (a *API) Handler() http.Handler {
 	// must never be able to lift it.
 	mux.HandleFunc("GET /api/v1/panel/version", a.authed(a.handleGetPanelVersion))
 	mux.HandleFunc("GET /api/v1/panel/logs", a.sessionOnly(a.handleGetPanelLogs))
+
+	// The panel's ACME account (agent-identity-and-tls.md §4). Owner-only: it
+	// decides how every routed application on every server is served to the
+	// public internet, and it registers an account in the operator's name.
+	mux.HandleFunc("GET /api/v1/panel/tls", a.authed(a.handleGetPanelTLS))
+	mux.HandleFunc("PUT /api/v1/panel/tls", a.authed(a.handleSetPanelTLS))
 
 	// DNS automation (dns-automation.md §5). Panel-scoped like mail: a
 	// Cloudflare account is an operator-level asset, not a team's.
