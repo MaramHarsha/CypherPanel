@@ -148,10 +148,11 @@ func TestRestorePostgresCopiesInAndRunsRestore(t *testing.T) {
 	s3.uploaded["backups/db_1/t.gz"] = gzbuf.Bytes()
 
 	b := NewBackupExecutor(eng, s3, quietLog())
+	var steps []agentv1.DbRestoreEvent_Step
 	ev := b.ExecuteRestore(context.Background(), &agentv1.DbRestoreWork{
 		RestoreId: "rs_1", DbId: "db_1", ContainerName: "cypher-db-db_1",
 		Engine: "postgresql", S3Key: "backups/db_1/t.gz",
-	})
+	}, func(p *agentv1.DbRestoreEvent) { steps = append(steps, p.GetStep()) })
 	if ev.GetOutcome() != agentv1.DbRestoreEvent_OUTCOME_SUCCEEDED {
 		t.Fatalf("outcome = %v (%s), want success", ev.GetOutcome(), ev.GetDetail())
 	}
@@ -160,6 +161,19 @@ func TestRestorePostgresCopiesInAndRunsRestore(t *testing.T) {
 	}
 	if got := strings.Join(eng.execCmds[0], " "); !strings.Contains(got, "psql -U postgres -f "+restoreInContainerPath) {
 		t.Fatalf("restore command = %q, want psql -f the copied file", got)
+	}
+	// The screen shows the steps in order, so they have to arrive in order.
+	want := []agentv1.DbRestoreEvent_Step{
+		agentv1.DbRestoreEvent_STEP_FETCHING,
+		agentv1.DbRestoreEvent_STEP_APPLYING,
+	}
+	if len(steps) != len(want) {
+		t.Fatalf("progress steps = %v, want %v", steps, want)
+	}
+	for i := range want {
+		if steps[i] != want[i] {
+			t.Fatalf("progress steps = %v, want %v", steps, want)
+		}
 	}
 }
 
@@ -175,10 +189,11 @@ func TestRestoreRedisUsesRestartPath(t *testing.T) {
 	s3.uploaded["k.gz"] = gzbuf.Bytes()
 
 	b := NewBackupExecutor(eng, s3, quietLog())
+	var steps []agentv1.DbRestoreEvent_Step
 	ev := b.ExecuteRestore(context.Background(), &agentv1.DbRestoreWork{
 		RestoreId: "rs_1", DbId: "db_1", ContainerName: "cypher-db-db_1",
 		Engine: "redis", DataPath: "/data", S3Key: "k.gz",
-	})
+	}, func(p *agentv1.DbRestoreEvent) { steps = append(steps, p.GetStep()) })
 	if ev.GetOutcome() != agentv1.DbRestoreEvent_OUTCOME_SUCCEEDED {
 		t.Fatalf("outcome = %v (%s), want success", ev.GetOutcome(), ev.GetDetail())
 	}
@@ -187,6 +202,21 @@ func TestRestoreRedisUsesRestartPath(t *testing.T) {
 	}
 	if eng.copiedDest != "/data/" {
 		t.Fatalf("copied dest = %q, want /data/", eng.copiedDest)
+	}
+	// The restart path is the one that has a stopping step at all.
+	want := []agentv1.DbRestoreEvent_Step{
+		agentv1.DbRestoreEvent_STEP_FETCHING,
+		agentv1.DbRestoreEvent_STEP_STOPPING,
+		agentv1.DbRestoreEvent_STEP_APPLYING,
+		agentv1.DbRestoreEvent_STEP_RESTARTING,
+	}
+	if len(steps) != len(want) {
+		t.Fatalf("progress steps = %v, want %v", steps, want)
+	}
+	for i := range want {
+		if steps[i] != want[i] {
+			t.Fatalf("progress steps = %v, want %v", steps, want)
+		}
 	}
 	if len(eng.execCmds) != 0 {
 		t.Fatalf("redis restore ran %d exec commands, want 0 (restart path)", len(eng.execCmds))

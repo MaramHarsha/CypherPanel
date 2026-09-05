@@ -111,6 +111,11 @@ type Store interface {
 	GetBackupTarget(ctx context.Context, id string) (domain.BackupTarget, error)
 	CreateBackupRecord(ctx context.Context, r domain.BackupRecord) (domain.BackupRecord, error)
 	GetBackupRecord(ctx context.Context, id string) (domain.BackupRecord, error)
+	SetDatabaseStatus(ctx context.Context, id, status, detail string) error
+	CreateDatabaseRestore(ctx context.Context, id, databaseID, backupRecordID, step string) (domain.DatabaseRestore, error)
+	AdvanceDatabaseRestore(ctx context.Context, id, step string, done, total int64) (domain.DatabaseRestore, error)
+	FinishDatabaseRestore(ctx context.Context, id, status, detail string) (domain.DatabaseRestore, error)
+	GetDatabaseRestore(ctx context.Context, id string) (domain.DatabaseRestore, error)
 	UpdateBackupRecord(ctx context.Context, id, objectKey string, sizeBytes int64, status, detail string, finishedAt *time.Time) error
 	SetDatabaseBackupLastRun(ctx context.Context, id string, lastRunAt *time.Time, lastStatus string) error
 	ListBackupRecords(ctx context.Context, backupID string) ([]domain.BackupRecord, error)

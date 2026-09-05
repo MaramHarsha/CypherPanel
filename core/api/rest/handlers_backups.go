@@ -475,13 +475,15 @@ func (a *API) handleRestoreDatabase(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "backup_record_id is required")
 		return
 	}
-	err := a.deps.Backups.RunRestore(r.Context(), r.PathValue("id"), req.BackupRecordID, req.Confirm)
+	restore, err := a.deps.Backups.RunRestore(r.Context(), r.PathValue("id"), req.BackupRecordID, req.Confirm)
 	switch {
 	case err == nil:
 		// The most destructive verb the API has: it overwrites live data from a
 		// snapshot. Who asked, and from which record.
 		a.auditDatabaseRestore(r, req.BackupRecordID)
-		w.WriteHeader(http.StatusAccepted)
+		// The record, not an empty 202: the caller has to be able to follow an
+		// operation that takes the database offline while it runs.
+		writeJSON(w, http.StatusAccepted, toRestoreDTO(restore))
 	case errors.Is(err, scheduler.ErrRestoreNotConfirmed):
 		writeError(w, http.StatusBadRequest, "restore is destructive: set confirm=true to proceed")
 	case errors.Is(err, store.ErrNotFound):
@@ -505,4 +507,90 @@ func (a *API) auditDatabaseRestore(r *http.Request, recordID string) {
 		EnvironmentID: db.EnvironmentID,
 		Detail:        map[string]any{"backup_record_id": recordID},
 	})
+}
+
+// ─── restore progress (managed-databases.md §"Restoring", canvas 10d) ────────
+
+type restoreDTO struct {
+	ID             string     `json:"id"`
+	DatabaseID     string     `json:"database_id"`
+	BackupRecordID string     `json:"backup_record_id,omitempty"`
+	Status         string     `json:"status"`
+	Step           string     `json:"step,omitempty"`
+	BytesDone      int64      `json:"bytes_done"`
+	BytesTotal     int64      `json:"bytes_total"`
+	Detail         string     `json:"detail,omitempty"`
+	StartedAt      time.Time  `json:"started_at"`
+	FinishedAt     *time.Time `json:"finished_at,omitempty"`
+}
+
+func toRestoreDTO(r domain.DatabaseRestore) restoreDTO {
+	return restoreDTO{
+		ID: r.ID, DatabaseID: r.DatabaseID, BackupRecordID: r.BackupRecordID,
+		Status: r.Status, Step: r.Step,
+		BytesDone: r.BytesDone, BytesTotal: r.BytesTotal, Detail: r.Detail,
+		StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
+	}
+}
+
+// handleListDatabaseRestores returns a database's restore history, newest
+// first. A restore is not a backup: the history of what was put back is a
+// different question from the history of what was taken.
+func (a *API) handleListDatabaseRestores(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	dbID := r.PathValue("id")
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForDatabase(ctx, dbID)
+	}) {
+		return
+	}
+	if a.deps.Restores == nil {
+		writeError(w, http.StatusNotImplemented, "restores are not enabled")
+		return
+	}
+	list, err := a.deps.Restores.ListDatabaseRestores(r.Context(), dbID, 50)
+	if err != nil {
+		a.deps.Log.Error("listing database restores", "db_id", dbID, "error", err)
+		writeError(w, http.StatusInternalServerError, "could not list restores")
+		return
+	}
+	out := make([]restoreDTO, 0, len(list))
+	for _, rec := range list {
+		out = append(out, toRestoreDTO(rec))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleGetDatabaseRestore returns one restore. The blocking popup polls this
+// while it is running, and reopens onto it when someone closes the tab and
+// comes back to a database that is still offline.
+func (a *API) handleGetDatabaseRestore(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	dbID := r.PathValue("id")
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForDatabase(ctx, dbID)
+	}) {
+		return
+	}
+	if a.deps.Restores == nil {
+		writeError(w, http.StatusNotImplemented, "restores are not enabled")
+		return
+	}
+	rec, err := a.deps.Restores.GetDatabaseRestore(r.Context(), r.PathValue("rid"))
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "restore not found")
+		return
+	}
+	if err != nil {
+		a.deps.Log.Error("getting database restore", "restore_id", r.PathValue("rid"), "error", err)
+		writeError(w, http.StatusInternalServerError, "could not read the restore")
+		return
+	}
+	// The restore is addressed under its database, so one that belongs to a
+	// different database is not found here even though the id exists.
+	if rec.DatabaseID != dbID {
+		writeError(w, http.StatusNotFound, "restore not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, toRestoreDTO(rec))
 }

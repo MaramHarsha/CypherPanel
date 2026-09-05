@@ -1125,4 +1125,9 @@ func (f *fakeBackupSchedules) RunBackup(_ context.Context, scheduleID string) (d
 	return domain.BackupRecord{ID: "bkr_test", DatabaseBackupID: scheduleID, Status: domain.BackupRunning}, nil
 }
 
-func (f *fakeBackupSchedules) RunRestore(context.Context, string, string, bool) error { return nil }
+func (f *fakeBackupSchedules) RunRestore(_ context.Context, dbID, recordID string, _ bool) (domain.DatabaseRestore, error) {
+	return domain.DatabaseRestore{
+		ID: "rst_fake", DatabaseID: dbID, BackupRecordID: recordID,
+		Status: domain.RestoreRunning, Step: domain.RestoreStepFetching,
+	}, nil
+}

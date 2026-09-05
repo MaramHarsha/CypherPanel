@@ -33,6 +33,10 @@ const (
 	PrefixBackupTarget     = "bt"
 	PrefixDatabaseBackup   = "bak"
 	PrefixBackupRecord     = "br"
+	// A restore is its own record rather than a second kind of backup record:
+	// it is an operation with steps and an outcome, and the design's blocking
+	// popup needs to address one (managed-databases.md §"Restoring").
+	PrefixDatabaseRestore = "rst"
 
 	// Phase 3: Notifications (docs/features/notifications.md).
 	PrefixNotifier = "ntf"

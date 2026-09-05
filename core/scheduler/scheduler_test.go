@@ -22,6 +22,8 @@ import (
 // ─── fakes ──────────────────────────────────────────────────────────────────
 
 type fakeStore struct {
+	restores       map[string]domain.DatabaseRestore
+	dbStatuses     map[string]string
 	mu             sync.Mutex
 	apps           map[string]domain.Application
 	revisions      map[string]domain.Revision
@@ -487,6 +489,68 @@ func (f *fakeStore) CreateBackupRecord(_ context.Context, r domain.BackupRecord)
 	defer f.mu.Unlock()
 	f.records[r.ID] = r
 	return r, nil
+}
+
+// Restore records, modelling the store's one rule: only a running restore
+// moves, so a redelivered event is a no-op rather than a second finish.
+func (f *fakeStore) CreateDatabaseRestore(_ context.Context, id, databaseID, backupRecordID, step string) (domain.DatabaseRestore, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.restores == nil {
+		f.restores = map[string]domain.DatabaseRestore{}
+	}
+	rec := domain.DatabaseRestore{
+		ID: id, DatabaseID: databaseID, BackupRecordID: backupRecordID,
+		Status: domain.RestoreRunning, Step: step, StartedAt: time.Now(),
+	}
+	f.restores[id] = rec
+	return rec, nil
+}
+
+func (f *fakeStore) GetDatabaseRestore(_ context.Context, id string) (domain.DatabaseRestore, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rec, ok := f.restores[id]
+	if !ok {
+		return domain.DatabaseRestore{}, store.ErrNotFound
+	}
+	return rec, nil
+}
+
+func (f *fakeStore) AdvanceDatabaseRestore(_ context.Context, id, step string, done, total int64) (domain.DatabaseRestore, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rec, ok := f.restores[id]
+	if !ok || rec.Status != domain.RestoreRunning {
+		return domain.DatabaseRestore{}, store.ErrNotFound
+	}
+	rec.Step, rec.BytesDone, rec.BytesTotal = step, done, total
+	f.restores[id] = rec
+	return rec, nil
+}
+
+func (f *fakeStore) FinishDatabaseRestore(_ context.Context, id, status, detail string) (domain.DatabaseRestore, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rec, ok := f.restores[id]
+	if !ok || rec.Status != domain.RestoreRunning {
+		return domain.DatabaseRestore{}, store.ErrNotFound
+	}
+	now := time.Now()
+	rec.Status, rec.Detail, rec.Step, rec.FinishedAt = status, detail, "", &now
+	f.restores[id] = rec
+	return rec, nil
+}
+
+func (f *fakeStore) SetDatabaseStatus(_ context.Context, id, status, detail string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.dbStatuses == nil {
+		f.dbStatuses = map[string]string{}
+	}
+	f.dbStatuses[id] = status
+	_ = detail
+	return nil
 }
 
 func (f *fakeStore) GetBackupRecord(_ context.Context, id string) (domain.BackupRecord, error) {

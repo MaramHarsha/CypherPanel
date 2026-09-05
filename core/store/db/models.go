@@ -184,6 +184,19 @@ type DatabaseBackup struct {
 	UpdatedAt      pgtype.Timestamptz
 }
 
+type DatabaseRestore struct {
+	ID             string
+	DatabaseID     string
+	BackupRecordID pgtype.Text
+	Status         string
+	Step           string
+	BytesDone      int64
+	BytesTotal     int64
+	Detail         string
+	StartedAt      pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+}
+
 type DatabaseRevision struct {
 	ID             string
 	DatabaseID     string

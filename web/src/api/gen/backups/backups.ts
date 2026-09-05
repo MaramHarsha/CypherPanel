@@ -33,6 +33,7 @@ import type {
   CreateBackupTargetRequest,
   CreateDatabaseBackupRequest,
   DatabaseBackup,
+  DatabaseRestore,
   Error,
   ForbiddenResponse,
   NotFoundResponse,
@@ -986,9 +987,9 @@ export const useRunBackupNow = <TError = UnauthorizedResponse | ForbiddenRespons
  * @summary Restore a database from a backup (destructive; confirm required)
  */
 export const restoreDatabase = async (id: string,
-    restoreRequest: RestoreRequest, options?: RequestInit): Promise<void> => {
+    restoreRequest: RestoreRequest, options?: RequestInit): Promise<DatabaseRestore> => {
 
-  return apiFetch<void>(getRestoreDatabaseUrl(id),
+  return apiFetch<DatabaseRestore>(getRestoreDatabaseUrl(id),
   {
     ...options,
     method: 'POST',
@@ -1045,3 +1046,213 @@ export const useRestoreDatabase = <TError = BadRequestResponse | UnauthorizedRes
       > => {
       return useMutation(getRestoreDatabaseMutationOptions(options), queryClient);
     }
+    export const getListDatabaseRestoresUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/databases/${id}/restores`
+}
+
+/**
+ * What was put back, and how it went. A different question from the backup history, which is what was taken.
+ * @summary A database's restore history, newest first
+ */
+export const listDatabaseRestores = async (id: string, options?: RequestInit): Promise<DatabaseRestore[]> => {
+
+  return apiFetch<DatabaseRestore[]>(getListDatabaseRestoresUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListDatabaseRestoresQueryKey = (id: string,) => {
+    return [
+    `/api/v1/databases/${id}/restores`
+    ] as const;
+    }
+
+
+export const getListDatabaseRestoresQueryOptions = <TData = Awaited<ReturnType<typeof listDatabaseRestores>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDatabaseRestores>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListDatabaseRestoresQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listDatabaseRestores>>> = ({ signal }) => listDatabaseRestores(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listDatabaseRestores>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListDatabaseRestoresQueryResult = NonNullable<Awaited<ReturnType<typeof listDatabaseRestores>>>
+export type ListDatabaseRestoresQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error
+
+
+export function useListDatabaseRestores<TData = Awaited<ReturnType<typeof listDatabaseRestores>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDatabaseRestores>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listDatabaseRestores>>,
+          TError,
+          Awaited<ReturnType<typeof listDatabaseRestores>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListDatabaseRestores<TData = Awaited<ReturnType<typeof listDatabaseRestores>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDatabaseRestores>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listDatabaseRestores>>,
+          TError,
+          Awaited<ReturnType<typeof listDatabaseRestores>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListDatabaseRestores<TData = Awaited<ReturnType<typeof listDatabaseRestores>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDatabaseRestores>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary A database's restore history, newest first
+ */
+
+export function useListDatabaseRestores<TData = Awaited<ReturnType<typeof listDatabaseRestores>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDatabaseRestores>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListDatabaseRestoresQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getGetDatabaseRestoreUrl = (id: string,
+    rid: string,) => {
+
+
+
+
+  return `/api/v1/databases/${id}/restores/${rid}`
+}
+
+/**
+ * The blocking progress dialog polls this while a restore runs, and reopens onto it when someone closes the tab and comes back to a database that is still offline. A restore belonging to another database is 404 here even though the id exists.
+ * @summary One restore, including how far a running one has got
+ */
+export const getDatabaseRestore = async (id: string,
+    rid: string, options?: RequestInit): Promise<DatabaseRestore> => {
+
+  return apiFetch<DatabaseRestore>(getGetDatabaseRestoreUrl(id,rid),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetDatabaseRestoreQueryKey = (id: string,
+    rid: string,) => {
+    return [
+    `/api/v1/databases/${id}/restores/${rid}`
+    ] as const;
+    }
+
+
+export const getGetDatabaseRestoreQueryOptions = <TData = Awaited<ReturnType<typeof getDatabaseRestore>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error>(id: string,
+    rid: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDatabaseRestore>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetDatabaseRestoreQueryKey(id,rid);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDatabaseRestore>>> = ({ signal }) => getDatabaseRestore(id,rid, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined && rid !== null && rid !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDatabaseRestore>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetDatabaseRestoreQueryResult = NonNullable<Awaited<ReturnType<typeof getDatabaseRestore>>>
+export type GetDatabaseRestoreQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error
+
+
+export function useGetDatabaseRestore<TData = Awaited<ReturnType<typeof getDatabaseRestore>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error>(
+ id: string,
+    rid: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDatabaseRestore>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getDatabaseRestore>>,
+          TError,
+          Awaited<ReturnType<typeof getDatabaseRestore>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDatabaseRestore<TData = Awaited<ReturnType<typeof getDatabaseRestore>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error>(
+ id: string,
+    rid: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDatabaseRestore>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getDatabaseRestore>>,
+          TError,
+          Awaited<ReturnType<typeof getDatabaseRestore>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDatabaseRestore<TData = Awaited<ReturnType<typeof getDatabaseRestore>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error>(
+ id: string,
+    rid: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDatabaseRestore>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary One restore, including how far a running one has got
+ */
+
+export function useGetDatabaseRestore<TData = Awaited<ReturnType<typeof getDatabaseRestore>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error>(
+ id: string,
+    rid: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDatabaseRestore>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetDatabaseRestoreQueryOptions(id,rid,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+

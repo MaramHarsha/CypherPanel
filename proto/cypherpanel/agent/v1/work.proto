@@ -413,8 +413,14 @@ message DbBackupEvent {
   google.protobuf.Timestamp occurred_at = 7;
 }
 
-// DbRestoreEvent reports a restore's terminal outcome, published on
+// DbRestoreEvent reports a restore's progress and its terminal outcome, both on
 // state.<server>.db.restore.
+//
+// A restore takes a database offline, so "it is running" is not a detail — it is
+// the whole answer someone staring at the screen needs. OUTCOME_RUNNING carries
+// the step the agent is on; the terminal outcomes end it. Progress events are
+// additive: a plane that does not know OUTCOME_RUNNING sees an unrecognised
+// enum value and ignores the event, exactly as it did before this existed.
 message DbRestoreEvent {
   string restore_id = 1;
   string db_id = 2;
@@ -423,11 +429,30 @@ message DbRestoreEvent {
     OUTCOME_UNSPECIFIED = 0;
     OUTCOME_SUCCEEDED = 1;
     OUTCOME_FAILED = 2;
+    OUTCOME_RUNNING = 3;
   }
   Outcome outcome = 3;
 
   string detail = 4;
   google.protobuf.Timestamp occurred_at = 5;
+
+  // Step names where a running restore has got to. Set only with
+  // OUTCOME_RUNNING; a terminal event leaves it unspecified because the outcome
+  // already says where it ended up.
+  enum Step {
+    STEP_UNSPECIFIED = 0;
+    STEP_FETCHING = 1;    // downloading and decompressing the backup object
+    STEP_STOPPING = 2;    // stopping the container (engines that reload on boot)
+    STEP_APPLYING = 3;    // writing the dump in and running the engine restore
+    STEP_RESTARTING = 4;  // starting again and waiting for health
+  }
+  Step step = 6;
+
+  // Bytes of the decompressed dump handled so far, and in total. Zero when the
+  // step has no meaningful byte count — an engine restart is not measured in
+  // bytes, and pretending otherwise would draw a bar that does not move.
+  int64 bytes_done = 7;
+  int64 bytes_total = 8;
 }
 
 // DbBackupPruneWork commands a database's host agent to delete specific backup

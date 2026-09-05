@@ -549,6 +549,7 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		BackupTargets:    backupTargetSvc,
 		BackupSchedules:  backupScheduleSvc,
 		Backups:          sched,
+		Restores:         st,
 		Previews:         previewMgr,
 		Notifiers:        notifySvc,
 		NotifyDelivery:   notifyMgr,

@@ -61,7 +61,10 @@ type ImageRelay interface {
 // managed-databases.md §7). Nil on nodes that run no databases.
 type BackupRunner interface {
 	ExecuteBackup(ctx context.Context, work *agentv1.DbBackupWork) *agentv1.DbBackupEvent
-	ExecuteRestore(ctx context.Context, work *agentv1.DbRestoreWork) *agentv1.DbRestoreEvent
+	// ExecuteRestore reports each step it reaches through progress before
+	// returning the terminal event. A restore takes the database offline, so
+	// how far along it is is the answer someone is waiting for.
+	ExecuteRestore(ctx context.Context, work *agentv1.DbRestoreWork, progress func(*agentv1.DbRestoreEvent)) *agentv1.DbRestoreEvent
 	ExecutePrune(ctx context.Context, work *agentv1.DbBackupPruneWork) *agentv1.DbBackupPruneEvent
 }
 
@@ -588,7 +591,14 @@ func (w *Worker) handleMsg(ctx context.Context, msg Message) {
 			return
 		}
 		event := w.runWithHeartbeat(ctx, msg, func(ctx context.Context) proto.Message {
-			return w.backup.ExecuteRestore(ctx, &work)
+			return w.backup.ExecuteRestore(ctx, &work, func(ev *agentv1.DbRestoreEvent) {
+				// Best-effort: a dropped progress event costs the screen a
+				// step, never the restore. The terminal event is what the
+				// record is closed on.
+				if data, err := proto.Marshal(ev); err == nil {
+					_ = w.bus.Publish(subjects.DbRestoreState(w.serverID), data)
+				}
+			})
 		})
 		if data, err := proto.Marshal(event); err == nil {
 			_ = w.bus.Publish(subjects.DbRestoreState(w.serverID), data)

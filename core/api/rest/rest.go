@@ -98,7 +98,7 @@ type Opener interface {
 // *scheduler.Scheduler satisfies it — managed-databases.md §7).
 type BackupOps interface {
 	RunBackup(ctx context.Context, scheduleID string) (domain.BackupRecord, error)
-	RunRestore(ctx context.Context, dbID, backupRecordID string, confirm bool) error
+	RunRestore(ctx context.Context, dbID, backupRecordID string, confirm bool) (domain.DatabaseRestore, error)
 }
 
 // PreviewManager drives preview environments from PR events and exposes the
@@ -119,6 +119,14 @@ type NotifierService interface {
 	Get(ctx context.Context, id string) (domain.Notifier, error)
 	List(ctx context.Context, projectID string) ([]domain.Notifier, error)
 	Delete(ctx context.Context, id string) error
+}
+
+// RestoreReader is the read side of database restores (consumer-defined;
+// *store.Store satisfies it). Writes belong to the scheduler, which is the only
+// thing that learns what an agent did.
+type RestoreReader interface {
+	ListDatabaseRestores(ctx context.Context, databaseID string, limit int32) ([]domain.DatabaseRestore, error)
+	GetDatabaseRestore(ctx context.Context, id string) (domain.DatabaseRestore, error)
 }
 
 // NotifierDelivery sends a synthetic event through one notifier — the test
@@ -280,16 +288,18 @@ type OnboardingService interface {
 }
 
 type Deps struct {
-	Auth             *auth.Authenticator
-	Onboarding       OnboardingService
-	Servers          *servers.Service
-	Projects         *projects.Service
-	Applications     *applications.Service
-	DeployKeys       *deploykeys.Service
-	Databases        *databases.Service
-	BackupTargets    *databases.BackupTargetService
-	BackupSchedules  *databases.BackupScheduleService
-	Backups          BackupOps
+	Auth            *auth.Authenticator
+	Onboarding      OnboardingService
+	Servers         *servers.Service
+	Projects        *projects.Service
+	Applications    *applications.Service
+	DeployKeys      *deploykeys.Service
+	Databases       *databases.Service
+	BackupTargets   *databases.BackupTargetService
+	BackupSchedules *databases.BackupScheduleService
+	Backups         BackupOps
+	// Restores reads the restore records the scheduler writes.
+	Restores         RestoreReader
 	Previews         PreviewManager
 	Notifiers        NotifierService
 	NotifyDelivery   NotifierDelivery
@@ -524,6 +534,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/databases/{id}/backups/{bak_id}", a.authed(a.handleDeleteDatabaseBackup))
 	mux.HandleFunc("GET /api/v1/databases/{id}/backups/{bak_id}/history", a.authed(a.handleListBackupRecords))
 	mux.HandleFunc("POST /api/v1/databases/{id}/backups/{bak_id}/run", a.authed(a.handleRunBackup))
+	mux.HandleFunc("GET /api/v1/databases/{id}/restores", a.authed(a.handleListDatabaseRestores))
+	mux.HandleFunc("GET /api/v1/databases/{id}/restores/{rid}", a.authed(a.handleGetDatabaseRestore))
 	mux.HandleFunc("POST /api/v1/databases/{id}/restore", a.authed(a.handleRestoreDatabase))
 
 	// Phase 3: preview environments (preview-environments.md §7).

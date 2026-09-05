@@ -181,6 +181,7 @@ const (
 	DbRestoreEvent_OUTCOME_UNSPECIFIED DbRestoreEvent_Outcome = 0
 	DbRestoreEvent_OUTCOME_SUCCEEDED   DbRestoreEvent_Outcome = 1
 	DbRestoreEvent_OUTCOME_FAILED      DbRestoreEvent_Outcome = 2
+	DbRestoreEvent_OUTCOME_RUNNING     DbRestoreEvent_Outcome = 3
 )
 
 // Enum value maps for DbRestoreEvent_Outcome.
@@ -189,11 +190,13 @@ var (
 		0: "OUTCOME_UNSPECIFIED",
 		1: "OUTCOME_SUCCEEDED",
 		2: "OUTCOME_FAILED",
+		3: "OUTCOME_RUNNING",
 	}
 	DbRestoreEvent_Outcome_value = map[string]int32{
 		"OUTCOME_UNSPECIFIED": 0,
 		"OUTCOME_SUCCEEDED":   1,
 		"OUTCOME_FAILED":      2,
+		"OUTCOME_RUNNING":     3,
 	}
 )
 
@@ -222,6 +225,64 @@ func (x DbRestoreEvent_Outcome) Number() protoreflect.EnumNumber {
 // Deprecated: Use DbRestoreEvent_Outcome.Descriptor instead.
 func (DbRestoreEvent_Outcome) EnumDescriptor() ([]byte, []int) {
 	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{24, 0}
+}
+
+// Step names where a running restore has got to. Set only with
+// OUTCOME_RUNNING; a terminal event leaves it unspecified because the outcome
+// already says where it ended up.
+type DbRestoreEvent_Step int32
+
+const (
+	DbRestoreEvent_STEP_UNSPECIFIED DbRestoreEvent_Step = 0
+	DbRestoreEvent_STEP_FETCHING    DbRestoreEvent_Step = 1 // downloading and decompressing the backup object
+	DbRestoreEvent_STEP_STOPPING    DbRestoreEvent_Step = 2 // stopping the container (engines that reload on boot)
+	DbRestoreEvent_STEP_APPLYING    DbRestoreEvent_Step = 3 // writing the dump in and running the engine restore
+	DbRestoreEvent_STEP_RESTARTING  DbRestoreEvent_Step = 4 // starting again and waiting for health
+)
+
+// Enum value maps for DbRestoreEvent_Step.
+var (
+	DbRestoreEvent_Step_name = map[int32]string{
+		0: "STEP_UNSPECIFIED",
+		1: "STEP_FETCHING",
+		2: "STEP_STOPPING",
+		3: "STEP_APPLYING",
+		4: "STEP_RESTARTING",
+	}
+	DbRestoreEvent_Step_value = map[string]int32{
+		"STEP_UNSPECIFIED": 0,
+		"STEP_FETCHING":    1,
+		"STEP_STOPPING":    2,
+		"STEP_APPLYING":    3,
+		"STEP_RESTARTING":  4,
+	}
+)
+
+func (x DbRestoreEvent_Step) Enum() *DbRestoreEvent_Step {
+	p := new(DbRestoreEvent_Step)
+	*p = x
+	return p
+}
+
+func (x DbRestoreEvent_Step) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (DbRestoreEvent_Step) Descriptor() protoreflect.EnumDescriptor {
+	return file_cypherpanel_agent_v1_work_proto_enumTypes[4].Descriptor()
+}
+
+func (DbRestoreEvent_Step) Type() protoreflect.EnumType {
+	return &file_cypherpanel_agent_v1_work_proto_enumTypes[4]
+}
+
+func (x DbRestoreEvent_Step) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use DbRestoreEvent_Step.Descriptor instead.
+func (DbRestoreEvent_Step) EnumDescriptor() ([]byte, []int) {
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{24, 1}
 }
 
 // AppSpec is an Application's desired state as one server's reconciler sees
@@ -2241,15 +2302,27 @@ func (x *DbBackupEvent) GetOccurredAt() *timestamppb.Timestamp {
 	return nil
 }
 
-// DbRestoreEvent reports a restore's terminal outcome, published on
+// DbRestoreEvent reports a restore's progress and its terminal outcome, both on
 // state.<server>.db.restore.
+//
+// A restore takes a database offline, so "it is running" is not a detail — it is
+// the whole answer someone staring at the screen needs. OUTCOME_RUNNING carries
+// the step the agent is on; the terminal outcomes end it. Progress events are
+// additive: a plane that does not know OUTCOME_RUNNING sees an unrecognised
+// enum value and ignores the event, exactly as it did before this existed.
 type DbRestoreEvent struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	RestoreId     string                 `protobuf:"bytes,1,opt,name=restore_id,json=restoreId,proto3" json:"restore_id,omitempty"`
-	DbId          string                 `protobuf:"bytes,2,opt,name=db_id,json=dbId,proto3" json:"db_id,omitempty"`
-	Outcome       DbRestoreEvent_Outcome `protobuf:"varint,3,opt,name=outcome,proto3,enum=cypherpanel.agent.v1.DbRestoreEvent_Outcome" json:"outcome,omitempty"`
-	Detail        string                 `protobuf:"bytes,4,opt,name=detail,proto3" json:"detail,omitempty"`
-	OccurredAt    *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=occurred_at,json=occurredAt,proto3" json:"occurred_at,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	RestoreId  string                 `protobuf:"bytes,1,opt,name=restore_id,json=restoreId,proto3" json:"restore_id,omitempty"`
+	DbId       string                 `protobuf:"bytes,2,opt,name=db_id,json=dbId,proto3" json:"db_id,omitempty"`
+	Outcome    DbRestoreEvent_Outcome `protobuf:"varint,3,opt,name=outcome,proto3,enum=cypherpanel.agent.v1.DbRestoreEvent_Outcome" json:"outcome,omitempty"`
+	Detail     string                 `protobuf:"bytes,4,opt,name=detail,proto3" json:"detail,omitempty"`
+	OccurredAt *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=occurred_at,json=occurredAt,proto3" json:"occurred_at,omitempty"`
+	Step       DbRestoreEvent_Step    `protobuf:"varint,6,opt,name=step,proto3,enum=cypherpanel.agent.v1.DbRestoreEvent_Step" json:"step,omitempty"`
+	// Bytes of the decompressed dump handled so far, and in total. Zero when the
+	// step has no meaningful byte count — an engine restart is not measured in
+	// bytes, and pretending otherwise would draw a bar that does not move.
+	BytesDone     int64 `protobuf:"varint,7,opt,name=bytes_done,json=bytesDone,proto3" json:"bytes_done,omitempty"`
+	BytesTotal    int64 `protobuf:"varint,8,opt,name=bytes_total,json=bytesTotal,proto3" json:"bytes_total,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2317,6 +2390,27 @@ func (x *DbRestoreEvent) GetOccurredAt() *timestamppb.Timestamp {
 		return x.OccurredAt
 	}
 	return nil
+}
+
+func (x *DbRestoreEvent) GetStep() DbRestoreEvent_Step {
+	if x != nil {
+		return x.Step
+	}
+	return DbRestoreEvent_STEP_UNSPECIFIED
+}
+
+func (x *DbRestoreEvent) GetBytesDone() int64 {
+	if x != nil {
+		return x.BytesDone
+	}
+	return 0
+}
+
+func (x *DbRestoreEvent) GetBytesTotal() int64 {
+	if x != nil {
+		return x.BytesTotal
+	}
+	return 0
 }
 
 // DbBackupPruneWork commands a database's host agent to delete specific backup
@@ -2785,7 +2879,7 @@ const file_cypherpanel_agent_v1_work_proto_rawDesc = "" +
 	"\aOutcome\x12\x17\n" +
 	"\x13OUTCOME_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11OUTCOME_SUCCEEDED\x10\x01\x12\x12\n" +
-	"\x0eOUTCOME_FAILED\x10\x02\"\xb0\x02\n" +
+	"\x0eOUTCOME_FAILED\x10\x02\"\xb0\x04\n" +
 	"\x0eDbRestoreEvent\x12\x1d\n" +
 	"\n" +
 	"restore_id\x18\x01 \x01(\tR\trestoreId\x12\x13\n" +
@@ -2793,11 +2887,23 @@ const file_cypherpanel_agent_v1_work_proto_rawDesc = "" +
 	"\aoutcome\x18\x03 \x01(\x0e2,.cypherpanel.agent.v1.DbRestoreEvent.OutcomeR\aoutcome\x12\x16\n" +
 	"\x06detail\x18\x04 \x01(\tR\x06detail\x12;\n" +
 	"\voccurred_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"occurredAt\"M\n" +
+	"occurredAt\x12=\n" +
+	"\x04step\x18\x06 \x01(\x0e2).cypherpanel.agent.v1.DbRestoreEvent.StepR\x04step\x12\x1d\n" +
+	"\n" +
+	"bytes_done\x18\a \x01(\x03R\tbytesDone\x12\x1f\n" +
+	"\vbytes_total\x18\b \x01(\x03R\n" +
+	"bytesTotal\"b\n" +
 	"\aOutcome\x12\x17\n" +
 	"\x13OUTCOME_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11OUTCOME_SUCCEEDED\x10\x01\x12\x12\n" +
-	"\x0eOUTCOME_FAILED\x10\x02\"\xe4\x01\n" +
+	"\x0eOUTCOME_FAILED\x10\x02\x12\x13\n" +
+	"\x0fOUTCOME_RUNNING\x10\x03\"j\n" +
+	"\x04Step\x12\x14\n" +
+	"\x10STEP_UNSPECIFIED\x10\x00\x12\x11\n" +
+	"\rSTEP_FETCHING\x10\x01\x12\x11\n" +
+	"\rSTEP_STOPPING\x10\x02\x12\x11\n" +
+	"\rSTEP_APPLYING\x10\x03\x12\x13\n" +
+	"\x0fSTEP_RESTARTING\x10\x04\"\xe4\x01\n" +
 	"\x11DbBackupPruneWork\x12\x13\n" +
 	"\x05db_id\x18\x01 \x01(\tR\x04dbId\x12\x1f\n" +
 	"\vs3_endpoint\x18\x02 \x01(\tR\n" +
@@ -2838,76 +2944,78 @@ func file_cypherpanel_agent_v1_work_proto_rawDescGZIP() []byte {
 	return file_cypherpanel_agent_v1_work_proto_rawDescData
 }
 
-var file_cypherpanel_agent_v1_work_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
+var file_cypherpanel_agent_v1_work_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
 var file_cypherpanel_agent_v1_work_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
 var file_cypherpanel_agent_v1_work_proto_goTypes = []any{
 	(DeployEvent_Stage)(0),        // 0: cypherpanel.agent.v1.DeployEvent.Stage
 	(DeployEvent_Outcome)(0),      // 1: cypherpanel.agent.v1.DeployEvent.Outcome
 	(DbBackupEvent_Outcome)(0),    // 2: cypherpanel.agent.v1.DbBackupEvent.Outcome
 	(DbRestoreEvent_Outcome)(0),   // 3: cypherpanel.agent.v1.DbRestoreEvent.Outcome
-	(*AppSpec)(nil),               // 4: cypherpanel.agent.v1.AppSpec
-	(*PortMapping)(nil),           // 5: cypherpanel.agent.v1.PortMapping
-	(*VolumeMount)(nil),           // 6: cypherpanel.agent.v1.VolumeMount
-	(*ScheduledTask)(nil),         // 7: cypherpanel.agent.v1.ScheduledTask
-	(*HealthCheck)(nil),           // 8: cypherpanel.agent.v1.HealthCheck
-	(*RouteSpec)(nil),             // 9: cypherpanel.agent.v1.RouteSpec
-	(*RolloutWork)(nil),           // 10: cypherpanel.agent.v1.RolloutWork
-	(*RemoveWork)(nil),            // 11: cypherpanel.agent.v1.RemoveWork
-	(*ConvergeWork)(nil),          // 12: cypherpanel.agent.v1.ConvergeWork
-	(*BuildWork)(nil),             // 13: cypherpanel.agent.v1.BuildWork
-	(*PushImageWork)(nil),         // 14: cypherpanel.agent.v1.PushImageWork
-	(*DistributeWork)(nil),        // 15: cypherpanel.agent.v1.DistributeWork
-	(*DesiredState)(nil),          // 16: cypherpanel.agent.v1.DesiredState
-	(*TLSSettings)(nil),           // 17: cypherpanel.agent.v1.TLSSettings
-	(*ResyncWork)(nil),            // 18: cypherpanel.agent.v1.ResyncWork
-	(*AppStatus)(nil),             // 19: cypherpanel.agent.v1.AppStatus
-	(*DeployEvent)(nil),           // 20: cypherpanel.agent.v1.DeployEvent
-	(*DbSpec)(nil),                // 21: cypherpanel.agent.v1.DbSpec
-	(*DbProvisionWork)(nil),       // 22: cypherpanel.agent.v1.DbProvisionWork
-	(*DbRemoveWork)(nil),          // 23: cypherpanel.agent.v1.DbRemoveWork
-	(*DbStatus)(nil),              // 24: cypherpanel.agent.v1.DbStatus
-	(*DbBackupWork)(nil),          // 25: cypherpanel.agent.v1.DbBackupWork
-	(*DbRestoreWork)(nil),         // 26: cypherpanel.agent.v1.DbRestoreWork
-	(*DbBackupEvent)(nil),         // 27: cypherpanel.agent.v1.DbBackupEvent
-	(*DbRestoreEvent)(nil),        // 28: cypherpanel.agent.v1.DbRestoreEvent
-	(*DbBackupPruneWork)(nil),     // 29: cypherpanel.agent.v1.DbBackupPruneWork
-	(*DbBackupPruneEvent)(nil),    // 30: cypherpanel.agent.v1.DbBackupPruneEvent
-	(*ScheduledTaskRun)(nil),      // 31: cypherpanel.agent.v1.ScheduledTaskRun
-	nil,                           // 32: cypherpanel.agent.v1.AppSpec.EnvEntry
-	nil,                           // 33: cypherpanel.agent.v1.DbSpec.EnvEntry
-	(*timestamppb.Timestamp)(nil), // 34: google.protobuf.Timestamp
+	(DbRestoreEvent_Step)(0),      // 4: cypherpanel.agent.v1.DbRestoreEvent.Step
+	(*AppSpec)(nil),               // 5: cypherpanel.agent.v1.AppSpec
+	(*PortMapping)(nil),           // 6: cypherpanel.agent.v1.PortMapping
+	(*VolumeMount)(nil),           // 7: cypherpanel.agent.v1.VolumeMount
+	(*ScheduledTask)(nil),         // 8: cypherpanel.agent.v1.ScheduledTask
+	(*HealthCheck)(nil),           // 9: cypherpanel.agent.v1.HealthCheck
+	(*RouteSpec)(nil),             // 10: cypherpanel.agent.v1.RouteSpec
+	(*RolloutWork)(nil),           // 11: cypherpanel.agent.v1.RolloutWork
+	(*RemoveWork)(nil),            // 12: cypherpanel.agent.v1.RemoveWork
+	(*ConvergeWork)(nil),          // 13: cypherpanel.agent.v1.ConvergeWork
+	(*BuildWork)(nil),             // 14: cypherpanel.agent.v1.BuildWork
+	(*PushImageWork)(nil),         // 15: cypherpanel.agent.v1.PushImageWork
+	(*DistributeWork)(nil),        // 16: cypherpanel.agent.v1.DistributeWork
+	(*DesiredState)(nil),          // 17: cypherpanel.agent.v1.DesiredState
+	(*TLSSettings)(nil),           // 18: cypherpanel.agent.v1.TLSSettings
+	(*ResyncWork)(nil),            // 19: cypherpanel.agent.v1.ResyncWork
+	(*AppStatus)(nil),             // 20: cypherpanel.agent.v1.AppStatus
+	(*DeployEvent)(nil),           // 21: cypherpanel.agent.v1.DeployEvent
+	(*DbSpec)(nil),                // 22: cypherpanel.agent.v1.DbSpec
+	(*DbProvisionWork)(nil),       // 23: cypherpanel.agent.v1.DbProvisionWork
+	(*DbRemoveWork)(nil),          // 24: cypherpanel.agent.v1.DbRemoveWork
+	(*DbStatus)(nil),              // 25: cypherpanel.agent.v1.DbStatus
+	(*DbBackupWork)(nil),          // 26: cypherpanel.agent.v1.DbBackupWork
+	(*DbRestoreWork)(nil),         // 27: cypherpanel.agent.v1.DbRestoreWork
+	(*DbBackupEvent)(nil),         // 28: cypherpanel.agent.v1.DbBackupEvent
+	(*DbRestoreEvent)(nil),        // 29: cypherpanel.agent.v1.DbRestoreEvent
+	(*DbBackupPruneWork)(nil),     // 30: cypherpanel.agent.v1.DbBackupPruneWork
+	(*DbBackupPruneEvent)(nil),    // 31: cypherpanel.agent.v1.DbBackupPruneEvent
+	(*ScheduledTaskRun)(nil),      // 32: cypherpanel.agent.v1.ScheduledTaskRun
+	nil,                           // 33: cypherpanel.agent.v1.AppSpec.EnvEntry
+	nil,                           // 34: cypherpanel.agent.v1.DbSpec.EnvEntry
+	(*timestamppb.Timestamp)(nil), // 35: google.protobuf.Timestamp
 }
 var file_cypherpanel_agent_v1_work_proto_depIdxs = []int32{
-	32, // 0: cypherpanel.agent.v1.AppSpec.env:type_name -> cypherpanel.agent.v1.AppSpec.EnvEntry
-	8,  // 1: cypherpanel.agent.v1.AppSpec.health:type_name -> cypherpanel.agent.v1.HealthCheck
-	9,  // 2: cypherpanel.agent.v1.AppSpec.route:type_name -> cypherpanel.agent.v1.RouteSpec
-	7,  // 3: cypherpanel.agent.v1.AppSpec.scheduled_tasks:type_name -> cypherpanel.agent.v1.ScheduledTask
-	6,  // 4: cypherpanel.agent.v1.AppSpec.volumes:type_name -> cypherpanel.agent.v1.VolumeMount
-	5,  // 5: cypherpanel.agent.v1.AppSpec.ports:type_name -> cypherpanel.agent.v1.PortMapping
-	4,  // 6: cypherpanel.agent.v1.RolloutWork.spec:type_name -> cypherpanel.agent.v1.AppSpec
-	4,  // 7: cypherpanel.agent.v1.ConvergeWork.spec:type_name -> cypherpanel.agent.v1.AppSpec
-	4,  // 8: cypherpanel.agent.v1.DesiredState.specs:type_name -> cypherpanel.agent.v1.AppSpec
-	21, // 9: cypherpanel.agent.v1.DesiredState.db_specs:type_name -> cypherpanel.agent.v1.DbSpec
-	17, // 10: cypherpanel.agent.v1.DesiredState.tls:type_name -> cypherpanel.agent.v1.TLSSettings
-	34, // 11: cypherpanel.agent.v1.AppStatus.observed_at:type_name -> google.protobuf.Timestamp
+	33, // 0: cypherpanel.agent.v1.AppSpec.env:type_name -> cypherpanel.agent.v1.AppSpec.EnvEntry
+	9,  // 1: cypherpanel.agent.v1.AppSpec.health:type_name -> cypherpanel.agent.v1.HealthCheck
+	10, // 2: cypherpanel.agent.v1.AppSpec.route:type_name -> cypherpanel.agent.v1.RouteSpec
+	8,  // 3: cypherpanel.agent.v1.AppSpec.scheduled_tasks:type_name -> cypherpanel.agent.v1.ScheduledTask
+	7,  // 4: cypherpanel.agent.v1.AppSpec.volumes:type_name -> cypherpanel.agent.v1.VolumeMount
+	6,  // 5: cypherpanel.agent.v1.AppSpec.ports:type_name -> cypherpanel.agent.v1.PortMapping
+	5,  // 6: cypherpanel.agent.v1.RolloutWork.spec:type_name -> cypherpanel.agent.v1.AppSpec
+	5,  // 7: cypherpanel.agent.v1.ConvergeWork.spec:type_name -> cypherpanel.agent.v1.AppSpec
+	5,  // 8: cypherpanel.agent.v1.DesiredState.specs:type_name -> cypherpanel.agent.v1.AppSpec
+	22, // 9: cypherpanel.agent.v1.DesiredState.db_specs:type_name -> cypherpanel.agent.v1.DbSpec
+	18, // 10: cypherpanel.agent.v1.DesiredState.tls:type_name -> cypherpanel.agent.v1.TLSSettings
+	35, // 11: cypherpanel.agent.v1.AppStatus.observed_at:type_name -> google.protobuf.Timestamp
 	0,  // 12: cypherpanel.agent.v1.DeployEvent.stage:type_name -> cypherpanel.agent.v1.DeployEvent.Stage
 	1,  // 13: cypherpanel.agent.v1.DeployEvent.outcome:type_name -> cypherpanel.agent.v1.DeployEvent.Outcome
-	34, // 14: cypherpanel.agent.v1.DeployEvent.occurred_at:type_name -> google.protobuf.Timestamp
-	33, // 15: cypherpanel.agent.v1.DbSpec.env:type_name -> cypherpanel.agent.v1.DbSpec.EnvEntry
-	21, // 16: cypherpanel.agent.v1.DbProvisionWork.spec:type_name -> cypherpanel.agent.v1.DbSpec
-	34, // 17: cypherpanel.agent.v1.DbStatus.observed_at:type_name -> google.protobuf.Timestamp
+	35, // 14: cypherpanel.agent.v1.DeployEvent.occurred_at:type_name -> google.protobuf.Timestamp
+	34, // 15: cypherpanel.agent.v1.DbSpec.env:type_name -> cypherpanel.agent.v1.DbSpec.EnvEntry
+	22, // 16: cypherpanel.agent.v1.DbProvisionWork.spec:type_name -> cypherpanel.agent.v1.DbSpec
+	35, // 17: cypherpanel.agent.v1.DbStatus.observed_at:type_name -> google.protobuf.Timestamp
 	2,  // 18: cypherpanel.agent.v1.DbBackupEvent.outcome:type_name -> cypherpanel.agent.v1.DbBackupEvent.Outcome
-	34, // 19: cypherpanel.agent.v1.DbBackupEvent.occurred_at:type_name -> google.protobuf.Timestamp
+	35, // 19: cypherpanel.agent.v1.DbBackupEvent.occurred_at:type_name -> google.protobuf.Timestamp
 	3,  // 20: cypherpanel.agent.v1.DbRestoreEvent.outcome:type_name -> cypherpanel.agent.v1.DbRestoreEvent.Outcome
-	34, // 21: cypherpanel.agent.v1.DbRestoreEvent.occurred_at:type_name -> google.protobuf.Timestamp
-	34, // 22: cypherpanel.agent.v1.DbBackupPruneEvent.occurred_at:type_name -> google.protobuf.Timestamp
-	34, // 23: cypherpanel.agent.v1.ScheduledTaskRun.started_at:type_name -> google.protobuf.Timestamp
-	34, // 24: cypherpanel.agent.v1.ScheduledTaskRun.finished_at:type_name -> google.protobuf.Timestamp
-	25, // [25:25] is the sub-list for method output_type
-	25, // [25:25] is the sub-list for method input_type
-	25, // [25:25] is the sub-list for extension type_name
-	25, // [25:25] is the sub-list for extension extendee
-	0,  // [0:25] is the sub-list for field type_name
+	35, // 21: cypherpanel.agent.v1.DbRestoreEvent.occurred_at:type_name -> google.protobuf.Timestamp
+	4,  // 22: cypherpanel.agent.v1.DbRestoreEvent.step:type_name -> cypherpanel.agent.v1.DbRestoreEvent.Step
+	35, // 23: cypherpanel.agent.v1.DbBackupPruneEvent.occurred_at:type_name -> google.protobuf.Timestamp
+	35, // 24: cypherpanel.agent.v1.ScheduledTaskRun.started_at:type_name -> google.protobuf.Timestamp
+	35, // 25: cypherpanel.agent.v1.ScheduledTaskRun.finished_at:type_name -> google.protobuf.Timestamp
+	26, // [26:26] is the sub-list for method output_type
+	26, // [26:26] is the sub-list for method input_type
+	26, // [26:26] is the sub-list for extension type_name
+	26, // [26:26] is the sub-list for extension extendee
+	0,  // [0:26] is the sub-list for field type_name
 }
 
 func init() { file_cypherpanel_agent_v1_work_proto_init() }
@@ -2920,7 +3028,7 @@ func file_cypherpanel_agent_v1_work_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cypherpanel_agent_v1_work_proto_rawDesc), len(file_cypherpanel_agent_v1_work_proto_rawDesc)),
-			NumEnums:      4,
+			NumEnums:      5,
 			NumMessages:   30,
 			NumExtensions: 0,
 			NumServices:   0,

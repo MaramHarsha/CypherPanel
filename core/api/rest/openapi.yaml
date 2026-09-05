@@ -2707,13 +2707,50 @@ paths:
         required: true
         content: { application/json: { schema: { $ref: "#/components/schemas/RestoreRequest" } } }
       responses:
-        "202": { description: Restore started. }
+        "202": { description: "Restore started. The record tracks it.", content: { application/json: { schema: { $ref: "#/components/schemas/DatabaseRestore" } } } }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403":
           $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { description: Confirmation missing or the database is not in a restorable state., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /api/v1/databases/{id}/restores:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Database ID. }
+    get:
+      operationId: listDatabaseRestores
+      tags: [backups]
+      summary: A database's restore history, newest first
+      description: >
+        What was put back, and how it went. A different question from the backup
+        history, which is what was taken.
+      responses:
+        "200": { description: Restores., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/DatabaseRestore" } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "501": { description: Restores are not enabled on this panel., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /api/v1/databases/{id}/restores/{rid}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Database ID. }
+      - { name: rid, in: path, required: true, schema: { type: string }, description: Restore ID. }
+    get:
+      operationId: getDatabaseRestore
+      tags: [backups]
+      summary: One restore, including how far a running one has got
+      description: >
+        The blocking progress dialog polls this while a restore runs, and reopens
+        onto it when someone closes the tab and comes back to a database that is
+        still offline. A restore belonging to another database is 404 here even
+        though the id exists.
+      responses:
+        "200": { description: The restore., content: { application/json: { schema: { $ref: "#/components/schemas/DatabaseRestore" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "501": { description: Restores are not enabled on this panel., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   # ─── Preview environments (preview-environments.md §7) ────────────────────
   /api/v1/applications/{id}/previews:
@@ -4410,6 +4447,39 @@ components:
       required: [name]
       properties:
         name: { type: string, maxLength: 100 }
+
+    DatabaseRestore:
+      type: object
+      required: [id, database_id, status, bytes_done, bytes_total, started_at]
+      properties:
+        id: { type: string, description: rst_… prefixed ID. }
+        database_id: { type: string }
+        backup_record_id:
+          type: string
+          description: >
+            The record restored from. Absent once that record has aged out of
+            retention — the restore outlives what it restored.
+        status:
+          type: string
+          enum: [running, succeeded, failed]
+        step:
+          type: string
+          enum: [fetching, stopping, applying, restarting]
+          description: >
+            Where a running restore has got to. Absent once it is finished,
+            because the status then says everything.
+        bytes_done:
+          type: integer
+          format: int64
+          description: >
+            Bytes of the decompressed dump handled so far. Zero where the step
+            has no meaningful byte count — an engine restart is not measured in
+            bytes, and a bar that moved for it would be drawing something nobody
+            counted.
+        bytes_total: { type: integer, format: int64 }
+        detail: { type: string, description: Failure reason. Never contains secrets. }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
 
     ConnectionTest:
       type: object
