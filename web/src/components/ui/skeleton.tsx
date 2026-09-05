@@ -51,6 +51,12 @@ const WIDTHS = [
   [120, 170, 100, 70],
 ] as const;
 
+/** Three rows: 1, .7, .4 — the canvas's exact fade, floored so a long list
+ *  never fades to nothing. */
+function fade(i: number): number {
+  return 1 - i * 0.3 < 0.25 ? 0.25 : 1 - i * 0.3;
+}
+
 /**
  * List skeleton — canvas `10e`. Rows mirror the real layout (name, rollup
  * chip, timestamp) so the page does not reflow when data lands, the first row
@@ -77,13 +83,7 @@ export function SkeletonRows({ columns, rows = 3, dot = true, className }: Skele
               "flex flex-col gap-2 py-4 sm:grid sm:items-center sm:gap-4 sm:[grid-template-columns:var(--sk-cols)]",
               i === 0 ? "border-t-[1.5px] border-t-border-strong" : "border-t border-t-border",
             )}
-            style={
-              {
-                "--sk-cols": columns,
-                // Three rows: 1, .7, .4 — the canvas's exact fade.
-                opacity: 1 - i * 0.3 < 0.25 ? 0.25 : 1 - i * 0.3,
-              } as CSSProperties
-            }
+            style={{ "--sk-cols": columns, opacity: fade(i) } as CSSProperties}
           >
             <div className="flex items-center gap-3.5">
               {dot && <span className="size-2.5 flex-none rounded-full bg-border" />}
@@ -97,6 +97,84 @@ export function SkeletonRows({ columns, rows = 3, dot = true, className }: Skele
               className="h-[11px] max-w-full bg-border-subtle sm:justify-self-end"
               style={{ width: stamp }}
             />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+export interface SkeletonCardsProps {
+  /** Card count — as many as the grid shows above the fold, no more. */
+  count?: number;
+  /**
+   * The real grid's column classes, e.g. `"sm:grid-cols-2 xl:grid-cols-3"`
+   * (templates) or `"md:grid-cols-2"` (the project board). Passed through
+   * rather than computed so the placeholder is the grid it stands in for.
+   */
+  columns?: string;
+  /** Cards lead with a neutral status dot when the real card has one. */
+  dot?: boolean;
+  className?: string;
+}
+
+/**
+ * Card-grid skeleton — the shape of a template card or an application card
+ * (1b/2j): a bordered surface with a name bar, a mono sub-bar and a meta line,
+ * on the same grid the real cards use, so nothing reflows when they arrive.
+ * Fades across the row like SkeletonRows so it reads as one board.
+ */
+export function SkeletonCards({ count = 3, columns = "sm:grid-cols-2 xl:grid-cols-3", dot = false, className }: SkeletonCardsProps) {
+  return (
+    <div className={cn("grid grid-cols-1 gap-3", columns, className)} aria-hidden>
+      {Array.from({ length: count }, (_, i) => {
+        const [name, sub, , meta] = WIDTHS[i % WIDTHS.length]!;
+        return (
+          <div
+            key={i}
+            className="flex flex-col rounded-lg border border-border bg-surface p-4.5"
+            style={{ opacity: fade(i) }}
+          >
+            <div className="flex items-center gap-2.5">
+              {dot && <span className="size-2.5 flex-none rounded-full bg-border" />}
+              <Skeleton className="h-[16px] max-w-full" style={{ width: name }} />
+              <Skeleton className="ml-auto h-[10px] w-14 max-w-full bg-border-subtle" />
+            </div>
+            <Skeleton className="mt-2.5 h-[11px] max-w-full bg-border-subtle" style={{ width: sub }} />
+            <Skeleton className="mt-4 h-[11px] max-w-full bg-border-subtle" style={{ width: meta }} />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+export interface SkeletonFormProps {
+  /** Label + control pairs to draw. */
+  fields?: number;
+  /** Two-up field grid above `sm`, as the settings forms are (12c/13i). */
+  columns?: 1 | 2;
+  className?: string;
+}
+
+/**
+ * Single-resource skeleton — a settings page or a `dl` of facts (2f/2h/12c):
+ * a 12px label bar over a 36px control-shaped bar, at the form's own gutter,
+ * so the page arrives into a form rather than into three table rows it never
+ * had.
+ */
+export function SkeletonForm({ fields = 4, columns = 2, className }: SkeletonFormProps) {
+  return (
+    <div
+      className={cn("grid grid-cols-1 gap-x-3 gap-y-4", columns === 2 && "sm:grid-cols-2", className)}
+      aria-hidden
+    >
+      {Array.from({ length: fields }, (_, i) => {
+        const [label] = WIDTHS[i % WIDTHS.length]!;
+        return (
+          <div key={i} style={{ opacity: fade(Math.floor(i / columns)) }}>
+            <Skeleton className="h-[12px] max-w-full bg-border-subtle" style={{ width: label * 0.6 }} />
+            <Skeleton className="mt-[7px] h-9 w-full rounded-md" />
           </div>
         );
       })}

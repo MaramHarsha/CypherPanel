@@ -20,7 +20,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
 import { useState, type FormEvent } from "react";
-import { toast } from "sonner";
 import { useGetProject, useListEnvironments } from "@/api/gen/projects/projects";
 import {
   getListSharedVariableUsageQueryKey,
@@ -37,12 +36,14 @@ import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
 import { InlineHint } from "@/components/inline-hint";
 import { PageState } from "@/components/page-state";
+import { ActionButton, useMutationActionState } from "@/components/ui/action-button";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { Input, Select } from "@/components/ui/input";
 import { useCrumbs } from "@/lib/crumbs";
 import { absoluteTime, relativeTime } from "@/lib/time";
+import { toastFailed, toastSuccess } from "@/lib/toast";
 
 export const Route = createFileRoute("/_app/projects/$projectId/settings/shared-variables")({
   component: SharedVariablesTab,
@@ -121,13 +122,13 @@ function VariableRow({ projectId, variable: v }: { projectId: string; variable: 
         invalidate();
         setReplacing(false);
         setValue("");
-        toast.success(
+        toastSuccess(
           v.used_by_count === 0
             ? "Value replaced"
             : `Value replaced — ${v.used_by_count} app${v.used_by_count === 1 ? "" : "s"} now need a redeploy`,
         );
       },
-      onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Could not replace the value"),
+      onError: (e: unknown, vars) => toastFailed("Could not replace the value", e, { retry: () => update.mutate(vars) }),
     },
   });
 
@@ -135,20 +136,27 @@ function VariableRow({ projectId, variable: v }: { projectId: string; variable: 
     mutation: {
       onSuccess: () => {
         invalidate();
-        toast.success(`${v.key} deleted`);
+        toastSuccess(`${v.key} deleted`);
       },
-      onError: (e: unknown) =>
-        toast.error(e instanceof Error ? e.message : "Could not delete the shared variable"),
+      onError: (e: unknown, vars) => toastFailed("Could not delete the shared variable", e, { retry: () => del.mutate(vars) }),
     },
   });
 
+  const saveState = useMutationActionState(update);
+
   return (
-    <li className="flex flex-col gap-2 px-3 py-2.5 sm:grid sm:grid-cols-[minmax(0,1fr)_auto_auto_auto] sm:items-center sm:gap-3">
-      <span className="mono min-w-0 truncate text-[13px] text-text" title={v.key}>
+    // One line per row (13h, §8): KEY · scope · ••••• · used by N apps · ✕.
+    // The age is folded into the key's hover title rather than given a second
+    // line — the board's card rhythm is a single 11px/16px line per variable.
+    <li className="group flex flex-col gap-2 px-4 py-[11px] sm:grid sm:grid-cols-[minmax(0,1fr)_auto_auto_auto] sm:items-center sm:gap-3">
+      <span
+        className="mono min-w-0 truncate text-[12.5px] text-text"
+        title={`${v.key} — changed ${relativeTime(v.updated_at)} (${absoluteTime(v.updated_at)})`}
+      >
         {v.key}
       </span>
       <span
-        className="mono text-[11px] text-text-faint sm:justify-self-end"
+        className="mono text-[10.5px] text-text-faint sm:justify-self-end"
         title={
           v.environment_id
             ? `Scoped to ${v.environment_name} — shadows any project-scoped variable of the same key`
@@ -165,44 +173,54 @@ function VariableRow({ projectId, variable: v }: { projectId: string; variable: 
             value={value}
             onChange={(e) => setValue(e.target.value)}
             placeholder="new value"
-            className="mono h-7 w-44"
+            className="h-7 w-44"
             aria-label={`New value for ${v.key}`}
-            autoComplete="off"
+            autoComplete="new-password"
             autoFocus
           />
           {/* An empty box is nothing to save, not an instruction to blank the
               variable: the value is write-only, so a blank Replace destroys a
               credential nobody can read back or recover. Deliberately emptying
               one is an API call. */}
-          <Button
+          <ActionButton
             size="sm"
             variant="primary"
-            disabled={update.isPending || value === ""}
-            title={value === "" ? "Type the new value first" : undefined}
+            state={saveState}
+            busyLabel="Saving…"
+            successLabel="Saved"
+            disabledReason={value === "" ? "Type the new value first" : undefined}
             onClick={() => update.mutate({ id: v.id, data: { value } })}
           >
             Save
-          </Button>
+          </ActionButton>
           <Button size="sm" variant="ghost" onClick={() => setReplacing(false)}>
             Cancel
           </Button>
         </span>
       ) : (
         <>
-          <span className="mono text-xs text-text-faint sm:justify-self-end">{MASK}</span>
-          <span className="flex items-center gap-1.5 sm:justify-self-end">
+          <span className="mono text-[11px] text-text-faint sm:justify-self-end">
+            <span aria-hidden>{MASK}</span>
+            <span className="sr-only">value hidden</span>
+          </span>
+          <span className="flex items-center gap-3 sm:justify-self-end">
             <UsedByCount count={v.used_by_count} variableId={v.id} />
-            <Button size="sm" variant="ghost" onClick={() => setReplacing(true)}>
+            {/* Replace is API-backed but not on the board's row, so at rest
+                it stays out of the line and appears on hover or keyboard
+                focus. Where nothing can hover — a phone — it is always shown,
+                otherwise the value could never be replaced from there. */}
+            <Button
+              size="sm"
+              variant="ghost"
+              className="transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-focus-within:opacity-100 [@media(hover:hover)]:group-hover:opacity-100"
+              onClick={() => setReplacing(true)}
+            >
               Replace
             </Button>
             <DeleteVariable variable={v} pending={del.isPending} onConfirm={() => del.mutate({ id: v.id })} />
           </span>
         </>
       )}
-
-      <span className="mono text-[11px] text-text-faint sm:col-span-4 sm:justify-self-start" title={absoluteTime(v.updated_at)}>
-        changed {relativeTime(v.updated_at)}
-      </span>
     </li>
   );
 }
@@ -215,9 +233,15 @@ function UsedByCount({ count, variableId }: { count: number; variableId: string 
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <Button size="sm" variant="ghost" className="mono text-[11px] text-text-mid">
+        {/* A word, not a pill: 13h sets the reach as faint mono text in the
+            row. It still opens the list — the count is the question, the
+            names are the answer. */}
+        <button
+          type="button"
+          className="mono whitespace-nowrap rounded text-[11px] text-text-faint underline-offset-2 transition-colors hover:text-text hover:underline"
+        >
           used by {count} app{count === 1 ? "" : "s"}
-        </Button>
+        </button>
       </DialogTrigger>
       <DialogContent title="Where this value goes" description="Every application whose env vars reference this key.">
         <UsedByList variableId={variableId} />
@@ -323,17 +347,20 @@ function NewVariableDialog({ projectId, primary }: { projectId: string; primary?
       onSuccess: () => {
         void qc.invalidateQueries({ queryKey: getListSharedVariablesQueryKey(projectId) });
         setOpen(false);
-        toast.success(`${key} added — reference it as {{shared.${key}}}`);
+        toastSuccess(`${key} added — reference it as {{shared.${key}}}`);
       },
       onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not add the shared variable"),
     },
   });
+
+  const addState = useMutationActionState(create);
 
   const reset = () => {
     setKey("");
     setScope("");
     setValue("");
     setError(null);
+    create.reset();
   };
 
   const submit = (e: FormEvent) => {
@@ -423,9 +450,16 @@ function NewVariableDialog({ projectId, primary }: { projectId: string; primary?
                 Cancel
               </Button>
             </DialogClose>
-            <Button variant="primary" type="submit" disabled={create.isPending || key.trim() === ""}>
-              {create.isPending ? "Adding…" : "Add variable"}
-            </Button>
+            <ActionButton
+              variant="primary"
+              type="submit"
+              state={addState}
+              busyLabel="Adding…"
+              successLabel="Added"
+              disabledReason={key.trim() === "" ? "Enter a key first" : undefined}
+            >
+              Add variable
+            </ActionButton>
           </div>
         </form>
       </DialogContent>

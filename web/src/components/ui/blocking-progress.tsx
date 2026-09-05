@@ -103,7 +103,7 @@ export function BlockingProgress({
             aria-valuemax={100}
           >
             <div
-              className="h-full rounded-full bg-status-error transition-[width] duration-500"
+              className="h-full rounded-full bg-status-error transition-[width] duration-500 motion-reduce:transition-none"
               style={{ width: `${Math.min(100, Math.max(0, progress * 100))}%` }}
             />
           </div>

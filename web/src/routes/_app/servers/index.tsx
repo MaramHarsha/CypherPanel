@@ -26,6 +26,7 @@ import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { useCrumbs } from "@/lib/crumbs";
+import { useRowNavigation } from "@/lib/keys";
 import { relativeTime, absoluteTime } from "@/lib/time";
 import { cn } from "@/lib/utils";
 
@@ -52,6 +53,8 @@ function ServersPage() {
   // went with it: the join command vanished seconds after being shown, right
   // as the operator was copying it.
   const [joinOpen, setJoinOpen] = useState(false);
+  // Canvas 14g TAB ORDER: one stop per row; j/k and ↑↓ walk the fleet, Enter opens.
+  const rowNav = useRowNavigation();
 
   return (
     <>
@@ -96,7 +99,7 @@ function ServersPage() {
                 <span>Status</span>
                 <span>Last heartbeat</span>
               </div>
-              <ul>
+              <ul ref={rowNav}>
                 {rows.map((s, i) => (
                   <ServerRow key={s.id} server={s} first={i === 0} />
                 ))}
@@ -120,7 +123,7 @@ function ServerRow({ server: s, first }: { server: Server; first: boolean }) {
     .join(" · ");
 
   return (
-    <li>
+    <li data-row>
       <Link
         to="/servers/$serverId"
         params={{ serverId: s.id }}
@@ -400,13 +403,18 @@ function JoinProgress({ serverId, command, fingerprint }: { serverId: string; co
 
       <div className="mt-4 flex flex-wrap items-center justify-end gap-2.5">
         {ready && (
-          <Link
-            to="/servers/$serverId"
-            params={{ serverId }}
-            className="mr-auto text-[12px] font-medium text-text-dim hover:underline"
-          >
-            Open {server?.name} →
-          </Link>
+          // The golden path's next box (12f: join server → create project),
+          // offered where the previous one finished rather than left to the
+          // top bar. Projects carries "+ New project" whether or not one
+          // exists yet, so the link is honest either way.
+          <span className="mr-auto flex flex-wrap gap-x-4 gap-y-1 text-[12px] font-medium text-text-dim">
+            <Link to="/servers/$serverId" params={{ serverId }} className="hover:underline">
+              Open {server?.name} →
+            </Link>
+            <Link to="/projects" className="hover:underline">
+              Create a project →
+            </Link>
+          </span>
         )}
         <DialogClose asChild>
           <Button variant={ready ? "primary" : "secondary"} size="lg">

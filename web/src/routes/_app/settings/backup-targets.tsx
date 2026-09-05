@@ -9,7 +9,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
 import { useState, type FormEvent } from "react";
-import { toast } from "sonner";
 import {
   getListBackupTargetsQueryKey,
   useCreateBackupTarget,
@@ -27,6 +26,7 @@ import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { useCrumbs } from "@/lib/crumbs";
 import { relativeTime } from "@/lib/time";
+import { toastFailed, toastSuccess } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -107,11 +107,11 @@ function DeleteTargetDialog({ t }: { t: BackupTarget }) {
       // stay on screen — offering credentials the panel no longer holds —
       // until something else reloaded the page.
       onSuccess: () => {
-        toast.success(`Deleted ${t.name}`);
+        toastSuccess(`Deleted ${t.name}`);
         void qc.invalidateQueries({ queryKey: getListBackupTargetsQueryKey() });
         setOpen(false);
       },
-      onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Could not delete the target"),
+      onError: (e: unknown, vars) => toastFailed("Could not delete the target", e, { retry: () => del.mutate(vars) }),
     },
   });
 
@@ -159,7 +159,7 @@ function CreateTargetDialog({ primary }: { primary?: boolean }) {
   const create = useCreateBackupTarget({
     mutation: {
       onSuccess: () => {
-        toast.success(`${form.name} is ready — schedule a backup on any database`);
+        toastSuccess(`${form.name} is ready — schedule a backup on any database`);
         void qc.invalidateQueries({ queryKey: getListBackupTargetsQueryKey() });
         setForm(BLANK);
       },

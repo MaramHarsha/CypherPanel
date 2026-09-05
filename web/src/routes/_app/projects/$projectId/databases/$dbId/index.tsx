@@ -4,7 +4,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Play, RotateCcw, Square } from "lucide-react";
 import { useState } from "react";
-import { toast } from "sonner";
 import {
   getGetDatabaseQueryKey,
   useGetDatabase,
@@ -17,9 +16,11 @@ import { Eyebrow } from "@/components/eyebrow";
 import { PageState } from "@/components/page-state";
 import { StatusBadge } from "@/components/status-badge";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
+import { ActionButton, useMutationActionState } from "@/components/ui/action-button";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { relativeTime, absoluteTime } from "@/lib/time";
+import { toastFailed } from "@/lib/toast";
 
 export const Route = createFileRoute("/_app/projects/$projectId/databases/$dbId/")({
   component: DatabaseOverview,
@@ -32,8 +33,20 @@ function DatabaseOverview() {
   const [newPassword, setNewPassword] = useState<string | null>(null);
 
   const invalidate = () => void qc.invalidateQueries({ queryKey: getGetDatabaseQueryKey(dbId) });
-  const start = useStartDatabase({ mutation: { onSuccess: invalidate, onError: mutErr } });
-  const stop = useStopDatabase({ mutation: { onSuccess: invalidate, onError: mutErr } });
+  const start = useStartDatabase({
+    mutation: {
+      onSuccess: invalidate,
+      onError: (e: unknown, vars) => toastFailed("Database didn't start", e, { retry: () => start.mutate(vars) }),
+    },
+  });
+  const stop = useStopDatabase({
+    mutation: {
+      onSuccess: invalidate,
+      onError: (e: unknown, vars) => toastFailed("Database didn't stop", e, { retry: () => stop.mutate(vars) }),
+    },
+  });
+  const startState = useMutationActionState(start);
+  const stopState = useMutationActionState(stop);
   const reset = useResetDatabasePassword({
     mutation: {
       onSuccess: (res) => {
@@ -44,7 +57,7 @@ function DatabaseOverview() {
         // password was unrecoverable.
         setNewPassword(res.root_password);
       },
-      onError: mutErr,
+      onError: (e: unknown, vars) => toastFailed("Could not reset the password", e, { retry: () => reset.mutate(vars) }),
     },
   });
 
@@ -92,14 +105,31 @@ function DatabaseOverview() {
             <section className="space-y-2">
               <Eyebrow>Lifecycle</Eyebrow>
               <div className="flex flex-wrap items-center gap-2">
+                {/* The pill holds its width while the verb is in progress
+                    (10b); the 202 only records intent, so the success word
+                    is "requested" and the reconciling line below carries the
+                    rest. */}
                 {wantsRunning ? (
-                  <Button size="sm" disabled={stop.isPending} onClick={() => stop.mutate({ id: dbId })}>
+                  <ActionButton
+                    size="sm"
+                    state={stopState}
+                    busyLabel="Stopping…"
+                    successLabel="Stop requested"
+                    onClick={() => stop.mutate({ id: dbId })}
+                  >
                     <Square className="h-3.5 w-3.5" /> Stop
-                  </Button>
+                  </ActionButton>
                 ) : (
-                  <Button size="sm" variant="primary" disabled={start.isPending} onClick={() => start.mutate({ id: dbId })}>
+                  <ActionButton
+                    size="sm"
+                    variant="primary"
+                    state={startState}
+                    busyLabel="Starting…"
+                    successLabel="Start requested"
+                    onClick={() => start.mutate({ id: dbId })}
+                  >
                     <Play className="h-3.5 w-3.5" /> Start
-                  </Button>
+                  </ActionButton>
                 )}
                 {/* Reality lags intent — say so rather than leaving the
                     operator to wonder why Stop is showing on a stopped box. */}
@@ -156,8 +186,4 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
       <dd className="min-w-0 text-right text-text">{children}</dd>
     </div>
   );
-}
-
-function mutErr(e: unknown) {
-  toast.error(e instanceof Error ? e.message : "Something went wrong");
 }

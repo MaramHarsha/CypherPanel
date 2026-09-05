@@ -18,7 +18,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Plus, RotateCw, Send, Trash2 } from "lucide-react";
 import { useState, type FormEvent } from "react";
-import { toast } from "sonner";
 import {
   getListWebhookDeliveriesQueryKey,
   getListWebhookEndpointsQueryKey,
@@ -39,12 +38,15 @@ import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
 import { InlineHint } from "@/components/inline-hint";
 import { PageState } from "@/components/page-state";
-import { StatusDot } from "@/components/status-badge";
+import { StatusDot, StatusWord } from "@/components/status-badge";
+import { ActionButton, useMutationActionState } from "@/components/ui/action-button";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { useCrumbs } from "@/lib/crumbs";
+import { absoluteTime, relativeTime, timeUntil } from "@/lib/time";
+import { toastFailed, toastSuccess } from "@/lib/toast";
 
 export const Route = createFileRoute("/_app/projects/$projectId/settings/webhooks")({
   component: WebhooksTab,
@@ -122,9 +124,9 @@ function EndpointCard({ projectId, endpoint: e }: { projectId: string; endpoint:
         // the button appears to have done nothing.
         void qc.invalidateQueries({ queryKey: getListWebhookDeliveriesQueryKey(e.id) });
         void invalidate();
-        toast.success("Ping queued — watch the delivery feed");
+        toastSuccess("Ping queued — watch the delivery feed");
       },
-      onError: (err: unknown) => toast.error(err instanceof Error ? err.message : "Could not send the ping"),
+      onError: (err: unknown, vars) => toastFailed("Could not send the ping", err, { retry: () => ping.mutate(vars) }),
     },
   });
 
@@ -132,9 +134,9 @@ function EndpointCard({ projectId, endpoint: e }: { projectId: string; endpoint:
     mutation: {
       onSuccess: () => {
         void invalidate();
-        toast.success(e.enabled ? "Endpoint paused" : "Endpoint resumed");
+        toastSuccess(e.enabled ? "Endpoint paused" : "Endpoint resumed");
       },
-      onError: (err: unknown) => toast.error(err instanceof Error ? err.message : "Could not update the endpoint"),
+      onError: (err: unknown, vars) => toastFailed("Could not update the endpoint", err, { retry: () => toggle.mutate(vars) }),
     },
   });
 
@@ -144,7 +146,7 @@ function EndpointCard({ projectId, endpoint: e }: { projectId: string; endpoint:
         void invalidate();
         setRotated(data.secret);
       },
-      onError: (err: unknown) => toast.error(err instanceof Error ? err.message : "Could not rotate the secret"),
+      onError: (err: unknown, vars) => toastFailed("Could not rotate the secret", err, { retry: () => rotate.mutate(vars) }),
     },
   });
 
@@ -152,69 +154,93 @@ function EndpointCard({ projectId, endpoint: e }: { projectId: string; endpoint:
     mutation: {
       onSuccess: () => {
         void invalidate();
-        toast.success("Endpoint deleted");
+        toastSuccess("Endpoint deleted");
       },
-      onError: (err: unknown) => toast.error(err instanceof Error ? err.message : "Could not delete the endpoint"),
+      onError: (err: unknown, vars) => toastFailed("Could not delete the endpoint", err, { retry: () => del.mutate(vars) }),
     },
   });
 
+  const pingState = useMutationActionState(ping);
+  const toggleState = useMutationActionState(toggle);
+  const rotateState = useMutationActionState(rotate);
+  const health = HEALTH_STATUS[e.health] ?? "unknown";
+
   return (
     <li className="overflow-hidden rounded-lg border border-border bg-surface">
-      <div className="flex items-start justify-between gap-3 px-4 py-3">
-        <span className="flex min-w-0 flex-col gap-1">
-          <span className="flex items-center gap-2">
-            <StatusDot status={HEALTH_STATUS[e.health] ?? "unknown"} />
-            <span className="mono truncate text-[13px] text-text" title={e.url}>
-              {e.url}
+      <div className="px-4 pb-3 pt-[13px]">
+        {/* 14h's card head: the receiver, then its health as a word at the
+            far right — `● HEALTHY` — so the state is readable, not only a
+            dot with an aria-label. */}
+        <div className="flex items-center gap-2.5">
+          <span className="mono min-w-0 flex-1 truncate text-[12.5px] font-medium text-text" title={e.url}>
+            {e.url}
+          </span>
+          {!e.enabled && <span className="mono shrink-0 text-[11px] text-text-faint">paused</span>}
+          <span className="flex shrink-0 items-center gap-1.5">
+            <StatusDot status={health} className="h-2 w-2" />
+            <StatusWord status={health} className="text-[10.5px]">
+              {e.health}
+            </StatusWord>
+          </span>
+        </div>
+        <div className="mt-[7px] flex flex-wrap items-center gap-1.5">
+          {e.events.map((ev) => (
+            <span key={ev} className="mono rounded bg-raised px-2 py-[2px] text-[10.5px] text-text">
+              {ev}
             </span>
-            {!e.enabled && <span className="mono shrink-0 text-[11px] text-text-faint">paused</span>}
+          ))}
+          <span className="ml-auto flex shrink-0 items-center gap-1">
+            <ActionButton
+              size="sm"
+              variant="ghost"
+              state={pingState}
+              busyLabel="Pinging…"
+              successLabel="Queued"
+              disabledReason={e.enabled ? undefined : "Resume the endpoint first — a paused endpoint delivers nothing"}
+              onClick={() => ping.mutate({ id: e.id })}
+            >
+              <Send className="h-3.5 w-3.5" /> Ping
+            </ActionButton>
+            <ActionButton
+              size="sm"
+              variant="ghost"
+              state={toggleState}
+              busyLabel={e.enabled ? "Pausing…" : "Resuming…"}
+              successLabel={e.enabled ? "Paused" : "Resumed"}
+              onClick={() => toggle.mutate({ id: e.id, data: { enabled: !e.enabled } })}
+            >
+              {e.enabled ? "Pause" : "Resume"}
+            </ActionButton>
+            <ActionButton
+              size="sm"
+              variant="ghost"
+              state={rotateState}
+              busyLabel="Rotating…"
+              successLabel="Rotated"
+              aria-label="Rotate signing secret"
+              onClick={() => rotate.mutate({ id: e.id })}
+            >
+              <RotateCw className="h-3.5 w-3.5" /> Rotate
+            </ActionButton>
+            <ConfirmDestructive
+              trigger={
+                <Button size="sm" variant="ghost" aria-label={`Delete ${e.url}`}>
+                  <Trash2 className="h-3.5 w-3.5 text-danger" />
+                </Button>
+              }
+              title="Delete this endpoint?"
+              blastRadius={[
+                "Stops every future delivery to this receiver.",
+                "Removes its delivery history — the feed below is gone with it.",
+                "The signing secret is destroyed; a new endpoint gets a new one.",
+              ]}
+              actionLabel="Delete endpoint"
+              pending={del.isPending}
+              pendingLabel="Deleting…"
+              onConfirm={() => del.mutate({ id: e.id })}
+            />
           </span>
-          <span className="flex flex-wrap gap-1.5">
-            {e.events.map((ev) => (
-              <span key={ev} className="mono rounded border border-border px-1.5 py-px text-[11px] text-text-faint">
-                {ev}
-              </span>
-            ))}
-          </span>
-        </span>
-        <span className="flex shrink-0 items-center gap-1.5">
-          <Button size="sm" variant="ghost" disabled={ping.isPending} onClick={() => ping.mutate({ id: e.id })}>
-            <Send className="h-3.5 w-3.5" /> Ping
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={toggle.isPending}
-            onClick={() => toggle.mutate({ id: e.id, data: { enabled: !e.enabled } })}
-          >
-            {e.enabled ? "Pause" : "Resume"}
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            aria-label="Rotate signing secret"
-            disabled={rotate.isPending}
-            onClick={() => rotate.mutate({ id: e.id })}
-          >
-            <RotateCw className="h-3.5 w-3.5" />
-          </Button>
-          <ConfirmDestructive
-            trigger={
-              <Button size="sm" variant="ghost" aria-label={`Delete ${e.url}`}>
-                <Trash2 className="h-3.5 w-3.5 text-danger" />
-              </Button>
-            }
-            title="Delete this endpoint?"
-            blastRadius={[
-              "Stops every future delivery to this receiver.",
-              "Removes its delivery history — the feed below is gone with it.",
-              "The signing secret is destroyed; a new endpoint gets a new one.",
-            ]}
-            actionLabel="Delete endpoint"
-            pending={del.isPending}
-            onConfirm={() => del.mutate({ id: e.id })}
-          />
-        </span>
+        </div>
       </div>
 
       {rotated && (
@@ -236,23 +262,31 @@ function EndpointCard({ projectId, endpoint: e }: { projectId: string; endpoint:
  *  the board shows it as the endpoint's own evidence, and a feed you have to go
  *  looking for is a feed nobody checks. */
 function DeliveryFeed({ endpointId }: { endpointId: string }) {
-  const qc = useQueryClient();
   const deliveries = useListWebhookDeliveries(endpointId, { limit: 5 });
 
-  const redeliver = useRedeliver(endpointId, qc);
-
   return (
-    <div className="border-t border-border px-4 py-2.5">
+    // The feed sits on the page ground, sunk below the white card head (14h):
+    // the endpoint is the object, the log is its evidence.
+    <div className="border-t border-border-subtle bg-bg px-4 pb-2.5 pt-1.5">
       <PageState
         query={deliveries}
         isEmpty={(d) => d.deliveries.length === 0}
         skeletonRows={2}
-        empty={<p className="py-1 text-xs text-text-faint">No deliveries yet.</p>}
+        empty={
+          // Nested evidence, not a page: no glyph, and the verb it points at
+          // — Ping — is on the card head above it.
+          <EmptyState
+            glyph={null}
+            className="py-2"
+            title="No deliveries yet"
+            hint="Ping sends a signed test event now; the next deploy or backup in this project follows on its own."
+          />
+        }
       >
         {(page) => (
-          <ul className="space-y-1">
+          <ul className="divide-y divide-border-subtle">
             {page.deliveries.map((d) => (
-              <DeliveryRow key={d.id} delivery={d} onRedeliver={() => redeliver.mutate({ id: d.id })} pending={redeliver.isPending} />
+              <DeliveryRow key={d.id} endpointId={endpointId} delivery={d} />
             ))}
           </ul>
         )}
@@ -261,48 +295,59 @@ function DeliveryFeed({ endpointId }: { endpointId: string }) {
   );
 }
 
-function useRedeliver(endpointId: string, qc: ReturnType<typeof useQueryClient>) {
-  return useRedeliverWebhookDelivery({
+/** One attempt log line — `● deploy.succeeded · web · 200 · 84ms   2m ago`. */
+function DeliveryRow({ endpointId, delivery: d }: { endpointId: string; delivery: WebhookDelivery }) {
+  const qc = useQueryClient();
+  // Held per row so the pill that was pressed is the one that reports (10b);
+  // a feed-wide mutation would spin every redeliver button at once.
+  const redeliver = useRedeliverWebhookDelivery({
     mutation: {
       onSuccess: () => {
         void qc.invalidateQueries({ queryKey: getListWebhookDeliveriesQueryKey(endpointId) });
-        toast.success("Queued for redelivery");
+        toastSuccess("Queued for redelivery");
       },
-      onError: (err: unknown) => toast.error(err instanceof Error ? err.message : "Could not redeliver"),
+      onError: (err: unknown, vars) => toastFailed("Could not redeliver", err, { retry: () => redeliver.mutate(vars) }),
     },
   });
-}
+  const redeliverState = useMutationActionState(redeliver);
 
-function DeliveryRow({
-  delivery: d,
-  onRedeliver,
-  pending,
-}: {
-  delivery: WebhookDelivery;
-  onRedeliver: () => void;
-  pending: boolean;
-}) {
-  // `pending` here is the delivery's own state, not the mutation's — a delivery
-  // still retrying has not failed yet, so it gets the deploying marker rather
-  // than an error one.
-  const marker = d.status === "succeeded" ? "running" : d.status === "failed" ? "error" : "deploying";
+  // A delivery past its first attempt has already failed once, whatever its
+  // status says now — it gets the square (14h draws `■ … retrying ×3`), and
+  // a redeliver button, because waiting out the backoff is not the only
+  // option. A first attempt still in flight is the only row that pulses.
+  const retrying = d.status === "pending" && d.attempt > 1;
+  const marker = d.status === "succeeded" ? "running" : d.status === "failed" || retrying ? "error" : "deploying";
+  const canRedeliver = d.status === "failed" || retrying;
 
   return (
-    <li className="flex items-center justify-between gap-3 py-0.5">
-      <span className="flex min-w-0 items-center gap-2">
-        <StatusDot status={marker} />
-        <span className="mono truncate text-[11.5px] text-text-mid">
-          {d.event_type} · {d.resource_name}
-          {d.response_status != null && ` · ${d.response_status}`}
-          {d.duration_ms != null && ` · ${d.duration_ms}ms`}
-          {d.status === "failed" && d.attempt > 1 && ` · ${d.attempt} attempts`}
-        </span>
+    <li className="flex items-center gap-2.5 py-[7px]">
+      <StatusDot status={marker} className="h-2 w-2" />
+      <span className="mono min-w-0 flex-1 truncate text-[11.5px] text-text-dim">
+        {d.event_type} · {d.resource_name}
+        {d.response_status != null && ` · ${d.response_status}`}
+        {d.duration_ms != null && ` · ${d.duration_ms}ms`}
+        {retrying && ` · retrying ×${d.attempt}`}
+        {retrying && d.next_attempt_at && ` · next ${timeUntil(d.next_attempt_at)}`}
+        {d.status === "failed" && d.attempt > 1 && ` · gave up after ${d.attempt} attempts`}
       </span>
-      {d.status === "failed" && (
-        <Button size="sm" variant="ghost" disabled={pending} onClick={onRedeliver}>
-          Redeliver
-        </Button>
+      {canRedeliver && (
+        <ActionButton
+          size="sm"
+          variant="secondary"
+          state={redeliverState}
+          busyLabel="Queueing…"
+          successLabel="Queued"
+          // 14h's `redeliver` is a small 1px box, not the 1.5px ink pill — the
+          // action belongs to one log line, not to the endpoint.
+          className="h-[22px] rounded-[5px] border border-border-input bg-surface px-2.5 text-[10.5px] font-normal text-text hover:bg-raised"
+          onClick={() => redeliver.mutate({ id: d.id })}
+        >
+          redeliver
+        </ActionButton>
       )}
+      <span className="mono shrink-0 text-[11.5px] text-text-faint" title={absoluteTime(d.created_at)}>
+        {relativeTime(d.created_at)}
+      </span>
     </li>
   );
 }
@@ -346,12 +391,15 @@ function NewEndpointDialog({ projectId, primary }: { projectId: string; primary?
     },
   });
 
+  const addState = useMutationActionState(create);
+
   const reset = () => {
     setUrl("");
     setEvents(new Set(["deploy.failed"]));
     setError(null);
     setSecret(null);
     setCreatedUrl("");
+    create.reset();
   };
 
   const submit = (e: FormEvent) => {
@@ -432,9 +480,9 @@ function NewEndpointDialog({ projectId, primary }: { projectId: string; primary?
                   Cancel
                 </Button>
               </DialogClose>
-              <Button variant="primary" type="submit" disabled={create.isPending}>
-                {create.isPending ? "Adding…" : "Add endpoint"}
-              </Button>
+              <ActionButton variant="primary" type="submit" state={addState} busyLabel="Adding…" successLabel="Added">
+                Add endpoint
+              </ActionButton>
             </div>
           </form>
         )}

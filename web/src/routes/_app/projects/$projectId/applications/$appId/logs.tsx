@@ -1,10 +1,17 @@
 // Application · Logs: the running container's own output — replay from the
 // retention window, then the live tail (web-ui-design.md §4). LogViewer owns
-// the stream, the amber reconnect banner and the follow toggle; what this page
-// owes it is the one thing the pane cannot know — why there is nothing in it.
-// A container that has never run and a container that stopped an hour ago both
-// produce an empty pane, and "Waiting for output…" is a lie in both cases.
+// the stream, the amber reconnect banner, the LIVE/PAUSED word and the follow
+// toggle; what this page owes it is the one thing the pane cannot know — why
+// there is nothing in it. A container that has never run and a container that
+// stopped an hour ago both produce an empty pane, and "Waiting for output…" is
+// a lie in both cases.
+//
+// On a phone (canvas 14d) the page IS the pane: the explanatory prose goes,
+// the pane bleeds to the gutters and runs to the bottom bar, and the one line
+// above it is a crumb back to the app. The masthead and tab strip above are
+// the application layout's, so they stay — the pane fills what is left.
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useLayoutEffect, useState } from "react";
 import { getStreamApplicationLogsUrl, useGetApplication } from "@/api/gen/applications/applications";
 import type { Application } from "@/api/gen/model";
 import { EmptyState } from "@/components/empty-state";
@@ -13,10 +20,14 @@ import { LogViewer } from "@/components/log-viewer";
 import { PageState } from "@/components/page-state";
 import { StatusDot } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_app/projects/$projectId/applications/$appId/logs")({
   component: LogsTab,
 });
+
+/** Tailwind's `sm` — below it the pane takes the phone layout. */
+const PHONE = "(max-width: 639px)";
 
 function shortRev(id: string | null | undefined): string {
   if (!id) return "";
@@ -54,9 +65,62 @@ function tailNote(a: Application): string | null {
   }
 }
 
+/**
+ * On a phone the pane runs from wherever it starts to the top of the bottom
+ * tab bar (14d: the pane is `flex:1` of the screen). The masthead above it is
+ * not this route's to remove, and its height is not a constant — the app name
+ * wraps, the redeploy chip comes and goes, the tail note appears when the
+ * container stops — so the height is measured rather than guessed: the
+ * viewport, less the pane's own offset, less the reserve `<main>` keeps for
+ * the bar (which already includes the notch inset). Re-measured when the
+ * window or anything above the pane changes size. From `sm` up the style is
+ * cleared and the pane's own classes size it.
+ *
+ * Returns a callback ref: the pane mounts only once the application has
+ * loaded, so a ref object read in an effect on mount would still be empty.
+ */
+function useFillToBottom(): (el: HTMLDivElement | null) => void {
+  const [el, setEl] = useState<HTMLDivElement | null>(null);
+  const [phone, setPhone] = useState(() => window.matchMedia(PHONE).matches);
+  useLayoutEffect(() => {
+    const mq = window.matchMedia(PHONE);
+    const sync = () => setPhone(mq.matches);
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+  useLayoutEffect(() => {
+    if (!el) return;
+    if (!phone) {
+      el.style.height = "";
+      return;
+    }
+    const apply = () => {
+      const top = el.getBoundingClientRect().top + window.scrollY;
+      const main = document.getElementById("main");
+      const reserve = main ? parseFloat(getComputedStyle(main).paddingBottom) || 0 : 0;
+      el.style.height = `${Math.max(280, window.innerHeight - top - reserve)}px`;
+    };
+    apply();
+    window.addEventListener("resize", apply);
+    // Whatever sits above the pane shares its parent; a change in the
+    // parent's size is a change in where the pane starts. Setting the same
+    // height again does not resize anything, so this cannot feed itself.
+    const above = el.parentElement;
+    const ro = above ? new ResizeObserver(apply) : undefined;
+    if (above) ro?.observe(above);
+    return () => {
+      window.removeEventListener("resize", apply);
+      ro?.disconnect();
+      el.style.height = "";
+    };
+  }, [el, phone]);
+  return setEl;
+}
+
 function LogsTab() {
   const { projectId, appId } = Route.useParams();
   const app = useGetApplication(appId);
+  const fill = useFillToBottom();
 
   return (
     <PageState query={app} isEmpty={() => false}>
@@ -65,11 +129,13 @@ function LogsTab() {
         const note = tailNote(a);
         return (
           <div className="space-y-3">
-            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+            {/* The prose is the desktop's. A phone has no room to explain the
+                pane before showing it, and 14d shows it first. */}
+            <div className="hidden flex-wrap items-baseline justify-between gap-x-4 gap-y-1 sm:flex">
               <Eyebrow>Runtime log</Eyebrow>
               {rev && <span className="font-mono text-[11px] text-text-faint">rev {rev}</span>}
             </div>
-            <p className="max-w-2xl text-[12.5px] leading-relaxed text-text-dim">
+            <p className="hidden max-w-2xl text-[12.5px] leading-relaxed text-text-dim sm:block">
               What the container writes to stdout and stderr. Recent history replays first, then the tail continues
               live; older lines age out of the retention window. Build output lives on the Deployments tab.
             </p>
@@ -98,14 +164,36 @@ function LogsTab() {
                     {note}
                   </p>
                 )}
-                <LogViewer
-                  url={getStreamApplicationLogsUrl(appId)}
-                  live={canEmit(a.status)}
-                  // Tall enough to be a window rather than a slot, and clamped
-                  // so a short laptop screen still leaves the pane usable
-                  // instead of collapsing it to a couple of lines.
-                  className="h-[55vh] min-h-[280px] lg:h-[calc(100dvh-23rem)]"
-                />
+                {/* Ink to the gutters and down to the bar (14d). The negative
+                    margins undo the layout's PageBody padding on a phone only;
+                    with no note above it the pane also takes back the body's
+                    top padding so it hangs straight off the tab strip. */}
+                <div
+                  ref={fill}
+                  className={cn(
+                    "flex flex-col max-sm:-mx-4 max-sm:-mb-6 max-sm:bg-pane",
+                    !note && "max-sm:-mt-6",
+                  )}
+                >
+                  <Link
+                    to="/projects/$projectId/applications/$appId"
+                    params={{ projectId, appId }}
+                    aria-label={`Back to ${a.name}`}
+                    className="eyebrow block px-4 pb-1.5 pt-3.5 text-pane-faint hover:text-pane-text sm:hidden"
+                  >
+                    ← {a.name} / logs
+                  </Link>
+                  <LogViewer
+                    url={getStreamApplicationLogsUrl(appId)}
+                    live={canEmit(a.status)}
+                    // Tall enough to be a window rather than a slot, and clamped
+                    // so a short laptop screen still leaves the pane usable
+                    // instead of collapsing it to a couple of lines. On a phone
+                    // the wrapper's measured height is the size, and the pane's
+                    // own frame goes — the screen is the frame.
+                    className="min-h-0 flex-1 max-sm:rounded-none max-sm:border-x-0 max-sm:border-b-0 sm:h-[55vh] sm:min-h-[280px] lg:h-[calc(100dvh-23rem)]"
+                  />
+                </div>
               </>
             )}
           </div>

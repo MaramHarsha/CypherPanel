@@ -10,15 +10,19 @@
 //
 // Each chip stays a real input with a real accessible name: the canvas is a
 // static mockup, and it does not get to cost a keyboard user the ability to
-// edit or remove an argument.
+// edit or remove an argument. The field as a whole is a labelled group, so the
+// visible heading ("Command · argv, never a shell string") is what a screen
+// reader hears on entering it, before the first chip's own name.
 import { X } from "lucide-react";
 
 interface ArgvInputProps {
   value: string[];
   onChange: (value: string[]) => void;
+  /** id of the visible heading — becomes the group's accessible name. */
+  labelledBy?: string;
 }
 
-export function ArgvInput({ value, onChange }: ArgvInputProps) {
+export function ArgvInput({ value, onChange, labelledBy }: ArgvInputProps) {
   const args = value.length === 0 ? [""] : value;
 
   const set = (i: number, v: string) => onChange(args.map((a, idx) => (idx === i ? v : a)));
@@ -26,7 +30,11 @@ export function ArgvInput({ value, onChange }: ArgvInputProps) {
   const remove = (i: number) => onChange(args.filter((_, idx) => idx !== i));
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-border-input bg-surface px-2.5 py-2">
+    <div
+      role="group"
+      aria-labelledby={labelledBy}
+      className="flex flex-wrap items-center gap-1.5 rounded-md border border-border-input bg-surface px-2.5 py-2"
+    >
       {args.map((arg, i) => {
         const placeholder = i === 0 ? "command" : "argument";
         return (
@@ -44,7 +52,7 @@ export function ArgvInput({ value, onChange }: ArgvInputProps) {
               placeholder={placeholder}
               autoComplete="off"
               spellCheck={false}
-              aria-label={`Argument ${i}`}
+              aria-label={i === 0 ? "Command" : `Argument ${i}`}
               // Mono, so a character count is a width: the chip grows with the
               // token instead of reserving a full row for a three-letter verb.
               style={{ width: `${Math.max(arg.length, placeholder.length, 3)}ch` }}

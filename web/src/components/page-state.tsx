@@ -2,11 +2,17 @@
 // Loading / Empty / Error / Content, making the contract the path of least
 // resistance for every data region.
 import { type UseQueryResult } from "@tanstack/react-query";
-import { RotateCw } from "lucide-react";
 import { type ReactNode } from "react";
-import { ApiError } from "@/api/client";
-import { Button } from "@/components/ui/button";
+import { ApiError, NetworkError } from "@/api/client";
+import {
+  ForbiddenForError,
+  NotFoundPage,
+  PlaneOfflinePage,
+  ServerFaultPage,
+} from "@/components/error-page";
+import { ActionButton } from "@/components/ui/action-button";
 import { SkeletonRows, useSkeletonDelay } from "@/components/ui/skeleton";
+import { relativeTime } from "@/lib/time";
 
 interface PageStateProps<T, E> {
   // E stays generic: the generated client's error type is the API's `Error`
@@ -61,23 +67,13 @@ export function PageState<T, E = unknown>({
   }
 
   if (query.isError) {
-    const err = query.error;
-    const headline = err instanceof ApiError ? err.message : "Something went wrong loading this";
     return (
-      <div className="rounded-lg border border-danger/35 bg-danger/[0.06] p-5">
-        <p className="text-[15px] font-semibold text-text">{headline}</p>
-        <div className="mt-4 flex items-center gap-3">
-          <Button size="sm" onClick={() => void query.refetch()}>
-            <RotateCw className="h-3.5 w-3.5" /> Retry
-          </Button>
-          {!(err instanceof ApiError) && (
-            <details className="text-xs text-text-faint">
-              <summary className="cursor-pointer">Details</summary>
-              <pre className="mono mt-1 whitespace-pre-wrap">{String(err)}</pre>
-            </details>
-          )}
-        </div>
-      </div>
+      <QueryError
+        error={query.error}
+        retry={() => void query.refetch()}
+        retrying={query.isFetching}
+        lastSyncAt={query.dataUpdatedAt}
+      />
     );
   }
 
@@ -85,4 +81,69 @@ export function PageState<T, E = unknown>({
   const emptyCheck = isEmpty ?? ((d: T) => Array.isArray(d) && d.length === 0);
   if (empty !== undefined && emptyCheck(data)) return <>{empty}</>;
   return <>{children(data)}</>;
+}
+
+/** The last prefixed id in a path (`app_…`, `tm_…`) — the thing a 404 was about. */
+function resourceIdOf(path: string): string | undefined {
+  return path
+    .split("/")
+    .reverse()
+    .find((seg) => /^[a-z]+_[A-Za-z0-9-]+$/.test(seg));
+}
+
+/**
+ * A failed query, answered with the page its status deserves (canvas 8a–8d).
+ * React Query hands errors back as state, so this is the one place a real API
+ * answer meets the designed pages: no answer at all is 8c, a refusal is 8b,
+ * a panel fault is 8d, a resource that is not there is 8a. Anything else is a
+ * 4xx with the server's own sentence — an inline box with the retry beside it.
+ */
+export function QueryError({
+  error,
+  retry,
+  retrying = false,
+  lastSyncAt,
+}: {
+  error: unknown;
+  /** Asks the same question again. Without it the offline and fault pages reload the tab. */
+  retry?: () => void;
+  retrying?: boolean;
+  /** react-query's `dataUpdatedAt`; 0 means this region has never had an answer. */
+  lastSyncAt?: number;
+}) {
+  if (error instanceof NetworkError) {
+    return (
+      <PlaneOfflinePage
+        embedded
+        // Without a query to re-ask, the retry is a reload — never on a timer.
+        retryEverySeconds={retry ? 5 : 0}
+        retrying={retrying}
+        lastSyncLabel={lastSyncAt ? relativeTime(new Date(lastSyncAt).toISOString()) : undefined}
+        onRetry={retry}
+      />
+    );
+  }
+  if (error instanceof ApiError) {
+    if (error.status === 403) return <ForbiddenForError error={error} embedded />;
+    if (error.status === 404) return <NotFoundPage embedded resource={resourceIdOf(error.path)} />;
+    if (error.status < 500) {
+      return (
+        <div className="rounded-lg border border-danger/35 bg-danger/[0.06] p-5" role="alert">
+          <p className="text-[15px] font-semibold text-text">{error.message}</p>
+          <div className="mt-4 flex items-center gap-3">
+            <ActionButton
+              size="sm"
+              state={retrying ? "busy" : "idle"}
+              busyLabel="Retrying…"
+              onClick={retry ?? (() => location.reload())}
+            >
+              Retry
+            </ActionButton>
+          </div>
+        </div>
+      );
+    }
+  }
+  // A 5xx, or something the panel itself threw while reading the answer.
+  return <ServerFaultPage embedded error={error} onReload={retry} reloading={retrying} />;
 }

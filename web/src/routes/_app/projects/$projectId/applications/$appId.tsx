@@ -5,7 +5,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { ChevronDown } from "lucide-react";
-import { toast } from "sonner";
 import { useGetApplication } from "@/api/gen/applications/applications";
 import { useGetMe } from "@/api/gen/auth/auth";
 import {
@@ -22,24 +21,25 @@ import { StatusBadge } from "@/components/status-badge";
 import { ActionButton, useAction } from "@/components/ui/action-button";
 import { Dropdown, DropdownContent, DropdownItem, DropdownTrigger } from "@/components/ui/dropdown";
 import { useCrumbs } from "@/lib/crumbs";
+import { APP_TABS, useDeployShortcut } from "@/lib/keys";
+import { toastFailed, toastSuccess } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_app/projects/$projectId/applications/$appId")({
   component: ApplicationLayout,
 });
 
+// The strip is drawn from lib/keys.ts, so the tabs `1`–`7` address (canvas
+// 14f) and the tabs on screen cannot drift apart. Storage (canvas 13g) sits
+// before Settings as the sitemap orders it; it has no key yet — giving it one
+// means adding it to APP_TABS and to the shell's goTab.
+//
 // `short` is the 360px label (canvas 14c). Only the first NARROW tabs survive
 // on a phone; the rest move into "More" rather than off the edge of a strip
 // nobody can tell is scrollable.
-const TABS = [
-  { to: "", label: "Overview", short: "Overview" },
-  { to: "deployments", label: "Deployments", short: "Deploys" },
-  { to: "logs", label: "Logs", short: "Logs" },
-  { to: "env", label: "Env vars", short: "Env" },
-  { to: "previews", label: "Previews", short: "Previews" },
-  { to: "tasks", label: "Tasks", short: "Tasks" },
-  { to: "settings", label: "Settings", short: "Settings" },
-] as const;
+const KEYED = APP_TABS.map((t) => ({ to: t.segment, label: t.label, short: t.short }));
+const STORAGE = { to: "storage", label: "Storage", short: "Storage" } as const;
+const TABS = [...KEYED.filter((t) => t.to !== "settings"), STORAGE, ...KEYED.filter((t) => t.to === "settings")];
 
 const NARROW = 4;
 
@@ -203,7 +203,7 @@ function DeployButton({ appId, branch }: { appId: string; branch: string | undef
   const deploy = useDeployApplication({
     mutation: {
       onSuccess: (d) => {
-        toast.success("Deploy started");
+        toastSuccess("Deploy started");
         // Nothing else refreshes the list until the plane emits an event, and
         // the Deployments tab we are about to land on is drawn from it.
         void qc.invalidateQueries({ queryKey: getListDeploymentsQueryKey(appId) });
@@ -213,11 +213,19 @@ function DeployButton({ appId, branch }: { appId: string; branch: string | undef
           search: { dep: d.id },
         });
       },
-      onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Deploy failed to start"),
+      onError: (e: unknown, vars) => toastFailed("Deploy failed to start", e, { retry: () => deploy.mutate(vars) }),
     },
   });
 
   const { state, trigger } = useAction(() => deploy.mutateAsync({ id: appId, data: {} }));
+
+  // `d` (canvas 14f) goes through the same guard as the click: a busy pill
+  // swallows both, so a deploy already running is never doubled from the
+  // keyboard.
+  useDeployShortcut(() => {
+    if (active || state === "busy") return;
+    void trigger();
+  });
 
   return (
     <ActionButton

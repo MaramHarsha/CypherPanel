@@ -83,6 +83,30 @@ export function StatusDot({ status, className }: { status: string | undefined | 
   );
 }
 
+/**
+ * The bare status word — mono 10px uppercase in the status colour, no marker,
+ * no tint. Canvas 14b/14c set it right-aligned on a phone card's name row
+ * (`1 ERROR`, `RUNNING`, `DEPLOYING`) where a pill would crowd the name; the
+ * marker that gives the word its shape sits at the row's start. Takes its own
+ * text so a rollup count can ride along; defaults to the status itself.
+ */
+export function StatusWord({
+  status,
+  children,
+  className,
+}: {
+  status: string | undefined | null;
+  children?: React.ReactNode;
+  className?: string;
+}) {
+  const s = normalizeStatus(status);
+  return (
+    <span className={cn("font-mono text-[10px] font-medium uppercase tracking-wide", TEXT[s], className)}>
+      {children ?? s}
+    </span>
+  );
+}
+
 /** Tinted rollup pill — carries its own sentence, e.g. "1 app error". */
 export function StatusPill({
   status,

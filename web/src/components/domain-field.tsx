@@ -1,18 +1,22 @@
 // The Domain field, when the panel knows which domains you actually own
-// (docs/features/dns-automation.md §6).
+// (docs/features/dns-automation.md §6, design canvas 17b).
 //
 // Free text was the wrong shape once a DNS provider is connected. Typing a
 // whole hostname invites `google.com` — which the panel will accept, store,
 // and then quietly refuse to route, leaving an application that looks fine and
 // serves nothing. The zones Cloudflare returns ARE the list of domains you can
-// use, so the field offers them: a subdomain box beside a zone picker, which
-// can only produce a hostname that verifies.
+// use, so the field offers them: one joined control, a subdomain box with the
+// zone picker attached to its right edge, which can only produce a hostname
+// that verifies. The verification state of the saved value sits directly
+// beneath it (DomainVerification).
 //
 // A custom domain stays possible, because someone will always have a zone
 // managed elsewhere. It is a deliberate second choice, and it says plainly and
 // permanently that it is not verified — never a silent acceptance.
 import { useEffect, useMemo, useState } from "react";
 import { useGetApplicationDNS } from "@/api/gen/applications/applications";
+import { DomainVerification } from "@/components/domain-verification";
+import { StatusDot } from "@/components/status-badge";
 import { Field } from "@/components/ui/field";
 import { Input, Select } from "@/components/ui/input";
 
@@ -60,7 +64,16 @@ export function DomainField({
   if (!data?.enforced || zones.length === 0) {
     return (
       <Field label="Domain" hint="Where the app is reachable.">
-        {(id) => <Input id={id} value={value} onChange={(e) => onChange(e.target.value)} className="mono" />}
+        {(id) => (
+          <Input
+            id={id}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            className="mono"
+            autoComplete="off"
+            spellCheck={false}
+          />
+        )}
       </Field>
     );
   }
@@ -69,16 +82,28 @@ export function DomainField({
     return (
       <div>
         <Field label="Domain" qualifier="· custom, outside Cloudflare">
-          {(id) => <Input id={id} value={value} onChange={(e) => onChange(e.target.value)} className="mono" />}
+          {(id) => (
+            <Input
+              id={id}
+              value={value}
+              onChange={(e) => onChange(e.target.value)}
+              className="mono"
+              autoComplete="off"
+              spellCheck={false}
+            />
+          )}
         </Field>
-        <p className="mt-1.5 flex items-start gap-1.5 text-[11.5px] leading-relaxed text-status-degraded-text">
-          <span className="mt-[0.42rem] size-[6px] shrink-0 bg-status-degraded" aria-hidden />
-          <span>
-            This domain is not verified in Cloudflare, so the app will not be published at it. Add it to Cloudflare and
-            refresh the zones, or{" "}
+        {/* The draft's own verdict, worded the way the saved one renders: a
+            zone managed elsewhere is permanently unverified here. */}
+        <p className="mt-2 flex items-start gap-2 text-[12px] leading-[1.5] text-text-dim">
+          <StatusDot status="degraded" className="mt-[5px] h-2 w-2" />
+          <span className="min-w-0">
+            Verification pending in Cloudflare —{" "}
+            <s className="font-mono text-[11.5px]">{value.trim() || "this domain"}</s> is outside your zones (
+            <span className="font-mono text-[11.5px]">{zones.join(", ")}</span>) · not routed, no cert requested ·{" "}
             <button
               type="button"
-              className="underline underline-offset-2"
+              className="font-semibold underline-offset-2 hover:underline"
               onClick={() => {
                 setTouched(true);
                 setCustom(false);
@@ -87,7 +112,6 @@ export function DomainField({
             >
               choose a domain you own
             </button>
-            .
           </span>
         </p>
       </div>
@@ -105,37 +129,42 @@ export function DomainField({
     <div>
       <Field label="Domain" qualifier="· verified in Cloudflare">
         {(id) => (
-          <span className="flex items-stretch gap-1.5">
+          // One outline around both halves: the box draws the control's border
+          // and its focus, the halves draw none of their own, and the zone
+          // segment is sunken so it reads as attached rather than typed into.
+          <span className="flex max-w-[440px] items-stretch rounded-md border border-border-input bg-surface transition-colors focus-within:border-border-strong focus-within:ring-1 focus-within:ring-border-strong">
             <Input
               id={id}
               value={sub}
               placeholder="app"
+              aria-label="Subdomain"
+              autoComplete="off"
+              spellCheck={false}
               onChange={(e) => {
                 setTouched(true);
                 compose(e.target.value, zone);
               }}
-              className="mono min-w-0 flex-1"
-              aria-label="Subdomain"
+              className="mono min-w-0 flex-1 rounded-r-none border-0 bg-transparent focus-visible:ring-0"
             />
-            <span className="mono self-center text-[12.5px] text-text-faint">.</span>
             <Select
               value={zone}
               aria-label="Zone"
-              className="mono w-auto shrink-0"
               onChange={(e) => {
                 setTouched(true);
                 compose(sub, e.target.value);
               }}
+              className="mono w-auto shrink-0 rounded-l-none border-0 border-l border-border-input bg-raised text-text-dim focus-visible:ring-0"
             >
               {zones.map((z) => (
                 <option key={z} value={z}>
-                  {z}
+                  .{z}
                 </option>
               ))}
             </Select>
           </span>
         )}
       </Field>
+      <DomainVerification applicationId={applicationId} />
       <p className="mt-1.5 text-[11.5px] leading-relaxed text-text-faint">
         Leave the first box empty to use <span className="mono">{zone}</span> itself. Need a domain managed elsewhere?{" "}
         <button

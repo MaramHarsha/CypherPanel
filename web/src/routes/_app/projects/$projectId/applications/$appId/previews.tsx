@@ -4,16 +4,19 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ExternalLink, Trash2 } from "lucide-react";
-import { toast } from "sonner";
 import { useGetApplication } from "@/api/gen/applications/applications";
+import { getHandleGithubWebhookUrl } from "@/api/gen/deployments/deployments";
 import { getListPreviewsQueryKey, useDeletePreview, useListPreviews } from "@/api/gen/previews/previews";
-import type { Preview } from "@/api/gen/model";
+import type { Application, Preview } from "@/api/gen/model";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
+import { CopyField } from "@/components/copy-field";
 import { EmptyState } from "@/components/empty-state";
 import { PageState } from "@/components/page-state";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { absoluteTime, timeUntil } from "@/lib/time";
+import { toastFailed, toastSuccess } from "@/lib/toast";
 
 export const Route = createFileRoute("/_app/projects/$projectId/applications/$appId/previews")({
   component: PreviewsTab,
@@ -30,6 +33,11 @@ function PreviewsTab() {
   // spec carried preview_enabled the UI could not tell the two apart
   // (ui-principles §11).
   const enabled = app.data?.preview_enabled ?? false;
+  // A preview is created by the webhook and never by hand, so the one verb
+  // left to offer on "none yet" is making sure the webhook can arrive (15a).
+  // An image-sourced app has no repository to hang it on, so it gets the
+  // sentence that is true for it instead of a URL that leads nowhere.
+  const fromImage = app.data?.source.kind === "image";
 
   return (
     <PageState
@@ -39,7 +47,12 @@ function PreviewsTab() {
           <EmptyState
             glyph="⎇"
             title="No preview environments"
-            hint="Open a pull request and one appears here with its own URL — torn down when the PR closes."
+            hint={
+              fromImage
+                ? "Previews follow pull requests on a git source — this app deploys from an image, so none will appear."
+                : "Open a pull request and one appears here with its own URL — torn down when the PR closes."
+            }
+            action={app.data && !fromImage && <PrWebhookDialog app={app.data} />}
           />
         ) : (
           <EmptyState
@@ -67,6 +80,42 @@ function PreviewsTab() {
   );
 }
 
+/**
+ * 15a's outline pill, "Set up the PR webhook". One webhook drives both
+ * push-to-deploy and previews — the same endpoint the Overview tab shows,
+ * listening for a second event type (preview-environments.md §4) — so setting
+ * it up is the Overview's URL plus the `pull_request` events ticked on GitHub.
+ */
+function PrWebhookDialog({ app }: { app: Application }) {
+  const webhookUrl = new URL(getHandleGithubWebhookUrl(app.webhook_id), window.location.origin).toString();
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button variant="secondary">Set up the PR webhook</Button>
+      </DialogTrigger>
+      <DialogContent
+        title="Set up the PR webhook"
+        description="The webhook that deploys pushes also drives previews. Add it to the repository on GitHub (Settings → Webhooks) and let it send pull request events."
+      >
+        <CopyField value={webhookUrl} />
+        <ol className="mt-3.5 space-y-0.5 font-mono text-[11.5px] leading-[1.7] text-text-dim">
+          <li>1 · payload URL: the address above</li>
+          <li>2 · content type: application/json</li>
+          <li>3 · events: pushes + pull requests</li>
+        </ol>
+        <p className="mt-3 text-[12px] leading-[1.55] text-text-faint">
+          Opening a pull request then builds a preview at its own subdomain; closing it tears the preview down.
+        </p>
+        <div className="mt-4 flex justify-end">
+          <DialogClose asChild>
+            <Button variant="primary">Done</Button>
+          </DialogClose>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function PreviewRow({ appId, preview: p }: { appId: string; preview: Preview }) {
   const qc = useQueryClient();
   const del = useDeletePreview({
@@ -76,9 +125,9 @@ function PreviewRow({ appId, preview: p }: { appId: string; preview: Preview }) 
         // application and database invalidations, so a torn-down preview would
         // sit here looking alive until the page was reloaded.
         void qc.invalidateQueries({ queryKey: getListPreviewsQueryKey(appId) });
-        toast.success(`Preview for PR #${p.pr_number} torn down`);
+        toastSuccess(`Preview for PR #${p.pr_number} torn down`);
       },
-      onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Could not delete the preview"),
+      onError: (e: unknown, vars) => toastFailed("Could not delete the preview", e, { retry: () => del.mutate(vars) }),
     },
   });
 

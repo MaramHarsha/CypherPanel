@@ -10,8 +10,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Plus, Trash2 } from "lucide-react";
-import { useState, type FormEvent } from "react";
-import { toast } from "sonner";
+import { useRef, useState, type FormEvent } from "react";
 import {
   getGetApplicationQueryKey,
   getListEnvVarKeysQueryKey,
@@ -27,7 +26,7 @@ import { PageState } from "@/components/page-state";
 import { RedeployPending } from "@/components/redeploy-pending";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { toastSuccess } from "@/lib/toast";
+import { toastFailed, toastSuccess } from "@/lib/toast";
 
 export const Route = createFileRoute("/_app/projects/$projectId/applications/$appId/env")({
   component: EnvTab,
@@ -41,6 +40,10 @@ function EnvTab() {
   const app = useGetApplication(appId);
   const [newKey, setNewKey] = useState("");
   const [newValue, setNewValue] = useState("");
+  // The empty state's verb lands here: the form is the next step and it is
+  // already on the page, so the pill moves focus to it rather than opening a
+  // second one (15a — never a dead end).
+  const keyField = useRef<HTMLInputElement>(null);
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: getListEnvVarKeysQueryKey(appId) });
@@ -62,7 +65,7 @@ function EnvTab() {
           search: { dep: d.id },
         });
       },
-      onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Deploy failed to start"),
+      onError: (e: unknown, vars) => toastFailed("Deploy failed to start", e, { retry: () => deploy.mutate(vars) }),
     },
   });
 
@@ -82,7 +85,7 @@ function EnvTab() {
         setNewValue("");
         toastSuccess({ title: "Env var saved", ...applied });
       },
-      onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Could not save the variable"),
+      onError: (e: unknown, vars) => toastFailed("Could not save the variable", e, { retry: () => setVar.mutate(vars) }),
     },
   });
   const deleteVar = useDeleteEnvVar({
@@ -91,7 +94,7 @@ function EnvTab() {
         invalidate();
         toastSuccess({ title: "Env var removed", ...applied });
       },
-      onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Could not remove the variable"),
+      onError: (e: unknown, vars) => toastFailed("Could not remove the variable", e, { retry: () => deleteVar.mutate(vars) }),
     },
   });
 
@@ -127,7 +130,17 @@ function EnvTab() {
       <PageState
         query={keys}
         isEmpty={(d) => d.keys.length === 0}
-        empty={<EmptyState title="No env vars" hint="Anything your app reads from the environment — API keys, connection strings — goes here." />}
+        empty={
+          <EmptyState
+            title="No env vars"
+            hint="Anything your app reads from the environment — API keys, connection strings — goes here."
+            action={
+              <Button variant="secondary" onClick={() => keyField.current?.focus()}>
+                <Plus className="h-3.5 w-3.5" /> Add a variable
+              </Button>
+            }
+          />
+        }
       >
         {(d) => (
           <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-surface">
@@ -150,6 +163,7 @@ function EnvTab() {
             key
           </label>
           <Input
+            ref={keyField}
             id="new-env-key"
             value={newKey}
             onChange={(e) => setNewKey(e.target.value.toUpperCase())}
@@ -212,6 +226,7 @@ function EnvRow({
               value={value}
               onChange={(e) => setValue(e.target.value)}
               placeholder="new value"
+              aria-label={`New value for ${name}`}
               className="mono h-7 w-44"
               autoFocus
             />

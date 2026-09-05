@@ -2,13 +2,13 @@
 // backup count is stated in the blast radius so nobody deletes it blind.
 import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { toast } from "sonner";
 import { useListDatabaseBackups } from "@/api/gen/backups/backups";
 import { getListDatabasesQueryKey, useDeleteDatabase, useGetDatabase } from "@/api/gen/databases/databases";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
 import { Eyebrow } from "@/components/eyebrow";
 import { PageState } from "@/components/page-state";
 import { Button } from "@/components/ui/button";
+import { toastFailed, toastSuccess } from "@/lib/toast";
 
 export const Route = createFileRoute("/_app/projects/$projectId/databases/$dbId/settings")({
   component: DatabaseSettings,
@@ -31,10 +31,10 @@ function DatabaseSettings() {
         // renders from cache the moment it mounts.
         const envId = db.data?.environment_id;
         if (envId) void qc.invalidateQueries({ queryKey: getListDatabasesQueryKey(envId) });
-        toast.success(`Deleted ${db.data?.name ?? "database"}`);
+        toastSuccess(`Deleted ${db.data?.name ?? "database"}`);
         void navigate({ to: "/projects/$projectId", params: { projectId } });
       },
-      onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Could not delete the database"),
+      onError: (e: unknown, vars) => toastFailed("Could not delete the database", e, { retry: () => del.mutate(vars) }),
     },
   });
 
