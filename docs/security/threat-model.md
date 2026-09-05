@@ -307,9 +307,28 @@ become a general-purpose network probe or an unbounded amplifier.
   per-attempt timeout, and the 200 most recent deliveries per endpoint retained,
   attempts cascading.
 
-**Accepted risk — egress is not filtered.** We enforce `http`/`https` only and
-refuse redirects, but we do **not** block private, loopback or link-local
-destinations. This is the same posture as
+**Testing an unsaved configuration is filtered.** `POST
+/projects/{id}/notifiers/test` (notifications.md §6) hands the sender a config
+straight from the request body. Three things separate it from a saved notifier:
+nothing is persisted, so no row records that the probe happened; the result is
+returned **synchronously**, so "connection refused" versus a timeout separates a
+closed port from a filtered one; and it can be repeated at will with a different
+address each time. That is a port scanner with no trace, so this one path takes
+the control named at the end of this section: a destination check resolved **at
+request time**, in the dialer's `Control` hook, refusing loopback, RFC1918,
+IPv6 unique-local, link-local (cloud metadata), unspecified and multicast
+addresses, and their IPv4-mapped forms. Because the hook sees the address the
+socket is about to use, a name that resolves publicly on the first lookup and
+privately on the second is refused on the second. `[core/notify/egress.go]`
+
+**Addresses are parsed, not merely non-empty.** A notifier's `from` and every
+recipient in `to` must parse as an address before the config can be stored, so a
+line break cannot reach a header in the first place; `buildMessage` still
+sanitises on the way out. `[notify.validateConfig]`
+
+**Accepted risk — egress from a *saved* notifier is not filtered.** We enforce
+`http`/`https` only and refuse redirects, but for a notifier that has been
+stored we do **not** block private, loopback or link-local destinations. This is the same posture as
 [notifications.md](../features/notifications.md) §6 and rests on the same
 premise: the operator is the trust root and already runs arbitrary containers on
 these servers. It is recorded here rather than left implicit because (b) makes

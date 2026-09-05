@@ -59,6 +59,9 @@ type Manager struct {
 	log    *slog.Logger
 	// inbox is optional and nil-guarded at its one call site.
 	inbox Inbox
+	// restrictEgress marks the copy used to test an unsaved configuration; see
+	// egress.go for why only that path carries it.
+	restrictEgress bool
 }
 
 // New wires the manager. box is the inbox sink (nil = no in-panel inbox); it is
@@ -202,7 +205,21 @@ func (m *Manager) TestConfig(ctx context.Context, channel string, raw json.RawMe
 	if err != nil {
 		return err
 	}
-	return m.send(ctx, channel, canonical, TestEvent())
+	// A copy of the manager whose egress is guarded (egress.go). Testing an
+	// unsaved config is the one path that can be pointed anywhere, repeatedly,
+	// leaving nothing behind, so it is the one path that refuses to dial the
+	// panel's own network — the control threat-model §5.11 names for exactly
+	// this case.
+	guarded := &Manager{
+		store:  m.store,
+		opener: m.opener,
+		http:   guardedHTTPClient(),
+		log:    m.log,
+		inbox:  m.inbox,
+		// The SMTP leg is dialled through the same guard.
+		restrictEgress: true,
+	}
+	return guarded.send(ctx, channel, canonical, TestEvent())
 }
 
 // deliver unseals the notifier's config and hands it to the channel sender.

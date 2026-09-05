@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/smtp"
 	"net/url"
@@ -105,10 +106,6 @@ func redactURL(err error) error {
 	return err
 }
 
-// MailConfig is everything needed to hand a message to an SMTP server. It is
-// exported because the panel now has mail of its own to send — account mail,
-// which belongs to no project (docs/features/panel-mail.md) — and that must go
-// through this sender rather than a second copy of it.
 // Transport security for an SMTP conversation. The zero value is STARTTLS
 // because that is what the panel did before the mode was configurable, and a
 // silent downgrade on upgrade would be the worst possible default.
@@ -133,6 +130,10 @@ func ValidMailTLS(v string) bool {
 	return false
 }
 
+// MailConfig is everything needed to hand a message to an SMTP server. It is
+// exported because the panel now has mail of its own to send — account mail,
+// which belongs to no project (docs/features/panel-mail.md) — and that must go
+// through this sender rather than a second copy of it.
 type MailConfig struct {
 	SMTPHost string
 	SMTPPort int
@@ -141,6 +142,10 @@ type MailConfig struct {
 	Password string
 	// TLS is one of the constants above; empty means TLSStartTLS.
 	TLS string
+	// RestrictEgress refuses to dial an address that is not publicly routable.
+	// Set only when testing a configuration nobody has saved — see egress.go
+	// for why that path is treated differently from a saved notifier.
+	RestrictEgress bool
 }
 
 // SendMail delivers one message over SMTP.
@@ -197,14 +202,24 @@ func SendMail(c MailConfig, to []string, subject, body string) error {
 	return nil
 }
 
+// dialTCP opens the underlying connection, through the egress guard when the
+// caller is testing a configuration nobody has saved.
+func dialTCP(c MailConfig, addr string) (net.Conn, error) {
+	if c.RestrictEgress {
+		return dialGuarded(addr)
+	}
+	return net.DialTimeout("tcp", addr, deliveryTimeout)
+}
+
 // dialSMTP opens the connection in the requested transport security mode and
 // returns a client that has already greeted the server.
 func dialSMTP(c MailConfig, addr string) (*smtp.Client, error) {
 	if c.TLS == TLSImplicit {
-		conn, err := tls.Dial("tcp", addr, &tls.Config{ServerName: c.SMTPHost, MinVersion: tls.VersionTLS12})
+		conn, err := dialTCP(c, addr)
 		if err != nil {
 			return nil, fmt.Errorf("smtp dial (implicit TLS): %w", err)
 		}
+		conn = tls.Client(conn, &tls.Config{ServerName: c.SMTPHost, MinVersion: tls.VersionTLS12})
 		client, err := smtp.NewClient(conn, c.SMTPHost)
 		if err != nil {
 			_ = conn.Close()
@@ -213,9 +228,14 @@ func dialSMTP(c MailConfig, addr string) (*smtp.Client, error) {
 		return client, nil
 	}
 
-	client, err := smtp.Dial(addr)
+	conn, err := dialTCP(c, addr)
 	if err != nil {
 		return nil, fmt.Errorf("smtp dial: %w", err)
+	}
+	client, err := smtp.NewClient(conn, c.SMTPHost)
+	if err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("smtp greet: %w", err)
 	}
 	if c.TLS == TLSNone {
 		return client, nil
@@ -240,7 +260,11 @@ func (m *Manager) sendEmail(cfg []byte, ev domain.NotifyEvent) error {
 		return fmt.Errorf("decoding email config: %w", err)
 	}
 	return SendMail(
-		MailConfig{SMTPHost: c.SMTPHost, SMTPPort: c.SMTPPort, Username: c.Username, From: c.From, Password: c.Password},
+		MailConfig{
+			SMTPHost: c.SMTPHost, SMTPPort: c.SMTPPort,
+			Username: c.Username, From: c.From, Password: c.Password,
+			RestrictEgress: m.restrictEgress,
+		},
 		splitRecipients(c.To), ev.Title, ev.Title+"\n\n"+ev.Body,
 	)
 }

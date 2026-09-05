@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -414,5 +415,101 @@ func TestBuildMessageBodyCannotInjectAHeader(t *testing.T) {
 		if msg[i] == '\r' && msg[i+1] != '\n' {
 			t.Fatalf("a bare CR survived at offset %d: %q", i, msg)
 		}
+	}
+}
+
+// ─── egress guard on the unsaved-config test path (threat-model §5.11) ───────
+
+// The guard is what keeps "test this config" from being a synchronous port
+// scanner with no trace. Everything an operator's own infrastructure answers on
+// is refused; a public address is not.
+func TestPubliclyRoutable(t *testing.T) {
+	refused := []string{
+		"127.0.0.1", "::1", // loopback
+		"10.0.0.7", "172.16.0.1", "192.168.1.1", // RFC1918
+		"fd00::1",                    // IPv6 unique-local
+		"169.254.169.254", "fe80::1", // link-local: cloud metadata lives here
+		"0.0.0.0", "::", // unspecified
+		"224.0.0.1", "ff02::1", // multicast
+		"::ffff:127.0.0.1", // IPv4-mapped loopback
+		"::ffff:10.0.0.7",  // IPv4-mapped RFC1918
+	}
+	for _, s := range refused {
+		if publiclyRoutable(net.ParseIP(s)) {
+			t.Fatalf("publiclyRoutable(%s) = true, want false", s)
+		}
+	}
+	for _, s := range []string{"1.1.1.1", "93.184.216.34", "2606:4700:4700::1111"} {
+		if !publiclyRoutable(net.ParseIP(s)) {
+			t.Fatalf("publiclyRoutable(%s) = false, want true", s)
+		}
+	}
+	// An unparseable address is refused rather than assumed safe.
+	if publiclyRoutable(nil) {
+		t.Fatal("publiclyRoutable(nil) = true, want false")
+	}
+}
+
+// The guard runs in the dialer's Control hook, so it sees the resolved address
+// the socket is about to use — which is what makes it proof against a name that
+// resolves publicly once and privately the next time.
+func TestGuardControlRefusesPrivateAddresses(t *testing.T) {
+	if err := guardControl("tcp", "127.0.0.1:8080", nil); !errors.Is(err, ErrPrivateDestination) {
+		t.Fatalf("guardControl(loopback) = %v, want ErrPrivateDestination", err)
+	}
+	if err := guardControl("tcp", "169.254.169.254:80", nil); !errors.Is(err, ErrPrivateDestination) {
+		t.Fatalf("guardControl(metadata) = %v, want ErrPrivateDestination", err)
+	}
+	if err := guardControl("tcp", "1.1.1.1:443", nil); err != nil {
+		t.Fatalf("guardControl(public) = %v, want nil", err)
+	}
+	// A malformed address is refused, not passed through.
+	if err := guardControl("tcp", "not-an-address", nil); !errors.Is(err, ErrPrivateDestination) {
+		t.Fatalf("guardControl(malformed) = %v, want ErrPrivateDestination", err)
+	}
+}
+
+// End to end: TestConfig will not reach a local listener, even though the same
+// config would be delivered to if it were saved. That asymmetry is the point —
+// a saved notifier keeps the posture threat-model §5.11 records.
+func TestTestConfigRefusesTheLocalNetwork(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	m := New(nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	cfg := json.RawMessage(`{"webhook_url":"` + srv.URL + `"}`)
+
+	err := m.TestConfig(context.Background(), domain.NotifyChannelSlack, cfg)
+	if err == nil {
+		t.Fatal("TestConfig reached a loopback address; the egress guard did not hold")
+	}
+	if !strings.Contains(err.Error(), "panel's own network") {
+		t.Fatalf("err = %v, want the refusal to name why", err)
+	}
+
+	// The same address is still deliverable through the ordinary saved-notifier
+	// path, which deliberately keeps the documented posture.
+	if err := m.send(context.Background(), domain.NotifyChannelSlack, cfg, TestEvent()); err != nil {
+		t.Fatalf("saved-notifier delivery to the same address failed: %v", err)
+	}
+}
+
+// An address that cannot be parsed cannot be stored, so a line break can never
+// reach a header in the first place.
+func TestEmailConfigRejectsUnparseableAddresses(t *testing.T) {
+	for _, cfg := range []string{
+		`{"smtp_host":"smtp.test","smtp_port":587,"from":"ops@test\nBcc: elsewhere@evil.test","to":"a@test"}`,
+		`{"smtp_host":"smtp.test","smtp_port":587,"from":"ops@test","to":"not an address"}`,
+		`{"smtp_host":"smtp.test","smtp_port":587,"from":"not an address","to":"a@test"}`,
+	} {
+		if _, err := validateConfig(domain.NotifyChannelEmail, json.RawMessage(cfg)); err == nil {
+			t.Fatalf("validateConfig accepted %s", cfg)
+		}
+	}
+	ok := `{"smtp_host":"smtp.test","smtp_port":587,"from":"ops@test.example","to":"a@test.example, b@test.example"}`
+	if _, err := validateConfig(domain.NotifyChannelEmail, json.RawMessage(ok)); err != nil {
+		t.Fatalf("validateConfig refused a valid config: %v", err)
 	}
 }

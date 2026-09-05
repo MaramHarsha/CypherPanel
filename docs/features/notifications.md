@@ -222,3 +222,23 @@ server-threshold, and docker-cleanup events (need observation points not all
 present yet — V1.x, feature-matrix.md) · team-scoped notifiers (arrive with
 teams + roles) · dig/batching and quiet hours · inbound/interactive
 (ChatOps) integrations.
+
+## Testing a configuration before it is saved
+
+`POST /api/v1/projects/{id}/notifiers/test` takes `{channel, config}`, validates
+it exactly as create would, uses it once and persists nothing. It exists because
+a dialog that can only test what it has already stored teaches operators to save
+broken credentials and find out later, from a notification that never arrived.
+
+`POST /api/v1/notifiers/{id}/test` answers the same shape for a stored notifier.
+Both return `200 {ok, detail}`: a reachable endpoint that refuses the message is
+`ok:false`, not an error status, because the request succeeded and the
+connection did not — collapsing the two costs the caller the distinction.
+`detail` carries the far end's own words, since "connection refused" is the whole
+answer.
+
+**The unsaved path refuses the panel's own network.** It is the only path that
+can be aimed anywhere, repeatedly, leaving nothing behind, so it dials only
+publicly routable addresses (threat-model §5.11). A saved notifier keeps the
+posture recorded there and may still point at an internal host — which is what
+makes a self-hosted Slack-compatible receiver work.

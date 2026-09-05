@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	netmail "net/mail"
 	"net/url"
 	"strings"
 
@@ -197,6 +198,22 @@ func validateConfig(channel string, raw json.RawMessage) (json.RawMessage, error
 		}
 		if c.From == "" || strings.TrimSpace(c.To) == "" {
 			return nil, invalid("email requires from and to")
+		}
+		// Parsed, not merely non-empty. A well-formed address cannot contain a
+		// line break, so this closes header injection structurally rather than
+		// relying on scrubbing at send time (buildMessage still sanitises —
+		// belt and braces is cheap on a header).
+		if _, err := netmail.ParseAddress(c.From); err != nil {
+			return nil, invalid(fmt.Sprintf("%q is not a valid email address", c.From))
+		}
+		recipients := splitRecipients(c.To)
+		if len(recipients) == 0 {
+			return nil, invalid("email requires at least one recipient")
+		}
+		for _, r := range recipients {
+			if _, err := netmail.ParseAddress(r); err != nil {
+				return nil, invalid(fmt.Sprintf("%q is not a valid email address", r))
+			}
 		}
 		return json.Marshal(c)
 	case domain.NotifyChannelDiscord, domain.NotifyChannelSlack:
