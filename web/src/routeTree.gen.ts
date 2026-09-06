@@ -27,6 +27,7 @@ import { Route as AppSettingsMailRouteImport } from './routes/_app/settings/mail
 import { Route as AppSettingsProfileRouteImport } from './routes/_app/settings/profile'
 import { Route as AppSettingsRegistriesRouteImport } from './routes/_app/settings/registries'
 import { Route as AppSettingsTeamsRouteImport } from './routes/_app/settings/teams'
+import { Route as AppSettingsTlsRouteImport } from './routes/_app/settings/tls'
 import { Route as AppSettingsUsersRouteImport } from './routes/_app/settings/users'
 import { Route as AppTemplatesIndexRouteImport } from './routes/_app/templates/index'
 import { Route as AppProjectsProjectIdIndexRouteImport } from './routes/_app/projects/$projectId/index'
@@ -145,6 +146,11 @@ const AppSettingsRegistriesRoute = AppSettingsRegistriesRouteImport.update({
 const AppSettingsTeamsRoute = AppSettingsTeamsRouteImport.update({
   id: '/teams',
   path: '/teams',
+  getParentRoute: () => AppSettingsRoute,
+} as any)
+const AppSettingsTlsRoute = AppSettingsTlsRouteImport.update({
+  id: '/tls',
+  path: '/tls',
   getParentRoute: () => AppSettingsRoute,
 } as any)
 const AppSettingsUsersRoute = AppSettingsUsersRouteImport.update({
@@ -335,6 +341,7 @@ export interface FileRoutesByFullPath {
   '/settings/profile': typeof AppSettingsProfileRoute
   '/settings/registries': typeof AppSettingsRegistriesRoute
   '/settings/teams': typeof AppSettingsTeamsRoute
+  '/settings/tls': typeof AppSettingsTlsRoute
   '/settings/users': typeof AppSettingsUsersRoute
   '/projects/': typeof AppProjectsIndexRoute
   '/servers/': typeof AppServersIndexRoute
@@ -382,6 +389,7 @@ export interface FileRoutesByTo {
   '/settings/profile': typeof AppSettingsProfileRoute
   '/settings/registries': typeof AppSettingsRegistriesRoute
   '/settings/teams': typeof AppSettingsTeamsRoute
+  '/settings/tls': typeof AppSettingsTlsRoute
   '/settings/users': typeof AppSettingsUsersRoute
   '/projects': typeof AppProjectsIndexRoute
   '/servers': typeof AppServersIndexRoute
@@ -428,6 +436,7 @@ export interface FileRoutesById {
   '/_app/settings/profile': typeof AppSettingsProfileRoute
   '/_app/settings/registries': typeof AppSettingsRegistriesRoute
   '/_app/settings/teams': typeof AppSettingsTeamsRoute
+  '/_app/settings/tls': typeof AppSettingsTlsRoute
   '/_app/settings/users': typeof AppSettingsUsersRoute
   '/_app/projects/': typeof AppProjectsIndexRoute
   '/_app/servers/': typeof AppServersIndexRoute
@@ -478,6 +487,7 @@ export interface FileRouteTypes {
     | '/settings/profile'
     | '/settings/registries'
     | '/settings/teams'
+    | '/settings/tls'
     | '/settings/users'
     | '/projects/'
     | '/servers/'
@@ -525,6 +535,7 @@ export interface FileRouteTypes {
     | '/settings/profile'
     | '/settings/registries'
     | '/settings/teams'
+    | '/settings/tls'
     | '/settings/users'
     | '/projects'
     | '/servers'
@@ -570,6 +581,7 @@ export interface FileRouteTypes {
     | '/_app/settings/profile'
     | '/_app/settings/registries'
     | '/_app/settings/teams'
+    | '/_app/settings/tls'
     | '/_app/settings/users'
     | '/_app/projects/'
     | '/_app/servers/'
@@ -736,6 +748,13 @@ declare module '@tanstack/react-router' {
       path: '/teams'
       fullPath: '/settings/teams'
       preLoaderRoute: typeof AppSettingsTeamsRouteImport
+      parentRoute: typeof AppSettingsRoute
+    }
+    '/_app/settings/tls': {
+      id: '/_app/settings/tls'
+      path: '/tls'
+      fullPath: '/settings/tls'
+      preLoaderRoute: typeof AppSettingsTlsRouteImport
       parentRoute: typeof AppSettingsRoute
     }
     '/_app/settings/users': {
@@ -953,6 +972,7 @@ interface AppSettingsRouteChildren {
   AppSettingsProfileRoute: typeof AppSettingsProfileRoute
   AppSettingsRegistriesRoute: typeof AppSettingsRegistriesRoute
   AppSettingsTeamsRoute: typeof AppSettingsTeamsRoute
+  AppSettingsTlsRoute: typeof AppSettingsTlsRoute
   AppSettingsUsersRoute: typeof AppSettingsUsersRoute
   AppSettingsIndexRoute: typeof AppSettingsIndexRoute
 }
@@ -966,6 +986,7 @@ const AppSettingsRouteChildren: AppSettingsRouteChildren = {
   AppSettingsProfileRoute: AppSettingsProfileRoute,
   AppSettingsRegistriesRoute: AppSettingsRegistriesRoute,
   AppSettingsTeamsRoute: AppSettingsTeamsRoute,
+  AppSettingsTlsRoute: AppSettingsTlsRoute,
   AppSettingsUsersRoute: AppSettingsUsersRoute,
   AppSettingsIndexRoute: AppSettingsIndexRoute,
 }

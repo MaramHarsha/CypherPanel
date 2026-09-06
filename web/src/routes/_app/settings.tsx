@@ -17,6 +17,7 @@ const TABS = [
   { to: "/settings/backup-targets", label: "Backup targets", exact: false },
   { to: "/settings/mail", label: "Mail", exact: false },
   { to: "/settings/dns", label: "DNS", exact: false },
+  { to: "/settings/tls", label: "TLS", exact: false },
 ] as const;
 
 function SettingsLayout() {
