@@ -71,11 +71,19 @@ jobs:
         run: |
           set -eu
           mkdir -p dist
+          # cypherd carries all three stamps: GET /api/v1/panel/version and
+          # `cypherd version` serve them, so a bug report names an exact build
+          # (docs/features/control-plane-hardening.md §3). The agent declares
+          # only main.version, so it gets only that — an -X for a symbol the
+          # binary does not define is silently dropped, which would hide a typo.
+          COMMIT=$(git rev-parse --short HEAD)
+          BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          PLANE_STAMPS="-X main.version=$VERSION -X main.commit=$COMMIT -X main.buildDate=$BUILD_DATE"
           for arch in amd64 arm64; do
             # Static, no cgo: these land on unknown distros and must not need a
             # matching libc.
             CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
-              go build -C core -trimpath -ldflags "-s -w -X main.version=$VERSION" \
+              go build -C core -trimpath -ldflags "-s -w $PLANE_STAMPS" \
                 -o "../dist/cypherd-linux-$arch" ./cmd/cypherd
             CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
               go build -C agent -trimpath -ldflags "-s -w -X main.version=$VERSION" \
