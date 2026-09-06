@@ -67,3 +67,7 @@ SELECT * FROM compose_env_vars WHERE stack_id = $1 ORDER BY key;
 
 -- name: DeleteComposeEnvVar :exec
 DELETE FROM compose_env_vars WHERE stack_id = $1 AND key = $2;
+
+-- The same narrowing ListEnvVarKeys does, for a Compose Stack's variables.
+-- name: ListComposeEnvVarKeys :many
+SELECT key FROM compose_env_vars WHERE stack_id = $1 ORDER BY key;

@@ -18,6 +18,14 @@ import "time"
 // property of the VARIABLE, not of the reference, which is why promoting a
 // value from project to environment scope needs no edit in any referencing
 // application (§3).
+// SharedVariableKey is a shared variable's name and scope without its sealed
+// value, for callers that must be unable to reach one (project-export.md §4).
+type SharedVariableKey struct {
+	Key string
+	// EnvironmentID is nil for project scope.
+	EnvironmentID *string
+}
+
 type SharedVariable struct {
 	ID        string
 	ProjectID string

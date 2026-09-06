@@ -171,6 +171,31 @@ func (q *Queries) LatestComposeRevision(ctx context.Context, stackID string) (Co
 	return i, err
 }
 
+const listComposeEnvVarKeys = `-- name: ListComposeEnvVarKeys :many
+SELECT key FROM compose_env_vars WHERE stack_id = $1 ORDER BY key
+`
+
+// The same narrowing ListEnvVarKeys does, for a Compose Stack's variables.
+func (q *Queries) ListComposeEnvVarKeys(ctx context.Context, stackID string) ([]string, error) {
+	rows, err := q.db.Query(ctx, listComposeEnvVarKeys, stackID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		items = append(items, key)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listComposeEnvVars = `-- name: ListComposeEnvVars :many
 SELECT stack_id, key, value_ct, value_nonce FROM compose_env_vars WHERE stack_id = $1 ORDER BY key
 `

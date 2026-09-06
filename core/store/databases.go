@@ -92,6 +92,20 @@ func (s *Store) ListDatabasesByEnvironment(ctx context.Context, envID string) ([
 	return out, nil
 }
 
+// ListDatabaseConfigsByEnvironment returns databases without their sealed root
+// password, for the reason ListApplicationConfigsByEnvironment exists.
+func (s *Store) ListDatabaseConfigsByEnvironment(ctx context.Context, envID string) ([]domain.DatabaseConfig, error) {
+	dbs, err := s.ListDatabasesByEnvironment(ctx, envID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.DatabaseConfig, 0, len(dbs))
+	for _, d := range dbs {
+		out = append(out, d.ConfigView())
+	}
+	return out, nil
+}
+
 func (s *Store) ListDatabasesByServer(ctx context.Context, serverID string) ([]domain.Database, error) {
 	rows, err := s.q.ListDatabasesByServer(ctx, serverID)
 	if err != nil {

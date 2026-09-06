@@ -81,6 +81,9 @@ const (
 	ActionProjectUpdated     = "project.updated"
 	ActionProjectTransferred = "project.transferred"
 	ActionProjectDeleted     = "project.deleted"
+	// A bulk read of a project's whole configuration, recorded before the
+	// stream starts so an abandoned download is still on the record.
+	ActionProjectExported = "project.exported"
 	ActionEnvironmentCreated = "environment.created"
 	ActionEnvironmentRenamed = "environment.renamed"
 	ActionEnvironmentDeleted = "environment.deleted"
@@ -257,6 +260,8 @@ var actions = map[string]bool{
 	ActionNotifierDeleted: true, ActionWebhookCreated: true,
 	ActionWebhookUpdated: true, ActionWebhookDeleted: true,
 	ActionWebhookSecretRotated: true,
+
+	ActionProjectExported: true,
 
 	ActionRegistryCreated: true, ActionRegistryUpdated: true,
 	ActionRegistryDeleted: true,

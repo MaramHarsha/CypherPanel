@@ -7,6 +7,7 @@ package rest
 
 import (
 	"context"
+	"io"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -294,6 +295,13 @@ type OnboardingService interface {
 	CreateFirstOwner(ctx context.Context, email, password string) (domain.User, error)
 }
 
+// ProjectExporter writes a project's portable archive. Consumer-defined
+// (ENGINEERING rule 6) and deliberately narrow: the handler hands it a writer
+// and a project id, and the package on the other side has no key material.
+type ProjectExporter interface {
+	WriteTo(ctx context.Context, w io.Writer, projectID string) error
+}
+
 type Deps struct {
 	Auth            *auth.Authenticator
 	Onboarding      OnboardingService
@@ -319,6 +327,10 @@ type Deps struct {
 	// on every stack route, which is what a panel that has not wired them
 	// looked like before they existed.
 	Compose ComposeService
+	// Export streams a project out as a portable archive (project-export.md);
+	// nil answers 501, the same shape every optional surface here takes. It is
+	// deliberately given no way to unseal a secret — see core/export.
+	Export ProjectExporter
 	Inbox   InboxService
 	// Audit records every sensitive action and serves the log back
 	// (audit-log.md). nil records nothing and serves an empty log.
@@ -464,6 +476,9 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/projects", a.authed(a.handleCreateProject))
 	mux.HandleFunc("GET /api/v1/projects/{id}", a.authed(a.handleGetProject))
 	mux.HandleFunc("DELETE /api/v1/projects/{id}", a.authed(a.handleDeleteProject))
+	// Portable export (project-export.md). Team admin; the archive carries
+	// configuration and env-var KEYS, never a sealed value.
+	mux.HandleFunc("GET /api/v1/projects/{id}/export", a.authed(a.handleExportProject))
 	mux.HandleFunc("PATCH /api/v1/projects/{id}", a.authed(a.handlePatchProject))
 	mux.HandleFunc("PATCH /api/v1/environments/{id}", a.authed(a.handlePatchEnvironment))
 	mux.HandleFunc("DELETE /api/v1/environments/{id}", a.authed(a.handleDeleteEnvironment))

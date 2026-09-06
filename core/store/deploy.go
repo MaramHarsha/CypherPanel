@@ -305,6 +305,21 @@ func (s *Store) ListApplicationsByEnvironment(ctx context.Context, envID string)
 	return out, nil
 }
 
+// ListApplicationConfigsByEnvironment returns applications with every sealed
+// field stripped, for callers that must be unable to hold one (see
+// domain.ApplicationConfig).
+func (s *Store) ListApplicationConfigsByEnvironment(ctx context.Context, envID string) ([]domain.ApplicationConfig, error) {
+	apps, err := s.ListApplicationsByEnvironment(ctx, envID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.ApplicationConfig, 0, len(apps))
+	for _, a := range apps {
+		out = append(out, a.ConfigView())
+	}
+	return out, nil
+}
+
 func (s *Store) ListApplicationsByServer(ctx context.Context, serverID string) ([]domain.Application, error) {
 	rows, err := s.q.ListApplicationsByServer(ctx, serverID)
 	if err != nil {
@@ -448,6 +463,23 @@ func (s *Store) ListEnvVars(ctx context.Context, appID string) ([]domain.EnvVar,
 	out := make([]domain.EnvVar, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, domain.EnvVar{Key: r.Key, ValueCT: r.ValueCt, ValueNonce: r.ValueNonce, SharedRefs: r.SharedRefs})
+	}
+	return out, nil
+}
+
+// ListEnvVarKeys returns the keys and their shared-variable references and
+// nothing else. It exists so a caller that must never hold a ciphertext — the
+// project exporter (project-export.md §4) — can be given an interface with no
+// method capable of returning one, rather than being trusted to ignore the
+// fields on domain.EnvVar.
+func (s *Store) ListEnvVarKeys(ctx context.Context, appID string) ([]domain.EnvVarKey, error) {
+	rows, err := s.q.ListEnvVarKeys(ctx, appID)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing env var keys: %w", err)
+	}
+	out := make([]domain.EnvVarKey, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, domain.EnvVarKey{Key: r.Key, SharedRefs: r.SharedRefs})
 	}
 	return out, nil
 }

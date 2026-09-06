@@ -23,6 +23,40 @@ func (q *Queries) DeleteEnvVar(ctx context.Context, arg DeleteEnvVarParams) erro
 	return err
 }
 
+const listEnvVarKeys = `-- name: ListEnvVarKeys :many
+SELECT key, shared_refs FROM app_env_vars WHERE application_id = $1 ORDER BY key
+`
+
+type ListEnvVarKeysRow struct {
+	Key        string
+	SharedRefs []string
+}
+
+// Keys and their shared-variable references, never the sealed value. This
+// exists so core/export's Store interface can be structurally incapable of
+// returning a ciphertext (project-export.md §4): ListEnvVars returns
+// value_ct/value_nonce, and an exporter that could call it would be one
+// serialization mistake away from a download containing every secret.
+func (q *Queries) ListEnvVarKeys(ctx context.Context, applicationID string) ([]ListEnvVarKeysRow, error) {
+	rows, err := q.db.Query(ctx, listEnvVarKeys, applicationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEnvVarKeysRow{}
+	for rows.Next() {
+		var i ListEnvVarKeysRow
+		if err := rows.Scan(&i.Key, &i.SharedRefs); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEnvVars = `-- name: ListEnvVars :many
 SELECT application_id, key, value_ct, value_nonce, shared_refs FROM app_env_vars WHERE application_id = $1 ORDER BY key
 `
