@@ -29,6 +29,20 @@ export const Route = createFileRoute("/_app/projects/$projectId/applications/$ap
 /** Tailwind's `sm` — below it the pane takes the phone layout. */
 const PHONE = "(max-width: 639px)";
 
+/**
+ * Where the replay starts (`?since=`, deployment-control.md). A picker rather
+ * than a free field: the windows an operator actually reaches for are the last
+ * few minutes, the last hour, the last day and everything retained, and the API
+ * answers 400 for anything it cannot parse rather than quietly falling back —
+ * not a failure worth exposing a text box to earn.
+ */
+const WINDOWS = [
+  { value: "15m", label: "15m" },
+  { value: "1h", label: "1h" },
+  { value: "24h", label: "24h" },
+  { value: "", label: "all" },
+] as const;
+
 function shortRev(id: string | null | undefined): string {
   if (!id) return "";
   const tail = id.includes("_") ? id.slice(id.lastIndexOf("_") + 1) : id;
@@ -121,6 +135,7 @@ function LogsTab() {
   const { projectId, appId } = Route.useParams();
   const app = useGetApplication(appId);
   const fill = useFillToBottom();
+  const [since, setSince] = useState<string>("");
 
   return (
     <PageState query={app} isEmpty={() => false}>
@@ -133,7 +148,10 @@ function LogsTab() {
                 pane before showing it, and 14d shows it first. */}
             <div className="hidden flex-wrap items-baseline justify-between gap-x-4 gap-y-1 sm:flex">
               <Eyebrow>Runtime log</Eyebrow>
-              {rev && <span className="font-mono text-[11px] text-text-faint">rev {rev}</span>}
+              <span className="flex items-center gap-2">
+                {rev && <span className="font-mono text-[11px] text-text-faint">rev {rev}</span>}
+                <SincePicker value={since} onChange={setSince} />
+              </span>
             </div>
             <p className="hidden max-w-2xl text-[12.5px] leading-relaxed text-text-dim sm:block">
               What the container writes to stdout and stderr. Recent history replays first, then the tail continues
@@ -184,7 +202,10 @@ function LogsTab() {
                     ← {a.name} / logs
                   </Link>
                   <LogViewer
-                    url={getStreamApplicationLogsUrl(appId)}
+                    // A new window is a new stream: the replay is chosen at
+                    // connect time, not filtered over the one already open.
+                    key={since}
+                    url={getStreamApplicationLogsUrl(appId, since ? { since } : undefined)}
                     live={canEmit(a.status)}
                     // Tall enough to be a window rather than a slot, and clamped
                     // so a short laptop screen still leaves the pane usable
@@ -200,5 +221,31 @@ function LogsTab() {
         );
       }}
     </PageState>
+  );
+}
+
+/** The replay-window control. Mono, bordered, the same chip row the audit
+ *  filters and the compose log pane use. */
+function SincePicker({ value, onChange }: { value: string; onChange: (next: string) => void }) {
+  return (
+    <span className="flex items-center gap-1" role="group" aria-label="Replay window">
+      <span className="mono mr-0.5 text-[11px] text-text-faint">from</span>
+      {WINDOWS.map((w) => (
+        <button
+          key={w.value}
+          type="button"
+          aria-pressed={value === w.value}
+          onClick={() => onChange(w.value)}
+          className={cn(
+            "mono rounded border px-2 py-[3px] text-[11px] transition-colors",
+            value === w.value
+              ? "border-border-strong bg-raised font-medium text-text"
+              : "border-border text-text-mid hover:text-text",
+          )}
+        >
+          {w.label}
+        </button>
+      ))}
+    </span>
   );
 }
