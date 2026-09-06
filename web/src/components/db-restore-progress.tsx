@@ -1,100 +1,56 @@
-// Restore in flight — design canvas `10d` (dark twin `13an`), wired to what the
-// control plane can actually see.
+// Restore in flight — design canvas `10d` (dark twin `13an`), wired to the
+// restore record the control plane now keeps.
 //
-// POST /databases/{id}/restore answers 202 with nothing in it: the plane hands
-// the work to the agent, the agent reports one terminal event back to the
-// plane, and the plane only logs it. `Database.status` has no "restoring"
-// value. So the popup this file drives shows the plane's own reading of the
-// record and nothing else — the same rule db-provisioning-steps.tsx follows:
+// This file used to guess. `POST /databases/{id}/restore` answered 202 with
+// nothing in it, the agent reported one terminal event that only reached the
+// plane's log, and `Database.status` has no "restoring" value — so the popup
+// inferred progress from the database going offline and coming back, and held
+// that inference in a module store that a page reload threw away.
 //
-//   1. accepted — the 202 means the work reached the agent's queue;
-//   2. fetching + applying — the agent's phase, which it does not report;
-//   3. the agent's next status report — the one signal the browser will get.
+// None of that is true any more. The 202 carries a `DatabaseRestore`, and the
+// record has exactly what the canvas draws: a `status`, the `step` the agent
+// has reached (fetching · stopping · applying · restarting), and
+// `bytes_done`/`bytes_total` while the dump is going in. So the popup shows
+// what is happening rather than a story told over a 202, the outcome is the
+// restore's own rather than the container's, and — because the SERVER holds
+// the record — a reload no longer forgets: the watch finds a running restore
+// by asking, which is what an operator who refreshed mid-restore expects.
 //
-// The popup closes on that report. `running` hands the operator back with a
-// toast that says exactly what was observed (the database *reports running* —
-// not "restored"); `error` becomes a persistent error toast carrying the
-// agent's own words; a `stopped`/`provisioning` report means the container
-// went down for the restore (the Redis/Valkey path), so the popup waits for
-// the healthy report that follows.
+// Two things the canvas asks for are still deliberately absent:
 //
-// The in-flight record lives in a module store rather than in a query: the
-// server does not hold it (that is the gap), so a reload forgets it — which is
-// honest, because after a reload the panel genuinely cannot tell.
+//   · No cancel. Stopping a half-applied restore corrupts the database, so
+//     there is no route and no button — and the footer says why rather than
+//     leaving the absence to be noticed.
+//   · No byte bar where bytes mean nothing. An engine restart is not measured
+//     in bytes, and `bytes_total` is zero for those steps; a bar that moved for
+//     them would be drawing something nobody counted.
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useRef } from "react";
+import { useListDatabaseRestores } from "@/api/gen/backups/backups";
 import { useGetDatabase } from "@/api/gen/databases/databases";
 import { useGetServer } from "@/api/gen/servers/servers";
-import type { BackupRecord } from "@/api/gen/model";
+import type { DatabaseRestore } from "@/api/gen/model";
 import { BlockingProgress, type ProgressStep } from "@/components/ui/blocking-progress";
 import { toastError, toastSuccess } from "@/lib/toast";
 
-export type RestoreSource = Pick<BackupRecord, "id" | "started_at" | "size_bytes">;
-
-export interface RestoreInFlight {
-  dbId: string;
-  /** The record being applied — "From today 04:00 (212 MB)". */
-  backup: RestoreSource;
-  /** Client clock at the 202. The first fetch completed after it sets `baseline`. */
-  acceptedAt: number;
-  /**
-   * `updated_at` of the record as first fetched after the 202. Every agent
-   * report bumps it (SetDatabaseObservedStatus writes `updated_at = now()`),
-   * so a later value is a report made since the restore was handed over.
-   */
-  baseline: string | null;
-  /** The agent has reported the database off since the restore began. */
-  sawOffline: boolean;
-}
-
-// ── store ────────────────────────────────────────────────────────────────
-
-let entries: ReadonlyMap<string, RestoreInFlight> = new Map();
-const listeners = new Set<() => void>();
-
-function write(next: ReadonlyMap<string, RestoreInFlight>) {
-  entries = next;
-  listeners.forEach((l) => l());
-}
-
-function patch(dbId: string, changes: Partial<RestoreInFlight>) {
-  const current = entries.get(dbId);
-  if (!current) return;
-  const next = new Map(entries);
-  next.set(dbId, { ...current, ...changes });
-  write(next);
-}
-
-function end(dbId: string) {
-  if (!entries.has(dbId)) return;
-  const next = new Map(entries);
-  next.delete(dbId);
-  write(next);
-}
-
-function subscribe(listener: () => void) {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
-
-/** Call on the restore's 202. `DatabaseRestoreWatch` opens the popup from it. */
-export function startRestoreWatch(dbId: string, backup: RestoreSource) {
-  const next = new Map(entries);
-  next.set(dbId, {
-    dbId,
-    backup: { id: backup.id, started_at: backup.started_at, size_bytes: backup.size_bytes },
-    acceptedAt: Date.now(),
-    baseline: null,
-    sawOffline: false,
+/**
+ * The running restore on this database, or undefined. It is a query rather
+ * than a module store now: the server is the one that knows, so every tab —
+ * and every reload, and a second browser — sees the same answer.
+ *
+ * Polled while one is running, because a restore's progress is not something
+ * the event stream carries. Off again the moment it is not.
+ */
+export function useRestoreInFlight(dbId: string): DatabaseRestore | undefined {
+  const restores = useListDatabaseRestores(dbId, {
+    query: {
+      // A 501 on a panel with restores disabled is an answer, not a fault, and
+      // retrying it three times only delays a null.
+      retry: false,
+      refetchInterval: (q) => (q.state.data?.some((r) => r.status === "running") ? 2_000 : false),
+    },
   });
-  write(next);
-}
-
-/** The restore this tab started on `dbId`, while the popup is still owed a report. */
-export function useRestoreInFlight(dbId: string): RestoreInFlight | undefined {
-  return useSyncExternalStore(subscribe, () => entries.get(dbId));
+  return (restores.data ?? []).find((r) => r.status === "running");
 }
 
 // ── copy ─────────────────────────────────────────────────────────────────
@@ -118,134 +74,127 @@ export function formatBytes(n: number): string {
 }
 
 /**
- * "today 04:00", "yesterday 04:00", "3 Sep 04:00" — the way 10d names the
- * backup. The viewer's clock, because "today" is a word about the reader's
- * day; the row it came from still carries the absolute UTC stamp on hover.
+ * What a restore is called while it is happening, from the record's own step.
+ * Used by the masthead, which has room for a phrase and not for a step list.
  */
-export function backupMoment(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "an earlier backup";
-  const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
-  const dayOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  const days = Math.round((dayOf(new Date()) - dayOf(d)) / 86_400_000);
-  if (days === 0) return `today ${time}`;
-  if (days === 1) return `yesterday ${time}`;
-  return `${d.toLocaleDateString(undefined, { day: "numeric", month: "short" })} ${time}`;
-}
-
-/** "today 04:00 (212 MB)" — the popup's second line and the masthead's. */
-export function restoreSourceLabel(b: RestoreSource): string {
-  const when = backupMoment(b.started_at);
-  return b.size_bytes > 0 ? `${when} (${formatBytes(b.size_bytes)})` : when;
-}
-
-/**
- * The plane-side steps. The canvas draws the agent's four (stop + drain,
- * fetch + checksum, apply with bytes, restart + health); none of them reach
- * the plane, so those would be a story told over a 202. These three are true.
- * The bar is half credit for the step in flight, as the create popup's is —
- * it tracks the list and stops where the work stops.
- */
-function restoreSteps(serverName: string, sawOffline: boolean): { steps: ProgressStep[]; progress: number } {
-  const accepted: ProgressStep = { label: `accepted · handed to the agent on ${serverName}`, state: "done" };
-  if (sawOffline) {
-    return {
-      steps: [
-        accepted,
-        { label: "fetched the backup · container stopped for the restore", state: "done" },
-        { label: "placing the dump · restarting · re-checking health", state: "active" },
-      ],
-      progress: 2.5 / 3,
-    };
+export function restoreStepLabel(r: DatabaseRestore): string {
+  switch (r.step) {
+    case "fetching":
+      return "fetching the backup";
+    case "stopping":
+      return "stopping the container";
+    case "applying":
+      return r.bytes_total > 0
+        ? `applying the dump · ${formatBytes(r.bytes_done)} of ${formatBytes(r.bytes_total)}`
+        : "applying the dump";
+    case "restarting":
+      return "restarting · re-checking health";
+    default:
+      return "restoring";
   }
-  return {
-    steps: [
-      accepted,
-      { label: "fetching the backup · applying the dump", state: "active" },
-      { label: "the agent's next status report", state: "pending" },
-    ],
-    progress: 1.5 / 3,
-  };
+}
+
+// The agent's four phases, in the order the canvas draws them. The record
+// names which one it is in, so the list is the truth rather than a guess.
+const STEPS = [
+  { key: "fetching", label: "fetching the backup · verifying the checksum" },
+  { key: "stopping", label: "stopping the container · draining connections" },
+  { key: "applying", label: "placing the dump" },
+  { key: "restarting", label: "restarting · re-checking health" },
+] as const;
+
+function restoreSteps(r: DatabaseRestore, serverName: string): { steps: ProgressStep[]; progress: number } {
+  const at = STEPS.findIndex((s) => s.key === r.step);
+  // An unreported step means the work reached the agent's queue and nothing
+  // more has come back — which is a real state at the very start.
+  const index = at === -1 ? 0 : at;
+  const steps: ProgressStep[] = [
+    { label: `accepted · handed to the agent on ${serverName}`, state: "done" },
+    ...STEPS.map((s, i) => ({
+      label:
+        s.key === "applying" && r.bytes_total > 0
+          ? `${s.label} · ${formatBytes(r.bytes_done)} of ${formatBytes(r.bytes_total)}`
+          : s.label,
+      state: (i < index ? "done" : i === index ? "active" : "pending") as ProgressStep["state"],
+    })),
+  ];
+  // Half credit for the step in flight, as the create popup's bar does — with
+  // one exception: while the dump is going in and the agent is counting bytes,
+  // the bar tracks the bytes, because that is the step that actually takes the
+  // time and the only one anyone watches.
+  const done = index + (r.step === "applying" && r.bytes_total > 0 ? r.bytes_done / r.bytes_total : 0.5);
+  return { steps, progress: (1 + done) / (STEPS.length + 1) };
 }
 
 // ── the watch ────────────────────────────────────────────────────────────
 
 /**
- * Mounted once by the database layout. Owns the polling, the exit rule and
- * the popup, so every tab under the database shares one restore watch and the
- * masthead can read the same record through `useRestoreInFlight`.
+ * Mounted once by the database layout. It owns the popup and the exit rule, so
+ * every tab under the database shares one restore watch and the masthead reads
+ * the same record through `useRestoreInFlight`.
+ *
+ * The exit is now the restore's own terminal status rather than the container's
+ * next status report — so a restore that failed while the container is happily
+ * running says "the restore failed", which is the sentence that matters, and a
+ * restore that succeeded says so instead of "the database reports running".
  */
 export function DatabaseRestoreWatch({ projectId, dbId }: { projectId: string; dbId: string }) {
-  const inFlight = useRestoreInFlight(dbId);
   const navigate = useNavigate();
-  // Every agent report also arrives as an SSE invalidation, but the popup's
-  // exit is exactly one report and the stream's reconnect fallback polls at
-  // 5 s — so while a restore is owed a report, ask every 2 s regardless. The
-  // options object is built conditionally: an explicit `undefined` would
-  // override the QueryClient's fallback poll rather than inherit it.
-  const db = useGetDatabase(dbId, inFlight ? { query: { refetchInterval: 2_000 } } : undefined);
+  const restores = useListDatabaseRestores(dbId, {
+    query: {
+      retry: false,
+      refetchInterval: (q) => (q.state.data?.some((r) => r.status === "running") ? 2_000 : false),
+    },
+  });
+  const list = restores.data ?? [];
+  const inFlight = list.find((r) => r.status === "running");
+  const db = useGetDatabase(dbId);
   const serverId = db.data?.server_id ?? "";
   const server = useGetServer(serverId, { query: { enabled: inFlight !== undefined && serverId !== "" } });
   const serverName = server.data?.name ?? "the server";
 
+  // Only a restore this tab actually watched running is worth a toast. A tab
+  // opened after the fact would otherwise announce yesterday's restore on
+  // mount, which is the one thing a notification must never do.
+  const watching = useRef<string | null>(null);
   useEffect(() => {
-    if (!inFlight || !db.data) return;
-    const d = db.data;
-
-    if (inFlight.baseline === null) {
-      // Only a fetch that completed after the 202 can be the baseline: the
-      // cached record may predate a report the agent made just before the
-      // click, and counting that one as "since the restore" would close the
-      // popup on a status that says nothing about it.
-      if (db.dataUpdatedAt > inFlight.acceptedAt) patch(dbId, { baseline: d.updated_at });
+    if (inFlight) {
+      watching.current = inFlight.id;
       return;
     }
-    if (Date.parse(d.updated_at) <= Date.parse(inFlight.baseline)) return;
-
-    const source = restoreSourceLabel(inFlight.backup);
-    if (d.status === "error") {
-      end(dbId);
-      toastError({
-        title: `${d.name} is in error after the restore`,
-        detail: d.status_detail || "The agent reported an error — the restore may not have applied.",
-        actions: [
-          {
-            label: "Open overview",
-            onClick: () => void navigate({ to: "/projects/$projectId/databases/$dbId", params: { projectId, dbId } }),
-          },
-        ],
+    const id = watching.current;
+    if (!id) return;
+    const finished = list.find((r) => r.id === id);
+    if (!finished || finished.status === "running") return;
+    watching.current = null;
+    const name = db.data?.name ?? "the database";
+    if (finished.status === "succeeded") {
+      toastSuccess({
+        title: `${name} restored`,
+        detail: finished.bytes_total > 0 ? `${formatBytes(finished.bytes_total)} applied and the container is back.` : undefined,
       });
       return;
     }
-    if (d.status === "running") {
-      end(dbId);
-      // What was observed, in those words. The agent reports the restore's
-      // own outcome to the control plane's log and nowhere the panel can
-      // read, so "running" is the most this toast may claim.
-      toastSuccess(
-        inFlight.sawOffline
-          ? {
-              title: `${d.name} is back — restarted and healthy`,
-              detail: `The container came back after the restore from ${source}. The agent logs the restore's own outcome on the control plane only.`,
-            }
-          : {
-              title: `${d.name} reports running`,
-              detail: `Restore from ${source} handed to the agent. It reports the restore's outcome to the control plane only, so check the data before relying on it.`,
-            },
-      );
-      return;
-    }
-    // stopped / provisioning / unknown: the container is down for the restore.
-    if (!inFlight.sawOffline) patch(dbId, { sawOffline: true });
-  }, [inFlight, db.data, db.dataUpdatedAt, dbId, projectId, navigate]);
+    toastError({
+      title: `Restoring ${name} failed`,
+      // Never contains secrets, so it is shown as the agent wrote it.
+      detail: finished.detail || "The agent reported a failure. The database may hold a partial restore.",
+      actions: [
+        {
+          label: "Open overview",
+          onClick: () => void navigate({ to: "/projects/$projectId/databases/$dbId", params: { projectId, dbId } }),
+        },
+      ],
+    });
+  }, [inFlight, list, db.data?.name, dbId, projectId, navigate]);
 
-  if (!inFlight || !db.data) return null;
-  const { steps, progress } = restoreSteps(serverName, inFlight.sawOffline);
+  if (!inFlight) return null;
+  const { steps, progress } = restoreSteps(inFlight, serverName);
   return (
     <BlockingProgress
       open
-      title={`Restoring ${db.data.name}…`}
-      detail={`From ${restoreSourceLabel(inFlight.backup)}. The database is offline during the restore.`}
+      title={`Restoring ${db.data?.name ?? "the database"}…`}
+      detail="The database is offline while the dump goes in."
       steps={steps}
       progress={progress}
       noCancelReason={RESTORE_NO_CANCEL}
