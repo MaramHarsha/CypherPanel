@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/MaramHarsha/cypherpanel/agent/builder"
+	"github.com/MaramHarsha/cypherpanel/agent/driver"
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
 	"github.com/MaramHarsha/cypherpanel/pkg/registryauth"
 )
@@ -270,27 +271,47 @@ type fakePack struct {
 	called    int
 	contextIn string
 	tagIn     string
-	writes    string // the Dockerfile it pretends to generate
-	err       error
+	writes    string // the file it pretends to generate
+	// frontend, when set, makes it produce a BuildKit frontend plan rather
+	// than a Dockerfile — the Railpack shape.
+	frontend string
+	err      error
 }
 
 func (p *fakePack) Available() bool { return p.available }
 
-func (p *fakePack) Generate(_ context.Context, contextDir, imageTag string, onLog func(string)) (string, error) {
+func (p *fakePack) Generate(_ context.Context, contextDir, imageTag string, onLog func(string)) (builder.Plan, error) {
 	p.called++
 	p.contextIn, p.tagIn = contextDir, imageTag
 	if p.err != nil {
-		return "", p.err
+		return builder.Plan{}, p.err
 	}
 	onLog("pack: planned this repository")
 	generated := filepath.Join(contextDir, p.writes)
 	if err := os.MkdirAll(filepath.Dir(generated), 0o755); err != nil {
-		return "", err
+		return builder.Plan{}, err
 	}
 	if err := os.WriteFile(generated, []byte("FROM scratch\n"), 0o644); err != nil {
-		return "", err
+		return builder.Plan{}, err
 	}
-	return p.writes, nil
+	if p.frontend != "" {
+		return builder.Plan{PlanFile: p.writes, Frontend: p.frontend}, nil
+	}
+	return builder.Plan{Dockerfile: p.writes}, nil
+}
+
+// fakeBuildKit stands in for the second transport.
+type fakeBuildKit struct {
+	called int
+	req    builder.BuildKitRequest
+	err    error
+}
+
+func (b *fakeBuildKit) Build(_ context.Context, req builder.BuildKitRequest, onLog func(string)) error {
+	b.called++
+	b.req = req
+	onLog("buildkit: built from the frontend plan")
+	return b.err
 }
 
 // seedRepoWith is seedRepo with an extra file, so a repository can look like
@@ -331,7 +352,7 @@ func TestAPackBuildGoesThroughTheOrdinaryBuildPath(t *testing.T) {
 	repo, commit := seedRepoWith(t, "package.json")
 	engine := &fakeEngine{}
 	pack := &fakePack{available: true, writes: ".nixpacks/Dockerfile"}
-	b := builder.NewBuilderWithPack(engine, t.TempDir(), pack)
+	b := builder.NewBuilderWithPacks(engine, t.TempDir(), nil, map[string]builder.Pack{"nixpacks": pack})
 
 	work := buildWorkFor(repo, commit)
 	work.DockerfilePath = "Dockerfile"
@@ -360,7 +381,7 @@ func TestAPackBuildGoesThroughTheOrdinaryBuildPath(t *testing.T) {
 func TestWithoutThePackAManifestOnlyRepoStillFails(t *testing.T) {
 	repo, commit := seedRepoWith(t, "package.json")
 	pack := &fakePack{available: false}
-	b := builder.NewBuilderWithPack(&fakeEngine{}, t.TempDir(), pack)
+	b := builder.NewBuilderWithPacks(&fakeEngine{}, t.TempDir(), nil, map[string]builder.Pack{"nixpacks": pack})
 
 	work := buildWorkFor(repo, commit)
 	work.BuildKind = "auto"
@@ -377,7 +398,7 @@ func TestWithoutThePackAManifestOnlyRepoStillFails(t *testing.T) {
 func TestAFailedPackFailsTheBuild(t *testing.T) {
 	repo, commit := seedRepoWith(t, "package.json")
 	pack := &fakePack{available: true, err: errors.New("no start command could be found")}
-	b := builder.NewBuilderWithPack(&fakeEngine{}, t.TempDir(), pack)
+	b := builder.NewBuilderWithPacks(&fakeEngine{}, t.TempDir(), nil, map[string]builder.Pack{"nixpacks": pack})
 
 	work := buildWorkFor(repo, commit)
 	work.BuildKind = "nixpacks"
@@ -385,5 +406,94 @@ func TestAFailedPackFailsTheBuild(t *testing.T) {
 	_, err := b.Build(context.Background(), work, func(string) {})
 	if err == nil || !strings.Contains(err.Error(), "no start command") {
 		t.Fatalf("err = %v, want the pack's own words", err)
+	}
+}
+
+// ─── the second transport (pack-builds.md §2) ───────────────────────────────
+
+// A pack whose output is a frontend plan takes the BuildKit path, and the
+// ordinary engine build never runs — the classic endpoint cannot resolve a
+// gateway frontend at all.
+func TestAFrontendPlanTakesTheBuildKitTransport(t *testing.T) {
+	repo, commit := seedRepoWith(t, "package.json")
+	engine := &fakeEngine{}
+	bk := &fakeBuildKit{}
+	pack := &fakePack{available: true, writes: "railpack-plan.json", frontend: "ghcr.io/railwayapp/railpack-frontend"}
+	b := builder.NewBuilderWithPacks(engine, t.TempDir(), bk, map[string]builder.Pack{"railpack": pack})
+
+	work := buildWorkFor(repo, commit)
+	work.BuildKind = "railpack"
+
+	var logs []string
+	if _, err := b.Build(context.Background(), work, func(l string) { logs = append(logs, l) }); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if bk.called != 1 {
+		t.Fatalf("buildkit called %d times, want once", bk.called)
+	}
+	if engine.builtImage != "" {
+		t.Fatalf("the classic endpoint also built %q — it cannot resolve a frontend", engine.builtImage)
+	}
+	if bk.req.Frontend != "ghcr.io/railwayapp/railpack-frontend" || bk.req.PlanFile != "railpack-plan.json" {
+		t.Fatalf("request = %+v, want the frontend and its plan", bk.req)
+	}
+	if !strings.Contains(strings.Join(logs, "\n"), "buildkit: built from the frontend plan") {
+		t.Fatalf("logs = %v, want the transport's output streamed", logs)
+	}
+}
+
+// Both transports produce the same tag with the same management labels: that is
+// what makes having two acceptable, because nothing downstream can tell them
+// apart.
+func TestBothTransportsProduceTheSameTagAndLabels(t *testing.T) {
+	repo, commit := seedRepoWith(t, "package.json")
+	bk := &fakeBuildKit{}
+	pack := &fakePack{available: true, writes: "railpack-plan.json", frontend: "f"}
+	b := builder.NewBuilderWithPacks(&fakeEngine{}, t.TempDir(), bk, map[string]builder.Pack{"railpack": pack})
+
+	work := buildWorkFor(repo, commit)
+	work.BuildKind = "railpack"
+	if _, err := b.Build(context.Background(), work, func(string) {}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if bk.req.Tag != "cypher/app1:rev1" {
+		t.Fatalf("tag = %q, want the ordinary managed tag", bk.req.Tag)
+	}
+	for _, label := range []string{driver.LabelManaged, driver.LabelAppID, driver.LabelRevisionID} {
+		if bk.req.Labels[label] == "" {
+			t.Fatalf("labels = %v, want %s stamped — GC discovers its set by these", bk.req.Labels, label)
+		}
+	}
+	if bk.req.Labels[driver.LabelRevisionID] != "rev1" {
+		t.Fatalf("revision label = %q, want rev1", bk.req.Labels[driver.LabelRevisionID])
+	}
+}
+
+// A frontend plan with no transport wired fails with the message that names
+// what is missing, rather than silently falling back to a path that cannot
+// build it.
+func TestAFrontendPlanWithNoTransportFails(t *testing.T) {
+	repo, commit := seedRepoWith(t, "package.json")
+	pack := &fakePack{available: true, writes: "railpack-plan.json", frontend: "f"}
+	b := builder.NewBuilderWithPacks(&fakeEngine{}, t.TempDir(), nil, map[string]builder.Pack{"railpack": pack})
+
+	work := buildWorkFor(repo, commit)
+	work.BuildKind = "railpack"
+	if _, err := b.Build(context.Background(), work, func(string) {}); err == nil {
+		t.Fatal("Build succeeded with no BuildKit transport wired")
+	}
+}
+
+func TestAFailedBuildKitBuildFailsTheBuild(t *testing.T) {
+	repo, commit := seedRepoWith(t, "package.json")
+	bk := &fakeBuildKit{err: errors.New("failed to solve: no start command")}
+	pack := &fakePack{available: true, writes: "railpack-plan.json", frontend: "f"}
+	b := builder.NewBuilderWithPacks(&fakeEngine{}, t.TempDir(), bk, map[string]builder.Pack{"railpack": pack})
+
+	work := buildWorkFor(repo, commit)
+	work.BuildKind = "railpack"
+	_, err := b.Build(context.Background(), work, func(string) {})
+	if err == nil || !strings.Contains(err.Error(), "no start command") {
+		t.Fatalf("err = %v, want the transport's own words", err)
 	}
 }

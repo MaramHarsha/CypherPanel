@@ -219,11 +219,17 @@ const (
 	BuildDockerfile = "dockerfile"
 	BuildStatic     = "static"
 	BuildAuto       = "auto"
-	// BuildNixpacks hands the checkout to a build pack, which decides the
-	// language, package manager, build command and runtime (pack-builds.md).
-	// Chosen explicitly it is an assertion: a builder without the pack fails
-	// that build rather than quietly building something else.
+	// BuildNixpacks and BuildRailpack hand the checkout to a build pack, which
+	// decides the language, package manager, build command and runtime
+	// (pack-builds.md). Chosen explicitly either is an assertion: a builder
+	// without that pack fails the build rather than quietly building something
+	// else.
+	//
+	// Railpack additionally needs BuildKit on the builder, because its output
+	// is a gateway frontend plan rather than a Dockerfile — which is why `auto`
+	// never infers it.
 	BuildNixpacks = "nixpacks"
+	BuildRailpack = "railpack"
 
 	AppRunning   = "running"
 	AppDeploying = "deploying"

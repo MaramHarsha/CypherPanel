@@ -20,7 +20,7 @@ func TestResolveBuildKindAuto(t *testing.T) {
 		dir := t.TempDir()
 		writeFile(t, dir, "Dockerfile")
 		writeFile(t, dir, "index.html") // present too; must not win
-		got, err := resolveBuildKind(kindAuto, dir, "./Dockerfile", false)
+		got, err := resolveBuildKind(kindAuto, dir, "./Dockerfile", nil)
 		if err != nil || got != kindDockerfile {
 			t.Fatalf("got %q, %v; want dockerfile", got, err)
 		}
@@ -29,7 +29,7 @@ func TestResolveBuildKindAuto(t *testing.T) {
 	t.Run("index.html and no Dockerfile is a static site", func(t *testing.T) {
 		dir := t.TempDir()
 		writeFile(t, dir, "index.html")
-		got, err := resolveBuildKind(kindAuto, dir, "./Dockerfile", false)
+		got, err := resolveBuildKind(kindAuto, dir, "./Dockerfile", nil)
 		if err != nil || got != kindStatic {
 			t.Fatalf("got %q, %v; want static", got, err)
 		}
@@ -38,7 +38,7 @@ func TestResolveBuildKindAuto(t *testing.T) {
 	t.Run("neither: say so, and say what to do", func(t *testing.T) {
 		dir := t.TempDir()
 		writeFile(t, dir, "main.go")
-		_, err := resolveBuildKind(kindAuto, dir, "./Dockerfile", false)
+		_, err := resolveBuildKind(kindAuto, dir, "./Dockerfile", nil)
 		if err == nil {
 			t.Fatal("want an error when nothing is inferable")
 		}
@@ -57,22 +57,22 @@ func TestResolveBuildKindExplicit(t *testing.T) {
 
 	// dockerfile is taken at its word even with no Dockefile present: the
 	// build then fails with docker's own error, which is the honest one.
-	if got, err := resolveBuildKind(kindDockerfile, dir, "./Dockerfile", false); err != nil || got != kindDockerfile {
+	if got, err := resolveBuildKind(kindDockerfile, dir, "./Dockerfile", nil); err != nil || got != kindDockerfile {
 		t.Errorf("explicit dockerfile: got %q, %v", got, err)
 	}
 
 	// An empty kind is what pre-existing applications send.
-	if got, err := resolveBuildKind("", dir, "./Dockerfile", false); err != nil || got != kindDockerfile {
+	if got, err := resolveBuildKind("", dir, "./Dockerfile", nil); err != nil || got != kindDockerfile {
 		t.Errorf("empty kind must stay dockerfile for compatibility: got %q, %v", got, err)
 	}
 
 	// static without an index is a misconfiguration worth naming early.
 	empty := t.TempDir()
-	if _, err := resolveBuildKind(kindStatic, empty, "./Dockerfile", false); err == nil {
+	if _, err := resolveBuildKind(kindStatic, empty, "./Dockerfile", nil); err == nil {
 		t.Error("static with no index.html should fail with a clear message")
 	}
 
-	if _, err := resolveBuildKind("nixpacks", dir, "./Dockerfile", false); err == nil {
+	if _, err := resolveBuildKind("nixpacks", dir, "./Dockerfile", nil); err == nil {
 		t.Error("an unknown kind must be rejected")
 	}
 }
@@ -154,7 +154,7 @@ func writeFiles(t *testing.T, dir string, names ...string) string {
 func TestAutoPrefersThePackForAnApplication(t *testing.T) {
 	dir := writeFiles(t, t.TempDir(), "package.json")
 
-	got, err := resolveBuildKind(kindAuto, dir, "./Dockerfile", true)
+	got, err := resolveBuildKind(kindAuto, dir, "./Dockerfile", map[string]bool{kindNixpacks: true})
 	if err != nil || got != kindNixpacks {
 		t.Fatalf("got %q, %v; want nixpacks", got, err)
 	}
@@ -166,7 +166,7 @@ func TestAutoPrefersThePackForAnApplication(t *testing.T) {
 func TestAutoPrefersThePackOverServingUnbuiltSource(t *testing.T) {
 	dir := writeFiles(t, t.TempDir(), "package.json", "index.html")
 
-	got, err := resolveBuildKind(kindAuto, dir, "./Dockerfile", true)
+	got, err := resolveBuildKind(kindAuto, dir, "./Dockerfile", map[string]bool{kindNixpacks: true})
 	if err != nil || got != kindNixpacks {
 		t.Fatalf("got %q, %v; want nixpacks for a repository that needs building", got, err)
 	}
@@ -177,7 +177,7 @@ func TestAutoPrefersThePackOverServingUnbuiltSource(t *testing.T) {
 func TestWithoutThePackAutoBehavesAsItAlwaysDid(t *testing.T) {
 	dir := writeFiles(t, t.TempDir(), "package.json", "index.html")
 
-	got, err := resolveBuildKind(kindAuto, dir, "./Dockerfile", false)
+	got, err := resolveBuildKind(kindAuto, dir, "./Dockerfile", nil)
 	if err != nil || got != kindStatic {
 		t.Fatalf("got %q, %v; want static where no pack is installed", got, err)
 	}
@@ -187,7 +187,7 @@ func TestWithoutThePackAutoBehavesAsItAlwaysDid(t *testing.T) {
 func TestADockerfileStillBeatsThePack(t *testing.T) {
 	dir := writeFiles(t, t.TempDir(), "package.json", "Dockerfile")
 
-	got, err := resolveBuildKind(kindAuto, dir, "./Dockerfile", true)
+	got, err := resolveBuildKind(kindAuto, dir, "./Dockerfile", map[string]bool{kindNixpacks: true})
 	if err != nil || got != kindDockerfile {
 		t.Fatalf("got %q, %v; want dockerfile", got, err)
 	}
@@ -197,7 +197,7 @@ func TestADockerfileStillBeatsThePack(t *testing.T) {
 func TestAPlainSiteIsStillStatic(t *testing.T) {
 	dir := writeFiles(t, t.TempDir(), "index.html", "style.css")
 
-	got, err := resolveBuildKind(kindAuto, dir, "./Dockerfile", true)
+	got, err := resolveBuildKind(kindAuto, dir, "./Dockerfile", map[string]bool{kindNixpacks: true})
 	if err != nil || got != kindStatic {
 		t.Fatalf("got %q, %v; want static", got, err)
 	}
@@ -208,7 +208,7 @@ func TestAPlainSiteIsStillStatic(t *testing.T) {
 func TestExplicitNixpacksWithoutTheBinaryFailsLoudly(t *testing.T) {
 	dir := writeFiles(t, t.TempDir(), "package.json")
 
-	_, err := resolveBuildKind(kindNixpacks, dir, "./Dockerfile", false)
+	_, err := resolveBuildKind(kindNixpacks, dir, "./Dockerfile", nil)
 	if err == nil {
 		t.Fatal("resolveBuildKind succeeded with no pack installed")
 	}
@@ -220,7 +220,7 @@ func TestExplicitNixpacksWithoutTheBinaryFailsLoudly(t *testing.T) {
 func TestExplicitNixpacksIsHonouredWhenAvailable(t *testing.T) {
 	// No manifest at all: an explicit choice does not need detection to agree,
 	// because the operator has already said how this repository builds.
-	got, err := resolveBuildKind(kindNixpacks, t.TempDir(), "./Dockerfile", true)
+	got, err := resolveBuildKind(kindNixpacks, t.TempDir(), "./Dockerfile", map[string]bool{kindNixpacks: true})
 	if err != nil || got != kindNixpacks {
 		t.Fatalf("got %q, %v; want nixpacks", got, err)
 	}
@@ -231,14 +231,61 @@ func TestExplicitNixpacksIsHonouredWhenAvailable(t *testing.T) {
 func TestEveryLanguageManifestIsRecognised(t *testing.T) {
 	for _, name := range languageManifests {
 		dir := writeFiles(t, t.TempDir(), name)
-		got, err := resolveBuildKind(kindAuto, dir, "./Dockerfile", true)
+		got, err := resolveBuildKind(kindAuto, dir, "./Dockerfile", map[string]bool{kindNixpacks: true})
 		if err != nil || got != kindNixpacks {
 			t.Errorf("%s: got %q, %v; want nixpacks", name, got, err)
 		}
 	}
 	// A .csproj is matched by glob, because its name is the project's.
 	dir := writeFiles(t, t.TempDir(), "Web.csproj")
-	if got, err := resolveBuildKind(kindAuto, dir, "./Dockerfile", true); err != nil || got != kindNixpacks {
+	if got, err := resolveBuildKind(kindAuto, dir, "./Dockerfile", map[string]bool{kindNixpacks: true}); err != nil || got != kindNixpacks {
 		t.Errorf(".csproj: got %q, %v; want nixpacks", got, err)
+	}
+}
+
+// ─── Railpack (pack-builds.md §§2-4) ────────────────────────────────────────
+
+// Both halves are required, and the refusal says so: the binary without buildx
+// is exactly as unusable as buildx without the binary.
+func TestExplicitRailpackNeedsBothHalves(t *testing.T) {
+	dir := writeFiles(t, t.TempDir(), "package.json")
+
+	_, err := resolveBuildKind(kindRailpack, dir, "./Dockerfile", map[string]bool{kindRailpack: false})
+	if err == nil {
+		t.Fatal("resolveBuildKind succeeded with Railpack unavailable")
+	}
+	if !strings.Contains(err.Error(), "buildx") || !strings.Contains(err.Error(), "railpack") {
+		t.Fatalf("err = %v, want it to name both halves", err)
+	}
+}
+
+func TestExplicitRailpackIsHonouredWhenAvailable(t *testing.T) {
+	got, err := resolveBuildKind(kindRailpack, t.TempDir(), "./Dockerfile", map[string]bool{kindRailpack: true})
+	if err != nil || got != kindRailpack {
+		t.Fatalf("got %q, %v; want railpack", got, err)
+	}
+}
+
+// `auto` never infers Railpack: choosing between two packs that claim the same
+// repositories would be arbitrary, and Nixpacks needs no BuildKit and pulls no
+// frontend image.
+func TestAutoNeverInfersRailpack(t *testing.T) {
+	dir := writeFiles(t, t.TempDir(), "package.json", "index.html")
+
+	// Only Railpack is installed — detection must still not choose it.
+	got, err := resolveBuildKind(kindAuto, dir, "./Dockerfile", map[string]bool{kindRailpack: true})
+	if err != nil || got != kindStatic {
+		t.Fatalf("got %q, %v; want static — auto must not infer railpack", got, err)
+	}
+}
+
+// With both installed, `auto` still picks Nixpacks.
+func TestAutoPrefersNixpacksWhenBothArePresent(t *testing.T) {
+	dir := writeFiles(t, t.TempDir(), "package.json")
+
+	got, err := resolveBuildKind(kindAuto, dir, "./Dockerfile",
+		map[string]bool{kindNixpacks: true, kindRailpack: true})
+	if err != nil || got != kindNixpacks {
+		t.Fatalf("got %q, %v; want nixpacks", got, err)
 	}
 }

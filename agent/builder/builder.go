@@ -40,20 +40,39 @@ type EngineClient interface {
 type Builder struct {
 	engine  EngineClient
 	workDir string
-	// pack turns a repository with no Dockerfile into one (pack-builds.md).
-	// Never nil: NewBuilder installs the real pack, and its Available() is what
-	// decides whether detection may reach for it.
-	pack Pack
+	// packs are the build packs this builder can reach, by build kind
+	// (pack-builds.md). Never nil: NewBuilder installs the real ones, and each
+	// pack's Available() is what decides whether detection may reach for it.
+	packs map[string]Pack
+	// buildKit is the second transport, for a pack whose output is a frontend
+	// plan rather than a Dockerfile (§2).
+	buildKit BuildKitBuilder
 }
 
 func NewBuilder(engine EngineClient, workDir string) *Builder {
-	return NewBuilderWithPack(engine, workDir, Nixpacks{})
+	return NewBuilderWithPacks(engine, workDir, BuildxCLI{}, map[string]Pack{
+		kindNixpacks: Nixpacks{},
+		kindRailpack: Railpack{},
+	})
 }
 
-// NewBuilderWithPack is NewBuilder with the build pack supplied, so the
-// builder's routing is testable without the binary installed.
-func NewBuilderWithPack(engine EngineClient, workDir string, pack Pack) *Builder {
-	return &Builder{engine: engine, workDir: workDir, pack: pack}
+// NewBuilderWithPacks is NewBuilder with the packs and the second transport
+// supplied, so the builder's routing is testable without either installed.
+func NewBuilderWithPacks(engine EngineClient, workDir string, bk BuildKitBuilder, packs map[string]Pack) *Builder {
+	return &Builder{engine: engine, workDir: workDir, packs: packs, buildKit: bk}
+}
+
+// packFor returns the pack for a build kind, or nil when the kind is not one.
+func (b *Builder) packFor(kind string) Pack { return b.packs[kind] }
+
+// availablePacks reports which packs this builder could actually use, which is
+// part of `auto`'s condition (pack-builds.md §4).
+func (b *Builder) availablePacks() map[string]bool {
+	out := make(map[string]bool, len(b.packs))
+	for kind, p := range b.packs {
+		out[kind] = p.Available()
+	}
+	return out
 }
 
 // sshCloneURL rewrites an https://github.com/ repository URL to its SSH form
@@ -159,20 +178,26 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 	// Decide how to build before tarring: a static site has its Dockerfile
 	// synthesized into the context, so it has to exist before the walk.
 	dockerfilePath := work.DockerfilePath
-	kind, err := resolveBuildKind(work.BuildKind, contextDir, dockerfilePath, b.pack.Available())
+	kind, err := resolveBuildKind(work.BuildKind, contextDir, dockerfilePath, b.availablePacks())
 	if err != nil {
 		onLog(err.Error())
 		return "", err
 	}
-	if kind == kindNixpacks {
-		// The pack writes a Dockerfile; from here the ordinary path takes over,
-		// so there is one place labels are stamped, one place a private base
-		// image's credential applies, and one place logs stream from.
-		generated, gerr := b.pack.Generate(ctx, contextDir, work.Image, onLog)
-		if gerr != nil {
-			return "", gerr
+	// plan is what a pack produced, when one ran. Its shape decides the
+	// transport: a Dockerfile goes through the ordinary path, a frontend plan
+	// through BuildKit (pack-builds.md §2).
+	var plan Plan
+	if pack := b.packFor(kind); pack != nil {
+		plan, err = pack.Generate(ctx, contextDir, work.Image, onLog)
+		if err != nil {
+			return "", err
 		}
-		dockerfilePath = generated
+		if plan.Dockerfile != "" {
+			// From here the ordinary path takes over, so there is one place
+			// labels are stamped, one place a private base image's credential
+			// applies, and one place logs stream from.
+			dockerfilePath = plan.Dockerfile
+		}
 	}
 	if kind == kindStatic {
 		onLog("No Dockerfile found — detected a static site; building an nginx image to serve it.")
@@ -279,7 +304,28 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 	}
 
 	defer func() { _ = tarPipeR.Close() }()
-	if err := b.engine.BuildImage(ctx, tarPipeR, work.Image, dockerfilePath, labels, buildAuth, onLog); err != nil {
+	if plan.NeedsBuildKit() {
+		// The second transport. Same tag, same labels — everything downstream
+		// (rollout, relay, rollback, garbage collection) cannot tell which
+		// transport produced an image, which is what makes having two
+		// acceptable (pack-builds.md §2).
+		//
+		// The tar pipe is not used here: buildx reads the context from disk
+		// itself. It is still closed by the deferred Close above, which stops
+		// the walking goroutine.
+		if b.buildKit == nil {
+			return "", ErrRailpackUnavailable
+		}
+		if err := b.buildKit.Build(ctx, BuildKitRequest{
+			ContextDir: contextDir,
+			PlanFile:   plan.PlanFile,
+			Frontend:   plan.Frontend,
+			Tag:        work.Image,
+			Labels:     labels,
+		}, onLog); err != nil {
+			return "", fmt.Errorf("build failed: %w", err)
+		}
+	} else if err := b.engine.BuildImage(ctx, tarPipeR, work.Image, dockerfilePath, labels, buildAuth, onLog); err != nil {
 		return "", fmt.Errorf("build failed: %w", err)
 	}
 

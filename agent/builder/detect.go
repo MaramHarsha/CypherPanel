@@ -18,9 +18,12 @@ const (
 	kindDockerfile = "dockerfile"
 	kindStatic     = "static"
 	kindAuto       = "auto"
-	// kindNixpacks hands the checkout to a build pack, which works out the
-	// language, package manager, build command and runtime (pack-builds.md).
+	// kindNixpacks and kindRailpack hand the checkout to a build pack, which
+	// works out the language, package manager, build command and runtime
+	// (pack-builds.md). They differ in what they produce — a Dockerfile and a
+	// BuildKit frontend plan — which is why the builder has two transports.
 	kindNixpacks = "nixpacks"
+	kindRailpack = "railpack"
 )
 
 // languageManifests are the files that mean "this repository is an application
@@ -57,12 +60,12 @@ var staticIndexNames = []string{"index.html", "index.htm"}
 // cannot infer, and saying so plainly beats guessing and failing later with a
 // confusing error.
 //
-// packAvailable reports whether the build pack is actually installed, and it is
-// part of the condition on purpose (pack-builds.md §4): on a builder without
-// it, detection falls through to static exactly as it did before packs existed,
-// so a node that has not opted in does not start failing builds it used to
+// packs reports which build packs are actually usable here, and it is part of
+// the condition on purpose (pack-builds.md §4): on a builder with none,
+// detection falls through to static exactly as it did before packs existed, so
+// a node that has not opted in does not start failing builds it used to
 // complete.
-func resolveBuildKind(declared, contextDir, dockerfilePath string, packAvailable bool) (string, error) {
+func resolveBuildKind(declared, contextDir, dockerfilePath string, packs map[string]bool) (string, error) {
 	switch declared {
 	case kindDockerfile, "":
 		return kindDockerfile, nil
@@ -78,17 +81,31 @@ func resolveBuildKind(declared, contextDir, dockerfilePath string, packAvailable
 		// Chosen explicitly, it is an assertion: the operator said this is how
 		// the repository builds, so a missing pack is a failure rather than a
 		// silent fall back to something else.
-		if !packAvailable {
+		if !packs[kindNixpacks] {
 			return "", fmt.Errorf(
 				"this app is set to build with Nixpacks, but the nixpacks binary is not installed on this builder — " +
 					"install it, or set the build to auto or dockerfile")
 		}
 		return kindNixpacks, nil
+	case kindRailpack:
+		// Railpack needs BOTH halves, and the message says so: its output is a
+		// BuildKit frontend plan, so the binary without buildx is as unusable
+		// as buildx without the binary.
+		if !packs[kindRailpack] {
+			return "", fmt.Errorf(
+				"this app is set to build with Railpack, but this builder is missing the railpack binary " +
+					"or docker buildx — Railpack builds need both, because its output is a BuildKit frontend plan")
+		}
+		return kindRailpack, nil
 	case kindAuto:
 		if hasDockerfile(contextDir, dockerfilePath) {
 			return kindDockerfile, nil
 		}
-		if packAvailable && hasLanguageManifest(contextDir) {
+		// Nixpacks is `auto`'s pack, and Railpack is never inferred: choosing
+		// between two packs that claim the same repositories would be
+		// arbitrary, and Nixpacks is the one that needs no BuildKit and pulls
+		// no frontend image. Railpack is a deliberate choice (§4).
+		if packs[kindNixpacks] && hasLanguageManifest(contextDir) {
 			return kindNixpacks, nil
 		}
 		if hasStaticIndex(contextDir) {

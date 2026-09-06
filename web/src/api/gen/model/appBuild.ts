@@ -15,7 +15,7 @@ export interface AppBuild {
      *
      * `auto` decides by looking at the repository: a Dockerfile if there is one, then a language manifest (`package.json`, `go.mod`, …) if the Nixpacks binary is installed on the builder, then an index.html to serve as a static site, and a clear failure naming what would fix it if none apply. Detection runs on the builder agent, where the source actually is — the control plane never fetches a repository.
      *
-     * Nixpacks is an opt-in an operator installs on a builder. Where it is absent, `auto` behaves exactly as it did before packs existed; choosing `nixpacks` explicitly on such a builder fails the build and says so.
+     * A pack is an opt-in an operator installs on a builder. Where none is present, `auto` behaves exactly as it did before packs existed. `auto` never infers `railpack`: choosing between two packs that claim the same repositories would be arbitrary, and Nixpacks is the one that needs no BuildKit and pulls no frontend image.
      */
   kind: AppBuildKind;
   /** Ignored for a `static` build. */

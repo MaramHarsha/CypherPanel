@@ -6216,7 +6216,7 @@ components:
       properties:
         kind:
           type: string
-          enum: [auto, dockerfile, static, nixpacks]
+          enum: [auto, dockerfile, static, nixpacks, railpack]
           default: auto
           description: >-
             How the checkout becomes an image. `dockerfile` builds the file at
@@ -6235,10 +6235,11 @@ components:
             source actually is — the control plane never fetches a repository.
 
 
-            Nixpacks is an opt-in an operator installs on a builder. Where it is
-            absent, `auto` behaves exactly as it did before packs existed;
-            choosing `nixpacks` explicitly on such a builder fails the build and
-            says so.
+            A pack is an opt-in an operator installs on a builder. Where none
+            is present, `auto` behaves exactly as it did before packs existed.
+            `auto` never infers `railpack`: choosing between two packs that
+            claim the same repositories would be arbitrary, and Nixpacks is the
+            one that needs no BuildKit and pulls no frontend image.
         dockerfile_path:
           type: string
           description: Ignored for a `static` build.

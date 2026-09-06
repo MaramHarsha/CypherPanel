@@ -1,4 +1,4 @@
-# Feature spec: Pack builds (Nixpacks)
+# Feature spec: Pack builds (Nixpacks and Railpack)
 
 > A build kind that hands a repository with no Dockerfile to a build pack,
 > which works out the language, the package manager, the build command and the
@@ -25,37 +25,61 @@ accreted guess §6 refused — it is the alternative to it.
 
 ## 2. What ships, and what does not
 
-| Pack | State | Why |
+Both ship, and they are **not** the same integration — the difference is what
+each produces, and it is the reason this feature adds a second way to build.
+
+| Pack | Produces | Built by |
 |---|---|---|
-| **Nixpacks** | **implemented** | It emits a Dockerfile. `nixpacks build <dir> --out <dir>` writes `.nixpacks/Dockerfile` and the files it needs, without building — so the existing tar-and-build path consumes it unchanged. |
-| **Railpack** | **not implemented; blocked on a second build transport** | It is a BuildKit *frontend*: it produces an LLB plan consumed by `ghcr.io/railwayapp/railpack`, invoked through a `# syntax=` directive. The agent builds through the daemon's **classic `/build` endpoint**, which cannot resolve a custom frontend. |
+| **Nixpacks** | a Dockerfile. `nixpacks build <dir> --out <dir>` writes `.nixpacks/Dockerfile` without building. | the existing tar-and-build path, unchanged |
+| **Railpack** | a BuildKit **gateway frontend plan**. `railpack prepare <dir> --plan-out railpack-plan.json` writes an LLB plan its own frontend interprets. | a second transport: `docker buildx build` |
 
-Railpack's blocker is architectural, not incidental, and it is worth stating
-precisely because it looks like "one more build kind" and is not. Supporting it
-means the agent gains a second way to build — either a BuildKit client session
-over `/build?version=2`, or shelling out to `docker buildx build` — alongside
-the endpoint every build uses today. That is its own decision, with its own
-consequences for what must be installed on a builder, and it should be made in
-its own spec rather than smuggled in here. **This spec deliberately leaves
-Railpack out rather than shipping an invocation nobody has verified against a
-real host.**
+Railpack's plan is not a Dockerfile and cannot be made into one. A gateway
+frontend is an image BuildKit fetches and hands the plan to, and the daemon's
+classic `/build` endpoint — which every build here uses — has no concept of one.
+So supporting Railpack means the agent gains a second way to make an image.
 
-The same second transport is what BuildKit cache mounts and multi-arch builds
-need ([feature matrix](../product/feature-matrix.md): "Multi-arch image
-builds", V1.x), so it is likely to be worth doing once, for three reasons at
-once.
+That is a real cost and it is worth naming rather than absorbing quietly: a
+Railpack build needs `docker buildx` on the builder as well as the `railpack`
+binary, and it pulls a frontend image from `ghcr.io` on first use. What makes
+two transports acceptable is that nothing downstream can tell them apart — both
+produce the same `cypher/<app>:<revision>` tag with the same management labels,
+and rollout, relay, rollback and garbage collection are identical either way.
 
-## 3. The build kind
+The invocation is Railpack's own published contract for platforms, taken from
+its frontend reference rather than inferred:
 
-`build.kind` gains a fourth value, `nixpacks`, beside `auto`, `dockerfile` and
-`static`.
+```sh
+railpack prepare <context> --plan-out <context>/railpack-plan.json
+
+docker buildx build \
+  --build-arg BUILDKIT_SYNTAX=ghcr.io/railwayapp/railpack-frontend \
+  --file railpack-plan.json --tag <image> --load --progress plain \
+  --label <management labels> .
+```
+
+`--load` is explicit: with buildx's container driver the result stays in the
+builder unless asked for, and an image that never reached the daemon would fail
+at rollout with nothing to explain it.
+
+The same transport is what BuildKit cache mounts and multi-arch builds need
+([feature matrix](../product/feature-matrix.md): "Multi-arch image builds",
+V1.x). It exists now, so those become configuration rather than architecture.
+
+## 3. The build kinds
+
+`build.kind` gains two values beside `auto`, `dockerfile` and `static`:
 
 ```
 nixpacks  Hand the checkout to Nixpacks. It writes a Dockerfile; we build it.
+railpack  Hand the checkout to Railpack. It writes a frontend plan; BuildKit builds it.
 ```
 
-Chosen explicitly, it is an assertion: fail loudly if Nixpacks cannot plan the
-repository, because the operator said this is how it builds.
+Chosen explicitly, either is an assertion: fail loudly if the pack cannot plan
+the repository, because the operator said this is how it builds.
+
+`railpack` requires **both** halves, and the refusal says so — the binary
+without `buildx` is exactly as unusable as `buildx` without the binary, and a
+message naming only one would send an operator to fix the wrong thing.
 
 ## 4. `auto`, and the one behaviour change
 
@@ -82,7 +106,15 @@ through to step 3 and every existing `auto` application resolves exactly as it
 does today. A node that has not installed the pack does not start failing
 builds it used to complete — the worst possible outcome for a detection change.
 
+**`auto` never infers `railpack`.** Both packs claim the same repositories, so
+choosing between them by detection would be arbitrary — and the tie-break that
+does exist favours Nixpacks: it needs no BuildKit and pulls no frontend image.
+Railpack is a deliberate choice an operator makes, which is also what makes its
+extra requirements fair.
+
 ## 5. How it runs
+
+**Nixpacks:**
 
 ```
 nixpacks build <context> --out <context> --name <image tag>
@@ -91,9 +123,20 @@ nixpacks build <context> --out <context> --name <image tag>
 `--out` is what makes this fit: Nixpacks writes `.nixpacks/Dockerfile` plus
 whatever it needs beside it and **does not build**. The agent then runs its
 ordinary path — tar the context, `POST /build` with `dockerfile=.nixpacks/Dockerfile`
-— so there is one build path, one place labels are stamped, one place a private
-base image's credential is applied ([registries.md](registries.md)), and one
-place build logs are streamed from.
+— so labels are stamped in one place, a private base image's credential is
+applied in one place ([registries.md](registries.md)), and build logs stream
+from one place.
+
+**Railpack** takes the second transport, shown in §2. A pack declares which
+shape it produced and the builder picks the path; nothing else in the build
+knows there is a choice.
+
+One thing the second transport does NOT carry today: the private-base-image
+credential. `X-Registry-Config` is a header on the classic endpoint, and buildx
+reads registry credentials from the Docker CLI config instead. A Railpack build
+whose base image is private therefore needs a `docker login` on the builder —
+stated here rather than discovered, and the reason `registries.md`'s per-work
+credential remains the better path for anything that can use a Dockerfile.
 
 **The application's environment variables are deliberately NOT passed to the
 pack**, and this is the one place the obvious design is wrong. Nixpacks takes
@@ -128,12 +171,16 @@ failure, the same courtesy `docker compose` gets in
 
 ## 7. Deliberately out of scope
 
-- **Railpack.** §2. It needs the second build transport.
-- **Installing Nixpacks for the operator.** The agent installer is deliberately
+- **Installing a pack for the operator.** The agent installer is deliberately
   small (`curl | sh`, Docker, the binary). A pack is an opt-in the operator adds
-  to a builder, and `auto` is written so that not adding it costs nothing.
+  to a builder, and `auto` is written so that not adding one costs nothing.
+- **Per-work registry credentials on the BuildKit transport.** §5. It needs a
+  buildx-shaped credential mechanism rather than the classic endpoint's header.
+- **Multi-arch and cache mounts.** The transport that makes them possible now
+  exists; exposing them is their own feature.
 - **Build-time variables from the panel.** §5: the mechanism Nixpacks offers
   leaks values through argv, so this needs a design of its own rather than the
   obvious one.
-- **Other packs** (Paketo, Heroku buildpacks). The same shape would fit; none
-  has the demand that moved this one.
+- **Other packs** (Paketo, Heroku buildpacks). The same shape would fit — a
+  pack declares what it produced and the builder picks a transport — but none
+  has the demand that moved these two.

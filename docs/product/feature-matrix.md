@@ -12,12 +12,12 @@
 | Deploy from container image | ✅ | ✅ | **V1** | |
 | Dockerfile builds | ✅ | ✅ | **V1** | BuildKit on builder agents |
 | Nixpacks auto-build | ✅ | ✅ | **V1** ✅ | [pack-builds.md](../features/pack-builds.md) — `--out` writes a Dockerfile the ordinary build path consumes; `auto` prefers it only where the binary is installed |
-| Railpack | ✅ | ✅ | **V1** ⛔ blocked | [pack-builds.md](../features/pack-builds.md) §2 — a BuildKit *frontend*, so it needs a second build transport (buildx or a BuildKit session) beside the classic `/build` endpoint every build uses today. Deliberately not shipped as a guessed invocation |
+| Railpack | ✅ | ✅ | **V1** ✅ | [pack-builds.md](../features/pack-builds.md) §2 — `railpack prepare` writes a BuildKit frontend plan, built through the second transport (`docker buildx`) this feature adds. Same tag and labels as every other build, so nothing downstream can tell the transports apart |
 | Heroku / Paketo buildpacks | ❌ | ✅ | **Later** | `builders/heroku.ts`, `builders/paketo.ts` |
 | Static site builds | ✅ | ✅ | **V1** | `builders/static.ts` |
 | Drag-and-drop file deploy | ❌ | ✅ | **Later** | `builders/drop.ts` — niche but loved |
 | Build on dedicated node | ⚠️ (build server) | ❌ (manager node) | **V1** | Core architectural fix; builder role |
-| Multi-arch image builds (build on amd64, run on arm64) | ⚠️ | ❌ | **V1.x** | BuildKit cross-platform; recurring Coolify pain point — and the cheapest servers (Hetzner ARM, Graviton, RPi) are arm64 |
+| Multi-arch image builds (build on amd64, run on arm64) | ⚠️ | ❌ | **V1.x** (the BuildKit transport it needs now exists — [pack-builds.md](../features/pack-builds.md) §2) | BuildKit cross-platform; recurring Coolify pain point — and the cheapest servers (Hetzner ARM, Graviton, RPi) are arm64 |
 | Verbose build logs streamed by default | ⚠️ (needs `BUILDKIT_PROGRESS=plain`) | ⚠️ | **V1** | Silent build failures are a top Reddit complaint; no hidden verbosity toggles |
 | Framework build presets (`.dockerignore`, Next.js standalone, memory caps) | ❌ | ❌ | **V1.x** | Heavy Next.js/Nuxt builds crash modest hosts today; presets + build resource caps prevent it before it happens |
 | Watch paths (monorepo triggers) | ⚠️ | ✅ | **V1.x** | `dokploy/.../utils/watch-paths` |
