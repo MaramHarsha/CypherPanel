@@ -513,6 +513,54 @@ their credential is wrong. This is deliberately stricter than §5.11's accepted
 risk for a saved notifier: that one rests on the destination being fixed at
 save time, and a registry's is not.
 
+### 5.15 Compose Stacks: a resource that can ask for root
+
+**Attack.** A **Compose Stack**
+([compose-stacks.md](../features/compose-stacks.md)) runs an operator's compose
+file as-is. A compose file can declare `privileged: true`, bind `/` into a
+container, take `pid: host` or `network_mode: host`, and add capabilities — any
+of which is root on the node. None of that is expressible as an Application, so
+this resource genuinely widens what someone inside the panel can reach: before
+it, the largest grant a project member could make was "run this image with
+these env vars".
+
+**Property that must hold.** The capability exists — that is the point of the
+resource, and the reason ~130 catalog entries need it — but it must be reachable
+only at a rank that already implies trust with the node, and every use of it
+must be attributable.
+
+**Controls.**
+- **Writing the file is team admin; deploying one is a member.** That split is
+  the whole authorization story. `POST /environments/{id}/compose-stacks`,
+  `PATCH` of the file or route, and `DELETE` are admin; deploy, rollback and the
+  env-var routes are member, because redeploying a file an admin has already
+  written and reviewed grants nothing new. `[compose-stacks.md §7]`
+- **Every mutation is audited**, and the detail records **that** the file
+  changed, never its content — a compose file often carries an inline value an
+  operator put there, and the audit log is not where it becomes permanent.
+- **The plane never sends a command.** It sends a file; the agent owns one
+  fixed invocation of its own. This is the same line §5.2 and `work.proto` draw
+  — declarative workload config is desired state and permitted, a general exec
+  verb is not — and it is what keeps a Compose Stack from becoming the
+  "run arbitrary command on the host" primitive ADR-005 exists to prevent.
+- **Secrets do not live in the stored file.** Variables are sealed rows;
+  compose interpolates them from an env file the agent writes `0600` and removes
+  on every exit path, so plaintext is on the host only for the length of one
+  converge.
+- **The stack id names a path**, so the reconciler refuses one containing a
+  separator or `..` before writing anything — the id is plane-generated, which
+  is exactly why the check is cheap.
+
+**Accepted risk — the dangerous directives are NOT blocked.** `privileged`,
+host mounts, `cap_add` and host networking are allowed. Blocking them would
+defeat the resource: the feature matrix names "a command override, a host
+mount, or privileged access" as precisely why these templates cannot be
+Applications. The mitigation is rank plus the audit trail, and it rests on §7's
+standing assumption that a team admin is trusted with the servers their team
+runs on. **If untrusted members or per-team isolation ever land, this is the
+scenario to revisit** — the control then is a policy on the environment
+declaring which directives its stacks may use, enforced at validation.
+
 ## 6. Cross-cutting controls (apply everywhere)
 
 - **Secrets never in logs, errors, or API responses** — mask by default (ENGINEERING rule 20). Every log line carries resource IDs, never secret values (rule 4).
@@ -559,6 +607,7 @@ These are the concrete, checkable requirements the Phase 1 handshake code must s
 | §5.8 Web/API | No SSR framework; auth+object-authz default; two-dimension rate limit with trusted-proxy client addressing; unforgeable trace ids; expired-session purge; owner+session-only log tail; **session-only deploy approval, rejection, break glass and deploy-protection policy writes**; **hashed single-use invitation tokens on the two public invite routes, and session-only access-request decisions**; masking | ADR-001, rules 20–21, control-plane-hardening.md §§2, 4, 5, 7, deploy-protection.md §5, invitations-and-access-requests.md §8 |
 | §5.9 Disk exhaustion/self-DoS | Desired-state GC; self-headroom guard; bounded retention; alerts | ADR-003, ADR-005, matrix V1 |
 | §5.10 Mailbox-as-identity | Two factors to move an address; old address always notified; single-use hashed token; sessionOnly + rate limited; an invitation to a known address requires that account's current password and second factor | panel-mail.md §4–5, invitations-and-access-requests.md §4, rules 20–21 |
+| §5.15 Compose Stack privilege | Admin to write the file, member to deploy it; audited by fact-of-change, never content; no command verb on the wire; sealed env in a short-lived 0600 file | compose-stacks.md §7 |
 | §5.14 Registry probe egress | Host held to one grammar and rebuilt from it; dial-time destination guard on both test paths; TLS always; team-admin rank | registries.md §3, §7, `core/egress` |
 | §5.11 Outbound webhook egress | Metadata-only payload; HMAC over raw bytes; sealed secret; no redirects; project-scoped authz; bounded retries | outbound-webhooks.md §4, §6, rule 20 |
 | §5.13 Update check (outbound HTTP) | Opt-out; no private-range redirects (post-resolution); bounded body and timeout; last-good-on-failure; once-per-version inbox item; never self-updates | control-plane-hardening.md §3, ADR-010 |

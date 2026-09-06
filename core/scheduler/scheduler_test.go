@@ -52,6 +52,11 @@ type fakeStore struct {
 	// an application with no references never touches the shared table.
 	scopeReads int
 
+	// Compose Stacks (compose-stacks.md §4).
+	composeStacks    map[string]domain.ComposeStack
+	composeRevisions map[string]domain.ComposeRevision
+	composeEnv       map[string][]domain.ComposeEnvVar
+
 	// panelTLS is the panel's ACME account (agent-identity-and-tls.md §4);
 	// nil models a panel that has never configured TLS.
 	panelTLS *domain.PanelTLS
@@ -85,22 +90,103 @@ func (f *fakeStore) latestDeployment(appID string) (domain.Deployment, bool) {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		apps:           map[string]domain.Application{},
-		revisions:      map[string]domain.Revision{},
-		deployments:    map[string]domain.Deployment{},
-		envVars:        map[string][]domain.EnvVar{},
-		deployKeys:     map[string]domain.DeployKey{},
-		dbs:            map[string]domain.Database{},
-		dbRevs:         map[string]domain.DatabaseRevision{},
-		targets:        map[string]domain.BackupTarget{},
-		schedules:      map[string]domain.DatabaseBackup{},
-		records:        map[string]domain.BackupRecord{},
-		scheduledTasks: map[string]domain.ScheduledTask{},
-		environments:   map[string]domain.Environment{"env_1": {ID: "env_1", ProjectID: "prj_1", Name: "production"}},
-		sharedVars:     map[string][]domain.SharedVariable{},
-		envResolved:    map[string]time.Time{},
-		envApplied:     map[string]time.Time{},
+		apps:             map[string]domain.Application{},
+		revisions:        map[string]domain.Revision{},
+		deployments:      map[string]domain.Deployment{},
+		envVars:          map[string][]domain.EnvVar{},
+		deployKeys:       map[string]domain.DeployKey{},
+		dbs:              map[string]domain.Database{},
+		dbRevs:           map[string]domain.DatabaseRevision{},
+		targets:          map[string]domain.BackupTarget{},
+		schedules:        map[string]domain.DatabaseBackup{},
+		records:          map[string]domain.BackupRecord{},
+		scheduledTasks:   map[string]domain.ScheduledTask{},
+		environments:     map[string]domain.Environment{"env_1": {ID: "env_1", ProjectID: "prj_1", Name: "production"}},
+		composeStacks:    map[string]domain.ComposeStack{},
+		composeRevisions: map[string]domain.ComposeRevision{},
+		composeEnv:       map[string][]domain.ComposeEnvVar{},
+		sharedVars:       map[string][]domain.SharedVariable{},
+		envResolved:      map[string]time.Time{},
+		envApplied:       map[string]time.Time{},
 	}
+}
+
+// ─── Compose Stacks (compose-stacks.md §4) ──────────────────────────────────
+
+func (f *fakeStore) GetComposeStack(_ context.Context, id string) (domain.ComposeStack, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	st, ok := f.composeStacks[id]
+	if !ok {
+		return domain.ComposeStack{}, store.ErrNotFound
+	}
+	return st, nil
+}
+
+func (f *fakeStore) ListComposeStacksByServer(_ context.Context, serverID string) ([]domain.ComposeStack, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []domain.ComposeStack
+	for _, st := range f.composeStacks {
+		if st.ServerID == serverID {
+			out = append(out, st)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) GetComposeRevision(_ context.Context, id string) (domain.ComposeRevision, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rev, ok := f.composeRevisions[id]
+	if !ok {
+		return domain.ComposeRevision{}, store.ErrNotFound
+	}
+	return rev, nil
+}
+
+func (f *fakeStore) ListComposeEnvVars(_ context.Context, stackID string) ([]domain.ComposeEnvVar, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.composeEnv[stackID], nil
+}
+
+func (f *fakeStore) SetComposeStackStatus(_ context.Context, id, status, detail string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	st, ok := f.composeStacks[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	st.Status, st.StatusDetail = status, detail
+	f.composeStacks[id] = st
+	return nil
+}
+
+func (f *fakeStore) SetComposeStackObservedStatus(_ context.Context, id, status, detail, revisionID string, at time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	st, ok := f.composeStacks[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	st.Status, st.StatusDetail = status, detail
+	st.ObservedRevisionID, st.StatusObservedAt = revisionID, &at
+	f.composeStacks[id] = st
+	return nil
+}
+
+// addComposeStack seeds a stack with one revision already deployed — the state
+// a converge or an observation acts on.
+func (f *fakeStore) addComposeStack(id, serverID, file string) domain.ComposeStack {
+	revID := "csr_" + id
+	f.composeRevisions[revID] = domain.ComposeRevision{ID: revID, StackID: id, ComposeYAML: file}
+	st := domain.ComposeStack{
+		ID: id, EnvironmentID: "env_1", Name: id, ServerID: serverID,
+		DesiredRevisionID: &revID, Status: domain.AppStopped,
+	}
+	f.composeStacks[id] = st
+	return st
 }
 
 // BumpApplicationRestartToken records a restart as desired state

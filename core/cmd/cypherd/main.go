@@ -38,6 +38,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/auth"
 	"github.com/MaramHarsha/cypherpanel/core/bus"
+	"github.com/MaramHarsha/cypherpanel/core/compose"
 	"github.com/MaramHarsha/cypherpanel/core/config"
 	"github.com/MaramHarsha/cypherpanel/core/databases"
 	"github.com/MaramHarsha/cypherpanel/core/deploykeys"
@@ -255,6 +256,9 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 	// domain ownership; with no provider configured it reports "not enforced"
 	// and every domain routes, exactly as before this feature existed.
 	dnsSvc := dns.New(st, box)
+	// Compose Stacks: the file is the desired state, and the scheduler is what
+	// publishes it (compose-stacks.md §4).
+	composeSvc := compose.NewService(st, box, sched)
 	sched.SetDomainVerifier(dnsSvc)
 	// Private-registry credentials are unsealed per work item, never cached, so
 	// rotating one takes effect on the next deploy (registries.md §5).
@@ -476,6 +480,21 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 	}
 	defer dbStatusConsume.Stop()
 
+	composeStatusConsume, err := b.ConsumeComposeStatus(ctx, func(serverID string, data []byte) {
+		var st agentv1.ComposeStatus
+		if err := proto.Unmarshal(data, &st); err != nil {
+			log.Error("unmarshaling compose status", "server_id", serverID, "error", err)
+			return
+		}
+		c, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		sched.HandleComposeStatus(c, serverID, &st)
+	})
+	if err != nil {
+		return err
+	}
+	defer composeStatusConsume.Stop()
+
 	dbBackupConsume, err := b.ConsumeDbBackupEvents(ctx, func(serverID string, data []byte) {
 		var ev agentv1.DbBackupEvent
 		if err := proto.Unmarshal(data, &ev); err != nil {
@@ -554,6 +573,7 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		Applications:     appSvc,
 		DeployKeys:       deployKeySvc,
 		Registries:       registrySvc,
+		Compose:          composeSvc,
 		Databases:        dbSvc,
 		BackupTargets:    backupTargetSvc,
 		BackupSchedules:  backupScheduleSvc,

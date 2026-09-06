@@ -139,6 +139,16 @@ func (a *API) projectIDForApplication(ctx context.Context, appID string) (string
 	return a.projectIDForEnvironment(ctx, app.EnvironmentID)
 }
 
+// projectIDForComposeStack resolves a stack's project through its environment,
+// so a Compose Stack is authorized exactly as every other Resource is.
+func (a *API) projectIDForComposeStack(ctx context.Context, stackID string) (string, error) {
+	stack, err := a.deps.Compose.Get(ctx, stackID)
+	if err != nil {
+		return "", err
+	}
+	return a.projectIDForEnvironment(ctx, stack.EnvironmentID)
+}
+
 func (a *API) projectIDForDeployment(ctx context.Context, depID string) (string, error) {
 	dep, err := a.deps.Deployments.GetDeployment(ctx, depID)
 	if err != nil {

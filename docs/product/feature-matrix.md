@@ -42,7 +42,7 @@
 | Valkey (BSD-licensed Redis fork) | ❌ | ❌ | **V1** | Neither reference has it (verified against their engine lists). Protocol-compatible with Redis 7.2: same desired-state spec, different image — near-zero marginal cost. Recommended default for license-sensitive users; don't oversell "drop-in" (divergence since the fork). |
 | ClickHouse, KeyDB, Dragonfly | ✅ | ❌ | **V1.x** | Coolify `StandaloneClickhouse` etc. |
 | libSQL | ❌ | ✅ | **Later** | `schema/libsql.ts` |
-| Compose Stack resources | ✅ ("Services") | ✅ ("Compose") | **V1** | Terminology per [glossary.md](../glossary.md) |
+| Compose Stack resources | ✅ ("Services") | ✅ ("Compose") | **V1** ✅ | [compose-stacks.md](../features/compose-stacks.md) — the file is desired state; `up -d` is the convergence, never a command the plane sends |
 | One-click template catalog | ✅ (361 templates) | ✅ (remote registry) | **V1** (subset) → full in Phase 4 | `coolify/templates/compose/`; ADR-007 pending |
 | Volumes / mounts | ✅ | ✅ | **V1** | `dokploy/.../schema/mount.ts` |
 | Per-resource CPU/memory limits | ✅ | ✅ | **V1** | Noisy-neighbor control on shared servers |

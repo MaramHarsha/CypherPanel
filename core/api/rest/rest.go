@@ -315,7 +315,11 @@ type Deps struct {
 	// (registries.md); nil answers 501 on every registry route, which is what
 	// a panel that has not wired them looked like before they existed.
 	Registries RegistryService
-	Inbox      InboxService
+	// Compose is the Compose Stack surface (compose-stacks.md); nil answers 501
+	// on every stack route, which is what a panel that has not wired them
+	// looked like before they existed.
+	Compose ComposeService
+	Inbox   InboxService
 	// Audit records every sensitive action and serves the log back
 	// (audit-log.md). nil records nothing and serves an empty log.
 	Audit           AuditRecorder
@@ -715,6 +719,24 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/registries/{id}/test", a.authed(a.handleTestRegistry))
 	mux.HandleFunc("GET /api/v1/registries/{id}/used-by", a.authed(a.handleRegistryUsedBy))
 
+	// V1: Compose Stacks (compose-stacks.md §7). Writing the FILE is team
+	// admin; deploying one is a member — a compose file can ask for privileged
+	// containers and host mounts, which an Application cannot express, so it
+	// must not be reachable at the rank that deploys an application.
+	mux.HandleFunc("GET /api/v1/environments/{id}/compose-stacks", a.authed(a.handleListComposeStacks))
+	mux.HandleFunc("POST /api/v1/environments/{id}/compose-stacks", a.authed(a.handleCreateComposeStack))
+	mux.HandleFunc("GET /api/v1/compose-stacks/{id}", a.authed(a.handleGetComposeStack))
+	mux.HandleFunc("PATCH /api/v1/compose-stacks/{id}", a.authed(a.handlePatchComposeStack))
+	mux.HandleFunc("DELETE /api/v1/compose-stacks/{id}", a.authed(a.handleDeleteComposeStack))
+	mux.HandleFunc("GET /api/v1/compose-stacks/{id}/file", a.authed(a.handleGetComposeFile))
+	mux.HandleFunc("POST /api/v1/compose-stacks/{id}/deploy", a.authed(a.handleDeployComposeStack))
+	mux.HandleFunc("POST /api/v1/compose-stacks/{id}/rollback", a.authed(a.handleRollbackComposeStack))
+	mux.HandleFunc("GET /api/v1/compose-stacks/{id}/revisions", a.authed(a.handleListComposeRevisions))
+	mux.HandleFunc("GET /api/v1/compose-stacks/{id}/logs", a.authed(a.handleComposeStackLogs))
+	mux.HandleFunc("GET /api/v1/compose-stacks/{id}/env", a.authed(a.handleListComposeEnvVars))
+	mux.HandleFunc("PUT /api/v1/compose-stacks/{id}/env/{key}", a.authed(a.handleSetComposeEnvVar))
+	mux.HandleFunc("DELETE /api/v1/compose-stacks/{id}/env/{key}", a.authed(a.handleDeleteComposeEnvVar))
+
 	mux.HandleFunc("POST /api/v1/users", a.authed(a.handleCreateUser))
 	mux.HandleFunc("GET /api/v1/users", a.authed(a.handleListUsers))
 	mux.HandleFunc("PATCH /api/v1/users/{id}", a.authed(a.handleSetUserRole))
@@ -811,10 +833,12 @@ func (a *API) sessionOnly(next http.HandlerFunc) http.HandlerFunc {
 // whole patterns also means a new deploy-shaped route must be added here
 // deliberately, never inherit an ability by accident.
 var deployRoutes = map[string]bool{
-	"POST /api/v1/applications/{id}/deploy":  true,
-	"POST /api/v1/deployments/{id}/rollback": true,
-	"POST /api/v1/deployments/{id}/cancel":   true,
-	"POST /api/v1/applications/{id}/restart": true,
+	"POST /api/v1/applications/{id}/deploy":     true,
+	"POST /api/v1/deployments/{id}/rollback":    true,
+	"POST /api/v1/deployments/{id}/cancel":      true,
+	"POST /api/v1/applications/{id}/restart":    true,
+	"POST /api/v1/compose-stacks/{id}/deploy":   true,
+	"POST /api/v1/compose-stacks/{id}/rollback": true,
 }
 
 // envRoutes, serverRoutes and adminRoutes carve narrower grants out of `write`,
@@ -827,8 +851,10 @@ var deployRoutes = map[string]bool{
 // vars, a provisioning script that enrols servers — instead of for every
 // mutation the API has.
 var envRoutes = map[string]bool{
-	"PUT /api/v1/applications/{id}/env/{key}":    true,
-	"DELETE /api/v1/applications/{id}/env/{key}": true,
+	"PUT /api/v1/applications/{id}/env/{key}":      true,
+	"DELETE /api/v1/applications/{id}/env/{key}":   true,
+	"PUT /api/v1/compose-stacks/{id}/env/{key}":    true,
+	"DELETE /api/v1/compose-stacks/{id}/env/{key}": true,
 }
 
 var serverRoutes = map[string]bool{
@@ -859,6 +885,11 @@ var adminRoutes = map[string]bool{
 	"PUT /api/v1/panel/dns":                   true,
 	"DELETE /api/v1/panel/dns":                true,
 	"PUT /api/v1/panel/tls":                   true,
+	// A compose file can ask for privileged containers and host mounts, which
+	// is root on the node — writing one is administration (compose-stacks.md §7).
+	"POST /api/v1/environments/{id}/compose-stacks": true,
+	"PATCH /api/v1/compose-stacks/{id}":             true,
+	"DELETE /api/v1/compose-stacks/{id}":            true,
 	// A registry credential can pull and push images for every project the
 	// team runs; minting one is administration, not deployment.
 	"POST /api/v1/registries":           true,

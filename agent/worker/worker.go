@@ -107,6 +107,7 @@ type Worker struct {
 	serverID      string
 	driver        driver.Reconciler
 	dbReconciler  driver.DbReconciler
+	composeRec    driver.ComposeReconciler
 	backup        BackupRunner
 	builder       *builder.Builder
 	relay         ImageRelay
@@ -115,9 +116,10 @@ type Worker struct {
 	cron          CronRunner
 	proxyTLS      ProxyTLS
 
-	mu      sync.Mutex
-	state   map[string]*agentv1.AppSpec // map[app_id]spec
-	dbState map[string]*agentv1.DbSpec  // map[db_id]spec
+	mu           sync.Mutex
+	state        map[string]*agentv1.AppSpec     // map[app_id]spec
+	dbState      map[string]*agentv1.DbSpec      // map[db_id]spec
+	composeState map[string]*agentv1.ComposeSpec // map[stack_id]spec
 }
 
 // CronRunner arms scheduled tasks from desired state and fires them on schedule
@@ -156,8 +158,15 @@ func New(bus Bus, serverID string, drv driver.Reconciler, dbRec driver.DbReconci
 		driftInterval: defaultDriftInterval,
 		state:         make(map[string]*agentv1.AppSpec),
 		dbState:       make(map[string]*agentv1.DbSpec),
+		composeState:  make(map[string]*agentv1.ComposeSpec),
 	}
 }
+
+// SetComposeReconciler attaches the Compose Stack reconciler. Kept out of New
+// for the reason cron is: it is an opt-in add-on wired only on app-role agents,
+// and a node without it behaves exactly as it did before the feature existed
+// (compose-stacks.md §4).
+func (w *Worker) SetComposeReconciler(c driver.ComposeReconciler) { w.composeRec = c }
 
 // SetCron attaches the scheduled-task runner. Kept out of New so cron stays an
 // opt-in add-on wired only on app-role agents (scheduled-tasks.md §5).
@@ -265,8 +274,12 @@ func (w *Worker) syncState(ctx context.Context) error {
 	for _, spec := range ds.DbSpecs {
 		dbState[spec.DbId] = spec
 	}
+	composeState := make(map[string]*agentv1.ComposeSpec, len(ds.ComposeSpecs))
+	for _, spec := range ds.ComposeSpecs {
+		composeState[spec.StackId] = spec
+	}
 	w.mu.Lock()
-	w.state, w.dbState = state, dbState
+	w.state, w.dbState, w.composeState = state, dbState, composeState
 	w.mu.Unlock()
 
 	// Node-wide TLS settings ride along with the desired set: one panel, one
@@ -280,6 +293,7 @@ func (w *Worker) syncState(ctx context.Context) error {
 	w.log.Info("worker: desired-state sync complete",
 		"apps", len(ds.Specs),
 		"databases", len(ds.DbSpecs),
+		"compose_stacks", len(ds.ComposeSpecs),
 		"tls_configured", ds.GetTls().GetAcmeEmail() != "",
 	)
 	return nil
@@ -314,6 +328,57 @@ func (w *Worker) handleMsg(ctx context.Context, msg Message) {
 		w.mu.Lock()
 		w.state[appID] = work.Spec
 		w.mu.Unlock()
+
+	case strings.HasSuffix(subject, ".compose.converge"):
+		// A stack's desired state, re-declared so a deploy lands promptly.
+		// Carries no command verb: the reconciler owns its own invocation and
+		// this only says which file to converge toward (compose-stacks.md §4).
+		var work agentv1.ComposeConvergeWork
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil || work.Spec == nil {
+			w.log.Error("worker: unmarshaling compose converge work", "error", err)
+			_ = msg.Term()
+			return
+		}
+		if w.composeRec == nil {
+			w.log.Error("worker: received compose work but no compose reconciler is wired")
+			_ = msg.Term()
+			return
+		}
+		w.mu.Lock()
+		if w.composeState == nil {
+			w.composeState = map[string]*agentv1.ComposeSpec{}
+		}
+		w.composeState[work.Spec.StackId] = work.Spec
+		w.mu.Unlock()
+		if err := w.reconcileCompose(ctx); err != nil {
+			w.log.Error("worker: compose converge reconcile", "stack_id", work.Spec.StackId, "error", err)
+			_ = msg.NakWithDelay(5 * time.Second)
+			return
+		}
+		_ = msg.Ack()
+		return
+
+	case strings.HasSuffix(subject, ".compose.remove"):
+		var work agentv1.ComposeRemoveWork
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
+			w.log.Error("worker: unmarshaling compose remove work", "error", err)
+			_ = msg.Term()
+			return
+		}
+		if w.composeRec == nil {
+			_ = msg.Term()
+			return
+		}
+		w.mu.Lock()
+		delete(w.composeState, work.StackId)
+		w.mu.Unlock()
+		if err := w.composeRec.Remove(ctx, work.StackId, work.DeleteVolumes); err != nil {
+			w.log.Error("worker: compose remove", "stack_id", work.StackId, "error", err)
+			_ = msg.NakWithDelay(5 * time.Second)
+			return
+		}
+		_ = msg.Ack()
+		return
 
 	case strings.HasSuffix(subject, ".converge"):
 		// Re-declared desired state without a deployment (ConvergeWork): update
@@ -682,6 +747,12 @@ func (w *Worker) reconcile(ctx context.Context, triggerDeploymentID, triggerAppI
 		w.log.Error("worker: database reconcile failed", "error", err)
 	}
 
+	// V1: Compose Stacks (compose-stacks.md §4). Also independent of the app
+	// driver, and a no-op when this node runs no stacks.
+	if err := w.reconcileCompose(ctx); err != nil {
+		w.log.Error("worker: compose reconcile failed", "error", err)
+	}
+
 	// Publish the terminal outcome for the triggering app work item, if any. A
 	// failed rollout or teardown surfaces as the triggered app's 'error'
 	// AppStatus; anything else is success.
@@ -730,6 +801,36 @@ func (w *Worker) reconcileDatabases(ctx context.Context) error {
 		}
 		if err := w.bus.Publish(subjects.DbState(w.serverID, status.DbId), data); err != nil {
 			w.log.Error("worker: publishing db status", "db_id", status.DbId, "error", err)
+		}
+	}
+	return nil
+}
+
+// reconcileCompose converges the local Compose Stack set toward
+// w.composeState and reports what it observed (compose-stacks.md §4).
+func (w *Worker) reconcileCompose(ctx context.Context) error {
+	if w.composeRec == nil {
+		return nil
+	}
+	w.mu.Lock()
+	desired := make([]*agentv1.ComposeSpec, 0, len(w.composeState))
+	for _, spec := range w.composeState {
+		desired = append(desired, spec)
+	}
+	w.mu.Unlock()
+
+	statuses, err := w.composeRec.Reconcile(ctx, desired)
+	if err != nil {
+		return err
+	}
+	for _, status := range statuses {
+		data, merr := proto.Marshal(status)
+		if merr != nil {
+			w.log.Error("worker: marshaling compose status", "error", merr)
+			continue
+		}
+		if perr := w.bus.Publish(subjects.ComposeState(w.serverID, status.StackId), data); perr != nil {
+			w.log.Error("worker: publishing compose status", "stack_id", status.StackId, "error", perr)
 		}
 	}
 	return nil

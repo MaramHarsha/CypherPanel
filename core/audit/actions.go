@@ -102,6 +102,15 @@ const (
 	ActionEnvVarSet            = "application.env_var_set"
 	ActionEnvVarRemoved        = "application.env_var_removed"
 
+	// Compose Stacks (compose-stacks.md §7). The detail records THAT the file
+	// changed, never its content: a compose file can carry an inline secret an
+	// operator put there, and the audit log is not where it becomes permanent.
+	ActionComposeStackCreated    = "compose_stack.created"
+	ActionComposeStackUpdated    = "compose_stack.updated"
+	ActionComposeStackDeleted    = "compose_stack.deleted"
+	ActionComposeStackDeployed   = "compose_stack.deployed"
+	ActionComposeStackRolledBack = "compose_stack.rolled_back"
+
 	// Managed databases.
 	ActionDatabaseCreated       = "database.created"
 	ActionDatabaseUpdated       = "database.updated"
@@ -188,6 +197,7 @@ const (
 	ResourceNotifier        = "notifier"
 	ResourceWebhookEndpoint = "webhook_endpoint"
 	ResourceRegistry        = "registry"
+	ResourceComposeStack    = "compose_stack"
 	ResourcePanel           = "panel"
 )
 
@@ -250,6 +260,10 @@ var actions = map[string]bool{
 
 	ActionRegistryCreated: true, ActionRegistryUpdated: true,
 	ActionRegistryDeleted: true,
+
+	ActionComposeStackCreated: true, ActionComposeStackUpdated: true,
+	ActionComposeStackDeleted: true, ActionComposeStackDeployed: true,
+	ActionComposeStackRolledBack: true,
 
 	ActionPanelSetupCompleted: true, ActionPanelMailUpdated: true,
 	ActionPanelMailDeleted: true, ActionPanelDNSUpdated: true,

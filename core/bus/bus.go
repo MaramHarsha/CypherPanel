@@ -68,16 +68,17 @@ import (
 )
 
 const (
-	streamState        = "STATE"
-	streamWork         = "WORK"
-	streamLogs         = "LOGS"
-	streamRuntimeLogs  = "RUNTIME_LOGS"
-	planeUser          = "cypherd-control-plane"
-	heartbeatDurable   = "plane-heartbeats"
-	deployEventDurable = "plane-deploy-events"
-	appStatusDurable   = "plane-app-status"
-	dbStatusDurable    = "plane-db-status"
-	readyTimeout       = 10 * time.Second
+	streamState          = "STATE"
+	streamWork           = "WORK"
+	streamLogs           = "LOGS"
+	streamRuntimeLogs    = "RUNTIME_LOGS"
+	planeUser            = "cypherd-control-plane"
+	heartbeatDurable     = "plane-heartbeats"
+	deployEventDurable   = "plane-deploy-events"
+	appStatusDurable     = "plane-app-status"
+	dbStatusDurable      = "plane-db-status"
+	composeStatusDurable = "plane-compose-status"
+	readyTimeout         = 10 * time.Second
 )
 
 // AgentAuthorizer answers whether a certificate identity is still an enrolled
@@ -248,7 +249,7 @@ func Start(ctx context.Context, opts Options) (*Bus, error) {
 	// step with the state.* subjects in pkg/subjects.
 	if _, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
 		Name:      streamState,
-		Subjects:  []string{subjects.HeartbeatAll, subjects.DeployStateAll, subjects.AppStateAll, subjects.DbStateAll, subjects.DbBackupStateAll, subjects.DbRestoreStateAll, subjects.DbBackupPruneStateAll, subjects.TaskStateAll},
+		Subjects:  []string{subjects.HeartbeatAll, subjects.DeployStateAll, subjects.AppStateAll, subjects.DbStateAll, subjects.ComposeStateAll, subjects.DbBackupStateAll, subjects.DbRestoreStateAll, subjects.DbBackupPruneStateAll, subjects.TaskStateAll},
 		Storage:   jetstream.MemoryStorage,
 		Retention: jetstream.LimitsPolicy,
 		Discard:   jetstream.DiscardOld,
@@ -445,6 +446,12 @@ func (b *Bus) ConsumeAppStatus(ctx context.Context, handle func(serverID string,
 // from the subject) to handle.
 func (b *Bus) ConsumeDbStatus(ctx context.Context, handle func(serverID string, data []byte)) (jetstream.ConsumeContext, error) {
 	return b.consumeState(ctx, dbStatusDurable, subjects.DbStateAll, handle)
+}
+
+// ConsumeComposeStatus delivers each ComposeStatus payload (with its server id
+// parsed from the subject) to handle.
+func (b *Bus) ConsumeComposeStatus(ctx context.Context, handle func(serverID string, data []byte)) (jetstream.ConsumeContext, error) {
+	return b.consumeState(ctx, composeStatusDurable, subjects.ComposeStateAll, handle)
 }
 
 // ConsumeDbBackupEvents delivers each DbBackupEvent payload to handle.

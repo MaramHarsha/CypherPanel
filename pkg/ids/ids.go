@@ -90,6 +90,11 @@ const (
 	// support conversation must keep naming the same event forever.
 	PrefixAuditEvent = "aud"
 
+	// V1: a Compose Stack and one immutable version of its file
+	// (docs/features/compose-stacks.md §2).
+	PrefixComposeStack    = "cs"
+	PrefixComposeRevision = "csr"
+
 	// V1.x: an optional container registry credential, never a requirement
 	// (docs/features/registries.md; ADR-008 path 3).
 	PrefixRegistry = "reg"

@@ -81,6 +81,13 @@ type Store interface {
 	GetApplication(ctx context.Context, id string) (domain.Application, error)
 	ListApplicationsByServer(ctx context.Context, serverID string) ([]domain.Application, error)
 	SetApplicationDesiredRevision(ctx context.Context, appID, revisionID string) (domain.Application, error)
+	// Compose Stacks (compose-stacks.md §4).
+	GetComposeStack(ctx context.Context, id string) (domain.ComposeStack, error)
+	ListComposeStacksByServer(ctx context.Context, serverID string) ([]domain.ComposeStack, error)
+	GetComposeRevision(ctx context.Context, id string) (domain.ComposeRevision, error)
+	ListComposeEnvVars(ctx context.Context, stackID string) ([]domain.ComposeEnvVar, error)
+	SetComposeStackStatus(ctx context.Context, id, status, detail string) error
+	SetComposeStackObservedStatus(ctx context.Context, id, status, detail, revisionID string, at time.Time) error
 	// BumpApplicationRestartToken records a restart as desired state
 	// (deployment-control.md §3). Separate from the config update so a restart
 	// cannot carry an unrelated edit along with it.
@@ -1734,6 +1741,13 @@ func (s *Scheduler) DesiredStateFor(ctx context.Context, serverID string) ([]byt
 		}
 		ds.DbSpecs = append(ds.DbSpecs, spec)
 	}
+
+	// V1: Compose Stacks (compose-stacks.md §4).
+	composeSpecs, err := s.composeSpecsFor(ctx, serverID)
+	if err != nil {
+		return nil, err
+	}
+	ds.ComposeSpecs = composeSpecs
 
 	// Node-wide TLS settings. A read failure is logged and the field is left
 	// empty rather than failing the whole sync: an agent with no desired state

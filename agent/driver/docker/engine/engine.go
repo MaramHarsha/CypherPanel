@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -360,6 +361,40 @@ func (c *Client) ContainerIP(ctx context.Context, id, network string) (string, e
 		return "", fmt.Errorf("engine: container %s has no address on network %s", id, network)
 	}
 	return n.IPAddress, nil
+}
+
+// ContainerNetwork reports a network the container is attached to, and its
+// address there — what a Compose Stack's route needs (compose-stacks.md §5).
+//
+// A compose file names its own networks, so unlike an Application there is no
+// network the plane can predict. Picking the alphabetically first is arbitrary
+// but DETERMINISTIC, which is what matters: the same container resolves to the
+// same upstream on every reconcile, so a converged stack does not re-write its
+// route fragment on every pass. `host` is skipped — a container on host
+// networking has no address of its own to route to.
+func (c *Client) ContainerNetwork(ctx context.Context, id string) (network, ip string, err error) {
+	var info struct {
+		NetworkSettings struct {
+			Networks map[string]struct {
+				IPAddress string `json:"IPAddress"`
+			} `json:"Networks"`
+		} `json:"NetworkSettings"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/containers/"+id+"/json", nil, nil, &info); err != nil {
+		return "", "", err
+	}
+	names := make([]string, 0, len(info.NetworkSettings.Networks))
+	for n := range info.NetworkSettings.Networks {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		if n == "host" || info.NetworkSettings.Networks[n].IPAddress == "" {
+			continue
+		}
+		return n, info.NetworkSettings.Networks[n].IPAddress, nil
+	}
+	return "", "", fmt.Errorf("engine: container %s has no routable network address", id)
 }
 
 type imageSummary struct {

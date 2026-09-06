@@ -145,6 +145,38 @@ type BreakGlassGrant struct {
 	ExpiresAt     pgtype.Timestamptz
 }
 
+type ComposeEnvVar struct {
+	StackID    string
+	Key        string
+	ValueCt    []byte
+	ValueNonce []byte
+}
+
+type ComposeRevision struct {
+	ID          string
+	StackID     string
+	ComposeYaml string
+	CreatedAt   pgtype.Timestamptz
+}
+
+type ComposeStack struct {
+	ID                 string
+	EnvironmentID      string
+	Name               string
+	RuntimeServerID    string
+	DesiredRevisionID  pgtype.Text
+	RouteDomain        string
+	RouteService       string
+	RoutePort          int32
+	RouteHttps         bool
+	Status             string
+	StatusDetail       string
+	ObservedRevisionID string
+	StatusObservedAt   pgtype.Timestamptz
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
 type Database struct {
 	ID                 string
 	EnvironmentID      string

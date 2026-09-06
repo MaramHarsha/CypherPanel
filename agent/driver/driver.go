@@ -142,3 +142,12 @@ type DbReconciler interface {
 	ReconcileDatabases(ctx context.Context, desired []*agentv1.DbSpec) ([]*agentv1.DbStatus, error)
 	RemoveDatabase(ctx context.Context, dbID string, deleteVolume bool) error
 }
+
+// ComposeReconciler converges this host's Compose Stacks (consumer-defined;
+// *compose.Reconciler satisfies it — compose-stacks.md §4). Optional: nil on a
+// builder-role agent and wherever the feature is unwired, which makes a node
+// behave exactly as it did before Compose Stacks existed.
+type ComposeReconciler interface {
+	Reconcile(ctx context.Context, desired []*agentv1.ComposeSpec) ([]*agentv1.ComposeStatus, error)
+	Remove(ctx context.Context, stackID string, deleteVolumes bool) error
+}

@@ -19,6 +19,7 @@ import (
 	"github.com/nats-io/nats.go"
 
 	"github.com/MaramHarsha/cypherpanel/agent/builder"
+	"github.com/MaramHarsha/cypherpanel/agent/compose"
 	"github.com/MaramHarsha/cypherpanel/agent/conn"
 	"github.com/MaramHarsha/cypherpanel/agent/cron"
 	"github.com/MaramHarsha/cypherpanel/agent/driver"
@@ -205,6 +206,7 @@ func runAgent(args []string, log *slog.Logger) error {
 		var drv driver.Reconciler
 		var dockerDrv *docker.Driver // concrete handle for the cron executor
 		var proxyTLS worker.ProxyTLS // the Proxy's ACME sink, on app-role nodes
+		var composeRec driver.ComposeReconciler
 		if *role != "builder" {
 			// The Proxy owns this host directory (routing-and-tls.md §5):
 			// fragments in <Dir>/apps, static config + acme.json alongside.
@@ -232,6 +234,12 @@ func runAgent(args []string, log *slog.Logger) error {
 			dockerDrv = docker.New(eng, prx, prb, log)
 			dockerDrv.OnProxyHealth(health.Set)
 			drv = dockerDrv
+			// Compose Stacks converge over the same Proxy and engine client:
+			// a stack's route is the same fragment an Application gets,
+			// because the Proxy runs the file provider only (ADR-004,
+			// compose-stacks.md §5).
+			composeRec = compose.New(compose.CLI{}, eng, prx,
+				filepath.Join(*stateDir, "compose"), log)
 		}
 
 		// Managed databases run on the same nodes as apps (worker/all roles),
@@ -265,6 +273,9 @@ func runAgent(args []string, log *slog.Logger) error {
 			// Scheduled tasks run only on app-role nodes (they need a container
 			// to exec into) — scheduled-tasks.md §5, ADR-011.
 			w.SetCron(cron.New(dockerDrv, wbus, id.ServerID, log))
+		}
+		if composeRec != nil {
+			w.SetComposeReconciler(composeRec)
 		}
 		errCh := make(chan error, 1)
 		go func() {

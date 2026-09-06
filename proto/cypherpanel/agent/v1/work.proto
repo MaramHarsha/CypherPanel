@@ -258,6 +258,10 @@ message DesiredState {
   // Databases whose db_id is absent from db_specs are removed (same
   // absence-means-remove contract as apps).
   repeated DbSpec db_specs = 2;
+  // V1: Compose Stack desired state (compose-stacks.md §4). Stacks whose
+  // stack_id is absent from compose_specs are brought down — the same
+  // absence-means-remove contract apps and databases follow.
+  repeated ComposeSpec compose_specs = 4;
   // Node-wide TLS settings for the managed Proxy (agent-identity-and-tls.md
   // §4). Desired state, not configuration: the panel owns the ACME account and
   // every node it schedules onto gets the same one, so a fresh install gets
@@ -405,6 +409,82 @@ message DbStatus {
   // One of: running, provisioning, stopped, error.
   string state = 3;
   // Human-readable detail for error state (never contains secrets).
+  string detail = 4;
+  google.protobuf.Timestamp observed_at = 5;
+}
+
+// ComposeSpec is a Compose Stack's desired state as one server's reconciler
+// sees it (compose-stacks.md).
+//
+// The FILE is the desired state, not a command: the agent has one fixed
+// invocation of its own (`docker compose up -d --remove-orphans --wait`) and
+// this message only says what it should be converging toward. That is the same
+// line work.proto draws everywhere — declarative workload config is desired
+// state and permitted; a command verb is not.
+message ComposeSpec {
+  string stack_id = 1;
+  string environment_id = 2;
+  // revision_id names the immutable version of the file this spec carries;
+  // rollback is a spec whose revision_id points at an older one (ADR-005).
+  string revision_id = 3;
+  // The compose file, verbatim, exactly as the operator wrote it.
+  string compose_yaml = 4;
+  // Decrypted env for compose's ${VAR} interpolation. The agent writes it to an
+  // env file mode 0600 and removes it on every exit path, so a secret never has
+  // to live in the file itself. Sealed at rest on the plane; never logged
+  // (rule 20); transported only over mTLS (rule 23).
+  map<string, string> env = 5;
+  // Deterministic environment network the stack joins, so its services can
+  // reach the environment's applications and databases by name.
+  string network = 6;
+  // Which service the managed Proxy publishes, and where. A compose file's own
+  // Traefik labels cannot work: the Proxy runs the file provider only and no
+  // docker provider (ADR-004), so the route is declared here and the agent
+  // points the same fragment an Application gets at the named service.
+  ComposeRoute route = 7;
+}
+
+// ComposeRoute names the service a domain reaches. An empty domain means the
+// stack publishes nothing through the Proxy.
+message ComposeRoute {
+  string domain = 1;
+  bool https = 2;
+  string path_prefix = 3;
+  // The compose service that answers, and the port it listens on inside the
+  // container.
+  string service = 4;
+  uint32 port = 5;
+}
+
+// ComposeRemoveWork commands absence of a whole stack.
+message ComposeRemoveWork {
+  string idempotency_key = 1;
+  string stack_id = 2;
+  // Explicit opt-in for data destruction. False preserves the stack's volumes,
+  // the conservative default a database removal already uses: orphaned volumes
+  // are better than data nobody meant to lose.
+  bool delete_volumes = 3;
+}
+
+// ComposeConvergeWork re-declares one stack's desired state so a deploy takes
+// effect promptly rather than at the next sync. Carries no command verb; the
+// spec is state.
+message ComposeConvergeWork {
+  ComposeSpec spec = 1;
+}
+
+// ComposeStatus is one stack's observed state, reported on
+// state.<server_id>.compose.<stack_id>. The plane records what the agent
+// reports and never asserts success from a work item (ADR-005).
+message ComposeStatus {
+  string stack_id = 1;
+  string revision_id = 2;
+  // One of: running, degraded, stopped, error — the same vocabulary an
+  // Application uses (ui-principles §5). `degraded` is some but not all of the
+  // services compose was asked for.
+  string state = 3;
+  // Compose's own last words on failure. Never contains secrets: the env file
+  // is not echoed, and compose reports service names, not values.
   string detail = 4;
   google.protobuf.Timestamp observed_at = 5;
 }

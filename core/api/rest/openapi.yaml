@@ -36,6 +36,7 @@ tags:
   - name: deployments
   - name: deploy-keys
   - name: registries
+  - name: compose-stacks
   - name: databases
   - name: backups
   - name: previews
@@ -1751,6 +1752,545 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           description: No such deployment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/environments/{id}/compose-stacks:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Environment ID.
+    get:
+      operationId: listComposeStacks
+      tags: [compose-stacks]
+      summary: List the environment's Compose Stacks
+      responses:
+        "200":
+          description: The stacks in this environment.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ComposeStack"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such environment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Compose stacks are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: createComposeStack
+      tags: [compose-stacks]
+      summary: Create a Compose Stack from a compose file
+      description: >-
+        **Team admin**, not member. A compose file can ask for
+        `privileged: true`, host mounts and host networking — capabilities an
+        Application cannot express and which amount to root on the node — so
+        writing one is administration. Deploying an existing stack is a member
+        action, because redeploying a file an admin already reviewed grants
+        nothing new.
+
+
+        Nothing is deployed here: a stack is born `stopped`, exactly as an
+        application is, and the file becomes its first revision. Two directives
+        are refused — `build:` (there is no builder on a target host) and
+        `container_name:` (it collides across environments on one server).
+        Everything else runs as-is.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateComposeStackRequest"
+      responses:
+        "201":
+          description: Created. Deploy it to make it run.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComposeStack"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such environment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: A stack with that name already exists in the environment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Compose stacks are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/compose-stacks/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Compose Stack ID (cs_... prefix).
+    get:
+      operationId: getComposeStack
+      tags: [compose-stacks]
+      summary: Get one Compose Stack
+      responses:
+        "200":
+          description: The stack.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComposeStack"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such compose stack.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Compose stacks are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    patch:
+      operationId: updateComposeStack
+      tags: [compose-stacks]
+      summary: Edit a Compose Stack
+      description: >-
+        **Team admin** when the request changes the compose file or the route;
+        member otherwise. A changed file becomes a new revision but is NOT
+        deployed — editing and shipping are separate acts, so a file can be
+        reviewed before it reaches a host.
+
+
+        A file identical to the current one mints no revision, so the history
+        keeps meaning "the versions that were deployed".
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateComposeStackRequest"
+      responses:
+        "200":
+          description: The updated stack.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComposeStack"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such compose stack.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Compose stacks are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteComposeStack
+      tags: [compose-stacks]
+      summary: Delete a Compose Stack
+      description: >-
+        **Team admin.** Convergence never removes a volume, so
+        `?delete_volumes=true` is the only way a stack's data goes — and it is
+        never the default.
+      parameters:
+        - name: delete_volumes
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: Destroy the stack's volumes as well. Irreversible.
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such compose stack.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Compose stacks are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/compose-stacks/{id}/file:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Compose Stack ID (cs_... prefix).
+    get:
+      operationId: getComposeFile
+      tags: [compose-stacks]
+      summary: The compose file a deploy would ship
+      description: >-
+        The newest revision, not the row — so what is shown and what would run
+        cannot differ.
+      responses:
+        "200":
+          description: The current revision.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComposeRevision"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such compose stack.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Compose stacks are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/compose-stacks/{id}/deploy:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Compose Stack ID (cs_... prefix).
+    post:
+      operationId: deployComposeStack
+      tags: [compose-stacks]
+      summary: Point desired state at the stack's current file
+      description: >-
+        Team member. There is no build and no distribute stage, so there is no
+        Deployment record: desired state moves to the newest revision and the
+        agent converges. Watch `status` for the outcome.
+      responses:
+        "202":
+          description: Accepted. The agent converges toward the new revision.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComposeStack"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such compose stack.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: The stack has no compose file yet.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Compose stacks are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/compose-stacks/{id}/rollback:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Compose Stack ID (cs_... prefix).
+    post:
+      operationId: rollbackComposeStack
+      tags: [compose-stacks]
+      summary: Re-point desired state at an older revision
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision_id]
+              properties:
+                revision_id:
+                  type: string
+                  description: A revision of THIS stack; another stack's is a 400.
+      responses:
+        "202":
+          description: Accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComposeStack"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such compose stack.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Compose stacks are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/compose-stacks/{id}/revisions:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Compose Stack ID (cs_... prefix).
+    get:
+      operationId: listComposeRevisions
+      tags: [compose-stacks]
+      summary: The stack's file history
+      responses:
+        "200":
+          description: Revisions, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ComposeRevision"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such compose stack.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Compose stacks are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/compose-stacks/{id}/logs:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Compose Stack ID (cs_... prefix).
+    get:
+      operationId: streamComposeStackLogs
+      tags: [compose-stacks]
+      summary: Stream the stack's logs (Server-Sent Events)
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >-
+            Where the replay starts — a Go duration (`15m`) or an RFC 3339
+            instant. Omitted replays everything retained, then tails.
+      responses:
+        "200":
+          description: SSE stream of the stack's logs.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such compose stack.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Compose stacks are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/compose-stacks/{id}/env:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Compose Stack ID (cs_... prefix).
+    get:
+      operationId: listComposeEnvVars
+      tags: [compose-stacks]
+      summary: The stack's variable keys (values are write-only)
+      description: >-
+        Keys only. A value is never returned (ENGINEERING rule 20); compose
+        interpolates `${KEY}` from them at converge time.
+      responses:
+        "200":
+          description: The keys.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvVarKeys"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such compose stack.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Compose stacks are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/compose-stacks/{id}/env/{key}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Compose Stack ID.
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Variable name, as compose would interpolate it.
+    put:
+      operationId: setComposeEnvVar
+      tags: [compose-stacks]
+      summary: Set one variable (sealed at rest)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value:
+                  type: string
+      responses:
+        "204":
+          description: Stored. Redeploy the stack to apply it.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such compose stack.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Compose stacks are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteComposeEnvVar
+      tags: [compose-stacks]
+      summary: Remove one variable
+      responses:
+        "204":
+          description: Removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such compose stack.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Compose stacks are not enabled on this panel.
           content:
             application/json:
               schema:
@@ -4966,6 +5506,112 @@ components:
           description: >-
             What the far end said, verbatim on failure. "connection refused" is
             the whole answer, and paraphrasing it makes an operator guess.
+
+    ComposeStack:
+      type: object
+      required: [id, environment_id, name, server_id, route, status, created_at]
+      properties:
+        id:
+          type: string
+          example: cs_2m9K4pQ
+        environment_id: { type: string }
+        name: { type: string, maxLength: 100 }
+        server_id:
+          type: string
+          description: The server this stack runs on.
+        route:
+          $ref: "#/components/schemas/ComposeRoute"
+        desired_revision_id:
+          type: [string, "null"]
+          description: The revision the agent is converging toward; null before the first deploy.
+        status:
+          type: string
+          enum: [running, degraded, stopped, error, deploying, unknown]
+          description: >-
+            Observed (ADR-005), in the same vocabulary an Application uses.
+            `degraded` is some but not all of the services compose was asked
+            for; `stopped` is the birth state.
+        status_detail:
+          type: string
+          description: Compose's own last words on failure. Never contains a variable's value.
+        observed_revision_id:
+          type: string
+          description: The revision the agent last reported actually running.
+        created_at: { type: string, format: date-time }
+
+    ComposeRoute:
+      type: object
+      required: [domain, service, port, https]
+      properties:
+        domain:
+          type: string
+          description: >-
+            Empty means the stack publishes nothing through the Proxy. Its
+            services still reach each other, and anything it publishes with
+            compose `ports:` is published as the file asks.
+        service:
+          type: string
+          description: >-
+            Which compose service the domain reaches. Required with a domain —
+            the file's own Traefik labels cannot work, because the managed Proxy
+            runs the file provider only and no docker provider (ADR-004), so the
+            panel emits the same route fragment an Application gets.
+        port:
+          type: integer
+          minimum: 0
+          maximum: 65535
+          description: The port that service listens on inside its container.
+        https:
+          type: boolean
+          default: true
+
+    ComposeRevision:
+      type: object
+      required: [id, stack_id, compose_yaml, created_at]
+      properties:
+        id:
+          type: string
+          example: csr_2m9K4pQ
+        stack_id: { type: string }
+        compose_yaml:
+          type: string
+          description: The file, verbatim, as the operator wrote it.
+        created_at: { type: string, format: date-time }
+
+    CreateComposeStackRequest:
+      type: object
+      required: [name, server_id, compose_yaml]
+      properties:
+        name: { type: string, maxLength: 100 }
+        server_id:
+          type: string
+          description: A server that runs workloads; a builder-role server is a 400.
+        compose_yaml:
+          type: string
+          maxLength: 524288
+          description: >-
+            The compose file. Must parse as YAML and declare at least one
+            service. `build:` and `container_name:` are refused; everything else
+            runs as-is.
+        route:
+          $ref: "#/components/schemas/ComposeRoute"
+        env_vars:
+          type: object
+          additionalProperties: { type: string }
+          description: >-
+            Sealed on the way in and never returned. Compose interpolates
+            `${KEY}` from them, so a secret need not live in the file.
+
+    UpdateComposeStackRequest:
+      type: object
+      description: Every field optional; an omitted field is left alone.
+      properties:
+        name: { type: string, maxLength: 100 }
+        compose_yaml:
+          type: string
+          description: A changed file becomes a new revision, but is not deployed.
+        route:
+          $ref: "#/components/schemas/ComposeRoute"
 
     Registry:
       type: object

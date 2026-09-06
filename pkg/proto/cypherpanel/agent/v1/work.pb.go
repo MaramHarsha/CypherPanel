@@ -172,7 +172,7 @@ func (x DbBackupEvent_Outcome) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use DbBackupEvent_Outcome.Descriptor instead.
 func (DbBackupEvent_Outcome) EnumDescriptor() ([]byte, []int) {
-	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{25, 0}
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{30, 0}
 }
 
 type DbRestoreEvent_Outcome int32
@@ -224,7 +224,7 @@ func (x DbRestoreEvent_Outcome) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use DbRestoreEvent_Outcome.Descriptor instead.
 func (DbRestoreEvent_Outcome) EnumDescriptor() ([]byte, []int) {
-	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{26, 0}
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{31, 0}
 }
 
 // Step names where a running restore has got to. Set only with
@@ -282,7 +282,7 @@ func (x DbRestoreEvent_Step) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use DbRestoreEvent_Step.Descriptor instead.
 func (DbRestoreEvent_Step) EnumDescriptor() ([]byte, []int) {
-	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{26, 1}
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{31, 1}
 }
 
 // AppSpec is an Application's desired state as one server's reconciler sees
@@ -1412,6 +1412,10 @@ type DesiredState struct {
 	// Databases whose db_id is absent from db_specs are removed (same
 	// absence-means-remove contract as apps).
 	DbSpecs []*DbSpec `protobuf:"bytes,2,rep,name=db_specs,json=dbSpecs,proto3" json:"db_specs,omitempty"`
+	// V1: Compose Stack desired state (compose-stacks.md §4). Stacks whose
+	// stack_id is absent from compose_specs are brought down — the same
+	// absence-means-remove contract apps and databases follow.
+	ComposeSpecs []*ComposeSpec `protobuf:"bytes,4,rep,name=compose_specs,json=composeSpecs,proto3" json:"compose_specs,omitempty"`
 	// Node-wide TLS settings for the managed Proxy (agent-identity-and-tls.md
 	// §4). Desired state, not configuration: the panel owns the ACME account and
 	// every node it schedules onto gets the same one, so a fresh install gets
@@ -1464,6 +1468,13 @@ func (x *DesiredState) GetSpecs() []*AppSpec {
 func (x *DesiredState) GetDbSpecs() []*DbSpec {
 	if x != nil {
 		return x.DbSpecs
+	}
+	return nil
+}
+
+func (x *DesiredState) GetComposeSpecs() []*ComposeSpec {
+	if x != nil {
+		return x.ComposeSpecs
 	}
 	return nil
 }
@@ -2132,6 +2143,394 @@ func (x *DbStatus) GetObservedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+// ComposeSpec is a Compose Stack's desired state as one server's reconciler
+// sees it (compose-stacks.md).
+//
+// The FILE is the desired state, not a command: the agent has one fixed
+// invocation of its own (`docker compose up -d --remove-orphans --wait`) and
+// this message only says what it should be converging toward. That is the same
+// line work.proto draws everywhere — declarative workload config is desired
+// state and permitted; a command verb is not.
+type ComposeSpec struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	StackId       string                 `protobuf:"bytes,1,opt,name=stack_id,json=stackId,proto3" json:"stack_id,omitempty"`
+	EnvironmentId string                 `protobuf:"bytes,2,opt,name=environment_id,json=environmentId,proto3" json:"environment_id,omitempty"`
+	// revision_id names the immutable version of the file this spec carries;
+	// rollback is a spec whose revision_id points at an older one (ADR-005).
+	RevisionId string `protobuf:"bytes,3,opt,name=revision_id,json=revisionId,proto3" json:"revision_id,omitempty"`
+	// The compose file, verbatim, exactly as the operator wrote it.
+	ComposeYaml string `protobuf:"bytes,4,opt,name=compose_yaml,json=composeYaml,proto3" json:"compose_yaml,omitempty"`
+	// Decrypted env for compose's ${VAR} interpolation. The agent writes it to an
+	// env file mode 0600 and removes it on every exit path, so a secret never has
+	// to live in the file itself. Sealed at rest on the plane; never logged
+	// (rule 20); transported only over mTLS (rule 23).
+	Env map[string]string `protobuf:"bytes,5,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Deterministic environment network the stack joins, so its services can
+	// reach the environment's applications and databases by name.
+	Network string `protobuf:"bytes,6,opt,name=network,proto3" json:"network,omitempty"`
+	// Which service the managed Proxy publishes, and where. A compose file's own
+	// Traefik labels cannot work: the Proxy runs the file provider only and no
+	// docker provider (ADR-004), so the route is declared here and the agent
+	// points the same fragment an Application gets at the named service.
+	Route         *ComposeRoute `protobuf:"bytes,7,opt,name=route,proto3" json:"route,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ComposeSpec) Reset() {
+	*x = ComposeSpec{}
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ComposeSpec) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ComposeSpec) ProtoMessage() {}
+
+func (x *ComposeSpec) ProtoReflect() protoreflect.Message {
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ComposeSpec.ProtoReflect.Descriptor instead.
+func (*ComposeSpec) Descriptor() ([]byte, []int) {
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *ComposeSpec) GetStackId() string {
+	if x != nil {
+		return x.StackId
+	}
+	return ""
+}
+
+func (x *ComposeSpec) GetEnvironmentId() string {
+	if x != nil {
+		return x.EnvironmentId
+	}
+	return ""
+}
+
+func (x *ComposeSpec) GetRevisionId() string {
+	if x != nil {
+		return x.RevisionId
+	}
+	return ""
+}
+
+func (x *ComposeSpec) GetComposeYaml() string {
+	if x != nil {
+		return x.ComposeYaml
+	}
+	return ""
+}
+
+func (x *ComposeSpec) GetEnv() map[string]string {
+	if x != nil {
+		return x.Env
+	}
+	return nil
+}
+
+func (x *ComposeSpec) GetNetwork() string {
+	if x != nil {
+		return x.Network
+	}
+	return ""
+}
+
+func (x *ComposeSpec) GetRoute() *ComposeRoute {
+	if x != nil {
+		return x.Route
+	}
+	return nil
+}
+
+// ComposeRoute names the service a domain reaches. An empty domain means the
+// stack publishes nothing through the Proxy.
+type ComposeRoute struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Domain     string                 `protobuf:"bytes,1,opt,name=domain,proto3" json:"domain,omitempty"`
+	Https      bool                   `protobuf:"varint,2,opt,name=https,proto3" json:"https,omitempty"`
+	PathPrefix string                 `protobuf:"bytes,3,opt,name=path_prefix,json=pathPrefix,proto3" json:"path_prefix,omitempty"`
+	// The compose service that answers, and the port it listens on inside the
+	// container.
+	Service       string `protobuf:"bytes,4,opt,name=service,proto3" json:"service,omitempty"`
+	Port          uint32 `protobuf:"varint,5,opt,name=port,proto3" json:"port,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ComposeRoute) Reset() {
+	*x = ComposeRoute{}
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ComposeRoute) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ComposeRoute) ProtoMessage() {}
+
+func (x *ComposeRoute) ProtoReflect() protoreflect.Message {
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ComposeRoute.ProtoReflect.Descriptor instead.
+func (*ComposeRoute) Descriptor() ([]byte, []int) {
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *ComposeRoute) GetDomain() string {
+	if x != nil {
+		return x.Domain
+	}
+	return ""
+}
+
+func (x *ComposeRoute) GetHttps() bool {
+	if x != nil {
+		return x.Https
+	}
+	return false
+}
+
+func (x *ComposeRoute) GetPathPrefix() string {
+	if x != nil {
+		return x.PathPrefix
+	}
+	return ""
+}
+
+func (x *ComposeRoute) GetService() string {
+	if x != nil {
+		return x.Service
+	}
+	return ""
+}
+
+func (x *ComposeRoute) GetPort() uint32 {
+	if x != nil {
+		return x.Port
+	}
+	return 0
+}
+
+// ComposeRemoveWork commands absence of a whole stack.
+type ComposeRemoveWork struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	IdempotencyKey string                 `protobuf:"bytes,1,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
+	StackId        string                 `protobuf:"bytes,2,opt,name=stack_id,json=stackId,proto3" json:"stack_id,omitempty"`
+	// Explicit opt-in for data destruction. False preserves the stack's volumes,
+	// the conservative default a database removal already uses: orphaned volumes
+	// are better than data nobody meant to lose.
+	DeleteVolumes bool `protobuf:"varint,3,opt,name=delete_volumes,json=deleteVolumes,proto3" json:"delete_volumes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ComposeRemoveWork) Reset() {
+	*x = ComposeRemoveWork{}
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ComposeRemoveWork) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ComposeRemoveWork) ProtoMessage() {}
+
+func (x *ComposeRemoveWork) ProtoReflect() protoreflect.Message {
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ComposeRemoveWork.ProtoReflect.Descriptor instead.
+func (*ComposeRemoveWork) Descriptor() ([]byte, []int) {
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *ComposeRemoveWork) GetIdempotencyKey() string {
+	if x != nil {
+		return x.IdempotencyKey
+	}
+	return ""
+}
+
+func (x *ComposeRemoveWork) GetStackId() string {
+	if x != nil {
+		return x.StackId
+	}
+	return ""
+}
+
+func (x *ComposeRemoveWork) GetDeleteVolumes() bool {
+	if x != nil {
+		return x.DeleteVolumes
+	}
+	return false
+}
+
+// ComposeConvergeWork re-declares one stack's desired state so a deploy takes
+// effect promptly rather than at the next sync. Carries no command verb; the
+// spec is state.
+type ComposeConvergeWork struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Spec          *ComposeSpec           `protobuf:"bytes,1,opt,name=spec,proto3" json:"spec,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ComposeConvergeWork) Reset() {
+	*x = ComposeConvergeWork{}
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ComposeConvergeWork) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ComposeConvergeWork) ProtoMessage() {}
+
+func (x *ComposeConvergeWork) ProtoReflect() protoreflect.Message {
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ComposeConvergeWork.ProtoReflect.Descriptor instead.
+func (*ComposeConvergeWork) Descriptor() ([]byte, []int) {
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *ComposeConvergeWork) GetSpec() *ComposeSpec {
+	if x != nil {
+		return x.Spec
+	}
+	return nil
+}
+
+// ComposeStatus is one stack's observed state, reported on
+// state.<server_id>.compose.<stack_id>. The plane records what the agent
+// reports and never asserts success from a work item (ADR-005).
+type ComposeStatus struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	StackId    string                 `protobuf:"bytes,1,opt,name=stack_id,json=stackId,proto3" json:"stack_id,omitempty"`
+	RevisionId string                 `protobuf:"bytes,2,opt,name=revision_id,json=revisionId,proto3" json:"revision_id,omitempty"`
+	// One of: running, degraded, stopped, error — the same vocabulary an
+	// Application uses (ui-principles §5). `degraded` is some but not all of the
+	// services compose was asked for.
+	State string `protobuf:"bytes,3,opt,name=state,proto3" json:"state,omitempty"`
+	// Compose's own last words on failure. Never contains secrets: the env file
+	// is not echoed, and compose reports service names, not values.
+	Detail        string                 `protobuf:"bytes,4,opt,name=detail,proto3" json:"detail,omitempty"`
+	ObservedAt    *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ComposeStatus) Reset() {
+	*x = ComposeStatus{}
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ComposeStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ComposeStatus) ProtoMessage() {}
+
+func (x *ComposeStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ComposeStatus.ProtoReflect.Descriptor instead.
+func (*ComposeStatus) Descriptor() ([]byte, []int) {
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *ComposeStatus) GetStackId() string {
+	if x != nil {
+		return x.StackId
+	}
+	return ""
+}
+
+func (x *ComposeStatus) GetRevisionId() string {
+	if x != nil {
+		return x.RevisionId
+	}
+	return ""
+}
+
+func (x *ComposeStatus) GetState() string {
+	if x != nil {
+		return x.State
+	}
+	return ""
+}
+
+func (x *ComposeStatus) GetDetail() string {
+	if x != nil {
+		return x.Detail
+	}
+	return ""
+}
+
+func (x *ComposeStatus) GetObservedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ObservedAt
+	}
+	return nil
+}
+
 // DbBackupWork commands a database's host agent to dump the database and upload
 // it to an S3-compatible target (managed-databases.md §7). The wire carries the
 // engine (the agent derives the dump command from its own matrix — never a
@@ -2158,7 +2557,7 @@ type DbBackupWork struct {
 
 func (x *DbBackupWork) Reset() {
 	*x = DbBackupWork{}
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[23]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2170,7 +2569,7 @@ func (x *DbBackupWork) String() string {
 func (*DbBackupWork) ProtoMessage() {}
 
 func (x *DbBackupWork) ProtoReflect() protoreflect.Message {
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[23]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2183,7 +2582,7 @@ func (x *DbBackupWork) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DbBackupWork.ProtoReflect.Descriptor instead.
 func (*DbBackupWork) Descriptor() ([]byte, []int) {
-	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{23}
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *DbBackupWork) GetBackupRecordId() string {
@@ -2285,7 +2684,7 @@ type DbRestoreWork struct {
 
 func (x *DbRestoreWork) Reset() {
 	*x = DbRestoreWork{}
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[24]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2297,7 +2696,7 @@ func (x *DbRestoreWork) String() string {
 func (*DbRestoreWork) ProtoMessage() {}
 
 func (x *DbRestoreWork) ProtoReflect() protoreflect.Message {
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[24]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2310,7 +2709,7 @@ func (x *DbRestoreWork) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DbRestoreWork.ProtoReflect.Descriptor instead.
 func (*DbRestoreWork) Descriptor() ([]byte, []int) {
-	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{24}
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *DbRestoreWork) GetRestoreId() string {
@@ -2407,7 +2806,7 @@ type DbBackupEvent struct {
 
 func (x *DbBackupEvent) Reset() {
 	*x = DbBackupEvent{}
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[25]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2419,7 +2818,7 @@ func (x *DbBackupEvent) String() string {
 func (*DbBackupEvent) ProtoMessage() {}
 
 func (x *DbBackupEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[25]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2432,7 +2831,7 @@ func (x *DbBackupEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DbBackupEvent.ProtoReflect.Descriptor instead.
 func (*DbBackupEvent) Descriptor() ([]byte, []int) {
-	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{25}
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *DbBackupEvent) GetBackupRecordId() string {
@@ -2511,7 +2910,7 @@ type DbRestoreEvent struct {
 
 func (x *DbRestoreEvent) Reset() {
 	*x = DbRestoreEvent{}
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[26]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2523,7 +2922,7 @@ func (x *DbRestoreEvent) String() string {
 func (*DbRestoreEvent) ProtoMessage() {}
 
 func (x *DbRestoreEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[26]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2536,7 +2935,7 @@ func (x *DbRestoreEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DbRestoreEvent.ProtoReflect.Descriptor instead.
 func (*DbRestoreEvent) Descriptor() ([]byte, []int) {
-	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{26}
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *DbRestoreEvent) GetRestoreId() string {
@@ -2615,7 +3014,7 @@ type DbBackupPruneWork struct {
 
 func (x *DbBackupPruneWork) Reset() {
 	*x = DbBackupPruneWork{}
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[27]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2627,7 +3026,7 @@ func (x *DbBackupPruneWork) String() string {
 func (*DbBackupPruneWork) ProtoMessage() {}
 
 func (x *DbBackupPruneWork) ProtoReflect() protoreflect.Message {
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[27]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2640,7 +3039,7 @@ func (x *DbBackupPruneWork) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DbBackupPruneWork.ProtoReflect.Descriptor instead.
 func (*DbBackupPruneWork) Descriptor() ([]byte, []int) {
-	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{27}
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *DbBackupPruneWork) GetDbId() string {
@@ -2708,7 +3107,7 @@ type DbBackupPruneEvent struct {
 
 func (x *DbBackupPruneEvent) Reset() {
 	*x = DbBackupPruneEvent{}
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[28]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2720,7 +3119,7 @@ func (x *DbBackupPruneEvent) String() string {
 func (*DbBackupPruneEvent) ProtoMessage() {}
 
 func (x *DbBackupPruneEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[28]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2733,7 +3132,7 @@ func (x *DbBackupPruneEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DbBackupPruneEvent.ProtoReflect.Descriptor instead.
 func (*DbBackupPruneEvent) Descriptor() ([]byte, []int) {
-	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{28}
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *DbBackupPruneEvent) GetDbId() string {
@@ -2784,7 +3183,7 @@ type ScheduledTaskRun struct {
 
 func (x *ScheduledTaskRun) Reset() {
 	*x = ScheduledTaskRun{}
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[29]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2796,7 +3195,7 @@ func (x *ScheduledTaskRun) String() string {
 func (*ScheduledTaskRun) ProtoMessage() {}
 
 func (x *ScheduledTaskRun) ProtoReflect() protoreflect.Message {
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[29]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2809,7 +3208,7 @@ func (x *ScheduledTaskRun) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ScheduledTaskRun.ProtoReflect.Descriptor instead.
 func (*ScheduledTaskRun) Descriptor() ([]byte, []int) {
-	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{29}
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *ScheduledTaskRun) GetTaskId() string {
@@ -2952,10 +3351,11 @@ const file_cypherpanel_agent_v1_work_proto_rawDesc = "" +
 	"\x0eDistributeWork\x12#\n" +
 	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12\x15\n" +
 	"\x06app_id\x18\x02 \x01(\tR\x05appId\x12\x14\n" +
-	"\x05image\x18\x03 \x01(\tR\x05image\"\xb1\x01\n" +
+	"\x05image\x18\x03 \x01(\tR\x05image\"\xf9\x01\n" +
 	"\fDesiredState\x123\n" +
 	"\x05specs\x18\x01 \x03(\v2\x1d.cypherpanel.agent.v1.AppSpecR\x05specs\x127\n" +
-	"\bdb_specs\x18\x02 \x03(\v2\x1c.cypherpanel.agent.v1.DbSpecR\adbSpecs\x123\n" +
+	"\bdb_specs\x18\x02 \x03(\v2\x1c.cypherpanel.agent.v1.DbSpecR\adbSpecs\x12F\n" +
+	"\rcompose_specs\x18\x04 \x03(\v2!.cypherpanel.agent.v1.ComposeSpecR\fcomposeSpecs\x123\n" +
 	"\x03tls\x18\x03 \x01(\v2!.cypherpanel.agent.v1.TLSSettingsR\x03tls\"R\n" +
 	"\vTLSSettings\x12\x1d\n" +
 	"\n" +
@@ -3024,6 +3424,39 @@ const file_cypherpanel_agent_v1_work_proto_rawDesc = "" +
 	"\rdelete_volume\x18\x03 \x01(\bR\fdeleteVolume\"\xab\x01\n" +
 	"\bDbStatus\x12\x13\n" +
 	"\x05db_id\x18\x01 \x01(\tR\x04dbId\x12\x1f\n" +
+	"\vrevision_id\x18\x02 \x01(\tR\n" +
+	"revisionId\x12\x14\n" +
+	"\x05state\x18\x03 \x01(\tR\x05state\x12\x16\n" +
+	"\x06detail\x18\x04 \x01(\tR\x06detail\x12;\n" +
+	"\vobserved_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"observedAt\"\xdd\x02\n" +
+	"\vComposeSpec\x12\x19\n" +
+	"\bstack_id\x18\x01 \x01(\tR\astackId\x12%\n" +
+	"\x0eenvironment_id\x18\x02 \x01(\tR\renvironmentId\x12\x1f\n" +
+	"\vrevision_id\x18\x03 \x01(\tR\n" +
+	"revisionId\x12!\n" +
+	"\fcompose_yaml\x18\x04 \x01(\tR\vcomposeYaml\x12<\n" +
+	"\x03env\x18\x05 \x03(\v2*.cypherpanel.agent.v1.ComposeSpec.EnvEntryR\x03env\x12\x18\n" +
+	"\anetwork\x18\x06 \x01(\tR\anetwork\x128\n" +
+	"\x05route\x18\a \x01(\v2\".cypherpanel.agent.v1.ComposeRouteR\x05route\x1a6\n" +
+	"\bEnvEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x8b\x01\n" +
+	"\fComposeRoute\x12\x16\n" +
+	"\x06domain\x18\x01 \x01(\tR\x06domain\x12\x14\n" +
+	"\x05https\x18\x02 \x01(\bR\x05https\x12\x1f\n" +
+	"\vpath_prefix\x18\x03 \x01(\tR\n" +
+	"pathPrefix\x12\x18\n" +
+	"\aservice\x18\x04 \x01(\tR\aservice\x12\x12\n" +
+	"\x04port\x18\x05 \x01(\rR\x04port\"~\n" +
+	"\x11ComposeRemoveWork\x12'\n" +
+	"\x0fidempotency_key\x18\x01 \x01(\tR\x0eidempotencyKey\x12\x19\n" +
+	"\bstack_id\x18\x02 \x01(\tR\astackId\x12%\n" +
+	"\x0edelete_volumes\x18\x03 \x01(\bR\rdeleteVolumes\"L\n" +
+	"\x13ComposeConvergeWork\x125\n" +
+	"\x04spec\x18\x01 \x01(\v2!.cypherpanel.agent.v1.ComposeSpecR\x04spec\"\xb6\x01\n" +
+	"\rComposeStatus\x12\x19\n" +
+	"\bstack_id\x18\x01 \x01(\tR\astackId\x12\x1f\n" +
 	"\vrevision_id\x18\x02 \x01(\tR\n" +
 	"revisionId\x12\x14\n" +
 	"\x05state\x18\x03 \x01(\tR\x05state\x12\x16\n" +
@@ -3139,7 +3572,7 @@ func file_cypherpanel_agent_v1_work_proto_rawDescGZIP() []byte {
 }
 
 var file_cypherpanel_agent_v1_work_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_cypherpanel_agent_v1_work_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
+var file_cypherpanel_agent_v1_work_proto_msgTypes = make([]protoimpl.MessageInfo, 38)
 var file_cypherpanel_agent_v1_work_proto_goTypes = []any{
 	(DeployEvent_Stage)(0),        // 0: cypherpanel.agent.v1.DeployEvent.Stage
 	(DeployEvent_Outcome)(0),      // 1: cypherpanel.agent.v1.DeployEvent.Outcome
@@ -3169,19 +3602,25 @@ var file_cypherpanel_agent_v1_work_proto_goTypes = []any{
 	(*DbProvisionWork)(nil),       // 25: cypherpanel.agent.v1.DbProvisionWork
 	(*DbRemoveWork)(nil),          // 26: cypherpanel.agent.v1.DbRemoveWork
 	(*DbStatus)(nil),              // 27: cypherpanel.agent.v1.DbStatus
-	(*DbBackupWork)(nil),          // 28: cypherpanel.agent.v1.DbBackupWork
-	(*DbRestoreWork)(nil),         // 29: cypherpanel.agent.v1.DbRestoreWork
-	(*DbBackupEvent)(nil),         // 30: cypherpanel.agent.v1.DbBackupEvent
-	(*DbRestoreEvent)(nil),        // 31: cypherpanel.agent.v1.DbRestoreEvent
-	(*DbBackupPruneWork)(nil),     // 32: cypherpanel.agent.v1.DbBackupPruneWork
-	(*DbBackupPruneEvent)(nil),    // 33: cypherpanel.agent.v1.DbBackupPruneEvent
-	(*ScheduledTaskRun)(nil),      // 34: cypherpanel.agent.v1.ScheduledTaskRun
-	nil,                           // 35: cypherpanel.agent.v1.AppSpec.EnvEntry
-	nil,                           // 36: cypherpanel.agent.v1.DbSpec.EnvEntry
-	(*timestamppb.Timestamp)(nil), // 37: google.protobuf.Timestamp
+	(*ComposeSpec)(nil),           // 28: cypherpanel.agent.v1.ComposeSpec
+	(*ComposeRoute)(nil),          // 29: cypherpanel.agent.v1.ComposeRoute
+	(*ComposeRemoveWork)(nil),     // 30: cypherpanel.agent.v1.ComposeRemoveWork
+	(*ComposeConvergeWork)(nil),   // 31: cypherpanel.agent.v1.ComposeConvergeWork
+	(*ComposeStatus)(nil),         // 32: cypherpanel.agent.v1.ComposeStatus
+	(*DbBackupWork)(nil),          // 33: cypherpanel.agent.v1.DbBackupWork
+	(*DbRestoreWork)(nil),         // 34: cypherpanel.agent.v1.DbRestoreWork
+	(*DbBackupEvent)(nil),         // 35: cypherpanel.agent.v1.DbBackupEvent
+	(*DbRestoreEvent)(nil),        // 36: cypherpanel.agent.v1.DbRestoreEvent
+	(*DbBackupPruneWork)(nil),     // 37: cypherpanel.agent.v1.DbBackupPruneWork
+	(*DbBackupPruneEvent)(nil),    // 38: cypherpanel.agent.v1.DbBackupPruneEvent
+	(*ScheduledTaskRun)(nil),      // 39: cypherpanel.agent.v1.ScheduledTaskRun
+	nil,                           // 40: cypherpanel.agent.v1.AppSpec.EnvEntry
+	nil,                           // 41: cypherpanel.agent.v1.DbSpec.EnvEntry
+	nil,                           // 42: cypherpanel.agent.v1.ComposeSpec.EnvEntry
+	(*timestamppb.Timestamp)(nil), // 43: google.protobuf.Timestamp
 }
 var file_cypherpanel_agent_v1_work_proto_depIdxs = []int32{
-	35, // 0: cypherpanel.agent.v1.AppSpec.env:type_name -> cypherpanel.agent.v1.AppSpec.EnvEntry
+	40, // 0: cypherpanel.agent.v1.AppSpec.env:type_name -> cypherpanel.agent.v1.AppSpec.EnvEntry
 	11, // 1: cypherpanel.agent.v1.AppSpec.health:type_name -> cypherpanel.agent.v1.HealthCheck
 	12, // 2: cypherpanel.agent.v1.AppSpec.route:type_name -> cypherpanel.agent.v1.RouteSpec
 	10, // 3: cypherpanel.agent.v1.AppSpec.scheduled_tasks:type_name -> cypherpanel.agent.v1.ScheduledTask
@@ -3195,27 +3634,32 @@ var file_cypherpanel_agent_v1_work_proto_depIdxs = []int32{
 	7,  // 11: cypherpanel.agent.v1.BuildWork.push:type_name -> cypherpanel.agent.v1.RegistryPush
 	5,  // 12: cypherpanel.agent.v1.DesiredState.specs:type_name -> cypherpanel.agent.v1.AppSpec
 	24, // 13: cypherpanel.agent.v1.DesiredState.db_specs:type_name -> cypherpanel.agent.v1.DbSpec
-	20, // 14: cypherpanel.agent.v1.DesiredState.tls:type_name -> cypherpanel.agent.v1.TLSSettings
-	37, // 15: cypherpanel.agent.v1.AppStatus.observed_at:type_name -> google.protobuf.Timestamp
-	0,  // 16: cypherpanel.agent.v1.DeployEvent.stage:type_name -> cypherpanel.agent.v1.DeployEvent.Stage
-	1,  // 17: cypherpanel.agent.v1.DeployEvent.outcome:type_name -> cypherpanel.agent.v1.DeployEvent.Outcome
-	37, // 18: cypherpanel.agent.v1.DeployEvent.occurred_at:type_name -> google.protobuf.Timestamp
-	36, // 19: cypherpanel.agent.v1.DbSpec.env:type_name -> cypherpanel.agent.v1.DbSpec.EnvEntry
-	24, // 20: cypherpanel.agent.v1.DbProvisionWork.spec:type_name -> cypherpanel.agent.v1.DbSpec
-	37, // 21: cypherpanel.agent.v1.DbStatus.observed_at:type_name -> google.protobuf.Timestamp
-	2,  // 22: cypherpanel.agent.v1.DbBackupEvent.outcome:type_name -> cypherpanel.agent.v1.DbBackupEvent.Outcome
-	37, // 23: cypherpanel.agent.v1.DbBackupEvent.occurred_at:type_name -> google.protobuf.Timestamp
-	3,  // 24: cypherpanel.agent.v1.DbRestoreEvent.outcome:type_name -> cypherpanel.agent.v1.DbRestoreEvent.Outcome
-	37, // 25: cypherpanel.agent.v1.DbRestoreEvent.occurred_at:type_name -> google.protobuf.Timestamp
-	4,  // 26: cypherpanel.agent.v1.DbRestoreEvent.step:type_name -> cypherpanel.agent.v1.DbRestoreEvent.Step
-	37, // 27: cypherpanel.agent.v1.DbBackupPruneEvent.occurred_at:type_name -> google.protobuf.Timestamp
-	37, // 28: cypherpanel.agent.v1.ScheduledTaskRun.started_at:type_name -> google.protobuf.Timestamp
-	37, // 29: cypherpanel.agent.v1.ScheduledTaskRun.finished_at:type_name -> google.protobuf.Timestamp
-	30, // [30:30] is the sub-list for method output_type
-	30, // [30:30] is the sub-list for method input_type
-	30, // [30:30] is the sub-list for extension type_name
-	30, // [30:30] is the sub-list for extension extendee
-	0,  // [0:30] is the sub-list for field type_name
+	28, // 14: cypherpanel.agent.v1.DesiredState.compose_specs:type_name -> cypherpanel.agent.v1.ComposeSpec
+	20, // 15: cypherpanel.agent.v1.DesiredState.tls:type_name -> cypherpanel.agent.v1.TLSSettings
+	43, // 16: cypherpanel.agent.v1.AppStatus.observed_at:type_name -> google.protobuf.Timestamp
+	0,  // 17: cypherpanel.agent.v1.DeployEvent.stage:type_name -> cypherpanel.agent.v1.DeployEvent.Stage
+	1,  // 18: cypherpanel.agent.v1.DeployEvent.outcome:type_name -> cypherpanel.agent.v1.DeployEvent.Outcome
+	43, // 19: cypherpanel.agent.v1.DeployEvent.occurred_at:type_name -> google.protobuf.Timestamp
+	41, // 20: cypherpanel.agent.v1.DbSpec.env:type_name -> cypherpanel.agent.v1.DbSpec.EnvEntry
+	24, // 21: cypherpanel.agent.v1.DbProvisionWork.spec:type_name -> cypherpanel.agent.v1.DbSpec
+	43, // 22: cypherpanel.agent.v1.DbStatus.observed_at:type_name -> google.protobuf.Timestamp
+	42, // 23: cypherpanel.agent.v1.ComposeSpec.env:type_name -> cypherpanel.agent.v1.ComposeSpec.EnvEntry
+	29, // 24: cypherpanel.agent.v1.ComposeSpec.route:type_name -> cypherpanel.agent.v1.ComposeRoute
+	28, // 25: cypherpanel.agent.v1.ComposeConvergeWork.spec:type_name -> cypherpanel.agent.v1.ComposeSpec
+	43, // 26: cypherpanel.agent.v1.ComposeStatus.observed_at:type_name -> google.protobuf.Timestamp
+	2,  // 27: cypherpanel.agent.v1.DbBackupEvent.outcome:type_name -> cypherpanel.agent.v1.DbBackupEvent.Outcome
+	43, // 28: cypherpanel.agent.v1.DbBackupEvent.occurred_at:type_name -> google.protobuf.Timestamp
+	3,  // 29: cypherpanel.agent.v1.DbRestoreEvent.outcome:type_name -> cypherpanel.agent.v1.DbRestoreEvent.Outcome
+	43, // 30: cypherpanel.agent.v1.DbRestoreEvent.occurred_at:type_name -> google.protobuf.Timestamp
+	4,  // 31: cypherpanel.agent.v1.DbRestoreEvent.step:type_name -> cypherpanel.agent.v1.DbRestoreEvent.Step
+	43, // 32: cypherpanel.agent.v1.DbBackupPruneEvent.occurred_at:type_name -> google.protobuf.Timestamp
+	43, // 33: cypherpanel.agent.v1.ScheduledTaskRun.started_at:type_name -> google.protobuf.Timestamp
+	43, // 34: cypherpanel.agent.v1.ScheduledTaskRun.finished_at:type_name -> google.protobuf.Timestamp
+	35, // [35:35] is the sub-list for method output_type
+	35, // [35:35] is the sub-list for method input_type
+	35, // [35:35] is the sub-list for extension type_name
+	35, // [35:35] is the sub-list for extension extendee
+	0,  // [0:35] is the sub-list for field type_name
 }
 
 func init() { file_cypherpanel_agent_v1_work_proto_init() }
@@ -3229,7 +3673,7 @@ func file_cypherpanel_agent_v1_work_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cypherpanel_agent_v1_work_proto_rawDesc), len(file_cypherpanel_agent_v1_work_proto_rawDesc)),
 			NumEnums:      5,
-			NumMessages:   32,
+			NumMessages:   38,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

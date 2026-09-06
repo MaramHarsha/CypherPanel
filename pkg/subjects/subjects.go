@@ -179,8 +179,21 @@ func DbBackupState(serverID string) string      { return StatePrefix + serverID 
 func DbRestoreState(serverID string) string     { return StatePrefix + serverID + ".dbrestore" }
 func DbBackupPruneState(serverID string) string { return StatePrefix + serverID + ".dbbackupprune" }
 
+// V1: Compose Stack subjects (docs/features/compose-stacks.md §4). Additive
+// (rule 14), inside the existing work.<server>.> / state.<server>.> scope, so
+// no new per-agent grant is needed.
+func ComposeConverge(serverID string) string { return WorkPrefix + serverID + ".compose.converge" }
+func ComposeRemove(serverID string) string   { return WorkPrefix + serverID + ".compose.remove" }
+
+// ComposeState is one stack's observation. The `.compose.` segment keeps it
+// clear of the app and db status wildcards.
+func ComposeState(serverID, stackID string) string {
+	return StatePrefix + serverID + ".compose." + stackID
+}
+
 // Plane-side consumption wildcards.
 const (
+	ComposeStateAll       = "state.*.compose.>"
 	DbStateAll            = "state.*.db.>"
 	DbBackupStateAll      = "state.*.dbbackup"
 	DbRestoreStateAll     = "state.*.dbrestore"
