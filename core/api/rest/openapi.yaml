@@ -5036,6 +5036,19 @@ components:
           nullable: true
           allOf: [{ $ref: "#/components/schemas/PanelRelease" }]
           description: The newest release beyond the running one, or null.
+        data_dir_total_bytes:
+          type: integer
+          format: int64
+          description: >-
+            The panel data directory's filesystem (disk-management.md §6). The
+            control plane reserves nothing and enforces nothing about its own
+            host — refusing to write when its disk is low would turn a disk
+            problem into an outage of the thing that reports disk problems — so
+            it reports the figure instead. `0` means it could not be read, which
+            a client should show as unknown, never as full.
+        data_dir_free_bytes:
+          type: integer
+          format: int64
 
     PanelRelease:
       type: object
@@ -5373,23 +5386,6 @@ components:
       type: object
       required: [public_address]
       properties:
-        disk_total_bytes:
-          type: integer
-          format: int64
-          description: >-
-            The Docker data root's filesystem, as of the last heartbeat. `0`
-            means not reported — an older agent, or a host where it could not be
-            read — which a client should show as unknown, never as full.
-        disk_free_bytes:
-          type: integer
-          format: int64
-        disk_low:
-          type: boolean
-          description: >-
-            Whether the server is past the panel's disk threshold
-            (`CYPHERD_DISK_WARN_PERCENT`, default 85). Crossing it, and crossing
-            back, writes one notification-inbox item for the panel's owners and
-            admins — on the transition, never on every heartbeat.
         public_address:
           type: string
           description: >-
@@ -5985,6 +5981,23 @@ components:
             (dns-automation.md §3.4). Empty until an operator sets it; the plane
             cannot learn it, because the agent dials out and the heartbeat
             carries no address.
+        disk_total_bytes:
+          type: integer
+          format: int64
+          description: >-
+            The Docker data root's filesystem, as of the last heartbeat. `0`
+            means not reported — an older agent, or a host where it could not be
+            read — which a client should show as unknown, never as full.
+        disk_free_bytes:
+          type: integer
+          format: int64
+        disk_low:
+          type: boolean
+          description: >-
+            Whether the server is past the panel's disk threshold
+            (`CYPHERD_DISK_WARN_PERCENT`, default 85). Crossing it, and crossing
+            back, writes one notification-inbox item for the panel's owners and
+            admins — on the transition, never on every heartbeat.
         enrolled:
           type: boolean
           description: Whether an agent has completed enrollment.

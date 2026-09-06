@@ -4,7 +4,7 @@
 import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
 import { useGetDatabase } from "@/api/gen/databases/databases";
 import { useGetProject } from "@/api/gen/projects/projects";
-import { DatabaseRestoreWatch, restoreSourceLabel, useRestoreInFlight } from "@/components/db-restore-progress";
+import { DatabaseRestoreWatch, restoreStepLabel, useRestoreInFlight } from "@/components/db-restore-progress";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { ResourceGone } from "@/components/resource-gone";
 import { StatusBadge } from "@/components/status-badge";
@@ -75,7 +75,7 @@ function DatabaseLayout() {
                 <span aria-hidden className="animate-status-pulse">
                   ▸
                 </span>
-                restoring from {restoreSourceLabel(restoring.backup)} · offline during the restore · no cancel
+                {restoreStepLabel(restoring)} · offline during the restore · no cancel
               </span>
             )}
           </span>

@@ -16,8 +16,11 @@ import {
   getGetMeQueryKey,
   getListSessionsQueryKey,
   getSetAvatarUrl,
+  getGetPendingEmailChangeQueryKey,
+  useCancelEmailChange,
   useChangePassword,
   useConfirmEmailChange,
+  useGetPendingEmailChange,
   useRequestEmailChange,
   useGetMe,
   useGetTotpStatus,
@@ -42,6 +45,7 @@ import { Skeleton, useSkeletonDelay } from "@/components/ui/skeleton";
 import { useCrumbs } from "@/lib/crumbs";
 import { atLeast } from "@/lib/roles";
 import { setTheme, useThemePreference, type ThemePreference } from "@/lib/theme";
+import { relativeTime } from "@/lib/time";
 import { toastFailed, toastSuccess } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
@@ -88,6 +92,10 @@ function ProfileTab() {
   return (
     <div className="max-w-2xl space-y-4">
       {confirm && <ConfirmEmailCard token={confirm} current={me.data?.email ?? ""} />}
+      {/* A move nobody has confirmed yet. It is on the page rather than behind
+          the mailed link because the person who needs to see it most is the one
+          who did NOT ask for it — they never got the link. */}
+      <PendingEmailChangeCard />
       <PageState query={me} loading={showSkeleton ? <ProfileSkeleton /> : null}>
         {(who) => (
           <>
@@ -1093,14 +1101,81 @@ function ConfirmEmailCard({ token, current }: { token: string; current: string }
           >
             Confirm change
           </ActionButton>
-          {/* 17d also draws a danger-outline "This wasn't me"; nothing serves a
-              cancel for a pending change yet, so the only other exit is to
-              leave the link unused — it expires on its own. */}
+          {/* 17d's danger-outline "This wasn't me". It spends every outstanding
+              change without applying one, so a second link requested in the
+              same breath cannot outlive the cancel of the first. */}
+          <CancelEmailChangeButton onDone={dismiss} />
           <Button variant="ghost" onClick={dismiss}>
             Not now
           </Button>
         </div>
       </div>
     </section>
+  );
+}
+
+/**
+ * The pending move, shown to whoever is signed in — which is the point. A
+ * confirmation link goes to the NEW address, so an attacker who has the
+ * password but not the mailbox leaves a pending change the real owner can see
+ * here and undo, and the old address's warning mail is the other half of the
+ * same signal.
+ *
+ * Nothing is pending is a 404, which is an answer rather than a failure, so the
+ * card is simply absent then.
+ */
+function PendingEmailChangeCard() {
+  const pending = useGetPendingEmailChange({ query: { retry: false } });
+  if (pending.isPending || pending.isError || !pending.data) return null;
+  const p = pending.data;
+  return (
+    <section className="rounded-[10px] border-[1.5px] border-status-degraded/45 bg-status-degraded/[.05] px-5 py-[18px]">
+      <h3 className="text-[15px] font-bold text-text">This account is moving</h3>
+      <p className="mt-1.5 text-[12.5px] leading-[1.6] text-text-dim">
+        A change to <span className="mono text-text">{p.new_email}</span> was requested{" "}
+        {relativeTime(p.requested_at)} and is waiting to be confirmed from that mailbox. The link stops working{" "}
+        {relativeTime(p.expires_at)}.
+      </p>
+      <p className="mt-1.5 text-[12px] leading-[1.5] text-text-faint">
+        If that was not you, undo it now — and change your password, because whoever asked knew it.
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <CancelEmailChangeButton />
+      </div>
+    </section>
+  );
+}
+
+/**
+ * "This wasn't me." Deliberately asks for no password: the person who can undo
+ * a move they did not request is the person holding the session, and making
+ * them find a password first only keeps a hijacked request alive longer.
+ */
+function CancelEmailChangeButton({ onDone }: { onDone?: () => void }) {
+  const qc = useQueryClient();
+  const cancel = useCancelEmailChange({
+    mutation: {
+      onSuccess: (res) => {
+        void qc.invalidateQueries({ queryKey: getGetPendingEmailChangeQueryKey() });
+        toastSuccess(
+          res.cancelled > 0
+            ? { title: "Address change cancelled", detail: "Your sign-in address is unchanged." }
+            : { title: "Nothing was pending", detail: "There was no change to undo." },
+        );
+        onDone?.();
+      },
+      onError: (e: unknown) => toastFailed("Could not cancel the change", e),
+    },
+  });
+  return (
+    <ActionButton
+      variant="danger"
+      state={cancel.isPending ? "busy" : "idle"}
+      busyLabel="Cancelling…"
+      successLabel="Cancelled"
+      onClick={() => cancel.mutate()}
+    >
+      This wasn’t me
+    </ActionButton>
   );
 }

@@ -14,6 +14,7 @@ import {
   useCreateBackupTarget,
   useDeleteBackupTarget,
   useListBackupTargets,
+  usePatchBackupTarget,
 } from "@/api/gen/backups/backups";
 import type { BackupTarget } from "@/api/gen/model";
 import { EmptyState } from "@/components/empty-state";
@@ -89,8 +90,136 @@ function TargetRow({ t }: { t: BackupTarget }) {
           {path} · added {relativeTime(t.created_at)}
         </span>
       </span>
+      <EditTargetDialog t={t} />
       <DeleteTargetDialog t={t} />
     </li>
+  );
+}
+
+/**
+ * Editing one. Neither key comes back — the DTO carries the endpoint, bucket,
+ * region and prefix and nothing else — so both credential fields start empty
+ * and empty means "keep the sealed one", which is the API's contract for an
+ * omitted field. That is what makes "change the bucket" something you can do
+ * without a copy of the secret in front of you.
+ *
+ * The endpoint and bucket are editable because a provider migration is a real
+ * thing that happens, and the alternative is deleting the target — which is the
+ * one act that makes the backups already written unreachable from this panel.
+ * Pointing an existing target somewhere new keeps the schedules attached to it.
+ */
+function EditTargetDialog({ t }: { t: BackupTarget }) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const patch = usePatchBackupTarget({
+    mutation: {
+      onSuccess: (next) => {
+        toastSuccess(`Saved ${next.name}`);
+        void qc.invalidateQueries({ queryKey: getListBackupTargetsQueryKey() });
+        setOpen(false);
+      },
+      onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not save the target"),
+    },
+  });
+
+  const submit = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setError(null);
+    const f = new FormData(e.currentTarget);
+    const str = (k: string) => String(f.get(k) ?? "").trim();
+    const access = str("access_key");
+    const secret = String(f.get("secret_key") ?? "");
+    patch.mutate({
+      id: t.id,
+      data: {
+        name: str("name"),
+        endpoint: str("endpoint"),
+        bucket: str("bucket"),
+        region: str("region"),
+        path_prefix: str("path_prefix"),
+        ...(access ? { access_key: access } : {}),
+        ...(secret ? { secret_key: secret } : {}),
+      },
+    });
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) setError(null);
+      }}
+    >
+      <DialogTrigger asChild>
+        <button type="button" className={cn(rowAction, "text-text-mid")} aria-label={`Edit ${t.name}`}>
+          Edit
+        </button>
+      </DialogTrigger>
+      <DialogContent size="form" title={`Edit ${t.name}`}>
+        <form onSubmit={submit} className="space-y-4">
+          {error && (
+            <p
+              role="alert"
+              className="rounded-md border border-danger/35 bg-danger/[0.06] px-3 py-2 text-[13px] text-danger"
+            >
+              {error}
+            </p>
+          )}
+          <Field label="Name">
+            {(id) => <Input id={id} name="name" required autoFocus defaultValue={t.name} />}
+          </Field>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Endpoint">
+              {(id) => <Input id={id} name="endpoint" required defaultValue={t.endpoint} />}
+            </Field>
+            <Field label="Bucket">{(id) => <Input id={id} name="bucket" required defaultValue={t.bucket} />}</Field>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Region" hint="Leave empty if your provider doesn’t use regions.">
+              {(id) => <Input id={id} name="region" defaultValue={t.region} />}
+            </Field>
+            <Field label="Path prefix" hint="Optional folder inside the bucket.">
+              {(id) => <Input id={id} name="path_prefix" defaultValue={t.path_prefix} />}
+            </Field>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Access key" qualifier="· empty keeps the stored one">
+              {(id) => <Input id={id} name="access_key" autoComplete="off" placeholder="•••••  (unchanged)" />}
+            </Field>
+            <Field label="Secret key" qualifier="· empty keeps the sealed one">
+              {(id) => (
+                <Input
+                  id={id}
+                  name="secret_key"
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder="•••••  (unchanged)"
+                />
+              )}
+            </Field>
+          </div>
+          <div className="flex justify-end gap-2">
+            <DialogClose asChild>
+              <Button type="button" variant="ghost" size="lg">
+                Cancel
+              </Button>
+            </DialogClose>
+            <ActionButton
+              type="submit"
+              variant="primary"
+              size="lg"
+              state={patch.isPending ? "busy" : "idle"}
+              busyLabel="Saving…"
+            >
+              Save
+            </ActionButton>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

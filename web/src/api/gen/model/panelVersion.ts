@@ -20,4 +20,7 @@ export interface PanelVersion {
   go_version: string;
   /** The newest release beyond the running one, or null. */
   latest: PanelRelease | null;
+  /** The panel data directory's filesystem (disk-management.md §6). The control plane reserves nothing and enforces nothing about its own host — refusing to write when its disk is low would turn a disk problem into an outage of the thing that reports disk problems — so it reports the figure instead. `0` means it could not be read, which a client should show as unknown, never as full. */
+  data_dir_total_bytes?: number;
+  data_dir_free_bytes?: number;
 }

@@ -366,7 +366,12 @@ type Deps struct {
 	// PanelLogs is the in-memory tail of the panel's own log; nil serves 503
 	// on GET /panel/logs (§4).
 	PanelLogs PanelLogTail
-	Log       *slog.Logger
+	// DataDir is cypherd's own durable state directory, reported on
+	// GET /panel/version so the one host the fleet view cannot cover is
+	// covered (disk-management.md §6). Empty reports zeros, which a client
+	// reads as unknown.
+	DataDir string
+	Log     *slog.Logger
 }
 
 // API holds the HTTP handlers and their dependencies.

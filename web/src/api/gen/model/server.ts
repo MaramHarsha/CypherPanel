@@ -24,6 +24,11 @@ export interface Server {
   hostname: string;
   /** Where DNS records for this server's applications point (dns-automation.md §3.4). Empty until an operator sets it; the plane cannot learn it, because the agent dials out and the heartbeat carries no address. */
   public_address?: string;
+  /** The Docker data root's filesystem, as of the last heartbeat. `0` means not reported — an older agent, or a host where it could not be read — which a client should show as unknown, never as full. */
+  disk_total_bytes?: number;
+  disk_free_bytes?: number;
+  /** Whether the server is past the panel's disk threshold (`CYPHERD_DISK_WARN_PERCENT`, default 85). Crossing it, and crossing back, writes one notification-inbox item for the panel's owners and admins — on the transition, never on every heartbeat. */
+  disk_low?: boolean;
   /** Whether an agent has completed enrollment. */
   enrolled: boolean;
   /** @nullable */

@@ -21,6 +21,7 @@ import { useListTeamMembers, useListUsers } from "@/api/gen/teams/teams";
 import { openCommandPalette } from "@/components/command-palette";
 import { CopyButton } from "@/components/copy-field";
 import { ReportIssueDialog } from "@/components/report-issue-dialog";
+import { RequestAccessDialog } from "@/components/request-access-dialog";
 import { ActionButton } from "@/components/ui/action-button";
 import { type Role } from "@/lib/roles";
 import { useTeamScope } from "@/lib/team";
@@ -321,28 +322,52 @@ export function ForbiddenForError({ error, embedded }: { error: ApiError; embedd
       ? (members.data ?? []).filter((m) => m.role === "owner").map((m) => m.email)
       : (users.data ?? []).filter((u) => u.role === "owner").map((u) => u.email);
   const held = scope === "panel" ? me.data?.role : team?.role;
+  const [asking, setAsking] = useState(false);
+
+  // A team refusal has a real ask behind it now (invitations-and-access-
+  // requests.md): the request lands in the owners' inbox, and granting it runs
+  // the ordinary member-role path, so the last-owner guard still holds. A PANEL
+  // refusal has no such route — panel rank is not team rank and there is no
+  // API for asking for it — so that one is still an email, with the ask
+  // already written so the owner knows which switch to flip.
+  const canAskInPanel = scope === "team" && team !== undefined;
 
   return (
-    <ForbiddenPage
-      action={action}
-      needs={needs}
-      held={held}
-      scope={scope}
-      owners={owners}
-      embedded={embedded}
-      onRequestAccess={() => {
-        // There is no in-panel access request yet (that needs an inbox kind the
-        // API does not have), so the request is an email — with the ask already
-        // written, so the owner knows which switch to flip.
-        const owner = owners[0];
-        if (owner === undefined) return;
-        const subject = encodeURIComponent("CypherPanel — access request");
-        const body = encodeURIComponent(
-          `${action} needs the ${needs} role${team ? ` on ${team.name}` : ""}${held ? ` — I'm a ${held}` : ""}.`,
-        );
-        window.location.href = `mailto:${owner}?subject=${subject}&body=${body}`;
-      }}
-    />
+    <>
+      <ForbiddenPage
+        action={action}
+        needs={needs}
+        held={held}
+        scope={scope}
+        owners={owners}
+        embedded={embedded}
+        onRequestAccess={() => {
+          if (canAskInPanel) {
+            setAsking(true);
+            return;
+          }
+          const owner = owners[0];
+          if (owner === undefined) return;
+          const subject = encodeURIComponent("CypherPanel — access request");
+          const body = encodeURIComponent(
+            `${action} needs the ${needs} role${team ? ` on ${team.name}` : ""}${held ? ` — I'm a ${held}` : ""}.`,
+          );
+          window.location.href = `mailto:${owner}?subject=${subject}&body=${body}`;
+        }}
+      />
+      {canAskInPanel && (
+        <RequestAccessDialog
+          open={asking}
+          onOpenChange={setAsking}
+          teamId={team.id}
+          teamName={team.name}
+          role={needs}
+          held={held}
+          owners={owners}
+          action={action}
+        />
+      )}
+    </>
   );
 }
 

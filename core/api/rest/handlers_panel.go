@@ -43,6 +43,14 @@ type panelVersionResponse struct {
 	// a documented field the server never sends is a lie in the contract
 	// (spec §12 puts it out of scope; ENGINEERING rule 10).
 	Latest *panelLatestResult `json:"latest"`
+	// DataDirTotalBytes / DataDirFreeBytes are the panel data directory's
+	// filesystem (disk-management.md §6). The plane reserves nothing and
+	// enforces nothing about its own host — refusing to write when its disk is
+	// low would turn a disk problem into an outage of the thing that reports
+	// disk problems — so it tells the truth instead. Zero means the figure
+	// could not be read, which is "unknown" and never "full".
+	DataDirTotalBytes uint64 `json:"data_dir_total_bytes"`
+	DataDirFreeBytes  uint64 `json:"data_dir_free_bytes"`
 }
 
 type panelLatestResult struct {
@@ -72,6 +80,13 @@ func (a *API) handleGetPanelVersion(w http.ResponseWriter, r *http.Request) {
 		Commit:    info.Commit,
 		GoVersion: info.GoVersion,
 		BuiltAt:   rfc3339OrNil(info.BuiltAt),
+	}
+	// One statfs, on the request rather than on a timer: it is a single
+	// syscall, and a cached number about free disk is worth less than none.
+	if a.deps.DataDir != "" {
+		if total, free, ok := diskUsage(a.deps.DataDir); ok {
+			resp.DataDirTotalBytes, resp.DataDirFreeBytes = total, free
+		}
 	}
 	if latest := a.deps.Panel.Latest(); latest != nil {
 		resp.Latest = &panelLatestResult{

@@ -14,8 +14,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ConfirmRollback } from "@/components/confirm-rollback";
 import { toastDeployment } from "@/components/deploy-toast";
 import {
+  getGetDeploymentQueryKey,
   getListDeploymentsQueryKey,
   getStreamDeploymentLogsUrl,
+  useCancelDeployment,
   useDeployApplication,
   useGetDeployment,
   useListDeployments,
@@ -32,7 +34,7 @@ import { ActionButton, useMutationActionState } from "@/components/ui/action-but
 import { Drawer } from "@/components/ui/drawer";
 import { useRowNavigation } from "@/lib/keys";
 import { relativeTime, absoluteTime } from "@/lib/time";
-import { toastFailed } from "@/lib/toast";
+import { toastFailed, toastSuccess } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
 interface DeploymentsSearch {
@@ -61,6 +63,24 @@ function isTerminal(status: string): boolean {
  */
 function isLive(status: string): boolean {
   return !isTerminal(status) && status !== "awaiting_approval";
+}
+
+/**
+ * Whether cancelling is still honest (deployment-control.md). Cancel is the
+ * PANEL stopping waiting, not a remote kill — ADR-002 gives the plane no way to
+ * stop a running build — and once the deploy is `rolling_out` the desired
+ * revision has already moved, so cancelling would leave the panel claiming it
+ * abandoned what every agent is busy converging on. The API answers 409 there
+ * and names the rollback as the recovery; the button is simply absent rather
+ * than offered and refused.
+ */
+function isCancellable(status: string): boolean {
+  return (
+    status === "queued" ||
+    status === "awaiting_approval" ||
+    status === "building" ||
+    status === "distributing"
+  );
 }
 
 /** Deployment status → the shared status vocabulary (ui-principles §5). */
@@ -633,6 +653,20 @@ function DeployPanel({
           zero-downtime: {shortRev(serving.revision_id)} serves until {rev} is healthy
         </p>
       )}
+      {/* Stopping waiting. What it does and does not do is stated on the
+          button's own line, because "cancel" reads as "make it stop" and a
+          build already in flight finishes regardless — its image is reclaimed
+          by desired-state GC afterwards, because nothing desires its revision. */}
+      {isCancellable(d.status) && (
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <span className="font-mono text-[11.5px] text-toast-faint">
+            {d.status === "awaiting_approval"
+              ? "parked for approval — cancelling withdraws it"
+              : "a build already running finishes; its image is reclaimed"}
+          </span>
+          <CancelAction depId={d.id} appId={appId} />
+        </div>
+      )}
       {/* The phone list has no right-hand column (14c), so on a phone the way
           back to a superseded revision is from its own sheet — the slot the
           canvas gives the sheet's one footer action. From `sm` up the row's
@@ -664,5 +698,42 @@ function DeployPanel({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Cancel. It announces nothing to notifiers or outbound webhooks — a
+ * cancellation is a person's decision, not an infrastructure failure — so the
+ * only feedback is here, and it says what it actually did.
+ */
+function CancelAction({ depId, appId }: { depId: string; appId: string }) {
+  const qc = useQueryClient();
+  const cancel = useCancelDeployment({
+    mutation: {
+      onSuccess: () => {
+        void qc.invalidateQueries({ queryKey: getGetDeploymentQueryKey(depId) });
+        void qc.invalidateQueries({ queryKey: getListDeploymentsQueryKey(appId) });
+        toastSuccess({
+          title: "Deploy cancelled",
+          detail: "Nothing was shipped. What is serving now keeps serving.",
+        });
+      },
+      onError: (e: unknown, vars) => toastFailed("Could not cancel the deploy", e, { retry: () => cancel.mutate(vars) }),
+    },
+  });
+  const state = useMutationActionState(cancel);
+  return (
+    <ActionButton
+      size="sm"
+      variant="ghost"
+      state={state}
+      busyLabel="Cancelling…"
+      successLabel="Cancelled"
+      failedLabel="Retry"
+      onClick={() => cancel.mutate({ id: depId })}
+      className="text-toast-text hover:bg-white/10 hover:text-toast-text"
+    >
+      <X className="h-3 w-3" aria-hidden /> Cancel
+    </ActionButton>
   );
 }

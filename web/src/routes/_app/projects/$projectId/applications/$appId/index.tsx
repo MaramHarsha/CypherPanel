@@ -3,8 +3,15 @@
 // cards answer those three questions in that order; the two surfaces that own
 // an action of their own — the domain check and the push-to-deploy webhook —
 // sit under them rather than competing with the facts for attention.
+import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useCheckApplicationDomain, useGetApplication } from "@/api/gen/applications/applications";
+import { RotateCw } from "lucide-react";
+import {
+  getGetApplicationQueryKey,
+  useCheckApplicationDomain,
+  useGetApplication,
+  useRestartApplication,
+} from "@/api/gen/applications/applications";
 import { getHandleGithubWebhookUrl } from "@/api/gen/deployments/deployments";
 import { useGetServer } from "@/api/gen/servers/servers";
 import type { Application } from "@/api/gen/model";
@@ -13,8 +20,9 @@ import { DomainLink } from "@/components/domain-link";
 import { Fact, FactCard } from "@/components/fact-card";
 import { PageState } from "@/components/page-state";
 import { StatusBadge, StatusDot } from "@/components/status-badge";
-import { ActionButton } from "@/components/ui/action-button";
+import { ActionButton, useMutationActionState } from "@/components/ui/action-button";
 import { relativeTime, absoluteTime } from "@/lib/time";
+import { toastFailed, toastSuccess } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_app/projects/$projectId/applications/$appId/")({
@@ -71,7 +79,7 @@ function OverviewTab() {
         return (
           <div className="space-y-3.5">
             <div className="grid gap-3.5 lg:grid-cols-2">
-              <FactCard title="Status">
+              <FactCard title="Status" actions={<RestartAction appId={appId} status={a.status} />}>
                 <Fact label="State">
                   <StatusBadge status={a.status} />
                 </Fact>
@@ -289,5 +297,52 @@ function DomainCheck({ appId, domain, serverId }: { appId: string; domain: strin
         </p>
       )}
     </section>
+  );
+}
+
+/**
+ * Restart, expressed as desired state (deployment-control.md). A fresh restart
+ * token rides on the AppSpec and is stamped on the container, so the drift the
+ * existing recreate path already closes is what performs the restart: the
+ * replacement starts alongside, health-gates, takes the route, and only then
+ * does the old one drain. That is the whole reason the button can promise
+ * zero downtime, and the reason it says so before the click rather than after.
+ *
+ * It is deliberately NOT a deploy: no revision, no build, no deployment row,
+ * and the desired revision is unmoved — restarting a wedged container must not
+ * silently ship an hour-old edit. Nothing to restart is a real state, so a
+ * stopped application gets the reason rather than a button that would 409.
+ */
+function RestartAction({ appId, status }: { appId: string; status: string | undefined }) {
+  const qc = useQueryClient();
+  const restart = useRestartApplication({
+    mutation: {
+      onSuccess: () => {
+        void qc.invalidateQueries({ queryKey: getGetApplicationQueryKey(appId) });
+        toastSuccess({
+          title: "Restarting",
+          detail: "The replacement starts alongside and takes the route once it is healthy.",
+        });
+      },
+      onError: (e: unknown, vars) => toastFailed("Could not restart", e, { retry: () => restart.mutate(vars) }),
+    },
+  });
+  const state = useMutationActionState(restart);
+  const idle = status === "stopped" || status === "unknown";
+
+  return (
+    <ActionButton
+      size="sm"
+      variant="ghost"
+      state={state}
+      busyLabel="Restarting…"
+      successLabel="Restarting"
+      failedLabel="Retry"
+      disabledReason={idle ? "Nothing is running to restart — deploy it first" : undefined}
+      onClick={() => restart.mutate({ id: appId })}
+      title="Replaces the container with a fresh one of the same revision"
+    >
+      <RotateCw className="h-3.5 w-3.5" aria-hidden /> Restart
+    </ActionButton>
   );
 }

@@ -1,18 +1,39 @@
-// Settings · Teams: the tenancy boundary. Create teams, manage members. The
-// last-owner guard's 409 is surfaced verbatim (web-ui-design.md §4).
+// Settings · Teams: the tenancy boundary. Create teams, rename and delete them,
+// manage members and their ranks. The last-owner guard's 409 is surfaced
+// verbatim (web-ui-design.md §4) — it is the one refusal an operator must read
+// rather than be protected from, because the fix is "promote someone else
+// first" and no button can do that for them.
+//
+// A member's ROLE is an inline control rather than a dialog: it is the field
+// most often wrong right after someone joins, and a two-click confirm on a
+// change that is trivially reversible is ceremony. The two changes that are NOT
+// reversible — removing a member, deleting a team — keep theirs.
 import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Plus, Trash2, Users } from "lucide-react";
+import { ApiError } from "@/api/client";
 import { useState, type FormEvent } from "react";
 import {
   getListTeamMembersQueryKey,
   getListTeamsQueryKey,
+  useChangeTeamMemberRole,
   useCreateTeam,
+  useDeleteTeam,
   useListTeamMembers,
   useListTeams,
   useRemoveTeamMember,
+  useRenameTeam,
 } from "@/api/gen/teams/teams";
-import type { Team, TeamMember } from "@/api/gen/model";
+import { ChangeMemberRoleRequestRole } from "@/api/gen/model";
+import type { AccessRequest, Team, TeamInvite, TeamMember } from "@/api/gen/model";
+import { getListTeamInvitesQueryKey, useListTeamInvites, useRevokeTeamInvite } from "@/api/gen/invites/invites";
+import {
+  getListAccessRequestsQueryKey,
+  useDenyAccessRequest,
+  useGrantAccessRequest,
+  useListAccessRequests,
+} from "@/api/gen/access-requests/access-requests";
+import { ConfirmDestructive } from "@/components/confirm-destructive";
 import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
 import { InviteMemberDialog } from "@/components/invite-member-dialog";
@@ -21,7 +42,7 @@ import { ActionButton, useMutationActionState } from "@/components/ui/action-but
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
+import { Input, Select } from "@/components/ui/input";
 import { useCrumbs } from "@/lib/crumbs";
 import { relativeTime } from "@/lib/time";
 import { toastFailed, toastSuccess } from "@/lib/toast";
@@ -59,6 +80,7 @@ function TeamsTab() {
 }
 
 function TeamCard({ team, open, onToggle }: { team: Team; open: boolean; onToggle: () => void }) {
+  const isOwner = team.role === "owner";
   return (
     <li className="rounded-lg border border-border bg-surface">
       <button type="button" aria-expanded={open} onClick={onToggle} className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left">
@@ -69,7 +91,24 @@ function TeamCard({ team, open, onToggle }: { team: Team; open: boolean; onToggl
         </span>
         <span className="mono text-xs text-text-faint">created {relativeTime(team.created_at)}</span>
       </button>
-      {open && <MembersList team={team} />}
+      {open && (
+        <>
+          {/* The team's own two acts, above its members: they are about the
+              team, and burying them under the member list would put the
+              destructive one last on a card that scrolls. */}
+          <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border px-3 py-2.5">
+            <RenameTeamDialog team={team} isOwner={isOwner} />
+            <DeleteTeamDialog team={team} isOwner={isOwner} />
+          </div>
+          <MembersList team={team} />
+          {/* An invitation is a member who has not arrived yet, and an access
+              request is one asking to be more — both belong beside the member
+              list rather than on pages of their own
+              (invitations-and-access-requests.md §6). */}
+          <PendingInvites team={team} />
+          <AccessRequests team={team} />
+        </>
+      )}
     </li>
   );
 }
@@ -99,26 +138,351 @@ function MembersList({ team }: { team: Team }) {
         {(list) => (
           <ul className="divide-y divide-border rounded-md border border-border">
             {list.map((m: TeamMember) => (
-              <li key={m.user_id} className="flex items-center justify-between gap-2 px-3 py-2">
-                <span className="flex min-w-0 items-center gap-2">
-                  <span className="truncate text-[13px] text-text">{m.email}</span>
-                  <span className="mono text-[11px] text-text-faint">{m.role}</span>
-                </span>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  aria-label={`Remove ${m.email}`}
-                  disabled={remove.isPending}
-                  onClick={() => remove.mutate({ id: teamId, uid: m.user_id })}
-                >
-                  <Trash2 className="h-3.5 w-3.5 text-danger" />
-                </Button>
-              </li>
+              <MemberRow key={m.user_id} teamId={teamId} member={m} onRemove={() => remove.mutate({ id: teamId, uid: m.user_id })} removing={remove.isPending} />
             ))}
           </ul>
         )}
       </PageState>
     </div>
+  );
+}
+
+// Invitations that have not been accepted yet. Only pending ones are listed:
+// a spent or expired invitation is history, and history belongs to the audit
+// log rather than to the surface where people are managed.
+function PendingInvites({ team }: { team: Team }) {
+  const teamId = team.id;
+  const qc = useQueryClient();
+  const invites = useListTeamInvites(teamId, { state: "pending" });
+  const revoke = useRevokeTeamInvite({
+    mutation: {
+      onSuccess: () => {
+        void qc.invalidateQueries({ queryKey: getListTeamInvitesQueryKey(teamId) });
+        toastSuccess("Invitation revoked");
+      },
+      onError: (e: unknown, vars) => toastFailed("Could not revoke the invitation", e, { retry: () => revoke.mutate(vars) }),
+    },
+  });
+
+  if (invites.isPending || invites.isError || (invites.data ?? []).length === 0) return null;
+  return (
+    <div className="space-y-2 border-t border-border p-3">
+      <h3 className="eyebrow">Invited</h3>
+      <ul className="divide-y divide-border rounded-md border border-border">
+        {(invites.data ?? []).map((inv: TeamInvite) => (
+          <li key={inv.id} className="flex items-center justify-between gap-2 px-3 py-2">
+            <span className="flex min-w-0 flex-col">
+              <span className="truncate text-[13px] text-text">{inv.email}</span>
+              <span className="mono text-[11px] text-text-faint">
+                {inv.role} · invited by {inv.invited_by_label} · expires {relativeTime(inv.expires_at)}
+              </span>
+            </span>
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label={`Revoke the invitation for ${inv.email}`}
+              disabled={revoke.isPending}
+              onClick={() => revoke.mutate({ id: teamId, inv: inv.id })}
+            >
+              <Trash2 className="h-3.5 w-3.5 text-danger" />
+            </Button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// The mirror image of an invitation (canvas 13ah): a member asking this team's
+// owners for a higher rank, in their own words. The message is the whole
+// substance of the decision, so it is rendered rather than truncated to a
+// count — "reports@client-x.com wants developer" is not something anyone can
+// act on.
+function AccessRequests({ team }: { team: Team }) {
+  const teamId = team.id;
+  const qc = useQueryClient();
+  const requests = useListAccessRequests(teamId);
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: getListAccessRequestsQueryKey(teamId) });
+  };
+  const grant = useGrantAccessRequest({
+    mutation: {
+      onSuccess: () => {
+        toastSuccess("Access granted");
+        refresh();
+        void qc.invalidateQueries({ queryKey: getListTeamMembersQueryKey(teamId) });
+      },
+      onError: (e: unknown) => toastFailed("Could not grant access", e),
+    },
+  });
+  const deny = useDenyAccessRequest({
+    mutation: {
+      onSuccess: () => {
+        toastSuccess("Request denied");
+        refresh();
+      },
+      onError: (e: unknown) => toastFailed("Could not deny the request", e),
+    },
+  });
+
+  const pending = (requests.data ?? []).filter((r: AccessRequest) => r.state === "pending");
+  if (requests.isPending || requests.isError || pending.length === 0) return null;
+  return (
+    <div className="space-y-2 border-t border-border p-3">
+      <h3 className="eyebrow">Access requests</h3>
+      <ul className="space-y-2">
+        {pending.map((r: AccessRequest) => (
+          <li key={r.id} className="rounded-md border border-border p-3">
+            <p className="text-[13px] text-text">
+              <span className="mono">{r.user_email}</span> requests{" "}
+              <span className="mono">
+                {r.current_role || "none"} → {r.requested_role}
+              </span>
+            </p>
+            {r.message && <p className="mt-1.5 text-[12.5px] leading-[1.5] text-text-mid">“{r.message}”</p>}
+            <div className="mt-2.5 flex items-center gap-2.5">
+              <ActionButton
+                variant="primary"
+                size="sm"
+                state={grant.isPending ? "busy" : "idle"}
+                busyLabel="Granting…"
+                onClick={() => grant.mutate({ id: r.id })}
+              >
+                Grant {r.requested_role}
+              </ActionButton>
+              <ActionButton
+                variant="ghost"
+                size="sm"
+                state={deny.isPending ? "busy" : "idle"}
+                busyLabel="Denying…"
+                onClick={() => deny.mutate({ id: r.id, data: { reason: "" } })}
+              >
+                Deny
+              </ActionButton>
+              <span className="mono ml-auto text-[11px] text-text-faint">
+                either way, audit-logged · requester is notified
+              </span>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * One member. The role is a select that saves on change — the grant rules and
+ * the last-owner guard live on the server, so what the UI owes is the server's
+ * sentence when it refuses, in place, beside the control that caused it. A
+ * toast would fly past the one message the operator has to act on.
+ */
+function MemberRow({
+  teamId,
+  member,
+  onRemove,
+  removing,
+}: {
+  teamId: string;
+  member: TeamMember;
+  onRemove: () => void;
+  removing: boolean;
+}) {
+  const qc = useQueryClient();
+  const [refused, setRefused] = useState<string | null>(null);
+  const change = useChangeTeamMemberRole({
+    mutation: {
+      onSuccess: () => {
+        setRefused(null);
+        void qc.invalidateQueries({ queryKey: getListTeamMembersQueryKey(teamId) });
+        void qc.invalidateQueries({ queryKey: getListTeamsQueryKey() });
+        toastSuccess("Role changed");
+      },
+      // 409 is the last-owner guard and 403 is a grant rule; both are
+      // instructions rather than faults, and both are shown verbatim.
+      onError: (e: unknown) => {
+        if (e instanceof ApiError && (e.status === 409 || e.status === 403)) {
+          setRefused(e.message);
+          return;
+        }
+        toastFailed("Could not change the role", e);
+      },
+    },
+  });
+
+  return (
+    <li className="px-3 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="min-w-0 flex-1 truncate text-[13px] text-text">{member.email}</span>
+        <Select
+          value={member.role}
+          aria-label={`Role for ${member.email}`}
+          disabled={change.isPending}
+          onChange={(e) =>
+            change.mutate({
+              id: teamId,
+              uid: member.user_id,
+              data: { role: e.currentTarget.value as (typeof ChangeMemberRoleRequestRole)[keyof typeof ChangeMemberRoleRequestRole] },
+            })
+          }
+          className="h-7 w-[110px] text-[12px]"
+        >
+          {Object.values(ChangeMemberRoleRequestRole).map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </Select>
+        <ConfirmDestructive
+          trigger={
+            <Button size="sm" variant="ghost" aria-label={`Remove ${member.email}`} disabled={removing}>
+              <Trash2 className="h-3.5 w-3.5 text-danger" />
+            </Button>
+          }
+          title={`Remove ${member.email}?`}
+          lead="Removing them from this team, immediately:"
+          blastRadius={[
+            "their access to every project, server and resource this team owns",
+            "any invitations they issued (revoked with them)",
+            "not their account — they keep it, and any other team they belong to",
+          ]}
+          actionLabel="Remove member"
+          pending={removing}
+          pendingLabel="Removing…"
+          onConfirm={onRemove}
+        />
+      </div>
+      {refused && (
+        <p role="alert" className="mt-1.5 rounded-md border border-danger/35 bg-danger/[0.06] px-2.5 py-1.5 text-[12px] text-danger">
+          {refused}
+        </p>
+      )}
+    </li>
+  );
+}
+
+function RenameTeamDialog({ team, isOwner }: { team: Team; isOwner: boolean }) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState(team.name);
+  const [error, setError] = useState<string | null>(null);
+  const rename = useRenameTeam({
+    mutation: {
+      onSuccess: () => {
+        void qc.invalidateQueries({ queryKey: getListTeamsQueryKey() });
+        toastSuccess("Team renamed");
+        setOpen(false);
+      },
+      onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not rename the team"),
+    },
+  });
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) {
+          setError(null);
+          setName(team.name);
+        }
+      }}
+    >
+      <DialogTrigger asChild>
+        <Button size="sm" variant="ghost" disabledReason={isOwner ? undefined : "Renaming a team needs owner"}>
+          Rename
+        </Button>
+      </DialogTrigger>
+      <DialogContent title={`Rename ${team.name}`}>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            setError(null);
+            rename.mutate({ id: team.id, data: { name: name.trim() } });
+          }}
+          className="space-y-4"
+        >
+          <Field label="Name" error={error ?? undefined}>
+            {(id) => (
+              <Input id={id} required autoFocus maxLength={100} value={name} onChange={(e) => setName(e.target.value)} />
+            )}
+          </Field>
+          <div className="flex justify-end gap-2">
+            <DialogClose asChild>
+              <Button type="button" variant="ghost">
+                Cancel
+              </Button>
+            </DialogClose>
+            <ActionButton
+              type="submit"
+              variant="primary"
+              state={rename.isPending ? "busy" : "idle"}
+              busyLabel="Saving…"
+              disabledReason={name.trim() === "" || name.trim() === team.name ? "Nothing has changed" : undefined}
+            >
+              Save
+            </ActionButton>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Deleting a team is refused while it owns projects, and the refusal is the
+ * useful half: a cascade here would take every project, server, application and
+ * database with it in one click. So the confirm names the guard rather than
+ * pretending the delete is small, and the 409 lands in place when the operator
+ * gets there first.
+ */
+function DeleteTeamDialog({ team, isOwner }: { team: Team; isOwner: boolean }) {
+  const qc = useQueryClient();
+  const [blocked, setBlocked] = useState<string | null>(null);
+  const del = useDeleteTeam({
+    mutation: {
+      onSuccess: () => {
+        void qc.invalidateQueries({ queryKey: getListTeamsQueryKey() });
+        toastSuccess(`Deleted ${team.name}`);
+      },
+      onError: (e: unknown) => {
+        if (e instanceof ApiError && e.status === 409) {
+          setBlocked(e.message);
+          return;
+        }
+        toastFailed("Could not delete the team", e);
+      },
+    },
+  });
+
+  return (
+    <>
+      <ConfirmDestructive
+        trigger={
+          <Button size="sm" variant="ghost" className="text-danger" disabledReason={isOwner ? undefined : "Deleting a team needs owner"}>
+            Delete team
+          </Button>
+        }
+        title={`Delete ${team.name}?`}
+        blastRadius={[
+          "The team, its membership and its pending invitations.",
+          "Refused while it still owns any project — move or delete those first, so nothing is orphaned.",
+          "Servers it owns are not deleted; they stop being reachable from any project.",
+        ]}
+        confirmName={team.name}
+        actionLabel="Delete team"
+        pending={del.isPending}
+        pendingLabel="Deleting…"
+        onConfirm={() => {
+          setBlocked(null);
+          del.mutate({ id: team.id });
+        }}
+      />
+      {blocked && (
+        <p role="alert" className="w-full rounded-md border border-danger/35 bg-danger/[0.06] px-2.5 py-1.5 text-[12px] text-danger">
+          {blocked}
+        </p>
+      )}
+    </>
   );
 }
 
