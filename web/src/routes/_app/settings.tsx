@@ -13,6 +13,7 @@ const TABS = [
   { to: "/settings/users", label: "Users", exact: false },
   { to: "/settings/deploy-keys", label: "Deploy keys", exact: false },
   { to: "/settings/registries", label: "Registries", exact: false },
+  { to: "/settings/audit", label: "Audit", exact: false },
   { to: "/settings/backup-targets", label: "Backup targets", exact: false },
   { to: "/settings/mail", label: "Mail", exact: false },
   { to: "/settings/dns", label: "DNS", exact: false },

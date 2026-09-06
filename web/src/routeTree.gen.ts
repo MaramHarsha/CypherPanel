@@ -18,6 +18,7 @@ import { Route as AppProjectsIndexRouteImport } from './routes/_app/projects/ind
 import { Route as AppServersIndexRouteImport } from './routes/_app/servers/index'
 import { Route as AppServersServerIdRouteImport } from './routes/_app/servers/$serverId'
 import { Route as AppSettingsIndexRouteImport } from './routes/_app/settings/index'
+import { Route as AppSettingsAuditRouteImport } from './routes/_app/settings/audit'
 import { Route as AppSettingsBackupTargetsRouteImport } from './routes/_app/settings/backup-targets'
 import { Route as AppSettingsDeployKeysRouteImport } from './routes/_app/settings/deploy-keys'
 import { Route as AppSettingsDnsRouteImport } from './routes/_app/settings/dns'
@@ -91,6 +92,11 @@ const AppServersServerIdRoute = AppServersServerIdRouteImport.update({
 const AppSettingsIndexRoute = AppSettingsIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => AppSettingsRoute,
+} as any)
+const AppSettingsAuditRoute = AppSettingsAuditRouteImport.update({
+  id: '/audit',
+  path: '/audit',
   getParentRoute: () => AppSettingsRoute,
 } as any)
 const AppSettingsBackupTargetsRoute =
@@ -272,6 +278,7 @@ export interface FileRoutesByFullPath {
   '/inbox': typeof AppInboxRoute
   '/settings': typeof AppSettingsRouteWithChildren
   '/servers/$serverId': typeof AppServersServerIdRoute
+  '/settings/audit': typeof AppSettingsAuditRoute
   '/settings/backup-targets': typeof AppSettingsBackupTargetsRoute
   '/settings/deploy-keys': typeof AppSettingsDeployKeysRoute
   '/settings/dns': typeof AppSettingsDnsRoute
@@ -311,6 +318,7 @@ export interface FileRoutesByTo {
   '/inbox': typeof AppInboxRoute
   '/': typeof AppIndexRoute
   '/servers/$serverId': typeof AppServersServerIdRoute
+  '/settings/audit': typeof AppSettingsAuditRoute
   '/settings/backup-targets': typeof AppSettingsBackupTargetsRoute
   '/settings/deploy-keys': typeof AppSettingsDeployKeysRoute
   '/settings/dns': typeof AppSettingsDnsRoute
@@ -350,6 +358,7 @@ export interface FileRoutesById {
   '/_app/settings': typeof AppSettingsRouteWithChildren
   '/_app/': typeof AppIndexRoute
   '/_app/servers/$serverId': typeof AppServersServerIdRoute
+  '/_app/settings/audit': typeof AppSettingsAuditRoute
   '/_app/settings/backup-targets': typeof AppSettingsBackupTargetsRoute
   '/_app/settings/deploy-keys': typeof AppSettingsDeployKeysRoute
   '/_app/settings/dns': typeof AppSettingsDnsRoute
@@ -392,6 +401,7 @@ export interface FileRouteTypes {
     | '/inbox'
     | '/settings'
     | '/servers/$serverId'
+    | '/settings/audit'
     | '/settings/backup-targets'
     | '/settings/deploy-keys'
     | '/settings/dns'
@@ -431,6 +441,7 @@ export interface FileRouteTypes {
     | '/inbox'
     | '/'
     | '/servers/$serverId'
+    | '/settings/audit'
     | '/settings/backup-targets'
     | '/settings/deploy-keys'
     | '/settings/dns'
@@ -469,6 +480,7 @@ export interface FileRouteTypes {
     | '/_app/settings'
     | '/_app/'
     | '/_app/servers/$serverId'
+    | '/_app/settings/audit'
     | '/_app/settings/backup-targets'
     | '/_app/settings/deploy-keys'
     | '/_app/settings/dns'
@@ -572,6 +584,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/settings/'
       preLoaderRoute: typeof AppSettingsIndexRouteImport
+      parentRoute: typeof AppSettingsRoute
+    }
+    '/_app/settings/audit': {
+      id: '/_app/settings/audit'
+      path: '/audit'
+      fullPath: '/settings/audit'
+      preLoaderRoute: typeof AppSettingsAuditRouteImport
       parentRoute: typeof AppSettingsRoute
     }
     '/_app/settings/backup-targets': {
@@ -788,6 +807,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface AppSettingsRouteChildren {
+  AppSettingsAuditRoute: typeof AppSettingsAuditRoute
   AppSettingsBackupTargetsRoute: typeof AppSettingsBackupTargetsRoute
   AppSettingsDeployKeysRoute: typeof AppSettingsDeployKeysRoute
   AppSettingsDnsRoute: typeof AppSettingsDnsRoute
@@ -800,6 +820,7 @@ interface AppSettingsRouteChildren {
 }
 
 const AppSettingsRouteChildren: AppSettingsRouteChildren = {
+  AppSettingsAuditRoute: AppSettingsAuditRoute,
   AppSettingsBackupTargetsRoute: AppSettingsBackupTargetsRoute,
   AppSettingsDeployKeysRoute: AppSettingsDeployKeysRoute,
   AppSettingsDnsRoute: AppSettingsDnsRoute,
