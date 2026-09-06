@@ -40,13 +40,20 @@ type EngineClient interface {
 type Builder struct {
 	engine  EngineClient
 	workDir string
+	// pack turns a repository with no Dockerfile into one (pack-builds.md).
+	// Never nil: NewBuilder installs the real pack, and its Available() is what
+	// decides whether detection may reach for it.
+	pack Pack
 }
 
 func NewBuilder(engine EngineClient, workDir string) *Builder {
-	return &Builder{
-		engine:  engine,
-		workDir: workDir,
-	}
+	return NewBuilderWithPack(engine, workDir, Nixpacks{})
+}
+
+// NewBuilderWithPack is NewBuilder with the build pack supplied, so the
+// builder's routing is testable without the binary installed.
+func NewBuilderWithPack(engine EngineClient, workDir string, pack Pack) *Builder {
+	return &Builder{engine: engine, workDir: workDir, pack: pack}
 }
 
 // sshCloneURL rewrites an https://github.com/ repository URL to its SSH form
@@ -152,10 +159,20 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 	// Decide how to build before tarring: a static site has its Dockerfile
 	// synthesized into the context, so it has to exist before the walk.
 	dockerfilePath := work.DockerfilePath
-	kind, err := resolveBuildKind(work.BuildKind, contextDir, dockerfilePath)
+	kind, err := resolveBuildKind(work.BuildKind, contextDir, dockerfilePath, b.pack.Available())
 	if err != nil {
 		onLog(err.Error())
 		return "", err
+	}
+	if kind == kindNixpacks {
+		// The pack writes a Dockerfile; from here the ordinary path takes over,
+		// so there is one place labels are stamped, one place a private base
+		// image's credential applies, and one place logs stream from.
+		generated, gerr := b.pack.Generate(ctx, contextDir, work.Image, onLog)
+		if gerr != nil {
+			return "", gerr
+		}
+		dockerfilePath = generated
 	}
 	if kind == kindStatic {
 		onLog("No Dockerfile found — detected a static site; building an nginx image to serve it.")

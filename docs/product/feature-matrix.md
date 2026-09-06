@@ -11,8 +11,8 @@
 | Raw git URL + deploy key | ✅ | ✅ | **V1** | |
 | Deploy from container image | ✅ | ✅ | **V1** | |
 | Dockerfile builds | ✅ | ✅ | **V1** | BuildKit on builder agents |
-| Nixpacks auto-build | ✅ | ✅ | **V1** | `dokploy/.../utils/builders/nixpacks.ts` |
-| Railpack | ✅ | ✅ | **V1** | `builders/railpack.ts` |
+| Nixpacks auto-build | ✅ | ✅ | **V1** ✅ | [pack-builds.md](../features/pack-builds.md) — `--out` writes a Dockerfile the ordinary build path consumes; `auto` prefers it only where the binary is installed |
+| Railpack | ✅ | ✅ | **V1** ⛔ blocked | [pack-builds.md](../features/pack-builds.md) §2 — a BuildKit *frontend*, so it needs a second build transport (buildx or a BuildKit session) beside the classic `/build` endpoint every build uses today. Deliberately not shipped as a guessed invocation |
 | Heroku / Paketo buildpacks | ❌ | ✅ | **Later** | `builders/heroku.ts`, `builders/paketo.ts` |
 | Static site builds | ✅ | ✅ | **V1** | `builders/static.ts` |
 | Drag-and-drop file deploy | ❌ | ✅ | **Later** | `builders/drop.ts` — niche but loved |

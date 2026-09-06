@@ -9,7 +9,11 @@
  */
 
 /**
- * How the checkout becomes an image. `dockerfile` builds the file at `dockerfile_path`. `static` serves the build context as a website behind nginx, listening on `runtime.port`. `auto` decides by looking at the repository: a Dockerfile if there is one, otherwise a static site if there is an index.html, and a clear failure naming both if neither. Detection runs on the builder agent, where the source actually is — the control plane never fetches a repository.
+ * How the checkout becomes an image. `dockerfile` builds the file at `dockerfile_path`. `static` serves the build context as a website behind nginx, listening on `runtime.port`. `nixpacks` hands the repository to a build pack, which decides the language, package manager, build command and runtime, and writes a Dockerfile the ordinary path then builds.
+ *
+ * `auto` decides by looking at the repository: a Dockerfile if there is one, then a language manifest (`package.json`, `go.mod`, …) if the Nixpacks binary is installed on the builder, then an index.html to serve as a static site, and a clear failure naming what would fix it if none apply. Detection runs on the builder agent, where the source actually is — the control plane never fetches a repository.
+ *
+ * Nixpacks is an opt-in an operator installs on a builder. Where it is absent, `auto` behaves exactly as it did before packs existed; choosing `nixpacks` explicitly on such a builder fails the build and says so.
  */
 export type AppBuildKind = typeof AppBuildKind[keyof typeof AppBuildKind];
 
@@ -18,4 +22,5 @@ export const AppBuildKind = {
   auto: 'auto',
   dockerfile: 'dockerfile',
   static: 'static',
+  nixpacks: 'nixpacks',
 } as const;

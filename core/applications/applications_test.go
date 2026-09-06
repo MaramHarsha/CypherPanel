@@ -231,7 +231,10 @@ func TestCreateValidation(t *testing.T) {
 			key := "dk_1"
 			in.Source = domain.AppSource{Kind: "image", Image: "ghost:5", DeployKeyID: &key}
 		},
-		"bad build":    func(in *CreateInput) { in.Build.Kind = "nixpacks" },
+		// A kind outside the closed set. "nixpacks" used to sit here and is
+		// now supported (pack-builds.md), which is exactly why the assertion
+		// has to name something that is not.
+		"bad build":    func(in *CreateInput) { in.Build.Kind = "buildpacks" },
 		"zero port":    func(in *CreateInput) { in.Runtime.Port = 0 },
 		"huge port":    func(in *CreateInput) { in.Runtime.Port = 70000 },
 		"two replicas": func(in *CreateInput) { in.Runtime.Replicas = 2 },

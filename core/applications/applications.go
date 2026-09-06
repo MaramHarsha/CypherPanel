@@ -671,9 +671,9 @@ func validateAndDefault(in CreateInput) (CreateInput, error) {
 		in.Build.Kind = domain.BuildDockerfile
 	}
 	switch in.Build.Kind {
-	case domain.BuildDockerfile, domain.BuildStatic, domain.BuildAuto:
+	case domain.BuildDockerfile, domain.BuildStatic, domain.BuildAuto, domain.BuildNixpacks:
 	default:
-		return in, invalid(`build.kind must be one of "auto", "dockerfile", "static"`)
+		return in, invalid(`build.kind must be one of "auto", "dockerfile", "static", "nixpacks"`)
 	}
 	if in.Build.DockerfilePath == "" {
 		in.Build.DockerfilePath = "./Dockerfile"

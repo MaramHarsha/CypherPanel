@@ -16,16 +16,18 @@ import (
 )
 
 type fakeEngine struct {
-	builtImage string
-	buildAuth  string
-	tagged     [][2]string
-	pushed     []string
-	pushAuth   string
-	pushErr    error
+	builtImage      string
+	builtDockerfile string
+	buildAuth       string
+	tagged          [][2]string
+	pushed          []string
+	pushAuth        string
+	pushErr         error
 }
 
 func (f *fakeEngine) BuildImage(ctx context.Context, buildContext io.Reader, tag, dockerfile string, labels map[string]string, registryConfig string, onLog func(line string)) error {
 	f.builtImage = tag
+	f.builtDockerfile = dockerfile
 	f.buildAuth = registryConfig
 	onLog("Docker daemon building...")
 	_, _ = io.Copy(io.Discard, buildContext)
@@ -256,5 +258,132 @@ func TestAFailedPushFailsTheBuild(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "ghp_push") {
 		t.Fatalf("the credential reached the error: %v", err)
+	}
+}
+
+// ─── pack builds (pack-builds.md §5) ────────────────────────────────────────
+
+// fakePack stands in for Nixpacks: what matters here is that the builder hands
+// the checkout over and then builds what came back, not what the pack decides.
+type fakePack struct {
+	available bool
+	called    int
+	contextIn string
+	tagIn     string
+	writes    string // the Dockerfile it pretends to generate
+	err       error
+}
+
+func (p *fakePack) Available() bool { return p.available }
+
+func (p *fakePack) Generate(_ context.Context, contextDir, imageTag string, onLog func(string)) (string, error) {
+	p.called++
+	p.contextIn, p.tagIn = contextDir, imageTag
+	if p.err != nil {
+		return "", p.err
+	}
+	onLog("pack: planned this repository")
+	generated := filepath.Join(contextDir, p.writes)
+	if err := os.MkdirAll(filepath.Dir(generated), 0o755); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(generated, []byte("FROM scratch\n"), 0o644); err != nil {
+		return "", err
+	}
+	return p.writes, nil
+}
+
+// seedRepoWith is seedRepo with an extra file, so a repository can look like
+// an application rather than a directory of files to serve.
+func seedRepoWith(t *testing.T, extra string) (dir, commit string) {
+	t.Helper()
+	dir = t.TempDir()
+	if err := exec.Command("git", "init", dir).Run(); err != nil {
+		t.Skip("git not installed or failed to init")
+	}
+	if err := os.WriteFile(filepath.Join(dir, extra), []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write %s: %v", extra, err)
+	}
+	for _, args := range [][]string{
+		{"config", "user.email", "test@test.com"},
+		{"config", "user.name", "Test"},
+		{"add", "."},
+		{"commit", "-m", "init"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v (%s)", args, err, out)
+		}
+	}
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Skip("git rev-parse failed")
+	}
+	return dir, strings.TrimSpace(string(out))
+}
+
+// The pack writes a Dockerfile and the ORDINARY path builds it: one build path,
+// so labels, credentials and log streaming all stay in one place.
+func TestAPackBuildGoesThroughTheOrdinaryBuildPath(t *testing.T) {
+	repo, commit := seedRepoWith(t, "package.json")
+	engine := &fakeEngine{}
+	pack := &fakePack{available: true, writes: ".nixpacks/Dockerfile"}
+	b := builder.NewBuilderWithPack(engine, t.TempDir(), pack)
+
+	work := buildWorkFor(repo, commit)
+	work.DockerfilePath = "Dockerfile"
+	work.BuildKind = "auto"
+
+	var logs []string
+	if _, err := b.Build(context.Background(), work, func(l string) { logs = append(logs, l) }); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if pack.called != 1 {
+		t.Fatalf("pack called %d times, want once", pack.called)
+	}
+	if engine.builtImage != "cypher/app1:rev1" {
+		t.Fatalf("built image = %q, want the ordinary tag", engine.builtImage)
+	}
+	if engine.builtDockerfile != ".nixpacks/Dockerfile" {
+		t.Fatalf("built dockerfile = %q, want the generated one", engine.builtDockerfile)
+	}
+	if !strings.Contains(strings.Join(logs, "\n"), "pack: planned this repository") {
+		t.Fatalf("logs = %v, want the pack's own output streamed", logs)
+	}
+}
+
+// Without the pack installed, a repository that has only a manifest is a build
+// we cannot infer — the pre-feature answer, not a silent pack build.
+func TestWithoutThePackAManifestOnlyRepoStillFails(t *testing.T) {
+	repo, commit := seedRepoWith(t, "package.json")
+	pack := &fakePack{available: false}
+	b := builder.NewBuilderWithPack(&fakeEngine{}, t.TempDir(), pack)
+
+	work := buildWorkFor(repo, commit)
+	work.BuildKind = "auto"
+
+	if _, err := b.Build(context.Background(), work, func(string) {}); err == nil {
+		t.Fatal("Build succeeded with no pack and nothing to infer")
+	}
+	if pack.called != 0 {
+		t.Fatal("the pack was invoked despite being unavailable")
+	}
+}
+
+// A pack that cannot plan the repository fails the build with its own words.
+func TestAFailedPackFailsTheBuild(t *testing.T) {
+	repo, commit := seedRepoWith(t, "package.json")
+	pack := &fakePack{available: true, err: errors.New("no start command could be found")}
+	b := builder.NewBuilderWithPack(&fakeEngine{}, t.TempDir(), pack)
+
+	work := buildWorkFor(repo, commit)
+	work.BuildKind = "nixpacks"
+
+	_, err := b.Build(context.Background(), work, func(string) {})
+	if err == nil || !strings.Contains(err.Error(), "no start command") {
+		t.Fatalf("err = %v, want the pack's own words", err)
 	}
 }

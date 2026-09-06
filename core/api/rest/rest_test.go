@@ -1402,7 +1402,7 @@ func TestApplicationAcceptsSpecShapedBuild(t *testing.T) {
 
 	// An unsupported kind is still a validation error, not a decode error.
 	bad := `{"name":"nope","source":{"kind":"github","repo":"acme/x"},` +
-		`"build":{"kind":"nixpacks","dockerfile_path":"./Dockerfile","context":"."},` +
+		`"build":{"kind":"buildpacks","dockerfile_path":"./Dockerfile","context":"."},` +
 		`"runtime":{"server_id":"srv_test","port":8080},"route":{"domain":"n.example.com"}}`
 	status, _, resp = doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, bad)
 	if status != http.StatusBadRequest {
