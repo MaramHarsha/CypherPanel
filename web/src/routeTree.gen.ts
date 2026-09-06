@@ -31,6 +31,7 @@ import { Route as AppTemplatesIndexRouteImport } from './routes/_app/templates/i
 import { Route as AppProjectsProjectIdIndexRouteImport } from './routes/_app/projects/$projectId/index'
 import { Route as AppProjectsProjectIdSettingsRouteImport } from './routes/_app/projects/$projectId/settings'
 import { Route as AppProjectsProjectIdApplicationsAppIdRouteImport } from './routes/_app/projects/$projectId/applications/$appId'
+import { Route as AppProjectsProjectIdComposeStackIdRouteImport } from './routes/_app/projects/$projectId/compose/$stackId'
 import { Route as AppProjectsProjectIdDatabasesDbIdRouteImport } from './routes/_app/projects/$projectId/databases/$dbId'
 import { Route as AppProjectsProjectIdSettingsIndexRouteImport } from './routes/_app/projects/$projectId/settings/index'
 import { Route as AppProjectsProjectIdSettingsNotifiersRouteImport } from './routes/_app/projects/$projectId/settings/notifiers'
@@ -45,6 +46,11 @@ import { Route as AppProjectsProjectIdApplicationsAppIdPreviewsRouteImport } fro
 import { Route as AppProjectsProjectIdApplicationsAppIdSettingsRouteImport } from './routes/_app/projects/$projectId/applications/$appId/settings'
 import { Route as AppProjectsProjectIdApplicationsAppIdStorageRouteImport } from './routes/_app/projects/$projectId/applications/$appId/storage'
 import { Route as AppProjectsProjectIdApplicationsAppIdTasksRouteImport } from './routes/_app/projects/$projectId/applications/$appId/tasks'
+import { Route as AppProjectsProjectIdComposeStackIdIndexRouteImport } from './routes/_app/projects/$projectId/compose/$stackId/index'
+import { Route as AppProjectsProjectIdComposeStackIdEnvRouteImport } from './routes/_app/projects/$projectId/compose/$stackId/env'
+import { Route as AppProjectsProjectIdComposeStackIdLogsRouteImport } from './routes/_app/projects/$projectId/compose/$stackId/logs'
+import { Route as AppProjectsProjectIdComposeStackIdRevisionsRouteImport } from './routes/_app/projects/$projectId/compose/$stackId/revisions'
+import { Route as AppProjectsProjectIdComposeStackIdSettingsRouteImport } from './routes/_app/projects/$projectId/compose/$stackId/settings'
 import { Route as AppProjectsProjectIdDatabasesDbIdIndexRouteImport } from './routes/_app/projects/$projectId/databases/$dbId/index'
 import { Route as AppProjectsProjectIdDatabasesDbIdBackupsRouteImport } from './routes/_app/projects/$projectId/databases/$dbId/backups'
 import { Route as AppProjectsProjectIdDatabasesDbIdConnectionRouteImport } from './routes/_app/projects/$projectId/databases/$dbId/connection'
@@ -163,6 +169,12 @@ const AppProjectsProjectIdApplicationsAppIdRoute =
     path: '/projects/$projectId/applications/$appId',
     getParentRoute: () => AppRoute,
   } as any)
+const AppProjectsProjectIdComposeStackIdRoute =
+  AppProjectsProjectIdComposeStackIdRouteImport.update({
+    id: '/projects/$projectId/compose/$stackId',
+    path: '/projects/$projectId/compose/$stackId',
+    getParentRoute: () => AppRoute,
+  } as any)
 const AppProjectsProjectIdDatabasesDbIdRoute =
   AppProjectsProjectIdDatabasesDbIdRouteImport.update({
     id: '/projects/$projectId/databases/$dbId',
@@ -247,6 +259,36 @@ const AppProjectsProjectIdApplicationsAppIdTasksRoute =
     path: '/tasks',
     getParentRoute: () => AppProjectsProjectIdApplicationsAppIdRoute,
   } as any)
+const AppProjectsProjectIdComposeStackIdIndexRoute =
+  AppProjectsProjectIdComposeStackIdIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => AppProjectsProjectIdComposeStackIdRoute,
+  } as any)
+const AppProjectsProjectIdComposeStackIdEnvRoute =
+  AppProjectsProjectIdComposeStackIdEnvRouteImport.update({
+    id: '/env',
+    path: '/env',
+    getParentRoute: () => AppProjectsProjectIdComposeStackIdRoute,
+  } as any)
+const AppProjectsProjectIdComposeStackIdLogsRoute =
+  AppProjectsProjectIdComposeStackIdLogsRouteImport.update({
+    id: '/logs',
+    path: '/logs',
+    getParentRoute: () => AppProjectsProjectIdComposeStackIdRoute,
+  } as any)
+const AppProjectsProjectIdComposeStackIdRevisionsRoute =
+  AppProjectsProjectIdComposeStackIdRevisionsRouteImport.update({
+    id: '/revisions',
+    path: '/revisions',
+    getParentRoute: () => AppProjectsProjectIdComposeStackIdRoute,
+  } as any)
+const AppProjectsProjectIdComposeStackIdSettingsRoute =
+  AppProjectsProjectIdComposeStackIdSettingsRouteImport.update({
+    id: '/settings',
+    path: '/settings',
+    getParentRoute: () => AppProjectsProjectIdComposeStackIdRoute,
+  } as any)
 const AppProjectsProjectIdDatabasesDbIdIndexRoute =
   AppProjectsProjectIdDatabasesDbIdIndexRouteImport.update({
     id: '/',
@@ -294,6 +336,7 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/settings': typeof AppProjectsProjectIdSettingsRouteWithChildren
   '/projects/$projectId/': typeof AppProjectsProjectIdIndexRoute
   '/projects/$projectId/applications/$appId': typeof AppProjectsProjectIdApplicationsAppIdRouteWithChildren
+  '/projects/$projectId/compose/$stackId': typeof AppProjectsProjectIdComposeStackIdRouteWithChildren
   '/projects/$projectId/databases/$dbId': typeof AppProjectsProjectIdDatabasesDbIdRouteWithChildren
   '/projects/$projectId/settings/notifiers': typeof AppProjectsProjectIdSettingsNotifiersRoute
   '/projects/$projectId/settings/protection': typeof AppProjectsProjectIdSettingsProtectionRoute
@@ -307,10 +350,15 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/applications/$appId/settings': typeof AppProjectsProjectIdApplicationsAppIdSettingsRoute
   '/projects/$projectId/applications/$appId/storage': typeof AppProjectsProjectIdApplicationsAppIdStorageRoute
   '/projects/$projectId/applications/$appId/tasks': typeof AppProjectsProjectIdApplicationsAppIdTasksRoute
+  '/projects/$projectId/compose/$stackId/env': typeof AppProjectsProjectIdComposeStackIdEnvRoute
+  '/projects/$projectId/compose/$stackId/logs': typeof AppProjectsProjectIdComposeStackIdLogsRoute
+  '/projects/$projectId/compose/$stackId/revisions': typeof AppProjectsProjectIdComposeStackIdRevisionsRoute
+  '/projects/$projectId/compose/$stackId/settings': typeof AppProjectsProjectIdComposeStackIdSettingsRoute
   '/projects/$projectId/databases/$dbId/backups': typeof AppProjectsProjectIdDatabasesDbIdBackupsRoute
   '/projects/$projectId/databases/$dbId/connection': typeof AppProjectsProjectIdDatabasesDbIdConnectionRoute
   '/projects/$projectId/databases/$dbId/settings': typeof AppProjectsProjectIdDatabasesDbIdSettingsRoute
   '/projects/$projectId/applications/$appId/': typeof AppProjectsProjectIdApplicationsAppIdIndexRoute
+  '/projects/$projectId/compose/$stackId/': typeof AppProjectsProjectIdComposeStackIdIndexRoute
   '/projects/$projectId/databases/$dbId/': typeof AppProjectsProjectIdDatabasesDbIdIndexRoute
 }
 export interface FileRoutesByTo {
@@ -344,10 +392,15 @@ export interface FileRoutesByTo {
   '/projects/$projectId/applications/$appId/settings': typeof AppProjectsProjectIdApplicationsAppIdSettingsRoute
   '/projects/$projectId/applications/$appId/storage': typeof AppProjectsProjectIdApplicationsAppIdStorageRoute
   '/projects/$projectId/applications/$appId/tasks': typeof AppProjectsProjectIdApplicationsAppIdTasksRoute
+  '/projects/$projectId/compose/$stackId/env': typeof AppProjectsProjectIdComposeStackIdEnvRoute
+  '/projects/$projectId/compose/$stackId/logs': typeof AppProjectsProjectIdComposeStackIdLogsRoute
+  '/projects/$projectId/compose/$stackId/revisions': typeof AppProjectsProjectIdComposeStackIdRevisionsRoute
+  '/projects/$projectId/compose/$stackId/settings': typeof AppProjectsProjectIdComposeStackIdSettingsRoute
   '/projects/$projectId/databases/$dbId/backups': typeof AppProjectsProjectIdDatabasesDbIdBackupsRoute
   '/projects/$projectId/databases/$dbId/connection': typeof AppProjectsProjectIdDatabasesDbIdConnectionRoute
   '/projects/$projectId/databases/$dbId/settings': typeof AppProjectsProjectIdDatabasesDbIdSettingsRoute
   '/projects/$projectId/applications/$appId': typeof AppProjectsProjectIdApplicationsAppIdIndexRoute
+  '/projects/$projectId/compose/$stackId': typeof AppProjectsProjectIdComposeStackIdIndexRoute
   '/projects/$projectId/databases/$dbId': typeof AppProjectsProjectIdDatabasesDbIdIndexRoute
 }
 export interface FileRoutesById {
@@ -374,6 +427,7 @@ export interface FileRoutesById {
   '/_app/projects/$projectId/settings': typeof AppProjectsProjectIdSettingsRouteWithChildren
   '/_app/projects/$projectId/': typeof AppProjectsProjectIdIndexRoute
   '/_app/projects/$projectId/applications/$appId': typeof AppProjectsProjectIdApplicationsAppIdRouteWithChildren
+  '/_app/projects/$projectId/compose/$stackId': typeof AppProjectsProjectIdComposeStackIdRouteWithChildren
   '/_app/projects/$projectId/databases/$dbId': typeof AppProjectsProjectIdDatabasesDbIdRouteWithChildren
   '/_app/projects/$projectId/settings/notifiers': typeof AppProjectsProjectIdSettingsNotifiersRoute
   '/_app/projects/$projectId/settings/protection': typeof AppProjectsProjectIdSettingsProtectionRoute
@@ -387,10 +441,15 @@ export interface FileRoutesById {
   '/_app/projects/$projectId/applications/$appId/settings': typeof AppProjectsProjectIdApplicationsAppIdSettingsRoute
   '/_app/projects/$projectId/applications/$appId/storage': typeof AppProjectsProjectIdApplicationsAppIdStorageRoute
   '/_app/projects/$projectId/applications/$appId/tasks': typeof AppProjectsProjectIdApplicationsAppIdTasksRoute
+  '/_app/projects/$projectId/compose/$stackId/env': typeof AppProjectsProjectIdComposeStackIdEnvRoute
+  '/_app/projects/$projectId/compose/$stackId/logs': typeof AppProjectsProjectIdComposeStackIdLogsRoute
+  '/_app/projects/$projectId/compose/$stackId/revisions': typeof AppProjectsProjectIdComposeStackIdRevisionsRoute
+  '/_app/projects/$projectId/compose/$stackId/settings': typeof AppProjectsProjectIdComposeStackIdSettingsRoute
   '/_app/projects/$projectId/databases/$dbId/backups': typeof AppProjectsProjectIdDatabasesDbIdBackupsRoute
   '/_app/projects/$projectId/databases/$dbId/connection': typeof AppProjectsProjectIdDatabasesDbIdConnectionRoute
   '/_app/projects/$projectId/databases/$dbId/settings': typeof AppProjectsProjectIdDatabasesDbIdSettingsRoute
   '/_app/projects/$projectId/applications/$appId/': typeof AppProjectsProjectIdApplicationsAppIdIndexRoute
+  '/_app/projects/$projectId/compose/$stackId/': typeof AppProjectsProjectIdComposeStackIdIndexRoute
   '/_app/projects/$projectId/databases/$dbId/': typeof AppProjectsProjectIdDatabasesDbIdIndexRoute
 }
 export interface FileRouteTypes {
@@ -417,6 +476,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/settings'
     | '/projects/$projectId/'
     | '/projects/$projectId/applications/$appId'
+    | '/projects/$projectId/compose/$stackId'
     | '/projects/$projectId/databases/$dbId'
     | '/projects/$projectId/settings/notifiers'
     | '/projects/$projectId/settings/protection'
@@ -430,10 +490,15 @@ export interface FileRouteTypes {
     | '/projects/$projectId/applications/$appId/settings'
     | '/projects/$projectId/applications/$appId/storage'
     | '/projects/$projectId/applications/$appId/tasks'
+    | '/projects/$projectId/compose/$stackId/env'
+    | '/projects/$projectId/compose/$stackId/logs'
+    | '/projects/$projectId/compose/$stackId/revisions'
+    | '/projects/$projectId/compose/$stackId/settings'
     | '/projects/$projectId/databases/$dbId/backups'
     | '/projects/$projectId/databases/$dbId/connection'
     | '/projects/$projectId/databases/$dbId/settings'
     | '/projects/$projectId/applications/$appId/'
+    | '/projects/$projectId/compose/$stackId/'
     | '/projects/$projectId/databases/$dbId/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -467,10 +532,15 @@ export interface FileRouteTypes {
     | '/projects/$projectId/applications/$appId/settings'
     | '/projects/$projectId/applications/$appId/storage'
     | '/projects/$projectId/applications/$appId/tasks'
+    | '/projects/$projectId/compose/$stackId/env'
+    | '/projects/$projectId/compose/$stackId/logs'
+    | '/projects/$projectId/compose/$stackId/revisions'
+    | '/projects/$projectId/compose/$stackId/settings'
     | '/projects/$projectId/databases/$dbId/backups'
     | '/projects/$projectId/databases/$dbId/connection'
     | '/projects/$projectId/databases/$dbId/settings'
     | '/projects/$projectId/applications/$appId'
+    | '/projects/$projectId/compose/$stackId'
     | '/projects/$projectId/databases/$dbId'
   id:
     | '__root__'
@@ -496,6 +566,7 @@ export interface FileRouteTypes {
     | '/_app/projects/$projectId/settings'
     | '/_app/projects/$projectId/'
     | '/_app/projects/$projectId/applications/$appId'
+    | '/_app/projects/$projectId/compose/$stackId'
     | '/_app/projects/$projectId/databases/$dbId'
     | '/_app/projects/$projectId/settings/notifiers'
     | '/_app/projects/$projectId/settings/protection'
@@ -509,10 +580,15 @@ export interface FileRouteTypes {
     | '/_app/projects/$projectId/applications/$appId/settings'
     | '/_app/projects/$projectId/applications/$appId/storage'
     | '/_app/projects/$projectId/applications/$appId/tasks'
+    | '/_app/projects/$projectId/compose/$stackId/env'
+    | '/_app/projects/$projectId/compose/$stackId/logs'
+    | '/_app/projects/$projectId/compose/$stackId/revisions'
+    | '/_app/projects/$projectId/compose/$stackId/settings'
     | '/_app/projects/$projectId/databases/$dbId/backups'
     | '/_app/projects/$projectId/databases/$dbId/connection'
     | '/_app/projects/$projectId/databases/$dbId/settings'
     | '/_app/projects/$projectId/applications/$appId/'
+    | '/_app/projects/$projectId/compose/$stackId/'
     | '/_app/projects/$projectId/databases/$dbId/'
   fileRoutesById: FileRoutesById
 }
@@ -677,6 +753,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppProjectsProjectIdApplicationsAppIdRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/projects/$projectId/compose/$stackId': {
+      id: '/_app/projects/$projectId/compose/$stackId'
+      path: '/projects/$projectId/compose/$stackId'
+      fullPath: '/projects/$projectId/compose/$stackId'
+      preLoaderRoute: typeof AppProjectsProjectIdComposeStackIdRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/projects/$projectId/databases/$dbId': {
       id: '/_app/projects/$projectId/databases/$dbId'
       path: '/projects/$projectId/databases/$dbId'
@@ -774,6 +857,41 @@ declare module '@tanstack/react-router' {
       fullPath: '/projects/$projectId/applications/$appId/tasks'
       preLoaderRoute: typeof AppProjectsProjectIdApplicationsAppIdTasksRouteImport
       parentRoute: typeof AppProjectsProjectIdApplicationsAppIdRoute
+    }
+    '/_app/projects/$projectId/compose/$stackId/': {
+      id: '/_app/projects/$projectId/compose/$stackId/'
+      path: '/'
+      fullPath: '/projects/$projectId/compose/$stackId/'
+      preLoaderRoute: typeof AppProjectsProjectIdComposeStackIdIndexRouteImport
+      parentRoute: typeof AppProjectsProjectIdComposeStackIdRoute
+    }
+    '/_app/projects/$projectId/compose/$stackId/env': {
+      id: '/_app/projects/$projectId/compose/$stackId/env'
+      path: '/env'
+      fullPath: '/projects/$projectId/compose/$stackId/env'
+      preLoaderRoute: typeof AppProjectsProjectIdComposeStackIdEnvRouteImport
+      parentRoute: typeof AppProjectsProjectIdComposeStackIdRoute
+    }
+    '/_app/projects/$projectId/compose/$stackId/logs': {
+      id: '/_app/projects/$projectId/compose/$stackId/logs'
+      path: '/logs'
+      fullPath: '/projects/$projectId/compose/$stackId/logs'
+      preLoaderRoute: typeof AppProjectsProjectIdComposeStackIdLogsRouteImport
+      parentRoute: typeof AppProjectsProjectIdComposeStackIdRoute
+    }
+    '/_app/projects/$projectId/compose/$stackId/revisions': {
+      id: '/_app/projects/$projectId/compose/$stackId/revisions'
+      path: '/revisions'
+      fullPath: '/projects/$projectId/compose/$stackId/revisions'
+      preLoaderRoute: typeof AppProjectsProjectIdComposeStackIdRevisionsRouteImport
+      parentRoute: typeof AppProjectsProjectIdComposeStackIdRoute
+    }
+    '/_app/projects/$projectId/compose/$stackId/settings': {
+      id: '/_app/projects/$projectId/compose/$stackId/settings'
+      path: '/settings'
+      fullPath: '/projects/$projectId/compose/$stackId/settings'
+      preLoaderRoute: typeof AppProjectsProjectIdComposeStackIdSettingsRouteImport
+      parentRoute: typeof AppProjectsProjectIdComposeStackIdRoute
     }
     '/_app/projects/$projectId/databases/$dbId/': {
       id: '/_app/projects/$projectId/databases/$dbId/'
@@ -899,6 +1017,33 @@ const AppProjectsProjectIdApplicationsAppIdRouteWithChildren =
     AppProjectsProjectIdApplicationsAppIdRouteChildren,
   )
 
+interface AppProjectsProjectIdComposeStackIdRouteChildren {
+  AppProjectsProjectIdComposeStackIdEnvRoute: typeof AppProjectsProjectIdComposeStackIdEnvRoute
+  AppProjectsProjectIdComposeStackIdLogsRoute: typeof AppProjectsProjectIdComposeStackIdLogsRoute
+  AppProjectsProjectIdComposeStackIdRevisionsRoute: typeof AppProjectsProjectIdComposeStackIdRevisionsRoute
+  AppProjectsProjectIdComposeStackIdSettingsRoute: typeof AppProjectsProjectIdComposeStackIdSettingsRoute
+  AppProjectsProjectIdComposeStackIdIndexRoute: typeof AppProjectsProjectIdComposeStackIdIndexRoute
+}
+
+const AppProjectsProjectIdComposeStackIdRouteChildren: AppProjectsProjectIdComposeStackIdRouteChildren =
+  {
+    AppProjectsProjectIdComposeStackIdEnvRoute:
+      AppProjectsProjectIdComposeStackIdEnvRoute,
+    AppProjectsProjectIdComposeStackIdLogsRoute:
+      AppProjectsProjectIdComposeStackIdLogsRoute,
+    AppProjectsProjectIdComposeStackIdRevisionsRoute:
+      AppProjectsProjectIdComposeStackIdRevisionsRoute,
+    AppProjectsProjectIdComposeStackIdSettingsRoute:
+      AppProjectsProjectIdComposeStackIdSettingsRoute,
+    AppProjectsProjectIdComposeStackIdIndexRoute:
+      AppProjectsProjectIdComposeStackIdIndexRoute,
+  }
+
+const AppProjectsProjectIdComposeStackIdRouteWithChildren =
+  AppProjectsProjectIdComposeStackIdRoute._addFileChildren(
+    AppProjectsProjectIdComposeStackIdRouteChildren,
+  )
+
 interface AppProjectsProjectIdDatabasesDbIdRouteChildren {
   AppProjectsProjectIdDatabasesDbIdBackupsRoute: typeof AppProjectsProjectIdDatabasesDbIdBackupsRoute
   AppProjectsProjectIdDatabasesDbIdConnectionRoute: typeof AppProjectsProjectIdDatabasesDbIdConnectionRoute
@@ -934,6 +1079,7 @@ interface AppRouteChildren {
   AppProjectsProjectIdSettingsRoute: typeof AppProjectsProjectIdSettingsRouteWithChildren
   AppProjectsProjectIdIndexRoute: typeof AppProjectsProjectIdIndexRoute
   AppProjectsProjectIdApplicationsAppIdRoute: typeof AppProjectsProjectIdApplicationsAppIdRouteWithChildren
+  AppProjectsProjectIdComposeStackIdRoute: typeof AppProjectsProjectIdComposeStackIdRouteWithChildren
   AppProjectsProjectIdDatabasesDbIdRoute: typeof AppProjectsProjectIdDatabasesDbIdRouteWithChildren
 }
 
@@ -950,6 +1096,8 @@ const AppRouteChildren: AppRouteChildren = {
   AppProjectsProjectIdIndexRoute: AppProjectsProjectIdIndexRoute,
   AppProjectsProjectIdApplicationsAppIdRoute:
     AppProjectsProjectIdApplicationsAppIdRouteWithChildren,
+  AppProjectsProjectIdComposeStackIdRoute:
+    AppProjectsProjectIdComposeStackIdRouteWithChildren,
   AppProjectsProjectIdDatabasesDbIdRoute:
     AppProjectsProjectIdDatabasesDbIdRouteWithChildren,
 }
