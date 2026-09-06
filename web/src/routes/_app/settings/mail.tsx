@@ -13,16 +13,24 @@ import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
 import { ApiError } from "@/api/client";
-import { getGetPanelMailQueryKey, useGetPanelMail, useSetPanelMail, useTestPanelMail } from "@/api/gen/panel/panel";
+import {
+  getGetPanelMailQueryKey,
+  useDeletePanelMail,
+  useGetPanelMail,
+  useSetPanelMail,
+  useTestPanelMail,
+} from "@/api/gen/panel/panel";
 import { useGetMe } from "@/api/gen/auth/auth";
+import { ConfirmDestructive } from "@/components/confirm-destructive";
 import { EmptyState } from "@/components/empty-state";
+import { Button } from "@/components/ui/button";
 import { PageState } from "@/components/page-state";
 import { ActionButton, useMutationActionState } from "@/components/ui/action-button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { useCrumbs } from "@/lib/crumbs";
 import { atLeast, type Role } from "@/lib/roles";
-import { toastSuccess } from "@/lib/toast";
+import { toastFailed, toastSuccess } from "@/lib/toast";
 
 export const Route = createFileRoute("/_app/settings/mail")({ component: MailTab });
 
@@ -224,6 +232,11 @@ function MailForm({ hint, configured }: { hint: string; configured: boolean }) {
             saved: {hint}
           </span>
         )}
+        {/* Forgetting the transport, not editing it. It is a separate act
+            because it is the one that stops mail leaving: an invitation still
+            gets its link (the create response carries it either way), but an
+            email-change confirmation has nowhere to go. */}
+        {configured && <ForgetMail onForgotten={() => { setTestedTo(null); setError(null); }} />}
       </div>
 
       {testedTo && (
@@ -235,5 +248,43 @@ function MailForm({ hint, configured }: { hint: string; configured: boolean }) {
         </p>
       )}
     </form>
+  );
+}
+
+function ForgetMail({ onForgotten }: { onForgotten: () => void }) {
+  const qc = useQueryClient();
+  const forget = useDeletePanelMail({
+    mutation: {
+      onSuccess: () => {
+        void qc.invalidateQueries({ queryKey: getGetPanelMailQueryKey() });
+        onForgotten();
+        toastSuccess({
+          title: "Mail settings forgotten",
+          detail: "The panel can no longer send in its own name.",
+        });
+      },
+      onError: (e: unknown) => toastFailed("Could not forget the mail settings", e),
+    },
+  });
+  return (
+    <ConfirmDestructive
+      trigger={
+        <Button type="button" variant="ghost" size="sm" className="ml-auto text-danger">
+          Forget
+        </Button>
+      }
+      title="Forget the mail settings?"
+      lead="The panel stops being able to send in its own name:"
+      blastRadius={[
+        "Email-change confirmations cannot be sent, so nobody can move their sign-in address.",
+        "Invitations are still issued — the accept link comes back in the create response either way — but nobody is mailed one.",
+        "The SMTP password is destroyed and cannot be recovered; setting mail up again means typing it in.",
+        "Project notifiers are untouched — they have their own transports.",
+      ]}
+      actionLabel="Forget settings"
+      pending={forget.isPending}
+      pendingLabel="Forgetting…"
+      onConfirm={() => forget.mutate()}
+    />
   );
 }
