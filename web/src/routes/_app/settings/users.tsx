@@ -9,10 +9,12 @@ import { useGetMe } from "@/api/gen/auth/auth";
 import {
   getListUsersQueryKey,
   useCreateUser,
+  useDeleteUser,
   useListUsers,
   useUpdateUserRole,
 } from "@/api/gen/teams/teams";
 import type { User } from "@/api/gen/model";
+import { ConfirmDestructive } from "@/components/confirm-destructive";
 import { CopyField } from "@/components/copy-field";
 import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
@@ -59,7 +61,7 @@ function UsersTab() {
         {(list) => (
           <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-surface">
             {list.map((u) => (
-              <UserRow key={u.id} user={u} isSelf={u.id === me.data?.id} />
+              <UserRow key={u.id} user={u} isSelf={u.id === me.data?.id} canDelete={me.data?.role === "owner"} />
             ))}
           </ul>
         )}
@@ -68,7 +70,7 @@ function UsersTab() {
   );
 }
 
-function UserRow({ user, isSelf }: { user: User; isSelf: boolean }) {
+function UserRow({ user, isSelf, canDelete }: { user: User; isSelf: boolean; canDelete: boolean }) {
   const qc = useQueryClient();
   const update = useUpdateUserRole({
     mutation: {
@@ -77,6 +79,15 @@ function UserRow({ user, isSelf }: { user: User; isSelf: boolean }) {
         toastSuccess("Role updated");
       },
       onError: (e: unknown, vars) => toastFailed("Could not update the role", e, { retry: () => update.mutate(vars) }),
+    },
+  });
+  const del = useDeleteUser({
+    mutation: {
+      onSuccess: () => {
+        void qc.invalidateQueries({ queryKey: getListUsersQueryKey() });
+        toastSuccess(`Deleted ${user.email}`);
+      },
+      onError: (e: unknown) => toastFailed("Could not delete the account", e),
     },
   });
 
@@ -100,6 +111,40 @@ function UserRow({ user, isSelf }: { user: User; isSelf: boolean }) {
         <option value="admin">admin</option>
         <option value="owner">owner</option>
       </Select>
+      {/* Panel owner only, and never your own account — deleting the account
+          you are signed in as is the one mistake nobody can undo from here.
+          The API refuses it; the button says so rather than letting a 400 do
+          the explaining. */}
+      <ConfirmDestructive
+        trigger={
+          <Button
+            size="sm"
+            variant="ghost"
+            className="shrink-0 text-danger"
+            disabledReason={
+              isSelf
+                ? "You cannot delete your own account"
+                : canDelete
+                  ? undefined
+                  : "Deleting an account needs panel owner"
+            }
+          >
+            Delete
+          </Button>
+        }
+        title={`Delete ${user.email}?`}
+        lead="Deleting this account, immediately:"
+        blastRadius={[
+          "their sign-in — every live session and API token they hold stops working",
+          "their membership of every team, and the invitations they issued",
+          "not what they made: their projects, servers and deploys stay, and the audit log keeps their name",
+        ]}
+        confirmName={user.email}
+        actionLabel="Delete account"
+        pending={del.isPending}
+        pendingLabel="Deleting…"
+        onConfirm={() => del.mutate({ id: user.id })}
+      />
     </li>
   );
 }
