@@ -2,7 +2,7 @@
   <img src="docs/assets/cypherpanel-lockup.svg" alt="CypherPanel" width="360">
 </p>
 
-<p align="center"><strong>An open-source Heroku alternative that leaves your VPS enough RAM to actually deploy something.</strong></p>
+<p align="center"><strong>An open-source Vercel, Netlify, Coolify, Dokploy, Heroku alternative that leaves your VPS enough RAM to actually deploy something.</strong></p>
 
 <p align="center">
   <a href="#install">Install</a> ·
