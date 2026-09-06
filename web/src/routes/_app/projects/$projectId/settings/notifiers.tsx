@@ -125,6 +125,15 @@ function NotifierRow({ projectId, notifier: n }: { projectId: string; notifier: 
         >
           ↗ Test
         </ActionButton>
+        <NotifierConnectionDialog
+          projectId={projectId}
+          notifier={n}
+          trigger={
+            <Button size="sm" variant="ghost">
+              Edit
+            </Button>
+          }
+        />
         <ConfirmDestructive
           trigger={
             <Button size="sm" variant="ghost" aria-label={`Delete ${n.name}`}>

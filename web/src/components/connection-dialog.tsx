@@ -18,7 +18,13 @@
 // channel. A green "passed" here would be a lie the operator discovers at 2am.
 import { useQueryClient } from "@tanstack/react-query";
 import { useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
-import { getListNotifiersQueryKey, useCreateNotifier, useTestNotifier } from "@/api/gen/notifiers/notifiers";
+import {
+  getListNotifiersQueryKey,
+  useCreateNotifier,
+  useTestNotifier,
+  useTestNotifierConfig,
+  useUpdateNotifier,
+} from "@/api/gen/notifiers/notifiers";
 import type { CreateNotifierRequestChannel, CreateNotifierRequestEventsItem, Notifier } from "@/api/gen/model";
 import { ActionButton, useMutationActionState, type ActionState } from "@/components/ui/action-button";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
@@ -213,20 +219,86 @@ const EVENTS: { key: CreateNotifierRequestEventsItem; label: string }[] = [
 ];
 
 const TEST_NOTE =
-  "Tests send through the saved notifier: the panel attempts one delivery and logs any channel failure rather than surfacing it, so confirm in the channel itself.";
+  "Test proves the configuration without storing it — one delivery, nothing kept. Email is the exception: it is tested through a saved notifier, because an unsaved one would relay through an arbitrary server to an arbitrary address.";
 
-export function NotifierConnectionDialog({ projectId, trigger }: { projectId: string; trigger: ReactNode }) {
+const EDIT_NOTE =
+  "Leave the credential empty to keep the one already sealed here. Test sends through the saved notifier, so it proves what deploys will actually use.";
+
+/**
+ * Add a notifier, or edit one.
+ *
+ * Editing reuses the add form because it IS the add form: the config is sealed
+ * and never returned, so the credential field starts empty and an empty field
+ * means "keep the sealed value" — the API's own contract for an omitted
+ * `config`. Saying that on the field is what stops an operator wiping a working
+ * webhook by tabbing past it.
+ *
+ * The Test button changes meaning with what it can reach. Before anything is
+ * saved it proves the CONFIGURATION — validated exactly as create would, used
+ * once, stored nowhere — which is the whole reason that route exists: a dialog
+ * that can only test what it has already stored teaches people to save broken
+ * credentials and find out later. Once a notifier exists it tests the SAVED
+ * one, because that is the thing deploys will actually use.
+ */
+export function NotifierConnectionDialog({
+  projectId,
+  trigger,
+  notifier,
+}: {
+  projectId: string;
+  trigger: ReactNode;
+  /** Present to edit an existing notifier rather than create one. */
+  notifier?: Notifier;
+}) {
+  const editing = notifier !== undefined;
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   // Set once Save commits; its presence is what switches the dialog to the
   // test step. The fields behind it are gone by then — nothing stale to resubmit.
   const [saved, setSaved] = useState<Notifier | null>(null);
-  const [name, setName] = useState("");
-  const [channel, setChannel] = useState<CreateNotifierRequestChannel>("discord");
-  const [events, setEvents] = useState<Set<CreateNotifierRequestEventsItem>>(() => new Set(["deploy.failed"]));
+  const [name, setName] = useState(notifier?.name ?? "");
+  const [channel, setChannel] = useState<CreateNotifierRequestChannel>(
+    (notifier?.channel as CreateNotifierRequestChannel | undefined) ?? "discord",
+  );
+  const [events, setEvents] = useState<Set<CreateNotifierRequestEventsItem>>(
+    () => new Set((notifier?.events as CreateNotifierRequestEventsItem[] | undefined) ?? ["deploy.failed"]),
+  );
+  const [enabled, setEnabled] = useState(notifier?.enabled ?? true);
   const [cfg, setCfg] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ConnectionTestResult | null>(null);
+
+  const update = useUpdateNotifier({
+    mutation: {
+      onSuccess: (n) => {
+        void qc.invalidateQueries({ queryKey: getListNotifiersQueryKey(projectId) });
+        setError(null);
+        setSaved(n);
+        toastSuccess(`${n.name} saved`);
+      },
+      onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not save the notifier"),
+    },
+  });
+
+  // The unsaved test. A config the panel would refuse to store is a 400 —
+  // nothing to retry until the form changes — while one that stores but does
+  // not reach its far end comes back 200 with ok:false, so the two are reported
+  // differently rather than both as "failed".
+  const testConfig = useTestNotifierConfig({
+    mutation: {
+      onSuccess: (res) =>
+        setResult(
+          res.ok
+            ? { tone: "sent", message: res.detail || "Reached the channel. Nothing was stored — save to keep it." }
+            : { tone: "failed", message: res.detail || "The channel did not accept the message." },
+        ),
+      onError: (e: unknown) =>
+        setResult({
+          tone: "failed",
+          message: e instanceof Error ? e.message : "The panel could not use that configuration.",
+        }),
+    },
+  });
 
   const create = useCreateNotifier({
     mutation: {
@@ -253,19 +325,23 @@ export function NotifierConnectionDialog({ projectId, trigger }: { projectId: st
         }),
     },
   });
-  const saveState = useMutationActionState(create);
-  const testState = useMutationActionState(test);
+  const saveState = useMutationActionState(editing ? update : create);
+  const savedTestState = useMutationActionState(test);
+  const configTestState = useMutationActionState(testConfig);
 
   const reset = () => {
     setSaved(null);
-    setName("");
-    setChannel("discord");
-    setEvents(new Set(["deploy.failed"]));
+    setName(notifier?.name ?? "");
+    setChannel((notifier?.channel as CreateNotifierRequestChannel | undefined) ?? "discord");
+    setEvents(new Set((notifier?.events as CreateNotifierRequestEventsItem[] | undefined) ?? ["deploy.failed"]));
+    setEnabled(notifier?.enabled ?? true);
     setCfg({});
     setError(null);
     setResult(null);
     create.reset();
+    update.reset();
     test.reset();
+    testConfig.reset();
   };
 
   const setField = (k: string) => (e: ChangeEvent<HTMLInputElement>) => setCfg((c) => ({ ...c, [k]: e.target.value }));
@@ -278,7 +354,18 @@ export function NotifierConnectionDialog({ projectId, trigger }: { projectId: st
       return;
     }
     const config = channel === "email" ? { ...cfg, smtp_port: Number(cfg.smtp_port ?? "587") } : cfg;
-    create.mutate({ id: projectId, data: { name, channel, events: [...events], config, enabled: true } });
+    if (editing) {
+      // An untouched credential field means "keep the sealed value" — the
+      // API's contract for an omitted config, and the only way an edit can
+      // change the events without re-typing a webhook URL.
+      const touched = Object.values(cfg).some((v) => v !== "");
+      update.mutate({
+        id: notifier.id,
+        data: { name, events: [...events], enabled, ...(touched ? { config } : {}) },
+      });
+      return;
+    }
+    create.mutate({ id: projectId, data: { name, channel, events: [...events], config, enabled } });
   };
 
   return (
@@ -289,22 +376,39 @@ export function NotifierConnectionDialog({ projectId, trigger }: { projectId: st
         if (!next) reset();
       }}
       trigger={trigger}
-      title={saved ? "Notifier added" : "Add a notifier"}
-      description={saved ? "Send a test to confirm the wiring before you rely on it." : "Where to send it, and which events matter."}
+      title={saved ? (editing ? "Notifier saved" : "Notifier added") : editing ? `Edit ${notifier.name}` : "Add a notifier"}
+      description={
+        saved
+          ? "Send a test to confirm the wiring before you rely on it."
+          : "Where to send it, and which events matter."
+      }
       onSubmit={submit}
       error={error}
       result={result}
-      note={saved ? undefined : TEST_NOTE}
+      note={saved ? undefined : editing ? EDIT_NOTE : TEST_NOTE}
       test={{
         label: "↗ Test",
-        state: testState,
+        state: saved ? savedTestState : configTestState,
         busyLabel: "Sending…",
         successLabel: "Sent",
-        disabledReason: saved ? undefined : "Save first — a test sends through the saved notifier",
+        // Email is refused before saving on purpose: an unsaved email test
+        // would relay a message through an arbitrary SMTP server, with an
+        // arbitrary From, to an arbitrary recipient.
+        disabledReason:
+          saved || editing
+            ? undefined
+            : channel === "email"
+              ? "Save first — an email test sends through the saved notifier"
+              : undefined,
         onClick: () => {
-          if (!saved) return;
           setResult(null);
-          test.mutate({ id: saved.id });
+          const target = saved ?? notifier;
+          if (target) {
+            test.mutate({ id: target.id });
+            return;
+          }
+          const config = channel === "email" ? { ...cfg, smtp_port: Number(cfg.smtp_port ?? "587") } : cfg;
+          testConfig.mutate({ id: projectId, data: { channel, config } });
         },
       }}
       primary={
@@ -320,11 +424,16 @@ export function NotifierConnectionDialog({ projectId, trigger }: { projectId: st
           <Field label="Name" qualifier="· how it appears in the list">
             {(id) => <Input id={id} required autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="team-alerts" />}
           </Field>
-          <Field label="Channel">
+          {/* The channel is what the sealed config IS — changing it would
+              leave a Slack webhook configured as a Telegram bot — so an edit
+              keeps it and says so rather than offering a change that would be
+              refused. */}
+          <Field label="Channel" qualifier={editing ? "· fixed once created" : undefined}>
             {(id) => (
               <Select
                 id={id}
                 value={channel}
+                disabled={editing}
                 className="font-sans"
                 onChange={(e) => {
                   setChannel(e.target.value as CreateNotifierRequestChannel);
@@ -340,7 +449,25 @@ export function NotifierConnectionDialog({ projectId, trigger }: { projectId: st
             )}
           </Field>
 
-          <ChannelFields channel={channel} value={cfg} onField={setField} />
+          <ChannelFields channel={channel} value={cfg} onField={setField} keepSealed={editing} />
+
+          {editing && (
+            <label className="flex items-start gap-2.5">
+              <input
+                type="checkbox"
+                checked={enabled}
+                onChange={(e) => setEnabled(e.currentTarget.checked)}
+                className="mt-0.5 size-3.5 accent-accent"
+              />
+              <span className="text-[12.5px] leading-[1.45] text-text-mid">
+                Enabled
+                <span className="block text-[11.5px] text-text-faint">
+                  Off keeps the notifier and its credential but sends nothing — the way to silence a channel without
+                  losing its wiring.
+                </span>
+              </span>
+            </label>
+          )}
 
           <fieldset>
             <legend className="block text-[12px] font-semibold text-text">
@@ -398,23 +525,33 @@ function ChannelFields({
   channel,
   value,
   onField,
+  keepSealed,
 }: {
   channel: CreateNotifierRequestChannel;
   value: Record<string, string>;
   onField: (k: string) => (e: ChangeEvent<HTMLInputElement>) => void;
+  /** Editing: an empty field keeps the sealed value, so nothing is required. */
+  keepSealed?: boolean;
 }) {
+  // On an edit the browser must not demand a value the operator deliberately
+  // left blank — blank IS the instruction to keep what is sealed.
+  const need = !keepSealed;
   if (channel === "discord" || channel === "slack") {
     return (
       <Field
         label="Webhook URL"
         qualifier="· write-only"
-        hint={`Create an incoming webhook in ${channel === "discord" ? "Discord" : "Slack"} and paste its URL. It is sealed on save and shown back masked.`}
+        hint={
+          keepSealed
+            ? "Leave empty to keep the URL already sealed here. Anything typed replaces it wholesale."
+            : `Create an incoming webhook in ${channel === "discord" ? "Discord" : "Slack"} and paste its URL. It is sealed on save and shown back masked.`
+        }
       >
         {(id, describedBy) => (
           <Input
             id={id}
             aria-describedby={describedBy}
-            required
+            required={need}
             value={value.webhook_url ?? ""}
             onChange={onField("webhook_url")}
             placeholder="https://…"
@@ -427,20 +564,24 @@ function ChannelFields({
   if (channel === "telegram") {
     return (
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Bot token" qualifier="· write-only" hint="From @BotFather.">
+        <Field
+          label="Bot token"
+          qualifier="· write-only"
+          hint={keepSealed ? "Leave empty to keep the sealed token." : "From @BotFather."}
+        >
           {(id, describedBy) => (
             <Input
               id={id}
               aria-describedby={describedBy}
               type="password"
-              required
+              required={need}
               value={value.bot_token ?? ""}
               onChange={onField("bot_token")}
               autoComplete="new-password"
             />
           )}
         </Field>
-        <Field label="Chat ID">{(id) => <Input id={id} required value={value.chat_id ?? ""} onChange={onField("chat_id")} />}</Field>
+        <Field label="Chat ID">{(id) => <Input id={id} required={need} value={value.chat_id ?? ""} onChange={onField("chat_id")} />}</Field>
       </div>
     );
   }
@@ -448,7 +589,7 @@ function ChannelFields({
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
-        <Field label="SMTP host">{(id) => <Input id={id} required value={value.smtp_host ?? ""} onChange={onField("smtp_host")} />}</Field>
+        <Field label="SMTP host">{(id) => <Input id={id} required={need} value={value.smtp_host ?? ""} onChange={onField("smtp_host")} />}</Field>
         <Field label="SMTP port">
           {(id) => <Input id={id} value={value.smtp_port ?? "587"} onChange={onField("smtp_port")} inputMode="numeric" />}
         </Field>
@@ -470,9 +611,9 @@ function ChannelFields({
         </Field>
       </div>
       <div className="grid grid-cols-2 gap-3">
-        <Field label="From">{(id) => <Input id={id} required value={value.from ?? ""} onChange={onField("from")} placeholder="alerts@acme.com" />}</Field>
+        <Field label="From">{(id) => <Input id={id} required={need} value={value.from ?? ""} onChange={onField("from")} placeholder="alerts@acme.com" />}</Field>
         <Field label="To" hint="Comma-separated.">
-          {(id, describedBy) => <Input id={id} aria-describedby={describedBy} required value={value.to ?? ""} onChange={onField("to")} />}
+          {(id, describedBy) => <Input id={id} aria-describedby={describedBy} required={need} value={value.to ?? ""} onChange={onField("to")} />}
         </Field>
       </div>
     </div>
