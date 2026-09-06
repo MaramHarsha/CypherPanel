@@ -21,6 +21,8 @@ import {
   useListRegistries,
   useListRegistryUses,
   useTestRegistry,
+  useTestRegistryConfig,
+  useUpdateRegistry,
 } from "@/api/gen/registries/registries";
 import type { Registry } from "@/api/gen/model";
 import { EmptyState } from "@/components/empty-state";
@@ -93,6 +95,7 @@ function RegistryRow({ r }: { r: Registry }) {
           </span>
         </span>
         <TestRegistryAction r={r} />
+        <EditRegistryDialog r={r} />
         <DeleteRegistryDialog r={r} />
       </div>
       <UsedBy r={r} />
@@ -198,13 +201,163 @@ function DeleteRegistryDialog({ r }: { r: Registry }) {
   );
 }
 
+// Editing one. Everything is editable except the fact that the token is
+// write-only: the field starts empty and an empty field keeps what is sealed,
+// which is the API's own contract for an omitted token. That is what makes
+// "change the scope" a thing you can do without re-typing a credential you no
+// longer have a copy of.
+//
+// Rotating IS this dialog rather than a route of its own, because rotation is
+// what typing into the token field means — the old value is replaced wholesale
+// and nothing is cached, so the next deploy uses the new one and no builder is
+// left holding a docker login.
+function EditRegistryDialog({ r }: { r: Registry }) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [canPull, setCanPull] = useState(r.can_pull);
+  const [canPush, setCanPush] = useState(r.can_push);
+  const [error, setError] = useState<string | null>(null);
+
+  const update = useUpdateRegistry({
+    mutation: {
+      onSuccess: (next) => {
+        toastSuccess(`Saved ${next.name}`);
+        void qc.invalidateQueries({ queryKey: getListRegistriesQueryKey() });
+        setOpen(false);
+      },
+      onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not save the registry"),
+    },
+  });
+
+  function onSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setError(null);
+    const f = new FormData(e.currentTarget);
+    const token = String(f.get("token") ?? "");
+    update.mutate({
+      id: r.id,
+      data: {
+        name: String(f.get("name") ?? "").trim(),
+        url: String(f.get("url") ?? "").trim(),
+        username: String(f.get("username") ?? "").trim(),
+        ...(token ? { token } : {}),
+        can_pull: canPull,
+        can_push: canPush,
+      },
+    });
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) {
+          setError(null);
+          setCanPull(r.can_pull);
+          setCanPush(r.can_push);
+        }
+      }}
+    >
+      <DialogTrigger asChild>
+        <button type="button" className={cn(rowAction, "text-text-mid")} aria-label={`Edit ${r.name}`}>
+          Edit
+        </button>
+      </DialogTrigger>
+      <DialogContent title={`Edit ${r.name}`}>
+        <form onSubmit={onSubmit} className="space-y-3">
+          <Field label="Name">
+            {(id) => <Input id={id} name="name" required maxLength={100} defaultValue={r.name} autoFocus />}
+          </Field>
+          <Field label="Host" qualifier="· no scheme">
+            {(id) => <Input id={id} name="url" required className="mono" defaultValue={r.url} />}
+          </Field>
+          <Field label="Username" qualifier="· empty for a bearer-token registry">
+            {(id) => <Input id={id} name="username" className="mono" defaultValue={r.username ?? ""} />}
+          </Field>
+          <Field label="Token" qualifier="· empty keeps the sealed one" error={error ?? undefined}>
+            {(id, describedBy) => (
+              <Input
+                id={id}
+                name="token"
+                type="password"
+                className="mono"
+                aria-describedby={describedBy}
+                placeholder="•••••  (unchanged)"
+              />
+            )}
+          </Field>
+          {/* Scope is checked when the registry is ATTACHED, not when it is
+              spent, so narrowing it here does not break a deploy already
+              running — it refuses the next attach. */}
+          <div className="space-y-2 pt-0.5">
+            <label className="flex items-center gap-2.5">
+              <input
+                type="checkbox"
+                checked={canPull}
+                onChange={(e) => setCanPull(e.currentTarget.checked)}
+                className="size-3.5 accent-accent"
+              />
+              <span className="text-[12.5px] text-text-mid">Allow pulling images through it</span>
+            </label>
+            <label className="flex items-center gap-2.5">
+              <input
+                type="checkbox"
+                checked={canPush}
+                onChange={(e) => setCanPush(e.currentTarget.checked)}
+                className="size-3.5 accent-accent"
+              />
+              <span className="text-[12.5px] text-text-mid">Allow pushing builds here</span>
+            </label>
+          </div>
+          <div className="flex justify-end gap-2 pt-1">
+            <DialogClose asChild>
+              <Button type="button" variant="ghost" size="lg">
+                Cancel
+              </Button>
+            </DialogClose>
+            <ActionButton
+              type="submit"
+              variant="primary"
+              size="lg"
+              state={update.isPending ? "busy" : "idle"}
+              busyLabel="Saving…"
+            >
+              Save
+            </ActionButton>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // Adding one. The token is write-only from the moment it is typed — it is
 // sealed before it reaches storage and no route ever returns it — so the field
 // says so rather than implying it can be read back later.
+//
+// Test proves the credential BEFORE it is stored. That matters more here than
+// on most credential screens: a registry that rejects a login fails a deploy
+// five minutes into a build, and the operator finds out from a build log.
 function AddRegistryDialog({ primary }: { primary?: boolean }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [canPush, setCanPush] = useState(false);
+  const [url, setUrl] = useState("");
+  const [username, setUsername] = useState("");
+  const [token, setToken] = useState("");
+  const [probe, setProbe] = useState<{ ok: boolean; detail: string } | null>(null);
+  // A private-network registry cannot be tested from the panel at all — the
+  // agent that does the pulling is on that network and the plane is not — and
+  // the API says so in `detail` rather than reporting a failure. So the result
+  // is rendered as the registry's own words either way.
+  const test = useTestRegistryConfig({
+    mutation: {
+      onSuccess: (res) => setProbe({ ok: res.ok, detail: res.detail || (res.ok ? "Authenticated." : "Rejected.") }),
+      onError: (e: unknown) =>
+        setProbe({ ok: false, detail: e instanceof Error ? e.message : "The panel could not reach that host." }),
+    },
+  });
   const create = useCreateRegistry({
     mutation: {
       onSuccess: (r) => {
@@ -212,6 +365,7 @@ function AddRegistryDialog({ primary }: { primary?: boolean }) {
         void qc.invalidateQueries({ queryKey: getListRegistriesQueryKey() });
         setOpen(false);
         setCanPush(false);
+        setProbe(null);
       },
       onError: (e: unknown) => toastFailed("Could not add the registry", e),
     },
@@ -223,9 +377,9 @@ function AddRegistryDialog({ primary }: { primary?: boolean }) {
     create.mutate({
       data: {
         name: String(f.get("name") ?? "").trim(),
-        url: String(f.get("url") ?? "").trim(),
-        username: String(f.get("username") ?? "").trim() || undefined,
-        token: String(f.get("token") ?? ""),
+        url: url.trim(),
+        username: username.trim() || undefined,
+        token,
         can_pull: true,
         can_push: canPush,
       },
@@ -247,14 +401,66 @@ function AddRegistryDialog({ primary }: { primary?: boolean }) {
           {/* No scheme: a registry reference carries none, and accepting one
               would produce image names nothing can pull. */}
           <Field label="Host" qualifier="· no scheme — ghcr.io, ghcr.io/acme, registry:5000">
-            {(id) => <Input id={id} name="url" required className="mono" placeholder="ghcr.io/acme" />}
+            {(id) => (
+              <Input
+                id={id}
+                name="url"
+                required
+                className="mono"
+                placeholder="ghcr.io/acme"
+                value={url}
+                onChange={(e) => {
+                  setUrl(e.target.value);
+                  setProbe(null);
+                }}
+              />
+            )}
           </Field>
           <Field label="Username" qualifier="· empty for a bearer-token registry">
-            {(id) => <Input id={id} name="username" className="mono" placeholder="meridian-bot" />}
+            {(id) => (
+              <Input
+                id={id}
+                name="username"
+                className="mono"
+                placeholder="meridian-bot"
+                value={username}
+                onChange={(e) => {
+                  setUsername(e.target.value);
+                  setProbe(null);
+                }}
+              />
+            )}
           </Field>
           <Field label="Token" qualifier="· sealed on the way in, never shown again">
-            {(id) => <Input id={id} name="token" type="password" required className="mono" placeholder="•••••" />}
+            {(id) => (
+              <Input
+                id={id}
+                name="token"
+                type="password"
+                required
+                className="mono"
+                placeholder="•••••"
+                value={token}
+                onChange={(e) => {
+                  setToken(e.target.value);
+                  setProbe(null);
+                }}
+              />
+            )}
           </Field>
+          {probe && (
+            <p
+              role="status"
+              className={cn(
+                "rounded-md border px-3 py-2 text-[12.5px] leading-[1.5]",
+                probe.ok
+                  ? "border-status-running/35 bg-status-running/[0.06] text-status-running"
+                  : "border-status-degraded/40 bg-status-degraded/[0.06] text-status-degraded-text",
+              )}
+            >
+              {probe.detail}
+            </p>
+          )}
           {/* Pull is always on: it is the common case and the reason most
               credentials exist. Push is the larger grant, so it is opt-in and
               says what it unlocks. */}
@@ -280,6 +486,20 @@ function AddRegistryDialog({ primary }: { primary?: boolean }) {
                 Cancel
               </Button>
             </DialogClose>
+            <ActionButton
+              type="button"
+              variant="secondary"
+              size="lg"
+              state={test.isPending ? "busy" : "idle"}
+              busyLabel="Testing…"
+              disabledReason={url.trim() === "" || token === "" ? "Fill in the host and token first" : undefined}
+              onClick={() => {
+                setProbe(null);
+                test.mutate({ data: { url: url.trim(), username: username.trim() || undefined, token } });
+              }}
+            >
+              ↗ Test
+            </ActionButton>
             <ActionButton
               type="submit"
               variant="primary"
