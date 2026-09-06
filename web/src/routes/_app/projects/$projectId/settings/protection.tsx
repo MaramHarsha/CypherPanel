@@ -12,15 +12,18 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import {
   getGetEnvironmentProtectionQueryKey,
+  getListBreakGlassGrantsQueryKey,
   getListDeployApprovalsQueryKey,
   useApproveDeployment,
   useGetEnvironmentProtection,
+  useListBreakGlassGrants,
   useListDeployApprovals,
+  useOpenBreakGlass,
   useRejectDeployment,
   useSetEnvironmentProtection,
 } from "@/api/gen/protection/protection";
 import { useListEnvironments } from "@/api/gen/projects/projects";
-import type { DeployApproval, Environment, EnvironmentProtection } from "@/api/gen/model";
+import type { BreakGlassGrant, DeployApproval, Environment, EnvironmentProtection } from "@/api/gen/model";
 import { Eyebrow } from "@/components/eyebrow";
 import { PageState } from "@/components/page-state";
 import { ActionButton } from "@/components/ui/action-button";
@@ -29,7 +32,7 @@ import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { useCrumbs } from "@/lib/crumbs";
-import { relativeTime } from "@/lib/time";
+import { absoluteTime, relativeTime } from "@/lib/time";
 import { toastFailed, toastSuccess } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
@@ -219,7 +222,158 @@ function PolicyRules({ env, p }: { env: Environment; p: EnvironmentProtection })
             busy={set.isPending}
           />
         </div>
+        {/* The freeze's escape hatch, beside the freeze it suspends and
+            nowhere else. Only rendered when there is a window to override —
+            offering to break glass on a door that is open would be theatre. */}
+        {p.freeze_enabled && (p.windows ?? []).length > 0 && <BreakGlass envId={p.environment_id} />}
       </section>
+    </div>
+  );
+}
+
+/**
+ * Break glass — a 30-minute, recorded override of the FREEZE gate and nothing
+ * else. Three properties make it safe enough to put on this page, and all three
+ * are stated on it rather than in documentation:
+ *
+ *   · It suspends the freeze only. The approval gate is untouched, so a deploy
+ *     that needs two owners still needs two owners.
+ *   · It lapses on its own after 30 minutes and is never revoked early — so
+ *     there is no "close" button here, because there is no such operation and
+ *     drawing one would imply the window can be shut early.
+ *   · The reason is required, stored verbatim, and shown beside the opener's
+ *     name. It is the gate on the dialog instead of a typed resource name: a
+ *     name proves you can read, a reason proves you thought about it.
+ *
+ * Team owner and session only — an API token may not open one, because a leaked
+ * CI token must not be able to switch a protection control off.
+ */
+function BreakGlass({ envId }: { envId: string }) {
+  const qc = useQueryClient();
+  const grants = useListBreakGlassGrants(envId);
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const openGrant = useOpenBreakGlass({
+    mutation: {
+      onSuccess: (g: BreakGlassGrant) => {
+        void qc.invalidateQueries({ queryKey: getListBreakGlassGrantsQueryKey(envId) });
+        toastSuccess({
+          title: "Freeze suspended for 30 minutes",
+          detail: `Lapses ${relativeTime(g.expires_at)}. Approval rules still apply.`,
+        });
+        setOpen(false);
+        setReason("");
+      },
+      onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not open break glass"),
+    },
+  });
+
+  const active = (grants.data ?? []).find((g) => g.active);
+  // Newest first, and only what is worth reading back: the log is the audit
+  // log's job, not this card's.
+  const history = (grants.data ?? []).filter((g) => !g.active).slice(0, 3);
+
+  return (
+    <div className="ml-6 mt-2 rounded-lg border border-border bg-surface px-3.5 py-3">
+      {active ? (
+        <div className="space-y-1">
+          <p className="flex flex-wrap items-baseline gap-x-2 text-[12.5px] text-text">
+            <span className="mono rounded border border-status-degraded/40 bg-status-degraded/[.08] px-2 py-[2px] text-[10.5px] uppercase tracking-[.02em] text-status-degraded-text">
+              glass broken
+            </span>
+            <span>
+              {active.opened_by_email ?? "an owner"} suspended the freeze — it comes back{" "}
+              <span title={absoluteTime(active.expires_at)}>{relativeTime(active.expires_at)}</span>.
+            </span>
+          </p>
+          <p className="text-[12.5px] leading-[1.5] text-text-mid">“{active.reason}”</p>
+          <p className="mono text-[11px] text-text-faint">
+            grants lapse on their own and are never closed early · approval rules are unaffected
+          </p>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="min-w-0 flex-1 text-[12.5px] leading-[1.5] text-text-mid">
+            An owner can suspend this freeze for 30 minutes. It is recorded with your name and your reason, it lapses on
+            its own, and it does not touch the approval rule above.
+          </p>
+          <Dialog
+            open={open}
+            onOpenChange={(next) => {
+              setOpen(next);
+              if (!next) setError(null);
+            }}
+          >
+            <DialogTrigger asChild>
+              <Button type="button" variant="secondary" size="sm">
+                Break glass
+              </Button>
+            </DialogTrigger>
+            <DialogContent
+              title="Suspend the freeze for 30 minutes?"
+              description="Deploys to this environment stop being refused for 30 minutes. The grant lapses on its own — there is no way to close it early — and your name and reason are recorded in the audit log."
+            >
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  setError(null);
+                  openGrant.mutate({ id: envId, data: { reason: reason.trim() } });
+                }}
+                className="space-y-4"
+              >
+                <Field
+                  label="Reason"
+                  qualifier="· recorded verbatim"
+                  hint="One line. This is the gate on this dialog — whoever reads the audit log later gets exactly what you write here."
+                  error={error ?? undefined}
+                >
+                  {(id, describedBy) => (
+                    <Input
+                      id={id}
+                      required
+                      autoFocus
+                      maxLength={500}
+                      aria-describedby={describedBy}
+                      value={reason}
+                      onChange={(e) => setReason(e.target.value)}
+                      placeholder="rolling back the checkout outage"
+                    />
+                  )}
+                </Field>
+                <div className="flex justify-end gap-2">
+                  <DialogClose asChild>
+                    <Button type="button" variant="ghost" size="lg">
+                      Cancel
+                    </Button>
+                  </DialogClose>
+                  <ActionButton
+                    type="submit"
+                    variant="danger"
+                    size="lg"
+                    state={openGrant.isPending ? "busy" : "idle"}
+                    busyLabel="Opening…"
+                    disabledReason={reason.trim() === "" ? "Say why first" : undefined}
+                  >
+                    Break glass
+                  </ActionButton>
+                </div>
+              </form>
+            </DialogContent>
+          </Dialog>
+        </div>
+      )}
+
+      {history.length > 0 && (
+        <ul className="mt-2.5 space-y-1 border-t border-border-subtle pt-2.5">
+          {history.map((g) => (
+            <li key={g.id} className="mono truncate text-[11px] text-text-faint" title={g.reason}>
+              {relativeTime(g.created_at)} · {g.opened_by_email ?? g.opened_by} · {g.reason}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
