@@ -22,6 +22,7 @@ import { Route as AppSettingsIndexRouteImport } from './routes/_app/settings/ind
 import { Route as AppSettingsAuditRouteImport } from './routes/_app/settings/audit'
 import { Route as AppSettingsBackupTargetsRouteImport } from './routes/_app/settings/backup-targets'
 import { Route as AppSettingsDeployKeysRouteImport } from './routes/_app/settings/deploy-keys'
+import { Route as AppSettingsDiagnosticsRouteImport } from './routes/_app/settings/diagnostics'
 import { Route as AppSettingsDnsRouteImport } from './routes/_app/settings/dns'
 import { Route as AppSettingsMailRouteImport } from './routes/_app/settings/mail'
 import { Route as AppSettingsProfileRouteImport } from './routes/_app/settings/profile'
@@ -121,6 +122,11 @@ const AppSettingsBackupTargetsRoute =
 const AppSettingsDeployKeysRoute = AppSettingsDeployKeysRouteImport.update({
   id: '/deploy-keys',
   path: '/deploy-keys',
+  getParentRoute: () => AppSettingsRoute,
+} as any)
+const AppSettingsDiagnosticsRoute = AppSettingsDiagnosticsRouteImport.update({
+  id: '/diagnostics',
+  path: '/diagnostics',
   getParentRoute: () => AppSettingsRoute,
 } as any)
 const AppSettingsDnsRoute = AppSettingsDnsRouteImport.update({
@@ -336,6 +342,7 @@ export interface FileRoutesByFullPath {
   '/settings/audit': typeof AppSettingsAuditRoute
   '/settings/backup-targets': typeof AppSettingsBackupTargetsRoute
   '/settings/deploy-keys': typeof AppSettingsDeployKeysRoute
+  '/settings/diagnostics': typeof AppSettingsDiagnosticsRoute
   '/settings/dns': typeof AppSettingsDnsRoute
   '/settings/mail': typeof AppSettingsMailRoute
   '/settings/profile': typeof AppSettingsProfileRoute
@@ -384,6 +391,7 @@ export interface FileRoutesByTo {
   '/settings/audit': typeof AppSettingsAuditRoute
   '/settings/backup-targets': typeof AppSettingsBackupTargetsRoute
   '/settings/deploy-keys': typeof AppSettingsDeployKeysRoute
+  '/settings/diagnostics': typeof AppSettingsDiagnosticsRoute
   '/settings/dns': typeof AppSettingsDnsRoute
   '/settings/mail': typeof AppSettingsMailRoute
   '/settings/profile': typeof AppSettingsProfileRoute
@@ -431,6 +439,7 @@ export interface FileRoutesById {
   '/_app/settings/audit': typeof AppSettingsAuditRoute
   '/_app/settings/backup-targets': typeof AppSettingsBackupTargetsRoute
   '/_app/settings/deploy-keys': typeof AppSettingsDeployKeysRoute
+  '/_app/settings/diagnostics': typeof AppSettingsDiagnosticsRoute
   '/_app/settings/dns': typeof AppSettingsDnsRoute
   '/_app/settings/mail': typeof AppSettingsMailRoute
   '/_app/settings/profile': typeof AppSettingsProfileRoute
@@ -482,6 +491,7 @@ export interface FileRouteTypes {
     | '/settings/audit'
     | '/settings/backup-targets'
     | '/settings/deploy-keys'
+    | '/settings/diagnostics'
     | '/settings/dns'
     | '/settings/mail'
     | '/settings/profile'
@@ -530,6 +540,7 @@ export interface FileRouteTypes {
     | '/settings/audit'
     | '/settings/backup-targets'
     | '/settings/deploy-keys'
+    | '/settings/diagnostics'
     | '/settings/dns'
     | '/settings/mail'
     | '/settings/profile'
@@ -576,6 +587,7 @@ export interface FileRouteTypes {
     | '/_app/settings/audit'
     | '/_app/settings/backup-targets'
     | '/_app/settings/deploy-keys'
+    | '/_app/settings/diagnostics'
     | '/_app/settings/dns'
     | '/_app/settings/mail'
     | '/_app/settings/profile'
@@ -713,6 +725,13 @@ declare module '@tanstack/react-router' {
       path: '/deploy-keys'
       fullPath: '/settings/deploy-keys'
       preLoaderRoute: typeof AppSettingsDeployKeysRouteImport
+      parentRoute: typeof AppSettingsRoute
+    }
+    '/_app/settings/diagnostics': {
+      id: '/_app/settings/diagnostics'
+      path: '/diagnostics'
+      fullPath: '/settings/diagnostics'
+      preLoaderRoute: typeof AppSettingsDiagnosticsRouteImport
       parentRoute: typeof AppSettingsRoute
     }
     '/_app/settings/dns': {
@@ -967,6 +986,7 @@ interface AppSettingsRouteChildren {
   AppSettingsAuditRoute: typeof AppSettingsAuditRoute
   AppSettingsBackupTargetsRoute: typeof AppSettingsBackupTargetsRoute
   AppSettingsDeployKeysRoute: typeof AppSettingsDeployKeysRoute
+  AppSettingsDiagnosticsRoute: typeof AppSettingsDiagnosticsRoute
   AppSettingsDnsRoute: typeof AppSettingsDnsRoute
   AppSettingsMailRoute: typeof AppSettingsMailRoute
   AppSettingsProfileRoute: typeof AppSettingsProfileRoute
@@ -981,6 +1001,7 @@ const AppSettingsRouteChildren: AppSettingsRouteChildren = {
   AppSettingsAuditRoute: AppSettingsAuditRoute,
   AppSettingsBackupTargetsRoute: AppSettingsBackupTargetsRoute,
   AppSettingsDeployKeysRoute: AppSettingsDeployKeysRoute,
+  AppSettingsDiagnosticsRoute: AppSettingsDiagnosticsRoute,
   AppSettingsDnsRoute: AppSettingsDnsRoute,
   AppSettingsMailRoute: AppSettingsMailRoute,
   AppSettingsProfileRoute: AppSettingsProfileRoute,

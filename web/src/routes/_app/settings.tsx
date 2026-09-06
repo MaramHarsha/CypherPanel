@@ -18,6 +18,7 @@ const TABS = [
   { to: "/settings/mail", label: "Mail", exact: false },
   { to: "/settings/dns", label: "DNS", exact: false },
   { to: "/settings/tls", label: "TLS", exact: false },
+  { to: "/settings/diagnostics", label: "Diagnostics", exact: false },
 ] as const;
 
 function SettingsLayout() {
