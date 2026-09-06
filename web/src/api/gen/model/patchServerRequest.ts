@@ -9,6 +9,11 @@
  */
 
 export interface PatchServerRequest {
+  /** The Docker data root's filesystem, as of the last heartbeat. `0` means not reported — an older agent, or a host where it could not be read — which a client should show as unknown, never as full. */
+  disk_total_bytes?: number;
+  disk_free_bytes?: number;
+  /** Whether the server is past the panel's disk threshold (`CYPHERD_DISK_WARN_PERCENT`, default 85). Crossing it, and crossing back, writes one notification-inbox item for the panel's owners and admins — on the transition, never on every heartbeat. */
+  disk_low?: boolean;
   /** An IP address — what an A record points at. Empty string clears it, which stops new DNS records being written for this server's applications. */
   public_address: string;
 }

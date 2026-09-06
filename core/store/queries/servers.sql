@@ -24,10 +24,18 @@ SET status = $2,
     agent_version = $3,
     driver = $4,
     role = $5,
+    disk_total_bytes = $6,
+    disk_free_bytes = $7,
     last_seen_at = now(),
     updated_at = now()
 WHERE id = $1
 RETURNING *;
+
+-- SetServerDiskLow records whether a server is currently below the disk
+-- threshold. Separate from the heartbeat write because it is a TRANSITION the
+-- plane decides, not a measurement the agent reports (disk-management.md §5).
+-- name: SetServerDiskLow :exec
+UPDATE servers SET disk_low = $2, updated_at = now() WHERE id = $1;
 
 -- name: MarkStaleServersUnknown :many
 UPDATE servers

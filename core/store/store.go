@@ -226,18 +226,32 @@ func (s *Store) MarkServerEnrolled(ctx context.Context, id, hostname, agentVersi
 	return serverFromRow(row), nil
 }
 
-func (s *Store) RecordHeartbeat(ctx context.Context, id string, status domain.ServerStatus, agentVersion, driver, role string) (domain.Server, error) {
+func (s *Store) RecordHeartbeat(ctx context.Context, id string, status domain.ServerStatus, agentVersion, driver, role string, diskTotal, diskFree uint64) (domain.Server, error) {
 	row, err := s.q.RecordHeartbeat(ctx, db.RecordHeartbeatParams{
 		ID:           id,
 		Status:       string(status),
 		AgentVersion: agentVersion,
 		Driver:       driver,
 		Role:         role,
+		//nolint:gosec // a filesystem larger than 8 EiB is not a real host
+		DiskTotalBytes: int64(diskTotal),
+		//nolint:gosec // ditto
+		DiskFreeBytes: int64(diskFree),
 	})
 	if err != nil {
 		return domain.Server{}, wrap("recording heartbeat", err)
 	}
 	return serverFromRow(row), nil
+}
+
+// SetServerDiskLow records whether a server is currently below the disk
+// threshold — a transition the plane decides, not a measurement the agent
+// reports (disk-management.md §5).
+func (s *Store) SetServerDiskLow(ctx context.Context, id string, low bool) error {
+	if err := s.q.SetServerDiskLow(ctx, db.SetServerDiskLowParams{ID: id, DiskLow: low}); err != nil {
+		return wrapUpdate("recording server disk state", err)
+	}
+	return nil
 }
 
 // MarkStaleServersUnknown flips every enrolled server not seen since cutoff to
@@ -863,6 +877,11 @@ func serverFromRow(r db.Server) domain.Server {
 		AgentVersion:  r.AgentVersion,
 		Hostname:      r.Hostname,
 		PublicAddress: r.PublicAddress,
+		//nolint:gosec // stored from a uint64 that no real filesystem overflows
+		DiskTotalBytes: uint64(r.DiskTotalBytes),
+		//nolint:gosec // ditto
+		DiskFreeBytes: uint64(r.DiskFreeBytes),
+		DiskLow:       r.DiskLow,
 		EnrolledAt:    ptrTime(r.EnrolledAt),
 		LastSeenAt:    ptrTime(r.LastSeenAt),
 		CreatedAt:     r.CreatedAt.Time,

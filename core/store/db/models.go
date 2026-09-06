@@ -492,18 +492,21 @@ type ScheduledTaskRun struct {
 }
 
 type Server struct {
-	ID            string
-	Name          string
-	Status        string
-	Driver        string
-	AgentVersion  string
-	Hostname      string
-	EnrolledAt    pgtype.Timestamptz
-	LastSeenAt    pgtype.Timestamptz
-	CreatedAt     pgtype.Timestamptz
-	UpdatedAt     pgtype.Timestamptz
-	Role          string
-	PublicAddress string
+	ID             string
+	Name           string
+	Status         string
+	Driver         string
+	AgentVersion   string
+	Hostname       string
+	EnrolledAt     pgtype.Timestamptz
+	LastSeenAt     pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	Role           string
+	PublicAddress  string
+	DiskTotalBytes int64
+	DiskFreeBytes  int64
+	DiskLow        bool
 }
 
 type Session struct {

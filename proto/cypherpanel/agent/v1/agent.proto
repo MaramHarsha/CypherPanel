@@ -123,4 +123,11 @@ message Heartbeat {
   // (builder-role-and-relay.md §1). Routing input only — relay operations are
   // authorized per-deployment, never from this claim.
   string role = 6;
+  // V1: the Docker data root's filesystem (disk-management.md §4). Read from
+  // the daemon's own /info (DockerRootDir) rather than assumed, because an
+  // operator who moved it is exactly the one who will not have moved an alert
+  // with it. Zero means "could not read", which the plane treats as unknown
+  // and never as full.
+  uint64 disk_total_bytes = 7;
+  uint64 disk_free_bytes = 8;
 }

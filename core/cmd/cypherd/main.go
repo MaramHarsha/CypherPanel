@@ -43,6 +43,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/databases"
 	"github.com/MaramHarsha/cypherpanel/core/deploykeys"
 	"github.com/MaramHarsha/cypherpanel/core/dns"
+	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/enroll"
 	"github.com/MaramHarsha/cypherpanel/core/guard"
 	"github.com/MaramHarsha/cypherpanel/core/identity"
@@ -263,6 +264,10 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 	// Private-registry credentials are unsealed per work item, never cached, so
 	// rotating one takes effect on the next deploy (registries.md §5).
 	sched.SetRegistries(registrySvc)
+	// How many of an application's images a node keeps: the whole
+	// garbage-collection policy, converged to rather than swept for
+	// (disk-management.md §2).
+	sched.SetRevisionRetain(cfg.RevisionRetain)
 
 	// The panel's ACME account (agent-identity-and-tls.md §4): one setting,
 	// carried to every node in its desired state. The scheduler is the fleet
@@ -283,6 +288,10 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 	// runs BEFORE the notifier lookup, which is what makes the bell work on a
 	// panel with no channels configured at all.
 	inboxSvc := inbox.New(st, log)
+	// Disk alerting, once the inbox exists to receive it. A server belongs to
+	// no project, so the panel's owners and admins are the audience
+	// (disk-management.md §5). Zero percent disables it.
+	recorder.WatchDisk(cfg.DiskWarnPercent, serverDiskAnnouncer{inbox: inboxSvc})
 
 	// Notifications: terminal deploy/backup outcomes fan out to a project's
 	// configured channels (notifications.md). Delivery is best-effort and
@@ -644,6 +653,25 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 	wg.Wait()
 	log.Info("cypherd stopped")
 	return nil
+}
+
+// serverDiskAnnouncer turns a server crossing the disk threshold into one inbox
+// item per panel owner and admin (disk-management.md §5). Like the update
+// announcer it lives in the wiring, because it is the only place that knows
+// both halves — and it is the inbox rather than a notifier because a Server
+// belongs to no project.
+type serverDiskAnnouncer struct {
+	inbox *inbox.Service
+}
+
+func (a serverDiskAnnouncer) AnnounceServerDisk(ctx context.Context, server domain.Server, kind, detail string) error {
+	title := "Disk is filling up on " + server.Name
+	body := detail + " Reclaim space, or move workloads to another server."
+	if kind == domain.InboxKindServerDiskRecovered {
+		title = "Disk recovered on " + server.Name
+		body = detail
+	}
+	return a.inbox.RecordServerDisk(ctx, server.ID, server.Name, kind, title, body)
 }
 
 // panelUpdateAnnouncer turns "a newer release exists" into one inbox item per

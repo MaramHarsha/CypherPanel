@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -60,6 +61,10 @@ var ErrCannotCancel = errors.New("scheduler: deployment can no longer be cancell
 // the application has never had a revision roll out.
 var ErrNeverDeployed = errors.New("scheduler: application has never deployed")
 
+// defaultRevisionRetain is the images-per-application window a node keeps when
+// the wiring set none.
+const defaultRevisionRetain = 3
+
 // FrozenError carries the sentence the 409 body shows: which environment is
 // frozen and when it lifts, e.g. "production is frozen until Mon 08:00
 // Europe/Berlin". It wraps ErrFrozen, so callers may match either.
@@ -81,6 +86,9 @@ type Store interface {
 	GetApplication(ctx context.Context, id string) (domain.Application, error)
 	ListApplicationsByServer(ctx context.Context, serverID string) ([]domain.Application, error)
 	SetApplicationDesiredRevision(ctx context.Context, appID, revisionID string) (domain.Application, error)
+	// ListRevisionsByApplication backs the garbage-collection retain set,
+	// newest first (disk-management.md §2).
+	ListRevisionsByApplication(ctx context.Context, appID string) ([]domain.Revision, error)
 	// Compose Stacks (compose-stacks.md §4).
 	GetComposeStack(ctx context.Context, id string) (domain.ComposeStack, error)
 	ListComposeStacksByServer(ctx context.Context, serverID string) ([]domain.ComposeStack, error)
@@ -245,6 +253,12 @@ type Scheduler struct {
 	// registry it has not stored, so nothing changes for one that never used
 	// the feature.
 	registries RegistryCredentials
+
+	// revisionRetain is how many of an application's images a node keeps,
+	// newest first and including the deployed one (disk-management.md §7).
+	// Zero means the default — the wiring sets it, and a test that does not
+	// still gets a sane window.
+	revisionRetain int
 
 	// mu serializes pipeline transitions: deploy requests and event handlers
 	// race on the per-app queue, and the transitions are read-modify-write.
@@ -1742,6 +1756,12 @@ func (s *Scheduler) DesiredStateFor(ctx context.Context, serverID string) ([]byt
 		ds.DbSpecs = append(ds.DbSpecs, spec)
 	}
 
+	// V1: which revisions' images must survive garbage collection
+	// (disk-management.md §2). Built from the same application list, and
+	// deliberately a SEPARATE field: an app missing from `specs` is removed,
+	// while one missing from `retain` is left alone.
+	ds.Retain = s.retainFor(ctx, serverID, apps)
+
 	// V1: Compose Stacks (compose-stacks.md §4).
 	composeSpecs, err := s.composeSpecsFor(ctx, serverID)
 	if err != nil {
@@ -1763,6 +1783,55 @@ func (s *Scheduler) DesiredStateFor(ctx context.Context, serverID string) ([]byt
 	}
 
 	return proto.Marshal(ds)
+}
+
+// retainFor names, per application, the revisions whose images must survive on
+// this node (disk-management.md §2).
+//
+// This is what turns garbage collection from a heuristic into a reconciler. The
+// plane already knows which revisions it wants to be able to run — the deployed
+// one, plus the most recent others a rollback could name — so everything else
+// is, by definition, unreferenced. A prune job cannot know that, which is why
+// every prune job either spares too much or breaks rollback.
+//
+// An application whose revisions cannot be read is OMITTED rather than sent
+// empty: an empty list would read as "keep nothing", and the cost of removing a
+// rollback target is not the cost of keeping an image too long.
+func (s *Scheduler) retainFor(ctx context.Context, serverID string, apps []domain.Application) []*agentv1.RetainSpec {
+	keep := s.revisionRetain
+	if keep < 1 {
+		keep = defaultRevisionRetain
+	}
+	out := make([]*agentv1.RetainSpec, 0, len(apps))
+	for _, app := range apps {
+		revs, err := s.store.ListRevisionsByApplication(ctx, app.ID)
+		if err != nil {
+			s.log.Error("retain set: listing revisions", "server_id", serverID, "app_id", app.ID, "error", err)
+			continue
+		}
+		ids := make([]string, 0, keep)
+		// The desired revision first and unconditionally: it is what is running,
+		// and a retention window that could exclude it would be a request to
+		// delete the image serving traffic.
+		if app.DesiredRevisionID != nil {
+			ids = append(ids, *app.DesiredRevisionID)
+		}
+		// Then the most recent others, newest first — the ones a rollback can
+		// name. ListRevisionsByApplication already orders by created_at DESC.
+		for _, rev := range revs {
+			if len(ids) >= keep {
+				break
+			}
+			if !slices.Contains(ids, rev.ID) {
+				ids = append(ids, rev.ID)
+			}
+		}
+		if len(ids) == 0 {
+			continue // nothing to keep is not an instruction to keep nothing
+		}
+		out = append(out, &agentv1.RetainSpec{AppId: app.ID, RevisionIds: ids})
+	}
+	return out
 }
 
 // RequestResync asks every enrolled server to re-read its desired state
@@ -1929,6 +1998,15 @@ func (s *Scheduler) SetGate(g Gate) { s.gate = g }
 // can only name a registry the panel stored, so a panel without this never has
 // one to resolve (registries.md §5).
 func (s *Scheduler) SetRegistries(r RegistryCredentials) { s.registries = r }
+
+// SetRevisionRetain sets how many of an application's images a node keeps
+// (disk-management.md §7). Below 1 is ignored: the deployed revision is never
+// reclaimable, so "keep zero" is not a policy anyone can mean.
+func (s *Scheduler) SetRevisionRetain(n int) {
+	if n >= 1 {
+		s.revisionRetain = n
+	}
+}
 
 // registryAuth resolves one credential into the wire form, unsealing it here —
 // at work-build time — exactly as the deploy key is, and for the same reason:

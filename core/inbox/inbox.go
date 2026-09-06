@@ -171,6 +171,44 @@ func (s *Service) RecordPanelUpdate(ctx context.Context, u PanelUpdate) error {
 	return nil
 }
 
+// RecordServerDisk announces a server crossing the disk threshold, or crossing
+// back (disk-management.md §5).
+//
+// Panel-level, to the owners and admins who can act on a server. Deduped on the
+// kind and the server, so the two transitions replace each other in a reader's
+// inbox rather than stacking up as a history nobody wants.
+func (s *Service) RecordServerDisk(ctx context.Context, serverID, serverName, kind, title, body string) error {
+	recipients, err := s.store.ListPanelInboxRecipients(ctx, kind)
+	if err != nil {
+		return fmt.Errorf("inbox: resolving panel recipients: %w", err)
+	}
+	if len(recipients) == 0 {
+		return nil
+	}
+	severity := domain.NotifyError
+	if kind == domain.InboxKindServerDiskRecovered {
+		severity = domain.NotifyInfo
+	}
+	f := store.InboxFanout{
+		IDs:      mintIDs(len(recipients)),
+		UserIDs:  recipients,
+		Kind:     kind,
+		Severity: string(severity),
+		Title:    title,
+		Body:     clampBody(body),
+		// The server, not the moment: a disk that crosses back and forth should
+		// leave one current item per direction, not a log.
+		DedupeKey: kind + ":" + serverID,
+	}
+	if err := s.store.InsertPanelInboxItems(ctx, f); err != nil {
+		return fmt.Errorf("inbox: inserting panel items: %w", err)
+	}
+	if err := s.store.PruneInboxItems(ctx, recipients, domain.InboxRetention); err != nil {
+		return fmt.Errorf("inbox: pruning: %w", err)
+	}
+	return nil
+}
+
 // ─── Deploy protection (deploy-protection.md §9) ────────────────────────────
 
 // DeployNotice is what deploy protection tells the inbox about one parked

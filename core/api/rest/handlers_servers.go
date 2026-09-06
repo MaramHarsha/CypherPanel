@@ -29,27 +29,38 @@ type serverDTO struct {
 	Hostname     string `json:"hostname"`
 	// PublicAddress is where DNS records for this server's applications point
 	// (dns-automation.md §3.4). Empty until an operator sets it.
-	PublicAddress string  `json:"public_address"`
-	Enrolled      bool    `json:"enrolled"`
-	EnrolledAt    *string `json:"enrolled_at"`
-	LastSeenAt    *string `json:"last_seen_at"`
-	CreatedAt     string  `json:"created_at"`
+	PublicAddress string `json:"public_address"`
+	// DiskTotalBytes / DiskFreeBytes are the Docker data root's filesystem as
+	// of the last heartbeat (disk-management.md §4). Zero means not reported —
+	// an older agent, or a host where it could not be read — which a client
+	// should show as unknown rather than as full.
+	DiskTotalBytes uint64 `json:"disk_total_bytes"`
+	DiskFreeBytes  uint64 `json:"disk_free_bytes"`
+	// DiskLow is whether the server is currently past the panel's threshold.
+	DiskLow    bool    `json:"disk_low"`
+	Enrolled   bool    `json:"enrolled"`
+	EnrolledAt *string `json:"enrolled_at"`
+	LastSeenAt *string `json:"last_seen_at"`
+	CreatedAt  string  `json:"created_at"`
 }
 
 func toServerDTO(s domain.Server) serverDTO {
 	return serverDTO{
-		ID:            s.ID,
-		Name:          s.Name,
-		Status:        string(s.Status),
-		Driver:        s.Driver,
-		Role:          s.Role,
-		AgentVersion:  s.AgentVersion,
-		Hostname:      s.Hostname,
-		PublicAddress: s.PublicAddress,
-		Enrolled:      s.Enrolled(),
-		EnrolledAt:    formatTime(s.EnrolledAt),
-		LastSeenAt:    formatTime(s.LastSeenAt),
-		CreatedAt:     s.CreatedAt.UTC().Format(time.RFC3339),
+		ID:             s.ID,
+		Name:           s.Name,
+		Status:         string(s.Status),
+		Driver:         s.Driver,
+		DiskTotalBytes: s.DiskTotalBytes,
+		DiskFreeBytes:  s.DiskFreeBytes,
+		DiskLow:        s.DiskLow,
+		Role:           s.Role,
+		AgentVersion:   s.AgentVersion,
+		Hostname:       s.Hostname,
+		PublicAddress:  s.PublicAddress,
+		Enrolled:       s.Enrolled(),
+		EnrolledAt:     formatTime(s.EnrolledAt),
+		LastSeenAt:     formatTime(s.LastSeenAt),
+		CreatedAt:      s.CreatedAt.UTC().Format(time.RFC3339),
 	}
 }
 

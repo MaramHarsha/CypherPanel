@@ -380,9 +380,16 @@ type Heartbeat struct {
 	// Role the agent runs with: "all" (default), "builder", or "worker"
 	// (builder-role-and-relay.md §1). Routing input only — relay operations are
 	// authorized per-deployment, never from this claim.
-	Role          string `protobuf:"bytes,6,opt,name=role,proto3" json:"role,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Role string `protobuf:"bytes,6,opt,name=role,proto3" json:"role,omitempty"`
+	// V1: the Docker data root's filesystem (disk-management.md §4). Read from
+	// the daemon's own /info (DockerRootDir) rather than assumed, because an
+	// operator who moved it is exactly the one who will not have moved an alert
+	// with it. Zero means "could not read", which the plane treats as unknown
+	// and never as full.
+	DiskTotalBytes uint64 `protobuf:"varint,7,opt,name=disk_total_bytes,json=diskTotalBytes,proto3" json:"disk_total_bytes,omitempty"`
+	DiskFreeBytes  uint64 `protobuf:"varint,8,opt,name=disk_free_bytes,json=diskFreeBytes,proto3" json:"disk_free_bytes,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Heartbeat) Reset() {
@@ -457,6 +464,20 @@ func (x *Heartbeat) GetRole() string {
 	return ""
 }
 
+func (x *Heartbeat) GetDiskTotalBytes() uint64 {
+	if x != nil {
+		return x.DiskTotalBytes
+	}
+	return 0
+}
+
+func (x *Heartbeat) GetDiskFreeBytes() uint64 {
+	if x != nil {
+		return x.DiskFreeBytes
+	}
+	return 0
+}
+
 var File_cypherpanel_agent_v1_agent_proto protoreflect.FileDescriptor
 
 const file_cypherpanel_agent_v1_agent_proto_rawDesc = "" +
@@ -480,7 +501,7 @@ const file_cypherpanel_agent_v1_agent_proto_rawDesc = "" +
 	"\rRenewResponse\x12'\n" +
 	"\x0fcertificate_pem\x18\x01 \x01(\fR\x0ecertificatePem\x12\x15\n" +
 	"\x06ca_pem\x18\x02 \x01(\fR\x05caPem\x127\n" +
-	"\tnot_after\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\bnotAfter\"\xef\x01\n" +
+	"\tnot_after\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\bnotAfter\"\xc1\x02\n" +
 	"\tHeartbeat\x12\x1b\n" +
 	"\tserver_id\x18\x01 \x01(\tR\bserverId\x129\n" +
 	"\n" +
@@ -488,7 +509,9 @@ const file_cypherpanel_agent_v1_agent_proto_rawDesc = "" +
 	"\ragent_version\x18\x03 \x01(\tR\fagentVersion\x12\x16\n" +
 	"\x06driver\x18\x04 \x01(\tR\x06driver\x129\n" +
 	"\x06status\x18\x05 \x01(\x0e2!.cypherpanel.agent.v1.AgentStatusR\x06status\x12\x12\n" +
-	"\x04role\x18\x06 \x01(\tR\x04role*^\n" +
+	"\x04role\x18\x06 \x01(\tR\x04role\x12(\n" +
+	"\x10disk_total_bytes\x18\a \x01(\x04R\x0ediskTotalBytes\x12&\n" +
+	"\x0fdisk_free_bytes\x18\b \x01(\x04R\rdiskFreeBytes*^\n" +
 	"\vAgentStatus\x12\x1c\n" +
 	"\x18AGENT_STATUS_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12AGENT_STATUS_READY\x10\x01\x12\x19\n" +

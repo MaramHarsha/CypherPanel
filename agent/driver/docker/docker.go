@@ -96,6 +96,17 @@ type Image struct {
 	// Pending is the tidy-up an earlier rollout could not finish — a registry
 	// reference our own pull created and failed to drop.
 	Pending []PendingRef
+	// Managed pairs each managed reference with the application and revision it
+	// names, so garbage collection can reclaim ONE revision's reference without
+	// touching another's on a shared image (disk-management.md §2).
+	Managed []ManagedRef
+}
+
+// ManagedRef is one reference this driver created, with what it names.
+type ManagedRef struct {
+	Reference  string
+	AppID      string
+	RevisionID string
 }
 
 // PendingRef pairs a registry reference this driver's pull created with the
@@ -223,7 +234,7 @@ func (d *Driver) Name() string { return driverName }
 // the others (reconciler-development skill). Apps absent from desired are torn
 // down; a teardown that fails is itself reported as an observed error status —
 // the plane must see that removal has not actually converged.
-func (d *Driver) Reconcile(ctx context.Context, desired []*agentv1.AppSpec) ([]*agentv1.AppStatus, error) {
+func (d *Driver) Reconcile(ctx context.Context, desired []*agentv1.AppSpec, retain []*agentv1.RetainSpec) ([]*agentv1.AppStatus, error) {
 	managed, err := d.client.ListManaged(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("docker: listing managed containers: %w", err)
@@ -285,7 +296,7 @@ func (d *Driver) Reconcile(ctx context.Context, desired []*agentv1.AppSpec) ([]*
 	// Desired-state image GC: images of fully-removed apps are prunable
 	// (threat-model §5.9). Revision-window GC within a still-desired app needs
 	// the plane's retain-set and lands with the deployment store.
-	d.gcRemovedAppImages(ctx, desiredApps)
+	d.gcImages(ctx, desiredApps, retainSet(retain))
 
 	return statuses, nil
 }
@@ -593,9 +604,45 @@ func (d *Driver) dropPullCreated(ctx context.Context, ref PendingRef) {
 	}
 }
 
-// gcRemovedAppImages removes images belonging to apps absent from desired, and
-// finishes any pull-reference tidy-up an earlier rollout could not complete.
-func (d *Driver) gcRemovedAppImages(ctx context.Context, desiredApps map[string]struct{}) {
+// retainSet indexes the plane's instruction: for each application, the
+// revisions whose images must survive (disk-management.md §2).
+//
+// An application ABSENT from the instruction is absent from this map, and every
+// caller reads that as "no instruction", never as "remove everything". That is
+// the opposite of how the spec list is read, deliberately: the cost of keeping
+// an image too long is disk, and the cost of removing one too early is a
+// rollback that cannot run.
+func retainSet(desired []*agentv1.RetainSpec) map[string]map[string]struct{} {
+	if len(desired) == 0 {
+		return nil
+	}
+	out := make(map[string]map[string]struct{}, len(desired))
+	for _, r := range desired {
+		if len(r.GetRevisionIds()) == 0 {
+			continue // no instruction, not "keep nothing"
+		}
+		keep := make(map[string]struct{}, len(r.GetRevisionIds()))
+		for _, rev := range r.GetRevisionIds() {
+			keep[rev] = struct{}{}
+		}
+		out[r.GetAppId()] = keep
+	}
+	return out
+}
+
+// gcImages reclaims what desired state does not reference.
+//
+// Two rules, and nothing else is ever touched. An application absent from
+// desired loses every managed reference — that is absence-means-remove, and it
+// already existed. An application still desired loses the references naming
+// revisions outside its retain set — that is the part a prune job cannot do,
+// because it cannot know which stopped image a rollback still needs.
+//
+// It works on REFERENCES rather than images: two revisions of one app can share
+// an image, and one operator's own tag can sit beside ours on it. Removing a
+// name we created frees the layers exactly when the last such name goes, and
+// never removes one we did not create.
+func (d *Driver) gcImages(ctx context.Context, desiredApps map[string]struct{}, retain map[string]map[string]struct{}) {
 	images, err := d.client.ListManagedImages(ctx)
 	if err != nil {
 		d.log.Warn("listing managed images for GC", "error", err)
@@ -616,6 +663,7 @@ func (d *Driver) gcRemovedAppImages(ctx context.Context, desiredApps map[string]
 			_, wanted := desiredApps[appID]
 			return wanted
 		}) {
+			d.gcRetainedRevisions(ctx, img, desiredApps, retain)
 			continue
 		}
 		// Drop every managed alias. Together with the pending references above
@@ -626,6 +674,30 @@ func (d *Driver) gcRemovedAppImages(ctx context.Context, desiredApps map[string]
 			if err := d.client.RemoveImage(ctx, ref); err != nil {
 				d.log.Warn("removing image reference", "reference", ref, "app_ids", img.AppIDs, "error", err)
 			}
+		}
+	}
+}
+
+// gcRetainedRevisions drops the references of a still-desired application that
+// name a revision the plane no longer wants to be able to run.
+func (d *Driver) gcRetainedRevisions(ctx context.Context, img Image, desiredApps map[string]struct{}, retain map[string]map[string]struct{}) {
+	for _, ref := range img.Managed {
+		if _, wanted := desiredApps[ref.AppID]; !wanted {
+			continue // handled by the absence path, which drops every reference
+		}
+		keep, instructed := retain[ref.AppID]
+		if !instructed {
+			continue // no instruction for this app: leave it alone
+		}
+		if ref.RevisionID == "" {
+			continue // a reference that names no revision is not ours to judge
+		}
+		if _, retained := keep[ref.RevisionID]; retained {
+			continue
+		}
+		if err := d.client.RemoveImage(ctx, ref.Reference); err != nil {
+			d.log.Warn("reclaiming an unreferenced revision image",
+				"reference", ref.Reference, "app_id", ref.AppID, "revision_id", ref.RevisionID, "error", err)
 		}
 	}
 }

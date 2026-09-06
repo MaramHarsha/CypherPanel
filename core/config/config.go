@@ -85,6 +85,16 @@ type Config struct {
 	// requirement and the wrong default for a panel nobody prunes.
 	AuditRetention time.Duration
 
+	// RevisionRetain is how many of an application's images the plane wants
+	// kept on a node, newest first and including the deployed one
+	// (disk-management.md §7). It is the whole garbage-collection policy: the
+	// agent converges to it, so there is no prune schedule and no
+	// aggressiveness dial.
+	RevisionRetain int
+	// DiskWarnPercent is the used-percentage at which a server reports low
+	// disk. Zero disables the alert.
+	DiskWarnPercent int
+
 	// UpdateCheck is whether the panel polls a release feed to tell owners a
 	// newer version exists. "off" disables the outbound request entirely — the
 	// whole answer for an air-gapped install. The panel never updates itself
@@ -115,8 +125,12 @@ func Load() (Config, error) {
 		DataDir:           envOr("CYPHERD_DATA_DIR", "/var/lib/cypherd"),
 		RuntimeLogsMaxAge: envDuration("CYPHERD_RUNTIME_LOGS_MAX_AGE", 24*time.Hour),
 		AuditRetention:    envDuration("CYPHERD_AUDIT_RETENTION", 90*24*time.Hour),
-		UpdateCheck:       !strings.EqualFold(envOr("CYPHERD_UPDATE_CHECK", "on"), "off"),
-		UpdateFeedURL:     envOr("CYPHERD_UPDATE_FEED_URL", ""),
+		// Minimum 1 enforced below: the deployed revision is never reclaimable,
+		// so a zero here would be a request to delete what is running.
+		RevisionRetain:  envInt("CYPHERD_REVISION_RETAIN", 3),
+		DiskWarnPercent: envInt("CYPHERD_DISK_WARN_PERCENT", 85),
+		UpdateCheck:     !strings.EqualFold(envOr("CYPHERD_UPDATE_CHECK", "on"), "off"),
+		UpdateFeedURL:   envOr("CYPHERD_UPDATE_FEED_URL", ""),
 	}
 
 	runtimeBytes, err := envBytes("CYPHERD_RUNTIME_LOGS_MAX_BYTES", 536870912) // 512 MiB
@@ -124,6 +138,12 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("config: %w", err)
 	}
 	c.RuntimeLogsMaxBytes = runtimeBytes
+	if c.RevisionRetain < 1 {
+		c.RevisionRetain = 1
+	}
+	if c.DiskWarnPercent < 0 || c.DiskWarnPercent > 100 {
+		c.DiskWarnPercent = 0 // out of range disables rather than alarms wrongly
+	}
 
 	if c.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("config: CYPHERD_DATABASE_URL is required")
@@ -263,6 +283,20 @@ func envBytes(key string, def uint64) (uint64, error) {
 		return 0, fmt.Errorf("parsing %q as bytes: %w", v, err)
 	}
 	return n, nil
+}
+
+// envInt reads a whole number. A malformed value keeps the default rather than
+// failing startup: a mistyped retention must not stop the panel from booting.
+func envInt(key string, def int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
 }
 
 func envDuration(key string, def time.Duration) time.Duration {

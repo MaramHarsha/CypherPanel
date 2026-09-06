@@ -120,6 +120,10 @@ type Worker struct {
 	state        map[string]*agentv1.AppSpec     // map[app_id]spec
 	dbState      map[string]*agentv1.DbSpec      // map[db_id]spec
 	composeState map[string]*agentv1.ComposeSpec // map[stack_id]spec
+	// retain is the plane's garbage-collection instruction: which revisions'
+	// images must survive (disk-management.md §2). Held beside the specs and
+	// replaced wholesale on every sync, like them.
+	retain []*agentv1.RetainSpec
 }
 
 // CronRunner arms scheduled tasks from desired state and fires them on schedule
@@ -280,6 +284,7 @@ func (w *Worker) syncState(ctx context.Context) error {
 	}
 	w.mu.Lock()
 	w.state, w.dbState, w.composeState = state, dbState, composeState
+	w.retain = ds.Retain
 	w.mu.Unlock()
 
 	// Node-wide TLS settings ride along with the desired set: one panel, one
@@ -712,6 +717,7 @@ func (w *Worker) reconcile(ctx context.Context, triggerDeploymentID, triggerAppI
 		for _, spec := range w.state {
 			desired = append(desired, spec)
 		}
+		retain := w.retain
 		w.mu.Unlock()
 
 		// Re-arm the scheduled-task set from the same desired state, so
@@ -722,7 +728,7 @@ func (w *Worker) reconcile(ctx context.Context, triggerDeploymentID, triggerAppI
 		}
 
 		var err error
-		statuses, err = w.driver.Reconcile(ctx, desired)
+		statuses, err = w.driver.Reconcile(ctx, desired, retain)
 		if err != nil {
 			return err // total orchestrator failure
 		}

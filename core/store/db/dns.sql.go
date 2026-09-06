@@ -502,7 +502,7 @@ func (q *Queries) SetDNSProvider(ctx context.Context, arg SetDNSProviderParams) 
 
 const setServerPublicAddress = `-- name: SetServerPublicAddress :one
 
-UPDATE servers SET public_address = $2, updated_at = now() WHERE id = $1 RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address
+UPDATE servers SET public_address = $2, updated_at = now() WHERE id = $1 RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low
 `
 
 type SetServerPublicAddressParams struct {
@@ -527,6 +527,9 @@ func (q *Queries) SetServerPublicAddress(ctx context.Context, arg SetServerPubli
 		&i.UpdatedAt,
 		&i.Role,
 		&i.PublicAddress,
+		&i.DiskTotalBytes,
+		&i.DiskFreeBytes,
+		&i.DiskLow,
 	)
 	return i, err
 }

@@ -182,10 +182,19 @@ func runAgent(args []string, log *slog.Logger) error {
 	// turns the server amber instead of leaving it green while every routed
 	// deploy fails.
 	health := &heartbeat.Health{}
-	go heartbeat.NewPublisher(nc, id.ServerID, version, *drvName, *role, *interval, health, log).Run(ctx)
+	hb := heartbeat.NewPublisher(nc, id.ServerID, version, *drvName, *role, *interval, health, log)
+	go hb.Run(ctx)
 
 	if *drvName == "docker" {
 		eng := engine.New("")
+		// Report free space on the filesystem the daemon actually uses. A
+		// failure here costs the disk report and nothing else, so it is logged
+		// rather than fatal (disk-management.md §4).
+		if root, rerr := eng.DataRoot(ctx); rerr != nil {
+			log.Warn("reading the docker data root; disk usage will not be reported", "error", rerr)
+		} else {
+			hb.SetDataRoot(root)
+		}
 
 		// The image relay dials the plane address the agent enrolled against
 		// (builder-role-and-relay.md §3). Identities saved before plane_addr

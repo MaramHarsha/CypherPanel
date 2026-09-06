@@ -45,6 +45,15 @@ type Server struct {
 	// EnrolledAt is nil until the agent completes enrollment; it distinguishes
 	// "awaiting enrollment" from "enrolled but currently offline".
 	EnrolledAt *time.Time
+	// DiskTotalBytes / DiskFreeBytes are the Docker data root's filesystem as
+	// of the last heartbeat (disk-management.md §4). Zero means not reported —
+	// an older agent, or a host where the figure could not be read — which is
+	// read as unknown and never as full.
+	DiskTotalBytes uint64
+	DiskFreeBytes  uint64
+	// DiskLow is whether the server is currently below the threshold. Stored so
+	// the alert can fire on the transition rather than on every heartbeat.
+	DiskLow bool
 	// LastSeenAt is the time of the most recent heartbeat, nil if never seen.
 	LastSeenAt *time.Time
 	CreatedAt  time.Time

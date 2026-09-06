@@ -85,6 +85,21 @@ message AppSpec {
   string restart_token = 17;
 }
 
+// RetainSpec names the revisions of one Application whose images must be kept
+// (disk-management.md §2).
+//
+// It is what turns garbage collection from a heuristic into a reconciler: the
+// plane knows exactly which revisions it wants to be able to run — the deployed
+// one, plus the recent ones a rollback could name — so everything else is, by
+// definition, not referenced. A prune job cannot know that, which is why every
+// prune job either spares too much or breaks rollback.
+message RetainSpec {
+  string app_id = 1;
+  // Newest first, including the desired revision. Never empty: an application
+  // with nothing to keep is omitted from the list entirely.
+  repeated string revision_ids = 2;
+}
+
 // RegistryAuth is one credential for one registry, as the daemon wants it.
 //
 // It is deliberately a value on the work item rather than agent configuration:
@@ -262,6 +277,11 @@ message DesiredState {
   // stack_id is absent from compose_specs are brought down — the same
   // absence-means-remove contract apps and databases follow.
   repeated ComposeSpec compose_specs = 4;
+  // V1: which revisions' images must survive garbage collection
+  // (disk-management.md §2). Unlike specs, ABSENCE MEANS NO INSTRUCTION here,
+  // not removal: an application the plane could not read revisions for is
+  // omitted and left alone. The two mistakes do not cost the same.
+  repeated RetainSpec retain = 5;
   // Node-wide TLS settings for the managed Proxy (agent-identity-and-tls.md
   // §4). Desired state, not configuration: the panel owns the ACME account and
   // every node it schedules onto gets the same one, so a fresh install gets

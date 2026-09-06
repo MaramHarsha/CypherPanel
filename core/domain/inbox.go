@@ -27,10 +27,29 @@ const (
 	// InboxKindPanelUpdateAvailable: a newer cypherd release was seen by the
 	// update check. Written once per version to owners.
 	InboxKindPanelUpdateAvailable = "panel.update_available"
+
+	// InboxKindServerDiskLow / InboxKindServerDiskRecovered: a server crossed
+	// the disk threshold, or crossed back (disk-management.md §5).
+	//
+	// Panel-level rather than subscribable, and the reason is structural: a
+	// Server belongs to no project, and a Notifier is scoped to one. There is
+	// no project whose channel should receive this, and delivering it to every
+	// project's would be worse than not delivering it. It goes to the people
+	// who can act on a server — the panel's owners and admins.
+	//
+	// Channel delivery for it therefore waits on panel-level notifiers, which
+	// do not exist; that is a real gap and it is named here rather than papered
+	// over by attaching a server to an arbitrary project.
+	InboxKindServerDiskLow       = "server.disk_low"
+	InboxKindServerDiskRecovered = "server.disk_recovered"
 )
 
 // panelInboxKinds is the panel-level half of the inbox taxonomy.
-var panelInboxKinds = []string{InboxKindPanelUpdateAvailable}
+var panelInboxKinds = []string{
+	InboxKindPanelUpdateAvailable,
+	InboxKindServerDiskLow,
+	InboxKindServerDiskRecovered,
+}
 
 // Deploy-protection inbox kinds (deploy-protection.md §9). Like the panel-level
 // kinds these are inbox kinds ONLY — never a notifier or an outbound-webhook

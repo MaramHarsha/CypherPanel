@@ -111,6 +111,21 @@ func newFakeStore() *fakeStore {
 	}
 }
 
+// ListRevisionsByApplication backs the garbage-collection retain set, newest
+// first (disk-management.md §2).
+func (f *fakeStore) ListRevisionsByApplication(_ context.Context, appID string) ([]domain.Revision, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []domain.Revision
+	for _, r := range f.revisions {
+		if r.ApplicationID == appID {
+			out = append(out, r)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out, nil
+}
+
 // ─── Compose Stacks (compose-stacks.md §4) ──────────────────────────────────
 
 func (f *fakeStore) GetComposeStack(_ context.Context, id string) (domain.ComposeStack, error) {

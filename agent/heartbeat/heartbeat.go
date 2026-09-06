@@ -60,18 +60,31 @@ type Publisher struct {
 	role     string
 	interval time.Duration
 	health   *Health
+	// dataRoot is the filesystem whose free space is reported
+	// (disk-management.md §4). Empty reports nothing, which the plane reads as
+	// unknown — a node that cannot answer is silent rather than alarming.
+	dataRoot string
 	log      *slog.Logger
 }
 
 // NewPublisher wires the publisher. role is the agent's --role value
 // (builder-role-and-relay.md §1), reported so the plane can route builds.
 // health may be nil, in which case the agent always reports READY.
+//
+// SetDataRoot adds the disk report; without it the heartbeat carries zeros,
+// exactly as it did before disk management existed.
 func NewPublisher(nc *nats.Conn, serverID, version, driver, role string, interval time.Duration, health *Health, log *slog.Logger) *Publisher {
 	return &Publisher{
 		nc: nc, serverID: serverID, version: version, driver: driver,
 		role: role, interval: interval, health: health, log: log,
 	}
 }
+
+// SetDataRoot records the filesystem to report free space for — the daemon's
+// own DockerRootDir, read from /info rather than assumed to be
+// /var/lib/docker, because an operator who moved it is exactly the one who will
+// not have moved an alert with it (disk-management.md §4).
+func (p *Publisher) SetDataRoot(path string) { p.dataRoot = path }
 
 // Run publishes one heartbeat immediately, then every interval until ctx is
 // cancelled. It owns its ticker's lifecycle (ENGINEERING rule 7).
@@ -101,14 +114,22 @@ func (p *Publisher) status() agentv1.AgentStatus {
 }
 
 func (p *Publisher) publish() {
-	data, err := proto.Marshal(&agentv1.Heartbeat{
+	hb := &agentv1.Heartbeat{
 		ServerId:     p.serverID,
 		EmittedAt:    timestamppb.Now(),
 		AgentVersion: p.version,
 		Driver:       p.driver,
 		Status:       p.status(),
 		Role:         p.role,
-	})
+	}
+	// Measured per heartbeat, not cached: the number's whole value is that it
+	// is current, and statfs is a single syscall.
+	if p.dataRoot != "" {
+		if total, free, ok := diskUsage(p.dataRoot); ok {
+			hb.DiskTotalBytes, hb.DiskFreeBytes = total, free
+		}
+	}
+	data, err := proto.Marshal(hb)
 	if err != nil {
 		p.log.Error("marshaling heartbeat", "error", err)
 		return

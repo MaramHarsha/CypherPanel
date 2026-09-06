@@ -363,6 +363,21 @@ func (c *Client) ContainerIP(ctx context.Context, id, network string) (string, e
 	return n.IPAddress, nil
 }
 
+// DataRoot reports where the daemon stores its images, containers and volumes.
+//
+// Read from the daemon rather than assumed to be /var/lib/docker: an operator
+// who moved it onto a bigger disk is exactly the one who would otherwise get
+// disk alerts about the wrong filesystem (disk-management.md §4).
+func (c *Client) DataRoot(ctx context.Context) (string, error) {
+	var info struct {
+		DockerRootDir string `json:"DockerRootDir"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/info", nil, nil, &info); err != nil {
+		return "", fmt.Errorf("engine: reading daemon info: %w", err)
+	}
+	return info.DockerRootDir, nil
+}
+
 // ContainerNetwork reports a network the container is attached to, and its
 // address there — what a Compose Stack's route needs (compose-stacks.md §5).
 //
@@ -458,17 +473,19 @@ func (c *Client) ListManagedImages(ctx context.Context) ([]docker.Image, error) 
 		// must never untag those (reconciler contract: never touch what is not
 		// ours).
 		managed := make([]string, 0, len(s.RepoTags))
+		var managedRefs []docker.ManagedRef
 		var pending []docker.PendingRef
 		for _, tag := range s.RepoTags {
 			if _, source, ok := driver.ParsePullMarker(tag); ok {
 				pending = append(pending, docker.PendingRef{Source: source, Marker: tag})
 				continue
 			}
-			if _, _, ok := parseManagedTag(tag); ok {
+			if appID, revID, ok := parseManagedTag(tag); ok {
 				managed = append(managed, tag)
+				managedRefs = append(managedRefs, docker.ManagedRef{Reference: tag, AppID: appID, RevisionID: revID})
 			}
 		}
-		out = append(out, docker.Image{ID: s.ID, AppIDs: appIDs, References: managed, Pending: pending})
+		out = append(out, docker.Image{ID: s.ID, AppIDs: appIDs, References: managed, Pending: pending, Managed: managedRefs})
 	}
 	return out, nil
 }

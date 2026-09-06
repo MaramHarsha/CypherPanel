@@ -132,7 +132,13 @@ type Reconciler interface {
 	// actually true afterward. A partial failure converges everything it can
 	// and reports per-app state; the returned error is reserved for total
 	// inability to reconcile (e.g. orchestrator unreachable).
-	Reconcile(ctx context.Context, desired []*agentv1.AppSpec) ([]*agentv1.AppStatus, error)
+	//
+	// retain names the revisions whose images must survive garbage collection
+	// (disk-management.md §2). It is a SEPARATE list rather than a field on
+	// AppSpec because its absence means something different: an application
+	// missing from desired is removed, while one missing from retain is simply
+	// left alone.
+	Reconcile(ctx context.Context, desired []*agentv1.AppSpec, retain []*agentv1.RetainSpec) ([]*agentv1.AppStatus, error)
 }
 
 // DbReconciler manages database resource reconciliation on this server

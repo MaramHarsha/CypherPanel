@@ -14,7 +14,7 @@ import (
 const createServer = `-- name: CreateServer :one
 INSERT INTO servers (id, name)
 VALUES ($1, $2)
-RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address
+RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low
 `
 
 type CreateServerParams struct {
@@ -38,6 +38,9 @@ func (q *Queries) CreateServer(ctx context.Context, arg CreateServerParams) (Ser
 		&i.UpdatedAt,
 		&i.Role,
 		&i.PublicAddress,
+		&i.DiskTotalBytes,
+		&i.DiskFreeBytes,
+		&i.DiskLow,
 	)
 	return i, err
 }
@@ -52,7 +55,7 @@ func (q *Queries) DeleteServer(ctx context.Context, id string) error {
 }
 
 const getServer = `-- name: GetServer :one
-SELECT id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address FROM servers WHERE id = $1
+SELECT id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low FROM servers WHERE id = $1
 `
 
 func (q *Queries) GetServer(ctx context.Context, id string) (Server, error) {
@@ -71,12 +74,15 @@ func (q *Queries) GetServer(ctx context.Context, id string) (Server, error) {
 		&i.UpdatedAt,
 		&i.Role,
 		&i.PublicAddress,
+		&i.DiskTotalBytes,
+		&i.DiskFreeBytes,
+		&i.DiskLow,
 	)
 	return i, err
 }
 
 const listServers = `-- name: ListServers :many
-SELECT id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address FROM servers ORDER BY created_at DESC
+SELECT id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low FROM servers ORDER BY created_at DESC
 `
 
 func (q *Queries) ListServers(ctx context.Context) ([]Server, error) {
@@ -101,6 +107,9 @@ func (q *Queries) ListServers(ctx context.Context) ([]Server, error) {
 			&i.UpdatedAt,
 			&i.Role,
 			&i.PublicAddress,
+			&i.DiskTotalBytes,
+			&i.DiskFreeBytes,
+			&i.DiskLow,
 		); err != nil {
 			return nil, err
 		}
@@ -119,7 +128,7 @@ SET enrolled_at = now(),
     agent_version = $3,
     updated_at = now()
 WHERE id = $1
-RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address
+RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low
 `
 
 type MarkServerEnrolledParams struct {
@@ -144,6 +153,9 @@ func (q *Queries) MarkServerEnrolled(ctx context.Context, arg MarkServerEnrolled
 		&i.UpdatedAt,
 		&i.Role,
 		&i.PublicAddress,
+		&i.DiskTotalBytes,
+		&i.DiskFreeBytes,
+		&i.DiskLow,
 	)
 	return i, err
 }
@@ -184,18 +196,22 @@ SET status = $2,
     agent_version = $3,
     driver = $4,
     role = $5,
+    disk_total_bytes = $6,
+    disk_free_bytes = $7,
     last_seen_at = now(),
     updated_at = now()
 WHERE id = $1
-RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address
+RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low
 `
 
 type RecordHeartbeatParams struct {
-	ID           string
-	Status       string
-	AgentVersion string
-	Driver       string
-	Role         string
+	ID             string
+	Status         string
+	AgentVersion   string
+	Driver         string
+	Role           string
+	DiskTotalBytes int64
+	DiskFreeBytes  int64
 }
 
 func (q *Queries) RecordHeartbeat(ctx context.Context, arg RecordHeartbeatParams) (Server, error) {
@@ -205,6 +221,8 @@ func (q *Queries) RecordHeartbeat(ctx context.Context, arg RecordHeartbeatParams
 		arg.AgentVersion,
 		arg.Driver,
 		arg.Role,
+		arg.DiskTotalBytes,
+		arg.DiskFreeBytes,
 	)
 	var i Server
 	err := row.Scan(
@@ -220,6 +238,9 @@ func (q *Queries) RecordHeartbeat(ctx context.Context, arg RecordHeartbeatParams
 		&i.UpdatedAt,
 		&i.Role,
 		&i.PublicAddress,
+		&i.DiskTotalBytes,
+		&i.DiskFreeBytes,
+		&i.DiskLow,
 	)
 	return i, err
 }
@@ -238,4 +259,21 @@ func (q *Queries) ServerIsEnrolled(ctx context.Context, id string) (bool, error)
 	var enrolled bool
 	err := row.Scan(&enrolled)
 	return enrolled, err
+}
+
+const setServerDiskLow = `-- name: SetServerDiskLow :exec
+UPDATE servers SET disk_low = $2, updated_at = now() WHERE id = $1
+`
+
+type SetServerDiskLowParams struct {
+	ID      string
+	DiskLow bool
+}
+
+// SetServerDiskLow records whether a server is currently below the disk
+// threshold. Separate from the heartbeat write because it is a TRANSITION the
+// plane decides, not a measurement the agent reports (disk-management.md §5).
+func (q *Queries) SetServerDiskLow(ctx context.Context, arg SetServerDiskLowParams) error {
+	_, err := q.db.Exec(ctx, setServerDiskLow, arg.ID, arg.DiskLow)
+	return err
 }
