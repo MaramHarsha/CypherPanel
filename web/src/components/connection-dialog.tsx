@@ -222,7 +222,7 @@ const TEST_NOTE =
   "Test proves the configuration without storing it — one delivery, nothing kept. Email is the exception: it is tested through a saved notifier, because an unsaved one would relay through an arbitrary server to an arbitrary address.";
 
 const EDIT_NOTE =
-  "Leave the credential empty to keep the one already sealed here. Test sends through the saved notifier, so it proves what deploys will actually use.";
+  "Leave the channel fields empty to keep what is sealed here. They are replaced together — the panel reseals the config wholesale — so changing one means re-entering the rest. Test sends through the saved notifier, so it proves what deploys will actually use.";
 
 /**
  * Add a notifier, or edit one.
@@ -530,12 +530,17 @@ function ChannelFields({
   channel: CreateNotifierRequestChannel;
   value: Record<string, string>;
   onField: (k: string) => (e: ChangeEvent<HTMLInputElement>) => void;
-  /** Editing: an empty field keeps the sealed value, so nothing is required. */
+  /** Editing: leaving the whole group empty keeps the sealed value. */
   keepSealed?: boolean;
 }) {
-  // On an edit the browser must not demand a value the operator deliberately
-  // left blank — blank IS the instruction to keep what is sealed.
-  const need = !keepSealed;
+  // On an edit the config is ALL OR NOTHING, because the API reseals it
+  // wholesale — an omitted `config` keeps what is stored, and a supplied one
+  // replaces every field of it. So a half-filled group would quietly wipe the
+  // fields left blank: changing a Telegram chat id would destroy the bot token
+  // beside it. Leaving the group untouched requires nothing; touching any of
+  // it requires all of it, which is the same rule the API enforces, said by
+  // the form instead of discovered as a dead channel.
+  const need = !keepSealed || Object.values(value).some((v) => v !== "");
   if (channel === "discord" || channel === "slack") {
     return (
       <Field
@@ -567,7 +572,11 @@ function ChannelFields({
         <Field
           label="Bot token"
           qualifier="· write-only"
-          hint={keepSealed ? "Leave empty to keep the sealed token." : "From @BotFather."}
+          hint={
+            keepSealed
+              ? "Leave both fields empty to keep what is sealed. Changing either one replaces both, so re-enter the token as well."
+              : "From @BotFather."
+          }
         >
           {(id, describedBy) => (
             <Input
