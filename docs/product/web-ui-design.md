@@ -298,6 +298,15 @@ specs (this document + ui-principles govern); the *product features* in slice
    metrics/observability (charts via the `dataviz` skill). `design-system.md`
    is written **during** this slice from the real component inventory of §6.
 
+   *Compose stacks shipped* — the board's third Resource plus a detail layout
+   (overview · logs · variables · revisions · settings). It has no card in the
+   design canvas, so it is built from the resource-card idiom the applications
+   and databases sections already carry, and each file's header records that
+   sourcing so a later diff against the canvas is a token check rather than a
+   rewrite. The same note applies to the audit page, the panel's TLS and
+   diagnostics tabs, and the invitation accept page: all four post-date the
+   canvas, and all four say so where they are defined.
+
 ## 8. Backend prerequisites (do these before or with slice 1)
 
 Honest gaps the UI depends on — plane work, not `web/` work:
