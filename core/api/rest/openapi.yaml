@@ -13,6 +13,14 @@ info:
     session token from /api/v1/auth/login; the GitHub webhook authenticates by
     per-application HMAC instead. Every project-scoped route is authorized by
     team membership (a non-member sees 404, insufficient rank 403).
+
+
+    Every response — success, error and SSE stream alike — carries an
+    `X-Request-Id` header (`components/headers/RequestId`), and every JSON
+    error body repeats it as `trace_id`. It is the value to quote in a bug
+    report and the key to search for in `GET /api/v1/panel/logs`. Individual
+    responses reference the header only where a generated client benefits;
+    it is present on all of them.
   version: 0.3.0
 servers:
   - url: /
@@ -20,19 +28,25 @@ tags:
   - name: health
   - name: auth
   - name: teams
+  - name: invites
+  - name: access-requests
   - name: servers
   - name: projects
   - name: applications
   - name: deployments
   - name: deploy-keys
+  - name: registries
+  - name: compose-stacks
   - name: databases
   - name: backups
   - name: previews
   - name: notifiers
   - name: webhooks
   - name: inbox
+  - name: audit
   - name: shared-variables
   - name: scheduled-tasks
+  - name: protection
 
 paths:
   /healthz:
@@ -147,11 +161,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "429":
-          description: Too many failed attempts from this client; retry later.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
+          $ref: "#/components/responses/TooManyRequests"
 
   /api/v1/auth/logout:
     post:
@@ -259,6 +269,35 @@ paths:
         "404": { description: That user has no photo., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   /api/v1/auth/email/change:
+    get:
+      operationId: getPendingEmailChange
+      tags: [auth]
+      summary: The address move already in flight, if any (session only)
+      description: >
+        Lets the confirm step show "old → new" rather than asking someone to
+        trust a link. Never returns the token: holding a session is enough to
+        start or abandon a change, never to complete one. 404 is the ordinary
+        answer — most visits have nothing pending.
+      responses:
+        "200": { description: A change is pending., content: { application/json: { schema: { $ref: "#/components/schemas/PendingEmailChange" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: Nothing is pending., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      operationId: cancelEmailChange
+      tags: [auth]
+      summary: Abandon a pending address move — "this wasn't me" (session only)
+      description: >
+        Spends every outstanding change for the account without applying one, so
+        a second link requested in the same breath cannot survive the cancel of
+        the first. Deliberately does not require the password: the person who can
+        undo a move they did not ask for is the person holding the session, and
+        making them find a password first only keeps a hijacked request alive
+        longer.
+      responses:
+        "200": { description: Cancelled., content: { application/json: { schema: { $ref: "#/components/schemas/EmailChangeCancelled" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
     post:
       operationId: requestEmailChange
       tags: [auth]
@@ -276,6 +315,7 @@ paths:
         "401": { description: The current password is wrong., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { description: That address is already in use., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "502": { description: The panel could not send the mail., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   /api/v1/auth/email/confirm:
@@ -295,6 +335,53 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { description: That address was taken while confirming., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /api/v1/panel/tls:
+    get:
+      operationId: getPanelTLS
+      tags: [panel]
+      summary: The panel's ACME account for routed applications (panel owner)
+      description: >-
+        The one setting that decides whether the managed Proxy on every server can obtain
+        certificates. Nothing here is a secret — an ACME account email is published back by
+        the CA in the registration, and the ACME account key never leaves the serving node —
+        so the values are returned as stored rather than hinted at.
+      responses:
+        "200":
+          description: >-
+            The account, or `configured: false` on a panel that has never set one. An
+            unconfigured panel is a normal state, not an error: routed applications are
+            served over plain HTTP and say so through `Application.tls_state`.
+          content: { application/json: { schema: { $ref: "#/components/schemas/PanelTLSSettings" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: setPanelTLS
+      tags: [panel]
+      summary: Set (or clear) the panel's ACME account (panel owner)
+      description: >-
+        Wholesale replacement: the email and the directory URL are one account, and
+        half-changing them would point an existing account at a different CA. An empty
+        `acme_email` CLEARS the account — "no email" and "no ACME" are the same statement,
+        so there is no separate delete.
+
+
+        The change is desired state: it is carried to every enrolled server inside its
+        desired set, and the fleet is asked to re-read that set immediately, so nodes pick
+        up a new account within a reconcile rather than on their next reconnect. Servers
+        that are offline pick it up when they return. Certificates already issued are held
+        on the serving nodes and keep working regardless.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetPanelTLSRequest" } } }
+      responses:
+        "200":
+          description: Stored (or cleared, when `acme_email` was empty).
+          content: { application/json: { schema: { $ref: "#/components/schemas/PanelTLSSettings" } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /api/v1/panel/dns:
     get:
@@ -302,7 +389,7 @@ paths:
       tags: [panel]
       summary: The panel's DNS provider, as a hint (panel admin)
       responses:
-        "200": { description: Whether a DNS provider is connected, and a hint naming the zones it can see. Never the token., content: { application/json: { schema: { $ref: "#/components/schemas/DNSSettings" } } } }
+        "200": { description: "Whether a DNS provider is connected, and a hint naming the zones it can see. Never the token.", content: { application/json: { schema: { $ref: "#/components/schemas/DNSSettings" } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
     put:
@@ -351,6 +438,22 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /api/v1/panel/dns/disconnect-preview:
+    get:
+      operationId: getDNSDisconnectPreview
+      tags: [panel]
+      summary: What stops being verified if the DNS provider is disconnected (panel admin)
+      description: >
+        Lists the application domains verified through the connected provider, so
+        the confirmation can state its blast radius with a count instead of
+        generic destructive copy — only the panel knows which domains these are.
+        Reads desired state and changes nothing, so it is safe to call every time
+        the dialog opens.
+      responses:
+        "200": { description: The blast radius., content: { application/json: { schema: { $ref: "#/components/schemas/DNSDisconnectPreview" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /api/v1/panel/dns/zones:
     get:
       operationId: listDNSZones
@@ -384,13 +487,87 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/v1/panel/version:
+    get:
+      operationId: getPanelVersion
+      tags: [panel]
+      summary: The running build, and any newer release
+      description: >
+        What build of cypherd is serving this request, and — when the update
+        check is on and has found one — the newest release beyond it. Readable
+        by any authenticated principal: the version appears in every startup log
+        line and the report-issue dialog needs it for every user.
+
+
+        `latest` is `null` whenever there is nothing to say: the panel is up to
+        date, the check is off (`CYPHERD_UPDATE_CHECK=off`), it has not
+        completed yet, or this is not a release build. CypherPanel never updates
+        itself (ADR-010); this only tells the operator.
+      responses:
+        "200":
+          description: The running build, and the newer release if there is one.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PanelVersion"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /api/v1/panel/logs:
+    get:
+      operationId: getPanelLogs
+      tags: [panel]
+      summary: A bounded tail of the panel's own log (panel owner, session only)
+      description: >
+        The most recent lines of cypherd's structured log, oldest first, from an
+        in-memory ring — no shell, no file, no log shipper. Meant to be attached
+        to a bug report alongside a trace id.
+
+
+        Panel **owner** only, and only from an interactive session: the log
+        names hosts, resources and users, so an API token — which may live in a
+        CI runner — must never be able to lift it. Secrets never reach any log
+        line (ENGINEERING rule 20), which the API's tests assert rather than
+        assume.
+      parameters:
+        - name: tail
+          in: query
+          required: false
+          description: How many lines to return, newest last. 1–500; default 50.
+          schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+      responses:
+        "200":
+          description: The tail, oldest line first.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PanelLogs"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: >-
+            The caller is not a panel owner, or authenticated with an API token
+            rather than an interactive session.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503": { $ref: "#/components/responses/Unavailable" }
+
   /api/v1/panel/mail:
     get:
       operationId: getPanelMail
       tags: [panel]
       summary: The panel's mail settings, as a hint (panel admin)
       responses:
-        "200": { description: Whether mail is configured, and a hint naming it. Never the credentials., content: { application/json: { schema: { $ref: "#/components/schemas/PanelMailSettings" } } } }
+        "200": { description: "Whether mail is configured, and a hint naming it. Never the credentials.", content: { application/json: { schema: { $ref: "#/components/schemas/PanelMailSettings" } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
     put:
@@ -705,8 +882,9 @@ paths:
         via the API on connect, then refetches a resource when this stream names
         it as changed (ui-principles §10). Scoped to the caller's visible
         resources (a panel owner sees all). Two event types: `connected` (once,
-        empty) and `invalidate` (data: {resource, id}). The response media type
-        is text/event-stream.
+        carrying `{"trace_id": "..."}` — the same correlation id the response
+        headers give, so a misbehaving stream is diagnosable) and `invalidate`
+        (data: {resource, id}). The response media type is text/event-stream.
       responses:
         "200":
           description: The event stream (never closes until the client disconnects).
@@ -965,6 +1143,18 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: >-
+            The environment is inside a freeze window; nothing was written. An
+            install deploys, so it passes the same gate a deploy does — and the
+            resources it had begun to create are rolled back, so the refusal
+            leaves no partial install behind. The error names the window and
+            when it lifts, e.g. "production is frozen until Mon 08:00
+            Europe/Berlin", so the request can simply be retried after it. A
+            team owner may open a break-glass grant first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /api/v1/projects/{id}:
     parameters:
       - name: id
@@ -994,6 +1184,29 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+    patch:
+      operationId: patchProject
+      tags: [projects]
+      summary: Rename a project, set its default environment, or transfer it
+      description: >
+        Rename and default-environment need team admin. A transfer is different
+        in kind — it changes who can see everything inside — so it needs
+        ownership of both the source and the destination team, and an
+        interactive session: an API token that leaked must not be able to hand a
+        project to a team the attacker controls. The slug is not editable; it is
+        chosen once so URLs and scripts keep working. On transfer the slug is
+        kept when free in the destination and otherwise reassigned, because a
+        clash between two teams is not the operator's mistake to fix.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PatchProjectRequest" } } }
+      responses:
+        "200": { description: Updated., content: { application/json: { schema: { $ref: "#/components/schemas/Project" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: The name is taken in the team., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
     delete:
       operationId: deleteProject
       tags: [projects]
@@ -1067,6 +1280,41 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+
+  /api/v1/environments/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Environment ID. }
+    patch:
+      operationId: patchEnvironment
+      tags: [projects]
+      summary: Rename a standing environment (team admin)
+      description: >
+        A preview environment belongs to its pull request and is refused —
+        renaming one by hand desynchronises it from the PR that made it.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PatchEnvironmentRequest" } } }
+      responses:
+        "200": { description: Renamed., content: { application/json: { schema: { $ref: "#/components/schemas/Environment" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: "A preview, or the name is taken in the project.", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      operationId: deleteEnvironment
+      tags: [projects]
+      summary: Remove a standing environment (team admin)
+      description: >
+        Refused for a preview (its pull request owns it), for the last standing
+        environment a project has, and while resources remain inside — the same
+        protection deleting a project gets.
+      responses:
+        "204": { description: Removed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: "A preview, the last environment, or resources remain.", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   /api/v1/environments/{id}/applications:
     parameters:
@@ -1252,6 +1500,20 @@ paths:
           required: true
           schema:
             type: string
+        - name: since
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >-
+            Where the replay starts. Either a Go duration meaning "that long
+            ago" (`15m`, `2h`, at most `720h`) or an RFC 3339 instant
+            (`2026-09-06T09:00:00Z`). Omitted replays everything the stream
+            still retains, then tails. A `since` older than the retention
+            window yields whatever is retained; one in the future yields an
+            empty replay that then tails. Anything unparseable is a `400`
+            rather than a silent fall back to the whole window.
+          example: 15m
       responses:
         "200":
           description: SSE stream of application logs.
@@ -1259,12 +1521,75 @@ paths:
             text/event-stream:
               schema:
                 type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           description: No such application.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/applications/{id}/restart:
+    post:
+      operationId: restartApplication
+      tags: [applications]
+      summary: Recreate the container without shipping a new revision
+      description: >-
+        Restarts the running application. Expressed as desired state rather than
+        as a verb the agent obeys: the panel issues a new restart token, the
+        reconciler recreates a container whose token does not match, and
+        converging again afterwards changes nothing.
+
+
+        This is NOT a deploy. No revision is created, no build runs, no
+        deployment appears, and the desired revision does not move — restarting
+        a wedged container must not silently ship the configuration someone
+        edited an hour ago. The response is the application.
+
+
+        The replacement starts alongside the container it replaces, passes the
+        same health gate, takes the route, and only then does the old one drain
+        — a restart is zero-downtime for the same reason a deploy is.
+
+
+        A freeze window does NOT block it: a freeze exists to stop new code
+        shipping, and a restart ships none. Refusing to restart a crashed
+        application during a freeze would make the freeze an outage.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          description: >-
+            Accepted. The application, unchanged in everything a client can
+            act on — the restart token itself is internal plumbing and is not
+            part of the response. Watch `status` for the recreate.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Application"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such application.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: >-
+            The application has never deployed, so there is no container to
+            restart. Deploy it first.
           content:
             application/json:
               schema:
@@ -1289,17 +1614,39 @@ paths:
               $ref: "#/components/schemas/DeployRequest"
       responses:
         "202":
-          description: Pipeline started; poll the deployment for progress.
+          description: >-
+            Accepted. Normally the pipeline has started; poll the deployment for
+            progress. When the target environment requires approval
+            (deploy-protection.md), the deployment comes back with
+            `status: awaiting_approval` and its `approval` summary instead — no
+            work item has been published, and it starts only once someone at or
+            above `approval.required_role` approves it.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Deployment"
+        "400":
+          description: Malformed request body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           description: No such application.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: >-
+            The environment is inside a freeze window; nothing was written. The
+            error names the window and when it lifts, e.g. "production is frozen
+            until Mon 08:00 Europe/Berlin", so the request can simply be retried
+            after it. A team owner may open a break-glass grant first.
           content:
             application/json:
               schema:
@@ -1376,6 +1723,20 @@ paths:
           required: true
           schema:
             type: string
+        - name: since
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >-
+            Where the replay starts. Either a Go duration meaning "that long
+            ago" (`15m`, `2h`, at most `720h`) or an RFC 3339 instant
+            (`2026-09-06T09:00:00Z`). Omitted replays everything the stream
+            still retains, then tails. A `since` older than the retention
+            window yields whatever is retained; one in the future yields an
+            empty replay that then tails. Anything unparseable is a `400`
+            rather than a silent fall back to the whole window.
+          example: 15m
       responses:
         "200":
           description: SSE stream of deployment build logs.
@@ -1383,12 +1744,609 @@ paths:
             text/event-stream:
               schema:
                 type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           description: No such deployment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/environments/{id}/compose-stacks:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Environment ID.
+    get:
+      operationId: listComposeStacks
+      tags: [compose-stacks]
+      summary: List the environment's Compose Stacks
+      responses:
+        "200":
+          description: The stacks in this environment.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ComposeStack"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such environment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Compose stacks are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: createComposeStack
+      tags: [compose-stacks]
+      summary: Create a Compose Stack from a compose file
+      description: >-
+        **Team admin**, not member. A compose file can ask for
+        `privileged: true`, host mounts and host networking — capabilities an
+        Application cannot express and which amount to root on the node — so
+        writing one is administration. Deploying an existing stack is a member
+        action, because redeploying a file an admin already reviewed grants
+        nothing new.
+
+
+        Nothing is deployed here: a stack is born `stopped`, exactly as an
+        application is, and the file becomes its first revision. Two directives
+        are refused — `build:` (there is no builder on a target host) and
+        `container_name:` (it collides across environments on one server).
+        Everything else runs as-is.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateComposeStackRequest"
+      responses:
+        "201":
+          description: Created. Deploy it to make it run.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComposeStack"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such environment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: A stack with that name already exists in the environment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Compose stacks are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/compose-stacks/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Compose Stack ID (cs_... prefix).
+    get:
+      operationId: getComposeStack
+      tags: [compose-stacks]
+      summary: Get one Compose Stack
+      responses:
+        "200":
+          description: The stack.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComposeStack"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such compose stack.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Compose stacks are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    patch:
+      operationId: updateComposeStack
+      tags: [compose-stacks]
+      summary: Edit a Compose Stack
+      description: >-
+        **Team admin** when the request changes the compose file or the route;
+        member otherwise. A changed file becomes a new revision but is NOT
+        deployed — editing and shipping are separate acts, so a file can be
+        reviewed before it reaches a host.
+
+
+        A file identical to the current one mints no revision, so the history
+        keeps meaning "the versions that were deployed".
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateComposeStackRequest"
+      responses:
+        "200":
+          description: The updated stack.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComposeStack"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such compose stack.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Compose stacks are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteComposeStack
+      tags: [compose-stacks]
+      summary: Delete a Compose Stack
+      description: >-
+        **Team admin.** Convergence never removes a volume, so
+        `?delete_volumes=true` is the only way a stack's data goes — and it is
+        never the default.
+      parameters:
+        - name: delete_volumes
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: Destroy the stack's volumes as well. Irreversible.
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such compose stack.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Compose stacks are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/compose-stacks/{id}/file:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Compose Stack ID (cs_... prefix).
+    get:
+      operationId: getComposeFile
+      tags: [compose-stacks]
+      summary: The compose file a deploy would ship
+      description: >-
+        The newest revision, not the row — so what is shown and what would run
+        cannot differ.
+      responses:
+        "200":
+          description: The current revision.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComposeRevision"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such compose stack.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Compose stacks are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/compose-stacks/{id}/deploy:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Compose Stack ID (cs_... prefix).
+    post:
+      operationId: deployComposeStack
+      tags: [compose-stacks]
+      summary: Point desired state at the stack's current file
+      description: >-
+        Team member. There is no build and no distribute stage, so there is no
+        Deployment record: desired state moves to the newest revision and the
+        agent converges. Watch `status` for the outcome.
+      responses:
+        "202":
+          description: Accepted. The agent converges toward the new revision.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComposeStack"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such compose stack.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: The stack has no compose file yet.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Compose stacks are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/compose-stacks/{id}/rollback:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Compose Stack ID (cs_... prefix).
+    post:
+      operationId: rollbackComposeStack
+      tags: [compose-stacks]
+      summary: Re-point desired state at an older revision
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision_id]
+              properties:
+                revision_id:
+                  type: string
+                  description: A revision of THIS stack; another stack's is a 400.
+      responses:
+        "202":
+          description: Accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComposeStack"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such compose stack.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Compose stacks are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/compose-stacks/{id}/revisions:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Compose Stack ID (cs_... prefix).
+    get:
+      operationId: listComposeRevisions
+      tags: [compose-stacks]
+      summary: The stack's file history
+      responses:
+        "200":
+          description: Revisions, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ComposeRevision"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such compose stack.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Compose stacks are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/compose-stacks/{id}/logs:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Compose Stack ID (cs_... prefix).
+    get:
+      operationId: streamComposeStackLogs
+      tags: [compose-stacks]
+      summary: Stream the stack's logs (Server-Sent Events)
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >-
+            Where the replay starts — a Go duration (`15m`) or an RFC 3339
+            instant. Omitted replays everything retained, then tails.
+      responses:
+        "200":
+          description: SSE stream of the stack's logs.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such compose stack.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Compose stacks are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/compose-stacks/{id}/env:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Compose Stack ID (cs_... prefix).
+    get:
+      operationId: listComposeEnvVars
+      tags: [compose-stacks]
+      summary: The stack's variable keys (values are write-only)
+      description: >-
+        Keys only. A value is never returned (ENGINEERING rule 20); compose
+        interpolates `${KEY}` from them at converge time.
+      responses:
+        "200":
+          description: The keys.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvVarKeys"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such compose stack.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Compose stacks are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/compose-stacks/{id}/env/{key}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Compose Stack ID.
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Variable name, as compose would interpolate it.
+    put:
+      operationId: setComposeEnvVar
+      tags: [compose-stacks]
+      summary: Set one variable (sealed at rest)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value:
+                  type: string
+      responses:
+        "204":
+          description: Stored. Redeploy the stack to apply it.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such compose stack.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Compose stacks are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteComposeEnvVar
+      tags: [compose-stacks]
+      summary: Remove one variable
+      responses:
+        "204":
+          description: Removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such compose stack.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Compose stacks are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/deployments/{id}/cancel:
+    post:
+      operationId: cancelDeployment
+      tags: [deployments]
+      summary: Stop waiting on a deploy that is going nowhere
+      description: >-
+        Ends a deployment the operator has stopped waiting on. It is the PANEL
+        stopping waiting, not a remote kill: a build already in flight finishes
+        on its builder, and the image it produces is reclaimed by desired-state
+        garbage collection because nothing desires its revision.
+
+
+        Works while the deploy is `queued`, `awaiting_approval`, `building` or
+        `distributing`. Once it is `rolling_out` the answer is `409` — desired
+        state has already moved and every agent is converging on the new
+        revision, so the honest recovery is a rollback rather than a cancel that
+        would leave the panel claiming it abandoned what the reconciler is still
+        applying.
+
+
+        A cancelled deploy ends as `failed`, with `cancelled by <email>` in its
+        detail. There is no separate `cancelled` status, and nothing is
+        announced to notifiers or outbound webhooks: their taxonomy is
+        infrastructure outcomes, and a cancellation is a person's decision.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Cancelled. The deployment comes back terminal.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deployment"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such deployment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: >-
+            The deploy is already rolling out (roll back instead), or it has
+            already finished. Nothing is written either way.
           content:
             application/json:
               schema:
@@ -1407,7 +2365,12 @@ paths:
             type: string
       responses:
         "202":
-          description: Rollback pipeline started.
+          description: >-
+            Accepted. Normally the rollback pipeline has started. When the
+            environment requires approval the deployment comes back with
+            `status: awaiting_approval` and its `approval` summary — a rollback
+            changes what is serving, so it passes the same gate a forward deploy
+            does.
           content:
             application/json:
               schema:
@@ -1423,7 +2386,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: The revision was never built; nothing to roll back to.
+          description: >-
+            Either the revision was never built (nothing to roll back to), or
+            the environment is inside a freeze window — in which case the error
+            names the window and when it lifts. Nothing is written in either
+            case.
           content:
             application/json:
               schema:
@@ -1450,7 +2417,11 @@ paths:
           description: GitHub's HMAC-SHA256 body signature ("sha256=<hex>").
       responses:
         "202":
-          description: Push on the configured branch; deployment started.
+          description: >-
+            Push on the configured branch; deployment started — or, when the
+            environment requires approval, parked with
+            `status: awaiting_approval` and a `requested_by`-less approval
+            (a push has no panel user behind it).
           content:
             application/json:
               schema:
@@ -1465,6 +2436,16 @@ paths:
                 $ref: "#/components/schemas/Error"
         "404":
           description: Unknown webhook id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: >-
+            The environment is inside a freeze window; nothing was written. The
+            error names the window and when it lifts, so the delivery is
+            diagnosable from the response alone and can be redelivered from
+            GitHub after the window.
           content:
             application/json:
               schema:
@@ -1557,7 +2538,332 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Deploy key is still in use by one or more applications.
+          description: >-
+            Deploy key is still in use. The body names the blocking
+            applications so the operator can go detach them.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeployKeyInUse"
+
+  /api/v1/registries:
+    get:
+      operationId: listRegistries
+      tags: [registries]
+      summary: List the container registries your teams can use
+      description: >-
+        Filtered to the teams you belong to rather than refused, so a caller in
+        no teams gets an empty list. The token is never returned — `token_set`
+        says only that one exists.
+      responses:
+        "200":
+          description: The registries visible to you.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Registry"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "501":
+          description: Registries are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: createRegistry
+      tags: [registries]
+      summary: Store a container registry credential
+      description: >-
+        Team admin or above. `team_id` may be omitted when you belong to exactly
+        one team. Nothing in the deploy path requires a registry (ADR-008); this
+        is for pulling a private base image and for pushing builds somewhere the
+        operator already runs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRegistryRequest"
+      responses:
+        "201":
+          description: Registry created. The token is sealed and is never returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Registry"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: A registry with that name already exists in the team.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Registries are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/registries/test:
+    post:
+      operationId: testRegistryConfig
+      tags: [registries]
+      summary: Prove a credential before saving it
+      description: >-
+        Authenticates against the registry's `/v2/` endpoint and stores nothing.
+        A rejected credential is a `200` with `ok:false` — the request
+        succeeded, the authentication did not. Team admin or above, because it
+        makes an outbound request to a host the caller chose.
+
+
+        The panel will not connect to an address inside its own network
+        (loopback, RFC1918, link-local and the rest, checked against the
+        RESOLVED address). A registry on a private network therefore cannot be
+        tested from here — `detail` says so, and says to save it anyway, because
+        the agent that does the pulling is already on that network.
+      parameters:
+        - name: team_id
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >-
+            Which team's admin rank to check. May be omitted when you belong to
+            exactly one team.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TestRegistryRequest"
+      responses:
+        "200":
+          description: Tested. `ok` is the verdict.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionTest"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "501":
+          description: Registries are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/registries/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Registry ID (reg_... prefix).
+    get:
+      operationId: getRegistry
+      tags: [registries]
+      summary: Get one registry
+      responses:
+        "200":
+          description: The registry, without its token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Registry"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: >-
+            No such registry — the same answer given for a registry in a team
+            you do not belong to, so membership is not probeable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Registries are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    patch:
+      operationId: updateRegistry
+      tags: [registries]
+      summary: Edit a registry, or rotate its token
+      description: >-
+        Team admin or above. Every field is optional; an omitted field is left
+        alone, so rotating the token does not mean re-sending the URL. The
+        merged result is validated exactly as a create would be.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRegistryRequest"
+      responses:
+        "200":
+          description: The updated registry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Registry"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such registry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: A registry with that name already exists in the team.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Registries are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteRegistry
+      tags: [registries]
+      summary: Delete a registry (refused while applications use it)
+      description: >-
+        Team admin or above. Deleting a credential that applications depend on
+        would break their next deploy at the moment nobody is looking, so it is
+        refused; `GET /api/v1/registries/{id}/used-by` names what is holding it.
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such registry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Applications still use this registry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Registries are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/registries/{id}/test:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Registry ID.
+    post:
+      operationId: testRegistry
+      tags: [registries]
+      summary: Re-authenticate a stored registry and record the outcome
+      description: >-
+        Team admin or above. The result is stored on the registry as
+        `last_test_at` / `last_test_ok`, so a list can show whether a credential
+        is known-good without re-authenticating on every page render.
+
+
+        Subject to the same egress rule as testing an unsaved configuration: the
+        panel will not connect to an address inside its own network, and a
+        private registry is pulled by the agent rather than reached from here.
+      responses:
+        "200":
+          description: Tested. `ok` is the verdict.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionTest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such registry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Registries are not enabled on this panel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/registries/{id}/used-by:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Registry ID.
+    get:
+      operationId: listRegistryUses
+      tags: [registries]
+      summary: The applications that would break if this registry went away
+      description: >-
+        Named rather than counted, because "3 applications" is not something an
+        operator can act on.
+      responses:
+        "200":
+          description: What pulls through, and what pushes to, this registry.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RegistryUse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such registry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Registries are not enabled on this panel.
           content:
             application/json:
               schema:
@@ -1822,6 +3128,312 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  # ─── Invitations and access requests
+  #     (invitations-and-access-requests.md §7) ────────────────────────────────
+  /api/v1/teams/{id}/invites:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Team ID (tm_… prefix). }
+    get:
+      operationId: listTeamInvites
+      tags: [invites]
+      summary: List a team's invitations (team admin+)
+      description: >-
+        Outstanding invitations by default — those that can still be accepted.
+        No response here ever carries the invitation's token or its hash: the
+        accept URL is readable exactly once, in the response that created it.
+      parameters:
+        - name: state
+          in: query
+          required: false
+          schema: { type: string, enum: [pending, all], default: pending }
+          description: >-
+            `pending` (the default) lists only invitations that can still be
+            accepted; `all` adds the accepted, revoked and expired ones.
+      responses:
+        "200":
+          description: The team's invitations, newest first.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/TeamInvite" } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: createTeamInvite
+      tags: [invites]
+      summary: Invite an address to a team (team admin+; inviting an owner needs team owner)
+      description: >-
+        Issues a single-use invitation link that expires in 7 days. The invited
+        role may not exceed the caller's own rank, and the rank is checked HERE
+        rather than at acceptance — the person accepting has none of their own.
+
+
+        Re-inviting an address supersedes: the outstanding invitation for it on
+        this team is revoked and a fresh one issued, so an operator is never
+        stuck behind a link they cannot see. An address that is already a member
+        is refused with 409 — re-ranking an existing member is
+        `PATCH /teams/{id}/members/{uid}`, which has the last-owner guard.
+
+
+        The response's `accept_url` is the ONLY time the invitation's token is
+        readable. It is returned whether or not the panel could mail it, because
+        a self-hosted panel with no SMTP is the common case and an invitation
+        nobody can deliver is worse than a link the operator hands over
+        themselves; `mail_sent` says which of the two happened.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateInviteRequest" }
+      responses:
+        "201":
+          description: Invitation issued. `accept_url` appears here and nowhere else, ever.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreatedInvite" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: That address is already a member of this team.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/teams/{id}/invites/{inv}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Team ID. }
+      - { name: inv, in: path, required: true, schema: { type: string }, description: Invitation ID (inv_… prefix). }
+    delete:
+      operationId: revokeTeamInvite
+      tags: [invites]
+      summary: Revoke an invitation (team admin+)
+      description: >-
+        Kills the link immediately. Any team admin may revoke any of the team's
+        invitations, including one that would have granted owner: revoking is a
+        reduction, so it needs no extra rank. An invitation that was already
+        revoked, already accepted, or never belonged to this team answers 404 —
+        one undifferentiated answer.
+      responses:
+        "204": { description: Revoked. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/invites/{token}:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema: { type: string }
+        description: >-
+          The wire token from the invitation link (`inv_….<secret>`). Only a
+          hash of the secret is stored, and it is compared in constant time.
+    get:
+      operationId: getInvite
+      tags: [invites]
+      summary: Read an invitation by its link (public)
+      description: >-
+        Public — this is the screen someone opens before they have an account.
+        It says who invited them, to which team, as what, and until when.
+
+
+        Unknown, wrong-secret, expired, revoked and already-accepted are ONE
+        answer (404), so a guess learns nothing about which invitations exist.
+        Throttled by client address like sign-in: a refused call answers 429
+        with `Retry-After`.
+      security: []
+      responses:
+        "200":
+          description: The invitation, as much of it as a stranger may see.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InvitePreview" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+  /api/v1/invites/{token}/accept:
+    parameters:
+      - { name: token, in: path, required: true, schema: { type: string }, description: The wire token from the invitation link. }
+    post:
+      operationId: acceptInvite
+      tags: [invites]
+      summary: Accept an invitation and sign in (public)
+      description: >-
+        Spends the invitation, adds the membership at the invited role, and
+        returns a session — the invitee lands inside the panel rather than at a
+        second form.
+
+
+        If the invited address has no account, `password` is the one they are
+        CHOOSING (at least 8 characters, the same floor first-run setup
+        enforces) and the account is created with panel role `member`.
+
+
+        If the address already has an account, `password` is that account's
+        CURRENT password and the call goes through the ordinary sign-in path: an
+        account with two-factor enabled answers 401 with `totp_required` until
+        `totp_code` is supplied. An invitation never resets an existing
+        password — otherwise inviting an address would be an account-takeover
+        primitive for anyone who can invite.
+
+
+        Single-use, enforced by the database: a replay answers 404. An address
+        that became a member between the invitation and the acceptance answers
+        409 and the link is revoked as moot.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AcceptInviteRequest" }
+      responses:
+        "200":
+          description: Joined with an existing account; the session token is returned once.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResponse" }
+        "201":
+          description: Account created and joined; the session token is returned once.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: >-
+            The address already has an account and the password was wrong, or a
+            second factor is required — `totp_required: true` then says to ask
+            for the code rather than the password again.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: That address is already a member of this team — sign in instead.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+  /api/v1/teams/{id}/access-requests:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Team ID. }
+    get:
+      operationId: listAccessRequests
+      tags: [access-requests]
+      summary: List a team's access requests (team admin+)
+      parameters:
+        - name: state
+          in: query
+          required: false
+          schema: { type: string, enum: [pending, all], default: pending }
+          description: "`pending` (the default) is the owners' queue; `all` adds the decided ones."
+      responses:
+        "200":
+          description: The team's access requests, newest first.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/AccessRequest" } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: createAccessRequest
+      tags: [access-requests]
+      summary: Ask this team's owners for a higher role (team member+)
+      description: >-
+        What the 403 screen's "Request access" does. The requested role must
+        rank strictly above the caller's current one, and the caller must
+        already be a member — a team you cannot see answers 404, because a
+        request collection that answered otherwise would be a way to probe for
+        other tenants. The way into a team you are not in is an invitation.
+
+
+        One open request per person per team: a second while one is pending
+        answers 409, so the owners' inbox does not fill with the same ask.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateAccessRequestRequest" }
+      responses:
+        "201":
+          description: Request opened; the team's owners have been told.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessRequest" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: A request from you is already open on this team.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/access-requests/{id}/grant:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Access request ID (acr_… prefix). }
+    post:
+      operationId: grantAccessRequest
+      tags: [access-requests]
+      summary: Grant an access request (team owner; interactive session only)
+      description: >-
+        Applies the requested role through the ordinary member-role path, so the
+        last-owner guard and the grant-rank rule hold unchanged, then records
+        the decision and tells the requester.
+
+
+        Session-only: an API token inherits its owner's role, so a leaked
+        `write`-able token belonging to an owner could otherwise promote an
+        account to owner — durable, panel-wide privilege from one CI credential.
+        A request whose subject has left the team, or that another owner has
+        already decided, answers 409.
+      responses:
+        "200":
+          description: Granted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Already decided, the requester has left the team, or it would leave the team without an owner.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/access-requests/{id}/deny:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Access request ID. }
+    post:
+      operationId: denyAccessRequest
+      tags: [access-requests]
+      summary: Deny an access request (team owner; interactive session only)
+      description: >-
+        Records the refusal, with an optional reason carried verbatim to the
+        requester, and changes no membership. Session-only for the same reason
+        as `grant`: both are decisions about who can do what in the team.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DenyAccessRequestRequest" }
+      responses:
+        "200":
+          description: Denied.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessRequest" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: That request has already been decided.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   # ─── Managed databases (managed-databases.md) ─────────────────────────────
   /api/v1/environments/{id}/databases:
     parameters:
@@ -1925,7 +3537,7 @@ paths:
       tags: [databases]
       summary: Reset the root password (returned once)
       responses:
-        "200": { description: New password, shown once., content: { application/json: { schema: { $ref: "#/components/schemas/ResetPasswordResponse" } } } }
+        "200": { description: "New password, shown once.", content: { application/json: { schema: { $ref: "#/components/schemas/ResetPasswordResponse" } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403":
           $ref: "#/components/responses/Forbidden"
@@ -1981,6 +3593,25 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: patchBackupTarget
+      tags: [backups]
+      summary: Edit a backup target (panel admin)
+      description: >
+        A partial edit: an omitted field is left alone, which is what lets one
+        credential rotate without re-sending the other. The merged result is
+        validated as a whole, so a PATCH cannot leave a target in a state create
+        would have refused. Keys are write-only in both directions and are
+        resealed only when sent.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PatchBackupTargetRequest" } } }
+      responses:
+        "200": { description: Updated., content: { application/json: { schema: { $ref: "#/components/schemas/BackupTarget" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
     delete:
       operationId: deleteBackupTarget
       tags: [backups]
@@ -2022,6 +3653,24 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Database ID. }
       - { name: bak_id, in: path, required: true, schema: { type: string }, description: Backup schedule ID (bak_… prefix). }
+    patch:
+      operationId: patchDatabaseBackup
+      tags: [backups]
+      summary: Edit a backup schedule
+      description: >
+        A partial edit: pause a schedule without forgetting where it wrote, move
+        it to another target, or change the retention window, one at a time. A
+        target that does not exist is a 400 rather than a foreign-key error, and
+        a retention of zero or less falls back to the same default creation uses.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PatchDatabaseBackupRequest" } } }
+      responses:
+        "200": { description: Updated., content: { application/json: { schema: { $ref: "#/components/schemas/DatabaseBackup" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
     delete:
       operationId: deleteDatabaseBackup
       tags: [backups]
@@ -2041,7 +3690,7 @@ paths:
       tags: [backups]
       summary: List a schedule's backup run history
       responses:
-        "200": { description: Backup records, newest first., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/BackupRecord" } } } } }
+        "200": { description: "Backup records, newest first.", content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/BackupRecord" } } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403":
           $ref: "#/components/responses/Forbidden"
@@ -2071,13 +3720,50 @@ paths:
         required: true
         content: { application/json: { schema: { $ref: "#/components/schemas/RestoreRequest" } } }
       responses:
-        "202": { description: Restore started. }
+        "202": { description: "Restore started. The record tracks it.", content: { application/json: { schema: { $ref: "#/components/schemas/DatabaseRestore" } } } }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403":
           $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { description: Confirmation missing or the database is not in a restorable state., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /api/v1/databases/{id}/restores:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Database ID. }
+    get:
+      operationId: listDatabaseRestores
+      tags: [backups]
+      summary: A database's restore history, newest first
+      description: >
+        What was put back, and how it went. A different question from the backup
+        history, which is what was taken.
+      responses:
+        "200": { description: Restores., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/DatabaseRestore" } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "501": { description: Restores are not enabled on this panel., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /api/v1/databases/{id}/restores/{rid}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Database ID. }
+      - { name: rid, in: path, required: true, schema: { type: string }, description: Restore ID. }
+    get:
+      operationId: getDatabaseRestore
+      tags: [backups]
+      summary: One restore, including how far a running one has got
+      description: >
+        The blocking progress dialog polls this while a restore runs, and reopens
+        onto it when someone closes the tab and comes back to a database that is
+        still offline. A restore belonging to another database is 404 here even
+        though the id exists.
+      responses:
+        "200": { description: The restore., content: { application/json: { schema: { $ref: "#/components/schemas/DatabaseRestore" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "501": { description: Restores are not enabled on this panel., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   # ─── Preview environments (preview-environments.md §7) ────────────────────
   /api/v1/applications/{id}/previews:
@@ -2182,6 +3868,42 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/projects/{id}/notifiers/test:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Project ID. }
+    post:
+      operationId: testNotifierConfig
+      tags: [notifiers]
+      summary: Prove a channel configuration before saving it
+      description: >
+        Validates the configuration exactly as create would, uses it once, and
+        persists nothing. It exists because a dialog that can only test what it
+        has already stored teaches operators to save broken credentials and find
+        out later. A config the panel would refuse to store is a 400 — there is
+        nothing to retry until the form changes — while a config that stores but
+        does not reach its far end is `200 {ok:false, detail}`.
+
+
+        Two limits apply here that do not apply to a saved notifier, because
+        this path can be aimed anywhere, repeatedly, leaving no row behind.
+        **The `email` channel is refused with 400**: an unsaved email test would
+        relay a message through an arbitrary SMTP server, with an arbitrary
+        From, to an arbitrary recipient — save the notifier and use
+        `POST /notifiers/{id}/test`. **A webhook URL must be `https` with a
+        dotted hostname** (no cleartext, no IP literal, no userinfo), and
+        addresses that resolve into the panel's own network are refused at dial
+        time.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/TestNotifierConfigRequest" } } }
+      responses:
+        "200": { description: "Tested. `ok` is the verdict.", content: { application/json: { schema: { $ref: "#/components/schemas/ConnectionTest" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "501": { description: Notifications are not enabled on this panel., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
   /api/v1/notifiers/{id}/test:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Notifier ID. }
@@ -2189,8 +3911,15 @@ paths:
       operationId: testNotifier
       tags: [notifiers]
       summary: Send a synthetic test notification through this notifier
+      description: >
+        Answers what happened. This used to return 202 without looking, so a
+        notifier with a stale webhook URL reported success and the operator
+        learned the truth from a notification that never arrived. A channel
+        failure is `200 {ok:false, detail}`, not an error status: the request
+        succeeded and the connection did not, and conflating the two costs the
+        caller the distinction.
       responses:
-        "202": { description: Delivery attempted (a channel failure is logged, not surfaced). }
+        "200": { description: "Tested. `ok` is the verdict.", content: { application/json: { schema: { $ref: "#/components/schemas/ConnectionTest" } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403":
           $ref: "#/components/responses/Forbidden"
@@ -2342,6 +4071,134 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { description: The endpoint is disabled. }
+
+  # ─── Audit log (audit-log.md §7) ──────────────────────────────────────────
+  #
+  # One immutable row per sensitive action: who did what to which resource, from
+  # where, and whether it worked. It is what makes the destructive-confirm
+  # dialog's promise ("audit-logged with your name") true, what the threat model
+  # relies on to make a compromise reconstructable, and the answer to "who
+  # deleted this?" after the resource itself is gone.
+  #
+  # There is no write route. A row is minted by the handler that performed the
+  # action, never by a request to this collection — a log anyone can POST to is
+  # not evidence.
+  #
+  # SCOPE IS THE AUTHORIZATION. Neither route carries a role gate; the service
+  # resolves what the caller may see and every filter narrows inside it:
+  #   * a panel owner sees every row (the same superadmin bypass team roles
+  #     already grant);
+  #   * anyone sees the rows of the teams they belong to;
+  #   * a panel admin also sees PANEL-scoped rows — a server, a user, the
+  #     mail/DNS/TLS settings — which belong to no team;
+  #   * everyone sees their own actions, whatever scope those landed in.
+  # A `team_id` the caller does not belong to therefore returns an EMPTY page,
+  # not 403: the log must not become a way to probe for another tenant.
+  /api/v1/audit:
+    get:
+      operationId: listAuditEvents
+      tags: [audit]
+      summary: Page the audit log, newest first
+      description: >-
+        Seek pagination on `(at, id)` descending: pass the previous page's
+        `next_before` as `before`. An empty `next_before` is the end of the log.
+        Every filter is optional and narrows within what the caller may already
+        see.
+      parameters:
+        - name: team_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: >-
+            Only this team's rows. A team the caller does not belong to yields
+            an empty page rather than 403.
+        - name: project_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: Only rows scoped to this project.
+        - name: resource_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: >-
+            One resource's whole timeline — every action ever recorded against
+            this id, including the one that deleted it.
+        - name: action
+          in: query
+          required: false
+          schema: { type: string }
+          description: >-
+            An exact verb (`deploy.started`) or a whole family by prefix
+            (`deploy` selects every `deploy.*`). The vocabulary is closed and
+            documented in `AuditEvent.action`.
+          example: deploy
+        - name: actor
+          in: query
+          required: false
+          schema: { type: string }
+          description: >-
+            A user id (`usr_…`) or the email label recorded at the time, so
+            "priya@example.com" works without resolving it to an id first.
+        - name: outcome
+          in: query
+          required: false
+          schema: { type: string, enum: [success, failure] }
+          description: >-
+            `failure` is every refused action — a wrong password, a deploy a
+            freeze window turned away, a rejected approval.
+        - name: since
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: RFC 3339 lower bound on `at`. Omitted means unbounded.
+        - name: before
+          in: query
+          required: false
+          schema: { type: string }
+          description: >-
+            Cursor: the id of the last event on the previous page. An id the
+            caller may not see yields an empty page rather than restarting at
+            the newest row.
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: One page of the log, newest first.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/audit/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Audit event ID (aud_… prefix). }
+    get:
+      operationId: getAuditEvent
+      tags: [audit]
+      summary: Get one audit entry
+      description: >-
+        The permalink behind an entry — what a trace id in a support
+        conversation resolves to. An entry outside the caller's scope answers
+        404, the same as one that does not exist.
+      responses:
+        "200":
+          description: The audit entry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditEvent"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404": { $ref: "#/components/responses/NotFound" }
 
   # ─── Project shared variables (shared-variables.md §7) ────────────────
   #
@@ -2535,6 +4392,412 @@ paths:
           $ref: "#/components/responses/Forbidden"
 
   # ─── Scheduled tasks (scheduled-tasks.md §7) ──────────────────────────────
+  # ─── Deploy protection (deploy-protection.md §6) ──────────────────────────
+  # Protection hangs off the ENVIRONMENT because that is the unit an operator
+  # reasons about ("nobody deploys to production on a Friday"), and the two
+  # decision routes hang off the DEPLOYMENT because that is what is parked.
+
+  /api/v1/environments/{id}/protection:
+    get:
+      operationId: getEnvironmentProtection
+      tags: [protection]
+      summary: The environment's deploy-protection policy
+      description: >-
+        Returns the DEFAULT document (`require_approval: false`, `windows: []`)
+        for an environment that has never been protected, rather than 404: "not
+        protected" is an answer, and a 404 would make a screen invent one. Any
+        team member may read it.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The policy in force.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvironmentProtection"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such environment (or the caller is not a member of its team).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    put:
+      operationId: setEnvironmentProtection
+      tags: [protection]
+      summary: Replace the environment's protection policy (team admin, session only)
+      description: >-
+        Carries the WHOLE document — the flags plus the complete window list —
+        and replaces it wholesale; an empty `windows` array means no freeze.
+        There is no partial update, because flags and windows describing
+        different intents is exactly the state an operator cannot reason about.
+        Every field is required for the same reason: an omitted one read as a
+        default would turn a forgotten field into a policy change, answered
+        `200`. Preview environments cannot be protected.
+
+
+        Session only, like break glass and the two decision routes, and for the
+        same reason with more force: this request can switch the control off
+        wholesale (`require_approval: false`, `freeze_enabled: false`,
+        `windows: []`), which is strictly more powerful than the single
+        30-minute grant that suspends one freeze. A leaked CI token must not be
+        able to switch a protection control off — including by deleting it.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetProtectionRequest"
+      responses:
+        "200":
+          description: The stored policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvironmentProtection"
+        "400":
+          description: >-
+            Invalid document — an unknown role, a day or minute out of range, a
+            window that starts and ends at the same moment, a time zone that is
+            not an IANA name, or more than 8 windows.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: >-
+            Not a team admin, or the caller authenticated with an API token
+            rather than an interactive session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No such environment (or the caller is not a member of its team).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: >-
+            This is a preview environment. Previews are ordinary environments
+            with a TTL and stay unprotected — freezing them would strand every
+            open pull request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: >-
+            Deploy protection is not enabled on this panel, so there is no
+            policy to write. Reads still answer: the default document says
+            nothing is protected, which is true.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/environments/{id}/approvals:
+    get:
+      operationId: listDeployApprovals
+      tags: [protection]
+      summary: The environment's gate decisions, newest first
+      description: >-
+        Bounded to the 100 most recent decisions. The pending queue is short by
+        construction, but `state=all` asks for a history that grows for as long
+        as the environment exists, and an unbounded answer is one that
+        eventually stops arriving.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: false
+          description: Filter by decision state. Defaults to `pending`; pass `all` for every state.
+          schema:
+            type: string
+            enum: [pending, approved, rejected, all]
+      responses:
+        "200":
+          description: The approvals.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DeployApproval"
+        "400":
+          description: Unknown state filter.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such environment (or the caller is not a member of its team).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/environments/{id}/break-glass:
+    get:
+      operationId: listBreakGlassGrants
+      tags: [protection]
+      summary: Break-glass grants on this environment, newest first
+      description: >-
+        Active and recent grants, each with who opened it, why, and when it
+        lapses. Any team member may read them: a recorded override is only a
+        control if the people it affects can see it.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The grants.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BreakGlassGrant"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such environment (or the caller is not a member of its team).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: openBreakGlass
+      tags: [protection]
+      summary: Suspend this environment's freeze for 30 minutes (team owner, session only)
+      description: >-
+        Opens a bounded, recorded override of the FREEZE gate — and only the
+        freeze gate; the approval gate is unaffected. The grant lapses on its
+        own after 30 minutes and is never revoked early. The reason is required
+        and is stored verbatim beside the opener's name.
+
+
+        Session only: an API token may not open one, for the same reason it may
+        not manage credentials — a leaked CI token must not be able to switch a
+        protection control off.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BreakGlassRequest"
+      responses:
+        "201":
+          description: The grant.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BreakGlassGrant"
+        "400":
+          description: Missing, over-long or multi-line reason.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Not a team owner, or the caller authenticated with an API token rather than a session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No such environment (or the caller is not a member of its team).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: >-
+            Deploy protection is not enabled on this panel, so no freeze exists
+            to suspend. The grant listing still answers, with nothing in it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/deployments/{id}/approval:
+    get:
+      operationId: getDeployApproval
+      tags: [protection]
+      summary: One deployment's gate decision
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The approval.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeployApproval"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: >-
+            No such deployment, or it was never gated — an ungated deployment
+            has no approval, which is the ordinary case.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/deployments/{id}/approve:
+    post:
+      operationId: approveDeployment
+      tags: [protection]
+      summary: Approve a parked deploy and let it run (approver rank, session only)
+      description: >-
+        The caller must rank at or above the approval's `required_role` — the
+        rank snapshotted when the deploy parked, so relaxing the policy since
+        then does not relax this decision. The requester may not approve their
+        own deploy while another qualifying approver exists; where they are the
+        only one, they may, because a two-person rule needs two people.
+
+
+        Session only: an API token inherits its owner's role, so a `deploy`
+        token in CI could otherwise approve the deploy it had just requested and
+        the gate would be decorative. Deploy routes are unchanged, so CI keeps
+        working — its deploys park.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          description: Approved; the deployment re-entered the ordinary queue.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deployment"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: >-
+            Rank below `required_role`, an API token rather than a session, or
+            the requester approving their own deploy while another qualifying
+            approver exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No such deployment, or it was never gated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Already approved or rejected — decisions are once-only.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/deployments/{id}/reject:
+    post:
+      operationId: rejectDeployment
+      tags: [protection]
+      summary: Reject a parked deploy (approver rank, session only)
+      description: >-
+        Ends the deployment as `failed` with a detail naming the rejecter and
+        their reason. No container is ever touched, because the deploy never
+        started. The reason is required.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RejectDeploymentRequest"
+      responses:
+        "200":
+          description: Rejected; the deployment ended failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deployment"
+        "400":
+          description: Missing, over-long or multi-line reason.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Rank below `required_role`, or an API token rather than a session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No such deployment, or it was never gated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Already approved or rejected — decisions are once-only.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /api/v1/applications/{id}/scheduled-tasks:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Application ID. }
@@ -2607,7 +4870,7 @@ paths:
       tags: [scheduled-tasks]
       summary: List a task's recent run history
       responses:
-        "200": { description: Runs, newest first., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/ScheduledTaskRun" } } } } }
+        "200": { description: "Runs, newest first.", content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/ScheduledTaskRun" } } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403":
           $ref: "#/components/responses/Forbidden"
@@ -2621,27 +4884,47 @@ components:
       scheme: bearer
       description: Session token from /api/v1/auth/login.
 
+  headers:
+    RequestId:
+      description: >-
+        Correlation id for this request, minted by the API's outermost
+        middleware and present on every response. It is repeated as `trace_id`
+        in every JSON error body, and it is the key to search for in
+        `GET /api/v1/panel/logs`. An inbound `X-Request-Id` is honoured only
+        when the peer is a configured trusted proxy and the value is a short
+        printable token; otherwise a fresh id is minted.
+      schema: { type: string }
+      example: trace_9f3a-11bd-4c02-7e51
+
   responses:
     BadRequest:
       description: Malformed or invalid request body.
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/RequestId" }
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
     Unauthorized:
       description: Missing, invalid, or expired session token.
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/RequestId" }
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
     Unavailable:
       description: A backing dependency is unavailable.
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/RequestId" }
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
     Forbidden:
       description: Authenticated but the caller's role is insufficient for this action.
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/RequestId" }
       content:
         application/json:
           schema:
@@ -2650,6 +4933,21 @@ components:
       description: >-
         No such resource — also returned when the caller is not a member of the
         owning team, so resource existence never leaks across tenants.
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/RequestId" }
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TooManyRequests:
+      description: >-
+        Throttled. The `Retry-After` header and the body's
+        `retry_after_seconds` both give the whole seconds to wait.
+      headers:
+        Retry-After:
+          description: Seconds until another attempt is accepted.
+          schema: { type: integer, minimum: 1 }
+        X-Request-Id: { $ref: "#/components/headers/RequestId" }
       content:
         application/json:
           schema:
@@ -2671,6 +4969,109 @@ components:
         error:
           type: string
           description: Human-readable message; never contains secrets.
+        trace_id:
+          type: string
+          description: >-
+            The value of this response's `X-Request-Id` header, repeated in the
+            body so a screenshot of a failure carries it. Paste it into a bug
+            report or `GET /api/v1/panel/logs` to find the request. Present on
+            every response served through the API's middleware.
+          example: trace_9f3a-11bd-4c02-7e51
+        retry_after_seconds:
+          type: integer
+          minimum: 1
+          description: >-
+            Present only on `429`: whole seconds until the throttle lifts, the
+            same value as the `Retry-After` header. Count down against it rather
+            than guessing.
+        totp_required:
+          type: boolean
+          description: >-
+            Present only on the `401` from `POST /api/v1/auth/login` and
+            `POST /api/v1/invites/{token}/accept`: the password was correct and
+            the account has two-factor enabled, so the client should ask for the
+            code rather than the password again.
+
+    DeployKeyInUse:
+      type: object
+      description: >-
+        The `Error` envelope plus the applications blocking a deploy-key
+        delete. Additive: a client that reads only `error` is unaffected.
+      required: [error, applications]
+      properties:
+        error: { type: string }
+        trace_id: { type: string }
+        applications:
+          type: array
+          description: The applications that still reference the key.
+          items:
+            type: object
+            required: [id, name]
+            properties:
+              id: { type: string }
+              name: { type: string }
+
+    PanelVersion:
+      type: object
+      required: [version, commit, built_at, go_version, latest]
+      properties:
+        version:
+          type: string
+          description: The release this binary was built from; `dev` for a local build.
+          example: v0.4.0
+        commit:
+          type: string
+          description: The commit it was built from; `dev` for a local build.
+          example: 0c7a08b
+        built_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When it was built, or null when the build carried no date.
+        go_version:
+          type: string
+          description: The Go toolchain the binary was compiled with.
+          example: go1.25.12
+        latest:
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/PanelRelease" }]
+          description: The newest release beyond the running one, or null.
+
+    PanelRelease:
+      type: object
+      required: [version, kind, notes_url, published_at]
+      properties:
+        version:
+          type: string
+          example: v0.5.0
+        kind:
+          type: string
+          enum: [patch, minor, major]
+          description: >-
+            The semver class of the delta from the running build — what a
+            release badge shows, and how urgent the read is.
+        notes_url:
+          type: string
+          description: Where the release notes live.
+        published_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    PanelLogs:
+      type: object
+      required: [lines, capacity]
+      properties:
+        lines:
+          type: array
+          description: >-
+            Structured log records rendered as `key=value` text, oldest first.
+          items: { type: string }
+          example: ["time=2026-09-05T10:00:00.000Z level=INFO msg=\"http request\" method=GET path=/api/v1/servers status=200 duration_ms=3 trace_id=trace_9f3a-11bd-4c02-7e51"]
+        capacity:
+          type: integer
+          description: How many lines the ring holds in total.
+          example: 500
 
     SetupStatus:
       type: object
@@ -2825,6 +5226,47 @@ components:
           format: int64
           description: Other sessions signed out, because the recovery address moved.
 
+    PanelTLSSettings:
+      type: object
+      required: [configured, acme_email, acme_ca_server]
+      properties:
+        configured:
+          type: boolean
+          description: >-
+            Whether an ACME account exists — the same question as "will a server configure a
+            certificate resolver?". False means every https route is served over plain HTTP
+            until an account is set.
+        acme_email:
+          type: string
+          description: >-
+            The account email registered with the CA. Empty when unconfigured. Not a secret:
+            the CA publishes it back in the account record, and the ACME account KEY — the
+            part that is secret — is generated and kept by the proxy on the serving node,
+            never by the control plane.
+        acme_ca_server:
+          type: string
+          description: >-
+            ACME directory URL. Empty means Let's Encrypt production; point it at the Let's
+            Encrypt staging directory while testing so a misconfigured domain does not burn
+            the production rate limit.
+        updated_at: { type: string, format: date-time }
+
+    SetPanelTLSRequest:
+      type: object
+      required: [acme_email]
+      properties:
+        acme_email:
+          type: string
+          description: >-
+            A plain email address (`ops@example.com`), not a display-name form — the CA
+            registers the address itself. Empty clears the account and turns certificate
+            issuance off fleet-wide.
+        acme_ca_server:
+          type: string
+          description: >-
+            Optional absolute http(s) ACME directory URL. Empty means Let's Encrypt
+            production.
+
     DNSSettings:
       type: object
       required: [configured, kind, config_hint, zone_count]
@@ -2893,6 +5335,13 @@ components:
             zone is still yours and still verifies a domain — it will not resolve until its
             nameservers point at the provider.
         refreshed_at: { type: string, format: date-time }
+        managed_record_count:
+          type: integer
+          format: int64
+          description: >-
+            How many records the panel still wants to exist in this zone. What a
+            disconnect would orphan, so it is a count of desired state rather
+            than of what the provider currently holds.
 
     ApplicationDNS:
       type: object
@@ -2924,6 +5373,23 @@ components:
       type: object
       required: [public_address]
       properties:
+        disk_total_bytes:
+          type: integer
+          format: int64
+          description: >-
+            The Docker data root's filesystem, as of the last heartbeat. `0`
+            means not reported — an older agent, or a host where it could not be
+            read — which a client should show as unknown, never as full.
+        disk_free_bytes:
+          type: integer
+          format: int64
+        disk_low:
+          type: boolean
+          description: >-
+            Whether the server is past the panel's disk threshold
+            (`CYPHERD_DISK_WARN_PERCENT`, default 85). Crossing it, and crossing
+            back, writes one notification-inbox item for the panel's owners and
+            admins — on the transition, never on every heartbeat.
         public_address:
           type: string
           description: >-
@@ -2939,6 +5405,397 @@ components:
           type: string
           description: Non-secret summary, e.g. "smtp.acme.com → ops@acme.com". Never the password.
         updated_at: { type: string, format: date-time }
+        smtp_host:
+          type: string
+          description: >-
+            Present only when configured. The saved settings are read back so the
+            form can be edited rather than retyped; the password is the one field
+            that never comes back.
+        smtp_port: { type: integer, minimum: 1, maximum: 65535 }
+        username: { type: string }
+        from: { type: string }
+        tls:
+          type: string
+          enum: [starttls, implicit, none]
+          description: >-
+            Transport security in use. Settings saved before this field existed
+            read back as starttls, which is how they are sent.
+
+    PatchBackupTargetRequest:
+      type: object
+      description: Every field optional; omitted means "leave it alone".
+      properties:
+        name: { type: string }
+        endpoint: { type: string }
+        bucket: { type: string }
+        region: { type: string }
+        access_key: { type: string, description: Write-only. Resealed only when sent. }
+        secret_key: { type: string, description: Write-only. Resealed only when sent. }
+        path_prefix: { type: string }
+
+    PatchDatabaseBackupRequest:
+      type: object
+      description: Every field optional; omitted means "leave it alone".
+      properties:
+        target_id: { type: string }
+        schedule: { type: string, description: "Cron expression; empty means manual only." }
+        retention_count: { type: integer, description: "Keep the last N backups; zero or less falls back to 7." }
+        enabled: { type: boolean }
+
+    DNSDisconnectPreview:
+      type: object
+      required: [verified_domain_count, domains]
+      properties:
+        verified_domain_count: { type: integer }
+        domains:
+          type: array
+          items: { $ref: "#/components/schemas/DNSVerifiedDomain" }
+
+    DNSVerifiedDomain:
+      type: object
+      required: [application_name, domain, zone_name]
+      properties:
+        application_id: { type: string }
+        application_name: { type: string }
+        domain: { type: string }
+        zone_name: { type: string }
+
+    PatchProjectRequest:
+      type: object
+      description: Every field optional; omitted means "leave it alone".
+      properties:
+        name: { type: string, maxLength: 100 }
+        team_id:
+          type: string
+          description: Transfer. Needs owner of both teams and an interactive session.
+        default_environment_id:
+          type: string
+          description: Must belong to this project. Empty string clears it.
+
+    PatchEnvironmentRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, maxLength: 100 }
+
+    DatabaseRestore:
+      type: object
+      required: [id, database_id, status, bytes_done, bytes_total, started_at]
+      properties:
+        id: { type: string, description: rst_… prefixed ID. }
+        database_id: { type: string }
+        backup_record_id:
+          type: string
+          description: >
+            The record restored from. Absent once that record has aged out of
+            retention — the restore outlives what it restored.
+        status:
+          type: string
+          enum: [running, succeeded, failed]
+        step:
+          type: string
+          enum: [fetching, stopping, applying, restarting]
+          description: >
+            Where a running restore has got to. Absent once it is finished,
+            because the status then says everything.
+        bytes_done:
+          type: integer
+          format: int64
+          description: >
+            Bytes of the decompressed dump handled so far. Zero where the step
+            has no meaningful byte count — an engine restart is not measured in
+            bytes, and a bar that moved for it would be drawing something nobody
+            counted.
+        bytes_total: { type: integer, format: int64 }
+        detail: { type: string, description: Failure reason. Never contains secrets. }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+
+    ConnectionTest:
+      type: object
+      required: [ok, detail]
+      properties:
+        ok:
+          type: boolean
+          description: Whether the far end accepted the message.
+        detail:
+          type: string
+          description: >-
+            What the far end said, verbatim on failure. "connection refused" is
+            the whole answer, and paraphrasing it makes an operator guess.
+
+    ComposeStack:
+      type: object
+      required: [id, environment_id, name, server_id, route, status, created_at]
+      properties:
+        id:
+          type: string
+          example: cs_2m9K4pQ
+        environment_id: { type: string }
+        name: { type: string, maxLength: 100 }
+        server_id:
+          type: string
+          description: The server this stack runs on.
+        route:
+          $ref: "#/components/schemas/ComposeRoute"
+        desired_revision_id:
+          type: [string, "null"]
+          description: The revision the agent is converging toward; null before the first deploy.
+        status:
+          type: string
+          enum: [running, degraded, stopped, error, deploying, unknown]
+          description: >-
+            Observed (ADR-005), in the same vocabulary an Application uses.
+            `degraded` is some but not all of the services compose was asked
+            for; `stopped` is the birth state.
+        status_detail:
+          type: string
+          description: Compose's own last words on failure. Never contains a variable's value.
+        observed_revision_id:
+          type: string
+          description: The revision the agent last reported actually running.
+        created_at: { type: string, format: date-time }
+
+    ComposeRoute:
+      type: object
+      required: [domain, service, port, https]
+      properties:
+        domain:
+          type: string
+          description: >-
+            Empty means the stack publishes nothing through the Proxy. Its
+            services still reach each other, and anything it publishes with
+            compose `ports:` is published as the file asks.
+        service:
+          type: string
+          description: >-
+            Which compose service the domain reaches. Required with a domain —
+            the file's own Traefik labels cannot work, because the managed Proxy
+            runs the file provider only and no docker provider (ADR-004), so the
+            panel emits the same route fragment an Application gets.
+        port:
+          type: integer
+          minimum: 0
+          maximum: 65535
+          description: The port that service listens on inside its container.
+        https:
+          type: boolean
+          default: true
+
+    ComposeRevision:
+      type: object
+      required: [id, stack_id, compose_yaml, created_at]
+      properties:
+        id:
+          type: string
+          example: csr_2m9K4pQ
+        stack_id: { type: string }
+        compose_yaml:
+          type: string
+          description: The file, verbatim, as the operator wrote it.
+        created_at: { type: string, format: date-time }
+
+    CreateComposeStackRequest:
+      type: object
+      required: [name, server_id, compose_yaml]
+      properties:
+        name: { type: string, maxLength: 100 }
+        server_id:
+          type: string
+          description: A server that runs workloads; a builder-role server is a 400.
+        compose_yaml:
+          type: string
+          maxLength: 524288
+          description: >-
+            The compose file. Must parse as YAML and declare at least one
+            service. `build:` and `container_name:` are refused; everything else
+            runs as-is.
+        route:
+          $ref: "#/components/schemas/ComposeRoute"
+        env_vars:
+          type: object
+          additionalProperties: { type: string }
+          description: >-
+            Sealed on the way in and never returned. Compose interpolates
+            `${KEY}` from them, so a secret need not live in the file.
+
+    UpdateComposeStackRequest:
+      type: object
+      description: Every field optional; an omitted field is left alone.
+      properties:
+        name: { type: string, maxLength: 100 }
+        compose_yaml:
+          type: string
+          description: A changed file becomes a new revision, but is not deployed.
+        route:
+          $ref: "#/components/schemas/ComposeRoute"
+
+    Registry:
+      type: object
+      required: [id, team_id, name, url, can_pull, can_push, token_set, last_test_ok, created_at]
+      properties:
+        id:
+          type: string
+          example: reg_2m9K4pQ
+        team_id:
+          type: string
+        name:
+          type: string
+        url:
+          type: string
+          description: >-
+            The registry host, optionally with a namespace — `ghcr.io`,
+            `ghcr.io/acme`, `registry:5000`. No scheme: a registry reference
+            carries none, and accepting one would produce image names nothing
+            can pull.
+          example: ghcr.io/acme
+        username:
+          type: string
+        can_pull:
+          type: boolean
+          description: >-
+            Whether this credential may be attached to an application as its
+            image source.
+        can_push:
+          type: boolean
+          description: >-
+            Whether builds may push their result here. A pull-only credential
+            attached to a pushing build is refused at validation rather than
+            discovered as a 403 from the registry mid-deploy.
+        token_set:
+          type: boolean
+          description: >-
+            That a credential exists — never what it is (ENGINEERING rule 20).
+        last_test_at:
+          type: string
+          format: date-time
+        last_test_ok:
+          type: boolean
+        last_test_detail:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    RegistryUse:
+      type: object
+      required: [application_id, application_name, environment_name, project_name, pulls, pushes]
+      properties:
+        application_id:
+          type: string
+        application_name:
+          type: string
+        environment_name:
+          type: string
+        project_name:
+          type: string
+        pulls:
+          type: boolean
+          description: The application's image source is this registry.
+        pushes:
+          type: boolean
+          description: The application's builds push here.
+
+    CreateRegistryRequest:
+      type: object
+      required: [name, url, token]
+      properties:
+        team_id:
+          type: string
+          description: >-
+            Optional when you belong to exactly one team; required otherwise.
+        name:
+          type: string
+          maxLength: 100
+        url:
+          type: string
+          description: Registry host, without a scheme.
+          example: ghcr.io
+        username:
+          type: string
+          description: >-
+            Omit for a registry that takes a bearer token rather than a
+            username and password.
+        token:
+          type: string
+          description: >-
+            The password or access token. Sealed under the master key on the
+            way in and never returned.
+        can_pull:
+          type: boolean
+          default: true
+        can_push:
+          type: boolean
+          default: false
+
+    UpdateRegistryRequest:
+      type: object
+      description: Every field optional; an omitted field is left alone.
+      properties:
+        name:
+          type: string
+          maxLength: 100
+        url:
+          type: string
+        username:
+          type: string
+        token:
+          type: string
+          description: Send only to rotate; omitting it keeps the stored credential.
+        can_pull:
+          type: boolean
+        can_push:
+          type: boolean
+
+    TestRegistryRequest:
+      type: object
+      required: [url, token]
+      properties:
+        url:
+          type: string
+          description: Registry host, without a scheme.
+        username:
+          type: string
+        token:
+          type: string
+
+    TestNotifierConfigRequest:
+      type: object
+      required: [channel, config]
+      properties:
+        channel:
+          type: string
+          enum: [email, discord, slack, telegram]
+        config:
+          type: object
+          additionalProperties: true
+          description: >-
+            The same channel-specific shape create takes. Never stored by this
+            route.
+
+    PendingEmailChange:
+      type: object
+      required: [new_email, requested_at, expires_at]
+      properties:
+        new_email:
+          type: string
+          description: The address the account is moving to, as the panel parsed it.
+        requested_at: { type: string, format: date-time }
+        expires_at:
+          type: string
+          format: date-time
+          description: When the confirmation link stops working.
+
+    EmailChangeCancelled:
+      type: object
+      required: [cancelled]
+      properties:
+        cancelled:
+          type: integer
+          format: int64
+          description: >-
+            How many pending changes were spent. 0 means there was nothing to
+            undo, which is a different answer from having undone something.
 
     SetPanelMailRequest:
       type: object
@@ -2951,6 +5808,15 @@ components:
           type: string
           description: Write-only. Never returned by any route.
         from: { type: string }
+        tls:
+          type: string
+          enum: [starttls, implicit, none]
+          default: starttls
+          description: >-
+            Transport security. starttls (port 587) upgrades the connection and
+            refuses to send if the server will not offer STARTTLS — no silent
+            downgrade. implicit (port 465) is TLS from the first byte. none sends
+            in the clear and is only defensible for a relay you control.
 
     ChangePasswordResponse:
       type: object
@@ -2990,12 +5856,27 @@ components:
 
     Ability:
       type: string
-      enum: [read, write, deploy]
+      enum: [read, write, deploy, env, servers, admin]
       description: >
-        What a personal access token may do. `read` permits safe methods,
-        `write` permits creating and changing resources, `deploy` permits
-        triggering deploys and rollbacks. A token's authority is the
-        intersection of its owner's role and its abilities.
+        What a personal access token may do. A token's authority is the
+        intersection of its owner's role and its abilities: an ability never
+        grants access to something the owner could not already reach.
+
+
+        `read` permits safe methods. `deploy` permits triggering deploys and
+        rollbacks. `write` permits every other mutation.
+
+
+        `env`, `servers` and `admin` carve narrower grants out of `write`, so a
+        credential can be minted for one job rather than for every mutation the
+        API has: `env` sets and removes an application's environment variables,
+        `servers` enrols and removes servers and reads join instructions, and
+        `admin` changes teams, members, invitations, users and panel settings.
+
+
+        **`write` still satisfies all three.** A token issued before they
+        existed does exactly what it did before; the narrow abilities are for
+        narrowing a new token, not for re-cutting an old one.
 
     ApiToken:
       type: object
@@ -3011,6 +5892,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Ability"
+        project_id:
+          type: string
+          description: >
+            Present when the token is confined to one project. Absent means
+            unscoped, which is what every token was before scoping existed.
         last_used_at:
           type: string
           format: date-time
@@ -3035,6 +5921,15 @@ components:
           description: Lifetime in days; 0 or omitted means the token never expires.
           minimum: 0
           maximum: 3650
+        project_id:
+          type: string
+          description: >
+            Confine the token to one project. Abilities say what a credential
+            may do; this says where. A scoped token answers 404 for any other
+            project — the same answer a non-member gets, so one token cannot be
+            used to enumerate which projects its owner can see — and 403 for
+            panel- and team-level routes, which belong to no project. The caller
+            must be a member of the project named here.
         abilities:
           type: array
           description: >
@@ -3140,7 +6035,12 @@ components:
           description: Manual cypher-agent enroll command (binary preinstalled).
         install_command:
           type: string
-          description: Ready-to-paste curl|sh join line (the acceptance path).
+          description: >-
+            Ready-to-paste curl|sh join line (the acceptance path). It is self-sufficient: on
+            a release build it pins `CYPHER_AGENT_URL` to this panel's own version, so the
+            server joins running the agent that matches the plane. A development build omits
+            it and the installer falls back to the project's latest GitHub release. Either
+            way the plane never stores or serves the binary itself (ADR-010).
 
     CreateServerResponse:
       type: object
@@ -3166,6 +6066,28 @@ components:
         created_at:
           type: string
           format: date-time
+        slug:
+          type: string
+          description: >-
+            Stable handle for URLs and the CLI. Derived from the name at
+            creation and immutable after: renaming must not break a bookmark or
+            a script. Unique within the team.
+        default_environment_id:
+          type: string
+          description: Where "open this project" lands. Absent only if the project has no environments.
+        last_activity_at:
+          type: string
+          format: date-time
+          description: Last deploy, resource change or setting change here. The list orders by it.
+        application_count: { type: integer, format: int64, description: "List view only." }
+        database_count: { type: integer, format: int64, description: "List view only." }
+        error_count: { type: integer, format: int64, description: "List view only." }
+        worst_status:
+          type: string
+          description: >-
+            List view only. The most severe observed status among the project's
+            applications and managed databases, so a page can be ordered
+            worst-first. Empty when the project holds nothing.
 
     Environment:
       type: object
@@ -3181,6 +6103,13 @@ components:
         created_at:
           type: string
           format: date-time
+        kind:
+          type: string
+          enum: [production, standard, preview]
+          description: >-
+            A preview is created and destroyed by its pull request and cannot be
+            renamed or deleted by hand.
+        is_default: { type: boolean }
 
     CreateProjectRequest:
       type: object
@@ -3249,6 +6178,15 @@ components:
             build stage runs, and deploys go straight to rollout. A digest is
             immutable and fetched once; a tag is re-fetched on every deploy, so
             redeploying a moved tag runs the new image rather than a cached one.
+        registry_id:
+          type: [string, "null"]
+          description: >-
+            The stored registry credential the pull authenticates with
+            (`reg_...`). It answers "where do this application's bits come
+            from": the image itself for kind `image`, and the private base
+            image a Dockerfile `FROM` names for a git kind. Must belong to the
+            application's own team and allow pulling; null is the ordinary
+            public case. Nothing in the deploy path requires one (ADR-008).
 
     DomainCheck:
       type: object
@@ -3278,21 +6216,52 @@ components:
       properties:
         kind:
           type: string
-          enum: [auto, dockerfile, static]
+          enum: [auto, dockerfile, static, nixpacks, railpack]
           default: auto
           description: >-
             How the checkout becomes an image. `dockerfile` builds the file at
             `dockerfile_path`. `static` serves the build context as a website
-            behind nginx, listening on `runtime.port`. `auto` decides by looking
-            at the repository: a Dockerfile if there is one, otherwise a static
-            site if there is an index.html, and a clear failure naming both if
-            neither. Detection runs on the builder agent, where the source
-            actually is — the control plane never fetches a repository.
+            behind nginx, listening on `runtime.port`. `nixpacks` hands the
+            repository to a build pack, which decides the language, package
+            manager, build command and runtime, and writes a Dockerfile the
+            ordinary path then builds.
+
+
+            `auto` decides by looking at the repository: a Dockerfile if there
+            is one, then a language manifest (`package.json`, `go.mod`, …) if
+            the Nixpacks binary is installed on the builder, then an index.html
+            to serve as a static site, and a clear failure naming what would fix
+            it if none apply. Detection runs on the builder agent, where the
+            source actually is — the control plane never fetches a repository.
+
+
+            A pack is an opt-in an operator installs on a builder. Where none
+            is present, `auto` behaves exactly as it did before packs existed.
+            `auto` never infers `railpack`: choosing between two packs that
+            claim the same repositories would be arbitrary, and Nixpacks is the
+            one that needs no BuildKit and pulls no frontend image.
         dockerfile_path:
           type: string
           description: Ignored for a `static` build.
         context:
           type: string
+        push_registry_id:
+          type: [string, "null"]
+          description: >-
+            Push the completed image to this stored registry (`reg_...`) in
+            addition to keeping it locally — ADR-008 path 3. Must belong to the
+            application's own team and allow pushing, and cannot be set on an
+            image source, which is never built. The rollout never reads this
+            copy: it runs the local build or the relayed one, so no registry is
+            required even for an application that configures one. A failed push
+            fails the deployment.
+        push_repository:
+          type: string
+          maxLength: 255
+          description: >-
+            Repository within the push registry, e.g. `acme/web`. Lowercase
+            path components only. Empty uses the application's own name reduced
+            to a legal repository path. Requires `push_registry_id`.
 
     AppVolume:
       type: object
@@ -3435,6 +6404,30 @@ components:
           description: >-
             Backstop lifetime for a preview whose PR never closes; defaults to
             72 when unset.
+        tls_state:
+          type: string
+          enum: [https, http_only_no_resolver, http_only]
+          description: >-
+            Derived, never stored (agent-identity-and-tls.md §5): what this application's
+            route is actually served as, given what the panel knows. Omitted entirely when
+            the application has no domain, because then there is no route to describe.
+
+
+            `https` — the route asks for HTTPS and the panel has an ACME account, so the
+            serving node configures a resolver and obtains a certificate.
+            `http_only_no_resolver` — the route asks for HTTPS but the panel has no ACME
+            account, so there is nothing to issue with: the node serves the app over plain
+            HTTP and the deploy is unaffected. Say "serving over HTTP meanwhile", never
+            "HTTPS".
+            `http_only` — HTTPS was not requested; plain HTTP is what was asked for and
+            nothing is missing.
+
+
+            This reports the panel's configuration, not an observed certificate. It cannot
+            see a per-node `CYPHER_ACME_EMAIL` override, and it does not claim a certificate
+            was actually ISSUED — issuance also needs DNS pointing at the server
+            (`GET /applications/{id}/domain-check`). Reporting per-domain certificate state
+            from the node is a later refinement (routing-and-tls.md §10).
         redeploy_pending:
           type: boolean
           description: >-
@@ -3607,12 +6600,26 @@ components:
           type: string
         status:
           type: string
-          enum: [queued, building, distributing, rolling_out, succeeded, failed]
+          description: >-
+            Pipeline state. `awaiting_approval` is a deploy that deploy
+            protection parked before it started: nothing was published, the
+            application's own status is untouched, and it holds no queue slot.
+            It is NOT terminal — it is waiting for a person. A rejected deploy
+            ends `failed`, with a detail naming the rejecter.
+          enum: [queued, building, distributing, rolling_out, succeeded, failed, awaiting_approval]
         trigger:
           type: string
           enum: [manual, webhook, rollback]
         detail:
           type: string
+        approval:
+          description: >-
+            The gate decision on this deployment, present only when it was
+            gated. Carries enough to render the pending card without a second
+            request; a deployment that was never gated omits it entirely.
+          oneOf:
+            - $ref: "#/components/schemas/DeployApproval"
+            - type: "null"
         created_at:
           type: string
           format: date-time
@@ -3731,6 +6738,147 @@ components:
       properties:
         role: { type: string, enum: [member, admin, owner] }
 
+    # ─── Invitations and access requests
+    #     (invitations-and-access-requests.md §7) ──────────────────────────────
+    TeamInvite:
+      type: object
+      description: >-
+        One invitation to join a team. It never carries the token or its hash:
+        the accept URL is readable exactly once, in the response that created it.
+      required: [id, team_id, email, role, state, invited_by_label, expires_at, created_at]
+      properties:
+        id: { type: string, description: inv_… prefixed ID. }
+        team_id: { type: string }
+        email: { type: string, format: email, description: The address as the panel parsed and lower-cased it. }
+        role: { type: string, enum: [member, admin, owner], description: The rank accepting will grant. }
+        state:
+          type: string
+          enum: [pending, accepted, revoked, expired]
+          description: >-
+            Derived from the timestamps below, never stored — a stored
+            "expired" would need a sweeper to stay true.
+        invited_by_label:
+          type: string
+          description: >-
+            Who sent it, as their address read at the time. A snapshot: it still
+            names them after their account is deleted.
+        expires_at: { type: string, format: date-time, description: Seven days after it was issued. }
+        accepted_at: { type: [string, "null"], format: date-time }
+        revoked_at: { type: [string, "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+    CreateInviteRequest:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string, format: email }
+        role:
+          type: string
+          enum: [member, admin, owner]
+          default: member
+          description: >-
+            May not exceed the caller's own rank; inviting an owner needs team
+            owner. Checked here rather than at acceptance, because the person
+            accepting has no rank of their own.
+    CreatedInvite:
+      type: object
+      description: A fresh invitation plus the two facts that exist only at this moment.
+      required: [invite, accept_url, mail_sent]
+      properties:
+        invite: { $ref: "#/components/schemas/TeamInvite" }
+        accept_url:
+          type: string
+          description: >-
+            The full link to hand to the invitee. This is the ONLY time it is
+            readable — only a hash of its secret is stored — and it is returned
+            whether or not the panel could mail it, so an operator on a panel
+            with no SMTP can still pass it on themselves.
+        mail_sent:
+          type: boolean
+          description: >-
+            Whether Panel Mail actually delivered the invitation. False means
+            the panel has no mail configured (Settings → Mail) or the send
+            failed; the invitation is valid either way.
+    InvitePreview:
+      type: object
+      description: >-
+        What the unauthenticated landing screen may see about an invitation.
+        Deliberately not the invitation itself: no id, no timestamps beyond the
+        expiry, nothing about the team but its name.
+      required: [team_name, inviter_label, email, role, expires_at, account_exists]
+      properties:
+        team_name: { type: string }
+        inviter_label: { type: string, description: Who invited you, as an address. Empty if the panel no longer knows. }
+        email: { type: string, format: email, description: The address this invitation was issued for; it cannot be changed. }
+        role: { type: string, enum: [member, admin, owner] }
+        expires_at: { type: string, format: date-time }
+        account_exists:
+          type: boolean
+          description: >-
+            True when this address already has an account, so the form asks for
+            the existing password instead of offering to choose one. A
+            disclosure only to whoever already holds a valid invitation for that
+            exact address.
+    AcceptInviteRequest:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+          minLength: 8
+          description: >-
+            For an address with no account, the password being chosen (at least
+            8 characters). For one that already has an account, that account's
+            CURRENT password — accepting an invitation never resets it.
+        display_name:
+          type: string
+          maxLength: 64
+          description: >-
+            Optional, and only used when the account is being created. If the
+            panel cannot accept it — too long, or more than a single line — the
+            account is still created and joined without it, and the person can
+            set one from their profile: a name is not worth failing a join over,
+            and the invitation has already been spent by then.
+        totp_code:
+          type: string
+          description: >-
+            Second factor, required only when the address already has an account
+            with two-factor enabled — an invitation is not a way around one.
+    AccessRequest:
+      type: object
+      description: One member's ask for a higher rank in one team.
+      required: [id, team_id, user_id, user_email, current_role, requested_role, message, state, created_at]
+      properties:
+        id: { type: string, description: acr_… prefixed ID. }
+        team_id: { type: string }
+        user_id: { type: string }
+        user_email: { type: string, format: email, description: Who asked. }
+        current_role:
+          type: string
+          description: >-
+            Their rank in this team as it stands NOW, derived at read time —
+            empty if they have since left, which is why granting then answers
+            409.
+        requested_role: { type: string, enum: [member, admin, owner] }
+        message: { type: string, description: The requester's own words, at most 500 characters. }
+        state: { type: string, enum: [pending, granted, denied] }
+        decided_by_label: { type: string, description: Who decided, as an address read at the time. A snapshot. }
+        decision_reason: { type: string, description: A denial's reason, carried verbatim to the requester. Empty otherwise. }
+        decided_at: { type: [string, "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+    CreateAccessRequestRequest:
+      type: object
+      required: [requested_role]
+      properties:
+        requested_role:
+          type: string
+          enum: [member, admin, owner]
+          description: Must rank strictly above the caller's current role in this team.
+        message: { type: string, maxLength: 500, description: Why you need it — shown to the owners who decide. }
+    DenyAccessRequestRequest:
+      type: object
+      properties:
+        reason: { type: string, maxLength: 500, description: Optional; carried verbatim to the requester. }
+
     # ─── Databases ────────────────────────────────────────────────────────────
     Database:
       type: object
@@ -3815,7 +6963,17 @@ components:
       type: object
       required: [host, port, password_hint, internal_host]
       properties:
-        host: { type: string }
+        host:
+          type: string
+          description: >-
+            The address to dial from outside the environment's private network,
+            when the database exposes a port: the server's public address, or
+            the hostname its agent reported if no public address is set. Empty
+            (`""`) when the database exposes no port, or when the panel knows
+            no address for its server — an honest "we do not know where this
+            is" rather than a plausible value that is not an address. Use
+            `internal_host` for in-network access, which always works.
+          example: db1.example.com
         port: { type: integer }
         user: { type: string }
         password_hint: { type: string, description: Never the password itself. }
@@ -4161,11 +7319,27 @@ components:
       required: [id, project_id, kind, severity, digest, title, body, link, link_label, created_at, updated_at]
       properties:
         id: { type: string, description: inb_… prefixed ID. }
-        project_id: { type: string, description: The project the event happened in. }
+        project_id:
+          type: string
+          description: >-
+            The project the event happened in — **empty for a panel-level kind**
+            (`panel.update_available`) and for a team-scoped one
+            (`access.*`, `invite.accepted`), which belong to the panel and to a
+            team rather than to any project.
+        team_id:
+          type: string
+          description: >-
+            The team the item is about, set only for the team-access kinds
+            (`access.requested`, `access.granted`, `access.denied`,
+            `invite.accepted`). An item is scoped to a project, to a team, or to
+            the panel — never to two of them.
         kind:
           type: string
-          enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed]
-          description: An event key from the notification taxonomy — the same closed set notifiers and webhook endpoints subscribe to.
+          enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed, panel.update_available, deploy.awaiting_approval, deploy.approved, deploy.rejected, access.requested, access.granted, access.denied, invite.accepted]
+          description: >-
+            An inbox kind: an event key from the notification taxonomy — the
+            same closed set notifiers and webhook endpoints subscribe to — or a
+            panel-level kind, which only the inbox ever carries.
         severity:
           type: string
           enum: [info, error]
@@ -4225,17 +7399,342 @@ components:
         available_kinds:
           type: array
           items: { type: string }
-          description: Every kind this plane can emit — served rather than hardcoded, so a new taxonomy entry needs no client change.
+          description: >-
+            Every inbox kind this plane can emit — the subscribable event
+            taxonomy plus the panel-level kinds — served rather than hardcoded,
+            so a new entry needs no client change.
     SetInboxPreferencesRequest:
       type: object
       required: [muted_kinds]
       properties:
         muted_kinds:
           type: array
-          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed] }
+          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed, panel.update_available] }
           description: The complete muted set; this replaces the previous one. A kind outside available_kinds is a 400.
 
+    # ─── Audit log (audit-log.md §2, §7) ──────────────────────────────────
+    #
+    # Every id and name below is a SNAPSHOT taken when the action happened, not
+    # a live reference. Renaming an application does not rewrite its history,
+    # and deleting one does not delete the record of the deletion — so an id
+    # here may name something that no longer exists, which is information
+    # rather than an inconsistency.
+
+    AuditActor:
+      type: object
+      required: [kind, user_id, token_id, label]
+      properties:
+        kind:
+          type: string
+          enum: [user, token, agent, system, anonymous]
+          description: >-
+            `user` — an interactive session. `token` — a personal access token
+            acting for its owner (the owner is recorded too; a token is a way to
+            act, not an identity). `agent` — an enrolled agent acting for its
+            server. `system` — the panel itself, such as a signed inbound
+            webhook. `anonymous` — an unauthenticated caller, which is what a
+            refused sign-in is.
+        user_id:
+          type: string
+          description: >-
+            Empty for agent, system and anonymous actors. A snapshot: the
+            account it names may since have been deleted, and the entry stays.
+        token_id:
+          type: string
+          description: The personal access token used, when one was — the credential to revoke. Empty otherwise.
+        label:
+          type: string
+          description: >-
+            The email as it read when the action happened, never re-resolved.
+            For an anonymous actor it is the address the sign-in claimed to be.
+
+    AuditResource:
+      type: object
+      required: [kind, id, name]
+      properties:
+        kind:
+          type: string
+          description: >-
+            The glossary noun acted on — `user`, `session`, `api_token`, `team`,
+            `server`, `deploy_key`, `project`, `environment`, `application`,
+            `database`, `deployment`, `backup_target`, `backup_schedule`,
+            `shared_variable`, `notifier`, `webhook_endpoint`, `panel`. Not a
+            table name: an env-var change names the APPLICATION and a membership
+            change names the TEAM, because that is the timeline they are read
+            from.
+        id: { type: string }
+        name:
+          type: string
+          description: The name at the time. Empty when the action had no name to snapshot.
+
+    AuditEvent:
+      type: object
+      required: [id, at, action, outcome, actor, resource, team_id, project_id, environment_id, detail, trace_id, client_ip]
+      properties:
+        id: { type: string, description: aud_… prefixed ID. }
+        at: { type: string, format: date-time }
+        action:
+          type: string
+          description: >-
+            A dotted verb from the closed vocabulary: the family before the dot,
+            the past-tense event after it. The families are `auth`, `token`,
+            `user`, `team`, `server`, `deploy_key`, `project`, `environment`,
+            `application`, `database`, `deploy`, `protection`, `backup_target`,
+            `backup_schedule`, `backup`, `shared_variable`, `notifier`,
+            `webhook_endpoint` and `panel`. Filter on a family with
+            `?action=deploy`. The list grows additively; a client must treat an
+            unrecognised verb as ordinary text.
+          example: application.deleted
+        outcome:
+          type: string
+          enum: [success, failure]
+          description: >-
+            Failure is an outcome, not a separate verb, so "everything that was
+            refused" is one predicate over the whole vocabulary. A refusal
+            carries its reason in `detail.reason`.
+        actor:
+          $ref: "#/components/schemas/AuditActor"
+        resource:
+          $ref: "#/components/schemas/AuditResource"
+        team_id:
+          type: string
+          description: >-
+            The owning team at the time. EMPTY means the action was
+            panel-level — a server, a user, the mail/DNS/TLS settings — and only
+            panel admins may read it.
+        project_id:
+          type: string
+          description: Empty when the action was not scoped to a project.
+        environment_id:
+          type: string
+          description: Empty when the action was not scoped to an environment.
+        detail:
+          type: object
+          additionalProperties: true
+          description: >-
+            Structured extras: identifiers, key NAMES, counts, and the reason a
+            refusal was refused. Never a secret VALUE — an env-var change
+            records `{"key": "DATABASE_URL"}` and nothing else, and the audit
+            service strips a denylist of secret-shaped key names as a second
+            line of defence.
+        trace_id:
+          type: string
+          description: >-
+            The `X-Request-Id` of the request that performed the action, so a
+            trace id from a screenshot finds what it did as well as what it
+            logged.
+        client_ip:
+          type: string
+          description: >-
+            The address the panel attributed the request to — the same value the
+            sign-in throttle counts against. Empty for actions with no request
+            behind them.
+
+    AuditPage:
+      type: object
+      required: [events, next_before]
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEvent"
+        next_before:
+          type: string
+          description: >-
+            Pass as `before` for the following page. Empty at the end of the
+            log. A full page always returns a cursor, so the last page of an
+            exactly-divisible log costs one extra request that comes back empty.
+
     # ─── Project shared variables (shared-variables.md §7) ────────────────
+    # ─── Deploy protection (deploy-protection.md §2, §6) ────────────────────
+
+    EnvironmentProtection:
+      type: object
+      required: [environment_id, require_approval, min_approver_role, freeze_enabled, windows]
+      properties:
+        environment_id: { type: string }
+        require_approval:
+          type: boolean
+          description: >-
+            Deploys to this environment park until someone at or above
+            min_approver_role approves them. Webhook deploys park too — they
+            simply have no requester.
+        min_approver_role:
+          type: string
+          enum: [member, admin, owner]
+          description: >-
+            The minimum team rank that may approve. Snapshotted onto each
+            approval at park time, so relaxing it does not relax a deploy that
+            is already parked.
+        freeze_enabled:
+          type: boolean
+          description: >-
+            The master switch over `windows`. Turning it off keeps the declared
+            windows, so they can be re-armed without retyping; an empty
+            `windows` list means no freeze whatever this says.
+        windows:
+          type: array
+          items:
+            $ref: "#/components/schemas/FreezeWindow"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    FreezeWindow:
+      type: object
+      required: [id, start_dow, start_minute, end_dow, end_minute, timezone, summary]
+      properties:
+        id: { type: string, description: fzw_… prefixed ID, minted on each wholesale write. }
+        start_dow:
+          type: integer
+          minimum: 0
+          maximum: 6
+          description: 0 = Sunday … 6 = Saturday.
+        start_minute:
+          type: integer
+          minimum: 0
+          maximum: 1439
+          description: Minutes past local midnight, in `timezone`.
+        end_dow:
+          type: integer
+          minimum: 0
+          maximum: 6
+        end_minute:
+          type: integer
+          minimum: 0
+          maximum: 1439
+        timezone:
+          type: string
+          description: >-
+            IANA name, e.g. "Europe/Berlin". The window is evaluated on WALL
+            CLOCK in this zone, so a DST change makes it an hour shorter or
+            longer in absolute terms twice a year — which is what "no deploys
+            after six on Friday" means. The window is half-open and may wrap the
+            week (Fri 18:00 → Mon 08:00 is one window).
+        summary:
+          type: string
+          description: >-
+            The window rendered as the sentence the panel and the CLI both
+            print, e.g. "Fri 18:00 → Mon 08:00 (Europe/Berlin)". Derived,
+            never stored.
+
+    SetProtectionRequest:
+      type: object
+      # Every field is required, and the handler answers 400 for each omission
+      # rather than applying a default: this is a wholesale replace, so a
+      # forgotten field would silently rewrite the policy and answer 200.
+      required: [require_approval, min_approver_role, freeze_enabled, windows]
+      properties:
+        require_approval: { type: boolean }
+        min_approver_role:
+          type: string
+          enum: [member, admin, owner]
+        freeze_enabled: { type: boolean }
+        windows:
+          type: array
+          maxItems: 8
+          description: The complete window list; it replaces whatever was there.
+          items:
+            $ref: "#/components/schemas/FreezeWindowInput"
+
+    FreezeWindowInput:
+      type: object
+      required: [start_dow, start_minute, end_dow, end_minute, timezone]
+      properties:
+        start_dow: { type: integer, minimum: 0, maximum: 6 }
+        start_minute: { type: integer, minimum: 0, maximum: 1439 }
+        end_dow: { type: integer, minimum: 0, maximum: 6 }
+        end_minute: { type: integer, minimum: 0, maximum: 1439 }
+        timezone: { type: string, description: "IANA name, e.g. Europe/Berlin." }
+
+    DeployApproval:
+      type: object
+      required: [deployment_id, environment_id, required_role, state, created_at]
+      properties:
+        deployment_id: { type: string }
+        environment_id: { type: string }
+        requested_by:
+          type: string
+          description: >-
+            The user who asked for the deploy. Empty for a webhook deploy — a
+            push has no panel user behind it — and for a requester who has since
+            been deleted.
+        requested_by_email:
+          type: string
+          description: That user's address, joined for display. Empty when there is no requester.
+        required_role:
+          type: string
+          enum: [member, admin, owner]
+          description: The rank that must approve, snapshotted at park time.
+        state:
+          type: string
+          enum: [pending, approved, rejected]
+        decided_by:
+          type: string
+          description: Who approved or rejected; empty while pending.
+        decided_by_email:
+          type: string
+        decided_at:
+          type: string
+          format: date-time
+          nullable: true
+        reason:
+          type: string
+          description: The rejecter's sentence, stored verbatim and rendered as text. Empty on an approval.
+        created_at:
+          type: string
+          format: date-time
+
+    BreakGlassGrant:
+      type: object
+      required: [id, environment_id, opened_by, reason, created_at, expires_at, active]
+      properties:
+        id: { type: string, description: bg_… prefixed ID. }
+        environment_id: { type: string }
+        opened_by: { type: string }
+        opened_by_email: { type: string }
+        reason:
+          type: string
+          description: Why the freeze was overridden, stored verbatim and rendered as text.
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          description: >-
+            30 minutes after it was opened. Grants lapse on their own and are
+            never revoked early.
+        active:
+          type: boolean
+          description: Whether the grant still suspends the freeze, as of this response.
+
+    BreakGlassRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Required, single-line. It is the gate on the dialog instead of a typed name.
+
+    RejectDeploymentRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: >-
+            Why the deploy is refused. It becomes part of the deployment's
+            detail ("rejected by alex@acme.com: shipping Monday") and of the
+            requester's inbox item.
+
     SharedVariable:
       type: object
       required: [id, project_id, environment_id, environment_name, key, used_by_count, created_at, updated_at]

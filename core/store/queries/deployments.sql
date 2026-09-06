@@ -21,12 +21,20 @@ RETURNING *;
 -- name: ListDeploymentsByApplication :many
 SELECT * FROM deployments WHERE application_id = $1 ORDER BY created_at DESC LIMIT $2;
 
+-- The two queue queries below exclude 'awaiting_approval' as well as the two
+-- terminal states (deploy-protection.md §3). A parked deploy has not finished,
+-- but it holds no pipeline slot either: without the exclusion an approval
+-- nobody got round to would sit at the head of its application's queue and
+-- block every later deploy, and Scheduler.Recover would try to resume it on
+-- boot. With it, approving simply re-enters the ordinary queue through
+-- tryStart, and Recover needs no new case.
+
 -- name: ListActiveDeployments :many
 SELECT * FROM deployments
-WHERE status NOT IN ('succeeded', 'failed')
+WHERE status NOT IN ('succeeded', 'failed', 'awaiting_approval')
 ORDER BY created_at;
 
 -- name: ListActiveDeploymentsByApplication :many
 SELECT * FROM deployments
-WHERE application_id = $1 AND status NOT IN ('succeeded', 'failed')
+WHERE application_id = $1 AND status NOT IN ('succeeded', 'failed', 'awaiting_approval')
 ORDER BY created_at;

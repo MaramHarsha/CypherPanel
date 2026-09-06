@@ -33,6 +33,10 @@ const (
 	PrefixBackupTarget     = "bt"
 	PrefixDatabaseBackup   = "bak"
 	PrefixBackupRecord     = "br"
+	// A restore is its own record rather than a second kind of backup record:
+	// it is an operation with steps and an outcome, and the design's blocking
+	// popup needs to address one (managed-databases.md §"Restoring").
+	PrefixDatabaseRestore = "rst"
 
 	// Phase 3: Notifications (docs/features/notifications.md).
 	PrefixNotifier = "ntf"
@@ -71,6 +75,43 @@ const (
 	// a Record is one the panel created and therefore owns.
 	PrefixDNSZone   = "dnz"
 	PrefixDNSRecord = "dnr"
+
+	// V1.x: deploy protection (docs/features/deploy-protection.md §2). Only
+	// two of the feature's four tables mint an id: an EnvironmentProtection is
+	// keyed by its environment and a DeployApproval by its deployment, which
+	// is what makes "one policy per environment" and "one gate decision per
+	// deployment" invariants the database enforces rather than rules a service
+	// has to remember.
+	PrefixFreezeWindow = "fzw"
+	PrefixBreakGlass   = "bg"
+
+	// V1.x: the audit log (docs/features/audit-log.md §2). One id per recorded
+	// action. Audit ids are never reused and never renumbered — an id in a
+	// support conversation must keep naming the same event forever.
+	PrefixAuditEvent = "aud"
+
+	// V1: a Compose Stack and one immutable version of its file
+	// (docs/features/compose-stacks.md §2).
+	PrefixComposeStack    = "cs"
+	PrefixComposeRevision = "csr"
+
+	// V1.x: an optional container registry credential, never a requirement
+	// (docs/features/registries.md; ADR-008 path 3).
+	PrefixRegistry = "reg"
+
+	// V1.x: a restart token (docs/features/deployment-control.md §3). Not the
+	// id of a row — it is a value on the application that a new container is
+	// labelled with, so a restart is a difference in desired state rather than
+	// a verb the agent obeys.
+	PrefixRestart = "rst"
+
+	// V1.x: team invitations and access requests
+	// (docs/features/invitations-and-access-requests.md §2). An invite id is
+	// also the PUBLIC half of its wire token (`inv_….<secret>`), which is what
+	// lets the lookup be an indexed primary-key read while only the secret's
+	// hash is stored.
+	PrefixTeamInvite    = "inv"
+	PrefixAccessRequest = "acr"
 )
 
 // New returns a prefixed, URL-safe, collision-resistant identifier such as

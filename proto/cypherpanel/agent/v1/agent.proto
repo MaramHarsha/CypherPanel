@@ -20,6 +20,22 @@ service EnrollmentService {
   // Enroll exchanges a valid join token + CSR for a signed client
   // certificate. The token is consumed on success (single-use).
   rpc Enroll(EnrollRequest) returns (EnrollResponse);
+
+  // Renew re-signs an already-enrolled agent's certificate before it expires.
+  //
+  // Unlike Enroll it carries no join token: the caller authenticates with the
+  // certificate it already holds, over the same mTLS listener, and the plane
+  // takes the identity from the verified peer chain rather than from anything
+  // in the request (threat-model.md §5.2 — "short-lived agent certificates
+  // with rotation, renewed over the authenticated channel"). The agent
+  // generates a FRESH key pair for each renewal and sends only the CSR, so the
+  // property Enroll establishes — the private key never crosses the wire —
+  // holds for the whole lifetime of the identity, not just its first day.
+  //
+  // Idempotent in the only sense that matters here: calling it twice issues
+  // two certificates for the same CommonName, both valid, and the agent keeps
+  // whichever it stored last. Nothing is consumed.
+  rpc Renew(RenewRequest) returns (RenewResponse);
 }
 
 message EnrollRequest {
@@ -43,6 +59,39 @@ message EnrollResponse {
   bytes ca_pem = 3;
   // URL the agent dials for the NATS data-plane connection (mTLS).
   string nats_url = 4;
+}
+
+// RenewRequest asks the plane to re-sign this agent's identity.
+message RenewRequest {
+  // The server id the caller believes it is. It is NOT what authorizes the
+  // call — the verified client certificate's CommonName is — but the plane
+  // refuses a request whose claim disagrees with the peer identity, so an
+  // agent can never renew (or accidentally overwrite) another server's
+  // certificate, and a mismatch is a loud failure instead of a silent
+  // re-issue under the wrong name.
+  string server_id = 1;
+  // PEM-encoded PKCS#10 certificate signing request for the agent's new key
+  // pair. As with Enroll, the plane signs the key and dictates the subject.
+  bytes csr_pem = 2;
+  // Agent build version, recorded the same way Enroll records it so fleet
+  // version visibility survives re-enrollment-free lifetimes (ADR-010).
+  string agent_version = 3;
+}
+
+// RenewResponse carries the re-signed identity. The server id, the NATS URL
+// and the CA are unchanged by a renewal — only the certificate is new — so the
+// agent rewrites its certificate and nothing else.
+message RenewResponse {
+  // PEM-encoded client certificate signed by the control-plane CA, with the
+  // same CommonName the caller already had.
+  bytes certificate_pem = 1;
+  // PEM-encoded CA certificate, echoed so an agent that renews across a CA
+  // rotation is not left pinning material the plane no longer uses.
+  bytes ca_pem = 2;
+  // Expiry of the new certificate. The agent derives its next renewal from the
+  // certificate itself; this field is for logging and for an agent that wants
+  // to check the plane agreed with its own parse.
+  google.protobuf.Timestamp not_after = 3;
 }
 
 // AgentStatus is the agent's self-reported liveness, carried on heartbeats.
@@ -74,4 +123,11 @@ message Heartbeat {
   // (builder-role-and-relay.md §1). Routing input only — relay operations are
   // authorized per-deployment, never from this claim.
   string role = 6;
+  // V1: the Docker data root's filesystem (disk-management.md §4). Read from
+  // the daemon's own /info (DockerRootDir) rather than assumed, because an
+  // operator who moved it is exactly the one who will not have moved an alert
+  // with it. Zero means "could not read", which the plane treats as unknown
+  // and never as full.
+  uint64 disk_total_bytes = 7;
+  uint64 disk_free_bytes = 8;
 }

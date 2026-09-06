@@ -153,13 +153,13 @@ func TestRestoreRequiresConfirm(t *testing.T) {
 	fs.records["br_1"] = domain.BackupRecord{ID: "br_1", DatabaseBackupID: "bak_1", ObjectKey: "pfx/db_1/x.gz", Status: domain.BackupSucceeded}
 	s := newScheduler(fs, fb)
 
-	if err := s.RunRestore(context.Background(), "db_1", "br_1", false); err != ErrRestoreNotConfirmed {
+	if _, err := s.RunRestore(context.Background(), "db_1", "br_1", false); err != ErrRestoreNotConfirmed {
 		t.Fatalf("unconfirmed restore err = %v, want ErrRestoreNotConfirmed", err)
 	}
 	if fb.count() != 0 {
 		t.Fatal("unconfirmed restore must publish no work")
 	}
-	if err := s.RunRestore(context.Background(), "db_1", "br_1", true); err != nil {
+	if _, err := s.RunRestore(context.Background(), "db_1", "br_1", true); err != nil {
 		t.Fatalf("confirmed restore: %v", err)
 	}
 	if p, _ := fb.last(); p.subject != subjects.DbRestore("srv_1") {
@@ -232,5 +232,90 @@ func TestSweepSkipsDisabledManualAndBadCron(t *testing.T) {
 		if p.subject == subjects.DbBackup("srv_1") {
 			t.Fatalf("a disabled/manual/bad-cron schedule was fired: %+v", p)
 		}
+	}
+}
+
+// ─── restore progress (managed-databases.md §"Restoring") ───────────────────
+
+// A running event advances the record; the terminal one closes it and takes the
+// database off `restoring`, which nothing else would clear if the restore failed
+// before the container came back for DbStatus to observe.
+// schedulerForRestore seeds the same fixture TestRestoreRequiresConfirm uses.
+func schedulerForRestore(t *testing.T) (*Scheduler, *fakeStore) {
+	t.Helper()
+	fs, fb := newFakeStore(), &fakeBus{}
+	seedBackupFixture(fs)
+	fs.records["br_1"] = domain.BackupRecord{ID: "br_1", DatabaseBackupID: "bak_1", ObjectKey: "pfx/db_1/x.gz", Status: domain.BackupSucceeded}
+	return newScheduler(fs, fb), fs
+}
+
+func TestRestoreEventsAdvanceThenCloseTheRecord(t *testing.T) {
+	s, fs := schedulerForRestore(t)
+	ctx := context.Background()
+
+	restore, err := s.RunRestore(ctx, "db_1", "br_1", true)
+	if err != nil {
+		t.Fatalf("RunRestore: %v", err)
+	}
+	if fs.dbStatuses["db_1"] != domain.DbRestoring {
+		t.Fatalf("database status = %q, want restoring while the work is in flight", fs.dbStatuses["db_1"])
+	}
+
+	s.HandleDbRestoreEvent(ctx, "srv_1", &agentv1.DbRestoreEvent{
+		RestoreId: restore.ID, DbId: "db_1",
+		Outcome:   agentv1.DbRestoreEvent_OUTCOME_RUNNING,
+		Step:      agentv1.DbRestoreEvent_STEP_APPLYING,
+		BytesDone: 148, BytesTotal: 212,
+	})
+	got, _ := fs.GetDatabaseRestore(ctx, restore.ID)
+	if got.Step != domain.RestoreStepApplying || got.BytesDone != 148 {
+		t.Fatalf("after progress = %+v, want applying 148", got)
+	}
+	if got.Status != domain.RestoreRunning {
+		t.Fatalf("a progress event closed the restore: %+v", got)
+	}
+
+	s.HandleDbRestoreEvent(ctx, "srv_1", &agentv1.DbRestoreEvent{
+		RestoreId: restore.ID, DbId: "db_1",
+		Outcome: agentv1.DbRestoreEvent_OUTCOME_SUCCEEDED,
+	})
+	got, _ = fs.GetDatabaseRestore(ctx, restore.ID)
+	if got.Status != domain.RestoreSucceeded || got.FinishedAt == nil {
+		t.Fatalf("after success = %+v, want succeeded and finished", got)
+	}
+	if fs.dbStatuses["db_1"] == domain.DbRestoring {
+		t.Fatal("the database is still marked restoring after the restore ended")
+	}
+}
+
+// A redelivered terminal event must not re-decide the outcome, and must not
+// move the database's status a second time.
+func TestRestoreTerminalEventIsIdempotent(t *testing.T) {
+	s, fs := schedulerForRestore(t)
+	ctx := context.Background()
+
+	restore, err := s.RunRestore(ctx, "db_1", "br_1", true)
+	if err != nil {
+		t.Fatalf("RunRestore: %v", err)
+	}
+	success := &agentv1.DbRestoreEvent{
+		RestoreId: restore.ID, DbId: "db_1",
+		Outcome: agentv1.DbRestoreEvent_OUTCOME_SUCCEEDED,
+	}
+	s.HandleDbRestoreEvent(ctx, "srv_1", success)
+	s.HandleDbRestoreEvent(ctx, "srv_1", success) // redelivered
+
+	// And a failure arriving after the success does not overwrite it.
+	s.HandleDbRestoreEvent(ctx, "srv_1", &agentv1.DbRestoreEvent{
+		RestoreId: restore.ID, DbId: "db_1",
+		Outcome: agentv1.DbRestoreEvent_OUTCOME_FAILED, Detail: "late",
+	})
+
+	got, _ := fs.GetDatabaseRestore(ctx, restore.ID)
+	if got.Status != domain.RestoreSucceeded || got.Detail != "" {
+		t.Fatalf("restore = %+v, want the first outcome untouched", got)
+	}
+	if fs.dbStatuses["db_1"] == domain.DbError {
+		t.Fatal("a late failure event moved the database to error")
 	}
 }

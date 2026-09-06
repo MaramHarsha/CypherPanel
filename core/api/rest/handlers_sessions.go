@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/auth"
 )
 
@@ -53,6 +54,11 @@ func (a *API) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
 		a.deps.Log.Error("revoking session", "error", err)
 		writeError(w, http.StatusInternalServerError, "could not revoke session")
 	default:
+		a.audit(r, audit.Entry{
+			Action:   audit.ActionSessionRevoked,
+			Resource: audit.Resource(audit.ResourceSession, r.PathValue("id"), p.User.Email),
+			Detail:   map[string]any{"scope": "one"},
+		})
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -67,5 +73,10 @@ func (a *API) handleRevokeOtherSessions(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "could not revoke sessions")
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionSessionRevoked,
+		Resource: audit.Resource(audit.ResourceSession, p.SessionID, p.User.Email),
+		Detail:   map[string]any{"scope": "others", "revoked": n},
+	})
 	writeJSON(w, http.StatusOK, revokeSessionsResponse{Revoked: n})
 }

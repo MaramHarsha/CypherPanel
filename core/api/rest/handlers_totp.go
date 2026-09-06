@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/auth"
 )
 
@@ -87,6 +88,10 @@ func (a *API) handleTOTPVerify(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not enable two-factor")
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionTOTPEnabled,
+		Resource: audit.Resource(audit.ResourceUser, user.ID, user.Email),
+	})
 	writeJSON(w, http.StatusOK, totpVerifyResponse{RecoveryCodes: codes})
 }
 
@@ -118,5 +123,11 @@ func (a *API) handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not disable two-factor")
 		return
 	}
+	// Turning 2FA off is the last step of an account takeover (threat-model
+	// §5.8), so it is one of the rows the log exists for.
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionTOTPDisabled,
+		Resource: audit.Resource(audit.ResourceUser, user.ID, user.Email),
+	})
 	w.WriteHeader(http.StatusNoContent)
 }

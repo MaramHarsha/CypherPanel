@@ -6,7 +6,15 @@ import { Check, X } from "lucide-react";
 import { Fragment } from "react";
 import { cn } from "@/lib/utils";
 
-type DeployStatus = "queued" | "building" | "distributing" | "rolling_out" | "succeeded" | "failed" | string;
+type DeployStatus =
+  | "queued"
+  | "awaiting_approval"
+  | "building"
+  | "distributing"
+  | "rolling_out"
+  | "succeeded"
+  | "failed"
+  | string;
 
 // `short` is the 300px sheet's label (canvas 14c: BUILD · DIST · ROLLOUT ·
 // SERVE) — four full words plus their connectors do not fit in the ~264px a
@@ -19,6 +27,10 @@ const STAGES = [
 ] as const;
 
 const ORDER: Record<string, number> = {
+  // A parked deploy sits before the first stage, beside `queued`: nothing has
+  // been built, and the rail must not light a stage that has not begun
+  // (deploy-protection.md §7).
+  awaiting_approval: -1,
   queued: -1,
   building: 0,
   distributing: 1,
@@ -43,6 +55,7 @@ export function failedStage(detail: string | undefined): string {
 /** The stage in progress, in the present tense — "rolling out". Empty once terminal. */
 export function stageWord(status: DeployStatus): string {
   if (status === "succeeded" || status === "failed") return "";
+  if (status === "awaiting_approval") return "awaiting approval";
   const i = ORDER[status] ?? -1;
   return i < 0 ? "queued" : STAGES[i]!.word;
 }

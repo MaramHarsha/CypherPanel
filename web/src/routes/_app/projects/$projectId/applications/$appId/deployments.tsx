@@ -52,10 +52,22 @@ function isTerminal(status: string): boolean {
   return status === "succeeded" || status === "failed";
 }
 
+/**
+ * A deploy is LIVE while the plane is working on it. `awaiting_approval` is
+ * neither live nor terminal: it is parked, waiting for a person
+ * (deploy-protection.md §3). Treating it as live would pulse the deploying dot
+ * for something doing nothing, disable the Deploy button for as long as it sat
+ * there, and poll for a change that only a human can make.
+ */
+function isLive(status: string): boolean {
+  return !isTerminal(status) && status !== "awaiting_approval";
+}
+
 /** Deployment status → the shared status vocabulary (ui-principles §5). */
 function toStatus(d: Deployment, isNewest: boolean): string {
   if (d.status === "failed") return "error";
-  if (!isTerminal(d.status)) return "deploying";
+  if (d.status === "awaiting_approval") return "stopped";
+  if (isLive(d.status)) return "deploying";
   return isNewest ? "running" : "stopped";
 }
 
@@ -67,7 +79,8 @@ function toStatus(d: Deployment, isNewest: boolean): string {
  */
 function outcome(d: Deployment, isNewest: boolean): string {
   if (d.status === "failed") return "failed";
-  if (!isTerminal(d.status)) return "deploying";
+  if (d.status === "awaiting_approval") return "awaiting approval";
+  if (isLive(d.status)) return "deploying";
   return isNewest ? "serving" : "superseded";
 }
 
@@ -205,7 +218,7 @@ function DeploymentsTab() {
   const served = useMemo(() => servedDurations(list), [list]);
   // A rollback while a rollout is in flight would race it for the same slot;
   // the row pills say so instead of letting the plane refuse it.
-  const deployBusy = list.some((d) => !isTerminal(d.status));
+  const deployBusy = list.some((d) => isLive(d.status));
   const selectedAt = list.findIndex((d) => d.id === dep);
   const selected = selectedAt >= 0 ? list[selectedAt] : undefined;
   // Deploys are numbered from the first one, and the list arrives newest-first.
@@ -368,7 +381,7 @@ function DeploymentRow({
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   const status = toStatus(d, isNewest);
-  const live = !isTerminal(d.status);
+  const live = isLive(d.status);
   const took = elapsed(d.created_at, d.finished_at);
   const rev = shortRev(d.revision_id);
   // The phone row folds the outcome into its second line (canvas 14c: "6 days ·
@@ -494,7 +507,7 @@ function PanelHead({
 }) {
   const dep = useGetDeployment(depId);
   const revision = rev ?? (dep.data ? shortRev(dep.data.revision_id) : undefined);
-  const live = dep.data ? !isTerminal(dep.data.status) : false;
+  const live = dep.data ? isLive(dep.data.status) : false;
   const clock = useElapsedClock(dep.data?.created_at, live);
   const meta = [ordinal !== undefined ? `deploy #${ordinal}` : null, clock ?? null].filter(Boolean).join(" · ");
   return (
@@ -554,7 +567,9 @@ function DeployPanel({
       // The events stream invalidates the application and its lists, not this
       // deployment's own key — so while the deploy runs, the rail is polled.
       // Off again the moment it is terminal.
-      refetchInterval: (q) => (q.state.data && isTerminal(q.state.data.status) ? false : 3_000),
+      // A parked deploy is not polled either: only a person can move it, and
+      // they do that from a route that invalidates this key.
+      refetchInterval: (q) => (q.state.data && !isLive(q.state.data.status) ? false : 3_000),
     },
   });
   const { rollback, state } = useRollbackAction(appId, projectId);
@@ -606,14 +621,14 @@ function DeployPanel({
       {/* The caret means "more is coming". cypherd parks on the replay stream
           after a deploy ends, so the transport still reports open — only the
           deployment's own status can answer the question. */}
-      <LogViewer url={getStreamDeploymentLogsUrl(d.id)} live={!isTerminal(d.status)} className="min-h-0 flex-1" />
+      <LogViewer url={getStreamDeploymentLogsUrl(d.id)} live={isLive(d.status)} className="min-h-0 flex-1" />
       <p className="mt-3 font-mono text-[11.5px] text-toast-faint">
         {d.trigger} · started <span title={absoluteTime(d.created_at)}>{relativeTime(d.created_at)}</span>
         {took ? ` · ${took}` : ""}
       </p>
       {/* Only true while a rollout is in flight — and it is the sentence the
           whole pipeline exists to be able to say. */}
-      {!isTerminal(d.status) && serving && (
+      {isLive(d.status) && serving && (
         <p className="mt-1 font-mono text-[11.5px] text-toast-faint">
           zero-downtime: {shortRev(serving.revision_id)} serves until {rev} is healthy
         </p>

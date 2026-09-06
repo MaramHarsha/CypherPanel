@@ -104,3 +104,22 @@ func TestWorkConsumerNameHasNoDots(t *testing.T) {
 		t.Errorf("WorkConsumer name %q contains a dot", WorkConsumer("srv_alpha"))
 	}
 }
+
+// TestInboxPrefixIsOneTokenAndPerServer: the inbox prefix becomes the first
+// token of every reply subject, so it must carry no dot, must sit inside the
+// server's own inbox grant, and must never fall inside another server's.
+func TestInboxPrefixIsOneTokenAndPerServer(t *testing.T) {
+	prefix := InboxPrefix("srv_alpha")
+	if strings.Contains(prefix, ".") {
+		t.Fatalf("InboxPrefix %q contains a dot", prefix)
+	}
+	scope := strings.TrimSuffix(InboxForServer("srv_alpha"), ">")
+	if !strings.HasPrefix(prefix+".abc.1", scope) {
+		t.Errorf("reply subject %q is outside the inbox grant %q", prefix+".abc.1", InboxForServer("srv_alpha"))
+	}
+	for _, other := range []string{InboxPrefix("srv_alphab") + ".x", InboxPrefix("srv_beta") + ".x", "_INBOX.x"} {
+		if strings.HasPrefix(other, scope) {
+			t.Errorf("%q falls inside srv_alpha's inbox scope %q", other, scope)
+		}
+	}
+}

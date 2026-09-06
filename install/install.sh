@@ -19,6 +19,10 @@
 #   CYPHERD_SHA256     sha256 of the binary; verified when set.
 #   CYPHERD_PUBLIC_HOST  hostname/IP agents and browsers reach this plane at.
 #                      Auto-detected when unset.
+#   CYPHERD_PUBLIC_URL   browser-facing base URL, scheme+host[:port], when TLS
+#                      or a reverse proxy sits in front (e.g.
+#                      https://panel.example.com). Every link the panel writes
+#                      to itself is built from it. Optional.
 #   CYPHERD_HTTP_PORT  panel port (default 8080).
 #   CYPHER_SKIP_DOCKER set to 1 if you manage Docker yourself.
 #   POSTGRES_IMAGE     default postgres:16-alpine.
@@ -149,6 +153,16 @@ if [ -z "$PUBLIC_HOST" ]; then
 fi
 ok "public host: $PUBLIC_HOST"
 
+# The browser-facing base URL, when TLS terminates in front. Preserved across
+# re-runs like every other setting; empty means "derive http://host:port", which
+# is right for a panel exposed directly.
+PUBLIC_URL="${CYPHERD_PUBLIC_URL:-$(read_env CYPHERD_PUBLIC_URL)}"
+case "$PUBLIC_URL" in
+    "") ;;
+    http://*|https://*) ok "public URL: $PUBLIC_URL" ;;
+    *) fail "CYPHERD_PUBLIC_URL must start with http:// or https:// (got '$PUBLIC_URL')" ;;
+esac
+
 # ── postgres ─────────────────────────────────────────────────────────────────
 
 if docker inspect "$PG_NAME" >/dev/null 2>&1; then
@@ -223,6 +237,12 @@ POSTGRES_PASSWORD=$PG_PASSWORD
 CYPHERD_MASTER_KEY=$MASTER_KEY
 CYPHERD_DATABASE_URL=postgres://cypherpanel:$PG_PASSWORD@127.0.0.1:5432/cypherpanel?sslmode=disable
 CYPHERD_PUBLIC_HOST=$PUBLIC_HOST
+# Set this to the URL a browser types when TLS or a reverse proxy is in front
+# (e.g. https://panel.example.com). Every link the panel writes to itself — the
+# email-change confirmation, the GitHub webhook URL, the join command — is built
+# from it. Also set CYPHERD_TRUSTED_PROXIES to the proxy's CIDR so the panel
+# knows which client address a rate limit belongs to.
+CYPHERD_PUBLIC_URL=$PUBLIC_URL
 CYPHERD_HTTP_ADDR=0.0.0.0:$HTTP_PORT
 CYPHERD_ENROLL_ADDR=0.0.0.0:$ENROLL_PORT
 CYPHERD_NATS_ADDR=0.0.0.0:$NATS_PORT
@@ -291,7 +311,11 @@ ok "panel is running"
 # ── done ─────────────────────────────────────────────────────────────────────
 
 printf '\n\033[32mCypherPanel is installed.\033[0m\n\n'
-printf '  Open   http://%s:%s\n' "$PUBLIC_HOST" "$HTTP_PORT"
+if [ -n "$PUBLIC_URL" ]; then
+    printf '  Open   %s\n' "$PUBLIC_URL"
+else
+    printf '  Open   http://%s:%s\n' "$PUBLIC_HOST" "$HTTP_PORT"
+fi
 printf '  and create the owner account — that screen appears exactly once.\n\n'
 printf '  Anyone who reaches the panel before you can claim it, so do this now,\n'
 printf '  or restrict the port until you have:\n'

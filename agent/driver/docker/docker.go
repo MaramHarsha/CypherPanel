@@ -22,6 +22,7 @@ import (
 
 	"github.com/MaramHarsha/cypherpanel/agent/driver"
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
+	"github.com/MaramHarsha/cypherpanel/pkg/registryauth"
 )
 
 // driverName identifies this driver in labels, heartbeats, and work routing.
@@ -48,7 +49,11 @@ type Container struct {
 	Name       string
 	AppID      string
 	RevisionID string
-	Running    bool
+	// RestartToken is the token this container was created under. A container
+	// whose token differs from the spec's is not the desired container, even at
+	// the desired revision (deployment-control.md §3).
+	RestartToken string
+	Running      bool
 }
 
 // ContainerSpec is the create request the driver builds from an AppSpec.
@@ -91,6 +96,17 @@ type Image struct {
 	// Pending is the tidy-up an earlier rollout could not finish — a registry
 	// reference our own pull created and failed to drop.
 	Pending []PendingRef
+	// Managed pairs each managed reference with the application and revision it
+	// names, so garbage collection can reclaim ONE revision's reference without
+	// touching another's on a shared image (disk-management.md §2).
+	Managed []ManagedRef
+}
+
+// ManagedRef is one reference this driver created, with what it names.
+type ManagedRef struct {
+	Reference  string
+	AppID      string
+	RevisionID string
 }
 
 // PendingRef pairs a registry reference this driver's pull created with the
@@ -132,7 +148,9 @@ type Client interface {
 	// pick up whatever that tag points at now rather than silently reusing the
 	// cached image. Only pull-marked specs reach it (AppSpec.pull — deploy from
 	// container image); built images keep the ADR-008 local/relay contract.
-	EnsureImage(ctx context.Context, image string) error
+	// registryAuth is the encoded credential for a private registry
+	// (pkg/registryauth); empty is the anonymous pull every public image does.
+	EnsureImage(ctx context.Context, image, registryAuth string) error
 	// ImageDigest returns the immutable digest reference (repo@sha256:…) of a
 	// local image, or "" when it has none (a locally-built image never pushed
 	// anywhere). This is what lets the plane pin a revision to the artifact it
@@ -216,7 +234,7 @@ func (d *Driver) Name() string { return driverName }
 // the others (reconciler-development skill). Apps absent from desired are torn
 // down; a teardown that fails is itself reported as an observed error status —
 // the plane must see that removal has not actually converged.
-func (d *Driver) Reconcile(ctx context.Context, desired []*agentv1.AppSpec) ([]*agentv1.AppStatus, error) {
+func (d *Driver) Reconcile(ctx context.Context, desired []*agentv1.AppSpec, retain []*agentv1.RetainSpec) ([]*agentv1.AppStatus, error) {
 	managed, err := d.client.ListManaged(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("docker: listing managed containers: %w", err)
@@ -278,7 +296,7 @@ func (d *Driver) Reconcile(ctx context.Context, desired []*agentv1.AppSpec) ([]*
 	// Desired-state image GC: images of fully-removed apps are prunable
 	// (threat-model §5.9). Revision-window GC within a still-desired app needs
 	// the plane's retain-set and lands with the deployment store.
-	d.gcRemovedAppImages(ctx, desiredApps)
+	d.gcImages(ctx, desiredApps, retainSet(retain))
 
 	return statuses, nil
 }
@@ -296,7 +314,10 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 	var leftovers []Container // everything else: old revisions, dead duplicates
 	for i := range existing {
 		c := existing[i]
-		if c.RevisionID == spec.GetRevisionId() && c.Running && current == nil {
+		// The desired container is the one at the desired revision AND under the
+		// desired restart token. A restart changes only the second, which is
+		// exactly what makes it a difference the ordinary rollout path closes.
+		if c.RevisionID == spec.GetRevisionId() && c.RestartToken == spec.GetRestartToken() && c.Running && current == nil {
 			current = &existing[i]
 			continue
 		}
@@ -334,7 +355,18 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 			hadSource = true
 			d.log.Warn("checking image provenance", "image", image, "error", hasErr)
 		}
-		if err := d.client.EnsureImage(ctx, image); err != nil {
+		// The credential is assembled per rollout and lives only for this call:
+		// nothing about a registry is written to the agent's disk, so revoking
+		// one on the plane revokes it here at the next work item.
+		auth, authErr := registryauth.Encode(
+			spec.GetRegistryAuth().GetServerAddress(),
+			spec.GetRegistryAuth().GetUsername(),
+			spec.GetRegistryAuth().GetToken(),
+		)
+		if authErr != nil {
+			return status(spec.GetAppId(), currentRevision(existing), stateError, "registry credential: "+authErr.Error())
+		}
+		if err := d.client.EnsureImage(ctx, image, auth); err != nil {
 			return status(spec.GetAppId(), currentRevision(existing), stateError, "pull: "+err.Error())
 		}
 		// Record that the reference is ours before anything else can fail.
@@ -377,9 +409,16 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 
 	// A dead container of the desired revision (crash between create and
 	// start) holds the deterministic name; clear it so create cannot collide.
+	//
+	// Matched on the restart token too, because that is what the name now
+	// carries: a leftover at the same revision under a DIFFERENT token is the
+	// container a restart is replacing, it is very likely still serving, and
+	// discarding it here would turn a zero-downtime restart into an outage. It
+	// stays a leftover and is drained after the replacement is healthy and
+	// routed.
 	remaining := leftovers[:0]
 	for _, c := range leftovers {
-		if c.RevisionID == spec.GetRevisionId() {
+		if c.RevisionID == spec.GetRevisionId() && c.RestartToken == spec.GetRestartToken() {
 			d.discard(ctx, c.ID)
 			continue
 		}
@@ -389,7 +428,7 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 
 	// Start the new revision alongside the old one.
 	newID, err := d.client.CreateContainer(ctx, ContainerSpec{
-		Name:          containerName(spec.GetAppId(), spec.GetRevisionId()),
+		Name:          containerName(spec.GetAppId(), spec.GetRevisionId(), spec.GetRestartToken()),
 		Image:         image,
 		Env:           spec.GetEnv(),
 		Network:       spec.GetNetwork(),
@@ -565,9 +604,45 @@ func (d *Driver) dropPullCreated(ctx context.Context, ref PendingRef) {
 	}
 }
 
-// gcRemovedAppImages removes images belonging to apps absent from desired, and
-// finishes any pull-reference tidy-up an earlier rollout could not complete.
-func (d *Driver) gcRemovedAppImages(ctx context.Context, desiredApps map[string]struct{}) {
+// retainSet indexes the plane's instruction: for each application, the
+// revisions whose images must survive (disk-management.md §2).
+//
+// An application ABSENT from the instruction is absent from this map, and every
+// caller reads that as "no instruction", never as "remove everything". That is
+// the opposite of how the spec list is read, deliberately: the cost of keeping
+// an image too long is disk, and the cost of removing one too early is a
+// rollback that cannot run.
+func retainSet(desired []*agentv1.RetainSpec) map[string]map[string]struct{} {
+	if len(desired) == 0 {
+		return nil
+	}
+	out := make(map[string]map[string]struct{}, len(desired))
+	for _, r := range desired {
+		if len(r.GetRevisionIds()) == 0 {
+			continue // no instruction, not "keep nothing"
+		}
+		keep := make(map[string]struct{}, len(r.GetRevisionIds()))
+		for _, rev := range r.GetRevisionIds() {
+			keep[rev] = struct{}{}
+		}
+		out[r.GetAppId()] = keep
+	}
+	return out
+}
+
+// gcImages reclaims what desired state does not reference.
+//
+// Two rules, and nothing else is ever touched. An application absent from
+// desired loses every managed reference — that is absence-means-remove, and it
+// already existed. An application still desired loses the references naming
+// revisions outside its retain set — that is the part a prune job cannot do,
+// because it cannot know which stopped image a rollback still needs.
+//
+// It works on REFERENCES rather than images: two revisions of one app can share
+// an image, and one operator's own tag can sit beside ours on it. Removing a
+// name we created frees the layers exactly when the last such name goes, and
+// never removes one we did not create.
+func (d *Driver) gcImages(ctx context.Context, desiredApps map[string]struct{}, retain map[string]map[string]struct{}) {
 	images, err := d.client.ListManagedImages(ctx)
 	if err != nil {
 		d.log.Warn("listing managed images for GC", "error", err)
@@ -588,6 +663,7 @@ func (d *Driver) gcRemovedAppImages(ctx context.Context, desiredApps map[string]
 			_, wanted := desiredApps[appID]
 			return wanted
 		}) {
+			d.gcRetainedRevisions(ctx, img, desiredApps, retain)
 			continue
 		}
 		// Drop every managed alias. Together with the pending references above
@@ -598,6 +674,30 @@ func (d *Driver) gcRemovedAppImages(ctx context.Context, desiredApps map[string]
 			if err := d.client.RemoveImage(ctx, ref); err != nil {
 				d.log.Warn("removing image reference", "reference", ref, "app_ids", img.AppIDs, "error", err)
 			}
+		}
+	}
+}
+
+// gcRetainedRevisions drops the references of a still-desired application that
+// name a revision the plane no longer wants to be able to run.
+func (d *Driver) gcRetainedRevisions(ctx context.Context, img Image, desiredApps map[string]struct{}, retain map[string]map[string]struct{}) {
+	for _, ref := range img.Managed {
+		if _, wanted := desiredApps[ref.AppID]; !wanted {
+			continue // handled by the absence path, which drops every reference
+		}
+		keep, instructed := retain[ref.AppID]
+		if !instructed {
+			continue // no instruction for this app: leave it alone
+		}
+		if ref.RevisionID == "" {
+			continue // a reference that names no revision is not ours to judge
+		}
+		if _, retained := keep[ref.RevisionID]; retained {
+			continue
+		}
+		if err := d.client.RemoveImage(ctx, ref.Reference); err != nil {
+			d.log.Warn("reclaiming an unreferenced revision image",
+				"reference", ref.Reference, "app_id", ref.AppID, "revision_id", ref.RevisionID, "error", err)
 		}
 	}
 }
@@ -632,11 +732,17 @@ func (d *Driver) upstreamOf(ctx context.Context, containerID string, spec *agent
 }
 
 func managedLabels(spec *agentv1.AppSpec) map[string]string {
-	return map[string]string{
+	labels := map[string]string{
 		driver.LabelManaged:    driverName,
 		driver.LabelAppID:      spec.GetAppId(),
 		driver.LabelRevisionID: spec.GetRevisionId(),
 	}
+	// Stamped only when there is one, so an application that has never
+	// restarted keeps exactly the labels it had before this feature existed.
+	if t := spec.GetRestartToken(); t != "" {
+		labels[driver.LabelRestartToken] = t
+	}
+	return labels
 }
 
 // networkLabels marks the network as managed without app or revision labels:
@@ -655,8 +761,21 @@ func volumeLabels(spec *agentv1.AppSpec) map[string]string {
 	}
 }
 
-func containerName(appID, revisionID string) string {
-	return "cypher-" + appID + "-" + revisionID
+// containerName is the deterministic name a rollout creates under. The restart
+// token joins it so a restart's replacement does NOT collide with the container
+// it replaces: that is what lets a restart run the ordinary zero-downtime
+// sequence — start alongside, health-gate, flip the route, drain the old —
+// rather than killing the only container that is serving.
+//
+// Identity comes from labels, never from this name (see Container), so the
+// extra segment is cosmetic to everything except collision avoidance. An
+// application that has never restarted keeps the exact name it always had.
+func containerName(appID, revisionID, restartToken string) string {
+	name := "cypher-" + appID + "-" + revisionID
+	if restartToken != "" {
+		name += "-" + restartToken
+	}
+	return name
 }
 
 // managedImageTag is the deterministic reference every managed image lives

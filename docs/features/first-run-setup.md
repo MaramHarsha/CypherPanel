@@ -103,7 +103,10 @@ to login with a clear message.
 
 ## 8. Out of scope
 
-Multi-step onboarding wizards · email verification / invites (users are added
-in Settings → Users) · password-strength policy and rotation · SSO/OIDC
+Multi-step onboarding wizards · email verification · ~~invites~~ (**landed**
+as [invitations-and-access-requests.md](invitations-and-access-requests.md); an
+invitee chooses their own password against this file's `minPasswordLen`, so no
+door into the panel is weaker than another) · password-strength policy and
+rotation · SSO/OIDC
 first-run (post-v1) · recovery of a lost sole-owner account (operator restores
 from the DB / re-bootstraps).

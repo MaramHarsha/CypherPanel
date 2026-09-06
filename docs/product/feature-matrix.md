@@ -11,13 +11,13 @@
 | Raw git URL + deploy key | ✅ | ✅ | **V1** | |
 | Deploy from container image | ✅ | ✅ | **V1** | |
 | Dockerfile builds | ✅ | ✅ | **V1** | BuildKit on builder agents |
-| Nixpacks auto-build | ✅ | ✅ | **V1** | `dokploy/.../utils/builders/nixpacks.ts` |
-| Railpack | ✅ | ✅ | **V1** | `builders/railpack.ts` |
+| Nixpacks auto-build | ✅ | ✅ | **V1** ✅ | [pack-builds.md](../features/pack-builds.md) — `--out` writes a Dockerfile the ordinary build path consumes; `auto` prefers it only where the binary is installed |
+| Railpack | ✅ | ✅ | **V1** ✅ | [pack-builds.md](../features/pack-builds.md) §2 — `railpack prepare` writes a BuildKit frontend plan, built through the second transport (`docker buildx`) this feature adds. Same tag and labels as every other build, so nothing downstream can tell the transports apart |
 | Heroku / Paketo buildpacks | ❌ | ✅ | **Later** | `builders/heroku.ts`, `builders/paketo.ts` |
 | Static site builds | ✅ | ✅ | **V1** | `builders/static.ts` |
 | Drag-and-drop file deploy | ❌ | ✅ | **Later** | `builders/drop.ts` — niche but loved |
 | Build on dedicated node | ⚠️ (build server) | ❌ (manager node) | **V1** | Core architectural fix; builder role |
-| Multi-arch image builds (build on amd64, run on arm64) | ⚠️ | ❌ | **V1.x** | BuildKit cross-platform; recurring Coolify pain point — and the cheapest servers (Hetzner ARM, Graviton, RPi) are arm64 |
+| Multi-arch image builds (build on amd64, run on arm64) | ⚠️ | ❌ | **V1.x** (the BuildKit transport it needs now exists — [pack-builds.md](../features/pack-builds.md) §2) | BuildKit cross-platform; recurring Coolify pain point — and the cheapest servers (Hetzner ARM, Graviton, RPi) are arm64 |
 | Verbose build logs streamed by default | ⚠️ (needs `BUILDKIT_PROGRESS=plain`) | ⚠️ | **V1** | Silent build failures are a top Reddit complaint; no hidden verbosity toggles |
 | Framework build presets (`.dockerignore`, Next.js standalone, memory caps) | ❌ | ❌ | **V1.x** | Heavy Next.js/Nuxt builds crash modest hosts today; presets + build resource caps prevent it before it happens |
 | Watch paths (monorepo triggers) | ⚠️ | ✅ | **V1.x** | `dokploy/.../utils/watch-paths` |
@@ -42,7 +42,7 @@
 | Valkey (BSD-licensed Redis fork) | ❌ | ❌ | **V1** | Neither reference has it (verified against their engine lists). Protocol-compatible with Redis 7.2: same desired-state spec, different image — near-zero marginal cost. Recommended default for license-sensitive users; don't oversell "drop-in" (divergence since the fork). |
 | ClickHouse, KeyDB, Dragonfly | ✅ | ❌ | **V1.x** | Coolify `StandaloneClickhouse` etc. |
 | libSQL | ❌ | ✅ | **Later** | `schema/libsql.ts` |
-| Compose Stack resources | ✅ ("Services") | ✅ ("Compose") | **V1** | Terminology per [glossary.md](../glossary.md) |
+| Compose Stack resources | ✅ ("Services") | ✅ ("Compose") | **V1** ✅ | [compose-stacks.md](../features/compose-stacks.md) — the file is desired state; `up -d` is the convergence, never a command the plane sends |
 | One-click template catalog | ✅ (361 templates) | ✅ (remote registry) | **V1** (subset) → full in Phase 4 | `coolify/templates/compose/`; ADR-007 pending |
 | Volumes / mounts | ✅ | ✅ | **V1** | `dokploy/.../schema/mount.ts` |
 | Per-resource CPU/memory limits | ✅ | ✅ | **V1** | Noisy-neighbor control on shared servers |
@@ -59,7 +59,7 @@
 | Feature | Coolify | Dokploy | CypherPanel | Evidence / notes |
 |---|---|---|---|---|
 | Custom domains per resource | ✅ | ✅ | **V1** | |
-| Auto Let's Encrypt (HTTP-01) | ✅ | ✅ | **V1** | |
+| Auto Let's Encrypt (HTTP-01) | ✅ | ✅ | **V1** | One panel-wide ACME account (`PUT /panel/tls`, owner) carried to every node as desired state, so nothing is configured per host ([agent-identity-and-tls.md](../features/agent-identity-and-tls.md) §4). With no account configured a routed app is served over plain HTTP and the API says so (`tls_state: http_only_no_resolver`) rather than pointing routes at a resolver that does not exist |
 | Wildcard certs (DNS-01) | ⚠️ | ⚠️ | **V1.x** | Key for P4 (Hendrik) |
 | Custom/user certificates | ✅ | ✅ | **V1.x** | `dokploy/.../schema/certificate.ts` |
 | Redirects & middleware | ⚠️ | ✅ | **V1.x** | `schema/redirects.ts`, `schema/forward-auth.ts` |
@@ -78,13 +78,14 @@
 | Cloud provider server provisioning | ⚠️ (partial) | ❌ | **Later** | `coolify/app/Services/HetznerService.php`; join-token enrollment (ADR-002) makes this cheap |
 | Metric-triggered autoscaling | ❌ | ❌ | **Later** | Desired-state controller (ADR-005) + agent metrics; cooldowns and cost caps required |
 | Agent-based, no SSH keys stored | ⚠️ (Sentinel, metrics only) | ❌ | **V1** | Coolify Sentinel validates the direction |
+| Agent identity renews itself (no re-enrollment, no expiry cliff) | n/a (SSH keys, no expiry) | n/a (Swarm join tokens) | **V1** | Neither reference has the problem because neither has short-lived agent identities. Ours does, so it also has the renewal: a `Renew` RPC over the mTLS channel the agent already holds, at two thirds of the certificate's life, fresh key each time, atomic on-disk swap and no reconnection ([agent-identity-and-tls.md](../features/agent-identity-and-tls.md) §3) |
 | Live container logs | ✅ | ✅ | **V1** | |
 | Persistent log retention (bounded, survives crashes/restarts) | ❌ | ❌ | **V1.x** | Logs stream off-box via `logs.*` (ADR-003) as they happen; defined window (e.g. 7 days / N MB per resource), searchable. Fixes the "crashed at 3am, logs gone" gap both references have |
 | Log drains to external systems (Loki, Axiom, syslog, CloudWatch…) | ❌ | ❌ | **V1.x** | Heroku-proven pattern: agent already tails everything, sinks are cheap; long retention and complex queries stay off-platform (vision.md footprint budgets) |
 | Metric threshold alerts | ⚠️ (disk/server checks) | ✅ | **V1.x** | `dokploy/.../utils/notifications/server-threshold.ts`; ours routes through `core/notify` channels |
 | Interactive terminal | ✅ | ✅ | **V1.x** | Both use xterm + websockets; ours via gRPC stream |
 | Server metrics / monitoring | ✅ (Sentinel) | ✅ (Go monitoring app) | **V1.x** | `dokploy/apps/monitoring` — already Go, port concepts |
-| Proactive disk management (threshold alerts, auto-pruning policies, desired-state GC) | ⚠️ (cleanup exists; outages still common) | ⚠️ (same) | **V1** | **Reddit's #1 production killer for both tools** — silent disk fill until the panel itself crashes. Desired state makes GC principled: prune anything not referenced. Control plane reserves headroom for its own DB. `coolify/app/Jobs/DockerCleanupJob.php` shows the insufficient version |
+| Proactive disk management (threshold alerts, auto-pruning policies, desired-state GC) | ⚠️ (cleanup exists; outages still common) | ⚠️ (same) | **V1** ✅ | **Reddit's #1 production killer for both tools** — silent disk fill until the panel itself crashes. Desired state makes GC principled: prune anything not referenced. Control plane reserves headroom for its own DB. `coolify/app/Jobs/DockerCleanupJob.php` shows the insufficient version |
 | Notifications: Email/Discord/Slack/Telegram | ✅ (+Pushover) | ✅ (+Gotify) | **V1** (these 4) | `coolify/app/Jobs/SendMessageTo*Job.php`; `dokploy/.../utils/notifications` |
 | Auto-update of the platform (safe-by-design) | ⚠️ (breaks: #3687, #7193, #7599) | ✅ | **V1.x** | The community's #1 trust wound in Coolify — bricked panels, lost encryption keys. ADR-010 scope: pre-update snapshot, atomic apply + health-verified rollback, update lock; see [research/community-pain-points.md](../../research/community-pain-points.md) |
 | Panel-level backup/restore | ⚠️ | ✅ | **V1.x** | Control plane = 1 binary + pg_dump makes this easy |
@@ -103,12 +104,16 @@
 |---|---|---|---|---|
 | Teams / multi-tenancy | ✅ | ✅ (Organizations) | **V1** | |
 | Roles / permissions | ✅ (Member/Admin/Owner) | ✅ (granular) | **V1** (simple roles) | Granular RBAC **V1.x** |
+| Team invitations by email link | ✅ | ✅ | **V1** | An invited address gets a single-use, seven-day link, chooses its own password, and lands signed in — no admin creating an account and handing over a password. Only a hash of the secret is stored; re-inviting supersedes; removing a member revokes the invitations they issued. An invitation to an address that *already* has an account requires that account's current password and its second factor, so it is never a takeover primitive ([invitations-and-access-requests.md](../features/invitations-and-access-requests.md)) |
+| Access requests (member asks, owner decides) | ❌ | ❌ | **V1** | Neither reference has one: in both, "I need a higher role" is an out-of-band conversation. Ours is a first-class record — the 403 screen's "Request access" opens it, the team's owners get it in their inbox and their mailbox, granting applies through the ordinary member-role path (so the last-owner guard holds), and both decisions are audit-logged and session-only |
 | REST API + OpenAPI spec | ✅ | ✅ | **V1** | Both ship `openapi.json`; ours is spec-first |
 | API tokens with scoped abilities | ✅ (read/write/deploy) | ✅ | **V1** | Coolify's ability model is worth copying |
 | Outbound webhooks (signed, retried, replayable) | ❌ | ❌ | **V1** | Neither reference has one: Coolify's `app/Notifications/Channels/` is Discord/Email/Pushover/Slack/Telegram and Dokploy's `utils/notifications/` likewise — all human channels. Ours is the machine-facing twin of a Notifier: HMAC-SHA256 over `timestamp.body`, bounded retries, a readable per-attempt log ([outbound-webhooks.md](../features/outbound-webhooks.md)) |
 | Two-factor authentication (TOTP + recovery codes) | ✅ | ✅ | **V1** | Panel compromise = fleet control; account security is not optional here |
-| Login rate limiting & session management | ✅ | ⚠️ | **V1** | Brute-force protection, session revocation; threat-model deliverable (roadmap Phase 1) |
-| Audit log | ⚠️ | ✅ | **V1.x** | `dokploy/.../schema/audit-log.ts` |
+| Login rate limiting & session management | ✅ | ⚠️ | **V1** | Brute-force protection, session revocation; threat-model deliverable (roadmap Phase 1). Throttled per client address *and* per account, so one attacker behind a shared proxy cannot lock everyone out; `429` carries `Retry-After`; expired sessions are purged rather than merely ignored ([control-plane-hardening.md](../features/control-plane-hardening.md) §§5, 7) |
+| Panel version, update check & diagnostics | ⚠️ | ⚠️ | **V1** | `GET /panel/version` reports the running build and any newer release (opt-out feed check, once-per-version inbox item to owners; the panel never updates itself — [ADR-010](../adrs/ADR-010-agent-auto-update.md)). Every response carries `X-Request-Id`, repeated as `trace_id` in every error body, and `GET /panel/logs` hands an owner a bounded tail of the panel's own log — what a bug report needs, without shell access ([control-plane-hardening.md](../features/control-plane-hardening.md) §§2–4) |
+| Deploy protection (approvals + freeze windows) | ❌ | ❌ | **V1.x** | Neither reference gates a deploy on a person or a clock. An Environment declares who must approve and when deploys are refused; the plane enforces both at the single point where a Deployment is born, so a gated deploy is the ordinary pipeline that has not been allowed to start — no second pipeline, no agent change. Break glass is a 30-minute recorded override of the freeze, never of the approval ([deploy-protection.md](../features/deploy-protection.md)) |
+| Audit log | ⚠️ | ✅ | **V1.x** | `dokploy/.../schema/audit-log.ts` — the shape (one flat, queryable table rather than per-resource history), never the code. One immutable row per sensitive action: who did what to which resource, from where, and whether it worked, with the ownership chain snapshotted so an entry outlives everything it names — no foreign keys, because a cascade would delete exactly the evidence of a deletion. Queryable per team: scope IS the authorization, so a member of one team cannot read another's by any parameter, and a bad `team_id` is an empty page rather than a 403. `CYPHERD_AUDIT_RETENTION` (90d) purges past the horizon ([audit-log.md](../features/audit-log.md)) |
 | SSO / OIDC | ⚠️ | ✅ (+SCIM, proprietary) | **Later** | License caution — see [research/dokploy.md](../../research/dokploy.md) |
 | CLI | ⚠️ | ❌ | **V1.x** | Generated from OpenAPI |
 | Terraform provider | ❌ | ❌ | **Later** | Enabled by API-first |

@@ -167,3 +167,23 @@ FROM applications a
 JOIN servers s ON s.id = a.runtime_server_id
 WHERE a.route_domain <> '' AND s.public_address <> ''
 ORDER BY a.id;
+
+-- Managed records per zone, counting only what the panel still wants to exist.
+-- A tombstoned row (desired='absent') is on its way out and would overstate
+-- what disconnecting the provider affects.
+-- name: CountManagedRecordsByZone :many
+SELECT zone_id, count(*)::bigint AS managed_records
+FROM dns_records
+WHERE desired = 'present'
+GROUP BY zone_id;
+
+-- The applications whose domains are verified through the connected provider,
+-- which is exactly what stops being verified if it is disconnected. Ordered so
+-- a confirmation dialog reads the same way twice.
+-- name: ListApplicationsWithManagedDNS :many
+SELECT r.application_id, a.name AS application_name, r.name AS domain, z.name AS zone_name
+FROM dns_records r
+JOIN dns_zones z ON z.id = r.zone_id
+JOIN applications a ON a.id = r.application_id
+WHERE r.desired = 'present' AND r.application_id IS NOT NULL
+ORDER BY z.name, r.name;

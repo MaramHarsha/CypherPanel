@@ -59,13 +59,15 @@ func (a *API) handleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	})
 	if err != nil {
-		a.deps.Log.Error("subscribing to status", "error", err)
+		a.deps.Log.Error("subscribing to status", "user_id", user.ID, "trace_id", traceIDFromContext(ctx), "error", err)
 		writeError(w, http.StatusInternalServerError, "could not subscribe to events")
 		return
 	}
 	defer stop()
 
-	if _, err := fmt.Fprint(w, "event: connected\ndata: {}\n\n"); err != nil {
+	// The opening frame carries the request's correlation id, as every other
+	// response does (control-plane-hardening.md §2).
+	if _, err := fmt.Fprintf(w, "event: connected\ndata: {\"trace_id\":%q}\n\n", traceIDFromContext(ctx)); err != nil {
 		return
 	}
 	flusher.Flush()

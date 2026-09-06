@@ -44,9 +44,44 @@ func (s *Store) ListDNSZones(ctx context.Context) ([]domain.DNSZone, error) {
 	if err != nil {
 		return nil, wrap("listing dns zones", err)
 	}
+	// One grouped count for every zone rather than a query per row: the zones
+	// page renders the whole list, and N+1 here would scale with the operator's
+	// domain portfolio.
+	counts, err := s.q.CountManagedRecordsByZone(ctx)
+	if err != nil {
+		return nil, wrap("counting managed dns records", err)
+	}
+	byZone := make(map[string]int64, len(counts))
+	for _, c := range counts {
+		byZone[c.ZoneID] = c.ManagedRecords
+	}
 	out := make([]domain.DNSZone, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, dnsZoneFromRow(r))
+		z := dnsZoneFromRow(r)
+		z.ManagedRecords = byZone[z.ID]
+		out = append(out, z)
+	}
+	return out, nil
+}
+
+// ListApplicationsWithManagedDNS returns the domains that are verified through
+// the connected provider — the blast radius of disconnecting it.
+func (s *Store) ListApplicationsWithManagedDNS(ctx context.Context) ([]domain.DNSVerifiedDomain, error) {
+	rows, err := s.q.ListApplicationsWithManagedDNS(ctx)
+	if err != nil {
+		return nil, wrap("listing applications with managed dns", err)
+	}
+	out := make([]domain.DNSVerifiedDomain, 0, len(rows))
+	for _, r := range rows {
+		d := domain.DNSVerifiedDomain{
+			ApplicationName: r.ApplicationName,
+			Domain:          r.Domain,
+			ZoneName:        r.ZoneName,
+		}
+		if r.ApplicationID.Valid {
+			d.ApplicationID = r.ApplicationID.String
+		}
+		out = append(out, d)
 	}
 	return out, nil
 }

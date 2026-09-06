@@ -8,14 +8,18 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
-	"net"
 	"net/http"
+	"net/netip"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/MaramHarsha/cypherpanel/core/access"
 	"github.com/MaramHarsha/cypherpanel/core/api/rest/webui"
 	"github.com/MaramHarsha/cypherpanel/core/applications"
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/auth"
 	"github.com/MaramHarsha/cypherpanel/core/databases"
 	"github.com/MaramHarsha/cypherpanel/core/deploykeys"
@@ -23,6 +27,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/inbox"
 	"github.com/MaramHarsha/cypherpanel/core/notify"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
+	"github.com/MaramHarsha/cypherpanel/core/protection"
 	"github.com/MaramHarsha/cypherpanel/core/scheduledtasks"
 	"github.com/MaramHarsha/cypherpanel/core/servers"
 	"github.com/MaramHarsha/cypherpanel/core/sharedvars"
@@ -37,10 +42,48 @@ type Pinger interface {
 
 // Deployer starts pipelines and publishes desired absence (consumer-defined;
 // *scheduler.Scheduler satisfies it).
+//
+// The two start verbs are the ATTRIBUTED forms: every deploy reachable from
+// this API was asked for by an identified principal, or by a signed webhook
+// push that has none, and deploy protection records which (deploy-protection.md
+// §2). The unattributed Deploy/Rollback stay on the scheduler for the
+// machine-triggered paths — a template install, a preview environment — which
+// this package never calls.
 type Deployer interface {
-	Deploy(ctx context.Context, appID, trigger, ref string) (domain.Deployment, error)
-	Rollback(ctx context.Context, deploymentID string) (domain.Deployment, error)
+	DeployAs(ctx context.Context, appID, trigger, ref, requestedBy string) (domain.Deployment, error)
+	RollbackAs(ctx context.Context, deploymentID, requestedBy string) (domain.Deployment, error)
 	RemoveApp(ctx context.Context, serverID, appID string) error
+	// Cancel ends a deployment the operator has stopped waiting on, and
+	// Restart recreates an application's container without shipping anything
+	// new (deployment-control.md §§2-3).
+	Cancel(ctx context.Context, deploymentID, by string) (domain.Deployment, error)
+	Restart(ctx context.Context, appID string) (domain.Application, error)
+}
+
+// ProtectionService is deploy protection (consumer-defined; *protection.Service
+// satisfies it — deploy-protection.md §6): the policy document, the approval
+// queue, the two decision verbs and the recorded freeze override. nil when the
+// feature is not wired, which every handler treats as "nothing is protected" —
+// the same answer the default document gives.
+type ProtectionService interface {
+	Get(ctx context.Context, envID string) (domain.EnvironmentProtection, error)
+	Set(ctx context.Context, envID string, in protection.Document) (domain.EnvironmentProtection, error)
+
+	Approvals(ctx context.Context, envID, state string) ([]domain.DeployApproval, error)
+	// ApprovalFor is also what the deployment DTO attaches, so it stays a
+	// plain lookup; store.ErrNotFound means the deployment was never gated.
+	ApprovalFor(ctx context.Context, deploymentID string) (domain.DeployApproval, error)
+	// ApprovalsForApplication decorates ONE PAGE of deployments: the ids are
+	// the rows being rendered, not the application's whole deploy history.
+	ApprovalsForApplication(ctx context.Context, appID string, deploymentIDs []string) (map[string]domain.DeployApproval, error)
+	Approve(ctx context.Context, deploymentID string, actor domain.User) (domain.Deployment, domain.DeployApproval, error)
+	Reject(ctx context.Context, deploymentID, reason string, actor domain.User) (domain.Deployment, domain.DeployApproval, error)
+
+	OpenBreakGlass(ctx context.Context, envID string, actor domain.User, reason string) (domain.BreakGlassGrant, error)
+	BreakGlassGrants(ctx context.Context, envID string) ([]domain.BreakGlassGrant, error)
+	// Now is the service's own clock, so a grant's `active` flag in a response
+	// and the gate's decision are read from one time source.
+	Now() time.Time
 }
 
 // DeploymentReader reads deployment records (consumer-defined; *store.Store
@@ -60,7 +103,7 @@ type Opener interface {
 // *scheduler.Scheduler satisfies it — managed-databases.md §7).
 type BackupOps interface {
 	RunBackup(ctx context.Context, scheduleID string) (domain.BackupRecord, error)
-	RunRestore(ctx context.Context, dbID, backupRecordID string, confirm bool) error
+	RunRestore(ctx context.Context, dbID, backupRecordID string, confirm bool) (domain.DatabaseRestore, error)
 }
 
 // PreviewManager drives preview environments from PR events and exposes the
@@ -83,10 +126,21 @@ type NotifierService interface {
 	Delete(ctx context.Context, id string) error
 }
 
+// RestoreReader is the read side of database restores (consumer-defined;
+// *store.Store satisfies it). Writes belong to the scheduler, which is the only
+// thing that learns what an agent did.
+type RestoreReader interface {
+	ListDatabaseRestores(ctx context.Context, databaseID string, limit int32) ([]domain.DatabaseRestore, error)
+	GetDatabaseRestore(ctx context.Context, id string) (domain.DatabaseRestore, error)
+}
+
 // NotifierDelivery sends a synthetic event through one notifier — the test
 // endpoint (consumer-defined; *notify.Manager satisfies it).
 type NotifierDelivery interface {
 	Deliver(ctx context.Context, n domain.Notifier, ev domain.NotifyEvent) error
+	// TestConfig proves an unsaved configuration by using it, so a connection
+	// can be tested before it is stored.
+	TestConfig(ctx context.Context, channel string, cfg json.RawMessage) error
 }
 
 // WebhookEndpointService is the outbound webhook surface — endpoint CRUD, the
@@ -127,6 +181,24 @@ type SharedVariableService interface {
 	PendingInEnvironment(ctx context.Context, envID string) (map[string]bool, error)
 }
 
+// AuditRecorder is the audit log (consumer-defined; *audit.Service satisfies
+// it — audit-log.md §4, §5). One write verb and two reads: this package records
+// what its handlers did and reads the log back, and knows nothing about how
+// either is stored.
+//
+// nil when the feature is not wired, which every call site treats as "record
+// nothing" and both read routes answer as an empty log. A panel with no audit
+// service therefore behaves exactly as it did before this feature — it does not
+// fail requests because it cannot record them.
+type AuditRecorder interface {
+	Record(ctx context.Context, e audit.Entry) (domain.AuditEvent, error)
+	// List and Get take the VIEWER, not a scope: the service resolves what
+	// that user may see from their own panel role and team memberships, so no
+	// query parameter can widen it (§5).
+	List(ctx context.Context, viewer domain.User, q audit.Query) (audit.Page, error)
+	Get(ctx context.Context, viewer domain.User, id string) (domain.AuditEvent, error)
+}
+
 // InboxService is the notification inbox (consumer-defined; *inbox.Service
 // satisfies it — notification-inbox.md §6). Every method takes the caller's own
 // user id as its first argument and none accepts anyone else's: tenancy in this
@@ -165,6 +237,31 @@ type TeamService interface {
 	DeleteUser(ctx context.Context, userID string, actor domain.User) error
 }
 
+// InviteService is the team-invitation surface (consumer-defined;
+// *access.Invites satisfies it — invitations-and-access-requests.md §7).
+//
+// Preview and Accept take the CLIENT ADDRESS rather than a principal: they are
+// the two public routes, throttled by address exactly like sign-in, and the
+// service owns that throttle so the handler cannot forget it.
+type InviteService interface {
+	Create(ctx context.Context, teamID string, in access.CreateInput, actor domain.User, actorRole string) (access.Created, error)
+	List(ctx context.Context, teamID string, includeDecided bool) ([]domain.TeamInvite, error)
+	Revoke(ctx context.Context, teamID, id string) (domain.TeamInvite, error)
+	Preview(ctx context.Context, token, clientIP string) (access.Preview, error)
+	Accept(ctx context.Context, token string, in access.AcceptInput, clientIP string) (access.Accepted, error)
+}
+
+// AccessRequestService is the access-request surface (consumer-defined;
+// *access.Requests satisfies it). Get is what the two decision routes resolve
+// their team from, so it stays a plain lookup.
+type AccessRequestService interface {
+	Create(ctx context.Context, teamID string, actor domain.User, actorRole string, in access.RequestInput) (domain.AccessRequest, error)
+	List(ctx context.Context, teamID string, includeDecided bool) ([]domain.AccessRequest, error)
+	Get(ctx context.Context, id string) (domain.AccessRequest, error)
+	Grant(ctx context.Context, id string, actor domain.User, actorRole string) (domain.AccessRequest, error)
+	Deny(ctx context.Context, id, reason string, actor domain.User) (domain.AccessRequest, error)
+}
+
 // ScheduledTaskService is the scheduled-task CRUD surface (consumer-defined;
 // *scheduledtasks.Service satisfies it — scheduled-tasks.md §7).
 type ScheduledTaskService interface {
@@ -180,8 +277,10 @@ type ScheduledTaskService interface {
 // log subject (consumer-defined; *bus.Bus satisfies it). handle is invoked
 // from the subscriber's goroutine until stop is called.
 type LogSubscriber interface {
-	SubscribeLogs(ctx context.Context, subject string, handle func(data []byte)) (stop func(), err error)
-	SubscribeRuntimeLogs(ctx context.Context, subject string, handle func(data []byte)) (stop func(), err error)
+	// since bounds where the replay starts; the zero time replays everything
+	// the stream still holds (deployment-control.md §4).
+	SubscribeLogs(ctx context.Context, subject string, since time.Time, handle func(data []byte)) (stop func(), err error)
+	SubscribeRuntimeLogs(ctx context.Context, subject string, since time.Time, handle func(data []byte)) (stop func(), err error)
 	// SubscribeStatus delivers new app/database status observations (subject +
 	// payload) — the source for the /events SSE stream (ui-principles §10).
 	SubscribeStatus(ctx context.Context, handle func(subject string, data []byte)) (stop func(), err error)
@@ -196,42 +295,78 @@ type OnboardingService interface {
 }
 
 type Deps struct {
-	Auth             *auth.Authenticator
-	Onboarding       OnboardingService
-	Servers          *servers.Service
-	Projects         *projects.Service
-	Applications     *applications.Service
-	DeployKeys       *deploykeys.Service
-	Databases        *databases.Service
-	BackupTargets    *databases.BackupTargetService
-	BackupSchedules  *databases.BackupScheduleService
-	Backups          BackupOps
+	Auth            *auth.Authenticator
+	Onboarding      OnboardingService
+	Servers         *servers.Service
+	Projects        *projects.Service
+	Applications    *applications.Service
+	DeployKeys      *deploykeys.Service
+	Databases       *databases.Service
+	BackupTargets   *databases.BackupTargetService
+	BackupSchedules *databases.BackupScheduleService
+	Backups         BackupOps
+	// Restores reads the restore records the scheduler writes.
+	Restores         RestoreReader
 	Previews         PreviewManager
 	Notifiers        NotifierService
 	NotifyDelivery   NotifierDelivery
 	WebhookEndpoints WebhookEndpointService
-	Inbox            InboxService
-	SharedVariables  SharedVariableService
-	ScheduledTasks   ScheduledTaskService
-	Templates        *templates.Service
-	Teams            TeamService
-	Mail             MailService
+	// Registries are the team's container registry credentials
+	// (registries.md); nil answers 501 on every registry route, which is what
+	// a panel that has not wired them looked like before they existed.
+	Registries RegistryService
+	// Compose is the Compose Stack surface (compose-stacks.md); nil answers 501
+	// on every stack route, which is what a panel that has not wired them
+	// looked like before they existed.
+	Compose ComposeService
+	Inbox   InboxService
+	// Audit records every sensitive action and serves the log back
+	// (audit-log.md). nil records nothing and serves an empty log.
+	Audit           AuditRecorder
+	SharedVariables SharedVariableService
+	ScheduledTasks  ScheduledTaskService
+	Templates       *templates.Service
+	Teams           TeamService
+	// Invites and AccessRequests are the two ways into a team from outside it
+	// (invitations-and-access-requests.md). nil disables the routes rather than
+	// changing anyone's rank: a panel without them behaves exactly as it did
+	// before the feature existed.
+	Invites        InviteService
+	AccessRequests AccessRequestService
+	Mail           MailService
+	// PanelTLS is the panel's ACME account (agent-identity-and-tls.md §4); nil
+	// when it is not wired, which every handler treats as "no certificate
+	// resolver" — the honest default rather than an assumed one.
+	PanelTLS PanelTLSService
 	// DNS is the panel's DNS Provider; nil when DNS automation is not wired,
 	// which every handler treats as "nothing is enforced" (dns-automation.md §4.1).
 	DNS      DNSService
 	DNSZones DNSReader
 	// ServerAddresses records where a server's applications' DNS points.
 	ServerAddresses ServerAddressWriter
-	Scheduler       Deployer
-	Deployments     DeploymentReader
-	Opener          Opener
-	Pinger          Pinger
-	CACertPEM       []byte
-	EnrollAddr      string // advertised gRPC enrollment address (host:port)
-	NATSURL         string // advertised data-plane URL
-	Logs            LogSubscriber
-	ConsoleURL      string // advertised HTTP base URL (installer + CA fetch)
-	Log             *slog.Logger
+	// Protection is deploy protection (deploy-protection.md); nil when it is
+	// not wired, which every handler treats as "nothing is protected".
+	Protection  ProtectionService
+	Scheduler   Deployer
+	Deployments DeploymentReader
+	Opener      Opener
+	Pinger      Pinger
+	CACertPEM   []byte
+	EnrollAddr  string // advertised gRPC enrollment address (host:port)
+	NATSURL     string // advertised data-plane URL
+	Logs        LogSubscriber
+	ConsoleURL  string // advertised HTTP base URL (installer + CA fetch)
+	// TrustedProxies are the peer CIDRs allowed to speak for a client through
+	// X-Forwarded-For / X-Real-IP / X-Request-Id. Empty means nothing is
+	// trusted and the TCP peer is always the client (§5).
+	TrustedProxies []netip.Prefix
+	// Panel is the build the process is running and what the update check has
+	// found; nil serves 503 on GET /panel/version (§3).
+	Panel PanelInfo
+	// PanelLogs is the in-memory tail of the panel's own log; nil serves 503
+	// on GET /panel/logs (§4).
+	PanelLogs PanelLogTail
+	Log       *slog.Logger
 }
 
 // API holds the HTTP handlers and their dependencies.
@@ -268,7 +403,9 @@ func (a *API) Handler() http.Handler {
 	// Session-only — an API token must not be able to cut off the operator.
 	mux.HandleFunc("PATCH /api/v1/auth/me", a.sessionOnly(a.handleUpdateProfile))
 	mux.HandleFunc("POST /api/v1/auth/password", a.sessionOnly(a.handleChangePassword))
+	mux.HandleFunc("GET /api/v1/auth/email/change", a.sessionOnly(a.handleGetPendingEmailChange))
 	mux.HandleFunc("POST /api/v1/auth/email/change", a.sessionOnly(a.handleRequestEmailChange))
+	mux.HandleFunc("DELETE /api/v1/auth/email/change", a.sessionOnly(a.handleCancelEmailChange))
 	mux.HandleFunc("POST /api/v1/auth/email/confirm", a.sessionOnly(a.handleConfirmEmailChange))
 	mux.HandleFunc("PUT /api/v1/auth/me/avatar", a.sessionOnly(a.handleSetAvatar))
 	mux.HandleFunc("DELETE /api/v1/auth/me/avatar", a.sessionOnly(a.handleDeleteAvatar))
@@ -322,6 +459,9 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/projects", a.authed(a.handleCreateProject))
 	mux.HandleFunc("GET /api/v1/projects/{id}", a.authed(a.handleGetProject))
 	mux.HandleFunc("DELETE /api/v1/projects/{id}", a.authed(a.handleDeleteProject))
+	mux.HandleFunc("PATCH /api/v1/projects/{id}", a.authed(a.handlePatchProject))
+	mux.HandleFunc("PATCH /api/v1/environments/{id}", a.authed(a.handlePatchEnvironment))
+	mux.HandleFunc("DELETE /api/v1/environments/{id}", a.authed(a.handleDeleteEnvironment))
 	mux.HandleFunc("GET /api/v1/projects/{id}/environments", a.authed(a.handleListEnvironments))
 	mux.HandleFunc("POST /api/v1/projects/{id}/environments", a.authed(a.handleCreateEnvironment))
 
@@ -349,6 +489,13 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/deployments/{id}", a.authed(a.handleGetDeployment))
 	mux.HandleFunc("GET /api/v1/deployments/{id}/logs", a.authed(a.handleGetDeploymentLogs))
 	mux.HandleFunc("POST /api/v1/deployments/{id}/rollback", a.authed(a.handleRollback))
+	// V1.x: deployment control (deployment-control.md). Cancel ends a deploy
+	// the operator has stopped waiting on; restart recreates a container
+	// without shipping anything new. Both carry the `deploy` ability — the
+	// credential that can start a deploy can stop one — and neither is
+	// session-only: cancelling and restarting from CI is legitimate.
+	mux.HandleFunc("POST /api/v1/deployments/{id}/cancel", a.authed(a.handleCancelDeployment))
+	mux.HandleFunc("POST /api/v1/applications/{id}/restart", a.authed(a.handleRestartApplication))
 
 	// GitHub webhook: authenticated by per-app HMAC secret, not a session
 	// (spec §4) — the only unauthenticated mutating route.
@@ -373,25 +520,44 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/panel/mail", a.authed(a.handleDeletePanelMail))
 	mux.HandleFunc("POST /api/v1/panel/mail/test", a.authed(a.handleTestPanelMail))
 
+	// Panel build, update check and diagnostics (control-plane-hardening.md
+	// §§3–4). The version is readable by any authenticated principal — the
+	// report-issue dialog needs it for every user; the log tail is owner-only
+	// and session-only, because it names hosts and resources and an API token
+	// must never be able to lift it.
+	mux.HandleFunc("GET /api/v1/panel/version", a.authed(a.handleGetPanelVersion))
+	mux.HandleFunc("GET /api/v1/panel/logs", a.sessionOnly(a.handleGetPanelLogs))
+
+	// The panel's ACME account (agent-identity-and-tls.md §4). Owner-only: it
+	// decides how every routed application on every server is served to the
+	// public internet, and it registers an account in the operator's name.
+	mux.HandleFunc("GET /api/v1/panel/tls", a.authed(a.handleGetPanelTLS))
+	mux.HandleFunc("PUT /api/v1/panel/tls", a.authed(a.handleSetPanelTLS))
+
 	// DNS automation (dns-automation.md §5). Panel-scoped like mail: a
 	// Cloudflare account is an operator-level asset, not a team's.
 	mux.HandleFunc("GET /api/v1/panel/dns", a.authed(a.handleGetPanelDNS))
 	mux.HandleFunc("PUT /api/v1/panel/dns", a.authed(a.handleSetPanelDNS))
 	mux.HandleFunc("DELETE /api/v1/panel/dns", a.authed(a.handleDeletePanelDNS))
 	mux.HandleFunc("POST /api/v1/panel/dns/test", a.authed(a.handleTestPanelDNS))
+	mux.HandleFunc("GET /api/v1/panel/dns/disconnect-preview", a.authed(a.handleDNSDisconnectPreview))
 	mux.HandleFunc("GET /api/v1/panel/dns/zones", a.authed(a.handleListDNSZones))
 	mux.HandleFunc("POST /api/v1/panel/dns/zones/refresh", a.authed(a.handleRefreshDNSZones))
 
 	mux.HandleFunc("POST /api/v1/backup-targets", a.authed(a.handleCreateBackupTarget))
 	mux.HandleFunc("GET /api/v1/backup-targets", a.authed(a.handleListBackupTargets))
 	mux.HandleFunc("GET /api/v1/backup-targets/{id}", a.authed(a.handleGetBackupTarget))
+	mux.HandleFunc("PATCH /api/v1/backup-targets/{id}", a.authed(a.handlePatchBackupTarget))
 	mux.HandleFunc("DELETE /api/v1/backup-targets/{id}", a.authed(a.handleDeleteBackupTarget))
 
 	mux.HandleFunc("POST /api/v1/databases/{id}/backups", a.authed(a.handleCreateDatabaseBackup))
 	mux.HandleFunc("GET /api/v1/databases/{id}/backups", a.authed(a.handleListDatabaseBackups))
+	mux.HandleFunc("PATCH /api/v1/databases/{id}/backups/{bak_id}", a.authed(a.handlePatchDatabaseBackup))
 	mux.HandleFunc("DELETE /api/v1/databases/{id}/backups/{bak_id}", a.authed(a.handleDeleteDatabaseBackup))
 	mux.HandleFunc("GET /api/v1/databases/{id}/backups/{bak_id}/history", a.authed(a.handleListBackupRecords))
 	mux.HandleFunc("POST /api/v1/databases/{id}/backups/{bak_id}/run", a.authed(a.handleRunBackup))
+	mux.HandleFunc("GET /api/v1/databases/{id}/restores", a.authed(a.handleListDatabaseRestores))
+	mux.HandleFunc("GET /api/v1/databases/{id}/restores/{rid}", a.authed(a.handleGetDatabaseRestore))
 	mux.HandleFunc("POST /api/v1/databases/{id}/restore", a.authed(a.handleRestoreDatabase))
 
 	// Phase 3: preview environments (preview-environments.md §7).
@@ -402,6 +568,7 @@ func (a *API) Handler() http.Handler {
 	// Phase 3: notifications (notifications.md §7).
 	mux.HandleFunc("POST /api/v1/projects/{id}/notifiers", a.authed(a.handleCreateNotifier))
 	mux.HandleFunc("GET /api/v1/projects/{id}/notifiers", a.authed(a.handleListNotifiers))
+	mux.HandleFunc("POST /api/v1/projects/{id}/notifiers/test", a.authed(a.handleTestNotifierConfig))
 	mux.HandleFunc("GET /api/v1/notifiers/{id}", a.authed(a.handleGetNotifier))
 	mux.HandleFunc("PATCH /api/v1/notifiers/{id}", a.authed(a.handlePatchNotifier))
 	mux.HandleFunc("DELETE /api/v1/notifiers/{id}", a.authed(a.handleDeleteNotifier))
@@ -434,6 +601,20 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/inbox/preferences", a.authed(a.handleGetInboxPreferences))
 	mux.HandleFunc("PUT /api/v1/inbox/preferences", a.authed(a.handlePutInboxPreferences))
 
+	// V1.x: the audit log (audit-log.md §7). Two reads and no writes — a row
+	// is minted by the handler that performed the action, never by a request
+	// to this collection, which is what makes the log evidence rather than a
+	// place anyone can write to.
+	//
+	// Neither route carries a role gate: the SCOPE is the authorization. The
+	// service resolves what the caller may see (their teams, plus panel-level
+	// rows for a panel admin, plus their own actions wherever those landed) and
+	// every query parameter narrows inside it. A team_id the caller does not
+	// belong to therefore returns an empty page, not a 403 — the log must not
+	// become a way to probe for the existence of another tenant.
+	mux.HandleFunc("GET /api/v1/audit", a.authed(a.handleListAuditEvents))
+	mux.HandleFunc("GET /api/v1/audit/{id}", a.authed(a.handleGetAuditEvent))
+
 	// Phase 4: project shared variables (shared-variables.md §7). The
 	// collection hangs off the project because that is the scope that owns
 	// them; an environment-scoped variable is the same row with
@@ -446,6 +627,33 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/v1/shared-variables/{id}", a.authed(a.handlePatchSharedVariable))
 	mux.HandleFunc("DELETE /api/v1/shared-variables/{id}", a.authed(a.handleDeleteSharedVariable))
 	mux.HandleFunc("GET /api/v1/shared-variables/{id}/used-by", a.authed(a.handleListSharedVariableUsage))
+
+	// V1.x: deploy protection (deploy-protection.md §6). Protection hangs off
+	// the ENVIRONMENT because that is the unit an operator reasons about; the
+	// two decision routes hang off the DEPLOYMENT because that is what is
+	// parked.
+	//
+	// deployRoutes gains no entry, deliberately: approve triggers a rollout,
+	// but no token ability can reach it — approve, reject and break glass are
+	// sessionOnly. An API token inherits its owner's role, so a `deploy`-able
+	// token in CI could otherwise approve the deploy it had just requested and
+	// the gate would be decorative (§5, threat-model §5.8). The deploy routes
+	// themselves are unchanged, so CI keeps working: its deploys park.
+	//
+	// The PUT is sessionOnly for the SAME reason, and with more force: a
+	// `write`-ability token whose owner is a team admin could otherwise send
+	// `{require_approval:false, freeze_enabled:false, windows:[]}` and then
+	// deploy freely. Switching the whole control off is strictly more powerful
+	// than the single 30-minute break-glass grant that is already session-only,
+	// so it cannot be the one door a leaked CI token is left holding.
+	mux.HandleFunc("GET /api/v1/environments/{id}/protection", a.authed(a.handleGetEnvironmentProtection))
+	mux.HandleFunc("PUT /api/v1/environments/{id}/protection", a.sessionOnly(a.handleSetEnvironmentProtection))
+	mux.HandleFunc("GET /api/v1/environments/{id}/approvals", a.authed(a.handleListDeployApprovals))
+	mux.HandleFunc("GET /api/v1/environments/{id}/break-glass", a.authed(a.handleListBreakGlassGrants))
+	mux.HandleFunc("POST /api/v1/environments/{id}/break-glass", a.sessionOnly(a.handleOpenBreakGlass))
+	mux.HandleFunc("GET /api/v1/deployments/{id}/approval", a.authed(a.handleGetDeployApproval))
+	mux.HandleFunc("POST /api/v1/deployments/{id}/approve", a.sessionOnly(a.handleApproveDeployment))
+	mux.HandleFunc("POST /api/v1/deployments/{id}/reject", a.sessionOnly(a.handleRejectDeployment))
 
 	// Phase 3: scheduled tasks (scheduled-tasks.md §7).
 	mux.HandleFunc("POST /api/v1/applications/{id}/scheduled-tasks", a.authed(a.handleCreateScheduledTask))
@@ -465,6 +673,70 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/teams/{id}/members", a.authed(a.handleAddTeamMember))
 	mux.HandleFunc("PATCH /api/v1/teams/{id}/members/{uid}", a.authed(a.handleChangeTeamMemberRole))
 	mux.HandleFunc("DELETE /api/v1/teams/{id}/members/{uid}", a.authed(a.handleRemoveTeamMember))
+	// V1.x: invitations and access requests
+	// (invitations-and-access-requests.md §7) — the two ways into a team from
+	// outside it, beside the existing "an admin adds an account that already
+	// exists".
+	//
+	// The two public routes are the only unauthenticated surface this feature
+	// adds. They carry `security: []` in the spec, are gated by the
+	// invitation's own bearer secret, are throttled by client address, and
+	// answer one undifferentiated 404 for everything that is not currently
+	// acceptable.
+	//
+	// grant and deny are sessionOnly, and for the reason deploy protection made
+	// its decisions session-only: an API token inherits its owner's role, so a
+	// leaked `write`-able token belonging to an owner could otherwise promote
+	// an account to owner — durable, panel-wide privilege from one CI
+	// credential (threat-model §5.8). Issuing an INVITATION is deliberately not
+	// session-only: it grants nothing by itself, expires in 7 days, is
+	// revocable, and scripting team setup from CI is legitimate.
+	mux.HandleFunc("POST /api/v1/teams/{id}/invites", a.authed(a.handleCreateInvite))
+	mux.HandleFunc("GET /api/v1/teams/{id}/invites", a.authed(a.handleListInvites))
+	mux.HandleFunc("DELETE /api/v1/teams/{id}/invites/{inv}", a.authed(a.handleRevokeInvite))
+	mux.HandleFunc("GET /api/v1/invites/{token}", a.handleGetInvite)
+	mux.HandleFunc("POST /api/v1/invites/{token}/accept", a.handleAcceptInvite)
+	mux.HandleFunc("POST /api/v1/teams/{id}/access-requests", a.authed(a.handleCreateAccessRequest))
+	mux.HandleFunc("GET /api/v1/teams/{id}/access-requests", a.authed(a.handleListAccessRequests))
+	mux.HandleFunc("POST /api/v1/access-requests/{id}/grant", a.sessionOnly(a.handleGrantAccessRequest))
+	mux.HandleFunc("POST /api/v1/access-requests/{id}/deny", a.sessionOnly(a.handleDenyAccessRequest))
+
+	// V1.x: container registry credentials (registries.md §7; ADR-008 path 3).
+	//
+	// Team-scoped rather than project-scoped, like deploy keys and backup
+	// targets: one credential for ghcr.io serves every project the team runs,
+	// and duplicating it per project would mean rotating it in n places.
+	//
+	// The test routes are POSTs because they make an outbound request the
+	// caller chose the destination of — the notifier tests' precedent, and the
+	// reason both are behind admin rank rather than membership.
+	mux.HandleFunc("GET /api/v1/registries", a.authed(a.handleListRegistries))
+	mux.HandleFunc("POST /api/v1/registries", a.authed(a.handleCreateRegistry))
+	mux.HandleFunc("POST /api/v1/registries/test", a.authed(a.handleTestRegistryConfig))
+	mux.HandleFunc("GET /api/v1/registries/{id}", a.authed(a.handleGetRegistry))
+	mux.HandleFunc("PATCH /api/v1/registries/{id}", a.authed(a.handlePatchRegistry))
+	mux.HandleFunc("DELETE /api/v1/registries/{id}", a.authed(a.handleDeleteRegistry))
+	mux.HandleFunc("POST /api/v1/registries/{id}/test", a.authed(a.handleTestRegistry))
+	mux.HandleFunc("GET /api/v1/registries/{id}/used-by", a.authed(a.handleRegistryUsedBy))
+
+	// V1: Compose Stacks (compose-stacks.md §7). Writing the FILE is team
+	// admin; deploying one is a member — a compose file can ask for privileged
+	// containers and host mounts, which an Application cannot express, so it
+	// must not be reachable at the rank that deploys an application.
+	mux.HandleFunc("GET /api/v1/environments/{id}/compose-stacks", a.authed(a.handleListComposeStacks))
+	mux.HandleFunc("POST /api/v1/environments/{id}/compose-stacks", a.authed(a.handleCreateComposeStack))
+	mux.HandleFunc("GET /api/v1/compose-stacks/{id}", a.authed(a.handleGetComposeStack))
+	mux.HandleFunc("PATCH /api/v1/compose-stacks/{id}", a.authed(a.handlePatchComposeStack))
+	mux.HandleFunc("DELETE /api/v1/compose-stacks/{id}", a.authed(a.handleDeleteComposeStack))
+	mux.HandleFunc("GET /api/v1/compose-stacks/{id}/file", a.authed(a.handleGetComposeFile))
+	mux.HandleFunc("POST /api/v1/compose-stacks/{id}/deploy", a.authed(a.handleDeployComposeStack))
+	mux.HandleFunc("POST /api/v1/compose-stacks/{id}/rollback", a.authed(a.handleRollbackComposeStack))
+	mux.HandleFunc("GET /api/v1/compose-stacks/{id}/revisions", a.authed(a.handleListComposeRevisions))
+	mux.HandleFunc("GET /api/v1/compose-stacks/{id}/logs", a.authed(a.handleComposeStackLogs))
+	mux.HandleFunc("GET /api/v1/compose-stacks/{id}/env", a.authed(a.handleListComposeEnvVars))
+	mux.HandleFunc("PUT /api/v1/compose-stacks/{id}/env/{key}", a.authed(a.handleSetComposeEnvVar))
+	mux.HandleFunc("DELETE /api/v1/compose-stacks/{id}/env/{key}", a.authed(a.handleDeleteComposeEnvVar))
+
 	mux.HandleFunc("POST /api/v1/users", a.authed(a.handleCreateUser))
 	mux.HandleFunc("GET /api/v1/users", a.authed(a.handleListUsers))
 	mux.HandleFunc("PATCH /api/v1/users/{id}", a.authed(a.handleSetUserRole))
@@ -485,7 +757,11 @@ func (a *API) Handler() http.Handler {
 		app.ServeHTTP(w, r)
 	}))
 
-	return a.recoverer(a.securityHeaders(a.logRequests(mux)))
+	// Outermost first: every response gets a trace id before anything can
+	// fail, the log line sees the final status (a recovered panic included),
+	// and the recoverer sits innermost so it can still write the envelope
+	// (control-plane-hardening.md §2).
+	return a.requestID(a.logRequests(a.securityHeaders(a.recoverer(mux))))
 }
 
 // ─── middleware ─────────────────────────────────────────────────────────────
@@ -495,6 +771,7 @@ type ctxKey int
 const (
 	principalKey ctxKey = iota
 	rawTokenKey
+	traceIDKey
 )
 
 // authed wraps a handler so it runs only for an authenticated caller, whose
@@ -517,6 +794,13 @@ func (a *API) authed(next http.HandlerFunc) http.HandlerFunc {
 		}
 		if need := requiredAbility(r); !principal.Can(need) {
 			writeError(w, http.StatusForbidden, "this token lacks the "+string(need)+" ability")
+			return
+		}
+		// A project-scoped token is refused panel- and team-level routes
+		// outright. Resources that belong to a project are checked where the
+		// project is resolved (authz.go), because only there is it known.
+		if _, scoped := principal.ScopedToProject(); scoped && outsideProjectScope(r.URL.Path) {
+			writeError(w, http.StatusForbidden, "this token is scoped to one project and cannot reach panel-wide routes")
 			return
 		}
 		ctx := context.WithValue(r.Context(), principalKey, principal)
@@ -549,79 +833,124 @@ func (a *API) sessionOnly(next http.HandlerFunc) http.HandlerFunc {
 // whole patterns also means a new deploy-shaped route must be added here
 // deliberately, never inherit an ability by accident.
 var deployRoutes = map[string]bool{
-	"POST /api/v1/applications/{id}/deploy":  true,
-	"POST /api/v1/deployments/{id}/rollback": true,
+	"POST /api/v1/applications/{id}/deploy":     true,
+	"POST /api/v1/deployments/{id}/rollback":    true,
+	"POST /api/v1/deployments/{id}/cancel":      true,
+	"POST /api/v1/applications/{id}/restart":    true,
+	"POST /api/v1/compose-stacks/{id}/deploy":   true,
+	"POST /api/v1/compose-stacks/{id}/rollback": true,
+}
+
+// envRoutes, serverRoutes and adminRoutes carve narrower grants out of `write`,
+// listed the same way and for the same reason: a whole pattern, so a new route
+// joins a grant deliberately rather than by resembling one.
+//
+// `write` still satisfies every one of them (domain.Ability.Implies), so a
+// token issued before these existed does exactly what it did before. They are
+// here so a NEW token can be minted for one job — a CI credential that sets env
+// vars, a provisioning script that enrols servers — instead of for every
+// mutation the API has.
+var envRoutes = map[string]bool{
+	"PUT /api/v1/applications/{id}/env/{key}":      true,
+	"DELETE /api/v1/applications/{id}/env/{key}":   true,
+	"PUT /api/v1/compose-stacks/{id}/env/{key}":    true,
+	"DELETE /api/v1/compose-stacks/{id}/env/{key}": true,
+}
+
+var serverRoutes = map[string]bool{
+	"POST /api/v1/servers":        true,
+	"DELETE /api/v1/servers/{id}": true,
+	"PATCH /api/v1/servers/{id}":  true,
+}
+
+// adminRoutes change who can reach the panel and how it behaves. Most are
+// session-only already; the ability exists so the few that a token may reach
+// are refused to one that was not minted for administration.
+var adminRoutes = map[string]bool{
+	"POST /api/v1/teams":                      true,
+	"PATCH /api/v1/teams/{id}":                true,
+	"DELETE /api/v1/teams/{id}":               true,
+	"POST /api/v1/teams/{id}/members":         true,
+	"PATCH /api/v1/teams/{id}/members/{uid}":  true,
+	"DELETE /api/v1/teams/{id}/members/{uid}": true,
+	"POST /api/v1/teams/{id}/invites":         true,
+	"DELETE /api/v1/teams/{id}/invites/{inv}": true,
+	"POST /api/v1/access-requests/{id}/grant": true,
+	"POST /api/v1/access-requests/{id}/deny":  true,
+	"POST /api/v1/users":                      true,
+	"PATCH /api/v1/users/{id}":                true,
+	"DELETE /api/v1/users/{id}":               true,
+	"PUT /api/v1/panel/mail":                  true,
+	"DELETE /api/v1/panel/mail":               true,
+	"PUT /api/v1/panel/dns":                   true,
+	"DELETE /api/v1/panel/dns":                true,
+	"PUT /api/v1/panel/tls":                   true,
+	// A compose file can ask for privileged containers and host mounts, which
+	// is root on the node — writing one is administration (compose-stacks.md §7).
+	"POST /api/v1/environments/{id}/compose-stacks": true,
+	"PATCH /api/v1/compose-stacks/{id}":             true,
+	"DELETE /api/v1/compose-stacks/{id}":            true,
+	// A registry credential can pull and push images for every project the
+	// team runs; minting one is administration, not deployment.
+	"POST /api/v1/registries":           true,
+	"PATCH /api/v1/registries/{id}":     true,
+	"DELETE /api/v1/registries/{id}":    true,
+	"POST /api/v1/registries/test":      true,
+	"POST /api/v1/registries/{id}/test": true,
 }
 
 // requiredAbility maps a request to the ability a token must carry for it.
 // r.Pattern is the route ServeMux matched; when it is empty (a handler invoked
 // outside the mux) the safe default applies — a mutation needs `write`, which
-// no deploy-only credential holds.
+// no narrow credential holds.
 func requiredAbility(r *http.Request) domain.Ability {
 	switch r.Method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		// Reads stay on `read`, including reads of env keys and servers. Making
+		// them need the narrow ability would strip listings from every
+		// read-only token already issued.
 		return domain.AbilityRead
 	}
-	if deployRoutes[r.Pattern] {
+	switch {
+	case deployRoutes[r.Pattern]:
 		return domain.AbilityDeploy
+	case envRoutes[r.Pattern]:
+		return domain.AbilityEnv
+	case serverRoutes[r.Pattern]:
+		return domain.AbilityServers
+	case adminRoutes[r.Pattern]:
+		return domain.AbilityAdmin
 	}
 	return domain.AbilityWrite
 }
 
-func (a *API) logRequests(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(sw, r)
-		a.deps.Log.Info("http request",
-			"method", r.Method,
-			"path", r.URL.Path,
-			"status", sw.status,
-			"duration_ms", time.Since(start).Milliseconds(),
-		)
-	})
+// panelScopeRoutes are the route prefixes a project-scoped token may never
+// reach, whatever abilities it holds: they are about the panel or a team rather
+// than about one project's resources, so "which project?" has no answer for
+// them. Everything else resolves to a project and is checked against the scope
+// where that resolution already happens (authz.go).
+var panelScopePrefixes = []string{
+	"/api/v1/teams",
+	"/api/v1/users",
+	"/api/v1/panel/",
+	"/api/v1/servers",
+	"/api/v1/backup-targets",
+	"/api/v1/deploy-keys",
+	"/api/v1/registries",
+	"/api/v1/audit",
+	"/api/v1/invites",
+	"/api/v1/access-requests",
 }
 
-func (a *API) securityHeaders(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h := w.Header()
-		h.Set("X-Content-Type-Options", "nosniff")
-		h.Set("X-Frame-Options", "DENY")
-		h.Set("Referrer-Policy", "no-referrer")
-		next.ServeHTTP(w, r)
-	})
-}
-
-func (a *API) recoverer(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer func() {
-			if rec := recover(); rec != nil {
-				a.deps.Log.Error("panic in handler", "path", r.URL.Path, "panic", rec)
-				writeError(w, http.StatusInternalServerError, "internal error")
-			}
-		}()
-		next.ServeHTTP(w, r)
-	})
-}
-
-type statusWriter struct {
-	http.ResponseWriter
-	status int
-}
-
-func (w *statusWriter) WriteHeader(code int) {
-	w.status = code
-	w.ResponseWriter.WriteHeader(code)
-}
-
-// Flush forwards to the underlying writer so the SSE log endpoints can stream:
-// embedding http.ResponseWriter does not promote Flush (it is not part of that
-// interface), so without this the http.Flusher assertion in a streaming
-// handler would fail and event streaming would be silently unavailable.
-func (w *statusWriter) Flush() {
-	if f, ok := w.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
+// outsideProjectScope reports whether a project-scoped credential is reaching
+// for something that is not any one project's.
+func outsideProjectScope(path string) bool {
+	for _, p := range panelScopePrefixes {
+		if path == strings.TrimSuffix(p, "/") || strings.HasPrefix(path, p) {
+			return true
+		}
 	}
+	return false
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -656,14 +985,6 @@ func bearerToken(r *http.Request) (string, bool) {
 	return h[len(prefix):], true
 }
 
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
-
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
@@ -672,12 +993,45 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	}
 }
 
+// errorBody is the one fault envelope every non-2xx answer uses. TraceID is
+// the response's X-Request-Id, repeated in the body so a screenshot of a 500
+// carries it (canvas 13s); RetryAfterSeconds appears only on a 429, where it
+// is the countdown the sign-in screen shows (canvas 13t). Both are optional —
+// rule 17: additive only.
 type errorBody struct {
-	Error string `json:"error"`
+	Error             string `json:"error"`
+	TraceID           string `json:"trace_id,omitempty"`
+	RetryAfterSeconds int    `json:"retry_after_seconds,omitempty"`
+	// TOTPRequired appears only on the 401 that means "the password was right,
+	// now send the code": sign-in, and accepting an invitation for an address
+	// that already has a 2FA-enabled account. It tells the client to prompt for
+	// the second factor rather than for the password again.
+	TOTPRequired bool `json:"totp_required,omitempty"`
 }
 
+// writeError answers with the fault envelope, carrying the trace id the
+// request-id middleware already stamped on the response headers.
 func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, errorBody{Error: msg})
+	writeJSON(w, status, errorBody{Error: msg, TraceID: w.Header().Get(TraceIDHeader)})
+}
+
+// rateLimited answers 429 with how long to wait — the standard Retry-After
+// header and the same number in the body, so a client counts down instead of
+// guessing (control-plane-hardening.md §5). The delay comes from
+// *auth.RateLimitedError; an error that carries none is one second, never zero,
+// because "wait 0" is not a throttle.
+func rateLimited(w http.ResponseWriter, err error, msg string) {
+	secs := 1
+	var rl *auth.RateLimitedError
+	if errors.As(err, &rl) {
+		secs = rl.RetryAfterSeconds()
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	writeJSON(w, http.StatusTooManyRequests, errorBody{
+		Error:             msg,
+		TraceID:           w.Header().Get(TraceIDHeader),
+		RetryAfterSeconds: secs,
+	})
 }
 
 func decodeJSON(r *http.Request, dst any) error {

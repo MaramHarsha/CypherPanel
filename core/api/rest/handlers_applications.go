@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/MaramHarsha/cypherpanel/core/applications"
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/store"
 	"github.com/MaramHarsha/cypherpanel/pkg/subjects"
@@ -41,8 +43,15 @@ type applicationDTO struct {
 	// six-word vocabulary in ui-principles §5 is closed and "needs a redeploy"
 	// is not an observed state — so the UI renders it as a badge beside the
 	// status, never in place of one.
-	RedeployPending bool   `json:"redeploy_pending"`
-	CreatedAt       string `json:"created_at"`
+	RedeployPending bool `json:"redeploy_pending"`
+	// TLSState is DERIVED, never stored (agent-identity-and-tls.md §5): what
+	// this route is actually served as, given what the panel knows. Omitted
+	// when there is no domain — there is then no route to describe. It exists
+	// so the UI can say "serving over HTTP meanwhile" instead of printing
+	// "HTTPS · auto-renews" off the https flag alone, which asserted a
+	// certificate the panel had never seen issued (ui-principles §10).
+	TLSState  string `json:"tls_state,omitempty"`
+	CreatedAt string `json:"created_at"`
 }
 
 type appSourceDTO struct {
@@ -51,12 +60,18 @@ type appSourceDTO struct {
 	Branch      string  `json:"branch"`
 	DeployKeyID *string `json:"deploy_key_id"`
 	Image       string  `json:"image"` // OCI reference; set iff kind == "image"
+	// RegistryID authenticates where this app's bits come from: the image for
+	// an image source, the private base image for a build (registries.md).
+	RegistryID *string `json:"registry_id"`
 }
 
 type appBuildDTO struct {
 	Kind           string `json:"kind"`
 	DockerfilePath string `json:"dockerfile_path"`
 	Context        string `json:"context"`
+	// Push-after-build (ADR-008 path 3); null is every application by default.
+	PushRegistryID *string `json:"push_registry_id"`
+	PushRepository string  `json:"push_repository"`
 }
 
 type appVolumeDTO struct {
@@ -143,8 +158,8 @@ func toApplicationDTO(a domain.Application) applicationDTO {
 		ID:                 a.ID,
 		EnvironmentID:      a.EnvironmentID,
 		Name:               a.Name,
-		Source:             appSourceDTO{Kind: a.Source.Kind, Repo: a.Source.Repo, Branch: a.Source.Branch, DeployKeyID: a.Source.DeployKeyID, Image: a.Source.Image},
-		Build:              appBuildDTO{Kind: a.Build.Kind, DockerfilePath: a.Build.DockerfilePath, Context: a.Build.Context},
+		Source:             appSourceDTO{Kind: a.Source.Kind, Repo: a.Source.Repo, Branch: a.Source.Branch, DeployKeyID: a.Source.DeployKeyID, Image: a.Source.Image, RegistryID: a.Source.RegistryID},
+		Build:              appBuildDTO{Kind: a.Build.Kind, DockerfilePath: a.Build.DockerfilePath, Context: a.Build.Context, PushRegistryID: a.Build.PushRegistryID, PushRepository: a.Build.PushRepository},
 		Runtime:            appRuntimeDTO{ServerID: a.Runtime.ServerID, Port: a.Runtime.Port, Replicas: a.Runtime.Replicas, CPULimit: a.Runtime.CPULimit, MemoryLimitMB: a.Runtime.MemoryLimitMB},
 		Route:              appRouteDTO{Domain: a.Route.Domain, HTTPS: a.Route.HTTPS, PathPrefix: a.Route.PathPrefix},
 		Health:             appHealthDTO{Kind: a.Health.Kind, Path: a.Health.Path, IntervalSeconds: a.Health.IntervalSeconds, TimeoutSeconds: a.Health.TimeoutSeconds, Retries: a.Health.Retries},
@@ -172,6 +187,7 @@ type createApplicationRequest struct {
 		Branch      string  `json:"branch"`
 		DeployKeyID *string `json:"deploy_key_id"`
 		Image       string  `json:"image"`
+		RegistryID  *string `json:"registry_id"`
 	} `json:"source"`
 	Build struct {
 		// AppBuild.kind is required by the OpenAPI schema, so every generated
@@ -180,9 +196,11 @@ type createApplicationRequest struct {
 		// "invalid request body" — creating an application through the contract
 		// was impossible. The service defaults an empty kind to "dockerfile"
 		// and rejects anything else (applications.go validateAndDefault).
-		Kind           string `json:"kind"`
-		DockerfilePath string `json:"dockerfile_path"`
-		Context        string `json:"context"`
+		Kind           string  `json:"kind"`
+		DockerfilePath string  `json:"dockerfile_path"`
+		Context        string  `json:"context"`
+		PushRegistryID *string `json:"push_registry_id"`
+		PushRepository string  `json:"push_repository"`
 	} `json:"build"`
 	Runtime struct {
 		ServerID      string   `json:"server_id"`
@@ -229,8 +247,8 @@ func (r createApplicationRequest) toInput() applications.CreateInput {
 	}
 	return applications.CreateInput{
 		Name:    r.Name,
-		Source:  domain.AppSource{Kind: r.Source.Kind, Repo: r.Source.Repo, Branch: r.Source.Branch, DeployKeyID: r.Source.DeployKeyID, Image: r.Source.Image},
-		Build:   domain.AppBuild{Kind: r.Build.Kind, DockerfilePath: r.Build.DockerfilePath, Context: r.Build.Context},
+		Source:  domain.AppSource{Kind: r.Source.Kind, Repo: r.Source.Repo, Branch: r.Source.Branch, DeployKeyID: r.Source.DeployKeyID, Image: r.Source.Image, RegistryID: r.Source.RegistryID},
+		Build:   domain.AppBuild{Kind: r.Build.Kind, DockerfilePath: r.Build.DockerfilePath, Context: r.Build.Context, PushRegistryID: r.Build.PushRegistryID, PushRepository: r.Build.PushRepository},
 		Runtime: domain.AppRuntime{ServerID: r.Runtime.ServerID, Port: r.Runtime.Port, Replicas: r.Runtime.Replicas, CPULimit: r.Runtime.CPULimit, MemoryLimitMB: r.Runtime.MemoryLimitMB},
 		Route:   domain.AppRoute{Domain: r.Route.Domain, HTTPS: https, PathPrefix: r.Route.PathPrefix},
 		Health:  domain.AppHealth{Kind: r.Health.Kind, Path: r.Health.Path, IntervalSeconds: r.Health.IntervalSeconds, TimeoutSeconds: r.Health.TimeoutSeconds, Retries: r.Health.Retries},
@@ -263,9 +281,17 @@ func (a *API) handleCreateApplication(w http.ResponseWriter, r *http.Request) {
 		a.writeAppError(w, err, "could not create application")
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:        audit.ActionApplicationCreated,
+		Resource:      audit.Resource(audit.ResourceApplication, app.ID, app.Name),
+		EnvironmentID: app.EnvironmentID,
+		Detail:        map[string]any{"server_id": app.Runtime.ServerID, "source_kind": app.Source.Kind, "domain": app.Route.Domain},
+	})
 	a.syncApplicationDNS(r.Context(), app)
+	created := toApplicationDTO(app)
+	created.TLSState = domain.RouteTLSState(app.Route, a.acmeConfigured(r.Context()))
 	writeJSON(w, http.StatusCreated, createApplicationResponse{
-		Application: toApplicationDTO(app),
+		Application: created,
 		Webhook: webhookInfo{
 			URL:    a.deps.ConsoleURL + "/webhooks/github/" + app.WebhookID,
 			Secret: secret,
@@ -293,10 +319,14 @@ func (a *API) handleListApplications(w http.ResponseWriter, r *http.Request) {
 	// One query for the whole environment rather than one per row
 	// (shared-variables.md §5).
 	pending := a.redeployPendingSet(r.Context(), r.PathValue("id"))
+	// One TLS read for the whole list: the account is panel-wide, so asking
+	// once per application would be the same answer N times.
+	acme := a.acmeConfigured(r.Context())
 	out := make([]applicationDTO, 0, len(list))
 	for _, app := range list {
 		dto := toApplicationDTO(app)
 		dto.RedeployPending = pending[app.ID]
+		dto.TLSState = domain.RouteTLSState(app.Route, acme)
 		out = append(out, dto)
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -321,6 +351,7 @@ func (a *API) handleGetApplication(w http.ResponseWriter, r *http.Request) {
 	}
 	dto := toApplicationDTO(app)
 	dto.RedeployPending = a.redeployPending(r.Context(), app.ID)
+	dto.TLSState = domain.RouteTLSState(app.Route, a.acmeConfigured(r.Context()))
 	writeJSON(w, http.StatusOK, dto)
 }
 
@@ -356,13 +387,16 @@ type patchApplicationRequest struct {
 		Branch      string  `json:"branch"`
 		DeployKeyID *string `json:"deploy_key_id"`
 		Image       string  `json:"image"`
+		RegistryID  *string `json:"registry_id"`
 	} `json:"source"`
 	Build *struct {
 		// Same contract mismatch as createApplicationRequest.Build — a client
 		// echoing back the application it just read could not PATCH it.
-		Kind           string `json:"kind"`
-		DockerfilePath string `json:"dockerfile_path"`
-		Context        string `json:"context"`
+		Kind           string  `json:"kind"`
+		DockerfilePath string  `json:"dockerfile_path"`
+		Context        string  `json:"context"`
+		PushRegistryID *string `json:"push_registry_id"`
+		PushRepository string  `json:"push_repository"`
 	} `json:"build"`
 	Runtime *struct {
 		Port          *int     `json:"port"`
@@ -402,10 +436,10 @@ func (a *API) handlePatchApplication(w http.ResponseWriter, r *http.Request) {
 	}
 	in := applications.UpdateInput{Name: req.Name}
 	if req.Source != nil {
-		in.Source = &domain.AppSource{Kind: req.Source.Kind, Repo: req.Source.Repo, Branch: req.Source.Branch, DeployKeyID: req.Source.DeployKeyID, Image: req.Source.Image}
+		in.Source = &domain.AppSource{Kind: req.Source.Kind, Repo: req.Source.Repo, Branch: req.Source.Branch, DeployKeyID: req.Source.DeployKeyID, Image: req.Source.Image, RegistryID: req.Source.RegistryID}
 	}
 	if req.Build != nil {
-		in.Build = &domain.AppBuild{Kind: req.Build.Kind, DockerfilePath: req.Build.DockerfilePath, Context: req.Build.Context}
+		in.Build = &domain.AppBuild{Kind: req.Build.Kind, DockerfilePath: req.Build.DockerfilePath, Context: req.Build.Context, PushRegistryID: req.Build.PushRegistryID, PushRepository: req.Build.PushRepository}
 	}
 	if req.Runtime != nil {
 		in.Port = req.Runtime.Port // nil = unchanged; explicit 0 is rejected by validation
@@ -436,9 +470,19 @@ func (a *API) handlePatchApplication(w http.ResponseWriter, r *http.Request) {
 		a.writeAppError(w, err, "could not update application")
 		return
 	}
+	// The changed field NAMES, not their contents: what an operator needs to
+	// see is that the domain moved, and the new domain is on the application
+	// itself (§6).
+	a.audit(r, audit.Entry{
+		Action:        audit.ActionApplicationUpdated,
+		Resource:      audit.Resource(audit.ResourceApplication, app.ID, app.Name),
+		EnvironmentID: app.EnvironmentID,
+		Detail:        map[string]any{"fields": patchedApplicationFields(req)},
+	})
 	a.syncApplicationDNS(r.Context(), app)
 	dto := toApplicationDTO(app)
 	dto.RedeployPending = a.redeployPending(r.Context(), app.ID)
+	dto.TLSState = domain.RouteTLSState(app.Route, a.acmeConfigured(r.Context()))
 	writeJSON(w, http.StatusOK, dto)
 }
 
@@ -481,7 +525,41 @@ func (a *API) handleDeleteApplication(w http.ResponseWriter, r *http.Request) {
 		// removal anyway. Degraded immediacy, not failure.
 		a.deps.Log.Error("publishing app removal", "app_id", app.ID, "error", err)
 	}
+	// The environment survives the application, so the ownership chain still
+	// resolves from it — this is the answer to "who deleted notify-svc?" that
+	// the 404 screen promises the log remembers (canvas 13p).
+	a.audit(r, audit.Entry{
+		Action:        audit.ActionApplicationDeleted,
+		Resource:      audit.Resource(audit.ResourceApplication, app.ID, app.Name),
+		EnvironmentID: app.EnvironmentID,
+	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// patchedApplicationFields names the top-level fields a PATCH actually carried,
+// for the audit detail. Names only: the values are on the application, and one
+// of them (an env var) is sealed (§6).
+func patchedApplicationFields(req patchApplicationRequest) []string {
+	fields := []string{}
+	for name, present := range map[string]bool{
+		"name":                req.Name != nil,
+		"source":              req.Source != nil,
+		"build":               req.Build != nil,
+		"runtime":             req.Runtime != nil,
+		"route":               req.Route != nil,
+		"health":              req.Health != nil,
+		"volumes":             req.Volumes != nil,
+		"ports":               req.Ports != nil,
+		"preview_enabled":     req.PreviewEnabled != nil,
+		"preview_base_domain": req.PreviewBaseDomain != nil,
+		"preview_ttl_hours":   req.PreviewTTLHours != nil,
+	} {
+		if present {
+			fields = append(fields, name)
+		}
+	}
+	sort.Strings(fields)
+	return fields
 }
 
 func (a *API) handleListEnvVars(w http.ResponseWriter, r *http.Request) {
@@ -536,6 +614,10 @@ func (a *API) handleSetEnvVar(w http.ResponseWriter, r *http.Request) {
 		a.writeAppError(w, err, "could not set environment variable")
 		return
 	}
+	// The KEY, never the value (§6). `key` is deliberately not on the audit
+	// package's refused-key list: the name of an env var is exactly what this
+	// row is for, and its content is exactly what it must not carry.
+	a.auditApplication(r, audit.ActionEnvVarSet, r.PathValue("id"), map[string]any{"key": r.PathValue("key")})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -556,7 +638,25 @@ func (a *API) handleDeleteEnvVar(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not delete environment variable")
 		return
 	}
+	a.auditApplication(r, audit.ActionEnvVarRemoved, r.PathValue("id"), map[string]any{"key": r.PathValue("key")})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// auditApplication records an action on an application the handler addressed by
+// id alone, resolving its name and environment for the snapshot. A lookup that
+// fails still records the row: an entry that names only the id is worth more
+// than no entry at all.
+func (a *API) auditApplication(r *http.Request, action, appID string, detail map[string]any) {
+	if a.deps.Audit == nil {
+		return
+	}
+	app, _ := a.deps.Applications.Get(r.Context(), appID)
+	a.audit(r, audit.Entry{
+		Action:        action,
+		Resource:      audit.Resource(audit.ResourceApplication, appID, app.Name),
+		EnvironmentID: app.EnvironmentID,
+		Detail:        detail,
+	})
 }
 
 // writeAppError maps applications-service errors to HTTP status codes: client

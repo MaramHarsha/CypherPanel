@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -67,6 +68,13 @@ type apiError struct {
 }
 
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body io.Reader, contentType string) (*http.Response, error) {
+	return c.doAuth(ctx, method, path, query, body, contentType, "")
+}
+
+// doAuth is do with a registry credential attached. The credential rides in a
+// header rather than the query so it stays out of anything that logs a URL —
+// the daemon's own request log included (ENGINEERING rule 20).
+func (c *Client) doAuth(ctx context.Context, method, path string, query url.Values, body io.Reader, contentType, registryAuth string) (*http.Response, error) {
 	u := c.base + path
 	if len(query) > 0 {
 		u += "?" + query.Encode()
@@ -77,6 +85,9 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	}
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
+	}
+	if registryAuth != "" {
+		req.Header.Set("X-Registry-Auth", registryAuth)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -90,6 +101,38 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 			msg = e.Message
 		}
 		return nil, &StatusError{Code: resp.StatusCode, Message: fmt.Sprintf("engine: %s %s: %s", method, path, msg)}
+	}
+	return resp, nil
+}
+
+// doBuild posts a build context. /build reads its credentials from
+// X-Registry-Config rather than X-Registry-Auth, because one build may pull
+// from several registries.
+func (c *Client) doBuild(ctx context.Context, query url.Values, body io.Reader, registryConfig string) (*http.Response, error) {
+	u := c.base + "/build"
+	if len(query) > 0 {
+		u += "?" + query.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, body)
+	if err != nil {
+		return nil, fmt.Errorf("engine: building request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-tar")
+	if registryConfig != "" {
+		req.Header.Set("X-Registry-Config", registryConfig)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("engine: POST /build: %w", err)
+	}
+	if resp.StatusCode >= 400 {
+		defer func() { _ = resp.Body.Close() }()
+		var e apiError
+		msg := resp.Status
+		if json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&e) == nil && e.Message != "" {
+			msg = e.Message
+		}
+		return nil, &StatusError{Code: resp.StatusCode, Message: fmt.Sprintf("engine: POST /build: %s", msg)}
 	}
 	return resp, nil
 }
@@ -183,11 +226,12 @@ func (c *Client) ListManaged(ctx context.Context) ([]docker.Container, error) {
 			name = strings.TrimPrefix(s.Names[0], "/")
 		}
 		out = append(out, docker.Container{
-			ID:         s.ID,
-			Name:       name,
-			AppID:      s.Labels[driver.LabelAppID],
-			RevisionID: s.Labels[driver.LabelRevisionID],
-			Running:    s.State == "running",
+			ID:           s.ID,
+			Name:         name,
+			AppID:        s.Labels[driver.LabelAppID],
+			RevisionID:   s.Labels[driver.LabelRevisionID],
+			RestartToken: s.Labels[driver.LabelRestartToken],
+			Running:      s.State == "running",
 		})
 	}
 	return out, nil
@@ -319,6 +363,55 @@ func (c *Client) ContainerIP(ctx context.Context, id, network string) (string, e
 	return n.IPAddress, nil
 }
 
+// DataRoot reports where the daemon stores its images, containers and volumes.
+//
+// Read from the daemon rather than assumed to be /var/lib/docker: an operator
+// who moved it onto a bigger disk is exactly the one who would otherwise get
+// disk alerts about the wrong filesystem (disk-management.md §4).
+func (c *Client) DataRoot(ctx context.Context) (string, error) {
+	var info struct {
+		DockerRootDir string `json:"DockerRootDir"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/info", nil, nil, &info); err != nil {
+		return "", fmt.Errorf("engine: reading daemon info: %w", err)
+	}
+	return info.DockerRootDir, nil
+}
+
+// ContainerNetwork reports a network the container is attached to, and its
+// address there — what a Compose Stack's route needs (compose-stacks.md §5).
+//
+// A compose file names its own networks, so unlike an Application there is no
+// network the plane can predict. Picking the alphabetically first is arbitrary
+// but DETERMINISTIC, which is what matters: the same container resolves to the
+// same upstream on every reconcile, so a converged stack does not re-write its
+// route fragment on every pass. `host` is skipped — a container on host
+// networking has no address of its own to route to.
+func (c *Client) ContainerNetwork(ctx context.Context, id string) (network, ip string, err error) {
+	var info struct {
+		NetworkSettings struct {
+			Networks map[string]struct {
+				IPAddress string `json:"IPAddress"`
+			} `json:"Networks"`
+		} `json:"NetworkSettings"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/containers/"+id+"/json", nil, nil, &info); err != nil {
+		return "", "", err
+	}
+	names := make([]string, 0, len(info.NetworkSettings.Networks))
+	for n := range info.NetworkSettings.Networks {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		if n == "host" || info.NetworkSettings.Networks[n].IPAddress == "" {
+			continue
+		}
+		return n, info.NetworkSettings.Networks[n].IPAddress, nil
+	}
+	return "", "", fmt.Errorf("engine: container %s has no routable network address", id)
+}
+
 type imageSummary struct {
 	ID       string            `json:"Id"`
 	Labels   map[string]string `json:"Labels"`
@@ -380,17 +473,19 @@ func (c *Client) ListManagedImages(ctx context.Context) ([]docker.Image, error) 
 		// must never untag those (reconciler contract: never touch what is not
 		// ours).
 		managed := make([]string, 0, len(s.RepoTags))
+		var managedRefs []docker.ManagedRef
 		var pending []docker.PendingRef
 		for _, tag := range s.RepoTags {
 			if _, source, ok := driver.ParsePullMarker(tag); ok {
 				pending = append(pending, docker.PendingRef{Source: source, Marker: tag})
 				continue
 			}
-			if _, _, ok := parseManagedTag(tag); ok {
+			if appID, revID, ok := parseManagedTag(tag); ok {
 				managed = append(managed, tag)
+				managedRefs = append(managedRefs, docker.ManagedRef{Reference: tag, AppID: appID, RevisionID: revID})
 			}
 		}
-		out = append(out, docker.Image{ID: s.ID, AppIDs: appIDs, References: managed, Pending: pending})
+		out = append(out, docker.Image{ID: s.ID, AppIDs: appIDs, References: managed, Pending: pending, Managed: managedRefs})
 	}
 	return out, nil
 }
@@ -514,7 +609,9 @@ type buildLine struct {
 // result and stamping the managed labels. Every progress line is handed to
 // onLog (verbose by default — no hidden progress, feature-matrix row); a
 // build error in the stream is returned as the error.
-func (c *Client) BuildImage(ctx context.Context, buildContext io.Reader, tag, dockerfile string, labels map[string]string, onLog func(line string)) error {
+// registryConfig is the encoded credential map for private base images
+// (pkg/registryauth.EncodeConfig); empty builds with anonymous pulls.
+func (c *Client) BuildImage(ctx context.Context, buildContext io.Reader, tag, dockerfile string, labels map[string]string, registryConfig string, onLog func(line string)) error {
 	q := url.Values{}
 	q.Set("t", tag)
 	if dockerfile != "" {
@@ -523,7 +620,7 @@ func (c *Client) BuildImage(ctx context.Context, buildContext io.Reader, tag, do
 	lbl, _ := json.Marshal(labels)
 	q.Set("labels", string(lbl))
 
-	resp, err := c.do(ctx, http.MethodPost, "/build", q, buildContext, "application/x-tar")
+	resp, err := c.doBuild(ctx, q, buildContext, registryConfig)
 	if err != nil {
 		return err
 	}

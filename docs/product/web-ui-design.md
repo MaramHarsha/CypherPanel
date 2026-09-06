@@ -185,7 +185,8 @@ without refresh (ui-principles §10).
 | Server join | `POST /servers` | joining server appears | The `curl \| sh` command front and center, copy button; “running within 60 s” progress |
 | Server detail | `GET /servers/{id}` | status | Workloads placed here; revoke = typed-name delete |
 | Templates | (Phase 4 catalog feature — own spec first) | — | Ships as an honest empty state until the catalog lands |
-| Settings · Teams | `GET/POST /teams`, members CRUD | — | Last-owner guard errors surfaced verbatim (409) |
+| Settings · Teams | `GET/POST /teams`, members CRUD, `GET/POST /teams/{id}/invites`, `DELETE …/invites/{inv}`, `GET /teams/{id}/access-requests`, `POST /access-requests/{id}/grant\|deny` | — | Last-owner guard errors surfaced verbatim (409); the invite dialog shows the accept link **once** and says whether mail went out; the owners' queue grants through the member-role path ([invitations-and-access-requests.md](../features/invitations-and-access-requests.md)) |
+| Invitation landing (public) | `GET /invites/{token}`, `POST /invites/{token}/accept` | — | Outside the authed shell, like sign-in. "Choose a password" or "Enter your password" from `account_exists`; one honest expired/used/revoked state; lands signed in |
 | Settings · Users | `GET/POST /users`, role PATCH | — | Panel-role gated; hidden below admin |
 | Settings · Backup targets | `GET/POST/DELETE /backup-targets` | — | Secrets write-only |
 | Settings · Deploy keys | `GET/POST/DELETE /deploy-keys` | — | Public key copy |

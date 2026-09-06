@@ -11,6 +11,74 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const bumpApplicationRestartToken = `-- name: BumpApplicationRestartToken :one
+UPDATE applications
+SET restart_token = $2, updated_at = now()
+WHERE id = $1
+RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token
+`
+
+type BumpApplicationRestartTokenParams struct {
+	ID           string
+	RestartToken string
+}
+
+// BumpApplicationRestartToken is a restart: a new token is a difference in
+// desired state the reconciler closes by recreating the container
+// (deployment-control.md §3). Deliberately NOT part of UpdateApplicationConfig
+// — a restart must not carry an unrelated config edit along with it.
+func (q *Queries) BumpApplicationRestartToken(ctx context.Context, arg BumpApplicationRestartTokenParams) (Application, error) {
+	row := q.db.QueryRow(ctx, bumpApplicationRestartToken, arg.ID, arg.RestartToken)
+	var i Application
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.Name,
+		&i.SourceKind,
+		&i.SourceRepo,
+		&i.SourceBranch,
+		&i.SourceDeployKeyID,
+		&i.BuildKind,
+		&i.BuildDockerfilePath,
+		&i.BuildContext,
+		&i.RuntimeServerID,
+		&i.RuntimePort,
+		&i.RuntimeReplicas,
+		&i.RouteDomain,
+		&i.RouteHttps,
+		&i.RoutePathPrefix,
+		&i.HealthPath,
+		&i.HealthIntervalSeconds,
+		&i.HealthTimeoutSeconds,
+		&i.HealthRetries,
+		&i.WebhookID,
+		&i.WebhookSecretCt,
+		&i.WebhookSecretNonce,
+		&i.DesiredRevisionID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Status,
+		&i.StatusDetail,
+		&i.ObservedRevisionID,
+		&i.StatusObservedAt,
+		&i.PreviewEnabled,
+		&i.PreviewBaseDomain,
+		&i.PreviewTtlHours,
+		&i.CpuLimit,
+		&i.MemoryLimitMb,
+		&i.Volumes,
+		&i.Ports,
+		&i.HealthKind,
+		&i.SourceImage,
+		&i.EnvAppliedAt,
+		&i.SourceRegistryID,
+		&i.BuildPushRegistryID,
+		&i.BuildPushRepository,
+		&i.RestartToken,
+	)
+	return i, err
+}
+
 const createApplication = `-- name: CreateApplication :one
 INSERT INTO applications (
     id, environment_id, name,
@@ -22,7 +90,8 @@ INSERT INTO applications (
     webhook_id, webhook_secret_ct, webhook_secret_nonce,
     preview_enabled, preview_base_domain, preview_ttl_hours,
     cpu_limit, memory_limit_mb, volumes,
-    ports, health_kind, source_image
+    ports, health_kind, source_image,
+    source_registry_id, build_push_registry_id, build_push_repository
 ) VALUES (
     $1, $2, $3,
     $4, $5, $6, $7,
@@ -33,9 +102,10 @@ INSERT INTO applications (
     $21, $22, $23,
     $24, $25, $26,
     $27, $28, $29,
-    $30, $31, $32
+    $30, $31, $32,
+    $33, $34, $35
 )
-RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at
+RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token
 `
 
 type CreateApplicationParams struct {
@@ -71,6 +141,9 @@ type CreateApplicationParams struct {
 	Ports                 []byte
 	HealthKind            string
 	SourceImage           string
+	SourceRegistryID      pgtype.Text
+	BuildPushRegistryID   pgtype.Text
+	BuildPushRepository   string
 }
 
 func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationParams) (Application, error) {
@@ -107,6 +180,9 @@ func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationPa
 		arg.Ports,
 		arg.HealthKind,
 		arg.SourceImage,
+		arg.SourceRegistryID,
+		arg.BuildPushRegistryID,
+		arg.BuildPushRepository,
 	)
 	var i Application
 	err := row.Scan(
@@ -150,6 +226,10 @@ func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationPa
 		&i.HealthKind,
 		&i.SourceImage,
 		&i.EnvAppliedAt,
+		&i.SourceRegistryID,
+		&i.BuildPushRegistryID,
+		&i.BuildPushRepository,
+		&i.RestartToken,
 	)
 	return i, err
 }
@@ -164,7 +244,7 @@ func (q *Queries) DeleteApplication(ctx context.Context, id string) error {
 }
 
 const getApplication = `-- name: GetApplication :one
-SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at FROM applications WHERE id = $1
+SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token FROM applications WHERE id = $1
 `
 
 func (q *Queries) GetApplication(ctx context.Context, id string) (Application, error) {
@@ -211,12 +291,16 @@ func (q *Queries) GetApplication(ctx context.Context, id string) (Application, e
 		&i.HealthKind,
 		&i.SourceImage,
 		&i.EnvAppliedAt,
+		&i.SourceRegistryID,
+		&i.BuildPushRegistryID,
+		&i.BuildPushRepository,
+		&i.RestartToken,
 	)
 	return i, err
 }
 
 const getApplicationByWebhookID = `-- name: GetApplicationByWebhookID :one
-SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at FROM applications WHERE webhook_id = $1
+SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token FROM applications WHERE webhook_id = $1
 `
 
 func (q *Queries) GetApplicationByWebhookID(ctx context.Context, webhookID string) (Application, error) {
@@ -263,12 +347,48 @@ func (q *Queries) GetApplicationByWebhookID(ctx context.Context, webhookID strin
 		&i.HealthKind,
 		&i.SourceImage,
 		&i.EnvAppliedAt,
+		&i.SourceRegistryID,
+		&i.BuildPushRegistryID,
+		&i.BuildPushRepository,
+		&i.RestartToken,
 	)
 	return i, err
 }
 
+const listApplicationsByDeployKey = `-- name: ListApplicationsByDeployKey :many
+SELECT id, name FROM applications WHERE source_deploy_key_id = $1 ORDER BY name, id
+`
+
+type ListApplicationsByDeployKeyRow struct {
+	ID   string
+	Name string
+}
+
+// ListApplicationsByDeployKey names the applications still referencing a
+// deploy key, so a refused delete can say which (deploy-key-private-repos.md
+// §3; control-plane-hardening.md §8).
+func (q *Queries) ListApplicationsByDeployKey(ctx context.Context, sourceDeployKeyID pgtype.Text) ([]ListApplicationsByDeployKeyRow, error) {
+	rows, err := q.db.Query(ctx, listApplicationsByDeployKey, sourceDeployKeyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListApplicationsByDeployKeyRow{}
+	for rows.Next() {
+		var i ListApplicationsByDeployKeyRow
+		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listApplicationsByEnvironment = `-- name: ListApplicationsByEnvironment :many
-SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at FROM applications WHERE environment_id = $1 ORDER BY created_at DESC
+SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token FROM applications WHERE environment_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environmentID string) ([]Application, error) {
@@ -321,6 +441,10 @@ func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environment
 			&i.HealthKind,
 			&i.SourceImage,
 			&i.EnvAppliedAt,
+			&i.SourceRegistryID,
+			&i.BuildPushRegistryID,
+			&i.BuildPushRepository,
+			&i.RestartToken,
 		); err != nil {
 			return nil, err
 		}
@@ -333,7 +457,7 @@ func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environment
 }
 
 const listApplicationsByServer = `-- name: ListApplicationsByServer :many
-SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at FROM applications WHERE runtime_server_id = $1 ORDER BY created_at DESC
+SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token FROM applications WHERE runtime_server_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListApplicationsByServer(ctx context.Context, runtimeServerID string) ([]Application, error) {
@@ -386,6 +510,10 @@ func (q *Queries) ListApplicationsByServer(ctx context.Context, runtimeServerID 
 			&i.HealthKind,
 			&i.SourceImage,
 			&i.EnvAppliedAt,
+			&i.SourceRegistryID,
+			&i.BuildPushRegistryID,
+			&i.BuildPushRepository,
+			&i.RestartToken,
 		); err != nil {
 			return nil, err
 		}
@@ -401,7 +529,7 @@ const setApplicationDesiredRevision = `-- name: SetApplicationDesiredRevision :o
 UPDATE applications
 SET desired_revision_id = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at
+RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token
 `
 
 type SetApplicationDesiredRevisionParams struct {
@@ -453,6 +581,10 @@ func (q *Queries) SetApplicationDesiredRevision(ctx context.Context, arg SetAppl
 		&i.HealthKind,
 		&i.SourceImage,
 		&i.EnvAppliedAt,
+		&i.SourceRegistryID,
+		&i.BuildPushRegistryID,
+		&i.BuildPushRepository,
+		&i.RestartToken,
 	)
 	return i, err
 }
@@ -509,9 +641,10 @@ SET name = $2,
     preview_enabled = $19, preview_base_domain = $20, preview_ttl_hours = $21,
     cpu_limit = $22, memory_limit_mb = $23, volumes = $24,
     ports = $25, health_kind = $26, source_image = $27,
+    source_registry_id = $28, build_push_registry_id = $29, build_push_repository = $30,
     updated_at = now()
 WHERE id = $1
-RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at
+RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token
 `
 
 type UpdateApplicationConfigParams struct {
@@ -542,6 +675,9 @@ type UpdateApplicationConfigParams struct {
 	Ports                 []byte
 	HealthKind            string
 	SourceImage           string
+	SourceRegistryID      pgtype.Text
+	BuildPushRegistryID   pgtype.Text
+	BuildPushRepository   string
 }
 
 func (q *Queries) UpdateApplicationConfig(ctx context.Context, arg UpdateApplicationConfigParams) (Application, error) {
@@ -573,6 +709,9 @@ func (q *Queries) UpdateApplicationConfig(ctx context.Context, arg UpdateApplica
 		arg.Ports,
 		arg.HealthKind,
 		arg.SourceImage,
+		arg.SourceRegistryID,
+		arg.BuildPushRegistryID,
+		arg.BuildPushRepository,
 	)
 	var i Application
 	err := row.Scan(
@@ -616,6 +755,10 @@ func (q *Queries) UpdateApplicationConfig(ctx context.Context, arg UpdateApplica
 		&i.HealthKind,
 		&i.SourceImage,
 		&i.EnvAppliedAt,
+		&i.SourceRegistryID,
+		&i.BuildPushRegistryID,
+		&i.BuildPushRepository,
+		&i.RestartToken,
 	)
 	return i, err
 }

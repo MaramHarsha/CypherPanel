@@ -222,3 +222,38 @@ server-threshold, and docker-cleanup events (need observation points not all
 present yet — V1.x, feature-matrix.md) · team-scoped notifiers (arrive with
 teams + roles) · dig/batching and quiet hours · inbound/interactive
 (ChatOps) integrations.
+
+## Testing a configuration before it is saved
+
+`POST /api/v1/projects/{id}/notifiers/test` takes `{channel, config}`, validates
+it exactly as create would, uses it once and persists nothing. It exists because
+a dialog that can only test what it has already stored teaches operators to save
+broken credentials and find out later, from a notification that never arrived.
+
+`POST /api/v1/notifiers/{id}/test` answers the same shape for a stored notifier.
+Both return `200 {ok, detail}`: a reachable endpoint that refuses the message is
+`ok:false`, not an error status, because the request succeeded and the
+connection did not — collapsing the two costs the caller the distinction.
+`detail` carries the far end's own words, since "connection refused" is the whole
+answer.
+
+**The unsaved path is narrower than a saved notifier, in three ways.** It is the
+only path that can be aimed anywhere, repeatedly, leaving nothing behind
+(threat-model §5.11), so:
+
+1. **Email cannot be tested unsaved.** Testing a webhook config POSTs a fixed
+   JSON body to one URL. Testing an email config makes the panel relay a message
+   through an arbitrary SMTP server, with an arbitrary `from`, to an arbitrary
+   recipient — a spam and spoofing primitive rather than a connectivity check.
+   Save the notifier, then use `POST /notifiers/{id}/test`, which is authorized,
+   recorded and revocable.
+2. **A webhook URL must be `https` with a dotted hostname.** No cleartext, so a
+   payload is not put on the wire to a host nobody has committed to; no
+   userinfo, so a URL cannot smuggle credentials; no IP literal, which is the
+   shape that skips DNS entirely.
+3. **It dials only publicly routable addresses**, checked at dial time so a
+   second lookup cannot slip past.
+
+A saved notifier keeps the posture recorded in the threat model and may still
+point at an internal host over plain HTTP — which is what makes a self-hosted
+Slack-compatible receiver work.

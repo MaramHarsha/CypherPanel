@@ -4,7 +4,9 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/auth"
+	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/onboarding"
 )
 
@@ -69,6 +71,14 @@ func (a *API) handleSetup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "account created — please sign in")
 		return
 	}
+	// Entry #1 in every panel's log: the account that created the panel, named
+	// by the account it created (audit-log.md §3). It is what makes the empty
+	// state honest — the log is never actually empty (canvas 15a).
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionPanelSetupCompleted,
+		Actor:    auditUserActor(owner),
+		Resource: audit.Resource(audit.ResourceUser, owner.ID, owner.Email),
+	})
 	writeJSON(w, http.StatusCreated, loginResponse{
 		Token: token,
 		User:  userDTO{ID: owner.ID, Email: owner.Email, Role: owner.Role},
@@ -105,21 +115,46 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	token, user, err := a.deps.Auth.Login(r.Context(), req.Email, req.Password, req.TOTPCode, clientIP(r))
+	// attempt describes the sign-in before it is known to have worked: the
+	// actor is anonymous and the resource is the account it CLAIMED to be, so a
+	// refusal is attributable to an address without ever asserting that address
+	// signed in (audit-log.md §3).
+	attempt := audit.Entry{
+		Action:   audit.ActionLogin,
+		Actor:    domain.AuditActor{Kind: domain.AuditActorAnonymous, Label: req.Email},
+		Resource: audit.Resource(audit.ResourceUser, "", req.Email),
+	}
+	token, user, err := a.deps.Auth.Login(r.Context(), req.Email, req.Password, req.TOTPCode, a.clientIP(r))
 	switch {
 	case errors.Is(err, auth.ErrRateLimited):
-		writeError(w, http.StatusTooManyRequests, "too many attempts, try again in a moment")
+		// One row per throttle EPISODE, not per refused packet. A throttled
+		// attempt never touches the database, so auditing each one would let an
+		// unauthenticated caller drive unbounded durable writes — each carrying
+		// an attacker-supplied label and kept for the whole retention window —
+		// at their own request rate, which is exactly the work the login
+		// throttle exists to bound (control-plane-hardening.md §5). Canvas 13t
+		// needs the throttling to be visible, not counted: the transition is
+		// the event.
+		var limited *auth.RateLimitedError
+		if errors.As(err, &limited) && limited.FirstRefusal {
+			a.auditFailed(r, attempt, "throttled")
+		}
+		// The countdown, not a shrug: canvas 13t shows the seconds, and a
+		// client that cannot read headers finds them in the body too.
+		rateLimited(w, err, "too many attempts — wait before trying again")
 		return
 	case errors.Is(err, auth.ErrTOTPRequired):
 		// Password was correct; the client must supply a second factor and
 		// retry. A distinct flag lets the UI prompt for the code (not the
 		// password) without leaking whether 2FA is on before the password check.
-		writeJSON(w, http.StatusUnauthorized, map[string]any{
-			"error":         "two-factor authentication code required",
-			"totp_required": true,
+		writeJSON(w, http.StatusUnauthorized, errorBody{
+			Error:        "two-factor authentication code required",
+			TraceID:      w.Header().Get(TraceIDHeader),
+			TOTPRequired: true,
 		})
 		return
 	case errors.Is(err, auth.ErrInvalidCredentials):
+		a.auditFailed(r, attempt, "invalid credentials")
 		writeError(w, http.StatusUnauthorized, "invalid email or password")
 		return
 	case err != nil:
@@ -127,6 +162,11 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "login failed")
 		return
 	}
+	// A successful sign-in is attributed to the account that now exists as a
+	// session, not to the string that was typed.
+	attempt.Actor = auditUserActor(user)
+	attempt.Resource = audit.Resource(audit.ResourceUser, user.ID, user.Email)
+	a.audit(r, attempt)
 	writeJSON(w, http.StatusOK, loginResponse{
 		Token: token,
 		User:  userDTO{ID: user.ID, Email: user.Email, Role: user.Role},
@@ -135,11 +175,16 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleLogout(w http.ResponseWriter, r *http.Request) {
 	token, _ := bearerToken(r)
+	user, _ := userFromContext(r.Context())
 	if err := a.deps.Auth.Logout(r.Context(), token); err != nil {
 		a.deps.Log.Error("logout failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "logout failed")
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionLogout,
+		Resource: audit.Resource(audit.ResourceUser, user.ID, user.Email),
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 

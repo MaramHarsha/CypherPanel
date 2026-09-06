@@ -142,7 +142,7 @@ func (q *Queries) GetTeamRoleForProject(ctx context.Context, arg GetTeamRoleForP
 }
 
 const listProjectsByUser = `-- name: ListProjectsByUser :many
-SELECT p.id, p.name, p.created_at, p.updated_at, p.team_id FROM projects p
+SELECT p.id, p.name, p.created_at, p.updated_at, p.team_id, p.slug, p.default_environment_id, p.last_activity_at FROM projects p
 JOIN team_members m ON m.team_id = p.team_id
 WHERE m.user_id = $1 ORDER BY p.created_at DESC
 `
@@ -162,6 +162,9 @@ func (q *Queries) ListProjectsByUser(ctx context.Context, userID string) ([]Proj
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.TeamID,
+			&i.Slug,
+			&i.DefaultEnvironmentID,
+			&i.LastActivityAt,
 		); err != nil {
 			return nil, err
 		}

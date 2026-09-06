@@ -21,6 +21,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +30,7 @@ import (
 
 	"github.com/MaramHarsha/cypherpanel/core/dns"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
+	"github.com/MaramHarsha/cypherpanel/core/registries"
 	"github.com/MaramHarsha/cypherpanel/core/sharedvars"
 	"github.com/MaramHarsha/cypherpanel/core/store"
 	"github.com/MaramHarsha/cypherpanel/pkg/ids"
@@ -39,11 +42,64 @@ import (
 // never produced an image (its build failed or never ran).
 var ErrRevisionNotBuilt = errors.New("scheduler: revision was never built")
 
+// ErrFrozen marks a deploy refused because its environment is inside a freeze
+// window (deploy-protection.md §4). Nothing is written when it is returned — no
+// Revision, no Deployment — so a refused deploy leaves no orphan behind, and a
+// GitHub delivery can simply be redelivered once the window lifts.
+var ErrFrozen = errors.New("scheduler: environment is frozen")
+
+// ErrNotParked refuses a decision on a deployment that is not awaiting
+// approval — one already running, already finished, or already decided.
+// Handlers map it to 409.
+var ErrNotParked = errors.New("scheduler: deployment is not awaiting approval")
+
+// ErrCannotCancel is returned when a deployment is past the point a cancel can
+// honestly act on it (deployment-control.md §2): rolling out, or finished.
+var ErrCannotCancel = errors.New("scheduler: deployment can no longer be cancelled")
+
+// ErrNeverDeployed is returned when there is no container to restart, because
+// the application has never had a revision roll out.
+var ErrNeverDeployed = errors.New("scheduler: application has never deployed")
+
+// defaultRevisionRetain is the images-per-application window a node keeps when
+// the wiring set none.
+const defaultRevisionRetain = 3
+
+// FrozenError carries the sentence the 409 body shows: which environment is
+// frozen and when it lifts, e.g. "production is frozen until Mon 08:00
+// Europe/Berlin". It wraps ErrFrozen, so callers may match either.
+type FrozenError struct{ Detail string }
+
+func (e *FrozenError) Error() string { return e.Detail }
+func (e *FrozenError) Unwrap() error { return ErrFrozen }
+
+// ErrRevisionDataInvalid marks a revision whose stored data cannot be turned
+// into a container spec at all — today, a config snapshot that will not parse.
+// It is permanent and scoped to one application: no retry can produce a spec,
+// which is what lets DesiredStateFor omit that one application instead of
+// failing a whole node's sync. Every other build failure is treated as
+// infrastructure and fails the sync (see DesiredStateFor).
+var ErrRevisionDataInvalid = errors.New("scheduler: revision data is invalid")
+
 // Store is the persistence the scheduler needs (consumer-defined).
 type Store interface {
 	GetApplication(ctx context.Context, id string) (domain.Application, error)
 	ListApplicationsByServer(ctx context.Context, serverID string) ([]domain.Application, error)
 	SetApplicationDesiredRevision(ctx context.Context, appID, revisionID string) (domain.Application, error)
+	// ListRevisionsByApplication backs the garbage-collection retain set,
+	// newest first (disk-management.md §2).
+	ListRevisionsByApplication(ctx context.Context, appID string) ([]domain.Revision, error)
+	// Compose Stacks (compose-stacks.md §4).
+	GetComposeStack(ctx context.Context, id string) (domain.ComposeStack, error)
+	ListComposeStacksByServer(ctx context.Context, serverID string) ([]domain.ComposeStack, error)
+	GetComposeRevision(ctx context.Context, id string) (domain.ComposeRevision, error)
+	ListComposeEnvVars(ctx context.Context, stackID string) ([]domain.ComposeEnvVar, error)
+	SetComposeStackStatus(ctx context.Context, id, status, detail string) error
+	SetComposeStackObservedStatus(ctx context.Context, id, status, detail, revisionID string, at time.Time) error
+	// BumpApplicationRestartToken records a restart as desired state
+	// (deployment-control.md §3). Separate from the config update so a restart
+	// cannot carry an unrelated edit along with it.
+	BumpApplicationRestartToken(ctx context.Context, appID, token string) (domain.Application, error)
 	SetApplicationStatus(ctx context.Context, appID, status, detail string) error
 	SetApplicationObservedStatus(ctx context.Context, appID, status, detail, observedRevisionID string, observedAt time.Time) error
 	ListEnvVars(ctx context.Context, appID string) ([]domain.EnvVar, error)
@@ -63,6 +119,11 @@ type Store interface {
 
 	ListServers(ctx context.Context) ([]domain.Server, error)
 
+	// GetPanelTLS is the panel's ACME account, carried to every node inside
+	// DesiredState (agent-identity-and-tls.md §4). store.ErrNotFound means TLS
+	// is not configured, which is a normal state, not a failure.
+	GetPanelTLS(ctx context.Context) (domain.PanelTLS, error)
+
 	GetDeployKey(ctx context.Context, id string) (domain.DeployKey, error)
 
 	// Phase 3: Managed Databases (managed-databases.md)
@@ -79,6 +140,11 @@ type Store interface {
 	GetBackupTarget(ctx context.Context, id string) (domain.BackupTarget, error)
 	CreateBackupRecord(ctx context.Context, r domain.BackupRecord) (domain.BackupRecord, error)
 	GetBackupRecord(ctx context.Context, id string) (domain.BackupRecord, error)
+	SetDatabaseStatus(ctx context.Context, id, status, detail string) error
+	CreateDatabaseRestore(ctx context.Context, id, databaseID, backupRecordID, step string) (domain.DatabaseRestore, error)
+	AdvanceDatabaseRestore(ctx context.Context, id, step string, done, total int64) (domain.DatabaseRestore, error)
+	FinishDatabaseRestore(ctx context.Context, id, status, detail string) (domain.DatabaseRestore, error)
+	GetDatabaseRestore(ctx context.Context, id string) (domain.DatabaseRestore, error)
 	UpdateBackupRecord(ctx context.Context, id, objectKey string, sizeBytes int64, status, detail string, finishedAt *time.Time) error
 	SetDatabaseBackupLastRun(ctx context.Context, id string, lastRunAt *time.Time, lastStatus string) error
 	ListBackupRecords(ctx context.Context, backupID string) ([]domain.BackupRecord, error)
@@ -120,6 +186,9 @@ type Opener interface {
 type EventSink interface {
 	NotifyDeploy(ctx context.Context, app domain.Application, dep domain.Deployment)
 	NotifyBackup(ctx context.Context, db domain.Database, rec domain.BackupRecord)
+	// NotifyAppHealth carries an observed health transition of a running
+	// application — app.crashed and app.recovered (deployment-control.md §5).
+	NotifyAppHealth(ctx context.Context, app domain.Application, eventType, detail string)
 }
 
 // Scheduler owns pipeline state transitions. Construct with New.
@@ -128,6 +197,34 @@ type EventSink interface {
 // question answered, not the whole DNS service.
 type DomainVerifier interface {
 	Verify(ctx context.Context, host string) (dns.Verification, error)
+}
+
+// Gate is the deploy-protection admission check (consumer-defined;
+// *protection.Service satisfies it — deploy-protection.md §4). It is consulted
+// once, in Deploy and Rollback, at the moment a Deployment is born and before
+// any work item is published.
+//
+// A nil Gate means protection is not wired and every deploy is clear — the same
+// nil-guard the optional DomainVerifier uses. It is deliberately NOT a sink:
+// the gate can refuse, so its errors are propagated, never swallowed (§5, fail
+// closed).
+type Gate interface {
+	Admit(ctx context.Context, environmentID string) (domain.DeployAdmission, error)
+	// Park records the gate decision for a deployment the scheduler has just
+	// parked. Its failure fails the deployment: a parked deploy with no
+	// approval row could never be decided.
+	Park(ctx context.Context, dep domain.Deployment, environmentID, requestedBy, requiredRole string) error
+}
+
+// RegistryCredentials resolves a stored registry credential at work-build time
+// (consumer-defined; *registries.Service satisfies it — registries.md §5).
+//
+// The scheduler holds the credential for exactly as long as it takes to put it
+// on one mTLS-carried work item; nothing about a registry is cached, so
+// rotating or deleting one takes effect on the next deploy rather than at some
+// expiry nobody can see.
+type RegistryCredentials interface {
+	Credential(ctx context.Context, id string) (registries.Credential, error)
 }
 
 type Scheduler struct {
@@ -145,6 +242,23 @@ type Scheduler struct {
 	// (dns-automation.md §4.2). nil when DNS automation is not wired, which
 	// routableDomain treats as "nothing is enforced".
 	dns DomainVerifier
+
+	// gate is deploy protection (deploy-protection.md). nil when it is not
+	// wired, which admit() treats as "every deploy is clear" — the behaviour
+	// of every panel before this feature existed.
+	gate Gate
+
+	// registries resolves the sealed credential for a private registry
+	// (registries.md). nil is the ordinary panel: no application can name a
+	// registry it has not stored, so nothing changes for one that never used
+	// the feature.
+	registries RegistryCredentials
+
+	// revisionRetain is how many of an application's images a node keeps,
+	// newest first and including the deployed one (disk-management.md §7).
+	// Zero means the default — the wiring sets it, and a test that does not
+	// still gets a sane window.
+	revisionRetain int
 
 	// mu serializes pipeline transitions: deploy requests and event handlers
 	// race on the per-app queue, and the transitions are read-modify-write.
@@ -168,6 +282,13 @@ func (s *Scheduler) AddSink(k EventSink) { s.sinks = append(s.sinks, k) }
 func (s *Scheduler) emitDeploy(ctx context.Context, app domain.Application, dep domain.Deployment) {
 	for _, k := range s.sinks {
 		k.NotifyDeploy(ctx, app, dep)
+	}
+}
+
+// emitAppHealth hands an observed health transition to every sink.
+func (s *Scheduler) emitAppHealth(ctx context.Context, app domain.Application, eventType, detail string) {
+	for _, k := range s.sinks {
+		k.NotifyAppHealth(ctx, app, eventType, detail)
 	}
 }
 
@@ -233,13 +354,34 @@ func imageTag(appID, revisionID string) string {
 // a Deployment to roll it out, then starts the pipeline (or queues behind the
 // app's active deployment). ref, when non-empty, is the exact commit to build;
 // empty builds the configured branch's head.
+//
+// It is DeployAs with no requester: the machine-triggered path (a template
+// install, a preview environment). A deploy a person asked for goes through
+// DeployAs so the gate can record who asked (deploy-protection.md §4).
 func (s *Scheduler) Deploy(ctx context.Context, appID, trigger, ref string) (domain.Deployment, error) {
+	return s.DeployAs(ctx, appID, trigger, ref, "")
+}
+
+// DeployAs is Deploy attributed to a user. requestedBy is the calling user's
+// id, or empty for a deploy no person asked for — a webhook push, a template
+// install — which is what a parked deployment stores as a NULL requester
+// (deploy-protection.md §2).
+func (s *Scheduler) DeployAs(ctx context.Context, appID, trigger, ref, requestedBy string) (domain.Deployment, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	app, err := s.store.GetApplication(ctx, appID)
 	if err != nil {
 		return domain.Deployment{}, fmt.Errorf("scheduler: getting application: %w", err)
+	}
+	// The gate runs BEFORE anything is written (deploy-protection.md §4): a
+	// freeze refuses outright, leaving no orphan Revision behind.
+	admission, err := s.admit(ctx, app)
+	if err != nil {
+		return domain.Deployment{}, err
+	}
+	if admission.Frozen {
+		return domain.Deployment{}, &FrozenError{Detail: admission.FreezeDetail}
 	}
 	snapshot, err := snapshotOf(app)
 	if err != nil {
@@ -268,6 +410,9 @@ func (s *Scheduler) Deploy(ctx context.Context, appID, trigger, ref string) (dom
 	if err != nil {
 		return domain.Deployment{}, fmt.Errorf("scheduler: creating deployment: %w", err)
 	}
+	if admission.NeedsApproval {
+		return s.park(ctx, dep, app, admission, requestedBy)
+	}
 	if serr := s.tryStart(ctx, dep); serr != nil {
 		// Return the current record alongside the error: a fail-fast start
 		// (no builder, bad deploy key) already wrote status=failed with the
@@ -283,7 +428,17 @@ func (s *Scheduler) Deploy(ctx context.Context, appID, trigger, ref string) (dom
 // Rollback starts a Deployment that re-points the application at the revision
 // a previous deployment shipped — same pipeline, build skipped (the image
 // exists; the agent's revision-window GC retains it).
+//
+// It is RollbackAs with no requester; a rollback a person asked for goes
+// through RollbackAs.
 func (s *Scheduler) Rollback(ctx context.Context, deploymentID string) (domain.Deployment, error) {
+	return s.RollbackAs(ctx, deploymentID, "")
+}
+
+// RollbackAs is Rollback attributed to a user. A rollback is a deploy — it
+// changes what is serving — so it passes the same gate, and inside a freeze it
+// is refused for the same reason a forward deploy is (deploy-protection.md §1).
+func (s *Scheduler) RollbackAs(ctx context.Context, deploymentID, requestedBy string) (domain.Deployment, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -298,9 +453,23 @@ func (s *Scheduler) Rollback(ctx context.Context, deploymentID string) (domain.D
 	if rev.Image == "" {
 		return domain.Deployment{}, ErrRevisionNotBuilt
 	}
+	app, err := s.store.GetApplication(ctx, src.ApplicationID)
+	if err != nil {
+		return domain.Deployment{}, fmt.Errorf("scheduler: getting application: %w", err)
+	}
+	admission, err := s.admit(ctx, app)
+	if err != nil {
+		return domain.Deployment{}, err
+	}
+	if admission.Frozen {
+		return domain.Deployment{}, &FrozenError{Detail: admission.FreezeDetail}
+	}
 	dep, err := s.store.CreateDeployment(ctx, ids.New(ids.PrefixDeployment), src.ApplicationID, rev.ID, "rollback")
 	if err != nil {
 		return domain.Deployment{}, fmt.Errorf("scheduler: creating rollback deployment: %w", err)
+	}
+	if admission.NeedsApproval {
+		return s.park(ctx, dep, app, admission, requestedBy)
 	}
 	if serr := s.tryStart(ctx, dep); serr != nil {
 		if fresh, err := s.store.GetDeployment(ctx, dep.ID); err == nil {
@@ -309,6 +478,217 @@ func (s *Scheduler) Rollback(ctx context.Context, deploymentID string) (domain.D
 		return dep, serr
 	}
 	return s.store.GetDeployment(ctx, dep.ID)
+}
+
+// ─── Deploy protection (deploy-protection.md §§3–4) ─────────────────────────
+
+// admit asks the gate whether this application's environment will accept a
+// deploy right now. No gate means no protection, which is how every panel
+// behaved before the feature existed. A gate that errors REFUSES: fail closed,
+// because a protection control that fails open is worse than none (§5).
+func (s *Scheduler) admit(ctx context.Context, app domain.Application) (domain.DeployAdmission, error) {
+	if s.gate == nil {
+		return domain.DeployAdmission{}, nil
+	}
+	adm, err := s.gate.Admit(ctx, app.EnvironmentID)
+	if err != nil {
+		return domain.DeployAdmission{}, fmt.Errorf("scheduler: evaluating deploy protection for %s: %w", app.ID, err)
+	}
+	return adm, nil
+}
+
+// park holds a freshly created Deployment at the gate: it moves to
+// awaiting_approval and NO work item is published, so the agent observes
+// nothing and the application's own status is untouched — start() is what sets
+// an app to deploying, and a parked deploy never reaches it (§3).
+//
+// Callers hold s.mu.
+func (s *Scheduler) park(ctx context.Context, dep domain.Deployment, app domain.Application,
+	adm domain.DeployAdmission, requestedBy string) (domain.Deployment, error) {
+	parked, err := s.store.UpdateDeploymentStatus(ctx, dep.ID, domain.DeployAwaitingApproval,
+		"waiting for approval from "+articleFor(adm.RequiredRole))
+	if err != nil {
+		return dep, err
+	}
+	if perr := s.gate.Park(ctx, parked, app.EnvironmentID, requestedBy, adm.RequiredRole); perr != nil {
+		// A deployment parked with no approval row could never be decided —
+		// no approve or reject route can reach it. Ending it is the honest
+		// outcome, and the detail says what to do about it.
+		s.log.Error("recording deploy approval", "deployment_id", parked.ID,
+			"app_id", app.ID, "environment_id", app.EnvironmentID, "error", perr)
+		failed, ferr := s.failParked(ctx, parked, "could not record the approval request — deploy again")
+		if ferr != nil {
+			return parked, perr
+		}
+		return failed, perr
+	}
+	return parked, nil
+}
+
+// ApproveDeployment releases a parked deployment into the ordinary queue: it
+// becomes queued and tryStart promotes it if it is at the head, so two
+// approvals granted at once serialize exactly like two manual deploys (§3).
+//
+// It asserts the parked state rather than trusting the caller, because the
+// approval row and the deployment row are written separately and only this
+// assertion makes "approved twice" harmless.
+func (s *Scheduler) ApproveDeployment(ctx context.Context, deploymentID string) (domain.Deployment, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	dep, err := s.store.GetDeployment(ctx, deploymentID)
+	if err != nil {
+		return domain.Deployment{}, fmt.Errorf("scheduler: getting deployment: %w", err)
+	}
+	if !dep.Status.Parked() {
+		return dep, ErrNotParked
+	}
+	queued, err := s.store.UpdateDeploymentStatus(ctx, dep.ID, domain.DeployQueued, "")
+	if err != nil {
+		return dep, err
+	}
+	s.log.Info("parked deployment approved", "deployment_id", dep.ID, "app_id", dep.ApplicationID)
+	if serr := s.tryStart(ctx, queued); serr != nil {
+		if fresh, gerr := s.store.GetDeployment(ctx, queued.ID); gerr == nil {
+			return fresh, serr
+		}
+		return queued, serr
+	}
+	return s.store.GetDeployment(ctx, queued.ID)
+}
+
+// RejectDeployment ends a parked deployment as failed, carrying detail — the
+// sentence naming the rejecter and their reason (§3).
+func (s *Scheduler) RejectDeployment(ctx context.Context, deploymentID, detail string) (domain.Deployment, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	dep, err := s.store.GetDeployment(ctx, deploymentID)
+	if err != nil {
+		return domain.Deployment{}, fmt.Errorf("scheduler: getting deployment: %w", err)
+	}
+	if !dep.Status.Parked() {
+		return dep, ErrNotParked
+	}
+	return s.failParked(ctx, dep, detail)
+}
+
+// failParked ends a deployment that never started. Deliberately NOT fail():
+//
+//   - there is no 'deploying' override to take back — start() never ran, so
+//     the application has been reporting what it is actually doing all along;
+//   - no queued successor to promote — a parked deploy holds no pipeline slot
+//     (the queue queries exclude awaiting_approval), so ending it frees
+//     nothing;
+//   - nothing is emitted to the notifier/webhook sinks. Their taxonomy is
+//     observed OUTCOMES (notifications.md §3), and announcing "deploy failed"
+//     in Slack would misrepresent a governance decision as an infrastructure
+//     failure. The requester is told directly, in the inbox, by the item that
+//     names who rejected it and why (§9).
+//
+// Callers hold s.mu.
+func (s *Scheduler) failParked(ctx context.Context, dep domain.Deployment, detail string) (domain.Deployment, error) {
+	failed, err := s.store.UpdateDeploymentStatus(ctx, dep.ID, domain.DeployFailed, detail)
+	if err != nil {
+		return dep, fmt.Errorf("scheduler: ending parked deployment: %w", err)
+	}
+	s.log.Info("parked deployment ended", "deployment_id", dep.ID,
+		"app_id", dep.ApplicationID, "detail", detail)
+	return failed, nil
+}
+
+// articleFor renders a role with its article, so a parked deployment's detail
+// reads "waiting for approval from an owner" rather than "from owner".
+func articleFor(role string) string {
+	switch role {
+	case domain.RoleAdmin, domain.RoleOwner:
+		return "an " + role
+	case domain.RoleMember:
+		return "a " + role
+	default:
+		return "an approver"
+	}
+}
+
+// Cancel ends a deployment the operator has stopped waiting on
+// (deployment-control.md §2).
+//
+// It is the PANEL stopping waiting, not a remote kill: ADR-002 gives the plane
+// no way to reach into a builder and stop a running build, and inventing one
+// for this would be the imperative path hard rule 3 forbids. A build already in
+// flight finishes on the builder; the image it produces references no revision
+// anything desires, so desired-state GC reclaims it on the next reconcile.
+//
+// Refusing once the deployment is ROLLING OUT is the load-bearing rule. By then
+// desired_revision_id names the new revision and every agent is converging on
+// it; "cancelling" would leave desired state pointing at a revision the panel
+// claims it abandoned, and the reconciler would go on converging while the
+// panel lied about it. The honest recovery there is a rollback.
+//
+// It adds no sixth deployment status, for the reason deploy-protection.md
+// already recorded when it declined to add one for a rejection: the terminal
+// set is load-bearing in the queue queries, in Terminal() and in the web's
+// isTerminal(). A cancelled deploy is a deploy that did not ship, and WHY is
+// in its detail.
+func (s *Scheduler) Cancel(ctx context.Context, deploymentID, by string) (domain.Deployment, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	dep, err := s.store.GetDeployment(ctx, deploymentID)
+	if err != nil {
+		return domain.Deployment{}, fmt.Errorf("scheduler: getting deployment: %w", err)
+	}
+	detail := "cancelled by " + by
+	switch dep.Status {
+	case domain.DeployQueued, domain.DeployAwaitingApproval:
+		// Never started: no 'deploying' override to take back, and no pipeline
+		// slot to free — the queue queries exclude both states, so there is
+		// nothing queued behind this one that ending it releases.
+		return s.failParked(ctx, dep, detail)
+	case domain.DeployBuilding, domain.DeployDistributing:
+		return s.endActive(ctx, dep, detail, false)
+	default:
+		return dep, fmt.Errorf("%w: %s", ErrCannotCancel, dep.Status)
+	}
+}
+
+// Restart recreates an application's container without shipping anything new
+// (deployment-control.md §3).
+//
+// Expressed as desired state, not as a verb: a fresh restart token is part of
+// the spec, the reconciler recreates a container whose token does not match,
+// and converging again afterwards mutates nothing. No Revision is created, no
+// build runs, no Deployment row appears and desired_revision_id does not move —
+// an operator restarting a wedged container must not silently ship the config
+// they edited an hour ago.
+//
+// Persisted before published (ENGINEERING rule 15): if the publish fails, the
+// token is still stored, so the agent's next sync converges to it anyway. The
+// error is still returned, because the operator deserves to know it will not be
+// immediate.
+func (s *Scheduler) Restart(ctx context.Context, appID string) (domain.Application, error) {
+	app, err := s.store.GetApplication(ctx, appID)
+	if err != nil {
+		return domain.Application{}, fmt.Errorf("scheduler: getting application: %w", err)
+	}
+	if app.DesiredRevisionID == nil {
+		return domain.Application{}, ErrNeverDeployed
+	}
+	rev, err := s.store.GetRevision(ctx, *app.DesiredRevisionID)
+	if err != nil {
+		return domain.Application{}, fmt.Errorf("scheduler: getting revision: %w", err)
+	}
+	if rev.Image == "" {
+		return domain.Application{}, ErrNeverDeployed
+	}
+	updated, err := s.store.BumpApplicationRestartToken(ctx, appID, ids.New(ids.PrefixRestart))
+	if err != nil {
+		return domain.Application{}, fmt.Errorf("scheduler: recording restart: %w", err)
+	}
+	if err := s.ConvergeApp(ctx, appID); err != nil {
+		return updated, err
+	}
+	return updated, nil
 }
 
 // RemoveApp publishes desired absence for a deleted application. Called after
@@ -482,6 +862,17 @@ func (s *Scheduler) buildWork(ctx context.Context, dep domain.Deployment, app do
 		}
 		deployKeyPem = string(priv)
 	}
+	// The base image a private Dockerfile FROM names comes from the same place
+	// the app's image source would: one credential, one answer to "where do
+	// this application's bits come from".
+	sourceAuth, err := s.registryAuth(ctx, app.Source.RegistryID)
+	if err != nil {
+		return nil, err
+	}
+	push, err := s.pushTarget(ctx, app, rev)
+	if err != nil {
+		return nil, err
+	}
 	return &agentv1.BuildWork{
 		DeploymentId:   dep.ID,
 		AppId:          app.ID,
@@ -495,6 +886,8 @@ func (s *Scheduler) buildWork(ctx context.Context, dep domain.Deployment, app do
 		// A synthesized static image must listen where the route and health
 		// check already expect it, not on whatever its base image defaults to.
 		RuntimePort: uint32(app.Runtime.Port), //nolint:gosec // validated 1–65535
+		SourceAuth:  sourceAuth,
+		Push:        push,
 	}, nil
 }
 
@@ -695,7 +1088,10 @@ func (s *Scheduler) routableDomain(ctx context.Context, domainName string) strin
 func (s *Scheduler) buildSpec(ctx context.Context, app domain.Application, rev domain.Revision, pol envPolicy) (*agentv1.AppSpec, error) {
 	var cs configSnapshot
 	if err := json.Unmarshal(rev.ConfigSnapshot, &cs); err != nil {
-		return nil, fmt.Errorf("scheduler: parsing config snapshot of %s: %w", rev.ID, err)
+		// Tagged as permanent and app-scoped: a stored snapshot that will not
+		// parse never will, so DesiredStateFor may omit this one application
+		// rather than fail the node's whole sync.
+		return nil, fmt.Errorf("%w: parsing config snapshot of %s: %w", ErrRevisionDataInvalid, rev.ID, err)
 	}
 	env, err := s.resolveEnv(ctx, app, pol)
 	if err != nil {
@@ -711,6 +1107,15 @@ func (s *Scheduler) buildSpec(ctx context.Context, app domain.Application, rev d
 	tasks, err := s.scheduledTasksFor(ctx, app.ID)
 	if err != nil {
 		return nil, err
+	}
+	// Only a pulling spec carries a credential: an image that arrived by local
+	// build or relay has nothing to authenticate to, and putting a token on
+	// that work item would be a secret travelling for no reason (rule 20).
+	var pullAuth *agentv1.RegistryAuth
+	if cs.Pull {
+		if pullAuth, err = s.registryAuth(ctx, app.Source.RegistryID); err != nil {
+			return nil, err
+		}
 	}
 	return &agentv1.AppSpec{
 		AppId:         app.ID,
@@ -734,6 +1139,11 @@ func (s *Scheduler) buildSpec(ctx context.Context, app domain.Application, rev d
 		},
 		ScheduledTasks: tasks,
 		Pull:           cs.Pull,
+		RegistryAuth:   pullAuth,
+		// Current app state, not a per-revision snapshot: a restart asked for
+		// now must survive a rollback, and the token is what the container is
+		// labelled with either way (deployment-control.md §3).
+		RestartToken: app.RestartToken,
 		// Resource limits are current app state (not per-revision snapshot),
 		// applied at rollout like env vars; nil = 0 = no limit on the wire.
 		CpuLimit:      cpuLimitValue(app.Runtime.CPULimit),
@@ -963,6 +1373,10 @@ func (s *Scheduler) HandleAppStatus(ctx context.Context, serverID string, st *ag
 		s.log.Error("app status: recording observation", "app_id", st.GetAppId(), "error", err)
 		return
 	}
+	// Announce the TRANSITION, from the status that was stored a moment ago —
+	// never the observation, which arrives continuously (deployment-control.md
+	// §5). Persisted first, then announced (ENGINEERING rule 15).
+	s.announceHealth(ctx, app, st.GetState(), st.GetDetail())
 	if st.GetState() != domain.AppRunning {
 		return
 	}
@@ -1036,20 +1450,58 @@ func (s *Scheduler) pinRevisionImage(ctx context.Context, st *agentv1.AppStatus)
 // application's own status stays observation-driven: the previous revision
 // keeps serving and the agent's reports say so. Callers hold s.mu.
 func (s *Scheduler) fail(ctx context.Context, dep domain.Deployment, detail string) {
-	failed, err := s.store.UpdateDeploymentStatus(ctx, dep.ID, domain.DeployFailed, detail)
-	if err != nil {
+	if _, err := s.endActive(ctx, dep, detail, true); err != nil {
 		s.log.Error("failing deployment", "deployment_id", dep.ID, "error", err)
-		return
 	}
-	s.log.Warn("deployment failed", "deployment_id", dep.ID, "app_id", dep.ApplicationID, "detail", detail)
+}
+
+// endActive ends a deployment that had STARTED: it takes back the 'deploying'
+// override start() applied and promotes whatever was queued behind it.
+//
+// announce is what separates a failure from a cancellation. A pipeline failure
+// is an outcome and belongs in the notifier/webhook taxonomy; a cancellation is
+// an operator's decision, and announcing "deploy failed" in Slack would
+// misrepresent it as an infrastructure failure — the same distinction
+// failParked already draws for a rejection (deployment-control.md §2).
+func (s *Scheduler) endActive(ctx context.Context, dep domain.Deployment, detail string, announce bool) (domain.Deployment, error) {
+	ended, err := s.store.UpdateDeploymentStatus(ctx, dep.ID, domain.DeployFailed, detail)
+	if err != nil {
+		return dep, fmt.Errorf("scheduler: ending deployment: %w", err)
+	}
+	s.log.Warn("deployment ended", "deployment_id", dep.ID, "app_id", dep.ApplicationID, "detail", detail)
 	// Load the app for the announcement and to clear the plane-driven
-	// 'deploying' override; a lookup miss just drops the notice (the failure is
+	// 'deploying' override; a lookup miss just drops the notice (the outcome is
 	// already recorded and logged).
 	if app, err := s.store.GetApplication(ctx, dep.ApplicationID); err == nil {
 		s.clearDeployingStatus(ctx, app, detail)
-		s.emitDeploy(ctx, app, failed)
+		if announce {
+			s.emitDeploy(ctx, app, ended)
+		}
 	}
 	s.promoteNext(ctx, dep.ApplicationID)
+	return ended, nil
+}
+
+// announceHealth emits app.crashed / app.recovered on the two transitions that
+// are news, and nothing on any other (deployment-control.md §5). app is the
+// application as it was BEFORE this observation was stored, so app.Status is
+// the previous status.
+//
+// Requiring the previous status to be exactly `running` is what keeps a failed
+// deploy out of this channel: a rollout whose health gate fails reports `error`
+// while the OLD container is still serving, so nothing crashed — and
+// deploy.failed already says the deploy did not land. `degraded` is excluded
+// for the same reason it is excluded from paging anywhere: it means "serving,
+// with something wrong", and a channel that fires on it gets muted.
+func (s *Scheduler) announceHealth(ctx context.Context, app domain.Application, observed, detail string) {
+	switch {
+	case app.Status == domain.AppRunning && observed == domain.AppError:
+		s.log.Warn("application crashed", "app_id", app.ID, "detail", detail)
+		s.emitAppHealth(ctx, app, domain.EventAppCrashed, detail)
+	case app.Status == domain.AppError && observed == domain.AppRunning:
+		s.log.Info("application recovered", "app_id", app.ID)
+		s.emitAppHealth(ctx, app, domain.EventAppRecovered, "")
+	}
 }
 
 // clearDeployingStatus takes back the 'deploying' override start() applied.
@@ -1212,6 +1664,22 @@ func (s *Scheduler) HandleScheduledTaskRun(ctx context.Context, serverID string,
 // DesiredStateFor resolves one server's full desired set — the reply to the
 // agent's sync request. Apps whose desired revision was never built are
 // omitted (nothing can serve them yet).
+//
+// The reply is the COMPLETE desired set and replaces what the agent holds, so
+// under ADR-005 omitting a running application here is an instruction to tear
+// its container down (agent/driver/docker removes what desired state does not
+// name; the same is true of databases). A store read that did not answer must
+// therefore fail the WHOLE sync rather than silently shrink the set: with no
+// reply the agent times out, keeps the desired set it already holds and asks
+// again, which costs one sync cycle instead of the fleet. This matters most for
+// a `work.<id>.resync` nudge, which re-syncs every node while it is up.
+//
+// Only a permanent, application-scoped data problem omits one entry — a
+// revision row that is gone, a config snapshot that will not parse — because
+// there is no spec to send for it and no retry can produce one. The node-wide
+// TLS settings at the end are the one deliberate exception, for the reason
+// recorded there: their absence means "no resolver", which serves HTTP for a
+// cycle rather than removing anything.
 func (s *Scheduler) DesiredStateFor(ctx context.Context, serverID string) ([]byte, error) {
 	apps, err := s.store.ListApplicationsByServer(ctx, serverID)
 	if err != nil {
@@ -1224,7 +1692,11 @@ func (s *Scheduler) DesiredStateFor(ctx context.Context, serverID string) ([]byt
 		}
 		rev, err := s.store.GetRevision(ctx, *app.DesiredRevisionID)
 		if err != nil {
-			s.log.Error("desired state: loading revision", "app_id", app.ID, "error", err)
+			if !errors.Is(err, store.ErrNotFound) {
+				return nil, fmt.Errorf("scheduler: loading revision %s of app %s for %s: %w", *app.DesiredRevisionID, app.ID, serverID, err)
+			}
+			s.log.Error("desired state: omitting an app whose desired revision row is gone",
+				"server_id", serverID, "app_id", app.ID, "revision_id", *app.DesiredRevisionID, "error", err)
 			continue
 		}
 		if rev.Image == "" {
@@ -1236,7 +1708,11 @@ func (s *Scheduler) DesiredStateFor(ctx context.Context, serverID string) ([]byt
 		// logged instead (shared-variables.md §4).
 		spec, err := s.buildSpec(ctx, app, rev, envOmitMissing)
 		if err != nil {
-			s.log.Error("desired state: building spec", "app_id", app.ID, "error", err)
+			if !errors.Is(err, ErrRevisionDataInvalid) {
+				return nil, fmt.Errorf("scheduler: building spec for app %s of %s: %w", app.ID, serverID, err)
+			}
+			s.log.Error("desired state: omitting an app whose revision data cannot be read",
+				"server_id", serverID, "app_id", app.ID, "revision_id", rev.ID, "error", err)
 			continue
 		}
 		ds.Specs = append(ds.Specs, spec)
@@ -1260,7 +1736,11 @@ func (s *Scheduler) DesiredStateFor(ctx context.Context, serverID string) ([]byt
 		}
 		rev, err := s.store.GetDatabaseRevision(ctx, *db.DesiredRevisionID)
 		if err != nil {
-			s.log.Error("desired state: loading db revision", "db_id", db.ID, "error", err)
+			if !errors.Is(err, store.ErrNotFound) {
+				return nil, fmt.Errorf("scheduler: loading revision %s of database %s for %s: %w", *db.DesiredRevisionID, db.ID, serverID, err)
+			}
+			s.log.Error("desired state: omitting a database whose desired revision row is gone",
+				"server_id", serverID, "db_id", db.ID, "revision_id", *db.DesiredRevisionID, "error", err)
 			continue
 		}
 
@@ -1268,13 +1748,128 @@ func (s *Scheduler) DesiredStateFor(ctx context.Context, serverID string) ([]byt
 		// comparing the two, so they must not be able to disagree.
 		spec, err := s.dbSpec(db, rev)
 		if err != nil {
-			s.log.Error("desired state: building db spec", "db_id", db.ID, "error", err)
-			continue
+			// dbSpec fails only when the sealed root password will not open —
+			// a sealing-key problem, not this database's data. Omitting the
+			// database would delete a running one (managed-databases.md §6).
+			return nil, fmt.Errorf("scheduler: building spec for database %s of %s: %w", db.ID, serverID, err)
 		}
 		ds.DbSpecs = append(ds.DbSpecs, spec)
 	}
 
+	// V1: which revisions' images must survive garbage collection
+	// (disk-management.md §2). Built from the same application list, and
+	// deliberately a SEPARATE field: an app missing from `specs` is removed,
+	// while one missing from `retain` is left alone.
+	ds.Retain = s.retainFor(ctx, serverID, apps)
+
+	// V1: Compose Stacks (compose-stacks.md §4).
+	composeSpecs, err := s.composeSpecsFor(ctx, serverID)
+	if err != nil {
+		return nil, err
+	}
+	ds.ComposeSpecs = composeSpecs
+
+	// Node-wide TLS settings. A read failure is logged and the field is left
+	// empty rather than failing the whole sync: an agent with no desired state
+	// converges nothing, which is far worse than an agent that serves HTTP for
+	// one sync cycle. The empty value is also the safe one — it makes the node
+	// stop promising HTTPS rather than start.
+	if tls, err := s.store.GetPanelTLS(ctx); err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			s.log.Error("desired state: reading panel tls", "server_id", serverID, "error", err)
+		}
+	} else if tls.Configured() {
+		ds.Tls = &agentv1.TLSSettings{AcmeEmail: tls.ACMEEmail, AcmeCaServer: tls.ACMECAServer}
+	}
+
 	return proto.Marshal(ds)
+}
+
+// retainFor names, per application, the revisions whose images must survive on
+// this node (disk-management.md §2).
+//
+// This is what turns garbage collection from a heuristic into a reconciler. The
+// plane already knows which revisions it wants to be able to run — the deployed
+// one, plus the most recent others a rollback could name — so everything else
+// is, by definition, unreferenced. A prune job cannot know that, which is why
+// every prune job either spares too much or breaks rollback.
+//
+// An application whose revisions cannot be read is OMITTED rather than sent
+// empty: an empty list would read as "keep nothing", and the cost of removing a
+// rollback target is not the cost of keeping an image too long.
+func (s *Scheduler) retainFor(ctx context.Context, serverID string, apps []domain.Application) []*agentv1.RetainSpec {
+	keep := s.revisionRetain
+	if keep < 1 {
+		keep = defaultRevisionRetain
+	}
+	out := make([]*agentv1.RetainSpec, 0, len(apps))
+	for _, app := range apps {
+		revs, err := s.store.ListRevisionsByApplication(ctx, app.ID)
+		if err != nil {
+			s.log.Error("retain set: listing revisions", "server_id", serverID, "app_id", app.ID, "error", err)
+			continue
+		}
+		ids := make([]string, 0, keep)
+		// The desired revision first and unconditionally: it is what is running,
+		// and a retention window that could exclude it would be a request to
+		// delete the image serving traffic.
+		if app.DesiredRevisionID != nil {
+			ids = append(ids, *app.DesiredRevisionID)
+		}
+		// Then the most recent others, newest first — the ones a rollback can
+		// name. ListRevisionsByApplication already orders by created_at DESC.
+		for _, rev := range revs {
+			if len(ids) >= keep {
+				break
+			}
+			if !slices.Contains(ids, rev.ID) {
+				ids = append(ids, rev.ID)
+			}
+		}
+		if len(ids) == 0 {
+			continue // nothing to keep is not an instruction to keep nothing
+		}
+		out = append(out, &agentv1.RetainSpec{AppId: app.ID, RevisionIds: ids})
+	}
+	return out
+}
+
+// RequestResync asks every enrolled server to re-read its desired state
+// (agent-identity-and-tls.md §4). It is how a node-wide setting that belongs to
+// no single Application — the panel's ACME account — reaches the fleet promptly
+// instead of waiting for each agent's next reconnect.
+//
+// Best-effort per server: one unreachable node must not stop the others, and
+// the nudge is only ever an optimization — the setting is already in Postgres,
+// which is what makes it true (rule 15).
+func (s *Scheduler) RequestResync(ctx context.Context, reason string) error {
+	servers, err := s.store.ListServers(ctx)
+	if err != nil {
+		return fmt.Errorf("scheduler: listing servers for resync: %w", err)
+	}
+	data, err := proto.Marshal(&agentv1.ResyncWork{Reason: reason})
+	if err != nil {
+		return fmt.Errorf("scheduler: marshaling resync: %w", err)
+	}
+	var failed int
+	for _, srv := range servers {
+		if srv.EnrolledAt == nil {
+			continue // never joined: nothing is listening on its work subject
+		}
+		// The message id is time-based rather than derived from the reason: two
+		// settings changes a minute apart are two nudges, and JetStream dedup
+		// must not swallow the second.
+		msgID := fmt.Sprintf("%s.resync.%d", srv.ID, s.now().UnixNano())
+		if err := s.bus.PublishWork(ctx, subjects.Resync(srv.ID), msgID, data); err != nil {
+			failed++
+			s.log.Error("resync: publishing", "server_id", srv.ID, "reason", reason, "error", err)
+		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("scheduler: %d of %d servers could not be nudged to resync", failed, len(servers))
+	}
+	s.log.Info("fleet asked to re-read desired state", "reason", reason, "servers", len(servers))
+	return nil
 }
 
 // Recover re-drives every non-terminal deployment after a plane restart:
@@ -1378,7 +1973,12 @@ func (s *Scheduler) Recover(ctx context.Context) error {
 			if err := s.startRollout(ctx, dep, app, rev); err != nil {
 				s.log.Error("recover: republishing rollout", "deployment_id", dep.ID, "error", err)
 			}
-		case domain.DeploySucceeded, domain.DeployFailed:
+		case domain.DeploySucceeded, domain.DeployFailed, domain.DeployAwaitingApproval:
+			// Unreachable: ListActiveDeployments excludes all three. Listed so
+			// the switch names every status, and so a parked deploy's absence
+			// from recovery is a stated decision rather than an omission —
+			// nothing was published for it, so there is nothing to republish
+			// (deploy-protection.md §3; ENGINEERING rule 15, vacuously).
 		}
 	}
 	return nil
@@ -1388,3 +1988,89 @@ func (s *Scheduler) Recover(ctx context.Context) error {
 // every domain routes, which is exactly how the panel behaved before DNS
 // automation existed (dns-automation.md §4.1).
 func (s *Scheduler) SetDomainVerifier(v DomainVerifier) { s.dns = v }
+
+// SetGate wires deploy protection. Optional: without it every deploy is
+// admitted, which is exactly how the panel behaved before the feature existed
+// (deploy-protection.md §4).
+func (s *Scheduler) SetGate(g Gate) { s.gate = g }
+
+// SetRegistries wires private-registry credentials. Optional: an application
+// can only name a registry the panel stored, so a panel without this never has
+// one to resolve (registries.md §5).
+func (s *Scheduler) SetRegistries(r RegistryCredentials) { s.registries = r }
+
+// SetRevisionRetain sets how many of an application's images a node keeps
+// (disk-management.md §7). Below 1 is ignored: the deployed revision is never
+// reclaimable, so "keep zero" is not a policy anyone can mean.
+func (s *Scheduler) SetRevisionRetain(n int) {
+	if n >= 1 {
+		s.revisionRetain = n
+	}
+}
+
+// registryAuth resolves one credential into the wire form, unsealing it here —
+// at work-build time — exactly as the deploy key is, and for the same reason:
+// the plaintext exists only inside the mTLS-carried work item (ENGINEERING
+// rule 23) and is never logged (rule 20).
+//
+// A named registry that cannot be resolved is an error rather than an
+// unauthenticated attempt. A silent fall back to anonymous fails later at the
+// daemon, with a "manifest unknown" nobody can act on, and would turn a
+// revoked credential into a mystery instead of a message.
+func (s *Scheduler) registryAuth(ctx context.Context, id *string) (*agentv1.RegistryAuth, error) {
+	if id == nil || *id == "" {
+		return nil, nil
+	}
+	if s.registries == nil {
+		return nil, fmt.Errorf("scheduler: application names registry %s but no registry service is wired", *id)
+	}
+	c, err := s.registries.Credential(ctx, *id)
+	if err != nil {
+		return nil, fmt.Errorf("scheduler: resolving registry credential: %w", err)
+	}
+	return &agentv1.RegistryAuth{ServerAddress: c.URL, Username: c.Username, Token: c.Token}, nil
+}
+
+// pushTarget is where a completed build is also sent (ADR-008 path 3). Nil when
+// the application has not asked for one, which is every application by default.
+func (s *Scheduler) pushTarget(ctx context.Context, app domain.Application, rev domain.Revision) (*agentv1.RegistryPush, error) {
+	auth, err := s.registryAuth(ctx, app.Build.PushRegistryID)
+	if err != nil || auth == nil {
+		return nil, err
+	}
+	repo := app.Build.PushRepository
+	if repo == "" {
+		repo = pushRepository(app)
+	}
+	return &agentv1.RegistryPush{
+		// The registry URL may already carry a namespace (ghcr.io/acme), so the
+		// reference is host-and-namespace, then repository, then the revision —
+		// the tag is the revision id because that is what a rollback names.
+		Image: strings.TrimSuffix(auth.GetServerAddress(), "/") + "/" + repo + ":" + rev.ID,
+		Auth:  auth,
+	}, nil
+}
+
+// pushRepository is the default repository within the push registry: the
+// application's name, reduced to what an OCI reference actually accepts. An
+// application named "My API" pushes to "my-api"; one whose name survives
+// nothing (all punctuation) falls back to its id, which always does.
+func pushRepository(app domain.Application) string {
+	var b strings.Builder
+	lastSep := true // suppress a leading separator
+	for _, r := range strings.ToLower(app.Name) {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+			lastSep = false
+		case !lastSep:
+			b.WriteByte('-')
+			lastSep = true
+		}
+	}
+	name := strings.Trim(b.String(), "-")
+	if name == "" {
+		return app.ID
+	}
+	return name
+}

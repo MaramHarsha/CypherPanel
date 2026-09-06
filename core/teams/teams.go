@@ -51,8 +51,13 @@ type Store interface {
 	ListTeamMembers(ctx context.Context, teamID string) ([]domain.TeamMember, error)
 	DeleteTeamMember(ctx context.Context, teamID, userID string) error
 	// DeleteInboxItemsForTeamMember drops the ex-member's notification-inbox
-	// items for this team's projects (notification-inbox.md §4).
+	// items for this team — its projects' and the team's own
+	// (notification-inbox.md §4, invitations-and-access-requests.md §6).
 	DeleteInboxItemsForTeamMember(ctx context.Context, teamID, userID string) error
+	// RevokeLiveTeamInvitesBy kills the invitations the departing member issued
+	// for this team (invitations-and-access-requests.md §8): an invitation
+	// outlives its issuer's session, but not their membership.
+	RevokeLiveTeamInvitesBy(ctx context.Context, teamID, userID string) (int64, error)
 	CountTeamOwners(ctx context.Context, teamID string) (int64, error)
 	ListTeamsByUser(ctx context.Context, userID string) ([]domain.TeamWithRole, error)
 	GetTeamRoleForProject(ctx context.Context, projectID, userID string) (string, error)
@@ -241,6 +246,11 @@ func (s *Service) ChangeMemberRole(ctx context.Context, teamID, userID, role, ac
 // removed from breaks it as surely as a live delivery would. The membership row
 // goes first: if the cleanup then fails, the caller sees the error and retries,
 // and in the meantime the person has already lost access.
+//
+// And it revokes the invitations they issued for this team
+// (invitations-and-access-requests.md §8). Otherwise removing an admin would
+// leave up to seven days of live links in other people's mailboxes, each still
+// able to hand out the rank the removed admin chose.
 func (s *Service) RemoveMember(ctx context.Context, teamID, userID, actorRole string) error {
 	cur, err := s.store.GetTeamMember(ctx, teamID, userID)
 	if err != nil {
@@ -260,17 +270,18 @@ func (s *Service) RemoveMember(ctx context.Context, teamID, userID, actorRole st
 	if err := s.store.DeleteInboxItemsForTeamMember(ctx, teamID, userID); err != nil {
 		return fmt.Errorf("teams: clearing inbox items for removed member %s: %w", userID, err)
 	}
+	if _, err := s.store.RevokeLiveTeamInvitesBy(ctx, teamID, userID); err != nil {
+		return fmt.Errorf("teams: revoking invitations issued by removed member %s: %w", userID, err)
+	}
 	return nil
 }
 
-// requireGrantRank: acting on the owner rank requires owner; anything else
-// requires admin.
+// requireGrantRank turns the shared rank rule (domain.CanGrantRole: acting on
+// the owner rank requires owner, anything else requires admin) into this
+// package's sentinel. The comparison itself lives in domain because invitations
+// mint the same grants later (invitations-and-access-requests.md §1).
 func requireGrantRank(actorRole, subjectRole string) error {
-	need := domain.RoleAdmin
-	if subjectRole == domain.RoleOwner {
-		need = domain.RoleOwner
-	}
-	if domain.RoleRank(actorRole) < domain.RoleRank(need) {
+	if !domain.CanGrantRole(actorRole, subjectRole) {
 		return ErrForbidden
 	}
 	return nil

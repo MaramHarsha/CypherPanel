@@ -12,7 +12,7 @@ import (
 )
 
 const aPITokenByHash = `-- name: APITokenByHash :one
-SELECT u.id, u.email, u.password_hash, u.role, u.totp_secret_enc, u.totp_secret_nonce, u.created_at, u.updated_at, u.totp_enabled, u.display_name, u.timezone, t.id AS token_id, t.abilities
+SELECT u.id, u.email, u.password_hash, u.role, u.totp_secret_enc, u.totp_secret_nonce, u.created_at, u.updated_at, u.totp_enabled, u.display_name, u.timezone, t.id AS token_id, t.abilities, t.project_id
 FROM api_tokens t
 JOIN users u ON u.id = t.user_id
 WHERE t.token_hash = $1
@@ -23,6 +23,7 @@ type APITokenByHashRow struct {
 	User      User
 	TokenID   string
 	Abilities []string
+	ProjectID pgtype.Text
 }
 
 // Resolves a presented token to its owner AND its abilities in one round trip:
@@ -44,14 +45,15 @@ func (q *Queries) APITokenByHash(ctx context.Context, tokenHash []byte) (APIToke
 		&i.User.Timezone,
 		&i.TokenID,
 		&i.Abilities,
+		&i.ProjectID,
 	)
 	return i, err
 }
 
 const createAPIToken = `-- name: CreateAPIToken :one
-INSERT INTO api_tokens (id, user_id, name, token_hash, expires_at, abilities)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, user_id, name, token_hash, last_used_at, expires_at, created_at, abilities
+INSERT INTO api_tokens (id, user_id, name, token_hash, expires_at, abilities, project_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, user_id, name, token_hash, last_used_at, expires_at, created_at, abilities, project_id
 `
 
 type CreateAPITokenParams struct {
@@ -61,6 +63,7 @@ type CreateAPITokenParams struct {
 	TokenHash []byte
 	ExpiresAt pgtype.Timestamptz
 	Abilities []string
+	ProjectID pgtype.Text
 }
 
 func (q *Queries) CreateAPIToken(ctx context.Context, arg CreateAPITokenParams) (ApiToken, error) {
@@ -71,6 +74,7 @@ func (q *Queries) CreateAPIToken(ctx context.Context, arg CreateAPITokenParams) 
 		arg.TokenHash,
 		arg.ExpiresAt,
 		arg.Abilities,
+		arg.ProjectID,
 	)
 	var i ApiToken
 	err := row.Scan(
@@ -82,6 +86,7 @@ func (q *Queries) CreateAPIToken(ctx context.Context, arg CreateAPITokenParams) 
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.Abilities,
+		&i.ProjectID,
 	)
 	return i, err
 }
@@ -96,7 +101,7 @@ func (q *Queries) DeleteAPIToken(ctx context.Context, id string) error {
 }
 
 const getAPIToken = `-- name: GetAPIToken :one
-SELECT id, user_id, name, last_used_at, expires_at, created_at, abilities
+SELECT id, user_id, name, last_used_at, expires_at, created_at, abilities, project_id
 FROM api_tokens WHERE id = $1
 `
 
@@ -108,6 +113,7 @@ type GetAPITokenRow struct {
 	ExpiresAt  pgtype.Timestamptz
 	CreatedAt  pgtype.Timestamptz
 	Abilities  []string
+	ProjectID  pgtype.Text
 }
 
 func (q *Queries) GetAPIToken(ctx context.Context, id string) (GetAPITokenRow, error) {
@@ -121,12 +127,13 @@ func (q *Queries) GetAPIToken(ctx context.Context, id string) (GetAPITokenRow, e
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.Abilities,
+		&i.ProjectID,
 	)
 	return i, err
 }
 
 const listAPITokensByUser = `-- name: ListAPITokensByUser :many
-SELECT id, user_id, name, last_used_at, expires_at, created_at, abilities
+SELECT id, user_id, name, last_used_at, expires_at, created_at, abilities, project_id
 FROM api_tokens WHERE user_id = $1 ORDER BY created_at DESC
 `
 
@@ -138,6 +145,7 @@ type ListAPITokensByUserRow struct {
 	ExpiresAt  pgtype.Timestamptz
 	CreatedAt  pgtype.Timestamptz
 	Abilities  []string
+	ProjectID  pgtype.Text
 }
 
 func (q *Queries) ListAPITokensByUser(ctx context.Context, userID string) ([]ListAPITokensByUserRow, error) {
@@ -157,6 +165,7 @@ func (q *Queries) ListAPITokensByUser(ctx context.Context, userID string) ([]Lis
 			&i.ExpiresAt,
 			&i.CreatedAt,
 			&i.Abilities,
+			&i.ProjectID,
 		); err != nil {
 			return nil, err
 		}

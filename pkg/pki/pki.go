@@ -267,6 +267,9 @@ func ServerBootstrapTLSConfig(serverCertPEM, serverKeyPEM []byte) (*tls.Config, 
 // ClientTLSConfig builds the agent's mTLS config: it presents the agent cert
 // and verifies the plane against the pinned CA. serverName must match a SAN on
 // the plane's server cert.
+//
+// The certificate is fixed for the life of the config. Long-lived connections
+// that must survive a certificate renewal want ClientTLSConfigFunc instead.
 func ClientTLSConfig(clientCertPEM, clientKeyPEM, caPEM []byte, serverName string) (*tls.Config, error) {
 	cert, err := tls.X509KeyPair(clientCertPEM, clientKeyPEM)
 	if err != nil {
@@ -281,6 +284,31 @@ func ClientTLSConfig(clientCertPEM, clientKeyPEM, caPEM []byte, serverName strin
 		Certificates: []tls.Certificate{cert},
 		RootCAs:      pool,
 		ServerName:   serverName,
+	}, nil
+}
+
+// ClientTLSConfigFunc is ClientTLSConfig with a certificate resolved per
+// handshake instead of baked in.
+//
+// This is what makes agent certificate rotation invisible to everything above
+// it (agent-identity-and-tls.md §3): a client that reconnects — nats.go
+// reconnects forever, gRPC redials on demand — presents whatever certificate
+// the agent holds at that moment, so a renewal needs no reconnection, drops no
+// desired state, and interrupts no transfer. getCert must be safe for
+// concurrent use and must never return nil without an error.
+func ClientTLSConfigFunc(getCert func(*tls.CertificateRequestInfo) (*tls.Certificate, error), caPEM []byte, serverName string) (*tls.Config, error) {
+	if getCert == nil {
+		return nil, fmt.Errorf("pki: a client certificate source is required")
+	}
+	pool, err := CertPool(caPEM)
+	if err != nil {
+		return nil, err
+	}
+	return &tls.Config{
+		MinVersion:           tls.VersionTLS13,
+		GetClientCertificate: getCert,
+		RootCAs:              pool,
+		ServerName:           serverName,
 	}, nil
 }
 
