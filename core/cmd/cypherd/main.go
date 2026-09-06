@@ -44,6 +44,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/deploykeys"
 	"github.com/MaramHarsha/cypherpanel/core/dns"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
+	"github.com/MaramHarsha/cypherpanel/core/export"
 	"github.com/MaramHarsha/cypherpanel/core/enroll"
 	"github.com/MaramHarsha/cypherpanel/core/guard"
 	"github.com/MaramHarsha/cypherpanel/core/identity"
@@ -583,6 +584,7 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		DeployKeys:       deployKeySvc,
 		Registries:       registrySvc,
 		Compose:          composeSvc,
+		Export:           export.New(st, version),
 		Databases:        dbSvc,
 		BackupTargets:    backupTargetSvc,
 		BackupSchedules:  backupScheduleSvc,

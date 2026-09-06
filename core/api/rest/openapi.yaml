@@ -1220,6 +1220,52 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /api/v1/projects/{id}/export:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Project ID. }
+    get:
+      operationId: exportProject
+      tags: [projects]
+      summary: Download the project as a portable archive (team admin)
+      description: >-
+        A gzipped tar containing a compose-style definition of every application,
+        managed database and Compose Stack, one directory per standing
+        environment, plus a generated README and a machine-readable manifest.
+        It runs anywhere Docker runs — leaving is deliberately easy.
+
+
+        **Secret values are never included**, in any form, including a masked
+        hint: each resource gets an `env/<name>.env.example` carrying the KEYS
+        only. That is structural rather than a promise — `core/export` is given
+        an interface with no method that returns a ciphertext and no dependency
+        on the unsealer, so it could not export a value if it tried.
+
+
+        Also absent, and stated in the archive's own README: volume and database
+        DATA, TLS certificates, and images. Preview environments are excluded
+        because a preview belongs to its pull request and is destroyed with it.
+
+
+        The response is streamed rather than buffered, so it carries no
+        `Content-Length`. Everything that can fail is checked before the first
+        byte; a write that fails afterwards truncates the archive, and a
+        truncated gzip fails its own CRC rather than opening as a smaller,
+        plausible-looking, wrong one.
+      responses:
+        "200":
+          description: The archive.
+          headers:
+            Content-Disposition:
+              description: 'attachment, named `<project-slug>-<YYYY-MM-DD>.tar.gz` — the slug is immutable, so a rename does not change it.'
+              schema: { type: string }
+          content:
+            application/gzip:
+              schema: { type: string, format: binary }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "501": { description: Export is not enabled on this panel., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
   /api/v1/projects/{id}/environments:
     parameters:
       - name: id

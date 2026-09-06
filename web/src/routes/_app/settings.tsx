@@ -1,25 +1,30 @@
 // Settings layout: the account, the people, and the credentials that outlive
 // any one project. Everything project-scoped lives inside its project instead
 // (ui-principles §4 — nav items compete with each other).
-import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
+import { createFileRoute, Outlet } from "@tanstack/react-router";
 import { PageBody, PageHeader } from "@/components/page-header";
+import { TabStrip, type Tab } from "@/components/tab-strip";
 
 export const Route = createFileRoute("/_app/settings")({ component: SettingsLayout });
 
-const TABS = [
-  { to: "/settings", label: "Account", exact: true },
-  { to: "/settings/profile", label: "Profile", exact: false },
-  { to: "/settings/teams", label: "Teams", exact: false },
-  { to: "/settings/users", label: "Users", exact: false },
-  { to: "/settings/deploy-keys", label: "Deploy keys", exact: false },
-  { to: "/settings/registries", label: "Registries", exact: false },
-  { to: "/settings/audit", label: "Audit", exact: false },
-  { to: "/settings/backup-targets", label: "Backup targets", exact: false },
-  { to: "/settings/mail", label: "Mail", exact: false },
-  { to: "/settings/dns", label: "DNS", exact: false },
-  { to: "/settings/tls", label: "TLS", exact: false },
-  { to: "/settings/diagnostics", label: "Diagnostics", exact: false },
-] as const;
+// Twelve destinations is more than a phone can hold, so the strip folds like
+// every other one (canvas 14c): the four an operator opens daily stay, the
+// rest are one tap into "More". None of the four needs a short label at
+// 360px, and the eight that fold are named in full in the menu.
+const TABS: readonly Tab[] = [
+  { to: "", label: "Account" },
+  { to: "profile", label: "Profile" },
+  { to: "teams", label: "Teams" },
+  { to: "users", label: "Users" },
+  { to: "deploy-keys", label: "Deploy keys" },
+  { to: "registries", label: "Registries" },
+  { to: "audit", label: "Audit" },
+  { to: "backup-targets", label: "Backup targets" },
+  { to: "mail", label: "Mail" },
+  { to: "dns", label: "DNS" },
+  { to: "tls", label: "TLS" },
+  { to: "diagnostics", label: "Diagnostics" },
+];
 
 function SettingsLayout() {
   // The trail is declared by each tab, not here: a dateline reading SETTINGS on
@@ -27,24 +32,7 @@ function SettingsLayout() {
   // segment is meant to be where you actually are (canvas 13a).
   return (
     <>
-      <PageHeader
-        title="Settings"
-        below={
-          <nav className="-mb-px flex gap-5 overflow-x-auto" aria-label="Settings">
-            {TABS.map((t) => (
-              <Link
-                key={t.to}
-                to={t.to}
-                activeOptions={{ exact: t.exact }}
-                className="whitespace-nowrap border-b-2 border-transparent px-0.5 py-2.5 text-[13px] text-text-mid hover:text-text"
-                activeProps={{ className: "border-border-strong font-semibold text-text" }}
-              >
-                {t.label}
-              </Link>
-            ))}
-          </nav>
-        }
-      />
+      <PageHeader title="Settings" below={<TabStrip label="Settings" base="/settings" tabs={TABS} />} />
       {/* The layout owns the page gutters so every tab is inset identically. */}
       <PageBody>
         <Outlet />

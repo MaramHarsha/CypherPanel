@@ -57,7 +57,7 @@ export function ArgvInput({ value, onChange, labelledBy }: ArgvInputProps) {
               // token instead of reserving a full row for a three-letter verb.
               style={{ width: `${Math.max(arg.length, placeholder.length, 3)}ch` }}
               // Ringless on purpose — the chip around it takes the ring.
-              className="bg-transparent text-text outline-none placeholder:text-text-disabled"
+              className="bg-transparent text-text outline-none placeholder:text-text-faint"
             />
             {args.length > 1 && (
               <button
@@ -75,7 +75,7 @@ export function ArgvInput({ value, onChange, labelledBy }: ArgvInputProps) {
       <button
         type="button"
         onClick={add}
-        className="rounded-[4px] px-1 py-[3px] font-mono text-[12px] text-text-disabled hover:text-text-mid"
+        className="rounded-[4px] px-1 py-[3px] font-mono text-[12px] text-text-faint hover:text-text-mid"
       >
         add arg…
       </button>

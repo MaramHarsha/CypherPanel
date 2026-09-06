@@ -240,6 +240,14 @@ const (
 )
 
 // EnvVar is one sealed environment variable belonging to an Application.
+// EnvVarKey is an env var's name and its shared-variable references, without
+// the sealed value. It is what a caller gets when it must be structurally
+// unable to reach a secret (project-export.md §4).
+type EnvVarKey struct {
+	Key        string
+	SharedRefs []string
+}
+
 type EnvVar struct {
 	Key        string
 	ValueCT    []byte
@@ -343,4 +351,40 @@ type DeployKey struct {
 type ApplicationRef struct {
 	ID   string
 	Name string
+}
+
+// ApplicationConfig is an Application with every sealed field removed: how it
+// is built, where it runs, how it is routed and probed — and nothing that could
+// leak. It exists so a caller that must be unable to hold a ciphertext can be
+// given an interface that structurally cannot hand it one (project-export.md
+// §4). Application itself carries WebhookSecretCT, so passing it would defeat
+// that whatever the caller intended.
+type ApplicationConfig struct {
+	ID                 string
+	EnvironmentID      string
+	Name               string
+	Source             AppSource
+	Build              AppBuild
+	Runtime            AppRuntime
+	Route              AppRoute
+	Health             AppHealth
+	Volumes            []VolumeMount
+	Ports              []PortMapping
+	ObservedRevisionID string
+	PreviewEnabled     bool
+	PreviewBaseDomain  string
+	PreviewTTLHours    int
+}
+
+// ConfigView narrows an Application to the fields that carry no secret.
+func (a Application) ConfigView() ApplicationConfig {
+	return ApplicationConfig{
+		ID: a.ID, EnvironmentID: a.EnvironmentID, Name: a.Name,
+		Source: a.Source, Build: a.Build, Runtime: a.Runtime,
+		Route: a.Route, Health: a.Health, Volumes: a.Volumes, Ports: a.Ports,
+		ObservedRevisionID: a.ObservedRevisionID,
+		PreviewEnabled:     a.PreviewEnabled,
+		PreviewBaseDomain:  a.PreviewBaseDomain,
+		PreviewTTLHours:    a.PreviewTTLHours,
+	}
 }

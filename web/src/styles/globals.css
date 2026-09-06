@@ -38,8 +38,13 @@
   /* Readable secondary body copy — commit subjects, step lists, rollup counts.
      A step darker than --text-mid, which is the label grey. */
   --text-dim: #514b40;
-  --text-mid: #6f695e;
-  --text-faint: #8a8375;
+  /* The label grey and the quiet grey, both over 4.5:1 on --bg. Canvas 14g
+     puts that floor under every text colour, not only the loud ones, and
+     --text-faint carries hints, eyebrows and dialog footers at 200-odd call
+     sites. Lifting faint on its own would have parked it on top of mid, so the
+     pair moved together and the ramp kept its steps: 8.2 : 6.1 : 4.8. */
+  --text-mid: #635e54;
+  --text-faint: #736d61;
 
   /* the one accent: signal orange, the primary-action and active-nav color */
   --accent: #e8490f;
@@ -51,13 +56,16 @@
   --primary-hover: #2e2a22;
   --primary-fg: #faf8f4;
 
-  /* status vocabulary (ui-principles §5) — each holds 4.5:1 on --bg */
+  /* status vocabulary (ui-principles §5) — each holds 4.5:1 on --bg, the two
+     greys included: they are --text-faint by another name and were lifted with
+     it, because STOPPED and UNKNOWN are words an operator reads across a desk
+     and not only dots. */
   --status-running: #2f7d4f;
   --status-deploying: #1b62c4;
-  --status-stopped: #8a8375;
+  --status-stopped: #736d61;
   --status-error: #d92d0a;
   --status-degraded: #d9a521;
-  --status-unknown: #8a8375;
+  --status-unknown: #736d61;
 
   /* Amber reads as amber on a dot and as mud in a sentence, so degraded gets
      the same split the error status already has: a marker colour and a text
@@ -72,13 +80,18 @@
      for the deploying status, so a focused row never reads as a state. */
   --focus: #e8490f;
 
-  /* the ramp bottoms out here: a control you cannot press, still legible */
-  --text-disabled: #b9b2a4;
+  /* The ramp bottoms out at a control you cannot press, and 14g asks 3:1 of
+     that, not the 4.5:1 the live ramp keeps. Text that is merely quiet — a
+     step not reached yet, the version on an unselected tile — is --text-faint;
+     this token is for the thing that is genuinely inert. */
+  --text-disabled: #958a75;
 
   /* A disabled pill is filled, not faded (canvas 10b/13al): the paper-grey fill
      inverts with the theme, but the label holds one value in both — the same
-     argument the log panes and toasts win on. */
-  --disabled-fg: #a49c8c;
+     argument the log panes and toasts win on. That one value sits where the two
+     fills meet, 3.6:1 on --border-subtle in either theme; the older #a49c8c
+     cleared 14g's 3:1 only on ink and left the paper pill at 2.25:1. */
+  --disabled-fg: #817866;
 
   /* log and terminal panes are ink in BOTH themes — they are already ink */
   --pane: #0d0b08;
@@ -133,7 +146,7 @@
   --text: #ece7db;
   --text-dim: #b8b0a0;
   --text-mid: #a49c8c;
-  --text-faint: #6f695e;
+  --text-faint: #8d8679;
 
   --accent: #ff6a33;
   --accent-hover: #ff8757;
@@ -146,11 +159,11 @@
 
   --status-running: #5cbf7f;
   --status-deploying: #5f9fe8;
-  --status-stopped: #6f695e;
+  --status-stopped: #8d8679;
   --status-error: #ff6a5e;
   --status-degraded: #e0b23f;
   --status-degraded-text: #e0b23f;
-  --status-unknown: #6f695e;
+  --status-unknown: #8d8679;
 
   /* Error text lifts off the dot colour here (canvas 13al: a FAILED pill is
      #ff8a7d text inside a #ff6a5e border). --status-error stays the marker.
@@ -158,9 +171,11 @@
   --danger: #ff8a7d;
   --danger-hover: #ffa79c;
 
-  /* Disabled sits above the faint text here, not below it: on ink, going
-     darker to say "unavailable" would drop it out of sight entirely. */
-  --text-disabled: #5d5850;
+  /* Disabled still sits below the faint text here, but not out of sight: on
+     ink, going darker to say "unavailable" is how a label disappears. It holds
+     14g's 3:1 floor for an inert control and stops there — the old #5d5850
+     read 2.6:1 on --bg, under the floor in both themes. */
+  --text-disabled: #706a60;
   /* --toast-* are deliberately NOT overridden — see the light block. */
 }
 

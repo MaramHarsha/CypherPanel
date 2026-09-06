@@ -151,7 +151,7 @@ function ServerRow({ server: s, first }: { server: Server; first: boolean }) {
         )}
       >
         <span className="flex min-w-0 items-center gap-3.5">
-          <StatusDot status={status} />
+          <StatusDot status={status} decorative />
           <span className="min-w-0">
             <span className="block truncate text-[19px] font-semibold tracking-tight">{s.name}</span>
             <span className="mt-0.5 block truncate font-mono text-[11.5px] text-text-faint">
@@ -305,11 +305,14 @@ function JoinServerDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
   );
 }
 
-/** Canvas 10a's step marks — the same three everywhere work is in flight. */
+/** Canvas 10a's step marks — the same three everywhere work is in flight, and
+ *  the same vocabulary ui/blocking-progress.tsx and db-provisioning-steps.tsx
+ *  use: 14g's "every dot carries the word, not just the color", so the glyph
+ *  that is decoration for the eye is spelled out for a screen reader. */
 const STEP_MARK = {
-  done: { glyph: "✓", className: "text-status-running" },
-  active: { glyph: "▸", className: "text-status-deploying" },
-  pending: { glyph: "○", className: "text-text-disabled" },
+  done: { glyph: "✓", word: "Done:", className: "text-status-running" },
+  active: { glyph: "▸", word: "In progress:", className: "text-status-deploying" },
+  pending: { glyph: "○", word: "Waiting:", className: "text-text-faint" },
 } as const;
 
 /** Whole seconds: the join is watched by a 3s poll, so tenths would be theatre. */
@@ -349,6 +352,7 @@ function JoinProgress({ serverId, command, fingerprint }: { serverId: string; co
       state: ready ? ("done" as const) : enrolled ? ("active" as const) : ("pending" as const),
     },
   ];
+  const active = steps.find((s) => s.state === "active");
   // Half credit for the step in flight — the bar tracks the list above it and
   // nothing else, so it stops where the work stops.
   const progress = ready ? 1 : enrolled ? 2.5 / 3 : 1.5 / 3;
@@ -392,16 +396,24 @@ function JoinProgress({ serverId, command, fingerprint }: { serverId: string; co
           <span className="ml-auto shrink-0 font-mono text-[10.5px] text-text-faint">{elapsedLabel(elapsed)}</span>
         </div>
 
-        <ol className="mt-2.5 font-mono text-[11.5px] leading-[2.1] text-text-dim" aria-live="polite">
+        <ol className="mt-2.5 font-mono text-[11.5px] leading-[2.1] text-text-dim">
           {steps.map((s) => (
-            <li key={s.label} className={cn(s.state === "pending" && "text-text-disabled")}>
+            <li key={s.label} className={cn(s.state === "pending" && "text-text-faint")}>
               <span className={STEP_MARK[s.state].className} aria-hidden>
                 {STEP_MARK[s.state].glyph}
-              </span>{" "}
-              {s.label}
+              </span>
+              <span className="sr-only">{STEP_MARK[s.state].word} </span> {s.label}
             </li>
           ))}
         </ol>
+
+        {/* 14g: the live region is the stage summary, not the list — announcing
+            the whole <ol> would re-read all three rows on every transition. It
+            speaks the headline on arrival, which is the only other thing on the
+            card that changes when the agent lands. */}
+        <p role="status" className="sr-only">
+          {ready ? `${server?.name} is ready` : active ? `${STEP_MARK[active.state].word} ${active.label}` : ""}
+        </p>
 
         <div
           className="mt-2.5 h-[5px] overflow-hidden rounded-full bg-border-subtle"

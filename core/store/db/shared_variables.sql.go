@@ -257,6 +257,39 @@ func (q *Queries) ListRedeployPendingApplications(ctx context.Context, environme
 	return items, nil
 }
 
+const listSharedVariableKeysByProject = `-- name: ListSharedVariableKeysByProject :many
+SELECT key, environment_id FROM shared_variables
+WHERE project_id = $1
+ORDER BY key, environment_id NULLS FIRST
+`
+
+type ListSharedVariableKeysByProjectRow struct {
+	Key           string
+	EnvironmentID pgtype.Text
+}
+
+// Keys and scope, never the sealed value — so core/export's Store interface
+// can be structurally incapable of holding a ciphertext (project-export.md §4).
+func (q *Queries) ListSharedVariableKeysByProject(ctx context.Context, projectID string) ([]ListSharedVariableKeysByProjectRow, error) {
+	rows, err := q.db.Query(ctx, listSharedVariableKeysByProject, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSharedVariableKeysByProjectRow{}
+	for rows.Next() {
+		var i ListSharedVariableKeysByProjectRow
+		if err := rows.Scan(&i.Key, &i.EnvironmentID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSharedVariableKeysInScope = `-- name: ListSharedVariableKeysInScope :many
 SELECT DISTINCT key
 FROM shared_variables

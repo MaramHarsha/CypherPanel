@@ -29,8 +29,9 @@
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
-import { ApiError } from "@/api/client";
+import { ApiError, apiBlob } from "@/api/client";
 import { getListApplicationsQueryOptions } from "@/api/gen/applications/applications";
+import { getExportProjectUrl } from "@/api/gen/projects/projects";
 import { useGetMe } from "@/api/gen/auth/auth";
 import { getListDatabasesQueryOptions } from "@/api/gen/databases/databases";
 import {
@@ -98,6 +99,7 @@ function GeneralTab() {
               ownedTeams={(me.data?.teams ?? []).filter((t) => t.role === "owner")}
             />
             <Environments projectId={projectId} detail={detail} canEdit={atLeast(role, "admin")} />
+            <ExportProject detail={detail} canExport={atLeast(role, "admin")} />
             <DangerZone projectId={projectId} detail={detail} canDelete={atLeast(role, "admin")} />
           </>
         )}
@@ -775,6 +777,72 @@ function DangerZone({
           {blocked}
         </p>
       )}
+    </section>
+  );
+}
+
+/**
+ * Export (canvas 14k). One archive, and the four things it deliberately does
+ * not contain are on the screen rather than only in the README inside it — an
+ * operator who discovers mid-recovery that their data was never in there has
+ * been misled by us.
+ *
+ * The download goes through `apiBlob` rather than a plain link because the
+ * route is bearer-authenticated and an `<a href>` carries no header. That does
+ * mean the archive lands in memory in the browser before it is saved; the
+ * PLANE still streams it, which is the side of the transfer that has a 300 MB
+ * budget to protect.
+ */
+function ExportProject({ detail, canExport }: { detail: ProjectDetail; canExport: boolean }) {
+  const p = detail.project;
+  const [busy, setBusy] = useState(false);
+
+  const run = async () => {
+    setBusy(true);
+    try {
+      const blob = await apiBlob(getExportProjectUrl(p.id));
+      if (!blob) throw new Error("the panel returned nothing");
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      // The slug is immutable, so the filename does not change when the
+      // project is renamed. The date is the reader's, which is the one place a
+      // clock belongs — nothing inside the archive carries one.
+      a.download = `${p.slug ?? p.id}-${new Date().toISOString().slice(0, 10)}.tar.gz`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toastSuccess({ title: "Export downloaded", detail: "Read the README first — it says what is not in it." });
+    } catch (e) {
+      toastFailed("Could not export the project", e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="mt-6 space-y-2.5">
+      <Eyebrow>Export</Eyebrow>
+      <div className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-border bg-surface px-4 py-3.5">
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] font-semibold text-text">Export this project</p>
+          <p className="mt-0.5 max-w-xl text-[12px] leading-[1.5] text-text-mid">
+            One archive: a compose-style definition of every application, database and stack, one directory per
+            environment, with a generated README. It runs anywhere Docker runs — leaving is meant to be easy.
+          </p>
+          <p className="mono mt-1.5 text-[11px] leading-[1.6] text-text-faint">
+            not included: secret values · database and volume data · TLS certificates · images
+          </p>
+        </div>
+        <ActionButton
+          variant="secondary"
+          state={busy ? "busy" : "idle"}
+          busyLabel="Building…"
+          disabledReason={canExport ? undefined : "Exporting needs admin on the team"}
+          onClick={() => void run()}
+        >
+          Export ↓
+        </ActionButton>
+      </div>
     </section>
   );
 }

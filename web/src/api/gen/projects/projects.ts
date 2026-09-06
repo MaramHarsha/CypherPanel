@@ -477,7 +477,114 @@ export const useDeleteProject = <TError = UnauthorizedResponse | ForbiddenRespon
       > => {
       return useMutation(getDeleteProjectMutationOptions(options), queryClient);
     }
-    export const getListEnvironmentsUrl = (id: string,) => {
+    export const getExportProjectUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/projects/${id}/export`
+}
+
+/**
+ * A gzipped tar containing a compose-style definition of every application, managed database and Compose Stack, one directory per standing environment, plus a generated README and a machine-readable manifest. It runs anywhere Docker runs — leaving is deliberately easy.
+ *
+ * **Secret values are never included**, in any form, including a masked hint: each resource gets an `env/<name>.env.example` carrying the KEYS only. That is structural rather than a promise — `core/export` is given an interface with no method that returns a ciphertext and no dependency on the unsealer, so it could not export a value if it tried.
+ *
+ * Also absent, and stated in the archive's own README: volume and database DATA, TLS certificates, and images. Preview environments are excluded because a preview belongs to its pull request and is destroyed with it.
+ *
+ * The response is streamed rather than buffered, so it carries no `Content-Length`. Everything that can fail is checked before the first byte; a write that fails afterwards truncates the archive, and a truncated gzip fails its own CRC rather than opening as a smaller, plausible-looking, wrong one.
+ * @summary Download the project as a portable archive (team admin)
+ */
+export const exportProject = async (id: string, options?: RequestInit): Promise<Blob> => {
+
+  return apiFetch<Blob>(getExportProjectUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getExportProjectQueryKey = (id: string,) => {
+    return [
+    `/api/v1/projects/${id}/export`
+    ] as const;
+    }
+
+
+export const getExportProjectQueryOptions = <TData = Awaited<ReturnType<typeof exportProject>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportProject>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getExportProjectQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof exportProject>>> = ({ signal }) => exportProject(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof exportProject>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ExportProjectQueryResult = NonNullable<Awaited<ReturnType<typeof exportProject>>>
+export type ExportProjectQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error
+
+
+export function useExportProject<TData = Awaited<ReturnType<typeof exportProject>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportProject>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof exportProject>>,
+          TError,
+          Awaited<ReturnType<typeof exportProject>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useExportProject<TData = Awaited<ReturnType<typeof exportProject>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportProject>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof exportProject>>,
+          TError,
+          Awaited<ReturnType<typeof exportProject>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useExportProject<TData = Awaited<ReturnType<typeof exportProject>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportProject>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Download the project as a portable archive (team admin)
+ */
+
+export function useExportProject<TData = Awaited<ReturnType<typeof exportProject>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportProject>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getExportProjectQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getListEnvironmentsUrl = (id: string,) => {
 
 
 
