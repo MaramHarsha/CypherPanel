@@ -2,34 +2,38 @@
   <img src="docs/assets/cypherpanel-lockup.svg" alt="CypherPanel" width="360">
 </p>
 
-<p align="center"><strong>A self-hosted PaaS: push code, get a URL, sleep well.</strong></p>
+<p align="center"><strong>An open-source Heroku alternative that leaves your VPS enough RAM to actually deploy something.</strong></p>
 
 <p align="center">
-  <a href="#quickstart-current-dev-state">Quickstart</a> ·
+  <a href="#install">Install</a> ·
   <a href="#what-works-today">What works today</a> ·
-  <a href="docs/architecture.md">Architecture</a> ·
+  <a href="#how-it-works">How it works</a> ·
   <a href="#the-api">API</a> ·
+  <a href="#security-model">Security</a> ·
   <a href="LICENSE">Apache-2.0</a>
 </p>
 
-CypherPanel deploys your applications from git to a live, TLS-terminated URL on your own servers. It unifies the best of **Coolify** (breadth: one-click templates, every database) and **Dokploy** (polish: rollbacks, backups, a clean data model) on an architecture neither has: a lightweight Go control plane commanding **dial-home agents** — no SSH keys stored anywhere, no builds on the panel, desired-state reconciliation throughout.
-
-> **Status: Phases 1–3 are complete.** The deploy vertical slice is proven end-to-end in CI — git → image build → health-gated zero-downtime rollout → routed at its domain through a managed Traefik proxy, plus webhook deploys, live log streaming, rollback, and crash recovery. Phase 3 adds the state-model breadth on top: managed databases, S3 backups/restore, preview environments from PRs, notifications, cron-in-container scheduled tasks, and teams + roles. See [What works today](#what-works-today) for the honest checklist of what is CI-proven vs. end-to-end-verified, and [docs/roadmap.md](docs/roadmap.md) for the phase gates.
-
 ---
 
-## Why another PaaS?
+CypherPanel deploys your applications from git to a live, TLS-terminated URL on servers you own. It takes the breadth of **Coolify** (one-click templates, every database) and the polish of **Dokploy** (rollbacks, backups, a clean data model), and puts them on an architecture neither has: a Go control plane that commands **dial-home agents** — no SSH keys stored anywhere, no builds on the panel, desired-state reconciliation throughout.
 
-Coolify and Dokploy fail in mirror-image ways with the same root cause — the control panel does the heavy lifting itself:
+The tagline is a measurement, not a boast:
 
 | | Coolify | Dokploy | CypherPanel |
 |---|---|---|---|
-| Orchestration | SSH from the panel (keys stored — fleet-wide liability) | Docker Swarm lock-in | Outbound-only mTLS agents, no stored credentials |
-| Footprint | ~2 GB stack (Laravel, Redis, Horizon, Soketi) | ~1 GB measured idle (Node SSR, Redis, BullMQ) | One Go binary + Postgres — **measured 34 MB plane / 17 MB agent RSS idle** (budgets: 300/50) |
-| Builds | Ad-hoc over SSH | On the panel's own node | On worker agents; **never on the control plane** |
+| **Platform RAM, idle** | ~2 GB stack | **~1 GiB, measured on a fresh VPS** | **34 MB** control plane · **17 MB** per agent |
+| **Platform disk before your first app** | — | **3.84 GB** of images and volumes | One binary + Postgres |
+| **On a 1 GB VPS** | No | **Cannot run at all** — the baseline exceeds total RAM | The target this was designed against&nbsp;<sup>[1]</sup> |
+| What you install | Laravel, Redis, Horizon, Soketi | Node SSR, Redis, BullMQ, Postgres | One Go binary + Postgres |
+| Orchestration | SSH from the panel — keys stored, fleet-wide liability | Docker Swarm lock-in | Outbound-only mTLS agents, no stored credentials |
+| Where builds run | Ad hoc over SSH | On the panel's own node | On worker agents — **never** on the control plane |
 | Deploys | Imperative scripts | Imperative scripts | Desired-state reconciliation — drift repair and crash recovery by construction |
 
-Full analysis: [docs/architecture.md](docs/architecture.md) · measured baselines and extraction maps: [research/](research/)
+<sup>[1]</sup> Where each number comes from, because a table like this is worthless if you cannot check it. **CypherPanel:** measured RSS for the `cypherd` and `cypher-agent` processes at idle, against budgets of 300 MB and 50 MB ([vision.md](docs/vision.md)). **Dokploy:** a whole-box measurement on a fresh Ubuntu VPS, recorded with its method in [research/dokploy.md](research/dokploy.md) — the "cannot run at all" is that document's own conclusion. **Coolify:** derived from the components its stack runs, not measured whole-box. The last row is the design goal stated in [vision.md](docs/vision.md) ("a $5 VPS runs the control plane *and* two deployed apps comfortably"); a like-for-like whole-box benchmark of CypherPanel is still owed, so read it as the target it is rather than as a number we have published.
+
+> **Status.** Phases 1–3 are complete and Phase 4 is nearly closed. The deploy pipeline is proven end to end in CI against real Docker and real Traefik; the state model, the security model, the template catalog and the web UI are all in. See [What works today](#what-works-today) for the honest checklist — including what is CI-proven versus verified by hand — and [docs/roadmap.md](docs/roadmap.md) for the phase gates.
+>
+> **There is no published release yet.** The one-line installer below expects one, so today you build the two binaries yourself ([Build from source](#build-from-source)).
 
 ## How it works
 
@@ -37,8 +41,8 @@ Two programs and a database. That is the whole install.
 
 ```
 ┌───────────────── CONTROL PLANE — cypherd (one binary) ─────────────────┐
-│  REST API + console ──► PostgreSQL (the only state of record)          │
-│  Scheduler: Deployment → durable work items → observed-outcome         │
+│  REST API + embedded web UI ──► PostgreSQL (the only state of record)  │
+│  Scheduler: Deployment → durable work items → observed outcome         │
 │  Embedded NATS JetStream bus (mTLS, per-agent authorization):          │
 │     work.*  → commands to agents      (file-backed, survives restarts) │
 │     state.* → agent observations      (heartbeats, statuses, events)   │
@@ -47,84 +51,90 @@ Two programs and a database. That is the whole install.
                        mTLS,  │  outbound-only (works behind NAT)
 ┌─────────────────────────────┴─────────── cypher-agent (per server) ────┐
 │  docker driver: reconciles containers against desired state            │
-│  builder: git clone → docker build (image stays local, no registry)    │
-│  proxy: runs + configures Traefik v3 (file provider, Let's Encrypt)    │
+│  builder: git clone → image build (stays local — no registry required) │
+│  proxy: runs and configures Traefik v3 (file provider, Let's Encrypt)  │
 │  streams logs, reports what is ACTUALLY running                        │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-**The deploy flow**, end to end: a `git push` fires your app's HMAC-verified webhook (or you `POST /deploy`) → the scheduler records a **Deployment** pointing at an immutable **Revision** and publishes a build work item to the target server's durable queue → the agent clones the repo, builds the Dockerfile image locally (no registry needed — [ADR-008](docs/adrs/ADR-008-no-registry-required.md)), and streams build logs → the docker driver starts the new container next to the old one, **health-checks it, atomically flips the Traefik route, then drains the old container** — the old revision never stops serving until the new one is provably healthy → the agent reports the *observed* state, and only that observation marks the deployment succeeded ([ADR-005](docs/adrs/ADR-005-desired-state-reconciliation.md)). Rollback is the same pipeline pointed at a previous revision, build skipped — seconds, not minutes.
+**A deploy, end to end.** A `git push` fires your app's HMAC-verified webhook (or you `POST /deploy`) → the scheduler records a **Deployment** pointing at an immutable **Revision** and publishes a build work item to that server's durable queue → the agent clones, builds the image locally, and streams the build log → the docker driver starts the new container beside the old one, **health-checks it, atomically flips the Traefik route, and only then drains the old one** — the old revision never stops serving until the new one is provably healthy → the agent reports the *observed* state, and only that observation marks the deployment succeeded. Rollback is the same pipeline aimed at an earlier revision with the build skipped: seconds, not minutes.
 
-Because everything is desired state, failure is boring: kill the agent mid-deploy and the work item waits in the durable queue; on restart the agent converges with no manual step. Kill the plane and agents keep serving; work replays when it returns. All of this is asserted by CI on every push.
+Because everything is desired state, failure is boring. Kill the agent mid-deploy and the work item waits in its durable queue; on restart the agent converges with no manual step. Kill the control plane and your apps keep serving; work replays when it comes back. CI asserts both on every push.
 
 **Three principles fall out of the design** ([architecture.md](docs/architecture.md)):
-1. **Control plane and data plane are separate programs.** The panel never reaches into servers; it publishes desired state, agents reconcile it.
-2. **Desired-state reconciliation, not imperative scripts.** A deployment is a row in Postgres; the agent's job is to make reality match it.
-3. **The API is the product.** Every feature is a documented REST call first — the UI, CLI, and CI integrations are just clients.
+
+1. **The control plane and the data plane are separate programs.** The panel never reaches into a server; it publishes desired state and agents reconcile it.
+2. **Desired state, not imperative scripts.** A deployment is a row in Postgres, and the agent's whole job is making reality match it.
+3. **The API is the product.** Every feature is a documented REST call first — the web UI, the webhooks and your CI are all just clients of it.
 
 ## Core concepts
 
-Full vocabulary in [docs/glossary.md](docs/glossary.md):
+Full vocabulary in [docs/glossary.md](docs/glossary.md).
 
-- **Team → Project → Environment** — the organizational spine and tenancy boundary. A team owns projects; users belong to teams with a ranked role (member < admin < owner). Every project gets a `production` environment; previews and staging are just more environments.
-- **Server** — a host running `cypher-agent`, identified by its mTLS certificate (never by stored credentials).
-- **Application** — a resource built from a git repository and owned end to end: source, build, runtime, route, health checks, sealed env vars.
-- **Managed Database** — a first-class resource (PostgreSQL, MySQL, MariaDB, MongoDB, Redis, Valkey) the agent provisions and reconciles, with scheduled backups to any S3-compatible target and restore.
-- **Revision** — an immutable record (image + config snapshot) that a deployment points at; what rollback restores.
-- **Deployment** — a recorded transition of an application from one desired revision to another, with its full pipeline history.
-- **Preview** — an ordinary child environment holding a cloned application, created and destroyed automatically from PR lifecycle events (with a TTL backstop) — not a special case.
-- **Notifier / Scheduled task** — a project-scoped channel (Email/Discord/Slack/Telegram) that fires on observed outcomes; and a cron entry the agent runs inside an app's own container ([ADR-011](docs/adrs/ADR-011-in-container-scheduled-tasks.md)).
-- **Driver** — an orchestrator backend inside the agent. `docker` is the launch driver ([ADR-006](docs/adrs/ADR-006-docker-only-at-launch.md)); Swarm and k8s are planned behind the same interface. The proxy (Traefik, later Caddy) is a driver too.
+- **Team → Project → Environment** — the organisational spine and the tenancy boundary. A team owns projects; people belong to teams with a ranked role (member < admin < owner). Every project gets a `production` environment; staging and previews are simply more environments.
+- **Server** — a host running `cypher-agent`, identified by its mTLS certificate and never by a stored credential.
+- **Resource** — anything deployable inside an environment. There are three: an **Application** (built from a git repository or an image), a **Managed Database** (PostgreSQL, MySQL, MariaDB, MongoDB, Redis, Valkey), and a **Compose Stack** (your own compose file, run as written).
+- **Revision** — an immutable snapshot of image plus config that a deployment points at, and what a rollback returns to.
+- **Deployment** — a recorded transition from one desired revision to another, with its full pipeline history.
+- **Preview** — an ordinary child environment holding a cloned application, created and destroyed by a pull request's own lifecycle with a TTL backstop. Not a special case.
+- **Driver** — an orchestrator backend inside the agent. `docker` is the launch driver ([ADR-006](docs/adrs/ADR-006-docker-only-at-launch.md)); Swarm and Kubernetes are planned behind the same interface. The proxy is a driver too.
 
 ## What works today
 
-Everything below is exercised by the [integration CI](.github/workflows/integration.yml) on every push — real Postgres, real Docker, real Traefik:
+**Proven by [integration CI](.github/workflows/integration.yml) on every push**, against real Postgres, real Docker and real Traefik:
 
-- ✅ **Server onboarding**: create a server in the API, paste one `curl | sh` line on a fresh Ubuntu box, it joins in under 60 seconds — mTLS cert issued against a pinned CA, single-use join token, no SSH ever.
-- ✅ **Deploy pipeline**: git repo → Dockerfile build on the agent → health-gated zero-downtime rollout → **reachable at its domain through the managed Traefik proxy**.
-- ✅ **Zero dropped requests** across a rolling update — a request hammer through the real proxy during the A→B flip sees only 200s.
-- ✅ **Rollback in seconds** (no rebuild), **GitHub push-to-deploy** (constant-time HMAC verification, branch-filtered), **PATCH config** shaping the next revision.
-- ✅ **Sealed secrets**: env vars and webhook secrets are AES-256-GCM encrypted at rest, masked in every API response, decrypted only on the mTLS wire to the agent.
-- ✅ **Live + replayed logs**: build and runtime logs stream over SSE; a client connecting mid-build replays what it missed from a bounded retention window.
-- ✅ **Crash recovery, proven**: plane killed for 45 s → agents reconverge; agent killed with a deploy pending → the durable work queue delivers it on restart and the new revision goes live unaided.
-- ✅ **Revocation**: deleting a server severs its live agent connection and refuses its still-valid certificate.
-- ✅ **Footprints inside budget**: 34 MB plane / 17 MB agent RSS measured idle (budgets 300/50, [vision.md](docs/vision.md)).
+- **Server onboarding** — create a server, paste one `curl | sh` line on a fresh Ubuntu box, and it joins in under 60 seconds: mTLS certificate issued against a pinned CA, single-use join token, no SSH at any point.
+- **The deploy pipeline** — git repository → image build on the agent → health-gated zero-downtime rollout → reachable at its domain through the managed Traefik proxy.
+- **Zero dropped requests** across a rolling update — a request hammer through the real proxy during the A→B flip sees only 200s.
+- **Rollback in seconds** without a rebuild, **GitHub push-to-deploy** with constant-time HMAC verification, and `PATCH` config shaping the next revision.
+- **Sealed secrets** — env vars and webhook secrets are AES-256-GCM encrypted at rest, masked in every response, and decrypted only onto the mTLS wire to the agent.
+- **Live and replayed logs** — build and runtime output streams over SSE, and a client joining mid-build replays what it missed from a bounded retention window.
+- **Crash recovery** — plane killed for 45 s and agents reconverge; agent killed with a deploy pending and the durable queue delivers it on restart, unaided.
+- **Revocation** — deleting a server severs its live connection and refuses its still-valid certificate.
+- **Footprints inside budget** — 34 MB plane / 17 MB agent RSS at idle, against budgets of 300 and 50.
 
-Also shipped in Phase 2: deploy-key private repos, bounded runtime-log retention, the `--role=builder` split with multi-server image relay (proven live across two Docker daemons, [ADR-008](docs/adrs/ADR-008-no-registry-required.md)), and production Let's Encrypt validated on a real domain.
+**The state model** (Phase 3) — plane services and agent reconcilers with unit coverage and real-Postgres store tests in CI, each additionally verified end to end by hand:
 
-**Phase 3 — state-model breadth — is complete.** These land as plane services + agent reconcilers with unit coverage and **real-Postgres store tests in integration CI**; each was additionally **verified end-to-end by hand** (a real deploy/boot, driven through the API) rather than yet having its own dedicated end-to-end CI job like the deploy slice:
+- **Managed databases** across six engines, provisioned and reconciled by the agent, with sealed root credentials, start/stop/reset and connection info.
+- **Scheduled backups and restore** to any S3-compatible target (SigV4, MinIO-tested) — engine-derived dump commands moved over the Docker archive API, never a shell string on the wire. A restore reports its real progress: the step it has reached and the bytes applied.
+- **Preview environments** from pull requests, torn down on close or by a TTL sweeper, with fork-PR secret safety by construction.
+- **Notifications** — Email, Discord, Slack and Telegram, project-scoped, fired on observed outcomes, best-effort and never blocking a deploy.
+- **Scheduled tasks** — cron as declarative desired state, run by the agent inside the app's own unprivileged container ([ADR-011](docs/adrs/ADR-011-in-container-scheduled-tasks.md)).
+- **Teams and roles** — ranked roles enforced on every project route, where a non-member gets 404 rather than 403 so existence never leaks across tenants.
 
-- ✅ **Managed databases** — PostgreSQL, MySQL, MariaDB, MongoDB, Redis, Valkey: provisioned and reconciled by the agent, sealed root credentials, start/stop/reset, connection info.
-- ✅ **Scheduled backups & restore** to any S3-compatible target (SigV4, MinIO-tested) — engine-derived dump commands moved via the Docker archive API, never a shell string on the wire.
-- ✅ **Preview environments** from PRs — a signed `pull_request` webhook clones the app into a child environment at `pr-<n>.<base>`; close (or a TTL sweeper) tears it all down; fork-PR secret safety by construction.
-- ✅ **Notifications** — Email (SMTP), Discord/Slack/Telegram (webhooks): project-scoped, fired on observed deploy/backup outcomes, best-effort and never blocking the pipeline; sealed config, masked responses.
-- ✅ **Scheduled tasks** (cron-in-container) — declarative desired state, run by the agent inside the app's own unprivileged container ([ADR-011](docs/adrs/ADR-011-in-container-scheduled-tasks.md)); **live-verified firing into a running container**.
-- ✅ **Teams + roles** — teams own projects; ranked roles (member < admin < owner) enforced on every project-scoped route (non-member → 404, low rank → 403), plus panel roles gating shared infrastructure.
+**Breadth and hardening** (Phase 4):
 
-**Not yet built** (tracked in [docs/roadmap.md](docs/roadmap.md)): template catalog, Compose stacks, metrics/observability, interactive terminal, CLI (Phase 4) · granular RBAC (V1.x) · agent auto-update implementation ([ADR-010](docs/adrs/ADR-010-agent-auto-update.md), lands with the release pipeline). Since Phase 3 closed, TOTP 2FA (with recovery codes), backup-cron auto-scheduling with S3 retention pruning, and the web UI (slices 1–4 of [docs/product/web-ui-design.md](docs/product/web-ui-design.md)) have all landed.
+- **A catalog of 158 one-click templates** — 7 hand-curated plus 151 translated from Coolify's compose library by a build-time importer, every image digest-pinned. What the importer refused, and why, is recorded per template ([docs/dev/template-import-report.md](docs/dev/template-import-report.md)).
+- **Compose stacks** — bring your own compose file and the agent converges to it. The file *is* the desired state, so the revision list is the history and rollback re-points it ([docs/features/compose-stacks.md](docs/features/compose-stacks.md)).
+- **Deploy protection** — per environment, who must approve a deploy and when deploys are refused outright. Freeze windows are weekly and zone-aware; break glass is a 30-minute recorded owner override; approvals are session-only, so a CI token can neither open its own gate nor delete it.
+- **An immutable audit log** — one row per sensitive action: who did what to which resource, from where, and whether it worked. Scope *is* the authorization, so it needs no role gate.
+- **Team invitations and access requests** — a single-use seven-day link, and the mirror image the 403 screen opens.
+- **Container registries** — optional by construction ([ADR-008](docs/adrs/ADR-008-no-registry-required.md)): a sealed credential to pull a private base image through, or push a build to. No registry is ever required.
+- **Deployment control** — cancel a deploy that is going nowhere, restart an application as desired state (zero-downtime, and never a silent redeploy of stale code), and a `?since=` replay window on both log streams.
+- **Pack builds** — Nixpacks and Railpack, where a builder has opted in ([docs/features/pack-builds.md](docs/features/pack-builds.md)).
+- **Proactive disk management** — the agent converges to a retain set rather than running a periodic prune, because a prune cannot tell what is still wanted. Crossing the disk threshold notifies the panel's owners once, on the transition.
+- **Agent identity and TLS** — certificates renew themselves over the mTLS channel at two thirds of their life with a fresh key; one panel-wide ACME account reaches every node.
+- **The web UI** — React, embedded in the binary, and at parity with the API: every mutating capability the plane exposes is reachable from the panel.
+
+**Not built yet**, tracked in [docs/roadmap.md](docs/roadmap.md): named application databases, a dashboard, an interactive terminal, metrics and observability, a published design system, a CLI, and the implementation of agent auto-update ([ADR-010](docs/adrs/ADR-010-agent-auto-update.md), which lands with the release pipeline). Granular RBAC is deliberately deferred to V1.x behind its own ADR.
 
 ## Install
 
-One command on a fresh Linux VPS (amd64 or arm64, systemd, root):
+> Once a release is published, one command on a fresh Linux VPS (amd64 or arm64, systemd, root) is the whole install:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/MaramHarsha/CypherPanel/main/install/install.sh | sh
 ```
 
-It installs Docker, starts PostgreSQL on loopback, installs the `cypherd`
-binary, generates a master key, and enables a systemd service that survives
-reboots. Then open the panel and create the owner account in the browser — no
-password is ever printed or defaulted.
+It installs Docker, starts PostgreSQL on loopback, installs the `cypherd` binary, generates a master key, and enables a systemd unit that survives reboots. Then you open the panel and create the owner account in the browser — no password is ever printed or defaulted.
 
-Re-running is safe: an existing master key is never regenerated (that would
-make every sealed secret unrecoverable) and an existing database is left alone.
+Re-running is safe: an existing master key is never regenerated (that would make every sealed secret unrecoverable) and an existing database is left alone. Point it at your own build with `CYPHERD_URL=file:///path/to/cypherd` until releases exist. Options are documented in the [installer's own header](install/install.sh).
 
-Servers are joined afterwards from the panel's own copy-paste command, one per
-host. Details and options: [install/install.sh](install/install.sh) header.
+Servers are joined afterwards from the panel's copy-paste command, one per host.
 
-## Quickstart (current dev state)
+## Build from source
 
-Prerequisites: Go 1.25+, Docker, PostgreSQL (or `make dev-up` for a local one). There are no hosted releases yet — you build the two binaries yourself.
+Prerequisites: Go 1.25+, Docker, and PostgreSQL (or `make dev-up` for a throwaway one).
 
 **1. Run the control plane**
 
@@ -133,14 +143,14 @@ Prerequisites: Go 1.25+, Docker, PostgreSQL (or `make dev-up` for a local one). 
 (cd agent && CGO_ENABLED=0 go build -o ../bin/cypher-agent ./cmd/cypher-agent)
 
 export CYPHERD_DATABASE_URL="postgres://cypherpanel:devpassword@localhost:5432/cypherpanel?sslmode=disable"
-export CYPHERD_MASTER_KEY=$(head -c32 /dev/urandom | base64)   # keep this safe — it seals every secret
+export CYPHERD_MASTER_KEY=$(head -c32 /dev/urandom | base64)   # keep this — it seals every secret
 export CYPHERD_ADMIN_EMAIL=you@example.com
 export CYPHERD_ADMIN_PASSWORD=choose-a-password
-export CYPHERD_PUBLIC_HOST=<hostname-agents-can-reach>          # default: localhost
+export CYPHERD_PUBLIC_HOST=<hostname-agents-can-reach>         # default: localhost
 ./bin/cypherd    # or, against the make dev-up Postgres: make run-plane
 ```
 
-`cypherd` migrates its schema, bootstraps your admin account, and serves the API + console on `:8080`, agent enrollment on `:8443`, and the mTLS bus on `:4222`.
+`cypherd` migrates its own schema, bootstraps the admin account, and serves the API and web UI on `:8080`, agent enrollment on `:8443`, and the mTLS bus on `:4222`.
 
 **2. Join a server**
 
@@ -151,9 +161,7 @@ curl -s -X POST localhost:8080/api/v1/servers \
   -H "Authorization: Bearer $TOKEN" -d '{"name":"my-vps"}' | jq -r .join.install_command
 ```
 
-Paste the printed `curl | sh` line on the target server, as root. It is self-sufficient on a fresh box: it installs Docker if there is none, downloads the agent (from the panel's own release when the panel is a release build, otherwise the project's latest — override with `CYPHER_AGENT_URL` for an air-gapped fleet), pins the plane CA against the fingerprint carried in the command, enrolls, and installs a systemd unit. The agent dials home over mTLS and the server shows `running` within seconds; it runs and configures its own Traefik.
-
-The agent's mTLS certificate renews itself over the same channel at two thirds of its lifetime, with a fresh key each time — nothing expires and nothing has to be re-enrolled.
+Paste the printed `curl | sh` line on the target server as root. It is self-sufficient on a fresh box: it installs Docker if there is none, downloads the agent, pins the plane's CA against the fingerprint carried in the command, enrolls, and installs a systemd unit. The agent dials home over mTLS and the server reads `running` within seconds, running and configuring its own Traefik.
 
 **3. Deploy an application**
 
@@ -169,86 +177,90 @@ curl -s -X POST localhost:8080/api/v1/environments/$EID/applications \
     "route": {"domain": "app.example.com"},
     "env_vars": {"DATABASE_URL": "..."}
   }'
-# response includes the app id and a webhook URL + secret (shown exactly once)
+# the response carries the app id and a webhook URL + secret, shown exactly once
 
 curl -s -X POST localhost:8080/api/v1/applications/<app-id>/deploy \
   -H "Authorization: Bearer $TOKEN" -d '{}'
 ```
 
-Point your domain's DNS at the server and the app is live at its URL. For HTTPS, give the panel an ACME account once — `curl -X PUT .../api/v1/panel/tls -d '{"acme_email":"ops@example.com"}'` — and every server obtains Let's Encrypt certificates for the domains routed to it. Until you do, routed apps are served over plain HTTP and the API says so (`tls_state: http_only_no_resolver`) rather than claiming a certificate nobody issued. Watch progress with `GET /api/v1/deployments/<id>` and stream logs from `/api/v1/deployments/<id>/logs` (SSE). Add the webhook to GitHub and every push to the configured branch deploys itself.
+Point the domain's DNS at the server and the app is live. For HTTPS, give the panel an ACME account once — `curl -X PUT .../api/v1/panel/tls -d '{"acme_email":"ops@example.com"}'` — and every server obtains Let's Encrypt certificates for the domains routed to it. Until you do, routed apps are served over plain HTTP and the API says so (`tls_state: http_only_no_resolver`) rather than claiming a certificate nobody issued.
 
 ## The API
 
-Everything under `/api/v1`, bearer-token authenticated (the GitHub webhook authenticates by per-app HMAC instead). The complete OpenAPI spec ships inside the binary at `GET /api/v1/openapi.yaml` — it is the contract, enforced by CI.
+**198 operations under `/api/v1`**, bearer-token authenticated — except the GitHub webhook, which authenticates by per-application HMAC. The complete OpenAPI spec ships inside the binary at `GET /api/v1/openapi.yaml`, and it is the contract: CI fails on drift between it and the handlers.
 
-| Area | Endpoints |
+| Area | What it covers |
 |---|---|
-| Auth | `POST /auth/login` · `POST /auth/logout` · `GET /auth/me` |
-| Teams & users | `GET·POST /teams` · `GET·PATCH·DELETE /teams/{id}` · `GET·POST·PATCH·DELETE /teams/{id}/members[/{uid}]` · `GET·POST /users` · `PATCH·DELETE /users/{id}` |
-| Servers | `GET·POST /servers` · `GET·DELETE /servers/{id}` |
-| Projects | `GET·POST /projects` · `GET·DELETE /projects/{id}` · `GET·POST /projects/{id}/environments` |
-| Applications | `GET·POST /environments/{id}/applications` · `GET·PATCH·DELETE /applications/{id}` · env vars (write-only values) · `GET /applications/{id}/logs` (SSE) |
-| Deployments | `POST /applications/{id}/deploy` · `GET /applications/{id}/deployments` · `GET /deployments/{id}` · `POST /deployments/{id}/rollback` · `GET /deployments/{id}/logs` (SSE) |
-| Databases | `GET·POST /environments/{id}/databases` · `GET·PATCH·DELETE /databases/{id}` · start/stop/reset-password · `GET /databases/{id}/connection-info` |
-| Backups | `GET·POST /backup-targets` · `GET·POST·DELETE /databases/{id}/backups[/{bak}]` · `POST …/run` · `GET …/history` · `POST /databases/{id}/restore` |
-| Previews | `GET /applications/{id}/previews` · `GET·DELETE /previews/{id}` |
-| Notifiers | `GET·POST /projects/{id}/notifiers` · `GET·PATCH·DELETE /notifiers/{id}` · `POST /notifiers/{id}/test` |
-| Scheduled tasks | `GET·POST /applications/{id}/scheduled-tasks` · `GET·PATCH·DELETE /scheduled-tasks/{id}` · `GET …/runs` |
-| Panel | `GET·PUT /panel/tls` (the fleet's ACME account, owner) · `GET·PUT·DELETE /panel/mail` · `GET·PUT·DELETE /panel/dns` · `GET /panel/version` · `GET /panel/logs` |
-| Webhooks | `POST /webhooks/github/{webhook_id}` (push → deploy, pull_request → preview) |
+| Auth & sessions | login/logout, profile, TOTP 2FA with recovery codes, live sessions, email change, API tokens |
+| Teams, users & access | teams and ranked membership, panel accounts, invitations, access requests |
+| Servers | enrollment, the join command, public address, disk, revocation |
+| Projects | projects, environments, transfer, shared variables |
+| Applications | create/patch/delete, env vars (write-only), volumes, ports and limits, restart, DNS and domain checks, runtime logs (SSE) |
+| Deployments | deploy, list, rollback, cancel, build logs (SSE) |
+| Compose stacks | create/edit, deploy, revisions, rollback, variables, logs (SSE) |
+| Databases & backups | six engines, start/stop/reset, backup targets, schedules, history, restore |
+| Previews | list and delete PR-spawned environments |
+| Registries | credentials, connection test, and what uses each one |
+| Deploy protection | policy, freeze windows, approvals, break glass |
+| Notifiers & webhooks | channels, tests, outbound endpoints and delivery history |
+| Scheduled tasks | cron entries and their run history |
+| Templates | the 158-entry catalog and one-click instantiation |
+| Audit & inbox | the immutable log, and per-user notifications |
+| Panel | ACME account, mail, DNS, version, log tail |
 
 ## Security model
 
-The full threat model lives in [docs/security/threat-model.md](docs/security/threat-model.md); it was written before the first line of agent code, and its requirements are enforced by tests. The highlights:
+The [threat model](docs/security/threat-model.md) was written before the first line of agent code, and its requirements are enforced by tests rather than by review.
 
-- **No SSH, ever.** Agents dial home outbound-only over mTLS against a pinned CA. A compromised control plane yields shell access to nothing ([ADR-002](docs/adrs/ADR-002-agent-dial-home-no-ssh.md)).
-- **Join tokens are single-use and short-lived**; thereafter the agent's identity is its short-lived, revocable certificate — 90 days, renewed by the agent over the authenticated channel at two thirds of its life with a fresh key each time. Deleting a server cuts its live connection *and* refuses its renewals, so a revoked identity expires rather than lingering.
-- **Per-agent authorization on the bus**: each agent can publish only its own `state.*`/`logs.*` and read only its own work queue — a compromised agent's blast radius is its own server, verified by tests down to the JetStream API grants.
-- **No arbitrary-command *verb* on the wire.** Work items describe state to converge on; there is no "run this command on the host" message. A scheduled-task command is the one command-bearing field, and it is deliberately scoped: declarative workload config that the agent runs only inside the app's *own* unprivileged container — no more privilege than deploying an image already grants ([ADR-011](docs/adrs/ADR-011-in-container-scheduled-tasks.md), refining threat-model §8 req 4).
-- **Team-scoped authorization** on every project route: the request resolves to its owning team, the caller's ranked role is checked, and a non-member gets 404 (not 403) so resource existence never leaks across tenants. Grants require strictly sufficient rank — no self-service escalation.
-- **Secrets sealed at rest** (AES-256-GCM under the master key), masked in all responses, never logged; certificate private keys never leave the node that serves them.
-- **Constant-time comparisons** for tokens and webhook HMACs; login rate-limiting; the plane guards its own disk headroom at boot.
+- **No SSH, ever.** Agents dial home outbound-only over mTLS against a pinned CA, so they work behind NAT and a compromised control plane yields shell access to nothing ([ADR-002](docs/adrs/ADR-002-agent-dial-home-no-ssh.md)).
+- **Join tokens are single-use and short-lived.** After that an agent's identity is its 90-day certificate, renewed over the authenticated channel at two thirds of its life with a fresh key. Deleting a server cuts the live connection *and* refuses renewal, so a revoked identity expires rather than lingering.
+- **Per-agent authorization on the bus.** Each agent may publish only its own `state.*` and `logs.*` and read only its own work queue, so a compromised agent's blast radius is its own server — asserted down to the JetStream API grants.
+- **No arbitrary-command verb on the wire.** Work items describe state to converge on; there is no "run this on the host" message. A scheduled task's command is the one command-bearing field, and it runs only inside the app's own unprivileged container — no more privilege than deploying an image already grants.
+- **Team-scoped authorization** on every project route, where a non-member gets 404 rather than 403 so resource existence never leaks. Rank is checked when a permission is created, never when it is spent.
+- **Secrets sealed at rest** under AES-256-GCM, masked in every response, never logged; certificate private keys never leave the node that serves them.
+- **Constant-time comparison** for tokens and HMACs, two-dimension login throttling, and one immutable audit row per sensitive action.
 
 ## Repository layout
 
 ```
-core/    control plane (cypherd): REST+console, scheduler, embedded NATS bus,
-         sqlc store + migrations, auth, enrollment CA
-agent/   data plane (cypher-agent): docker driver + Engine API client, builder,
-         Traefik proxy driver, work consumer, health prober, log streamer
-pkg/     shared: NATS subject contracts, generated proto, PKI, IDs
-proto/   the wire contract (buf-managed; additive-only, no arbitrary-command verbs)
-docs/    vision, architecture, ADRs, feature specs, threat model, roadmap
-research/ extraction maps + measured baselines from the reference codebases
-install/ the curl|sh agent installer (served by the plane)
+core/      control plane (cypherd): REST + embedded web UI, scheduler, NATS bus,
+           sqlc store + migrations, auth, enrollment CA, template catalog
+agent/     data plane (cypher-agent): docker driver, builder, Traefik proxy driver,
+           work consumer, health prober, log streamer
+web/       the React UI (TanStack Router, generated API client) — embedded into cypherd
+pkg/       shared: NATS subject contracts, generated proto, PKI, IDs
+proto/     the wire contract (buf-managed; additive-only, no arbitrary-command verbs)
+docs/      vision, architecture, 11 ADRs, 32 feature specs, threat model, roadmap
+research/  extraction maps and measured baselines from the reference codebases
+install/   the curl|sh installers for the plane and the agent
 ```
 
-Details and placement rules: [docs/project-structure.md](docs/project-structure.md).
+Placement rules: [docs/project-structure.md](docs/project-structure.md).
 
 ## Development
 
 ```sh
 make check        # fast pre-commit gate: proto + build + vet + test
 make test-race    # what CI runs
-make test-store   # store layer against a real throwaway Postgres
+make test-store   # the store layer against a real throwaway Postgres
 make lint         # golangci-lint, per module
 make dev-up       # local Postgres via docker compose
 ```
 
-CI runs on every push: format/lint/race/arm64-cross/proto-compat/generated-drift ([ci.yml](.github/workflows/ci.yml)) plus five integration jobs against real infrastructure — handshake & revocation, the 60-second installer gate, real-Postgres store tests, the full deploy slice (including the zero-dropped-requests check through real Traefik), and agent-outage resilience ([integration.yml](.github/workflows/integration.yml), inventory in [docs/dev/ci.md](docs/dev/ci.md)).
+Every push runs format, lint, race tests, an arm64 cross-build, proto compatibility and generated-code drift ([ci.yml](.github/workflows/ci.yml)), plus five integration jobs against real infrastructure: handshake and revocation, the 60-second installer gate, real-Postgres store tests, the full deploy slice including the zero-dropped-requests check through Traefik, and agent-outage resilience ([integration.yml](.github/workflows/integration.yml)).
 
-Working on the code? [CLAUDE.md](CLAUDE.md) is the router; [ENGINEERING.md](ENGINEERING.md) is the law — binding rules, not suggestions (consumer-defined interfaces, idempotent reconcilers with required test patterns, additive-only wire/schema changes, secrets never in logs).
+Working on the code? [CLAUDE.md](CLAUDE.md) is the router and [ENGINEERING.md](ENGINEERING.md) is the law — binding rules rather than suggestions: consumer-defined interfaces, idempotent reconcilers with required test patterns, additive-only wire and schema changes, and secrets never in logs.
 
-## Reading order (the deep dive)
+## Reading order
 
-1. [docs/vision.md](docs/vision.md) — why this exists, who it serves, the non-negotiables (with numbers)
+1. [docs/vision.md](docs/vision.md) — why this exists, who it serves, and the non-negotiables, with numbers
 2. [docs/architecture.md](docs/architecture.md) — the system design
-3. [docs/adrs/](docs/adrs/) — the decisions everything rests on: Go single binary · dial-home agents · embedded NATS · Traefik file provider · desired-state reconciliation · docker-only at launch · no registry required · Apache-2.0 license · agent auto-update · in-container scheduled tasks
-4. [docs/features/](docs/features/) — implemented feature specs: [application-deploy](docs/features/application-deploy.md), [routing-and-tls](docs/features/routing-and-tls.md), [managed-databases](docs/features/managed-databases.md), [preview-environments](docs/features/preview-environments.md), [notifications](docs/features/notifications.md), [scheduled-tasks](docs/features/scheduled-tasks.md), [teams-and-roles](docs/features/teams-and-roles.md)
+3. [docs/adrs/](docs/adrs/) — the eleven decisions everything else rests on
+4. [docs/features/](docs/features/) — thirty-two implemented feature specs, each written before its code
 5. [docs/product/feature-matrix.md](docs/product/feature-matrix.md) — the v1 scope contract, extracted from both reference codebases
-6. [docs/roadmap.md](docs/roadmap.md) — phases with acceptance gates, open decisions
-7. [research/](research/) — extraction maps into the reference sources, measured footprints, community pain points
+6. [docs/roadmap.md](docs/roadmap.md) — phases with acceptance gates
+7. [research/](research/) — extraction maps, measured footprints, and evidence-linked community pain points
 
 ## License
 
-[Apache-2.0](LICENSE) — the whole repository, no open-core split ([ADR-009](docs/adrs/ADR-009-apache-2-license.md)).
+[Apache-2.0](LICENSE) — the whole repository, with no open-core split ([ADR-009](docs/adrs/ADR-009-apache-2-license.md)).
