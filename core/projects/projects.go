@@ -8,9 +8,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/MaramHarsha/cypherpanel/core/domain"
+	"github.com/MaramHarsha/cypherpanel/core/store"
 	"github.com/MaramHarsha/cypherpanel/pkg/ids"
 )
 
@@ -20,9 +23,48 @@ const DefaultEnvironment = "production"
 // ErrInvalidName is returned for an empty or over-long name.
 var ErrInvalidName = errors.New("projects: name must be 1–100 characters")
 
+var (
+	// ErrEnvironmentNotInProject guards the default-environment field: a
+	// project cannot point at an environment belonging to someone else.
+	ErrEnvironmentNotInProject = errors.New("projects: that environment is not in this project")
+	// ErrPreviewEnvironment marks an attempt to rename or delete an
+	// environment the PR lifecycle owns. Previews come and go on their own;
+	// editing one by hand desynchronises it from the pull request that made it.
+	ErrPreviewEnvironment = errors.New("projects: a preview environment is managed by its pull request")
+	// ErrLastEnvironment refuses to remove the environment a project would be
+	// left without.
+	ErrLastEnvironment = errors.New("projects: a project keeps at least one environment")
+)
+
+// slugAlphabet is everything a slug may contain after normalisation.
+var slugAlphabet = regexp.MustCompile(`[^a-z0-9]+`)
+
+// Slugify renders a project name as a URL handle. Exported because the same
+// rule ran in the backfill migration, and a second implementation that drifted
+// would give old and new projects different-looking slugs.
+func Slugify(name string) string {
+	s := slugAlphabet.ReplaceAllString(strings.ToLower(name), "-")
+	s = strings.Trim(s, "-")
+	if s == "" {
+		// A name made entirely of punctuation or non-Latin script still needs a
+		// handle. The disambiguating suffix does the work from here.
+		return "project"
+	}
+	const maxSlug = 60
+	if len(s) > maxSlug {
+		s = strings.Trim(s[:maxSlug], "-")
+	}
+	return s
+}
+
 // Store is the persistence the service needs (consumer-defined).
 type Store interface {
-	CreateProjectWithEnvironment(ctx context.Context, projectID, name, teamID, envID, envName string) (domain.Project, domain.Environment, error)
+	CreateProjectWithEnvironment(ctx context.Context, projectID, name, teamID, slug, envID, envName string) (domain.Project, domain.Environment, error)
+	UpdateProject(ctx context.Context, id string, f store.UpdateProjectFields) (domain.Project, error)
+	SlugTakenInTeam(ctx context.Context, teamID, slug string) (bool, error)
+	ProjectRollups(ctx context.Context) (map[string]domain.ProjectRollup, error)
+	RenameEnvironment(ctx context.Context, id, name string) (domain.Environment, error)
+	DeleteEnvironment(ctx context.Context, id string) error
 	GetProject(ctx context.Context, id string) (domain.Project, error)
 	ListProjects(ctx context.Context) ([]domain.Project, error)
 	ListProjectsByUser(ctx context.Context, userID string) ([]domain.Project, error)
@@ -49,15 +91,162 @@ func (s *Service) Create(ctx context.Context, name, teamID string) (domain.Proje
 	if !validName(name) {
 		return domain.Project{}, domain.Environment{}, ErrInvalidName
 	}
+	slug, err := s.freeSlug(ctx, teamID, Slugify(name))
+	if err != nil {
+		return domain.Project{}, domain.Environment{}, err
+	}
 	proj, env, err := s.store.CreateProjectWithEnvironment(
 		ctx,
-		ids.New(ids.PrefixProject), name, teamID,
+		ids.New(ids.PrefixProject), name, teamID, slug,
 		ids.New(ids.PrefixEnvironment), DefaultEnvironment,
 	)
 	if err != nil {
 		return domain.Project{}, domain.Environment{}, fmt.Errorf("projects: creating project: %w", err)
 	}
 	return proj, env, nil
+}
+
+// freeSlug finds an unused slug in the team, appending -2, -3 … as the backfill
+// migration did. Bounded: after a hundred collisions the name is the problem,
+// not the suffix, and looping forever would turn a naming mistake into a hang.
+func (s *Service) freeSlug(ctx context.Context, teamID, base string) (string, error) {
+	for n := 1; n <= 100; n++ {
+		candidate := base
+		if n > 1 {
+			candidate = base + "-" + strconv.Itoa(n)
+		}
+		taken, err := s.store.SlugTakenInTeam(ctx, teamID, candidate)
+		if err != nil {
+			return "", fmt.Errorf("projects: checking slug: %w", err)
+		}
+		if !taken {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("projects: too many projects named like %q in this team", base)
+}
+
+// UpdateInput is a partial edit of a project. Slug is deliberately absent: it
+// is chosen once and never changes, because URLs and scripts depend on it.
+type UpdateInput struct {
+	Name                 *string
+	TeamID               *string
+	DefaultEnvironmentID *string
+}
+
+// Update applies a partial edit.
+//
+// A transfer keeps the slug only if it is free in the destination team; where
+// it collides the project is given the next free one rather than the transfer
+// being refused, because a name clash between two teams is not the operator's
+// mistake to fix.
+func (s *Service) Update(ctx context.Context, id string, in UpdateInput) (domain.Project, error) {
+	proj, err := s.store.GetProject(ctx, id)
+	if err != nil {
+		return domain.Project{}, fmt.Errorf("projects: getting project: %w", err)
+	}
+
+	f := store.UpdateProjectFields{}
+	if in.Name != nil {
+		name := strings.TrimSpace(*in.Name)
+		if !validName(name) {
+			return domain.Project{}, ErrInvalidName
+		}
+		f.Name = &name
+	}
+	if in.TeamID != nil && *in.TeamID != proj.TeamID {
+		f.TeamID = in.TeamID
+		slug, err := s.freeSlug(ctx, *in.TeamID, proj.Slug)
+		if err != nil {
+			return domain.Project{}, err
+		}
+		if slug != proj.Slug {
+			f.Slug = &slug
+		}
+	}
+	if in.DefaultEnvironmentID != nil {
+		if *in.DefaultEnvironmentID == "" {
+			f.ClearDefaultEnvironment = true
+		} else {
+			env, err := s.store.GetEnvironment(ctx, *in.DefaultEnvironmentID)
+			if err != nil {
+				return domain.Project{}, fmt.Errorf("projects: getting environment: %w", err)
+			}
+			if env.ProjectID != id {
+				return domain.Project{}, ErrEnvironmentNotInProject
+			}
+			f.DefaultEnvironmentID = in.DefaultEnvironmentID
+		}
+	}
+
+	updated, err := s.store.UpdateProject(ctx, id, f)
+	if err != nil {
+		return domain.Project{}, fmt.Errorf("projects: updating project: %w", err)
+	}
+	return updated, nil
+}
+
+// Rollups returns per-project resource counts and worst status for the list.
+func (s *Service) Rollups(ctx context.Context) (map[string]domain.ProjectRollup, error) {
+	r, err := s.store.ProjectRollups(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("projects: rolling up: %w", err)
+	}
+	return r, nil
+}
+
+// RenameEnvironment renames a standing environment. A preview belongs to its
+// pull request and is refused.
+func (s *Service) RenameEnvironment(ctx context.Context, id, name string) (domain.Environment, error) {
+	name = strings.TrimSpace(name)
+	if !validName(name) {
+		return domain.Environment{}, ErrInvalidName
+	}
+	env, err := s.store.GetEnvironment(ctx, id)
+	if err != nil {
+		return domain.Environment{}, fmt.Errorf("projects: getting environment: %w", err)
+	}
+	if env.Kind == domain.EnvPreview {
+		return domain.Environment{}, ErrPreviewEnvironment
+	}
+	renamed, err := s.store.RenameEnvironment(ctx, id, name)
+	if err != nil {
+		return domain.Environment{}, fmt.Errorf("projects: renaming environment: %w", err)
+	}
+	return renamed, nil
+}
+
+// DeleteEnvironment removes a standing environment. A preview is refused (its
+// pull request owns it), and so is the last one a project has — a project with
+// nowhere to put resources is not a state the UI can recover from.
+//
+// Resources still inside are refused by the store's foreign keys, which is the
+// same protection deleting a project gets.
+func (s *Service) DeleteEnvironment(ctx context.Context, id string) error {
+	env, err := s.store.GetEnvironment(ctx, id)
+	if err != nil {
+		return fmt.Errorf("projects: getting environment: %w", err)
+	}
+	if env.Kind == domain.EnvPreview {
+		return ErrPreviewEnvironment
+	}
+	siblings, err := s.store.ListEnvironmentsByProject(ctx, env.ProjectID)
+	if err != nil {
+		return fmt.Errorf("projects: listing environments: %w", err)
+	}
+	standing := 0
+	for _, e := range siblings {
+		if e.Kind != domain.EnvPreview {
+			standing++
+		}
+	}
+	if standing <= 1 {
+		return ErrLastEnvironment
+	}
+	if err := s.store.DeleteEnvironment(ctx, id); err != nil {
+		return fmt.Errorf("projects: deleting environment: %w", err)
+	}
+	return nil
 }
 
 // List returns all projects, newest first (the panel-owner view).

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/auth"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 )
@@ -27,12 +28,16 @@ type createTokenRequest struct {
 	// anything present, including `null` and `[]`, is taken literally and
 	// rejected when it grants nothing.
 	Abilities json.RawMessage `json:"abilities"`
+	// ProjectID narrows the token to one project. Empty or omitted leaves it
+	// unscoped, which is what every token was before scoping existed.
+	ProjectID string `json:"project_id"`
 }
 
 type tokenDTO struct {
 	ID         string     `json:"id"`
 	Name       string     `json:"name"`
 	Abilities  []string   `json:"abilities"`
+	ProjectID  string     `json:"project_id,omitempty"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`
@@ -54,6 +59,7 @@ func toTokenDTO(t domain.APIToken) tokenDTO {
 		ID:         t.ID,
 		Name:       t.Name,
 		Abilities:  abilities,
+		ProjectID:  t.ProjectID,
 		LastUsedAt: t.LastUsedAt,
 		ExpiresAt:  t.ExpiresAt,
 		CreatedAt:  t.CreatedAt,
@@ -94,7 +100,7 @@ func (a *API) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	if req.Abilities != nil {
 		var list []string
 		if err := json.Unmarshal(req.Abilities, &list); err != nil {
-			writeError(w, http.StatusBadRequest, "abilities must be an array of read, write, deploy")
+			writeError(w, http.StatusBadRequest, "abilities must be an array of read, write, deploy, env, servers, admin")
 			return
 		}
 		abilities = make([]domain.Ability, 0, len(list))
@@ -103,9 +109,17 @@ func (a *API) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	raw, tok, err := a.deps.Auth.CreateToken(r.Context(), user.ID, req.Name, abilities, expiresAt)
+	// A token can only be scoped to a project its owner can actually reach, and
+	// only by an interactive session — the scope is part of the credential's
+	// authority, so minting one is credential management like the rest of this
+	// route.
+	if req.ProjectID != "" && !a.requireProjectRole(w, r, user, req.ProjectID, domain.RoleMember) {
+		return
+	}
+
+	raw, tok, err := a.deps.Auth.CreateToken(r.Context(), user.ID, req.Name, abilities, expiresAt, req.ProjectID)
 	if errors.Is(err, auth.ErrInvalidAbility) {
-		writeError(w, http.StatusBadRequest, "abilities must be a non-empty subset of read, write, deploy")
+		writeError(w, http.StatusBadRequest, "abilities must be a non-empty subset of read, write, deploy, env, servers, admin")
 		return
 	}
 	if err != nil {
@@ -113,6 +127,16 @@ func (a *API) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not create token")
 		return
 	}
+	// The abilities and the expiry, never the token itself (§6). A minted
+	// credential is the row a later leak is traced back from.
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionTokenCreated,
+		Resource: audit.Resource(audit.ResourceAPIToken, tok.ID, tok.Name),
+		Detail: map[string]any{
+			"abilities": abilityNames(tok.Abilities), "expires_in_days": req.ExpiresInDays,
+			"project_id": tok.ProjectID,
+		},
+	})
 	writeJSON(w, http.StatusCreated, createTokenResponse{tokenDTO: toTokenDTO(tok), Token: raw})
 }
 
@@ -151,5 +175,19 @@ func (a *API) handleDeleteToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not delete token")
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionTokenRevoked,
+		Resource: audit.Resource(audit.ResourceAPIToken, r.PathValue("id"), ""),
+	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// abilityNames renders a token's abilities for an audit detail. The audit row
+// stores plain JSON, so the closed ability vocabulary crosses as strings.
+func abilityNames(in []domain.Ability) []string {
+	out := make([]string, 0, len(in))
+	for _, ab := range in {
+		out = append(out, string(ab))
+	}
+	return out
 }

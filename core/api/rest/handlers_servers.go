@@ -12,9 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/servers"
 	"github.com/MaramHarsha/cypherpanel/core/store"
+	"github.com/MaramHarsha/cypherpanel/core/updates"
 )
 
 type serverDTO struct {
@@ -27,27 +29,38 @@ type serverDTO struct {
 	Hostname     string `json:"hostname"`
 	// PublicAddress is where DNS records for this server's applications point
 	// (dns-automation.md §3.4). Empty until an operator sets it.
-	PublicAddress string  `json:"public_address"`
-	Enrolled      bool    `json:"enrolled"`
-	EnrolledAt    *string `json:"enrolled_at"`
-	LastSeenAt    *string `json:"last_seen_at"`
-	CreatedAt     string  `json:"created_at"`
+	PublicAddress string `json:"public_address"`
+	// DiskTotalBytes / DiskFreeBytes are the Docker data root's filesystem as
+	// of the last heartbeat (disk-management.md §4). Zero means not reported —
+	// an older agent, or a host where it could not be read — which a client
+	// should show as unknown rather than as full.
+	DiskTotalBytes uint64 `json:"disk_total_bytes"`
+	DiskFreeBytes  uint64 `json:"disk_free_bytes"`
+	// DiskLow is whether the server is currently past the panel's threshold.
+	DiskLow    bool    `json:"disk_low"`
+	Enrolled   bool    `json:"enrolled"`
+	EnrolledAt *string `json:"enrolled_at"`
+	LastSeenAt *string `json:"last_seen_at"`
+	CreatedAt  string  `json:"created_at"`
 }
 
 func toServerDTO(s domain.Server) serverDTO {
 	return serverDTO{
-		ID:            s.ID,
-		Name:          s.Name,
-		Status:        string(s.Status),
-		Driver:        s.Driver,
-		Role:          s.Role,
-		AgentVersion:  s.AgentVersion,
-		Hostname:      s.Hostname,
-		PublicAddress: s.PublicAddress,
-		Enrolled:      s.Enrolled(),
-		EnrolledAt:    formatTime(s.EnrolledAt),
-		LastSeenAt:    formatTime(s.LastSeenAt),
-		CreatedAt:     s.CreatedAt.UTC().Format(time.RFC3339),
+		ID:             s.ID,
+		Name:           s.Name,
+		Status:         string(s.Status),
+		Driver:         s.Driver,
+		DiskTotalBytes: s.DiskTotalBytes,
+		DiskFreeBytes:  s.DiskFreeBytes,
+		DiskLow:        s.DiskLow,
+		Role:           s.Role,
+		AgentVersion:   s.AgentVersion,
+		Hostname:       s.Hostname,
+		PublicAddress:  s.PublicAddress,
+		Enrolled:       s.Enrolled(),
+		EnrolledAt:     formatTime(s.EnrolledAt),
+		LastSeenAt:     formatTime(s.LastSeenAt),
+		CreatedAt:      s.CreatedAt.UTC().Format(time.RFC3339),
 	}
 }
 
@@ -118,6 +131,13 @@ func (a *API) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not create server")
 		return
 	}
+	// The server, never the join token beside it (§6): the token is a
+	// single-use credential and an audit row is not where one gets a second
+	// life.
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionServerCreated,
+		Resource: audit.Resource(audit.ResourceServer, srv.ID, srv.Name),
+	})
 	caSum := sha256.Sum256(a.deps.CACertPEM)
 	fingerprint := hex.EncodeToString(caSum[:])
 	writeJSON(w, http.StatusCreated, createServerResponse{
@@ -134,12 +154,35 @@ func (a *API) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 			),
 			// CYPHER_PLANE_HTTP is passed explicitly: the plane knows its own
 			// advertised URL; the installer must not guess a port.
-			InstallCommand: fmt.Sprintf(
-				"curl -fsSL %s/install/agent.sh | CYPHER_PLANE=%s CYPHER_PLANE_HTTP=%s CYPHER_TOKEN=%s CYPHER_CA_FINGERPRINT=%s sh",
-				a.deps.ConsoleURL, a.deps.EnrollAddr, a.deps.ConsoleURL, token, fingerprint,
-			),
+			InstallCommand: a.installCommand(token, fingerprint),
 		},
 	})
+}
+
+// installCommand builds the ready-to-paste join line.
+//
+// It pins CYPHER_AGENT_URL to this panel's OWN version when the panel is a
+// release build (agent-identity-and-tls.md §6): a server then joins running the
+// agent that matches the plane, which is the version pairing ADR-010 assumes,
+// and the paste works on a host that has never seen the binary. A development
+// build names no URL and the installer falls back to the project's latest
+// release — the plane still stores and serves no binaries either way (ADR-010).
+func (a *API) installCommand(token, fingerprint string) string {
+	agentURL := ""
+	if a.deps.Panel != nil {
+		agentURL = updates.AgentAssetURL(a.deps.Panel.Current().Version)
+	}
+	cmd := fmt.Sprintf(
+		"curl -fsSL %s/install/agent.sh | CYPHER_PLANE=%s CYPHER_PLANE_HTTP=%s CYPHER_TOKEN=%s CYPHER_CA_FINGERPRINT=%s",
+		a.deps.ConsoleURL, a.deps.EnrollAddr, a.deps.ConsoleURL, token, fingerprint,
+	)
+	if agentURL != "" {
+		// Quoted: the URL carries a literal {arch} placeholder the installer
+		// substitutes, and an unquoted brace is at the mercy of whichever shell
+		// the operator pastes into.
+		cmd += fmt.Sprintf(" CYPHER_AGENT_URL='%s'", agentURL)
+	}
+	return cmd + " sh"
 }
 
 func (a *API) handleGetServer(w http.ResponseWriter, r *http.Request) {
@@ -161,6 +204,7 @@ func (a *API) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
 	if !a.requirePanelRole(w, user, domain.RoleAdmin) {
 		return
 	}
+	before, _ := a.deps.Servers.Get(r.Context(), r.PathValue("id"))
 	if err := a.deps.Servers.Delete(r.Context(), r.PathValue("id")); err != nil {
 		if errors.Is(err, store.ErrInUse) {
 			writeError(w, http.StatusConflict, "server still runs applications — move or delete them first")
@@ -170,6 +214,12 @@ func (a *API) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not delete server")
 		return
 	}
+	// Deleting a server revokes its certificate and disconnects the agent —
+	// the mirror of enrollment, and audited for the same reason (§5.3).
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionServerDeleted,
+		Resource: audit.Resource(audit.ResourceServer, r.PathValue("id"), before.Name),
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -251,5 +301,10 @@ func (a *API) handlePatchServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not update the server")
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionServerUpdated,
+		Resource: audit.Resource(audit.ResourceServer, srv.ID, srv.Name),
+		Detail:   map[string]any{"public_address": srv.PublicAddress},
+	})
 	writeJSON(w, http.StatusOK, toServerDTO(srv))
 }

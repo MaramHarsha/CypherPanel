@@ -19,18 +19,21 @@
 # session — so the CA fetched over plain HTTP is verified against out-of-band
 # knowledge before anything trusts it.
 #
-# The agent binary is fetched from CYPHER_AGENT_URL, an operator-supplied
-# artifact URL (ADR-010: the plane names versions but never stores or relays
-# agent binaries). Point it at your release asset, object store, or file server.
+# The agent binary comes from this project's latest GitHub release by default,
+# the same way install.sh gets cypherd. CYPHER_AGENT_URL overrides that with any
+# artifact URL — a pinned release asset (which is what the panel's own join
+# command sends), an object store, an internal file server for an air-gapped
+# fleet. Either way the plane names versions but never stores or relays agent
+# binaries (ADR-010).
 #
 # Environment:
 #   CYPHER_PLANE           gRPC enrollment address, host:port          (required)
 #   CYPHER_TOKEN           single-use join token                       (required)
 #   CYPHER_PLANE_HTTP      plane HTTP base URL; default http://<plane-host>:8080
 #   CYPHER_CA_FINGERPRINT  sha256 hex of the plane CA PEM; strongly recommended
-#   CYPHER_AGENT_URL       URL of the cypher-agent binary; required on a host
-#                          that has no /usr/local/bin/cypher-agent yet. May
-#                          contain {arch}, replaced with amd64/arm64.
+#   CYPHER_AGENT_URL       URL of the cypher-agent binary; defaults to the
+#                          latest GitHub release for the detected architecture.
+#                          May contain {arch}, replaced with amd64/arm64.
 #   CYPHER_AGENT_SHA256    sha256 hex of the binary; verified when set
 #   CYPHER_ROLE            all (default) | builder | worker
 #   CYPHER_HOSTNAME        hostname to report; default $(hostname)
@@ -40,6 +43,7 @@
 
 set -eu
 
+REPO="MaramHarsha/CypherPanel"
 BIN=/usr/local/bin/cypher-agent
 STATE_DIR="${CYPHER_STATE_DIR:-/var/lib/cypher-agent}"
 ROLE="${CYPHER_ROLE:-all}"
@@ -130,11 +134,37 @@ if command -v timedatectl >/dev/null 2>&1; then
 fi
 
 # ── agent binary ─────────────────────────────────────────────────────────────
-if [ -n "${CYPHER_AGENT_URL:-}" ]; then
-    url=$(printf '%s' "$CYPHER_AGENT_URL" | sed "s/{arch}/$ARCH/g")
+#
+# Three cases, in this order:
+#   1. CYPHER_AGENT_URL set  → download it. Explicit operator intent (and what
+#      the panel's join command sends, pinned to the panel's own version) wins
+#      over anything already installed, so joining also upgrades a stale binary.
+#   2. a binary already here → reuse it. A host that was prepared out of band,
+#      or is re-joining, must not need network access to a release server.
+#   3. otherwise             → the project's latest release for this
+#      architecture, mirroring install.sh's default for cypherd. Without this
+#      the pasted join command could not complete on a fresh VM at all.
+download_agent() {
+    url=$(printf '%s' "$1" | sed "s/{arch}/$ARCH/g")
     say "downloading cypher-agent ($ARCH) from $url"
     tmp=$(mktemp)
-    fetch "$url" -o "$tmp" || fail "could not download the agent binary from $url"
+    fetch "$url" -o "$tmp" || {
+        rm -f "$tmp"
+        fail "could not download the agent binary from $url
+
+  The plane deliberately does not host binaries (ADR-010), so the installer
+  needs one of these:
+
+    * a reachable release asset — re-run with
+        CYPHER_AGENT_URL=https://.../cypher-agent-linux-$ARCH
+      (add CYPHER_AGENT_SHA256=<sum> to have it verified), or
+
+    * a binary already on this host — build or copy one into place and re-run
+      the same command:
+        install -m 0755 ./cypher-agent $BIN
+
+  Building from a source checkout: cd agent && go build -o $BIN ./cmd/cypher-agent"
+    }
     if [ -n "${CYPHER_AGENT_SHA256:-}" ]; then
         got=$(sha256sum "$tmp" | cut -d' ' -f1)
         [ "$got" = "$CYPHER_AGENT_SHA256" ] || fail "binary checksum mismatch (got $got) — refusing to install"
@@ -145,23 +175,14 @@ if [ -n "${CYPHER_AGENT_URL:-}" ]; then
     install -m 0755 "$tmp" "$BIN"
     rm -f "$tmp"
     say "installed $("$BIN" version 2>/dev/null || echo cypher-agent) to $BIN"
+}
+
+if [ -n "${CYPHER_AGENT_URL:-}" ]; then
+    download_agent "$CYPHER_AGENT_URL"
 elif [ -x "$BIN" ]; then
     say "reusing installed $BIN ($("$BIN" version 2>/dev/null || echo 'unknown version'))"
 else
-    fail "no agent binary found at $BIN.
-
-  The plane deliberately does not host binaries (ADR-010), so the installer
-  needs one of these:
-
-    * a release asset — re-run with
-        CYPHER_AGENT_URL=https://.../cypher-agent-linux-$ARCH
-      (add CYPHER_AGENT_SHA256=<sum> to have it verified), or
-
-    * a binary already on this host — build or copy one into place and re-run
-      the same command:
-        install -m 0755 ./cypher-agent $BIN
-
-  Building from a source checkout: cd agent && go build -o $BIN ./cmd/cypher-agent"
+    download_agent "https://github.com/$REPO/releases/latest/download/cypher-agent-linux-{arch}"
 fi
 
 # ── plane CA (pinned for all future traffic — threat-model §5.1) ─────────────

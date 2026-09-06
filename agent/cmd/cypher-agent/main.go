@@ -19,6 +19,7 @@ import (
 	"github.com/nats-io/nats.go"
 
 	"github.com/MaramHarsha/cypherpanel/agent/builder"
+	"github.com/MaramHarsha/cypherpanel/agent/compose"
 	"github.com/MaramHarsha/cypherpanel/agent/conn"
 	"github.com/MaramHarsha/cypherpanel/agent/cron"
 	"github.com/MaramHarsha/cypherpanel/agent/driver"
@@ -124,13 +125,20 @@ func runAgent(args []string, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	// The Keeper owns the identity from here on: every TLS handshake reads its
+	// certificate from it, so a renewal takes effect without reconnecting
+	// anything (agent-identity-and-tls.md §3).
+	keeper, err := identity.NewKeeper(*stateDir, id)
+	if err != nil {
+		return err
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	nc, err := conn.ConnectBus(id, log)
+	nc, err := conn.ConnectBus(keeper, log)
 	if err != nil {
 		return err
 	}
@@ -140,16 +148,53 @@ func runAgent(args []string, log *slog.Logger) error {
 	// Exit rather than linger publishing into a dead connection; the operator's
 	// init system decides whether to restart.
 	nc.SetClosedHandler(func(*nats.Conn) { cancel() })
-	log.Info("agent running", "server_id", id.ServerID, "driver", *drvName, "role", *role, "version", version)
+	log.Info("agent running",
+		"server_id", id.ServerID,
+		"driver", *drvName,
+		"role", *role,
+		"version", version,
+		"cert_not_after", keeper.NotAfter(),
+	)
+
+	// Certificate renewal: an owned goroutine that re-signs this agent's
+	// identity two thirds of the way through its life, over the mTLS channel
+	// it already holds (ADR-002; threat-model §5.2). Without it every agent
+	// goes dark at CYPHERD_AGENT_CERT_TTL and has to be re-enrolled by hand.
+	//
+	// It needs the plane's gRPC address, which identities enrolled before
+	// plane_addr existed do not carry; CYPHER_PLANE_ADDR supplies it. Without
+	// either, the agent says so loudly rather than failing silently in two
+	// months.
+	if planeAddr := envOr("CYPHER_PLANE_ADDR", id.PlaneAddr); planeAddr != "" {
+		renewClient, err := conn.NewRenewer(planeAddr, keeper, version)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = renewClient.Close() }()
+		renewer := identity.NewRenewer(keeper, renewClient, identity.SystemClock{}, log)
+		go renewer.Run(ctx)
+	} else {
+		log.Warn("no plane address on this identity: certificate renewal is disabled and this agent will stop connecting when its certificate expires; set CYPHER_PLANE_ADDR",
+			"server_id", id.ServerID, "cert_not_after", keeper.NotAfter())
+	}
 
 	// Shared with the docker driver below so a Proxy that cannot bind :80
 	// turns the server amber instead of leaving it green while every routed
 	// deploy fails.
 	health := &heartbeat.Health{}
-	go heartbeat.NewPublisher(nc, id.ServerID, version, *drvName, *role, *interval, health, log).Run(ctx)
+	hb := heartbeat.NewPublisher(nc, id.ServerID, version, *drvName, *role, *interval, health, log)
+	go hb.Run(ctx)
 
 	if *drvName == "docker" {
 		eng := engine.New("")
+		// Report free space on the filesystem the daemon actually uses. A
+		// failure here costs the disk report and nothing else, so it is logged
+		// rather than fatal (disk-management.md §4).
+		if root, rerr := eng.DataRoot(ctx); rerr != nil {
+			log.Warn("reading the docker data root; disk usage will not be reported", "error", rerr)
+		} else {
+			hb.SetDataRoot(root)
+		}
 
 		// The image relay dials the plane address the agent enrolled against
 		// (builder-role-and-relay.md §3). Identities saved before plane_addr
@@ -157,7 +202,7 @@ func runAgent(args []string, log *slog.Logger) error {
 		// relay work items fail with the remedy in the detail.
 		var imgRelay worker.ImageRelay
 		if planeAddr := envOr("CYPHER_PLANE_ADDR", id.PlaneAddr); planeAddr != "" {
-			rc, err := relay.New(planeAddr, id, eng, log)
+			rc, err := relay.New(planeAddr, keeper, eng, log)
 			if err != nil {
 				return err
 			}
@@ -169,6 +214,8 @@ func runAgent(args []string, log *slog.Logger) error {
 		// not bind :80/:443 (builder-role-and-relay.md §1).
 		var drv driver.Reconciler
 		var dockerDrv *docker.Driver // concrete handle for the cron executor
+		var proxyTLS worker.ProxyTLS // the Proxy's ACME sink, on app-role nodes
+		var composeRec driver.ComposeReconciler
 		if *role != "builder" {
 			// The Proxy owns this host directory (routing-and-tls.md §5):
 			// fragments in <Dir>/apps, static config + acme.json alongside.
@@ -179,19 +226,29 @@ func runAgent(args []string, log *slog.Logger) error {
 				proxyDir = d
 			}
 			prx := proxy.New(proxy.Config{
-				Dir:          proxyDir,
-				Image:        envOr("CYPHER_PROXY_IMAGE", "traefik:v3.3"),
-				ACMEEmail:    os.Getenv("CYPHER_ACME_EMAIL"),    // empty ⇒ HTTP-only, no cert resolver
-				ACMECAServer: os.Getenv("CYPHER_ACME_CASERVER"), // empty ⇒ Let's Encrypt production
+				Dir:   proxyDir,
+				Image: envOr("CYPHER_PROXY_IMAGE", "traefik:v3.3"),
+				// Host-local overrides. Empty is the normal case: the panel's
+				// ACME account arrives in desired state and is applied through
+				// SetACME below (agent-identity-and-tls.md §4).
+				ACMEEmail:    os.Getenv("CYPHER_ACME_EMAIL"),
+				ACMECAServer: os.Getenv("CYPHER_ACME_CASERVER"),
 				Engine:       eng,
 				Log:          log,
 			})
+			proxyTLS = prx
 			prb := prober.New()
 			strm := stream.NewStreamer(nc, eng, id.ServerID)
 			go strm.Start(ctx, 10*time.Second)
 			dockerDrv = docker.New(eng, prx, prb, log)
 			dockerDrv.OnProxyHealth(health.Set)
 			drv = dockerDrv
+			// Compose Stacks converge over the same Proxy and engine client:
+			// a stack's route is the same fragment an Application gets,
+			// because the Proxy runs the file provider only (ADR-004,
+			// compose-stacks.md §5).
+			composeRec = compose.New(compose.CLI{}, eng, prx,
+				filepath.Join(*stateDir, "compose"), log)
 		}
 
 		// Managed databases run on the same nodes as apps (worker/all roles),
@@ -218,10 +275,16 @@ func runAgent(args []string, log *slog.Logger) error {
 			return err
 		}
 		w := worker.New(wbus, id.ServerID, drv, dbRec, backupRunner, bld, imgRelay, log)
+		if proxyTLS != nil {
+			w.SetProxyTLS(proxyTLS)
+		}
 		if dockerDrv != nil {
 			// Scheduled tasks run only on app-role nodes (they need a container
 			// to exec into) — scheduled-tasks.md §5, ADR-011.
 			w.SetCron(cron.New(dockerDrv, wbus, id.ServerID, log))
+		}
+		if composeRec != nil {
+			w.SetComposeReconciler(composeRec)
 		}
 		errCh := make(chan error, 1)
 		go func() {

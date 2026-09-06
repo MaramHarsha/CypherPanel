@@ -93,20 +93,24 @@ func (b *fakeBus) publishedOn(subject string) [][]byte {
 // recordingDriver captures the desired sets it is asked to converge and
 // returns configurable statuses.
 type recordingDriver struct {
-	mu        sync.Mutex
-	lastSet   []*agentv1.AppSpec
-	calls     int
-	stateByID map[string]string // app_id -> reported state (default "running")
-	err       error
+	mu      sync.Mutex
+	lastSet []*agentv1.AppSpec
+	// lastRetain is the garbage-collection instruction the driver was handed
+	// (disk-management.md §2).
+	lastRetain []*agentv1.RetainSpec
+	calls      int
+	stateByID  map[string]string // app_id -> reported state (default "running")
+	err        error
 }
 
 func (d *recordingDriver) Name() string { return "fake" }
 
-func (d *recordingDriver) Reconcile(_ context.Context, desired []*agentv1.AppSpec) ([]*agentv1.AppStatus, error) {
+func (d *recordingDriver) Reconcile(_ context.Context, desired []*agentv1.AppSpec, retain []*agentv1.RetainSpec) ([]*agentv1.AppStatus, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.calls++
 	d.lastSet = desired
+	d.lastRetain = retain
 	if d.err != nil {
 		return nil, d.err
 	}

@@ -151,7 +151,9 @@ curl -s -X POST localhost:8080/api/v1/servers \
   -H "Authorization: Bearer $TOKEN" -d '{"name":"my-vps"}' | jq -r .join.install_command
 ```
 
-Paste the printed `curl | sh` line on the target server. The agent enrolls, dials home over mTLS, and the server shows `running` within seconds. The agent needs Docker and git installed; it runs and configures its own Traefik.
+Paste the printed `curl | sh` line on the target server, as root. It is self-sufficient on a fresh box: it installs Docker if there is none, downloads the agent (from the panel's own release when the panel is a release build, otherwise the project's latest — override with `CYPHER_AGENT_URL` for an air-gapped fleet), pins the plane CA against the fingerprint carried in the command, enrolls, and installs a systemd unit. The agent dials home over mTLS and the server shows `running` within seconds; it runs and configures its own Traefik.
+
+The agent's mTLS certificate renews itself over the same channel at two thirds of its lifetime, with a fresh key each time — nothing expires and nothing has to be re-enrolled.
 
 **3. Deploy an application**
 
@@ -173,7 +175,7 @@ curl -s -X POST localhost:8080/api/v1/applications/<app-id>/deploy \
   -H "Authorization: Bearer $TOKEN" -d '{}'
 ```
 
-Point your domain's DNS at the server and the app is live at its URL (set `CYPHER_ACME_EMAIL` on the agent to enable Let's Encrypt). Watch progress with `GET /api/v1/deployments/<id>` and stream logs from `/api/v1/deployments/<id>/logs` (SSE). Add the webhook to GitHub and every push to the configured branch deploys itself.
+Point your domain's DNS at the server and the app is live at its URL. For HTTPS, give the panel an ACME account once — `curl -X PUT .../api/v1/panel/tls -d '{"acme_email":"ops@example.com"}'` — and every server obtains Let's Encrypt certificates for the domains routed to it. Until you do, routed apps are served over plain HTTP and the API says so (`tls_state: http_only_no_resolver`) rather than claiming a certificate nobody issued. Watch progress with `GET /api/v1/deployments/<id>` and stream logs from `/api/v1/deployments/<id>/logs` (SSE). Add the webhook to GitHub and every push to the configured branch deploys itself.
 
 ## The API
 
@@ -192,6 +194,7 @@ Everything under `/api/v1`, bearer-token authenticated (the GitHub webhook authe
 | Previews | `GET /applications/{id}/previews` · `GET·DELETE /previews/{id}` |
 | Notifiers | `GET·POST /projects/{id}/notifiers` · `GET·PATCH·DELETE /notifiers/{id}` · `POST /notifiers/{id}/test` |
 | Scheduled tasks | `GET·POST /applications/{id}/scheduled-tasks` · `GET·PATCH·DELETE /scheduled-tasks/{id}` · `GET …/runs` |
+| Panel | `GET·PUT /panel/tls` (the fleet's ACME account, owner) · `GET·PUT·DELETE /panel/mail` · `GET·PUT·DELETE /panel/dns` · `GET /panel/version` · `GET /panel/logs` |
 | Webhooks | `POST /webhooks/github/{webhook_id}` (push → deploy, pull_request → preview) |
 
 ## Security model
@@ -199,7 +202,7 @@ Everything under `/api/v1`, bearer-token authenticated (the GitHub webhook authe
 The full threat model lives in [docs/security/threat-model.md](docs/security/threat-model.md); it was written before the first line of agent code, and its requirements are enforced by tests. The highlights:
 
 - **No SSH, ever.** Agents dial home outbound-only over mTLS against a pinned CA. A compromised control plane yields shell access to nothing ([ADR-002](docs/adrs/ADR-002-agent-dial-home-no-ssh.md)).
-- **Join tokens are single-use and short-lived**; thereafter the agent's identity is its short-lived, revocable certificate. Deleting a server cuts its live connection and refuses reconnection.
+- **Join tokens are single-use and short-lived**; thereafter the agent's identity is its short-lived, revocable certificate — 90 days, renewed by the agent over the authenticated channel at two thirds of its life with a fresh key each time. Deleting a server cuts its live connection *and* refuses its renewals, so a revoked identity expires rather than lingering.
 - **Per-agent authorization on the bus**: each agent can publish only its own `state.*`/`logs.*` and read only its own work queue — a compromised agent's blast radius is its own server, verified by tests down to the JetStream API grants.
 - **No arbitrary-command *verb* on the wire.** Work items describe state to converge on; there is no "run this command on the host" message. A scheduled-task command is the one command-bearing field, and it is deliberately scoped: declarative workload config that the agent runs only inside the app's *own* unprivileged container — no more privilege than deploying an image already grants ([ADR-011](docs/adrs/ADR-011-in-container-scheduled-tasks.md), refining threat-model §8 req 4).
 - **Team-scoped authorization** on every project route: the request resolves to its owning team, the caller's ranked role is checked, and a non-member gets 404 (not 403) so resource existence never leaks across tenants. Grants require strictly sufficient rank — no self-service escalation.

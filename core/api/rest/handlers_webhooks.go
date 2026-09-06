@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/store"
 	"github.com/MaramHarsha/cypherpanel/core/webhooks"
@@ -138,6 +139,13 @@ func (a *API) handleCreateWebhookEndpoint(w http.ResponseWriter, r *http.Request
 		a.writeWebhookError(w, "creating webhook endpoint", err)
 		return
 	}
+	// The URL and events, never the signing secret returned beside them (§6).
+	a.audit(r, audit.Entry{
+		Action:    audit.ActionWebhookCreated,
+		Resource:  audit.Resource(audit.ResourceWebhookEndpoint, created.Endpoint.ID, created.Endpoint.URL),
+		ProjectID: created.Endpoint.ProjectID,
+		Detail:    map[string]any{"url": created.Endpoint.URL, "events": created.Endpoint.Events, "enabled": created.Endpoint.Enabled},
+	})
 	// A brand-new endpoint has no deliveries yet, so its derived fields are
 	// known without a read-back: health "unknown", no last delivery.
 	writeJSON(w, http.StatusCreated, createWebhookEndpointResponse{
@@ -219,6 +227,12 @@ func (a *API) handlePatchWebhookEndpoint(w http.ResponseWriter, r *http.Request)
 		a.writeWebhookError(w, "updating webhook endpoint", err)
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:    audit.ActionWebhookUpdated,
+		Resource:  audit.Resource(audit.ResourceWebhookEndpoint, v.Endpoint.ID, v.Endpoint.URL),
+		ProjectID: v.Endpoint.ProjectID,
+		Detail:    map[string]any{"url": v.Endpoint.URL, "events": v.Endpoint.Events, "enabled": v.Endpoint.Enabled},
+	})
 	writeJSON(w, http.StatusOK, toWebhookEndpointDTO(v))
 }
 
@@ -226,10 +240,16 @@ func (a *API) handleDeleteWebhookEndpoint(w http.ResponseWriter, r *http.Request
 	if !a.authorizeWebhookEndpoint(w, r) {
 		return
 	}
+	before, _ := a.deps.WebhookEndpoints.Get(r.Context(), r.PathValue("id"))
 	if err := a.deps.WebhookEndpoints.Delete(r.Context(), r.PathValue("id")); err != nil {
 		a.writeWebhookError(w, "deleting webhook endpoint", err)
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:    audit.ActionWebhookDeleted,
+		Resource:  audit.Resource(audit.ResourceWebhookEndpoint, r.PathValue("id"), before.URL),
+		ProjectID: before.ProjectID,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -245,6 +265,14 @@ func (a *API) handleRotateWebhookSecret(w http.ResponseWriter, r *http.Request) 
 		a.writeWebhookError(w, "rotating webhook signing secret", err)
 		return
 	}
+	// There is no overlap window, so a rotation silently breaks every receiver
+	// still verifying with the old secret: the row is how that is traced back.
+	ep, _ := a.deps.WebhookEndpoints.Get(r.Context(), r.PathValue("id"))
+	a.audit(r, audit.Entry{
+		Action:    audit.ActionWebhookSecretRotated,
+		Resource:  audit.Resource(audit.ResourceWebhookEndpoint, r.PathValue("id"), ep.URL),
+		ProjectID: ep.ProjectID,
+	})
 	writeJSON(w, http.StatusOK, webhookSecretDTO{Secret: secret})
 }
 

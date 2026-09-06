@@ -14,6 +14,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/store/db"
@@ -35,13 +36,83 @@ func (s *Store) ListInboxRecipients(ctx context.Context, projectID, kind string)
 	return out, nil
 }
 
+// ListPanelInboxRecipients returns the users a panel-level kind reaches: every
+// panel owner and every team owner who has not muted kind
+// (control-plane-hardening.md §3). Distinct — one person, one item.
+func (s *Store) ListPanelInboxRecipients(ctx context.Context, kind string) ([]string, error) {
+	out, err := s.q.ListPanelInboxRecipients(ctx, kind)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing panel inbox recipients: %w", err)
+	}
+	return out, nil
+}
+
+// ListApprovalInboxRecipients is ListInboxRecipients narrowed by RANK: the
+// members of the project's team who could actually act on a parked deploy
+// (deploy-protection.md §9). Addressing everyone would put an item in front of
+// people who cannot act on it; the "never hold an item for a team you do not
+// belong to" rule still holds, because membership is still the join.
+func (s *Store) ListApprovalInboxRecipients(ctx context.Context, projectID, kind, minRole string) ([]string, error) {
+	out, err := s.q.ListApprovalInboxRecipients(ctx, db.ListApprovalInboxRecipientsParams{
+		ProjectID: projectID,
+		Kind:      kind,
+		MinRole:   minRole,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("store: listing approval inbox recipients: %w", err)
+	}
+	return out, nil
+}
+
+// ListInboxRecipientIfMember resolves ONE named user to a recipient list of
+// zero or one — a decision on a parked deploy is news for the person who asked
+// for it and nobody else (deploy-protection.md §9). It is a query rather than a
+// bare id so a requester who has since left the team, or muted the kind, is
+// filtered by the same rule every other fan-out obeys.
+func (s *Store) ListInboxRecipientIfMember(ctx context.Context, projectID, kind, userID string) ([]string, error) {
+	out, err := s.q.ListInboxRecipientIfMember(ctx, db.ListInboxRecipientIfMemberParams{
+		ProjectID: projectID,
+		Kind:      kind,
+		UserID:    userID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("store: listing inbox recipient: %w", err)
+	}
+	return out, nil
+}
+
+// InsertPanelInboxItems writes one immediate, project-less item per recipient.
+// The (user_id, dedupe_key) conflict is dropped, which is what makes "once per
+// version" hold across restarts. ProjectID, Link and LinkLabel on f are
+// ignored: a panel-level item has none.
+func (s *Store) InsertPanelInboxItems(ctx context.Context, f InboxFanout) error {
+	if len(f.IDs) == 0 {
+		return nil
+	}
+	if err := s.q.InsertPanelInboxItems(ctx, db.InsertPanelInboxItemsParams{
+		Ids:       f.IDs,
+		UserIds:   f.UserIDs,
+		Kind:      f.Kind,
+		Severity:  f.Severity,
+		Title:     f.Title,
+		Body:      f.Body,
+		DedupeKey: f.DedupeKey,
+	}); err != nil {
+		return wrapCreate("inserting panel inbox items", err)
+	}
+	return nil
+}
+
 // InboxFanout is the shared half of one fan-out write: the columns every
 // recipient's row holds identically. IDs and UserIDs are positional pairs —
 // IDs[i] is the id minted for UserIDs[i].
 type InboxFanout struct {
-	IDs       []string
-	UserIDs   []string
+	IDs     []string
+	UserIDs []string
+	// ProjectID and TeamID are the item's scope, and exactly one of them is set
+	// (a panel-level item sets neither).
 	ProjectID string
+	TeamID    string
 	Kind      string
 	Severity  string
 	Title     string
@@ -196,12 +267,71 @@ func (s *Store) MarkAllInboxItemsRead(ctx context.Context, userID string) (int64
 	return n, nil
 }
 
-// DeleteInboxItemsForTeamMember removes every item a user holds for the
-// projects of one team — what leaving a team costs (spec §4).
+// ListTeamInboxRecipients resolves a TEAM-scoped kind to the members at or
+// above minRole who have not muted it (invitations-and-access-requests.md §6).
+// The inbox's third scope after a project's and the panel's; membership is
+// still the join, so "never hold an item for a team you do not belong to"
+// holds by construction.
+func (s *Store) ListTeamInboxRecipients(ctx context.Context, teamID, kind, minRole string) ([]string, error) {
+	out, err := s.q.ListTeamInboxRecipients(ctx, db.ListTeamInboxRecipientsParams{
+		TeamID:  teamID,
+		Kind:    kind,
+		MinRole: minRole,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("store: listing team inbox recipients: %w", err)
+	}
+	return out, nil
+}
+
+// ListTeamInboxRecipientIfMember resolves ONE named user to a recipient list of
+// zero or one — the requester of an access request, the sender of an accepted
+// invitation — filtered by the same membership and mute rules as every other
+// fan-out.
+func (s *Store) ListTeamInboxRecipientIfMember(ctx context.Context, teamID, kind, userID string) ([]string, error) {
+	out, err := s.q.ListTeamInboxRecipientIfMember(ctx, db.ListTeamInboxRecipientIfMemberParams{
+		TeamID: teamID,
+		Kind:   kind,
+		UserID: userID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("store: listing team inbox recipient: %w", err)
+	}
+	return out, nil
+}
+
+// InsertTeamInboxItems writes one immediate, team-scoped item per recipient.
+// ProjectID on f is ignored: a team-scoped item has none.
+func (s *Store) InsertTeamInboxItems(ctx context.Context, f InboxFanout) error {
+	if len(f.IDs) == 0 {
+		return nil
+	}
+	if err := s.q.InsertTeamInboxItems(ctx, db.InsertTeamInboxItemsParams{
+		Ids:       f.IDs,
+		UserIds:   f.UserIDs,
+		TeamID:    f.TeamID,
+		Kind:      f.Kind,
+		Severity:  f.Severity,
+		Title:     f.Title,
+		Body:      f.Body,
+		Link:      f.Link,
+		LinkLabel: f.LinkLabel,
+		DedupeKey: f.DedupeKey,
+	}); err != nil {
+		return wrapCreate("inserting team inbox items", err)
+	}
+	return nil
+}
+
+// DeleteInboxItemsForTeamMember removes every item a user holds for one team —
+// its projects' items AND the team-scoped ones — which is what leaving a team
+// costs (spec §4, invitations-and-access-requests.md §6).
 func (s *Store) DeleteInboxItemsForTeamMember(ctx context.Context, teamID, userID string) error {
 	if err := s.q.DeleteInboxItemsForTeamMember(ctx, db.DeleteInboxItemsForTeamMemberParams{
 		UserID: userID,
-		TeamID: teamID,
+		// pgtype.Text because it is compared against the nullable team_id
+		// column too; a team id is never empty, so it is always Valid here.
+		TeamID: pgtype.Text{String: teamID, Valid: true},
 	}); err != nil {
 		return wrapDelete("deleting inbox items for team member", err)
 	}
@@ -252,7 +382,8 @@ func inboxItemFromRow(r db.InboxItem) domain.InboxItem {
 	return domain.InboxItem{
 		ID:         r.ID,
 		UserID:     r.UserID,
-		ProjectID:  r.ProjectID,
+		ProjectID:  r.ProjectID.String, // NULL for a panel-level kind (0028)
+		TeamID:     r.TeamID.String,    // set only for the team-access kinds (0033)
 		Kind:       r.Kind,
 		Severity:   domain.NotifyLevel(r.Severity),
 		Digest:     r.Digest,

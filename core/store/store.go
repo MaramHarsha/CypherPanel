@@ -226,18 +226,32 @@ func (s *Store) MarkServerEnrolled(ctx context.Context, id, hostname, agentVersi
 	return serverFromRow(row), nil
 }
 
-func (s *Store) RecordHeartbeat(ctx context.Context, id string, status domain.ServerStatus, agentVersion, driver, role string) (domain.Server, error) {
+func (s *Store) RecordHeartbeat(ctx context.Context, id string, status domain.ServerStatus, agentVersion, driver, role string, diskTotal, diskFree uint64) (domain.Server, error) {
 	row, err := s.q.RecordHeartbeat(ctx, db.RecordHeartbeatParams{
 		ID:           id,
 		Status:       string(status),
 		AgentVersion: agentVersion,
 		Driver:       driver,
 		Role:         role,
+		//nolint:gosec // a filesystem larger than 8 EiB is not a real host
+		DiskTotalBytes: int64(diskTotal),
+		//nolint:gosec // ditto
+		DiskFreeBytes: int64(diskFree),
 	})
 	if err != nil {
 		return domain.Server{}, wrap("recording heartbeat", err)
 	}
 	return serverFromRow(row), nil
+}
+
+// SetServerDiskLow records whether a server is currently below the disk
+// threshold — a transition the plane decides, not a measurement the agent
+// reports (disk-management.md §5).
+func (s *Store) SetServerDiskLow(ctx context.Context, id string, low bool) error {
+	if err := s.q.SetServerDiskLow(ctx, db.SetServerDiskLowParams{ID: id, DiskLow: low}); err != nil {
+		return wrapUpdate("recording server disk state", err)
+	}
+	return nil
 }
 
 // MarkStaleServersUnknown flips every enrolled server not seen since cutoff to
@@ -344,6 +358,18 @@ func (s *Store) DeleteSession(ctx context.Context, tokenHash []byte) error {
 	return nil
 }
 
+// DeleteExpiredSessions removes every session whose expiry is at or before
+// the cutoff and reports how many it removed (control-plane-hardening.md §7).
+// The cutoff is the caller's clock, not now(), so the purge is deterministic
+// under test.
+func (s *Store) DeleteExpiredSessions(ctx context.Context, before time.Time) (int64, error) {
+	n, err := s.q.DeleteExpiredSessions(ctx, tsFromTime(before))
+	if err != nil {
+		return 0, fmt.Errorf("store: deleting expired sessions: %w", err)
+	}
+	return n, nil
+}
+
 // ListSessionsByUser returns a user's live sessions, newest first.
 func (s *Store) ListSessionsByUser(ctx context.Context, userID string) ([]domain.Session, error) {
 	rows, err := s.q.ListSessionsByUser(ctx, userID)
@@ -389,7 +415,11 @@ func (s *Store) DeleteOtherSessionsForUser(ctx context.Context, userID string, k
 
 // CreateAPIToken persists a personal access token (only its hash) and returns
 // the stored record.
-func (s *Store) CreateAPIToken(ctx context.Context, id, userID, name string, abilities []domain.Ability, tokenHash []byte, expiresAt *time.Time) (domain.APIToken, error) {
+func (s *Store) CreateAPIToken(ctx context.Context, id, userID, name string, abilities []domain.Ability, tokenHash []byte, expiresAt *time.Time, projectID string) (domain.APIToken, error) {
+	var scope pgtype.Text
+	if projectID != "" {
+		scope = pgtype.Text{String: projectID, Valid: true}
+	}
 	row, err := s.q.CreateAPIToken(ctx, db.CreateAPITokenParams{
 		ID:        id,
 		UserID:    userID,
@@ -397,6 +427,7 @@ func (s *Store) CreateAPIToken(ctx context.Context, id, userID, name string, abi
 		TokenHash: tokenHash,
 		ExpiresAt: tsFromPtr(expiresAt),
 		Abilities: abilityStrings(abilities),
+		ProjectID: scope,
 	})
 	if err != nil {
 		return domain.APIToken{}, wrapCreate("creating api token", err)
@@ -407,12 +438,16 @@ func (s *Store) CreateAPIToken(ctx context.Context, id, userID, name string, abi
 // APITokenByHash returns the user owning a live (unexpired) token whose secret
 // hashes to tokenHash, together with the token's id and abilities, or
 // ErrNotFound.
-func (s *Store) APITokenByHash(ctx context.Context, tokenHash []byte) (domain.User, string, []domain.Ability, error) {
+func (s *Store) APITokenByHash(ctx context.Context, tokenHash []byte) (domain.User, string, []domain.Ability, string, error) {
 	row, err := s.q.APITokenByHash(ctx, tokenHash)
 	if err != nil {
-		return domain.User{}, "", nil, wrap("getting api token", err)
+		return domain.User{}, "", nil, "", wrap("getting api token", err)
 	}
-	return userFromRow(row.User), row.TokenID, abilitiesFromStrings(row.Abilities), nil
+	var scope string
+	if row.ProjectID.Valid {
+		scope = row.ProjectID.String
+	}
+	return userFromRow(row.User), row.TokenID, abilitiesFromStrings(row.Abilities), scope, nil
 }
 
 // abilityStrings and abilitiesFromStrings convert between the domain vocabulary
@@ -457,6 +492,7 @@ func (s *Store) ListAPITokensByUser(ctx context.Context, userID string) ([]domai
 			UserID:     r.UserID,
 			Name:       r.Name,
 			Abilities:  abilitiesFromStrings(r.Abilities),
+			ProjectID:  textOrEmpty(r.ProjectID),
 			LastUsedAt: ptrTime(r.LastUsedAt),
 			ExpiresAt:  ptrTime(r.ExpiresAt),
 			CreatedAt:  r.CreatedAt.Time,
@@ -476,6 +512,7 @@ func (s *Store) GetAPIToken(ctx context.Context, id string) (domain.APIToken, er
 		UserID:     r.UserID,
 		Name:       r.Name,
 		Abilities:  abilitiesFromStrings(r.Abilities),
+		ProjectID:  textOrEmpty(r.ProjectID),
 		LastUsedAt: ptrTime(r.LastUsedAt),
 		ExpiresAt:  ptrTime(r.ExpiresAt),
 		CreatedAt:  r.CreatedAt.Time,
@@ -554,6 +591,46 @@ func (s *Store) DeletePanelMail(ctx context.Context) error {
 	return nil
 }
 
+// ─── panel TLS (the panel's ACME account) ───────────────────────────────────
+
+// GetPanelTLS returns the panel's ACME account, or ErrNotFound when TLS has
+// never been configured (which is the same thing as "no certificate resolver
+// on any node" — agent-identity-and-tls.md §4).
+func (s *Store) GetPanelTLS(ctx context.Context) (domain.PanelTLS, error) {
+	row, err := s.q.GetPanelTLS(ctx)
+	if err != nil {
+		return domain.PanelTLS{}, wrap("getting panel tls", err)
+	}
+	return domain.PanelTLS{
+		ACMEEmail:    row.AcmeEmail,
+		ACMECAServer: row.AcmeCaServer,
+		UpdatedAt:    row.UpdatedAt.Time,
+	}, nil
+}
+
+// SetPanelTLS replaces the settings wholesale. There is no partial update: the
+// email and the directory URL are one account, and half-changing them would
+// point an existing account at a different CA.
+func (s *Store) SetPanelTLS(ctx context.Context, t domain.PanelTLS) error {
+	if err := s.q.SetPanelTLS(ctx, db.SetPanelTLSParams{
+		AcmeEmail:    t.ACMEEmail,
+		AcmeCaServer: t.ACMECAServer,
+	}); err != nil {
+		return fmt.Errorf("store: setting panel tls: %w", err)
+	}
+	return nil
+}
+
+// DeletePanelTLS forgets the ACME account. Certificates already issued keep
+// working until they expire — they live on the serving nodes, not here — but no
+// new ones are obtained and new https routes fall back to plain HTTP.
+func (s *Store) DeletePanelTLS(ctx context.Context) error {
+	if err := s.q.DeletePanelTLS(ctx); err != nil {
+		return fmt.Errorf("store: deleting panel tls: %w", err)
+	}
+	return nil
+}
+
 // ─── email changes ──────────────────────────────────────────────────────────
 
 // CreateEmailChange records a pending move and the hash of the secret that will
@@ -587,6 +664,29 @@ func (s *Store) ConsumeEmailChange(ctx context.Context, id string) (domain.Email
 		return domain.EmailChange{}, wrap("consuming email change", err)
 	}
 	return emailChangeFromRow(row), nil
+}
+
+// PendingEmailChange returns the change the user can still confirm. ErrNotFound
+// means there is none, which is an answer rather than a failure: the profile
+// screen asks on every visit and usually gets exactly that.
+func (s *Store) PendingEmailChange(ctx context.Context, userID string) (domain.EmailChange, error) {
+	row, err := s.q.PendingEmailChangeForUser(ctx, userID)
+	if err != nil {
+		return domain.EmailChange{}, wrap("reading pending email change", err)
+	}
+	return emailChangeFromRow(row), nil
+}
+
+// CancelPendingEmailChanges spends every outstanding change for the user without
+// applying it, and reports how many died. Cancelling one link must kill them all:
+// otherwise "this wasn't me" leaves a second link, requested in the same breath,
+// still live.
+func (s *Store) CancelPendingEmailChanges(ctx context.Context, userID string) (int64, error) {
+	n, err := s.q.CancelPendingEmailChanges(ctx, userID)
+	if err != nil {
+		return 0, wrap("cancelling email changes", err)
+	}
+	return n, nil
 }
 
 func emailChangeFromRow(r db.EmailChange) domain.EmailChange {
@@ -777,6 +877,11 @@ func serverFromRow(r db.Server) domain.Server {
 		AgentVersion:  r.AgentVersion,
 		Hostname:      r.Hostname,
 		PublicAddress: r.PublicAddress,
+		//nolint:gosec // stored from a uint64 that no real filesystem overflows
+		DiskTotalBytes: uint64(r.DiskTotalBytes),
+		//nolint:gosec // ditto
+		DiskFreeBytes: uint64(r.DiskFreeBytes),
+		DiskLow:       r.DiskLow,
 		EnrolledAt:    ptrTime(r.EnrolledAt),
 		LastSeenAt:    ptrTime(r.LastSeenAt),
 		CreatedAt:     r.CreatedAt.Time,
@@ -804,10 +909,20 @@ func apiTokenFromRow(r db.ApiToken) domain.APIToken {
 		UserID:     r.UserID,
 		Name:       r.Name,
 		Abilities:  abilitiesFromStrings(r.Abilities),
+		ProjectID:  textOrEmpty(r.ProjectID),
 		LastUsedAt: ptrTime(r.LastUsedAt),
 		ExpiresAt:  ptrTime(r.ExpiresAt),
 		CreatedAt:  r.CreatedAt.Time,
 	}
+}
+
+// textOrEmpty renders a nullable text column as a string, with SQL NULL and the
+// empty string meaning the same thing to the caller: absent.
+func textOrEmpty(t pgtype.Text) string {
+	if t.Valid {
+		return t.String
+	}
+	return ""
 }
 
 func joinTokenFromRow(r db.JoinToken) domain.JoinToken {

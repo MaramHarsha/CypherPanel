@@ -40,10 +40,49 @@ agent observation ──▶ scheduler transition ──▶ status row          (
 The consequences are the point. The bell and the Slack message say the same
 words, because both render one `domain.NotifyEvent`. A new event key costs
 nothing here: the inbox subscribes to the taxonomy, not to individual
-transitions, so notifications.md §8's follow-ons render unchanged. Nothing new
-reaches an agent — like notifiers, this is a plane-internal reaction to state
-that already exists (ADR-005): no work item, no subject, no proto change, no
-imperative path (CLAUDE.md rule 3). And unlike channel delivery, the inbox write
+transitions, so notifications.md §8's follow-ons render unchanged.
+
+**One exception, grown three times: inbox-only kinds.** Some news has no
+`NotifyEvent` behind it, and there are now three families of it.
+
+*Panel-level kinds* are about the panel rather than about a project's resources
+— today just `panel.update_available`
+([control-plane-hardening.md](control-plane-hardening.md) §3), written by the
+update check straight to owners. Those items have no project (`project_id` is
+nullable from migration `0028`), so the team-removal sweep never touches them.
+
+*Deploy-protection kinds* are the second family: `deploy.awaiting_approval`,
+`deploy.approved` and `deploy.rejected`
+([deploy-protection.md](deploy-protection.md) §9.1). They ARE about a project's
+resources and carry a `project_id` like any other item, but they describe a
+decision waiting on a person rather than an outcome that has been observed, so
+they have no `NotifyEvent` either: a gate that nobody is told about is a
+bottleneck, and a "deploy awaiting approval" line in Slack would announce a
+governance step as an infrastructure event. Their audience is narrower than a
+project's team, too — the awaiting item is rank-narrowed to the members who
+could actually act on it, and the two decisions go to the requester alone.
+
+*Team-access kinds* are the third family: `access.requested`,
+`access.granted`, `access.denied` and `invite.accepted`
+([invitations-and-access-requests.md](invitations-and-access-requests.md) §6).
+They are about a **team** rather than a project or the panel — the inbox's third
+scope — so `inbox_items` gained a nullable `team_id` in migration `0033`, set on
+exactly these rows and NULL on every other. Recipients are still resolved from
+`team_members`, rank-narrowed for the request (only owners decide one) and
+narrowed to a single named person for each decision and for an accepted
+invitation, so §4's rule holds by construction; and
+`DeleteInboxItemsForTeamMember` now sweeps both scopes, so it keeps holding
+after someone leaves. Like the other two families they have no `NotifyEvent`:
+"who is allowed in this team" is governance news for named people, not an
+outcome to broadcast to a channel.
+
+All three families are *inbox* kinds only: `domain.InboxKinds()` is
+`EventTypes()` plus the panel kinds plus deploy protection's three plus team
+access's four, preferences validate against `ValidInboxKind`, and notifiers and
+webhook endpoints keep subscribing to `EventTypes()` alone. Nothing emits an inbox-only kind to a channel, and
+nothing new reaches an agent — like notifiers, this is a plane-internal reaction
+to state that already exists (ADR-005): no work item, no subject, no proto
+change, no imperative path (CLAUDE.md rule 3). And unlike channel delivery, the inbox write
 is **persistence, not delivery**: it happens first, and its failure is logged,
 not swallowed by a dead webhook (§4).
 
@@ -266,8 +305,9 @@ The `InboxItem` DTO carries a **composed** `title` (`"Deploy failed: web"`,
 out of the contract: a client rendering them into English would be a second home
 for copy, and a CLI would get it subtly different (CLAUDE.md rule 4).
 `available_kinds` is served rather than hardcoded, so canvas 13i's checkbox list
-shows exactly what this plane can emit and a new taxonomy entry needs no
-front-end change; `PUT` replaces the whole set and 400s on a kind outside it.
+shows exactly what this plane can emit — the event taxonomy plus the panel-level
+kinds (§1) — and a new entry needs no front-end change; `PUT` replaces the whole
+set and 400s on a kind outside it. `project_id` is `""` for a panel-level item.
 Contract lands in `openapi.yaml` first (rule 19) under a new `inbox` tag; the
 client is regenerated with `make generate-web`.
 
@@ -345,8 +385,10 @@ stream) · personal **email** digests (canvas 13i's other half — it reuses thi
 preference row when it ships) · per-team or per-project preference overrides ·
 quiet hours, snooze, and any grouping beyond the daily digest · item-level
 actions (approve, retry, redeploy — an item links, it never acts) · search and
-filters beyond `?unread` · an audit log (different artifact, different
-retention: this one caps at 200 rows and prunes) · unread counts broken out per
+filters beyond `?unread` · an audit log — a different artifact with a different
+retention (this one caps at 200 rows per user and prunes; the log keeps 90 days
+and records what a *principal did* rather than what happened to your resources
+— [audit-log.md](audit-log.md)) · unread counts broken out per
 project · a keyboard shortcut for the bell (the shortcut table in `_app.tsx` is
 a shared surface) · desktop, web-push or mobile notifications · real-time
 cross-device read sync · localised relative timestamps.

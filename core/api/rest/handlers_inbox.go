@@ -27,8 +27,12 @@ import (
 // the contract, because a client rendering them into English would be a second
 // home for copy and a CLI would get it subtly different (spec §6).
 type inboxItemDTO struct {
-	ID        string     `json:"id"`
-	ProjectID string     `json:"project_id"`
+	ID        string `json:"id"`
+	ProjectID string `json:"project_id"`
+	// TeamID is set only for the team-access kinds — an item is scoped to a
+	// project, to a team, or to the panel, never to two
+	// (invitations-and-access-requests.md §6).
+	TeamID    string     `json:"team_id"`
 	Kind      string     `json:"kind"`
 	Severity  string     `json:"severity"`
 	Digest    bool       `json:"digest"`
@@ -66,6 +70,7 @@ func toInboxItemDTO(it domain.InboxItem) inboxItemDTO {
 	return inboxItemDTO{
 		ID:        it.ID,
 		ProjectID: it.ProjectID,
+		TeamID:    it.TeamID,
 		Kind:      it.Kind,
 		Severity:  string(it.Severity),
 		Digest:    it.Digest,

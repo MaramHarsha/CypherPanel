@@ -13,3 +13,21 @@ UPDATE email_changes
 SET consumed_at = now()
 WHERE id = $1 AND consumed_at IS NULL AND expires_at > now()
 RETURNING *;
+
+-- The pending change a user can still confirm, if any. Newest wins: requesting
+-- a second change supersedes the first in the UI even though both rows live
+-- until they expire.
+-- name: PendingEmailChangeForUser :one
+SELECT * FROM email_changes
+WHERE user_id = $1 AND consumed_at IS NULL AND expires_at > now()
+ORDER BY created_at DESC
+LIMIT 1;
+
+-- Cancelling is "this wasn't me": every outstanding link for the user dies at
+-- once, so a second request made by an attacker cannot survive the cancel of
+-- the first. Marking them consumed rather than deleting keeps the record that
+-- a change was attempted.
+-- name: CancelPendingEmailChanges :execrows
+UPDATE email_changes
+SET consumed_at = now()
+WHERE user_id = $1 AND consumed_at IS NULL AND expires_at > now();

@@ -22,6 +22,8 @@ import (
 // ─── fakes ──────────────────────────────────────────────────────────────────
 
 type fakeStore struct {
+	restores       map[string]domain.DatabaseRestore
+	dbStatuses     map[string]string
 	mu             sync.Mutex
 	apps           map[string]domain.Application
 	revisions      map[string]domain.Revision
@@ -49,6 +51,23 @@ type fakeStore struct {
 	// scopeReads counts ListSharedVariablesInScope calls, so a test can prove
 	// an application with no references never touches the shared table.
 	scopeReads int
+
+	// Compose Stacks (compose-stacks.md §4).
+	composeStacks    map[string]domain.ComposeStack
+	composeRevisions map[string]domain.ComposeRevision
+	composeEnv       map[string][]domain.ComposeEnvVar
+
+	// panelTLS is the panel's ACME account (agent-identity-and-tls.md §4);
+	// nil models a panel that has never configured TLS.
+	panelTLS *domain.PanelTLS
+	// panelTLSErr models a store that cannot answer the TLS question at all.
+	panelTLSErr error
+
+	// revisionErr / dbRevisionErr model an infrastructure failure — a
+	// connection that dropped mid-read, not a missing row. Desired state must
+	// never read one as "this application is gone" (see DesiredStateFor).
+	revisionErr   error
+	dbRevisionErr error
 }
 
 // latestDeployment returns the most recently created deployment for an app —
@@ -71,22 +90,132 @@ func (f *fakeStore) latestDeployment(appID string) (domain.Deployment, bool) {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		apps:           map[string]domain.Application{},
-		revisions:      map[string]domain.Revision{},
-		deployments:    map[string]domain.Deployment{},
-		envVars:        map[string][]domain.EnvVar{},
-		deployKeys:     map[string]domain.DeployKey{},
-		dbs:            map[string]domain.Database{},
-		dbRevs:         map[string]domain.DatabaseRevision{},
-		targets:        map[string]domain.BackupTarget{},
-		schedules:      map[string]domain.DatabaseBackup{},
-		records:        map[string]domain.BackupRecord{},
-		scheduledTasks: map[string]domain.ScheduledTask{},
-		environments:   map[string]domain.Environment{"env_1": {ID: "env_1", ProjectID: "prj_1", Name: "production"}},
-		sharedVars:     map[string][]domain.SharedVariable{},
-		envResolved:    map[string]time.Time{},
-		envApplied:     map[string]time.Time{},
+		apps:             map[string]domain.Application{},
+		revisions:        map[string]domain.Revision{},
+		deployments:      map[string]domain.Deployment{},
+		envVars:          map[string][]domain.EnvVar{},
+		deployKeys:       map[string]domain.DeployKey{},
+		dbs:              map[string]domain.Database{},
+		dbRevs:           map[string]domain.DatabaseRevision{},
+		targets:          map[string]domain.BackupTarget{},
+		schedules:        map[string]domain.DatabaseBackup{},
+		records:          map[string]domain.BackupRecord{},
+		scheduledTasks:   map[string]domain.ScheduledTask{},
+		environments:     map[string]domain.Environment{"env_1": {ID: "env_1", ProjectID: "prj_1", Name: "production"}},
+		composeStacks:    map[string]domain.ComposeStack{},
+		composeRevisions: map[string]domain.ComposeRevision{},
+		composeEnv:       map[string][]domain.ComposeEnvVar{},
+		sharedVars:       map[string][]domain.SharedVariable{},
+		envResolved:      map[string]time.Time{},
+		envApplied:       map[string]time.Time{},
 	}
+}
+
+// ListRevisionsByApplication backs the garbage-collection retain set, newest
+// first (disk-management.md §2).
+func (f *fakeStore) ListRevisionsByApplication(_ context.Context, appID string) ([]domain.Revision, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []domain.Revision
+	for _, r := range f.revisions {
+		if r.ApplicationID == appID {
+			out = append(out, r)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out, nil
+}
+
+// ─── Compose Stacks (compose-stacks.md §4) ──────────────────────────────────
+
+func (f *fakeStore) GetComposeStack(_ context.Context, id string) (domain.ComposeStack, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	st, ok := f.composeStacks[id]
+	if !ok {
+		return domain.ComposeStack{}, store.ErrNotFound
+	}
+	return st, nil
+}
+
+func (f *fakeStore) ListComposeStacksByServer(_ context.Context, serverID string) ([]domain.ComposeStack, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []domain.ComposeStack
+	for _, st := range f.composeStacks {
+		if st.ServerID == serverID {
+			out = append(out, st)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) GetComposeRevision(_ context.Context, id string) (domain.ComposeRevision, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rev, ok := f.composeRevisions[id]
+	if !ok {
+		return domain.ComposeRevision{}, store.ErrNotFound
+	}
+	return rev, nil
+}
+
+func (f *fakeStore) ListComposeEnvVars(_ context.Context, stackID string) ([]domain.ComposeEnvVar, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.composeEnv[stackID], nil
+}
+
+func (f *fakeStore) SetComposeStackStatus(_ context.Context, id, status, detail string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	st, ok := f.composeStacks[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	st.Status, st.StatusDetail = status, detail
+	f.composeStacks[id] = st
+	return nil
+}
+
+func (f *fakeStore) SetComposeStackObservedStatus(_ context.Context, id, status, detail, revisionID string, at time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	st, ok := f.composeStacks[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	st.Status, st.StatusDetail = status, detail
+	st.ObservedRevisionID, st.StatusObservedAt = revisionID, &at
+	f.composeStacks[id] = st
+	return nil
+}
+
+// addComposeStack seeds a stack with one revision already deployed — the state
+// a converge or an observation acts on.
+func (f *fakeStore) addComposeStack(id, serverID, file string) domain.ComposeStack {
+	revID := "csr_" + id
+	f.composeRevisions[revID] = domain.ComposeRevision{ID: revID, StackID: id, ComposeYAML: file}
+	st := domain.ComposeStack{
+		ID: id, EnvironmentID: "env_1", Name: id, ServerID: serverID,
+		DesiredRevisionID: &revID, Status: domain.AppStopped,
+	}
+	f.composeStacks[id] = st
+	return st
+}
+
+// BumpApplicationRestartToken records a restart as desired state
+// (deployment-control.md §3).
+func (f *fakeStore) BumpApplicationRestartToken(_ context.Context, appID, token string) (domain.Application, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	app, ok := f.apps[appID]
+	if !ok {
+		return domain.Application{}, store.ErrNotFound
+	}
+	app.RestartToken = token
+	f.apps[appID] = app
+	return app, nil
 }
 
 func (f *fakeStore) addApp(id, serverID string) domain.Application {
@@ -230,6 +359,9 @@ func (f *fakeStore) CreateRevision(_ context.Context, id, appID, sourceCommit st
 func (f *fakeStore) GetRevision(_ context.Context, id string) (domain.Revision, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.revisionErr != nil {
+		return domain.Revision{}, f.revisionErr
+	}
 	r, ok := f.revisions[id]
 	if !ok {
 		return domain.Revision{}, store.ErrNotFound
@@ -312,10 +444,15 @@ func (f *fakeStore) UpdateDeploymentStatus(_ context.Context, id string, status 
 	return d, nil
 }
 
+// activeFor mirrors the two queue queries in
+// core/store/queries/deployments.sql, which exclude the terminal states AND
+// awaiting_approval: a parked deploy holds no pipeline slot, so it can neither
+// block a later deploy nor be resumed by Recover (deploy-protection.md §3). A
+// fake that used Terminal() alone would hide exactly that.
 func (f *fakeStore) activeFor(appID string) []domain.Deployment {
 	var out []domain.Deployment
 	for _, d := range f.deployments {
-		if (appID == "" || d.ApplicationID == appID) && !d.Status.Terminal() {
+		if (appID == "" || d.ApplicationID == appID) && !d.Status.Terminal() && !d.Status.Parked() {
 			out = append(out, d)
 		}
 	}
@@ -339,6 +476,18 @@ func (f *fakeStore) ListServers(context.Context) ([]domain.Server, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.servers, nil
+}
+
+func (f *fakeStore) GetPanelTLS(context.Context) (domain.PanelTLS, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.panelTLSErr != nil {
+		return domain.PanelTLS{}, f.panelTLSErr
+	}
+	if f.panelTLS == nil {
+		return domain.PanelTLS{}, store.ErrNotFound
+	}
+	return *f.panelTLS, nil
 }
 
 func (f *fakeStore) GetDeployKey(_ context.Context, id string) (domain.DeployKey, error) {
@@ -376,6 +525,9 @@ func (f *fakeStore) ListDatabasesByServer(_ context.Context, serverID string) ([
 func (f *fakeStore) GetDatabaseRevision(_ context.Context, id string) (domain.DatabaseRevision, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.dbRevisionErr != nil {
+		return domain.DatabaseRevision{}, f.dbRevisionErr
+	}
 	r, ok := f.dbRevs[id]
 	if !ok {
 		return domain.DatabaseRevision{}, store.ErrNotFound
@@ -452,6 +604,68 @@ func (f *fakeStore) CreateBackupRecord(_ context.Context, r domain.BackupRecord)
 	defer f.mu.Unlock()
 	f.records[r.ID] = r
 	return r, nil
+}
+
+// Restore records, modelling the store's one rule: only a running restore
+// moves, so a redelivered event is a no-op rather than a second finish.
+func (f *fakeStore) CreateDatabaseRestore(_ context.Context, id, databaseID, backupRecordID, step string) (domain.DatabaseRestore, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.restores == nil {
+		f.restores = map[string]domain.DatabaseRestore{}
+	}
+	rec := domain.DatabaseRestore{
+		ID: id, DatabaseID: databaseID, BackupRecordID: backupRecordID,
+		Status: domain.RestoreRunning, Step: step, StartedAt: time.Now(),
+	}
+	f.restores[id] = rec
+	return rec, nil
+}
+
+func (f *fakeStore) GetDatabaseRestore(_ context.Context, id string) (domain.DatabaseRestore, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rec, ok := f.restores[id]
+	if !ok {
+		return domain.DatabaseRestore{}, store.ErrNotFound
+	}
+	return rec, nil
+}
+
+func (f *fakeStore) AdvanceDatabaseRestore(_ context.Context, id, step string, done, total int64) (domain.DatabaseRestore, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rec, ok := f.restores[id]
+	if !ok || rec.Status != domain.RestoreRunning {
+		return domain.DatabaseRestore{}, store.ErrNotFound
+	}
+	rec.Step, rec.BytesDone, rec.BytesTotal = step, done, total
+	f.restores[id] = rec
+	return rec, nil
+}
+
+func (f *fakeStore) FinishDatabaseRestore(_ context.Context, id, status, detail string) (domain.DatabaseRestore, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rec, ok := f.restores[id]
+	if !ok || rec.Status != domain.RestoreRunning {
+		return domain.DatabaseRestore{}, store.ErrNotFound
+	}
+	now := time.Now()
+	rec.Status, rec.Detail, rec.Step, rec.FinishedAt = status, detail, "", &now
+	f.restores[id] = rec
+	return rec, nil
+}
+
+func (f *fakeStore) SetDatabaseStatus(_ context.Context, id, status, detail string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.dbStatuses == nil {
+		f.dbStatuses = map[string]string{}
+	}
+	f.dbStatuses[id] = status
+	_ = detail
+	return nil
 }
 
 func (f *fakeStore) GetBackupRecord(_ context.Context, id string) (domain.BackupRecord, error) {
@@ -839,12 +1053,18 @@ func TestObservedRunningCompletesDeployment(t *testing.T) {
 // recordingNotifier captures the terminal-outcome calls the scheduler makes.
 type recordingNotifier struct {
 	deploys []domain.Deployment
+	// health records app.crashed / app.recovered as "<event>/<detail>"
+	// (deployment-control.md §5).
+	health []string
 }
 
 func (r *recordingNotifier) NotifyDeploy(_ context.Context, _ domain.Application, dep domain.Deployment) {
 	r.deploys = append(r.deploys, dep)
 }
 func (r *recordingNotifier) NotifyBackup(_ context.Context, _ domain.Database, _ domain.BackupRecord) {
+}
+func (r *recordingNotifier) NotifyAppHealth(_ context.Context, _ domain.Application, eventType, detail string) {
+	r.health = append(r.health, eventType+"/"+detail)
 }
 
 // The notifier fires once, with the succeeded deployment, at the observed-

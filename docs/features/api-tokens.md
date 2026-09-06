@@ -24,7 +24,8 @@ APIToken:
   id            tok_… (public identifier; safe to display and to name in URLs)
   user_id       → the owning user (ON DELETE CASCADE — deleting the user revokes)
   name          human label ("ci-deploy", "laptop"), 1–100 chars
-  abilities     TEXT[] ⊆ {read, write, deploy}, non-empty
+  abilities     TEXT[] ⊆ {read, write, deploy, env, servers, admin}, non-empty
+  project_id    → a project (ON DELETE CASCADE), NULL = unscoped
   token_hash    sha256(raw)   — only the hash is stored, never the raw token
   last_used_at  set on each successful authentication (best-effort)
   expires_at    NULL = never expires
@@ -36,11 +37,28 @@ APIToken:
 | Ability | Permits |
 |---|---|
 | `read` | Safe methods: `GET`, `HEAD`, `OPTIONS` |
-| `write` | Creating, changing, and deleting resources |
+| `write` | Every mutation, including the three below |
 | `deploy` | Triggering deploys and rollbacks (`POST …/deploy`, `POST …/rollback`) |
+| `env` | Setting and removing an application's environment variables |
+| `servers` | Enrolling and removing servers, and reading join instructions |
+| `admin` | Teams, members, invitations, access requests, users, panel settings |
 
 Deploy is separated from write so a CI credential can ship code without also
-being able to delete the application it deploys. The required ability is derived
+being able to delete the application it deploys.
+
+`env`, `servers` and `admin` carve narrower grants out of what `write` covers,
+so a credential can be minted for one job instead of for every mutation the API
+has. **`write` still satisfies all three** (`domain.Ability.Implies`), and that
+is deliberate: making `write` mean "mutations that are not env, servers or
+admin" would silently strip capability from credentials already sitting in
+someone's CI configuration, which ENGINEERING rule 17 forbids. The narrow
+abilities are for narrowing a *new* token, never for re-cutting an old one.
+
+Reads stay on `read`, including reads of env keys and of servers. Requiring the
+narrow ability for a listing would take listings away from every read-only token
+already issued, for no gain: env *values* are write-only by construction, so
+there is nothing sensitive behind the key list that `read` did not already
+reach. The required ability is derived
 from the request in one place (`requiredAbility` in `core/api/rest/rest.go`),
 and the deploy-triggering paths are an explicit table rather than a pattern —
 a new deploy-shaped route must be added deliberately, never inherit `write` by
@@ -51,6 +69,36 @@ this existed keep working; an explicitly empty list is **rejected** rather than
 silently widened — a credential's authority is always a deliberate choice.
 Existing tokens were migrated with the full set (migration `0018`), so no live
 credential changed authority.
+
+### Narrowing a token to one project
+
+Abilities say what a credential may do. They say nothing about *where*, so a
+deploy token minted for one project can deploy every project its owner can
+reach. A CI pipeline needs exactly one project, and handing it the whole account
+is the gap between what the credential is for and what it can do.
+
+`project_id` on create closes that gap. A scoped token:
+
+- answers **404** for any other project — the same answer a non-member gets, so
+  one token cannot be used to enumerate which projects its owner can see;
+- answers **403** for panel- and team-level routes (`/teams`, `/users`,
+  `/panel/*`, `/servers`, `/audit`, `/deploy-keys`, `/backup-targets`,
+  `/registries`, `/invites`, `/access-requests`), which belong to no project, so
+  "which project?" has no answer for them;
+- may only be minted for a project its owner is a member of, from an
+  interactive session like every other credential change.
+
+The check lives at one seam. Every project-scoped authorization already funnels
+through `requireProjectRole`, whether the route names a project directly or
+resolves one from an application, database, deployment or notifier, so the scope
+is compared there and nowhere else. Panel-level routes are refused earlier, in
+the same middleware that checks abilities, because there is no project to
+resolve.
+
+Nullable, and unscoped is the existing behaviour: every token issued before this
+existed keeps it. `ON DELETE CASCADE` on the project — a token scoped to a
+deleted project would otherwise be confined to nothing and reach nothing, which
+is a confusing way to say "revoked".
 
 ### Credential management is session-only
 
@@ -119,10 +167,12 @@ resource is gated. Cross-user administration of tokens is not a v1 need.
 
 - Token rotation endpoints (revoke + create covers it), org/service accounts
   decoupled from a human user, and last-used IP/user-agent metadata.
-- Per-resource token scoping ("this token may deploy *only* app X"). The
-  ability model narrows *what kind* of action, not *which* resource; resource
-  scoping is a follow-on that slots in at the same handler seam as object-level
-  authz.
+- Per-*resource* token scoping ("this token may deploy *only* app X"). Project
+  scoping (§1) narrows to a project; narrowing to one application inside it is a
+  follow-on at the same handler seam.
+- Scoping a token to more than one project, or changing a token's scope after
+  it is minted. Both are revoke-and-recreate today, which is one action and
+  leaves an audit row saying so.
 
 *(Per-token abilities were listed here as out of scope when this spec was
 written on 2026-07-21; they landed on 2026-08-02 and are specified in §1.)*

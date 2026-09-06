@@ -220,6 +220,147 @@ func (x *EnrollResponse) GetNatsUrl() string {
 	return ""
 }
 
+// RenewRequest asks the plane to re-sign this agent's identity.
+type RenewRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The server id the caller believes it is. It is NOT what authorizes the
+	// call — the verified client certificate's CommonName is — but the plane
+	// refuses a request whose claim disagrees with the peer identity, so an
+	// agent can never renew (or accidentally overwrite) another server's
+	// certificate, and a mismatch is a loud failure instead of a silent
+	// re-issue under the wrong name.
+	ServerId string `protobuf:"bytes,1,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
+	// PEM-encoded PKCS#10 certificate signing request for the agent's new key
+	// pair. As with Enroll, the plane signs the key and dictates the subject.
+	CsrPem []byte `protobuf:"bytes,2,opt,name=csr_pem,json=csrPem,proto3" json:"csr_pem,omitempty"`
+	// Agent build version, recorded the same way Enroll records it so fleet
+	// version visibility survives re-enrollment-free lifetimes (ADR-010).
+	AgentVersion  string `protobuf:"bytes,3,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RenewRequest) Reset() {
+	*x = RenewRequest{}
+	mi := &file_cypherpanel_agent_v1_agent_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RenewRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RenewRequest) ProtoMessage() {}
+
+func (x *RenewRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cypherpanel_agent_v1_agent_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RenewRequest.ProtoReflect.Descriptor instead.
+func (*RenewRequest) Descriptor() ([]byte, []int) {
+	return file_cypherpanel_agent_v1_agent_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *RenewRequest) GetServerId() string {
+	if x != nil {
+		return x.ServerId
+	}
+	return ""
+}
+
+func (x *RenewRequest) GetCsrPem() []byte {
+	if x != nil {
+		return x.CsrPem
+	}
+	return nil
+}
+
+func (x *RenewRequest) GetAgentVersion() string {
+	if x != nil {
+		return x.AgentVersion
+	}
+	return ""
+}
+
+// RenewResponse carries the re-signed identity. The server id, the NATS URL
+// and the CA are unchanged by a renewal — only the certificate is new — so the
+// agent rewrites its certificate and nothing else.
+type RenewResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// PEM-encoded client certificate signed by the control-plane CA, with the
+	// same CommonName the caller already had.
+	CertificatePem []byte `protobuf:"bytes,1,opt,name=certificate_pem,json=certificatePem,proto3" json:"certificate_pem,omitempty"`
+	// PEM-encoded CA certificate, echoed so an agent that renews across a CA
+	// rotation is not left pinning material the plane no longer uses.
+	CaPem []byte `protobuf:"bytes,2,opt,name=ca_pem,json=caPem,proto3" json:"ca_pem,omitempty"`
+	// Expiry of the new certificate. The agent derives its next renewal from the
+	// certificate itself; this field is for logging and for an agent that wants
+	// to check the plane agreed with its own parse.
+	NotAfter      *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=not_after,json=notAfter,proto3" json:"not_after,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RenewResponse) Reset() {
+	*x = RenewResponse{}
+	mi := &file_cypherpanel_agent_v1_agent_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RenewResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RenewResponse) ProtoMessage() {}
+
+func (x *RenewResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cypherpanel_agent_v1_agent_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RenewResponse.ProtoReflect.Descriptor instead.
+func (*RenewResponse) Descriptor() ([]byte, []int) {
+	return file_cypherpanel_agent_v1_agent_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *RenewResponse) GetCertificatePem() []byte {
+	if x != nil {
+		return x.CertificatePem
+	}
+	return nil
+}
+
+func (x *RenewResponse) GetCaPem() []byte {
+	if x != nil {
+		return x.CaPem
+	}
+	return nil
+}
+
+func (x *RenewResponse) GetNotAfter() *timestamppb.Timestamp {
+	if x != nil {
+		return x.NotAfter
+	}
+	return nil
+}
+
 // Heartbeat is published by the agent to the NATS subject
 // `state.heartbeat.<server_id>` (ADR-003, subject family state.*).
 //
@@ -239,14 +380,21 @@ type Heartbeat struct {
 	// Role the agent runs with: "all" (default), "builder", or "worker"
 	// (builder-role-and-relay.md §1). Routing input only — relay operations are
 	// authorized per-deployment, never from this claim.
-	Role          string `protobuf:"bytes,6,opt,name=role,proto3" json:"role,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Role string `protobuf:"bytes,6,opt,name=role,proto3" json:"role,omitempty"`
+	// V1: the Docker data root's filesystem (disk-management.md §4). Read from
+	// the daemon's own /info (DockerRootDir) rather than assumed, because an
+	// operator who moved it is exactly the one who will not have moved an alert
+	// with it. Zero means "could not read", which the plane treats as unknown
+	// and never as full.
+	DiskTotalBytes uint64 `protobuf:"varint,7,opt,name=disk_total_bytes,json=diskTotalBytes,proto3" json:"disk_total_bytes,omitempty"`
+	DiskFreeBytes  uint64 `protobuf:"varint,8,opt,name=disk_free_bytes,json=diskFreeBytes,proto3" json:"disk_free_bytes,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Heartbeat) Reset() {
 	*x = Heartbeat{}
-	mi := &file_cypherpanel_agent_v1_agent_proto_msgTypes[2]
+	mi := &file_cypherpanel_agent_v1_agent_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -258,7 +406,7 @@ func (x *Heartbeat) String() string {
 func (*Heartbeat) ProtoMessage() {}
 
 func (x *Heartbeat) ProtoReflect() protoreflect.Message {
-	mi := &file_cypherpanel_agent_v1_agent_proto_msgTypes[2]
+	mi := &file_cypherpanel_agent_v1_agent_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -271,7 +419,7 @@ func (x *Heartbeat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Heartbeat.ProtoReflect.Descriptor instead.
 func (*Heartbeat) Descriptor() ([]byte, []int) {
-	return file_cypherpanel_agent_v1_agent_proto_rawDescGZIP(), []int{2}
+	return file_cypherpanel_agent_v1_agent_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *Heartbeat) GetServerId() string {
@@ -316,6 +464,20 @@ func (x *Heartbeat) GetRole() string {
 	return ""
 }
 
+func (x *Heartbeat) GetDiskTotalBytes() uint64 {
+	if x != nil {
+		return x.DiskTotalBytes
+	}
+	return 0
+}
+
+func (x *Heartbeat) GetDiskFreeBytes() uint64 {
+	if x != nil {
+		return x.DiskFreeBytes
+	}
+	return 0
+}
+
 var File_cypherpanel_agent_v1_agent_proto protoreflect.FileDescriptor
 
 const file_cypherpanel_agent_v1_agent_proto_rawDesc = "" +
@@ -331,7 +493,15 @@ const file_cypherpanel_agent_v1_agent_proto_rawDesc = "" +
 	"\tserver_id\x18\x01 \x01(\tR\bserverId\x12'\n" +
 	"\x0fcertificate_pem\x18\x02 \x01(\fR\x0ecertificatePem\x12\x15\n" +
 	"\x06ca_pem\x18\x03 \x01(\fR\x05caPem\x12\x19\n" +
-	"\bnats_url\x18\x04 \x01(\tR\anatsUrl\"\xef\x01\n" +
+	"\bnats_url\x18\x04 \x01(\tR\anatsUrl\"i\n" +
+	"\fRenewRequest\x12\x1b\n" +
+	"\tserver_id\x18\x01 \x01(\tR\bserverId\x12\x17\n" +
+	"\acsr_pem\x18\x02 \x01(\fR\x06csrPem\x12#\n" +
+	"\ragent_version\x18\x03 \x01(\tR\fagentVersion\"\x88\x01\n" +
+	"\rRenewResponse\x12'\n" +
+	"\x0fcertificate_pem\x18\x01 \x01(\fR\x0ecertificatePem\x12\x15\n" +
+	"\x06ca_pem\x18\x02 \x01(\fR\x05caPem\x127\n" +
+	"\tnot_after\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\bnotAfter\"\xc1\x02\n" +
 	"\tHeartbeat\x12\x1b\n" +
 	"\tserver_id\x18\x01 \x01(\tR\bserverId\x129\n" +
 	"\n" +
@@ -339,13 +509,16 @@ const file_cypherpanel_agent_v1_agent_proto_rawDesc = "" +
 	"\ragent_version\x18\x03 \x01(\tR\fagentVersion\x12\x16\n" +
 	"\x06driver\x18\x04 \x01(\tR\x06driver\x129\n" +
 	"\x06status\x18\x05 \x01(\x0e2!.cypherpanel.agent.v1.AgentStatusR\x06status\x12\x12\n" +
-	"\x04role\x18\x06 \x01(\tR\x04role*^\n" +
+	"\x04role\x18\x06 \x01(\tR\x04role\x12(\n" +
+	"\x10disk_total_bytes\x18\a \x01(\x04R\x0ediskTotalBytes\x12&\n" +
+	"\x0fdisk_free_bytes\x18\b \x01(\x04R\rdiskFreeBytes*^\n" +
 	"\vAgentStatus\x12\x1c\n" +
 	"\x18AGENT_STATUS_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12AGENT_STATUS_READY\x10\x01\x12\x19\n" +
-	"\x15AGENT_STATUS_DEGRADED\x10\x022h\n" +
+	"\x15AGENT_STATUS_DEGRADED\x10\x022\xba\x01\n" +
 	"\x11EnrollmentService\x12S\n" +
-	"\x06Enroll\x12#.cypherpanel.agent.v1.EnrollRequest\x1a$.cypherpanel.agent.v1.EnrollResponseBKZIgithub.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1;agentv1b\x06proto3"
+	"\x06Enroll\x12#.cypherpanel.agent.v1.EnrollRequest\x1a$.cypherpanel.agent.v1.EnrollResponse\x12P\n" +
+	"\x05Renew\x12\".cypherpanel.agent.v1.RenewRequest\x1a#.cypherpanel.agent.v1.RenewResponseBKZIgithub.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1;agentv1b\x06proto3"
 
 var (
 	file_cypherpanel_agent_v1_agent_proto_rawDescOnce sync.Once
@@ -360,24 +533,29 @@ func file_cypherpanel_agent_v1_agent_proto_rawDescGZIP() []byte {
 }
 
 var file_cypherpanel_agent_v1_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_cypherpanel_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_cypherpanel_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_cypherpanel_agent_v1_agent_proto_goTypes = []any{
 	(AgentStatus)(0),              // 0: cypherpanel.agent.v1.AgentStatus
 	(*EnrollRequest)(nil),         // 1: cypherpanel.agent.v1.EnrollRequest
 	(*EnrollResponse)(nil),        // 2: cypherpanel.agent.v1.EnrollResponse
-	(*Heartbeat)(nil),             // 3: cypherpanel.agent.v1.Heartbeat
-	(*timestamppb.Timestamp)(nil), // 4: google.protobuf.Timestamp
+	(*RenewRequest)(nil),          // 3: cypherpanel.agent.v1.RenewRequest
+	(*RenewResponse)(nil),         // 4: cypherpanel.agent.v1.RenewResponse
+	(*Heartbeat)(nil),             // 5: cypherpanel.agent.v1.Heartbeat
+	(*timestamppb.Timestamp)(nil), // 6: google.protobuf.Timestamp
 }
 var file_cypherpanel_agent_v1_agent_proto_depIdxs = []int32{
-	4, // 0: cypherpanel.agent.v1.Heartbeat.emitted_at:type_name -> google.protobuf.Timestamp
-	0, // 1: cypherpanel.agent.v1.Heartbeat.status:type_name -> cypherpanel.agent.v1.AgentStatus
-	1, // 2: cypherpanel.agent.v1.EnrollmentService.Enroll:input_type -> cypherpanel.agent.v1.EnrollRequest
-	2, // 3: cypherpanel.agent.v1.EnrollmentService.Enroll:output_type -> cypherpanel.agent.v1.EnrollResponse
-	3, // [3:4] is the sub-list for method output_type
-	2, // [2:3] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	6, // 0: cypherpanel.agent.v1.RenewResponse.not_after:type_name -> google.protobuf.Timestamp
+	6, // 1: cypherpanel.agent.v1.Heartbeat.emitted_at:type_name -> google.protobuf.Timestamp
+	0, // 2: cypherpanel.agent.v1.Heartbeat.status:type_name -> cypherpanel.agent.v1.AgentStatus
+	1, // 3: cypherpanel.agent.v1.EnrollmentService.Enroll:input_type -> cypherpanel.agent.v1.EnrollRequest
+	3, // 4: cypherpanel.agent.v1.EnrollmentService.Renew:input_type -> cypherpanel.agent.v1.RenewRequest
+	2, // 5: cypherpanel.agent.v1.EnrollmentService.Enroll:output_type -> cypherpanel.agent.v1.EnrollResponse
+	4, // 6: cypherpanel.agent.v1.EnrollmentService.Renew:output_type -> cypherpanel.agent.v1.RenewResponse
+	5, // [5:7] is the sub-list for method output_type
+	3, // [3:5] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_cypherpanel_agent_v1_agent_proto_init() }
@@ -391,7 +569,7 @@ func file_cypherpanel_agent_v1_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cypherpanel_agent_v1_agent_proto_rawDesc), len(file_cypherpanel_agent_v1_agent_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   3,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

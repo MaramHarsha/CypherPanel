@@ -109,9 +109,10 @@ Alternatives rejected:
 The agent renders Traefik's static config (`traefik.yml`, mounted read-only)
 and owns it:
 
-- **Entrypoints:** `web` on `:80`, `websecure` on `:443`. `web` both serves
-  the ACME HTTP-01 challenge and issues a permanent redirect to `websecure`
-  for everything else. These are **public ingress ports** — orthogonal to
+- **Entrypoints:** `web` on `:80`, `websecure` on `:443`. `web` serves the ACME
+  HTTP-01 challenge, and — per Application, not globally (§6) — a permanent
+  redirect to `websecure` for routes that actually get a certificate. These are
+  **public ingress ports** — orthogonal to
   [ADR-002](../adrs/ADR-002-agent-dial-home-no-ssh.md), which forbids inbound
   *control* ports on the agent; user traffic to Applications is a different
   boundary (threat-model TB below §9) and must be served somewhere.
@@ -120,8 +121,12 @@ and owns it:
   no dashboard — nothing that reads intent from anywhere but the agent's
   fragments (ADR-004).
 - **Certificate resolver `le`:** ACME with the HTTP-01 challenge on the `web`
-  entrypoint, storage at `/etc/cypherpanel/traefik/acme.json`. The fragments
-  already reference `certResolver: le`; this is where it is defined.
+  entrypoint, storage at `/etc/cypherpanel/traefik/acme.json`. It is configured
+  **only when the node has an ACME account** — carried in desired state from the
+  panel's TLS settings, or overridden per host with `CYPHER_ACME_EMAIL`
+  ([agent-identity-and-tls.md §4](agent-identity-and-tls.md)). With no account
+  there is no resolver, and the fragment writer agrees with the static config
+  rather than naming one that does not exist (§7).
 - The static config and the `apps/` fragment directory and `acme.json` live on
   a host path bind-mounted into `cypher-proxy`, so certificates and routes
   survive a Proxy container recreation.
@@ -137,7 +142,13 @@ each routed Application the agent writes `apps/<app_id>.yml`:
 
 - a **router** keyed by `app_id`: rule `Host(\`<domain>\`)`
   (`&& PathPrefix(\`<prefix>\`)` when set), service `<app_id>`, and
-  `tls.certResolver: le` when the route is HTTPS;
+  `tls.certResolver: le` when the route is HTTPS **and this node has a resolver**
+  (§7). Its `entryPoints` are always written explicitly — `websecure` for a TLS
+  router, `web` for every router without a `certResolver` — never left to
+  Traefik's "attach to every entrypoint" default, which would answer `https://`
+  for a plain-HTTP route with the self-signed default certificate;
+- for an HTTPS route with a resolver, a sibling router `<app_id>-http` on `web`
+  that permanently redirects to HTTPS;
 - a **service** `<app_id>` whose single load-balancer server is the current
   revision's upstream (`http://<container-ip>:<port>` on `cypher-<env>`).
 
@@ -156,15 +167,31 @@ GC, like managed containers/images).
   `0600`). The control plane holds only route metadata, never certificate
   private keys (ADR-004). Renewal is Traefik's own responsibility once the
   resolver is configured; the agent does not proxy ACME.
-- **ACME endpoint** is configurable (staging vs production) via agent
-  config, defaulting to production; the integration test uses a local ACME
-  stub or asserts routing over plain HTTP to stay hermetic and off Let's
-  Encrypt's rate limits (§9).
+- **The ACME account is the panel's, not the host's.** The account email (and an
+  optional directory URL — Let's Encrypt staging vs production) is one panel-wide
+  setting under `PUT /api/v1/panel/tls`, carried to every node in `DesiredState`
+  ([agent-identity-and-tls.md §4](agent-identity-and-tls.md)). Nothing has to be
+  set per host; `CYPHER_ACME_EMAIL` / `CYPHER_ACME_CASERVER` remain per-host
+  overrides, which is also what keeps the integration test hermetic and off
+  Let's Encrypt's rate limits (§9).
+- **No account ⇒ no resolver ⇒ no HTTPS promise.** With no ACME account the node
+  configures no resolver, and an `https` route is written as a plain HTTP router
+  on `web` **only**: no `certResolver`, **no HTTP→HTTPS redirect**, and no
+  binding to `websecure`. Emitting the redirect anyway sent every visitor to
+  `:443` to be answered by Traefik's self-signed default certificate — a browser
+  warning instead of the app, which is worse than plain HTTP; leaving the router
+  bound to every entrypoint reached the same warning without the redirect, for
+  anyone who typed `https://`. `:443` answers such a host with a 404 instead.
+  The same pinning applies to a route the operator declared HTTP-only. The plane
+  reports this as
+  `Application.tls_state: http_only_no_resolver`, so the UI says "serving over
+  HTTP meanwhile" rather than claiming a certificate.
 - A domain that fails issuance (DNS not pointed, rate-limited) does not break
   the rollout: the Application still serves over `web`/HTTP and its status
   reflects the running revision; the missing cert is a route-level condition,
-  surfaced separately, not a deploy failure. (Reporting cert state to the
-  plane is a later refinement; §10.)
+  surfaced separately, not a deploy failure. (Reporting *issuance* state — as
+  opposed to whether a resolver is configured at all — from the node to the
+  plane is still a later refinement; §10.)
 
 ## 8. The `proxy.Driver` interface & reconciliation
 
@@ -217,8 +244,11 @@ DNS-01 / wildcard certificates · user-supplied (BYO) certificates · custom
 redirects, middlewares, rate-limiting, auth middleware · Caddy as a second
 proxy driver (bounded follow-on: implement `proxy.Driver`) · TCP/UDP routers ·
 multiple Proxy replicas / external load balancers (the scale-out story,
-[roadmap](../roadmap.md) Later) · reporting per-domain certificate status to the
-plane UI · sticky sessions.
+[roadmap](../roadmap.md) Later) · reporting per-domain certificate **issuance**
+status (reading `acme.json` on the node) to the plane UI — whether a *resolver
+exists* is now reported, via `Application.tls_state`
+([agent-identity-and-tls.md §5](agent-identity-and-tls.md)), but whether a
+certificate was actually obtained is not · sticky sessions.
 
 ## Acceptance (testable)
 

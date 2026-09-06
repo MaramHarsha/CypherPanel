@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"time"
 
+	"fmt"
+
 	"google.golang.org/protobuf/proto"
 
 	"github.com/MaramHarsha/cypherpanel/core/domain"
@@ -16,19 +18,42 @@ import (
 
 // Store is the persistence status needs (consumer-defined).
 type Store interface {
-	RecordHeartbeat(ctx context.Context, id string, status domain.ServerStatus, agentVersion, driver, role string) (domain.Server, error)
+	RecordHeartbeat(ctx context.Context, id string, status domain.ServerStatus, agentVersion, driver, role string, diskTotal, diskFree uint64) (domain.Server, error)
 	MarkStaleServersUnknown(ctx context.Context, cutoff time.Time) ([]string, error)
+	// SetServerDiskLow records the transition, so the alert fires once
+	// (disk-management.md §5).
+	SetServerDiskLow(ctx context.Context, id string, low bool) error
+}
+
+// DiskSink receives a server's disk-pressure transitions (disk-management.md
+// §5). Consumer-defined; the wiring satisfies it with the notification inbox,
+// because a Server belongs to no project and a Notifier is scoped to one.
+// No sink announces nothing, which is what a panel without an inbox does.
+type DiskSink interface {
+	AnnounceServerDisk(ctx context.Context, server domain.Server, kind, detail string) error
 }
 
 // Recorder applies incoming heartbeats to observed state.
 type Recorder struct {
 	store Store
-	log   *slog.Logger
+	// warnPercent is the used-percentage at which a server reports low disk;
+	// zero disables the alert entirely (disk-management.md §7).
+	warnPercent int
+	sinks       []DiskSink
+	log         *slog.Logger
 }
 
 // NewRecorder wires the recorder.
 func NewRecorder(s Store, log *slog.Logger) *Recorder {
 	return &Recorder{store: s, log: log}
+}
+
+// WatchDisk turns on disk alerting. Kept out of NewRecorder so it stays an
+// opt-in add-on: a panel that never calls it records the numbers and announces
+// nothing, which is exactly how it behaved before.
+func (r *Recorder) WatchDisk(warnPercent int, sinks ...DiskSink) {
+	r.warnPercent = warnPercent
+	r.sinks = append(r.sinks, sinks...)
 }
 
 // Record parses a heartbeat payload and updates the server's observed status.
@@ -59,9 +84,67 @@ func (r *Recorder) Record(ctx context.Context, data []byte) {
 		r.log.Warn("dropping heartbeat with unknown role", "server_id", hb.GetServerId(), "role", role)
 		return
 	}
-	if _, err := r.store.RecordHeartbeat(ctx, hb.GetServerId(), st, hb.GetAgentVersion(), hb.GetDriver(), role); err != nil {
+	server, err := r.store.RecordHeartbeat(ctx, hb.GetServerId(), st, hb.GetAgentVersion(), hb.GetDriver(), role,
+		hb.GetDiskTotalBytes(), hb.GetDiskFreeBytes())
+	if err != nil {
 		r.log.Error("recording heartbeat", "server_id", hb.GetServerId(), "error", err)
+		return
 	}
+	r.checkDisk(ctx, server)
+}
+
+// checkDisk announces a server crossing the disk threshold, and crossing back.
+//
+// It fires on the TRANSITION, never on the heartbeat: one arrives every few
+// seconds, and a channel that repeats itself gets muted — taking the next real
+// alert with it. `server` carries the state as it was BEFORE this heartbeat's
+// measurement was compared, because RecordHeartbeat writes the numbers and
+// leaves disk_low alone.
+func (r *Recorder) checkDisk(ctx context.Context, server domain.Server) {
+	if r.warnPercent <= 0 || server.DiskTotalBytes == 0 {
+		return // disabled, or a host that could not answer — never read as full
+	}
+	used := server.DiskTotalBytes - server.DiskFreeBytes
+	usedPercent := int(used * 100 / server.DiskTotalBytes)
+	low := usedPercent >= r.warnPercent
+	if low == server.DiskLow {
+		return
+	}
+	if err := r.store.SetServerDiskLow(ctx, server.ID, low); err != nil {
+		// Not announced: a transition we could not record would be announced
+		// again on the very next heartbeat, which is the flood this exists to
+		// prevent.
+		r.log.Error("recording server disk state", "server_id", server.ID, "error", err)
+		return
+	}
+	kind := domain.InboxKindServerDiskRecovered
+	detail := fmt.Sprintf("%d%% of the disk is used, %s free.", usedPercent, humanBytes(server.DiskFreeBytes))
+	if low {
+		kind = domain.InboxKindServerDiskLow
+	}
+	r.log.Warn("server disk state changed", "server_id", server.ID, "used_percent", usedPercent, "low", low)
+	for _, sink := range r.sinks {
+		if err := sink.AnnounceServerDisk(ctx, server, kind, detail); err != nil {
+			// The transition is already recorded, so this is not repeated on
+			// the next heartbeat. Losing the announcement is the lesser cost.
+			r.log.Error("announcing server disk state", "server_id", server.ID, "error", err)
+		}
+	}
+}
+
+// humanBytes renders a size an operator can act on. Exact bytes in an alert is
+// a number nobody converts under pressure.
+func humanBytes(n uint64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := uint64(unit), 0
+	for m := n / unit; m >= unit && exp < 3; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGT"[exp])
 }
 
 // mapStatus translates the agent's self-reported liveness into the server

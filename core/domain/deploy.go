@@ -9,11 +9,38 @@ import "time"
 
 // Project groups environments for one product or customer.
 type Project struct {
-	ID        string
-	Name      string
-	TeamID    string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID     string
+	Name   string
+	TeamID string
+	// Slug is the stable handle used in URLs and by the CLI. Derived from the
+	// name at creation and immutable after: renaming a project must not break a
+	// bookmark or a script, which is why the two are separate fields.
+	Slug string
+	// DefaultEnvironmentID is where "open this project" lands and what a deploy
+	// targets when none is named. Empty when the project has no environments.
+	DefaultEnvironmentID string
+	// LastActivityAt is the last time anything happened here — a deploy, a
+	// resource created or removed, a setting changed. The projects list orders
+	// by it, so it is maintained on those paths rather than derived at read
+	// time from a scan of everything underneath.
+	LastActivityAt time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+// ProjectRollup is what a project looks like from the list: how much is in it
+// and the worst thing happening. Counted across applications and managed
+// databases together, because an operator scanning the page does not care which
+// kind of resource is broken.
+type ProjectRollup struct {
+	ProjectID        string
+	ApplicationCount int64
+	DatabaseCount    int64
+	ErrorCount       int64
+	// WorstStatus is the most severe observed status among the project's
+	// resources, in the shared vocabulary (error, degraded, deploying, running,
+	// unknown). Empty when the project holds nothing.
+	WorstStatus string
 }
 
 // Environment is a named context inside a project (production, staging, a
@@ -22,9 +49,21 @@ type Environment struct {
 	ID        string
 	ProjectID string
 	Name      string
+	// Kind separates a preview from a standing environment. Previews are
+	// created and destroyed by the PR lifecycle, so they must never be renamed
+	// or deleted by hand — a rule that needs a column, not a guess from the
+	// name.
+	Kind      string
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
+
+// Environment kinds.
+const (
+	EnvProduction = "production"
+	EnvStandard   = "standard"
+	EnvPreview    = "preview"
+)
 
 // AppSource is where an Application's code comes from. Kind "image" deploys a
 // prebuilt OCI image reference directly (feature-matrix V1: deploy from
@@ -35,6 +74,10 @@ type AppSource struct {
 	Branch      string
 	DeployKeyID *string
 	Image       string // OCI reference; set iff Kind == "image"
+	// RegistryID is the credential the agent authenticates the pull with, when
+	// the image lives in a private registry (registries.md; ADR-008 path 3).
+	// nil is the ordinary case — a public image, or a built one.
+	RegistryID *string
 }
 
 // AppBuild is how the image is produced (Phase 2: dockerfile only).
@@ -42,6 +85,13 @@ type AppBuild struct {
 	Kind           string // "dockerfile"
 	DockerfilePath string
 	Context        string
+	// PushRegistryID and PushRepository are ADR-008 path 3: after a successful
+	// build, also push the image somewhere the operator already runs. Nothing
+	// in the deploy path depends on it — the rollout still uses the local image
+	// or the relay, and a failed push fails the deployment rather than
+	// silently shipping an image that is not where it was promised to be.
+	PushRegistryID *string
+	PushRepository string
 }
 
 // AppRuntime is where and how the container runs.
@@ -126,8 +176,14 @@ type Application struct {
 	PreviewEnabled    bool
 	PreviewBaseDomain string
 	PreviewTTLHours   int
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	// RestartToken is a restart expressed as desired state
+	// (deployment-control.md §3): it rides on the spec, is part of the
+	// container's config hash, and a new value is a difference the reconciler
+	// closes by recreating the container. Empty means no restart has been
+	// asked for, which is every application's birth value.
+	RestartToken string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // Preview status vocabulary (preview-environments.md §3). Orchestration state,
@@ -163,6 +219,17 @@ const (
 	BuildDockerfile = "dockerfile"
 	BuildStatic     = "static"
 	BuildAuto       = "auto"
+	// BuildNixpacks and BuildRailpack hand the checkout to a build pack, which
+	// decides the language, package manager, build command and runtime
+	// (pack-builds.md). Chosen explicitly either is an assertion: a builder
+	// without that pack fails the build rather than quietly building something
+	// else.
+	//
+	// Railpack additionally needs BuildKit on the builder, because its output
+	// is a gateway frontend plan rather than a Dockerfile — which is why `auto`
+	// never infers it.
+	BuildNixpacks = "nixpacks"
+	BuildRailpack = "railpack"
 
 	AppRunning   = "running"
 	AppDeploying = "deploying"
@@ -210,12 +277,34 @@ const (
 	DeployRollingOut   DeploymentStatus = "rolling_out"
 	DeploySucceeded    DeploymentStatus = "succeeded"
 	DeployFailed       DeploymentStatus = "failed"
+
+	// DeployAwaitingApproval is a deploy that protection parked before it
+	// started (deploy-protection.md §3): the Revision and Deployment exist,
+	// no work item was published, and the application's own status is
+	// untouched because start() never ran. NON-TERMINAL — a parked deploy has
+	// not finished — but it holds no pipeline slot either, so the two queue
+	// queries in core/store/queries/deployments.sql exclude it alongside the
+	// terminal states.
+	//
+	// REJECTION does not add a sixth status: it ends the deployment as failed
+	// with a detail naming the rejecter. The terminal set ('succeeded',
+	// 'failed') is load-bearing in the queue queries, in Terminal() below and
+	// in the web isTerminal(), and a fifth terminal status would touch all
+	// three for no observable gain. A rejected deploy is a deploy that did not
+	// ship; WHY it did not ship lives on the DeployApproval row, which is what
+	// answers governance questions anyway.
+	DeployAwaitingApproval DeploymentStatus = "awaiting_approval"
 )
 
 // Terminal reports whether a deployment has finished (succeeded or failed).
+// A parked deploy is deliberately not terminal: it has not finished, it is
+// waiting for a person.
 func (s DeploymentStatus) Terminal() bool {
 	return s == DeploySucceeded || s == DeployFailed
 }
+
+// Parked reports whether a deployment is waiting on a gate decision.
+func (s DeploymentStatus) Parked() bool { return s == DeployAwaitingApproval }
 
 // Deployment is a recorded transition of an Application to a revision.
 type Deployment struct {
@@ -247,4 +336,11 @@ type DeployKey struct {
 	PrivateKeyCT    []byte
 	PrivateKeyNonce []byte
 	CreatedAt       time.Time
+}
+
+// ApplicationRef names an application without loading it — what a refused
+// deploy-key delete reports as the blockers (deploy-key-private-repos.md §3).
+type ApplicationRef struct {
+	ID   string
+	Name string
 }

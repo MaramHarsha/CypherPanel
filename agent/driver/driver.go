@@ -35,6 +35,13 @@ const (
 	LabelAppID = "cypherpanel.app-id"
 	// LabelRevisionID carries the revision the resource was created from.
 	LabelRevisionID = "cypherpanel.revision-id"
+	// LabelRestartToken carries the restart token the container was created
+	// under (deployment-control.md §3). It is part of the container's identity
+	// so a NEW token reads as drift — the same way a new revision does — and
+	// the ordinary recreate path closes it. Absent on containers created
+	// before the feature, and on every application that has never restarted,
+	// which both compare equal to an empty spec token.
+	LabelRestartToken = "cypherpanel.restart-token"
 )
 
 // PullMarkerPrefix is the repository namespace of the marker reference that
@@ -125,7 +132,13 @@ type Reconciler interface {
 	// actually true afterward. A partial failure converges everything it can
 	// and reports per-app state; the returned error is reserved for total
 	// inability to reconcile (e.g. orchestrator unreachable).
-	Reconcile(ctx context.Context, desired []*agentv1.AppSpec) ([]*agentv1.AppStatus, error)
+	//
+	// retain names the revisions whose images must survive garbage collection
+	// (disk-management.md §2). It is a SEPARATE list rather than a field on
+	// AppSpec because its absence means something different: an application
+	// missing from desired is removed, while one missing from retain is simply
+	// left alone.
+	Reconcile(ctx context.Context, desired []*agentv1.AppSpec, retain []*agentv1.RetainSpec) ([]*agentv1.AppStatus, error)
 }
 
 // DbReconciler manages database resource reconciliation on this server
@@ -134,4 +147,13 @@ type Reconciler interface {
 type DbReconciler interface {
 	ReconcileDatabases(ctx context.Context, desired []*agentv1.DbSpec) ([]*agentv1.DbStatus, error)
 	RemoveDatabase(ctx context.Context, dbID string, deleteVolume bool) error
+}
+
+// ComposeReconciler converges this host's Compose Stacks (consumer-defined;
+// *compose.Reconciler satisfies it — compose-stacks.md §4). Optional: nil on a
+// builder-role agent and wherever the feature is unwired, which makes a node
+// behave exactly as it did before Compose Stacks existed.
+type ComposeReconciler interface {
+	Reconcile(ctx context.Context, desired []*agentv1.ComposeSpec) ([]*agentv1.ComposeStatus, error)
+	Remove(ctx context.Context, stackID string, deleteVolumes bool) error
 }

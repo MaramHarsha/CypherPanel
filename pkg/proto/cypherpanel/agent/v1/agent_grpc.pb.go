@@ -20,6 +20,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	EnrollmentService_Enroll_FullMethodName = "/cypherpanel.agent.v1.EnrollmentService/Enroll"
+	EnrollmentService_Renew_FullMethodName  = "/cypherpanel.agent.v1.EnrollmentService/Renew"
 )
 
 // EnrollmentServiceClient is the client API for EnrollmentService service.
@@ -40,6 +41,21 @@ type EnrollmentServiceClient interface {
 	// Enroll exchanges a valid join token + CSR for a signed client
 	// certificate. The token is consumed on success (single-use).
 	Enroll(ctx context.Context, in *EnrollRequest, opts ...grpc.CallOption) (*EnrollResponse, error)
+	// Renew re-signs an already-enrolled agent's certificate before it expires.
+	//
+	// Unlike Enroll it carries no join token: the caller authenticates with the
+	// certificate it already holds, over the same mTLS listener, and the plane
+	// takes the identity from the verified peer chain rather than from anything
+	// in the request (threat-model.md §5.2 — "short-lived agent certificates
+	// with rotation, renewed over the authenticated channel"). The agent
+	// generates a FRESH key pair for each renewal and sends only the CSR, so the
+	// property Enroll establishes — the private key never crosses the wire —
+	// holds for the whole lifetime of the identity, not just its first day.
+	//
+	// Idempotent in the only sense that matters here: calling it twice issues
+	// two certificates for the same CommonName, both valid, and the agent keeps
+	// whichever it stored last. Nothing is consumed.
+	Renew(ctx context.Context, in *RenewRequest, opts ...grpc.CallOption) (*RenewResponse, error)
 }
 
 type enrollmentServiceClient struct {
@@ -54,6 +70,16 @@ func (c *enrollmentServiceClient) Enroll(ctx context.Context, in *EnrollRequest,
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(EnrollResponse)
 	err := c.cc.Invoke(ctx, EnrollmentService_Enroll_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *enrollmentServiceClient) Renew(ctx context.Context, in *RenewRequest, opts ...grpc.CallOption) (*RenewResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RenewResponse)
+	err := c.cc.Invoke(ctx, EnrollmentService_Renew_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -78,6 +104,21 @@ type EnrollmentServiceServer interface {
 	// Enroll exchanges a valid join token + CSR for a signed client
 	// certificate. The token is consumed on success (single-use).
 	Enroll(context.Context, *EnrollRequest) (*EnrollResponse, error)
+	// Renew re-signs an already-enrolled agent's certificate before it expires.
+	//
+	// Unlike Enroll it carries no join token: the caller authenticates with the
+	// certificate it already holds, over the same mTLS listener, and the plane
+	// takes the identity from the verified peer chain rather than from anything
+	// in the request (threat-model.md §5.2 — "short-lived agent certificates
+	// with rotation, renewed over the authenticated channel"). The agent
+	// generates a FRESH key pair for each renewal and sends only the CSR, so the
+	// property Enroll establishes — the private key never crosses the wire —
+	// holds for the whole lifetime of the identity, not just its first day.
+	//
+	// Idempotent in the only sense that matters here: calling it twice issues
+	// two certificates for the same CommonName, both valid, and the agent keeps
+	// whichever it stored last. Nothing is consumed.
+	Renew(context.Context, *RenewRequest) (*RenewResponse, error)
 	mustEmbedUnimplementedEnrollmentServiceServer()
 }
 
@@ -90,6 +131,9 @@ type UnimplementedEnrollmentServiceServer struct{}
 
 func (UnimplementedEnrollmentServiceServer) Enroll(context.Context, *EnrollRequest) (*EnrollResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Enroll not implemented")
+}
+func (UnimplementedEnrollmentServiceServer) Renew(context.Context, *RenewRequest) (*RenewResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Renew not implemented")
 }
 func (UnimplementedEnrollmentServiceServer) mustEmbedUnimplementedEnrollmentServiceServer() {}
 func (UnimplementedEnrollmentServiceServer) testEmbeddedByValue()                           {}
@@ -130,6 +174,24 @@ func _EnrollmentService_Enroll_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _EnrollmentService_Renew_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RenewRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(EnrollmentServiceServer).Renew(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: EnrollmentService_Renew_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(EnrollmentServiceServer).Renew(ctx, req.(*RenewRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // EnrollmentService_ServiceDesc is the grpc.ServiceDesc for EnrollmentService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -140,6 +202,10 @@ var EnrollmentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Enroll",
 			Handler:    _EnrollmentService_Enroll_Handler,
+		},
+		{
+			MethodName: "Renew",
+			Handler:    _EnrollmentService_Renew_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

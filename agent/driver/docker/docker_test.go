@@ -12,6 +12,7 @@ import (
 
 	"github.com/MaramHarsha/cypherpanel/agent/driver"
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
+	"github.com/MaramHarsha/cypherpanel/pkg/registryauth"
 )
 
 // ── recording fakes ─────────────────────────────────────────────────────────
@@ -33,6 +34,7 @@ type fakeClient struct {
 	pulledImages   []string          // refs EnsureImage actually fetched
 	localImages    map[string]bool   // refs EnsureImage treats as already present
 	pullErr        error             // injected EnsureImage failure
+	pullAuth       string            // encoded credential the last EnsureImage saw
 	digests        map[string]string // explicit ref → digest overrides
 	digestErr      error             // injected ImageDigest failure
 	tagged         []string          // "source -> target" per TagImage call
@@ -107,11 +109,12 @@ func (f *fakeClient) CreateContainer(_ context.Context, spec ContainerSpec) (str
 	f.nextID++
 	id := "c" + itoa(f.nextID)
 	f.containers[id] = &Container{
-		ID:         id,
-		Name:       spec.Name,
-		AppID:      spec.Labels[driver.LabelAppID],
-		RevisionID: spec.Labels[driver.LabelRevisionID],
-		Running:    false,
+		ID:           id,
+		Name:         spec.Name,
+		AppID:        spec.Labels[driver.LabelAppID],
+		RevisionID:   spec.Labels[driver.LabelRevisionID],
+		RestartToken: spec.Labels[driver.LabelRestartToken],
+		Running:      false,
 	}
 	f.ipByID[id] = "10.1.2.3"
 	return id, nil
@@ -151,7 +154,8 @@ func (f *fakeClient) ContainerIP(_ context.Context, id, _ string) (string, error
 
 // EnsureImage models the real engine's contract: a digest is immutable, so a
 // local copy is accepted; a tag is mutable and always re-fetched.
-func (f *fakeClient) EnsureImage(_ context.Context, ref string) error {
+func (f *fakeClient) EnsureImage(_ context.Context, ref, registryAuth string) error {
+	f.pullAuth = registryAuth
 	if f.pullErr != nil {
 		return f.pullErr
 	}
@@ -235,14 +239,21 @@ func (f *fakeClient) RemoveImage(_ context.Context, id string) error {
 // addContainer seeds a managed container as if a previous driver run created
 // it (deterministic name included) — the raw material of crash-window tests.
 func (f *fakeClient) addContainer(appID, revID string, running bool) string {
+	return f.addRestartedContainer(appID, revID, "", running)
+}
+
+// addRestartedContainer is addContainer for a container created under a restart
+// token (deployment-control.md §3).
+func (f *fakeClient) addRestartedContainer(appID, revID, restartToken string, running bool) string {
 	f.nextID++
 	id := "c" + itoa(f.nextID)
 	f.containers[id] = &Container{
-		ID:         id,
-		Name:       containerName(appID, revID),
-		AppID:      appID,
-		RevisionID: revID,
-		Running:    running,
+		ID:           id,
+		Name:         containerName(appID, revID, restartToken),
+		AppID:        appID,
+		RevisionID:   revID,
+		RestartToken: restartToken,
+		Running:      running,
 	}
 	f.ipByID[id] = "10.1.2." + itoa(f.nextID)
 	return id
@@ -377,7 +388,7 @@ func TestReconcileRollsOutNewApp(t *testing.T) {
 	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
 	d := newDriver(c, r, p)
 
-	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "img:rev1")})
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "img:rev1")}, nil)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -398,12 +409,12 @@ func TestConvergeTwiceIsNoOp(t *testing.T) {
 	d := newDriver(c, r, p)
 	specs := []*agentv1.AppSpec{spec("app1", "rev1", "img:rev1")}
 
-	if _, err := d.Reconcile(context.Background(), specs); err != nil {
+	if _, err := d.Reconcile(context.Background(), specs, nil); err != nil {
 		t.Fatalf("first Reconcile: %v", err)
 	}
 	baseline := c.mutations + r.mutations
 
-	if _, err := d.Reconcile(context.Background(), specs); err != nil {
+	if _, err := d.Reconcile(context.Background(), specs, nil); err != nil {
 		t.Fatalf("second Reconcile: %v", err)
 	}
 	if after := c.mutations + r.mutations; after != baseline {
@@ -415,14 +426,14 @@ func TestCrashResumeIsNoOp(t *testing.T) {
 	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
 	specs := []*agentv1.AppSpec{spec("app1", "rev1", "img:rev1")}
 
-	if _, err := newDriver(c, r, p).Reconcile(context.Background(), specs); err != nil {
+	if _, err := newDriver(c, r, p).Reconcile(context.Background(), specs, nil); err != nil {
 		t.Fatalf("first Reconcile: %v", err)
 	}
 	baseline := c.mutations + r.mutations
 
 	// A brand-new driver instance over the same state must be a no-op — proving
 	// convergence reads reality (labels), not in-memory bookkeeping.
-	if _, err := newDriver(c, r, p).Reconcile(context.Background(), specs); err != nil {
+	if _, err := newDriver(c, r, p).Reconcile(context.Background(), specs, nil); err != nil {
 		t.Fatalf("resumed Reconcile: %v", err)
 	}
 	if after := c.mutations + r.mutations; after != baseline {
@@ -439,7 +450,7 @@ func TestCrashAfterCreateBeforeStartConverges(t *testing.T) {
 	r.routes["app1"] = "10.1.2.1:8080"
 	c.addContainer("app1", "rev2", false) // the crash leftover
 
-	got, err := newDriver(c, r, p).Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev2", "img:rev2")})
+	got, err := newDriver(c, r, p).Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev2", "img:rev2")}, nil)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -464,7 +475,7 @@ func TestCrashAfterStartBeforeFlipConverges(t *testing.T) {
 	newID := c.addContainer("app1", "rev2", true)
 	r.routes["app1"] = "10.1.2." + oldID[1:] + ":8080" // route still on rev1
 
-	got, err := newDriver(c, r, p).Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev2", "img:rev2")})
+	got, err := newDriver(c, r, p).Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev2", "img:rev2")}, nil)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -490,7 +501,7 @@ func TestCrashAfterFlipBeforeDrainConverges(t *testing.T) {
 	r.routes["app1"] = c.ipByID[newID] + ":8080" // route already on rev2
 
 	routeMuts := r.mutations
-	got, err := newDriver(c, r, p).Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev2", "img:rev2")})
+	got, err := newDriver(c, r, p).Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev2", "img:rev2")}, nil)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -512,11 +523,11 @@ func TestAbsenceRemovesApp(t *testing.T) {
 	c.unmanaged["x1"] = &Container{ID: "x1", AppID: "someone-else", Running: true}
 	d := newDriver(c, r, p)
 
-	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "img:rev1")}); err != nil {
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "img:rev1")}, nil); err != nil {
 		t.Fatalf("rollout: %v", err)
 	}
 	// Now app1 is no longer desired.
-	got, err := d.Reconcile(context.Background(), nil)
+	got, err := d.Reconcile(context.Background(), nil, nil)
 	if err != nil {
 		t.Fatalf("teardown: %v", err)
 	}
@@ -541,7 +552,7 @@ func TestFailedTeardownIsReported(t *testing.T) {
 	id := c.addContainer("gone", "rev1", true)
 	c.stopErrForID[id] = errors.New("daemon busy")
 
-	got, err := newDriver(c, r, p).Reconcile(context.Background(), nil)
+	got, err := newDriver(c, r, p).Reconcile(context.Background(), nil, nil)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -562,7 +573,7 @@ func TestFailedDrainReportsDegradedThenRecovers(t *testing.T) {
 	c.stopErrForID[oldID] = errors.New("daemon busy")
 
 	d := newDriver(c, r, p)
-	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev2", "img:rev2")})
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev2", "img:rev2")}, nil)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -572,7 +583,7 @@ func TestFailedDrainReportsDegradedThenRecovers(t *testing.T) {
 
 	// Drain succeeds on the retry: back to running, old container gone.
 	delete(c.stopErrForID, oldID)
-	got, err = d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev2", "img:rev2")})
+	got, err = d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev2", "img:rev2")}, nil)
 	if err != nil {
 		t.Fatalf("retry Reconcile: %v", err)
 	}
@@ -589,7 +600,7 @@ func TestFailedHealthKeepsOldServing(t *testing.T) {
 	d := newDriver(c, r, p)
 
 	// rev1 healthy and serving.
-	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "img:rev1")}); err != nil {
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "img:rev1")}, nil); err != nil {
 		t.Fatalf("rev1 rollout: %v", err)
 	}
 	rev1Route := r.routes["app1"]
@@ -597,7 +608,7 @@ func TestFailedHealthKeepsOldServing(t *testing.T) {
 	// rev2 attempted, but health fails.
 	p.fail = true
 	mutBefore := r.mutations
-	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev2", "img:rev2")})
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev2", "img:rev2")}, nil)
 	if err != nil {
 		t.Fatalf("rev2 rollout: %v", err)
 	}
@@ -637,7 +648,7 @@ func TestPartialFailureConvergesOthers(t *testing.T) {
 	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{
 		spec("bad", "rev1", "img:bad"),
 		spec("good", "rev1", "img:good"),
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Reconcile returned a total error for a per-app failure: %v", err)
 	}
@@ -660,7 +671,7 @@ func TestFailedCreateReportsServingRevision(t *testing.T) {
 	r.routes["app1"] = "10.1.2.1:8080"
 	c.createErrForImage["img:rev2"] = errors.New("no such image")
 
-	got, err := newDriver(c, r, p).Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev2", "img:rev2")})
+	got, err := newDriver(c, r, p).Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev2", "img:rev2")}, nil)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -673,7 +684,7 @@ func TestFailedCreateReportsServingRevision(t *testing.T) {
 func TestListManagedErrorIsReturned(t *testing.T) {
 	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
 	c.listErr = errors.New("daemon unreachable")
-	if _, err := newDriver(c, r, p).Reconcile(context.Background(), nil); err == nil {
+	if _, err := newDriver(c, r, p).Reconcile(context.Background(), nil, nil); err == nil {
 		t.Fatal("expected a total error when the daemon is unreachable")
 	}
 }
@@ -685,7 +696,7 @@ func TestGCRemovesImagesOfAbsentApps(t *testing.T) {
 		{ID: "i2", AppIDs: []string{"gone"}, References: []string{"cypher/gone:rev1"}},
 	}
 	d := newDriver(c, r, p)
-	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("keep", "rev1", "img:rev1")}); err != nil {
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("keep", "rev1", "img:rev1")}, nil); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	if len(c.images) != 1 || c.images[0].AppIDs[0] != "keep" {
@@ -741,7 +752,7 @@ func TestReconcileAppliesResourceLimits(t *testing.T) {
 	sp := spec("app1", "rev1", "img")
 	sp.CpuLimit = 1.5
 	sp.MemoryLimitMb = 512
-	d.Reconcile(context.Background(), []*agentv1.AppSpec{sp})
+	d.Reconcile(context.Background(), []*agentv1.AppSpec{sp}, nil)
 
 	if c.lastCreateSpec.CPULimit != 1.5 || c.lastCreateSpec.MemoryLimitMB != 512 {
 		t.Fatalf("container spec limits = %v/%v, want 1.5/512", c.lastCreateSpec.CPULimit, c.lastCreateSpec.MemoryLimitMB)
@@ -758,7 +769,7 @@ func TestReconcileEnsuresAndBindsVolumes(t *testing.T) {
 	sp.Volumes = []*agentv1.VolumeMount{
 		{VolumeName: "cypher-appvol-app1-data", Path: "/data"},
 	}
-	d.Reconcile(context.Background(), []*agentv1.AppSpec{sp})
+	d.Reconcile(context.Background(), []*agentv1.AppSpec{sp}, nil)
 
 	if len(c.ensuredVolumes) != 1 || c.ensuredVolumes[0] != "cypher-appvol-app1-data" {
 		t.Fatalf("ensured volumes = %v, want [cypher-appvol-app1-data]", c.ensuredVolumes)
@@ -770,7 +781,7 @@ func TestReconcileEnsuresAndBindsVolumes(t *testing.T) {
 	// Converge again with the same desired state: no new EnsureVolume (the app
 	// is already at its desired revision — converge-twice invariant).
 	before := len(c.ensuredVolumes)
-	d.Reconcile(context.Background(), []*agentv1.AppSpec{sp})
+	d.Reconcile(context.Background(), []*agentv1.AppSpec{sp}, nil)
 	if len(c.ensuredVolumes) != before {
 		t.Fatalf("second converge ensured a volume again (%d → %d)", before, len(c.ensuredVolumes))
 	}
@@ -790,7 +801,7 @@ func TestReconcileRawServiceNoRouteAndPorts(t *testing.T) {
 		{HostPort: 25565, ContainerPort: 25565, Protocol: "udp"},
 	}
 
-	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{sp})
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{sp}, nil)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -808,7 +819,7 @@ func TestReconcileRawServiceNoRouteAndPorts(t *testing.T) {
 
 	// Converge-twice: the second pass makes zero client and router mutations.
 	cm, rm := c.mutations, r.mutations
-	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{sp}); err != nil {
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{sp}, nil); err != nil {
 		t.Fatalf("second Reconcile: %v", err)
 	}
 	if c.mutations != cm || r.mutations != rm {
@@ -829,7 +840,7 @@ func TestReconcileReportsProxyHealth(t *testing.T) {
 	d.OnProxyHealth(func(err error) { reported = append(reported, err) })
 
 	r.proxyErr = errors.New("bind :80: address already in use")
-	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "img:rev1")})
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "img:rev1")}, nil)
 	if err != nil {
 		t.Fatalf("Reconcile must still converge apps when the Proxy is down: %v", err)
 	}
@@ -843,7 +854,7 @@ func TestReconcileReportsProxyHealth(t *testing.T) {
 	// Recovery has to clear it, or the server stays amber forever once the
 	// operator frees the port.
 	r.proxyErr = nil
-	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "img:rev1")}); err != nil {
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "img:rev1")}, nil); err != nil {
 		t.Fatalf("Reconcile after recovery: %v", err)
 	}
 	if len(reported) != 2 || reported[1] != nil {
@@ -861,14 +872,14 @@ func TestReconcileRewritesRouteWhenOnlyTheTemplateChanged(t *testing.T) {
 	d := newDriver(c, r, p)
 	specs := []*agentv1.AppSpec{spec("app1", "rev1", "img:rev1")}
 
-	if _, err := d.Reconcile(context.Background(), specs); err != nil {
+	if _, err := d.Reconcile(context.Background(), specs, nil); err != nil {
 		t.Fatalf("first Reconcile: %v", err)
 	}
 	before := r.setCalls
 
 	// Nothing about the app changed, so no probe should be needed...
 	probesBefore := p.calls
-	if _, err := d.Reconcile(context.Background(), specs); err != nil {
+	if _, err := d.Reconcile(context.Background(), specs, nil); err != nil {
 		t.Fatalf("second Reconcile: %v", err)
 	}
 	// ...but SetRoute is still offered the current desired route, so the
@@ -893,7 +904,7 @@ func TestPullSpecFetchesImageAndRollsOut(t *testing.T) {
 	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
 	d := newDriver(c, r, p)
 
-	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")})
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}, nil)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -911,12 +922,12 @@ func TestPullSpecConvergeTwicePullsOnce(t *testing.T) {
 	d := newDriver(c, r, p)
 	specs := []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}
 
-	if _, err := d.Reconcile(context.Background(), specs); err != nil {
+	if _, err := d.Reconcile(context.Background(), specs, nil); err != nil {
 		t.Fatalf("first Reconcile: %v", err)
 	}
 	baseline := c.mutations + r.mutations
 
-	if _, err := d.Reconcile(context.Background(), specs); err != nil {
+	if _, err := d.Reconcile(context.Background(), specs, nil); err != nil {
 		t.Fatalf("second Reconcile: %v", err)
 	}
 	if after := c.mutations + r.mutations; after != baseline {
@@ -935,11 +946,11 @@ func TestNewRevisionRepullsMutableTag(t *testing.T) {
 	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
 	d := newDriver(c, r, p)
 
-	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}); err != nil {
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}, nil); err != nil {
 		t.Fatalf("rev1: %v", err)
 	}
 	// Same reference, new revision — the operator moved the tag and redeployed.
-	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev2", "ghost:5")}); err != nil {
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev2", "ghost:5")}, nil); err != nil {
 		t.Fatalf("rev2: %v", err)
 	}
 	if len(c.pulledImages) != 2 {
@@ -954,10 +965,10 @@ func TestNewRevisionSkipsPullForLocalDigest(t *testing.T) {
 	d := newDriver(c, r, p)
 	const ref = "ghcr.io/acme/web@sha256:abc"
 
-	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", ref)}); err != nil {
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", ref)}, nil); err != nil {
 		t.Fatalf("rev1: %v", err)
 	}
-	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev2", ref)}); err != nil {
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev2", ref)}, nil); err != nil {
 		t.Fatalf("rev2: %v", err)
 	}
 	if len(c.pulledImages) != 1 {
@@ -970,14 +981,14 @@ func TestPullFailureLeavesOldServing(t *testing.T) {
 	d := newDriver(c, r, p)
 
 	// rev1 (a pulled image) healthy and serving.
-	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5.0")}); err != nil {
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5.0")}, nil); err != nil {
 		t.Fatalf("rev1 rollout: %v", err)
 	}
 	rev1Route := r.routes["app1"]
 
 	// rev2's registry fetch fails (missing tag, registry down).
 	c.pullErr = errors.New("pull failed: manifest unknown")
-	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev2", "ghost:9.9")})
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev2", "ghost:9.9")}, nil)
 	if err != nil {
 		t.Fatalf("rev2 rollout: %v", err)
 	}
@@ -1000,7 +1011,7 @@ func TestNonPullSpecNeverPulls(t *testing.T) {
 	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
 	d := newDriver(c, r, p)
 
-	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "img:rev1")}); err != nil {
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "img:rev1")}, nil); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	if len(c.pulledImages) != 0 {
@@ -1015,7 +1026,7 @@ func TestPulledImageIsTaggedManagedAndUsed(t *testing.T) {
 	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
 	d := newDriver(c, r, p)
 
-	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}); err != nil {
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}, nil); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	// Ownership is recorded first, then the alias — the marker has to be on the
@@ -1039,7 +1050,7 @@ func TestBuiltImageIsNotTagged(t *testing.T) {
 	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
 	d := newDriver(c, r, p)
 
-	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "cypher/app1:rev1")}); err != nil {
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "cypher/app1:rev1")}, nil); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	if len(c.tagged) != 0 || len(c.pulledImages) != 0 {
@@ -1054,7 +1065,7 @@ func TestPullSpecReportsResolvedDigest(t *testing.T) {
 	c.digests = map[string]string{"cypher/app1:rev1": "ghost@sha256:deadbeef"}
 	d := newDriver(c, r, p)
 
-	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")})
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}, nil)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -1070,7 +1081,7 @@ func TestResolvedDigestOmittedWhenUnavailable(t *testing.T) {
 	c.digestErr = errors.New("daemon hiccup")
 	d := newDriver(c, r, p)
 
-	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")})
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}, nil)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -1098,7 +1109,7 @@ func TestGCReclaimsAllReferencesOfRemovedApp(t *testing.T) {
 	}}
 	d := newDriver(c, r, p)
 
-	if _, err := d.Reconcile(context.Background(), nil); err != nil {
+	if _, err := d.Reconcile(context.Background(), nil, nil); err != nil {
 		t.Fatalf("teardown: %v", err)
 	}
 	for _, ref := range []string{"cypher/app1:rev1", "ghost:5"} {
@@ -1120,7 +1131,7 @@ func TestGCKeepsImageSharedWithDesiredApp(t *testing.T) {
 	}}
 	d := newDriver(c, r, p)
 
-	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("kept", "rev1", "ghost:5")}); err != nil {
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("kept", "rev1", "ghost:5")}, nil); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	if len(c.removedImages) != 0 {
@@ -1135,7 +1146,7 @@ func TestPullDropsTheReferenceItCreated(t *testing.T) {
 	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
 	d := newDriver(c, r, p)
 
-	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}); err != nil {
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}, nil); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	if !c.removedImages["ghost:5"] {
@@ -1156,7 +1167,7 @@ func TestPullKeepsAPreexistingReference(t *testing.T) {
 	c.localImages = map[string]bool{"ghost:5": true} // the operator pulled it
 	d := newDriver(c, r, p)
 
-	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}); err != nil {
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}, nil); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	if c.removedImages["ghost:5"] {
@@ -1180,7 +1191,7 @@ func TestGCLeavesUnownedReferences(t *testing.T) {
 	}}
 	d := newDriver(c, r, p)
 
-	if _, err := d.Reconcile(context.Background(), nil); err != nil {
+	if _, err := d.Reconcile(context.Background(), nil, nil); err != nil {
 		t.Fatalf("teardown: %v", err)
 	}
 	if !c.removedImages["cypher/app1:rev1"] {
@@ -1201,7 +1212,7 @@ func TestDigestResolvedFromManagedAlias(t *testing.T) {
 	}
 	d := newDriver(c, r, p)
 
-	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")})
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}, nil)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -1237,7 +1248,7 @@ func TestPullOwnershipSurvivesARolloutThatNeverCreatesAContainer(t *testing.T) {
 	c.createErrForImage["cypher/app1:rev1"] = errors.New("no such network")
 	d := newDriver(c, r, p)
 
-	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")})
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}, nil)
 	if err != nil {
 		t.Fatalf("rollout: %v", err)
 	}
@@ -1263,7 +1274,7 @@ func TestPullOwnershipSurvivesARolloutThatNeverCreatesAContainer(t *testing.T) {
 		AppIDs:  []string{"app1"},
 		Pending: []PendingRef{{Source: "ghost:5", Marker: marker}},
 	}}
-	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}); err != nil {
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}, nil); err != nil {
 		t.Fatalf("second converge: %v", err)
 	}
 	if !c.removedImages["ghost:5"] {
@@ -1284,7 +1295,7 @@ func TestPullOwnershipSurvivesAFailedManagedTag(t *testing.T) {
 	c.tagErrByTarget = map[string]error{"cypher/app1:rev1": errors.New("daemon busy")}
 	d := newDriver(c, r, p)
 
-	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")})
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}, nil)
 	if err != nil {
 		t.Fatalf("rollout: %v", err)
 	}
@@ -1301,7 +1312,7 @@ func TestPullOwnershipSurvivesAFailedManagedTag(t *testing.T) {
 		AppIDs:  []string{"app1"},
 		Pending: []PendingRef{{Source: "ghost:5", Marker: marker}},
 	}}
-	if _, err := d.Reconcile(context.Background(), nil); err != nil {
+	if _, err := d.Reconcile(context.Background(), nil, nil); err != nil {
 		t.Fatalf("teardown: %v", err)
 	}
 	if !c.removedImages["ghost:5"] || !c.removedImages[marker] {
@@ -1318,7 +1329,7 @@ func TestMarkerDoesNotAuthorizeASecondRemoval(t *testing.T) {
 	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
 	d := newDriver(c, r, p)
 
-	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}); err != nil {
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}, nil); err != nil {
 		t.Fatalf("rollout: %v", err)
 	}
 	marker := pullMarker(t, "app1", "ghost:5")
@@ -1331,7 +1342,7 @@ func TestMarkerDoesNotAuthorizeASecondRemoval(t *testing.T) {
 	c.removedImages = map[string]bool{}
 	c.localImages["ghost:5"] = true
 	for i := range 2 {
-		if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}); err != nil {
+		if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}, nil); err != nil {
 			t.Fatalf("reconcile %d: %v", i, err)
 		}
 	}
@@ -1362,7 +1373,7 @@ func TestPendingReferenceIsRetriedForADesiredApp(t *testing.T) {
 			}}
 			d := newDriver(c, r, p)
 
-			if _, err := d.Reconcile(context.Background(), tc.desired); err != nil {
+			if _, err := d.Reconcile(context.Background(), tc.desired, nil); err != nil {
 				t.Fatalf("Reconcile: %v", err)
 			}
 			if !c.removedImages["ghost:5"] || !c.removedImages[marker] {
@@ -1389,7 +1400,7 @@ func TestMarkerOutlivesAReferenceItCannotYetRemove(t *testing.T) {
 	}}
 	d := newDriver(c, r, p)
 
-	if _, err := d.Reconcile(context.Background(), nil); err != nil {
+	if _, err := d.Reconcile(context.Background(), nil, nil); err != nil {
 		t.Fatalf("teardown: %v", err)
 	}
 	if c.removedImages[marker] {
@@ -1404,14 +1415,254 @@ func TestConvergeTwiceUnaffectedByReferenceRetry(t *testing.T) {
 	d := newDriver(c, r, p)
 	specs := []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}
 
-	if _, err := d.Reconcile(context.Background(), specs); err != nil {
+	if _, err := d.Reconcile(context.Background(), specs, nil); err != nil {
 		t.Fatalf("first: %v", err)
 	}
 	baseline := c.mutations + r.mutations
-	if _, err := d.Reconcile(context.Background(), specs); err != nil {
+	if _, err := d.Reconcile(context.Background(), specs, nil); err != nil {
 		t.Fatalf("second: %v", err)
 	}
 	if after := c.mutations + r.mutations; after != baseline {
 		t.Fatalf("second converge mutated state: %d calls (want 0)", after-baseline)
+	}
+}
+
+// ── private registries (registries.md; ADR-008 path 3) ──────────────────────
+
+// A pull against a private registry carries the credential the plane sent,
+// assembled per rollout and held nowhere else on this host.
+func TestPullSpecCarriesTheCredentialToTheDaemon(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	sp := pullSpec("app1", "rev1", "ghcr.io/acme/web:1")
+	sp.RegistryAuth = &agentv1.RegistryAuth{ServerAddress: "ghcr.io", Username: "acme", Token: "ghp_s3cret"}
+
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{sp}, nil); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	want, err := registryauth.Encode("ghcr.io", "acme", "ghp_s3cret")
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	if c.pullAuth != want {
+		t.Fatalf("pull credential = %q, want the encoded credential", c.pullAuth)
+	}
+}
+
+// A public image pulls anonymously, exactly as it did before the feature.
+func TestPullSpecWithoutACredentialPullsAnonymously(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{pullSpec("app1", "rev1", "ghost:5")}, nil); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if c.pullAuth != "" {
+		t.Fatalf("pull credential = %q, want none", c.pullAuth)
+	}
+}
+
+// ── restart as desired state (deployment-control.md §3) ─────────────────────
+
+func restartSpec(appID, revID, image, token string) *agentv1.AppSpec {
+	sp := spec(appID, revID, image)
+	sp.RestartToken = token
+	return sp
+}
+
+// A new restart token is a difference in desired state, closed by the ordinary
+// recreate path — no new branch, and no verb the agent obeys.
+func TestNewRestartTokenRecreatesTheContainer(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	old := c.addRestartedContainer("app1", "rev1", "", true)
+	r.routes["app1"] = "10.1.2.1:8080"
+
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{restartSpec("app1", "rev1", "img", "rst_1")}, nil)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	st := statusOf(got, "app1")
+	if st == nil || st.GetState() != stateRunning {
+		t.Fatalf("status = %+v, want running", st)
+	}
+	if _, still := c.containers[old]; still {
+		t.Fatal("the old container survived the restart")
+	}
+	var tokens []string
+	for _, ct := range c.containers {
+		if ct.AppID == "app1" {
+			tokens = append(tokens, ct.RestartToken)
+		}
+	}
+	if len(tokens) != 1 || tokens[0] != "rst_1" {
+		t.Fatalf("containers carry %v, want exactly one under rst_1", tokens)
+	}
+}
+
+// The replacement starts alongside the container it replaces and is
+// health-gated before the old one goes: a restart is zero-downtime for the
+// same reason a deploy is. If the old container were discarded up front, the
+// create would happen with nothing serving.
+func TestRestartHealthGatesBeforeDrainingTheOldContainer(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	old := c.addRestartedContainer("app1", "rev1", "", true)
+	r.routes["app1"] = "10.1.2.1:8080"
+	p.fail = true
+
+	got, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{restartSpec("app1", "rev1", "img", "rst_1")}, nil)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	st := statusOf(got, "app1")
+	if st == nil || st.GetState() != stateError {
+		t.Fatalf("status = %+v, want error when the replacement never became healthy", st)
+	}
+	if _, still := c.containers[old]; !still {
+		t.Fatal("the serving container was destroyed by a restart that never became healthy")
+	}
+	if !c.containers[old].Running {
+		t.Fatal("the serving container was stopped by a failed restart")
+	}
+}
+
+// Converging twice after a restart must make no mutating call, or the
+// reconciler would recreate the container on every sync.
+func TestRestartConvergeTwiceIsANoOp(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+	specs := []*agentv1.AppSpec{restartSpec("app1", "rev1", "img", "rst_1")}
+
+	if _, err := d.Reconcile(context.Background(), specs, nil); err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+	before := c.mutations
+	if _, err := d.Reconcile(context.Background(), specs, nil); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	if c.mutations != before {
+		t.Fatalf("mutations %d -> %d, want zero on the second converge", before, c.mutations)
+	}
+}
+
+// An application that never restarts keeps exactly the container name and
+// labels it had before this feature existed.
+func TestNoRestartTokenLeavesTheContainerUnchanged(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "img")}, nil); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if c.lastCreateSpec.Name != "cypher-app1-rev1" {
+		t.Fatalf("name = %q, want the pre-feature name", c.lastCreateSpec.Name)
+	}
+	if _, stamped := c.lastCreateSpec.Labels[driver.LabelRestartToken]; stamped {
+		t.Fatal("a restart-token label was stamped on an application that has never restarted")
+	}
+}
+
+// ── the retain set (disk-management.md §2) ─────────────────────────────────
+
+// An image of a still-desired app whose revision is outside the retain set is
+// reclaimed. This is the part a prune job cannot do: it cannot know which
+// stopped image a rollback still needs.
+func TestGCReclaimsRevisionsOutsideTheRetainSet(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+	c.images = []Image{{
+		ID:         "i1",
+		AppIDs:     []string{"app1"},
+		References: []string{"cypher/app1:rev1", "cypher/app1:rev9"},
+		Managed: []ManagedRef{
+			{Reference: "cypher/app1:rev1", AppID: "app1", RevisionID: "rev1"},
+			{Reference: "cypher/app1:rev9", AppID: "app1", RevisionID: "rev9"},
+		},
+	}}
+
+	_, err := d.Reconcile(context.Background(),
+		[]*agentv1.AppSpec{spec("app1", "rev1", "cypher/app1:rev1")},
+		[]*agentv1.RetainSpec{{AppId: "app1", RevisionIds: []string{"rev1"}}})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if !c.removedImages["cypher/app1:rev9"] {
+		t.Fatalf("removed = %v, want the unretained revision reclaimed", c.removedImages)
+	}
+	if c.removedImages["cypher/app1:rev1"] {
+		t.Fatalf("removed = %v, want the retained revision kept", c.removedImages)
+	}
+}
+
+// Absence from the retain set means NO INSTRUCTION, not "remove everything" —
+// the opposite of how the spec list is read, because the two mistakes do not
+// cost the same.
+func TestGCLeavesAnUninstructedApplicationAlone(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+	c.images = []Image{{
+		ID:         "i1",
+		AppIDs:     []string{"app1"},
+		References: []string{"cypher/app1:rev9"},
+		Managed:    []ManagedRef{{Reference: "cypher/app1:rev9", AppID: "app1", RevisionID: "rev9"}},
+	}}
+
+	// Desired, but no retain entry: the plane could not read its revisions.
+	if _, err := d.Reconcile(context.Background(),
+		[]*agentv1.AppSpec{spec("app1", "rev1", "cypher/app1:rev1")}, nil); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(c.removedImages) != 0 {
+		t.Fatalf("removed %v with no instruction — absence must not mean remove here", c.removedImages)
+	}
+}
+
+// A deleted application still loses everything: that is absence-means-remove
+// on the spec list, and it is unchanged.
+func TestGCStillReclaimsARemovedApplication(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+	c.images = []Image{{
+		ID:         "i1",
+		AppIDs:     []string{"gone"},
+		References: []string{"cypher/gone:rev1"},
+		Managed:    []ManagedRef{{Reference: "cypher/gone:rev1", AppID: "gone", RevisionID: "rev1"}},
+	}}
+
+	if _, err := d.Reconcile(context.Background(), nil, nil); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if !c.removedImages["cypher/gone:rev1"] {
+		t.Fatalf("removed = %v, want the removed application reclaimed", c.removedImages)
+	}
+}
+
+// An image shared with another application must survive whole.
+func TestGCKeepsAnImageAnotherApplicationStillWants(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+	c.images = []Image{{
+		ID:         "i1",
+		AppIDs:     []string{"app1", "app2"},
+		References: []string{"cypher/app1:rev9", "cypher/app2:rev1"},
+		Managed: []ManagedRef{
+			{Reference: "cypher/app1:rev9", AppID: "app1", RevisionID: "rev9"},
+			{Reference: "cypher/app2:rev1", AppID: "app2", RevisionID: "rev1"},
+		},
+	}}
+
+	_, err := d.Reconcile(context.Background(),
+		[]*agentv1.AppSpec{spec("app2", "rev1", "cypher/app2:rev1")},
+		[]*agentv1.RetainSpec{{AppId: "app2", RevisionIds: []string{"rev1"}}})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	// app1 is not desired, but the image is shared with app2 — so it survives.
+	if len(c.removedImages) != 0 {
+		t.Fatalf("removed %v from an image another application still wants", c.removedImages)
 	}
 }

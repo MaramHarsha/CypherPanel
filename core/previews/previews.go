@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/MaramHarsha/cypherpanel/core/applications"
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/store"
 	"github.com/MaramHarsha/cypherpanel/pkg/ids"
@@ -21,7 +22,7 @@ import (
 type Store interface {
 	GetApplication(ctx context.Context, id string) (domain.Application, error)
 	GetEnvironment(ctx context.Context, id string) (domain.Environment, error)
-	CreateEnvironment(ctx context.Context, id, projectID, name string) (domain.Environment, error)
+	CreateEnvironmentOfKind(ctx context.Context, id, projectID, name, kind string) (domain.Environment, error)
 	DeleteEnvironment(ctx context.Context, id string) error
 	CreatePreview(ctx context.Context, p domain.Preview) (domain.Preview, error)
 	GetPreview(ctx context.Context, id string) (domain.Preview, error)
@@ -45,6 +46,28 @@ type Deployer interface {
 	RemoveApp(ctx context.Context, serverID, appID string) error
 }
 
+// AuditRecorder records the preview environment lifecycle (consumer-defined;
+// *audit.Service satisfies it). A preview environment is created and destroyed
+// with NO operator in the loop, so without this the `environment.created` and
+// `environment.deleted` verbs would be true only of the environments a person
+// made by hand — and the audit log would quietly under-report the environments
+// that actually come and go most often (audit-log.md §3).
+//
+// nil records nothing, which keeps previews working on a panel wired without
+// the audit log.
+type AuditRecorder interface {
+	Record(ctx context.Context, e audit.Entry) (domain.AuditEvent, error)
+}
+
+// auditTimeout bounds a recording write. It runs on a context detached from the
+// caller's, so it needs a deadline of its own.
+const auditTimeout = 5 * time.Second
+
+// systemActor attributes an automated preview lifecycle change: nobody was
+// signed in. The manual DELETE is audited by its handler instead, with the
+// operator's name on it.
+var systemActor = domain.AuditActor{Kind: domain.AuditActorSystem, Label: "preview automation"}
+
 // Manager reconciles previews against PR lifecycle events. Construct with New.
 type Manager struct {
 	store Store
@@ -52,11 +75,42 @@ type Manager struct {
 	sched Deployer
 	log   *slog.Logger
 	now   func() time.Time
+	audit AuditRecorder
 }
 
+// Option tunes a Manager at construction (ENGINEERING rule 5: no setters after
+// the fact).
+type Option func(*Manager)
+
+// WithAudit makes the automated halves of the preview lifecycle — the
+// environment a PR spawns and the one a close or a TTL sweep reclaims —
+// first-class audit events.
+func WithAudit(rec AuditRecorder) Option { return func(m *Manager) { m.audit = rec } }
+
 // New wires the manager.
-func New(st Store, apps AppService, sched Deployer, log *slog.Logger) *Manager {
-	return &Manager{store: st, apps: apps, sched: sched, log: log, now: time.Now}
+func New(st Store, apps AppService, sched Deployer, log *slog.Logger, opts ...Option) *Manager {
+	m := &Manager{store: st, apps: apps, sched: sched, log: log, now: time.Now}
+	for _, o := range opts {
+		o(m)
+	}
+	return m
+}
+
+// record writes one audit row and never fails the operation it describes: a
+// preview that was created must not be torn down because the record of it
+// could not be written (audit-log.md §9). The context is detached from
+// cancellation — a sweep shutting down still owes the log the teardown it just
+// performed — and carries its own deadline.
+func (m *Manager) record(ctx context.Context, e audit.Entry) {
+	if m.audit == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), auditTimeout)
+	defer cancel()
+	if _, err := m.audit.Record(ctx, e); err != nil {
+		m.log.Error("recording preview audit event",
+			"action", e.Action, "resource_id", e.Resource.ID, "error", err)
+	}
 }
 
 // PR lifecycle actions the manager acts on (GitHub pull_request payload).
@@ -110,7 +164,10 @@ func (m *Manager) ensureAndDeploy(ctx context.Context, source domain.Application
 		return fmt.Errorf("previews: loading source environment: %w", err)
 	}
 	domainName := previewDomain(prNumber, source.PreviewBaseDomain)
-	childEnv, err := m.store.CreateEnvironment(ctx, ids.New(ids.PrefixEnvironment), env.ProjectID, previewEnvName(prNumber, source.ID))
+	// Marked as a preview so the operator-facing lifecycle refuses to rename or
+	// delete it by hand: this environment belongs to the pull request.
+	childEnv, err := m.store.CreateEnvironmentOfKind(ctx, ids.New(ids.PrefixEnvironment), env.ProjectID,
+		previewEnvName(prNumber, source.ID), domain.EnvPreview)
 	if err != nil {
 		return fmt.Errorf("previews: creating child environment: %w", err)
 	}
@@ -157,6 +214,22 @@ func (m *Manager) ensureAndDeploy(ctx context.Context, source domain.Application
 		_ = m.store.DeleteEnvironment(ctx, childEnv.ID)
 		return fmt.Errorf("previews: recording preview: %w", err)
 	}
+	// Recorded only once the preview exists for real: the two rollback paths
+	// above leave nothing behind, so they leave no row either. The environment
+	// id is enough for the insert to resolve the project and the team.
+	m.record(ctx, audit.Entry{
+		Action:        audit.ActionEnvironmentCreated,
+		Actor:         systemActor,
+		Resource:      audit.Resource(audit.ResourceEnvironment, childEnv.ID, childEnv.Name),
+		EnvironmentID: childEnv.ID,
+		Detail: map[string]any{
+			"kind":                  domain.EnvPreview,
+			"preview_id":            preview.ID,
+			"pr":                    prNumber,
+			"source_application_id": source.ID,
+			"domain":                domainName,
+		},
+	})
 
 	if _, err := m.sched.Deploy(ctx, clone.ID, "preview", prSHA); err != nil {
 		_ = m.store.SetPreviewStatus(ctx, preview.ID, domain.PreviewError)
@@ -175,10 +248,12 @@ func (m *Manager) destroyByPR(ctx context.Context, sourceAppID string, prNumber 
 	if err != nil {
 		return fmt.Errorf("previews: loading preview: %w", err)
 	}
-	return m.destroy(ctx, p)
+	return m.destroyAndRecord(ctx, p, "pull request closed")
 }
 
-// DestroyByID tears a preview down by id (manual DELETE and the TTL sweeper).
+// DestroyByID tears a preview down by id. It is the MANUAL path (the operator's
+// DELETE), which its handler audits with the operator's name; the automated
+// paths record themselves, so this one does not.
 func (m *Manager) DestroyByID(ctx context.Context, previewID string) error {
 	p, err := m.store.GetPreview(ctx, previewID)
 	if errors.Is(err, store.ErrNotFound) {
@@ -188,6 +263,37 @@ func (m *Manager) DestroyByID(ctx context.Context, previewID string) error {
 		return fmt.Errorf("previews: loading preview: %w", err)
 	}
 	return m.destroy(ctx, p)
+}
+
+// destroyAndRecord is the automated teardown: the destroy plus the
+// `environment.deleted` row that says a preview environment stopped existing
+// without anyone asking.
+//
+// The environment is read BEFORE the delete on purpose. This handler destroys
+// its own ownership chain: once the environment row is gone there is nothing
+// left for the INSERT to resolve team_id from, and an entry that cannot be
+// scoped cannot be read by the team it belongs to (audit-log.md §4).
+func (m *Manager) destroyAndRecord(ctx context.Context, p domain.Preview, reason string) error {
+	var env domain.Environment
+	if m.audit != nil {
+		env, _ = m.store.GetEnvironment(ctx, p.EnvironmentID)
+	}
+	if err := m.destroy(ctx, p); err != nil {
+		return err
+	}
+	m.record(ctx, audit.Entry{
+		Action:    audit.ActionEnvironmentDeleted,
+		Actor:     systemActor,
+		Resource:  audit.Resource(audit.ResourceEnvironment, p.EnvironmentID, env.Name),
+		ProjectID: env.ProjectID,
+		Detail: map[string]any{
+			"kind":       domain.EnvPreview,
+			"preview_id": p.ID,
+			"pr":         p.PRNumber,
+			"reason":     reason,
+		},
+	})
+	return nil
 }
 
 // destroy tears down the cloned container/route and deletes the child
@@ -241,7 +347,7 @@ func (m *Manager) SweepExpired(ctx context.Context) {
 	}
 	for _, p := range expired {
 		m.log.Info("preview expired, destroying", "preview_id", p.ID, "pr", p.PRNumber)
-		if err := m.destroy(ctx, p); err != nil {
+		if err := m.destroyAndRecord(ctx, p, "ttl expired"); err != nil {
 			m.log.Error("preview sweep: destroying", "preview_id", p.ID, "error", err)
 		}
 	}
