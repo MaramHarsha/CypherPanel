@@ -11,9 +11,11 @@ import { ResourceGone } from "@/components/resource-gone";
 import { PageState } from "@/components/page-state";
 import { StatusBadge, StatusDot } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
+import { disk } from "@/lib/bytes";
 import { useCrumbs } from "@/lib/crumbs";
 import { absoluteTime, relativeTime } from "@/lib/time";
 import { toastFailed, toastSuccess } from "@/lib/toast";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_app/servers/$serverId")({ component: ServerDetail });
 
@@ -95,6 +97,13 @@ function ServerDetail() {
                 </Fact>
               </FactCard>
 
+              <DiskCard
+                total={srv.disk_total_bytes}
+                free={srv.disk_free_bytes}
+                low={srv.disk_low}
+                enrolled={srv.enrolled}
+              />
+
               {/* "Workloads placed here" needs a per-server list endpoint the
                   API doesn't expose yet — API-first (CLAUDE.md rule 4), so it
                   arrives with that route, not as a client-side scan. */}
@@ -136,5 +145,74 @@ function ServerDetail() {
         </PageState>
       </PageBody>
     </>
+  );
+}
+
+/**
+ * Disk on the Docker data root — read from the daemon's own `/info`, not
+ * assumed to be /var/lib/docker, because an operator who moved it is exactly
+ * the operator who will not have moved the alert with it (disk-management.md
+ * §4). The card exists so "how much room is left" is answerable without opening
+ * a shell, which is the whole point of the feature.
+ *
+ * Reclaiming is deliberately NOT an action here. There is no "clean up now"
+ * button because there is nothing for it to do that the agent is not already
+ * doing: the plane ships a retain set and the agent converges to it, which
+ * makes GC a reconciler rather than a thing a person triggers. A button would
+ * promise a lever that does not exist.
+ */
+function DiskCard({
+  total,
+  free,
+  low,
+  enrolled,
+}: {
+  total: number | undefined;
+  free: number | undefined;
+  low: boolean | undefined;
+  enrolled: boolean;
+}) {
+  const d = disk(total, free, low);
+  return (
+    <FactCard title="Disk">
+      {d === null ? (
+        // Zero is "not reported" and never "full" — an older agent, or a host
+        // where the figure could not be read. Saying so is the honest state;
+        // an empty bar would read as a disk with nothing on it.
+        <Fact label="Docker data root">
+          {enrolled ? "not reported — the agent predates disk reporting, or could not read it" : "not joined yet"}
+        </Fact>
+      ) : (
+        <>
+          <Fact label="Free">
+            {d.freeLabel} of {d.totalLabel}
+          </Fact>
+          <Fact label="Used">{d.usedPercent}%</Fact>
+          <div className="pt-0.5">
+            <div
+              className="h-[5px] overflow-hidden rounded-full bg-border-subtle"
+              role="progressbar"
+              aria-label="Disk used"
+              aria-valuenow={d.usedPercent}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
+              <div
+                className={cn(
+                  "h-full rounded-full transition-[width] duration-500",
+                  d.low ? "bg-status-degraded" : "bg-primary",
+                )}
+                style={{ width: `${d.usedPercent}%` }}
+              />
+            </div>
+            <p className="mt-2 text-[12px] leading-[1.5] text-text-faint">
+              {d.low
+                ? "Past the panel's threshold. The owners and admins were notified once, when it crossed — CypherPanel keeps only the retained revisions per application and never prunes anything it did not put there."
+                : "CypherPanel converges this host to its retain set — the deployed revision plus the most recent others a rollback could name. It never prunes images it did not put here."}
+            </p>
+          </div>
+        </>
+      )}
+    </FactCard>
   );
 }

@@ -618,6 +618,7 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		TrustedProxies:   cfg.TrustedProxies,
 		Panel:            updateChecker,
 		PanelLogs:        panelLogs,
+		DataDir:          cfg.DataDir,
 		Log:              log,
 	})
 	httpSrv := &http.Server{
