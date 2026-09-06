@@ -14,6 +14,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppInboxRouteImport } from './routes/_app/inbox'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
+import { Route as InviteTokenRouteImport } from './routes/invite.$token'
 import { Route as AppProjectsIndexRouteImport } from './routes/_app/projects/index'
 import { Route as AppServersIndexRouteImport } from './routes/_app/servers/index'
 import { Route as AppServersServerIdRouteImport } from './routes/_app/servers/$serverId'
@@ -79,6 +80,11 @@ const AppSettingsRoute = AppSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
   getParentRoute: () => AppRoute,
+} as any)
+const InviteTokenRoute = InviteTokenRouteImport.update({
+  id: '/invite/$token',
+  path: '/invite/$token',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const AppProjectsIndexRoute = AppProjectsIndexRouteImport.update({
   id: '/projects/',
@@ -319,6 +325,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/inbox': typeof AppInboxRoute
   '/settings': typeof AppSettingsRouteWithChildren
+  '/invite/$token': typeof InviteTokenRoute
   '/servers/$serverId': typeof AppServersServerIdRoute
   '/settings/audit': typeof AppSettingsAuditRoute
   '/settings/backup-targets': typeof AppSettingsBackupTargetsRoute
@@ -364,6 +371,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/inbox': typeof AppInboxRoute
+  '/invite/$token': typeof InviteTokenRoute
   '/': typeof AppIndexRoute
   '/servers/$serverId': typeof AppServersServerIdRoute
   '/settings/audit': typeof AppSettingsAuditRoute
@@ -409,6 +417,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/_app/inbox': typeof AppInboxRoute
   '/_app/settings': typeof AppSettingsRouteWithChildren
+  '/invite/$token': typeof InviteTokenRoute
   '/_app/': typeof AppIndexRoute
   '/_app/servers/$serverId': typeof AppServersServerIdRoute
   '/_app/settings/audit': typeof AppSettingsAuditRoute
@@ -459,6 +468,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/inbox'
     | '/settings'
+    | '/invite/$token'
     | '/servers/$serverId'
     | '/settings/audit'
     | '/settings/backup-targets'
@@ -504,6 +514,7 @@ export interface FileRouteTypes {
   to:
     | '/login'
     | '/inbox'
+    | '/invite/$token'
     | '/'
     | '/servers/$serverId'
     | '/settings/audit'
@@ -548,6 +559,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/_app/inbox'
     | '/_app/settings'
+    | '/invite/$token'
     | '/_app/'
     | '/_app/servers/$serverId'
     | '/_app/settings/audit'
@@ -595,6 +607,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   LoginRoute: typeof LoginRoute
+  InviteTokenRoute: typeof InviteTokenRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -633,6 +646,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/settings'
       preLoaderRoute: typeof AppSettingsRouteImport
       parentRoute: typeof AppRoute
+    }
+    '/invite/$token': {
+      id: '/invite/$token'
+      path: '/invite/$token'
+      fullPath: '/invite/$token'
+      preLoaderRoute: typeof InviteTokenRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/_app/projects/': {
       id: '/_app/projects/'
@@ -1107,6 +1127,7 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   LoginRoute: LoginRoute,
+  InviteTokenRoute: InviteTokenRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

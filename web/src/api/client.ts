@@ -72,6 +72,19 @@ export class NetworkError extends Error {
   }
 }
 
+/**
+ * Routes where a 401 is a REJECTED CREDENTIAL rather than an expired session.
+ * They are the ones that establish a session in the first place — sign-in, and
+ * accepting an invitation for an address that already has an account, which
+ * runs the ordinary sign-in path and so can answer 401 for a wrong password or
+ * a missing second factor. Sending those to /login would replace the panel's
+ * own sentence with "session expired" and navigate away from the form that
+ * needs to show it.
+ */
+function establishesSession(url: string): boolean {
+  return url.includes("/auth/login") || /\/invites\/[^/]+\/accept/.test(url);
+}
+
 function redirectToLogin(): void {
   const here = window.location.pathname + window.location.search;
   const ret = here === "/" || here.startsWith("/login") ? "" : `?return=${encodeURIComponent(here)}`;
@@ -168,7 +181,7 @@ export async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await send(url, init, headers);
   const meta = metaOf(url, init);
 
-  if (res.status === 401 && !url.includes("/auth/login")) {
+  if (res.status === 401 && !establishesSession(url)) {
     clearToken();
     redirectToLogin();
     throw new ApiError(401, "Session expired — sign in again", undefined, meta);
