@@ -46,7 +46,12 @@ function Root() {
 // 404 has to be declared here — the router's `defaultNotFoundComponent` only
 // covers `notFound()` thrown from a loader, and without this an unknown path
 // fell through to the router's built-in bare "Not Found" text.
+//
+// This one renders outside `_app`, which is where <CommandPalette /> is
+// mounted and listening for the event ⌘K Search dispatches. So the page drops
+// that action here rather than drawing a third exit that goes nowhere — the
+// two that remain are links, and both work with no shell around them.
 export const Route = createRootRoute({
   component: Root,
-  notFoundComponent: () => <NotFoundPage />,
+  notFoundComponent: () => <NotFoundPage searchable={false} />,
 });

@@ -110,13 +110,18 @@ export function ConfirmDestructive({
               </span>{" "}
               to confirm:
             </label>
+            {/* No `outline-none` here, unlike ui/input.tsx: that field trades the
+                ring for a border that deepens on focus, and this one is already
+                drawn at full ink strength, so removing the outline would leave
+                the control that arms an irreversible action with no focus
+                indicator at all. It takes the global 14g ring instead. */}
             <input
               id={inputId}
               value={typed}
               onChange={(e) => setTyped(e.target.value)}
               autoComplete="off"
               spellCheck={false}
-              className="mt-2 w-full rounded-md border-[1.5px] border-border-strong bg-surface px-[11px] py-[9px] font-mono text-[13px] text-text outline-none"
+              className="mt-2 w-full rounded-md border-[1.5px] border-border-strong bg-surface px-[11px] py-[9px] font-mono text-[13px] text-text"
             />
           </div>
         )}

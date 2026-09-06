@@ -31,6 +31,8 @@ import { PageState } from "@/components/page-state";
 import { failedStage, PipelineStages } from "@/components/pipeline-stages";
 import { StatusDot } from "@/components/status-badge";
 import { ActionButton, useMutationActionState } from "@/components/ui/action-button";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { Drawer } from "@/components/ui/drawer";
 import { useRowNavigation } from "@/lib/keys";
 import { relativeTime, absoluteTime } from "@/lib/time";
@@ -272,6 +274,7 @@ function DeploymentsTab() {
     serving,
     served,
     deployBusy,
+    ordinal,
   };
 
   return (
@@ -569,6 +572,7 @@ function DeployPanel({
   serving,
   served,
   deployBusy,
+  ordinal,
   className,
 }: {
   depId: string;
@@ -579,6 +583,8 @@ function DeployPanel({
   serving: Deployment | undefined;
   served: Map<string, string>;
   deployBusy: boolean;
+  /** Which deploy this is, for the cancel confirm's title (12e: "Cancel deploy #214?"). */
+  ordinal: number | undefined;
   /** How the panel takes its height: the column stretches it, the sheet fills it. */
   className?: string;
 }) {
@@ -664,7 +670,13 @@ function DeployPanel({
               ? "parked for approval — cancelling withdraws it"
               : "a build already running finishes; its image is reclaimed"}
           </span>
-          <CancelAction depId={d.id} appId={appId} />
+          <CancelAction
+            depId={d.id}
+            appId={appId}
+            ordinal={ordinal}
+            servingRev={serving ? shortRev(serving.revision_id) : undefined}
+            parked={d.status === "awaiting_approval"}
+          />
         </div>
       )}
       {/* The phone list has no right-hand column (14c), so on a phone the way
@@ -702,11 +714,40 @@ function DeployPanel({
 }
 
 /**
- * Cancel. It announces nothing to notifiers or outbound webhooks — a
- * cancellation is a person's decision, not an infrastructure failure — so the
- * only feedback is here, and it says what it actually did.
+ * Cancel, behind the confirm the canvas gives it (12e). The reassurance is the
+ * whole reason this verb gets a modal: "cancel" reads as "make something stop",
+ * and what an operator actually needs told is that nothing in production moves
+ * either way. Saying that in the success toast says it one click too late.
+ *
+ * Two clauses of 12e's body are this plane's rather than the canvas's, because
+ * the canvas's are not true here. ADR-002 gives the plane no way to stop a
+ * build that is already running (deployment-control.md), so it finishes and its
+ * image is reclaimed instead of stopping "now"; and a half-finished rollout is
+ * not rolled back but refused a cancel altogether — `isCancellable` never
+ * offers the button once `rolling_out`. The sentence the modal exists for is
+ * the canvas's, word for word.
+ *
+ * It announces nothing to notifiers or outbound webhooks — a cancellation is a
+ * person's decision, not an infrastructure failure — so the only feedback is
+ * here, and it says what it actually did.
  */
-function CancelAction({ depId, appId }: { depId: string; appId: string }) {
+function CancelAction({
+  depId,
+  appId,
+  ordinal,
+  servingRev,
+  parked,
+}: {
+  depId: string;
+  appId: string;
+  /** Which deploy this is — "#214", when the list that numbers it has arrived. */
+  ordinal: number | undefined;
+  /** The revision that keeps serving through all of this. */
+  servingRev: string | undefined;
+  /** A deploy protection parked before it started: there is no build to speak of. */
+  parked: boolean;
+}) {
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const qc = useQueryClient();
   const cancel = useCancelDeployment({
     mutation: {
@@ -723,17 +764,51 @@ function CancelAction({ depId, appId }: { depId: string; appId: string }) {
   });
   const state = useMutationActionState(cancel);
   return (
-    <ActionButton
-      size="sm"
-      variant="ghost"
-      state={state}
-      busyLabel="Cancelling…"
-      successLabel="Cancelled"
-      failedLabel="Retry"
-      onClick={() => cancel.mutate({ id: depId })}
-      className="text-toast-text hover:bg-white/10 hover:text-toast-text"
-    >
-      <X className="h-3 w-3" aria-hidden /> Cancel
-    </ActionButton>
+    <>
+      <ActionButton
+        size="sm"
+        variant="ghost"
+        state={state}
+        busyLabel="Cancelling…"
+        successLabel="Cancelled"
+        failedLabel="Retry"
+        onClick={() => setConfirmOpen(true)}
+        className="text-toast-text hover:bg-white/10 hover:text-toast-text"
+      >
+        <X className="h-3 w-3" aria-hidden /> Cancel
+      </ActionButton>
+      {/* No ✕ on confirms (canvas 9g/9h) — "Keep going" is the way out. */}
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent size="alert" hideClose title={ordinal !== undefined ? `Cancel deploy #${ordinal}?` : "Cancel this deploy?"}>
+          <p className="mt-0.5 text-[12.5px] leading-[1.55] text-text-mid">
+            {parked ? "It never started, so there is nothing to stop. " : "The deploy stops here. "}
+            <b className="text-text">Nothing changes in production</b>
+            {servingRev ? ` — ${servingRev} keeps serving` : " — nothing has shipped yet"}
+            {parked
+              ? "; the approval it was waiting for disappears with it."
+              : "; a build already running finishes on its node, and its image is reclaimed."}
+          </p>
+
+          <div className="mt-4 flex justify-end gap-2.5">
+            <DialogClose asChild>
+              <Button variant="ghost">Keep going</Button>
+            </DialogClose>
+            <ActionButton
+              variant="primary"
+              state={cancel.isPending ? "busy" : "idle"}
+              busyLabel="Cancelling…"
+              onClick={() => {
+                cancel.mutate({ id: depId });
+                // The panel underneath is where this plays out — the row's own
+                // pill carries the outcome, and the toast says what it did.
+                setConfirmOpen(false);
+              }}
+            >
+              Cancel deploy
+            </ActionButton>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

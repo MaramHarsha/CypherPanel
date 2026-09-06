@@ -101,12 +101,24 @@ The plane stores it on the server and exposes it on the server DTO, so
 
 ## 5. Alerting
 
-Two entries join the **subscribable** event taxonomy, beside `app.crashed`:
+Two entries, written to the **notification inbox** for the panel's owners and
+admins:
 
 ```
 server.disk_low        (error)
 server.disk_recovered  (info)
 ```
+
+They are deliberately **panel-level inbox kinds rather than subscribable
+events**, and the reason is structural rather than an oversight: a Notifier is
+scoped to one project, and a Server belongs to no project, so there is nothing
+to resolve a channel against. Registering them in the subscribable taxonomy
+would declare a delivery path that cannot fire. `core/domain/inbox.go` is where
+that decision lives — `InboxKindServerDiskLow` and `InboxKindServerDiskRecovered`
+are in `panelInboxKinds`, and neither appears among the `EventType` values.
+Channel delivery for them waits on panel-level notifiers, which do not exist
+yet; that gap is named here rather than papered over by attaching a server to
+an arbitrary project.
 
 Fired on the **transition** across `CYPHERD_DISK_WARN_PERCENT` (default 85),
 never on every heartbeat — a heartbeat arrives every few seconds, and a channel

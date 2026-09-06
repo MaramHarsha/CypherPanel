@@ -164,11 +164,24 @@ export function toastWorking(copy: Copy, id?: ToastId) {
     () => (
       <Shell
         {...body(copy)}
+        // 14g: under prefers-reduced-motion the spinner becomes the static ▸,
+        // the same swap ui/action-button.tsx makes. Merely stopping the
+        // animation leaves a frozen partial ring for the whole life of the job,
+        // and a stalled ring reads as a fault — on the one surface the panel
+        // has for work in flight, that is the wrong thing to say.
         mark={
-          <span
-            aria-hidden
-            className="mt-[3px] size-3 flex-none animate-spin rounded-full border-2 border-pane-border border-t-pane-info motion-reduce:animate-none"
-          />
+          <>
+            <span
+              aria-hidden
+              className="mt-[3px] size-3 flex-none animate-spin rounded-full border-2 border-pane-border border-t-pane-info motion-reduce:hidden"
+            />
+            <span
+              aria-hidden
+              className="mt-[3px] hidden flex-none text-[12px] leading-none text-pane-info motion-reduce:inline"
+            >
+              ▸
+            </span>
+          </>
         }
       />
     ),
