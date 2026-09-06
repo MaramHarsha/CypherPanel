@@ -356,7 +356,7 @@ function AppRow({ projectId, app }: { projectId: string; app: Application }) {
         )}
       >
         <span className="flex items-center gap-2.5">
-          <StatusDot status={status} />
+          <StatusDot status={status} decorative />
           <span className="min-w-0 truncate text-base font-semibold">{app.name}</span>
           <span
             className={cn(
@@ -415,7 +415,7 @@ function DbRow({ projectId, db, serverName }: { projectId: string; db: Database;
         )}
       >
         <span className="flex items-center gap-3.5">
-          <StatusDot status={db.status} />
+          <StatusDot status={db.status} decorative />
           <DatabaseIcon className="h-4 w-4 shrink-0 text-text-faint" aria-hidden />
           <span className="min-w-0 truncate text-[15px] font-semibold">{db.name}</span>
           <span className="min-w-0 truncate font-mono text-[11.5px] text-text-faint">{engineLabel(db.engine, db.version)}</span>
@@ -484,7 +484,7 @@ function ComposeRow({
         )}
       >
         <span className="flex items-center gap-3.5">
-          <StatusDot status={stack.status} />
+          <StatusDot status={stack.status} decorative />
           <Boxes className="h-4 w-4 shrink-0 text-text-faint" aria-hidden />
           <span className="min-w-0 truncate text-[15px] font-semibold">{stack.name}</span>
           <span className="min-w-0 truncate font-mono text-[11.5px] text-text-faint">

@@ -245,7 +245,7 @@ function AuditRow({ e, first }: { e: AuditEvent; first: boolean }) {
       <span className="block min-w-0 text-[12px] text-text-mid">
         {refused && reason ? <span className="block text-danger">{reason}</span> : null}
         {extras ? <span className="mono block break-all text-[11px] text-text-faint">{extras}</span> : null}
-        {e.trace_id ? <span className="mono block text-[10.5px] text-text-disabled">{e.trace_id}</span> : null}
+        {e.trace_id ? <span className="mono block text-[10.5px] text-text-faint">{e.trace_id}</span> : null}
       </span>
     </li>
   );

@@ -151,7 +151,7 @@ function ServerRow({ server: s, first }: { server: Server; first: boolean }) {
         )}
       >
         <span className="flex min-w-0 items-center gap-3.5">
-          <StatusDot status={status} />
+          <StatusDot status={status} decorative />
           <span className="min-w-0">
             <span className="block truncate text-[19px] font-semibold tracking-tight">{s.name}</span>
             <span className="mt-0.5 block truncate font-mono text-[11.5px] text-text-faint">
@@ -312,7 +312,7 @@ function JoinServerDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
 const STEP_MARK = {
   done: { glyph: "✓", word: "Done:", className: "text-status-running" },
   active: { glyph: "▸", word: "In progress:", className: "text-status-deploying" },
-  pending: { glyph: "○", word: "Waiting:", className: "text-text-disabled" },
+  pending: { glyph: "○", word: "Waiting:", className: "text-text-faint" },
 } as const;
 
 /** Whole seconds: the join is watched by a 3s poll, so tenths would be theatre. */
@@ -398,7 +398,7 @@ function JoinProgress({ serverId, command, fingerprint }: { serverId: string; co
 
         <ol className="mt-2.5 font-mono text-[11.5px] leading-[2.1] text-text-dim">
           {steps.map((s) => (
-            <li key={s.label} className={cn(s.state === "pending" && "text-text-disabled")}>
+            <li key={s.label} className={cn(s.state === "pending" && "text-text-faint")}>
               <span className={STEP_MARK[s.state].className} aria-hidden>
                 {STEP_MARK[s.state].glyph}
               </span>

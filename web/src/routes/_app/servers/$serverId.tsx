@@ -65,7 +65,7 @@ function ServerDetail() {
             <StatusBadge status={s.status} />
           ) : (
             <span className="flex items-center gap-2">
-              <StatusDot status="unknown" />
+              <StatusDot status="unknown" decorative />
               <span className="font-mono text-[11px] font-medium uppercase tracking-wide text-status-unknown">
                 not joined
               </span>

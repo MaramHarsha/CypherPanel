@@ -62,16 +62,30 @@ this is the only other line there is.
 
 `--text` `#16130e`/`#ece7db` → `--text-dim` `#514b40`/`#b8b0a0` (readable
 secondary body: commit subjects, step lists, rollup counts) → `--text-mid`
-`#6f695e`/`#a49c8c` (the label grey) → `--text-faint` `#8a8375`/`#6f695e`
-(eyebrows, timestamps) → `--text-disabled` `#b9b2a4`/`#5d5850`.
+`#635e54`/`#a49c8c` (the label grey) → `--text-faint` `#736d61`/`#8d8679`
+(eyebrows, timestamps, hints) → `--text-disabled` `#958a75`/`#706a60`.
 
-Two ramp facts that will bite you if you assume symmetry:
+The ramp below `--text-dim` was **lifted** once the A11y spec's 4.5:1 floor was
+measured against it rather than assumed: `--text-faint` was `#8a8375`/`#6f695e`,
+which is 3.55:1 light and 3.44:1 dark, and it carries every `Field` hint, every
+`.eyebrow` and every dialog footer across roughly 200 call sites. The lift is a
+calibration, not a repalette — the greys read the same, they just clear the
+floor now.
+
+Three ramp facts that will bite you if you assume symmetry:
 
 - **`--text-disabled` inverts direction.** On light it sits *below* faint; on
   dark it sits *above* it. The ramp is tuned for legibility per theme, not
   mechanically flipped.
-- **`--disabled-fg` `#a49c8c` holds one value in both themes.** It is the
-  disabled pill's *label*, and the pill's fill inverts around it.
+- **`--text-disabled` is for controls that cannot be pressed, not for quiet
+  text.** It clears the 3:1 disabled floor, not the 4.5:1 text floor, so a
+  pending step label, an unselected tile's version or a trace id belongs on
+  `--text-faint`. The only live exceptions are `ui/button.tsx`'s disabled
+  states and `empty-state.tsx`'s `aria-hidden` glyph.
+- **`--disabled-fg` `#817866` holds one value in both themes.** It is the
+  disabled pill's *label*, and the pill's fill inverts around it. Keeping one
+  value costs the dark pill some headroom (3.63:1, still above the 3:1 disabled
+  floor) and is the price of the invariant.
 
 ### 1.4 One accent, and it is signal orange
 
@@ -92,8 +106,13 @@ the first.
 ### 1.6 The status vocabulary is closed — six words
 
 `--status-running` `#2f7d4f`/`#5cbf7f` · `--status-deploying` `#1b62c4`/`#5f9fe8` ·
-`--status-stopped` `#8a8375`/`#6f695e` · `--status-error` `#d92d0a`/`#ff6a5e` ·
-`--status-degraded` `#d9a521`/`#e0b23f` · `--status-unknown` `#8a8375`/`#6f695e`.
+`--status-stopped` `#736d61`/`#8d8679` · `--status-error` `#d92d0a`/`#ff6a5e` ·
+`--status-degraded` `#d9a521`/`#e0b23f` · `--status-unknown` `#736d61`/`#8d8679`.
+
+`stopped` and `unknown` are `--text-faint` by another name and were lifted with
+it, for the same reason and at the same time: the status *word* is text, and it
+was failing the text floor at 3.55:1 while `error` and `degraded` had already
+been given darkened `-text` twins for precisely that.
 
 Each holds 4.5:1 on `--bg` (the dark values were lifted for exactly this).
 A seventh word is not a token you add — it is a change to ui-principles §5.
@@ -510,7 +529,7 @@ Grouped by when you would reach for them.
 | Component | Signature | Notes |
 |---|---|---|
 | `StatusBadge` | `{ status: string \| undefined \| null; className? }` | Dot + mono uppercase word, `aria-live="polite"`. The default rendering of status anywhere. |
-| `StatusDot` | same | `role="img"` with an `aria-label`. Use when the word is already adjacent. |
+| `StatusDot` | `+ decorative?` | `role="img"` with an `aria-label` by default. Pass `decorative` where the status word is already beside it — otherwise a screen reader reads the state twice. `StatusBadge` sets it on its own dot. |
 | `StatusWord` | `{ status; children?: ReactNode; className? }` | Bare word; `children` override the text so a rollup count can ride along. |
 | `StatusPill` | `{ status; children: ReactNode; className? }` | `children` is **required** here, unlike `StatusWord`. |
 | | `type Status = "running"\|"deploying"\|"stopped"\|"error"\|"degraded"\|"unknown"`; `normalizeStatus(s)` | **Every status string entering the UI goes through `normalizeStatus`.** That is what keeps the vocabulary closed at six words. |
@@ -789,10 +808,9 @@ only past 200 ms; under that, nothing flashes."*
   the PR closes.` / **Set up the PR webhook**. When the app deploys from an
   image the hint tells the truth instead: *"Previews follow pull requests on a
   git source — this app deploys from an image, so none will appear."*
-- **Audit log, filter miss** — `No matching entries` / `Widen the filters — or
-  nothing of that kind has happened yet.` The canvas wrote a richer, filter-aware
-  line (`Nothing from priya@ in the last 24 hours` / `Widen to 7 days`); the
-  built version is generic. Worth closing if you touch that page.
+- **Audit log, filter miss** — filter-aware, as the canvas wrote it: the title
+  echoes the active filter and the two verbs are **Widen to 7 days** and
+  **Clear filters**, rather than a generic "no matching entries".
 
 **The golden path is chained empty states** (ui-principles §11), which is why
 `EmptyState.emphasis` exists: an accent hairline with no fill, reserved for the
@@ -807,7 +825,7 @@ same design can render inside a region, and `QueryError` (§4) routes to them
 from a real API answer.
 
 ```ts
-NotFoundPage({ resource?; backTo = "/projects"; backLabel = "← Projects"; auditLogHref?; embedded? })
+NotFoundPage({ resource?; backTo = "/projects"; backLabel = "← Projects"; auditLogHref = "/settings/audit"; searchable = true; embedded? })
 ForbiddenPage({ action: string; needs: Role; held?; scope?: "panel"|"team" = "team"; owners? = []; onRequestAccess?; embedded? })
 ForbiddenForError({ error: ApiError; embedded? })
 PlaneOfflinePage({ retryEverySeconds? = 5; retrying? = false; lastSyncLabel?; onRetry?; embedded? })
@@ -823,7 +841,15 @@ actionFor(method: string, path: string): string
 *"This page doesn't exist."* / *"Or it did — `notify-svc` may have been deleted
 by a teammate. The audit log remembers."* Actions: **← Projects** · **⌘K
 Search** (which calls `openCommandPalette()` rather than faking a keystroke) ·
-**Audit log**, shown only when `auditLogHref` is passed — a 404 whose way out is
+**Audit log** now defaults to `/settings/audit` rather than being opt-in: the
+prop was held back while the audit page did not exist, and it does now, so every
+404 offers the third way out the reference draws. `searchable` exists for the one
+surface that cannot: ⌘K is requested by a window event that `<CommandPalette />`
+listens for from the `_app` layout, and the root route's unknown-URL 404 renders
+outside it, so that surface turns the action off rather than drawing a pill that
+does nothing.
+
+A 404 whose way out is
 another 404 is the dead end this page exists to avoid.
 
 **403** — *"You can see this, but not touch it."* / *"Deploying to
@@ -875,7 +901,7 @@ code actually guarantees:
   in dark. One base rule (§6.6). Rows flip to an inset offset. The only
   overrides are the ones that draw their own indicator.
 - **Status names** — every dot carries the word, not just the colour.
-  `StatusDot` is `role="img"` with an `aria-label`; `StatusBadge` is
+  `StatusDot` is `role="img"` with an `aria-label` unless `decorative` is set; `StatusBadge` is
   `aria-live="polite"`. Shape encodes severity independently of hue (§6.8).
 - **Live regions** — pipeline stage changes and toasts announce via
   `aria-live="polite"`. **Log tails do not** — they would never stop talking;
@@ -1038,22 +1064,13 @@ canvas is a short list rather than an audit.
 
 **Designed details missing inside screens that do exist:**
 
-- **The cancel-deploy confirmation** (canvas 12e: *"Cancel deploy #214? Build
-  stops now. **Nothing changes in production** — 9be04d1 keeps serving; a
-  half-finished rollout is rolled back."*). Cancel is built and honest, but as a
-  direct `ActionButton` with a success toast (*"Deploy cancelled / Nothing was
-  shipped. What is serving now keeps serving."*) — **no confirm dialog**. Adding
-  one is a small, well-scoped piece of work.
-- **The 404's third action.** `NotFoundPage` accepts `auditLogHref` and renders
-  the **Audit log** pill only when it is passed; **no call site passes it**, so
-  the button never appears in the running product even though the audit route
-  now exists. Closing this is a one-line change per call site.
 - **The 500's trace id.** cypherd does not stamp a trace id into the error
   response body, so the chip carries the request line and status instead (§7.3).
   The canvas's `trace_8fk2-x91b-04aa` is a plane change, not a UI change.
-- **The audit-log filter-miss copy** is generic (*"No matching entries"*) where
-  the canvas writes a filter-aware sentence and a **Widen to 7 days** action
-  (§7.2).
+- **The audit log's "Widen to 7 days" verb** is deliberately absent. The canvas
+  pairs it with **Clear filters** on the filter-miss empty state, and the second
+  one is built — but the list has no date filter to widen, so the first verb has
+  nothing to act on. It arrives with a time range, not before.
 - **The palette's create verb** is `+ New project`, not the canvas's
   `+ Create application "<query>"` — deliberately, and the reason is recorded in
   the component (§7.2).

@@ -19,6 +19,7 @@ import { CopyField } from "@/components/copy-field";
 import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
 import { PageState } from "@/components/page-state";
+import { PanelRoleRefusal } from "@/components/role-refusal";
 import { ActionButton, useMutationActionState } from "@/components/ui/action-button";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
@@ -37,12 +38,7 @@ function UsersTab() {
   const users = useListUsers({ query: { enabled: canManage } });
 
   if (me.isSuccess && !canManage) {
-    return (
-      <EmptyState
-        title="Admins only"
-        hint="Managing panel accounts needs an admin or owner role. Ask an admin if you need access changed."
-      />
-    );
+    return <PanelRoleRefusal action="Managing panel accounts" needs="admin" />;
   }
 
   return (
