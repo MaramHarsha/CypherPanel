@@ -15,7 +15,9 @@
 
 ---
 
-CypherPanel deploys your applications from git to a live, TLS-terminated URL on servers you own. It takes the breadth of **Coolify** (one-click templates, every database) and the polish of **Dokploy** (rollbacks, backups, a clean data model), and puts them on an architecture neither has: a Go control plane that commands **dial-home agents** — no SSH keys stored anywhere, no builds on the panel, desired-state reconciliation throughout.
+CypherPanel runs applications, databases and compose stacks on servers you own — from a git push, a container image, or a one-click template. Builds happen on your servers and never on the panel, every rollout is health-gated so the old version keeps serving until the new one is provably healthy, and anything you give a domain is routed through a managed Traefik proxy (with Let's Encrypt certificates once you have added an ACME account).
+
+It takes the breadth of **Coolify** (one-click templates, every database) and the polish of **Dokploy** (rollbacks, backups, a clean data model), and puts them on an architecture neither has: a Go control plane commanding **dial-home agents** — no SSH keys stored anywhere, no builds on the panel, desired-state reconciliation throughout.
 
 The tagline is a measurement, not a boast:
 
@@ -57,7 +59,7 @@ Two programs and a database. That is the whole install.
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-**A deploy, end to end.** A `git push` fires your app's HMAC-verified webhook (or you `POST /deploy`) → the scheduler records a **Deployment** pointing at an immutable **Revision** and publishes a build work item to that server's durable queue → the agent clones, builds the image locally, and streams the build log → the docker driver starts the new container beside the old one, **health-checks it, atomically flips the Traefik route, and only then drains the old one** — the old revision never stops serving until the new one is provably healthy → the agent reports the *observed* state, and only that observation marks the deployment succeeded. Rollback is the same pipeline aimed at an earlier revision with the build skipped: seconds, not minutes.
+**A deploy, end to end.** A `git push` fires your app's HMAC-verified webhook (or you `POST /deploy`) → the scheduler records a **Deployment** pointing at an immutable **Revision** and publishes a build work item to that server's durable queue → the agent clones, builds the image locally, and streams the build log (an application sourced from an image skips straight past this) → the docker driver starts the new container beside the old one, **health-checks it, atomically flips the Traefik route, and only then drains the old one** — the old revision never stops serving until the new one is provably healthy → the agent reports the *observed* state, and only that observation marks the deployment succeeded. Rollback is the same pipeline aimed at an earlier revision with the build skipped: seconds, not minutes.
 
 Because everything is desired state, failure is boring. Kill the agent mid-deploy and the work item waits in its durable queue; on restart the agent converges with no manual step. Kill the control plane and your apps keep serving; work replays when it comes back. CI asserts both on every push.
 
