@@ -12,7 +12,14 @@ import {
   useListTeams,
   useRemoveTeamMember,
 } from "@/api/gen/teams/teams";
-import type { Team, TeamMember } from "@/api/gen/model";
+import type { AccessRequest, Team, TeamInvite, TeamMember } from "@/api/gen/model";
+import { getListTeamInvitesQueryKey, useListTeamInvites, useRevokeTeamInvite } from "@/api/gen/invites/invites";
+import {
+  getListAccessRequestsQueryKey,
+  useDenyAccessRequest,
+  useGrantAccessRequest,
+  useListAccessRequests,
+} from "@/api/gen/access-requests/access-requests";
 import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
 import { InviteMemberDialog } from "@/components/invite-member-dialog";
@@ -69,7 +76,17 @@ function TeamCard({ team, open, onToggle }: { team: Team; open: boolean; onToggl
         </span>
         <span className="mono text-xs text-text-faint">created {relativeTime(team.created_at)}</span>
       </button>
-      {open && <MembersList team={team} />}
+      {open && (
+        <>
+          <MembersList team={team} />
+          {/* An invitation is a member who has not arrived yet, and an access
+              request is one asking to be more — both belong beside the member
+              list rather than on pages of their own
+              (invitations-and-access-requests.md §6). */}
+          <PendingInvites team={team} />
+          <AccessRequests team={team} />
+        </>
+      )}
     </li>
   );
 }
@@ -118,6 +135,129 @@ function MembersList({ team }: { team: Team }) {
           </ul>
         )}
       </PageState>
+    </div>
+  );
+}
+
+// Invitations that have not been accepted yet. Only pending ones are listed:
+// a spent or expired invitation is history, and history belongs to the audit
+// log rather than to the surface where people are managed.
+function PendingInvites({ team }: { team: Team }) {
+  const teamId = team.id;
+  const qc = useQueryClient();
+  const invites = useListTeamInvites(teamId, { state: "pending" });
+  const revoke = useRevokeTeamInvite({
+    mutation: {
+      onSuccess: () => {
+        void qc.invalidateQueries({ queryKey: getListTeamInvitesQueryKey(teamId) });
+        toastSuccess("Invitation revoked");
+      },
+      onError: (e: unknown, vars) => toastFailed("Could not revoke the invitation", e, { retry: () => revoke.mutate(vars) }),
+    },
+  });
+
+  if (invites.isPending || invites.isError || (invites.data ?? []).length === 0) return null;
+  return (
+    <div className="space-y-2 border-t border-border p-3">
+      <h3 className="eyebrow">Invited</h3>
+      <ul className="divide-y divide-border rounded-md border border-border">
+        {(invites.data ?? []).map((inv: TeamInvite) => (
+          <li key={inv.id} className="flex items-center justify-between gap-2 px-3 py-2">
+            <span className="flex min-w-0 flex-col">
+              <span className="truncate text-[13px] text-text">{inv.email}</span>
+              <span className="mono text-[11px] text-text-faint">
+                {inv.role} · invited by {inv.invited_by_label} · expires {relativeTime(inv.expires_at)}
+              </span>
+            </span>
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label={`Revoke the invitation for ${inv.email}`}
+              disabled={revoke.isPending}
+              onClick={() => revoke.mutate({ id: teamId, inv: inv.id })}
+            >
+              <Trash2 className="h-3.5 w-3.5 text-danger" />
+            </Button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// The mirror image of an invitation (canvas 13ah): a member asking this team's
+// owners for a higher rank, in their own words. The message is the whole
+// substance of the decision, so it is rendered rather than truncated to a
+// count — "reports@client-x.com wants developer" is not something anyone can
+// act on.
+function AccessRequests({ team }: { team: Team }) {
+  const teamId = team.id;
+  const qc = useQueryClient();
+  const requests = useListAccessRequests(teamId);
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: getListAccessRequestsQueryKey(teamId) });
+  };
+  const grant = useGrantAccessRequest({
+    mutation: {
+      onSuccess: () => {
+        toastSuccess("Access granted");
+        refresh();
+        void qc.invalidateQueries({ queryKey: getListTeamMembersQueryKey(teamId) });
+      },
+      onError: (e: unknown) => toastFailed("Could not grant access", e),
+    },
+  });
+  const deny = useDenyAccessRequest({
+    mutation: {
+      onSuccess: () => {
+        toastSuccess("Request denied");
+        refresh();
+      },
+      onError: (e: unknown) => toastFailed("Could not deny the request", e),
+    },
+  });
+
+  const pending = (requests.data ?? []).filter((r: AccessRequest) => r.state === "pending");
+  if (requests.isPending || requests.isError || pending.length === 0) return null;
+  return (
+    <div className="space-y-2 border-t border-border p-3">
+      <h3 className="eyebrow">Access requests</h3>
+      <ul className="space-y-2">
+        {pending.map((r: AccessRequest) => (
+          <li key={r.id} className="rounded-md border border-border p-3">
+            <p className="text-[13px] text-text">
+              <span className="mono">{r.user_email}</span> requests{" "}
+              <span className="mono">
+                {r.current_role || "none"} → {r.requested_role}
+              </span>
+            </p>
+            {r.message && <p className="mt-1.5 text-[12.5px] leading-[1.5] text-text-mid">“{r.message}”</p>}
+            <div className="mt-2.5 flex items-center gap-2.5">
+              <ActionButton
+                variant="primary"
+                size="sm"
+                state={grant.isPending ? "busy" : "idle"}
+                busyLabel="Granting…"
+                onClick={() => grant.mutate({ id: r.id })}
+              >
+                Grant {r.requested_role}
+              </ActionButton>
+              <ActionButton
+                variant="ghost"
+                size="sm"
+                state={deny.isPending ? "busy" : "idle"}
+                busyLabel="Denying…"
+                onClick={() => deny.mutate({ id: r.id, data: { reason: "" } })}
+              >
+                Deny
+              </ActionButton>
+              <span className="mono ml-auto text-[11px] text-text-faint">
+                either way, audit-logged · requester is notified
+              </span>
+            </div>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
