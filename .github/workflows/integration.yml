@@ -202,6 +202,30 @@ jobs:
           echo "joined in $((T1-T0))s"
           [ $((T1-T0)) -lt 60 ] || { echo "join took $((T1-T0))s, gate is 60s"; exit 1; }
 
+      - name: "Assert: the installer defaults to the project's release asset"
+        run: |
+          # The pasted join command has to work on a host that has never seen a
+          # cypher-agent binary. CI cannot install from a real release (there
+          # may not be one for this commit), but it can prove the installer now
+          # knows where to look instead of failing with "no agent binary found"
+          # — the gap this closes. Run in a throwaway container so nothing here
+          # can affect the joined host above.
+          docker run -d --name urltest --network host ubuntu:24.04 sleep 120
+          docker exec urltest sh -c "apt-get update -q && apt-get install -y -q curl" >/dev/null
+          OUT=$(docker exec urltest sh -c "curl -fsSL $API/install/agent.sh | CYPHER_SKIP_DOCKER=1 CYPHER_PLANE=localhost:8443 CYPHER_TOKEN=jt_x.secret sh" 2>&1 || true)
+          echo "$OUT"
+          ARCH=$(docker exec urltest sh -c 'uname -m' | tr -d '\r')
+          case "$ARCH" in x86_64|amd64) ARCH=amd64 ;; aarch64|arm64) ARCH=arm64 ;; esac
+          echo "$OUT" | grep -q "https://github.com/MaramHarsha/CypherPanel/releases/latest/download/cypher-agent-linux-$ARCH" || {
+            echo "the installer did not fall back to the project's latest release asset"
+            exit 1
+          }
+          if echo "$OUT" | grep -q "no agent binary found"; then
+            echo "the installer still dead-ends instead of downloading"
+            exit 1
+          fi
+          docker rm -f urltest >/dev/null
+
       - name: "Assert: tampered CA is refused"
         run: |
           TOKEN=$(curl -sf -X POST "$API/api/v1/auth/login" -H 'Content-Type: application/json' \
