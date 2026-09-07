@@ -21,7 +21,7 @@ is a field whose own screen does not mention it once.
     python3 scripts/api-ui-parity.py            # report
     python3 scripts/api-ui-parity.py --check    # non-zero exit if anything is missing
 """
-import json, subprocess, sys, pathlib, re, collections
+import json, sys, pathlib, re, collections
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WEB = ROOT / "web/src"
@@ -63,11 +63,49 @@ UNREACHABLE_BY_DESIGN = {
     "addTeamMember": "invitations replaced direct member-adding (invite-member-dialog.tsx)",
 }
 
+def die(message):
+    """Exit with a sentence, never a traceback.
+
+    Every failure below used to surface as an opaque
+    `JSONDecodeError: Expecting value: line 1 column 1` from a subprocess whose
+    exit code nobody looked at — which is the same class of bug this script
+    exists to find.
+    """
+    sys.exit("api-ui-parity: " + message)
+
 def load_spec():
-    out = subprocess.run(
-        ["python3", "-c", "import sys,yaml,json;json.dump(yaml.safe_load(open(sys.argv[1])),sys.stdout)",
-         str(ROOT / "core/api/rest/openapi.yaml")], capture_output=True, text=True)
-    return json.loads(out.stdout)
+    """The OpenAPI document, or a refusal that says what went wrong."""
+    spec_path = ROOT / "core/api/rest/openapi.yaml"
+    if not spec_path.is_file():
+        die(f"no OpenAPI spec at {spec_path} — run this from a CypherPanel checkout")
+    try:
+        import yaml
+    except ImportError:
+        die("PyYAML is not installed (pip install pyyaml). This script parses the "
+            "OpenAPI spec, and there is no useful answer without it.")
+    try:
+        spec = yaml.safe_load(spec_path.read_text())
+    except yaml.YAMLError as exc:
+        die(f"{spec_path} is not valid YAML: {exc}")
+    # An empty or scalar document parses cleanly and is not a spec. Without this
+    # the failure is an AttributeError on NoneType four frames later.
+    if not isinstance(spec, dict):
+        die(f"{spec_path} is not an OpenAPI document (parsed as {type(spec).__name__})")
+    return spec
+
+def check_tree():
+    """Refuse to audit a tree that cannot be audited.
+
+    This is the failure mode worth the most care, because it does not raise: a
+    missing `web/src` makes `rglob` yield nothing, and the script then prints a
+    confident, fully formatted report saying every mutating endpoint in the API
+    is unreachable from the UI. A wrong answer that looks right is worse than a
+    traceback, and this script's whole job is saying so about other people's
+    code.
+    """
+    if not WEB.is_dir():
+        die(f"no web sources at {WEB} — this audit compares the API against the "
+            "panel's screens, and there are none here to compare against")
 
 def fields_of(schemas, node, depth=0):
     if depth > 4 or not isinstance(node, dict):
@@ -114,9 +152,13 @@ def reachable_text(path, files):
     return text
 
 def main():
+    check_tree()
     spec = load_spec()
     schemas = spec.get("components", {}).get("schemas", {})
     files = {p: p.read_text(errors="ignore") for p in hand_written()}
+    if not files:
+        die(f"{WEB} contains no TypeScript sources — every endpoint would report "
+            "as unreachable, which would be a false report rather than a finding")
 
     findings, checked, unreachable = [], 0, []
     for path, ops in (spec.get("paths") or {}).items():

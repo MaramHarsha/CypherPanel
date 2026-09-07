@@ -66,9 +66,54 @@ nobody chose a password for, and invitations replaced it
 (`invitations-and-access-requests.md` §1). The API keeps the route for scripts
 that manage users out of band.
 
-## What it does not check
+## What it does not check, and the gap that proves it
 
 It does not check that a control *works*, that it is reachable by a viewer's
 role, or that the field means what the screen says it means. It answers one
 question — is this field mentioned on the screen that calls its endpoint — and
 answers it every time, which is more than a reviewer's memory does.
+
+**The limitation that matters most is the one it cannot see at all: this script
+audits the OpenAPI spec against the UI, so a capability missing from the spec is
+invisible to it.** That is not hypothetical. On 2026-09-07 an external review
+found `github_installation_id` — the field that makes the GitHub App usable —
+present in the migration, the sqlc queries, the store, the domain, the scheduler
+and the agent, and absent from `openapi.yaml`, from the three handler DTOs and
+from every screen. This script reported **no gaps** throughout, correctly and
+uselessly: there was no request field to check, because the contract never had
+one.
+
+So a green run means *"every field the API declares is mentioned on the screen
+that sends it"* and nothing more. It does not mean the API declares everything
+the database can store, and it never will — the check that would catch that is a
+different one, comparing the schema against the contract, and it does not exist
+yet.
+
+## Failure modes it refuses to guess through
+
+The same review found the script dying with an opaque
+`JSONDecodeError: Expecting value: line 1 column 1` whenever anything went
+wrong, because it shelled out to a subprocess and never looked at the exit code.
+It parses the YAML in-process now, and every failure is a sentence:
+
+| Situation | What happens |
+|---|---|
+| PyYAML not installed | says so, and names `pip install pyyaml` |
+| No spec at that path | says so, with the path |
+| Spec is malformed YAML | prints the parser's own complaint |
+| Spec parses to something that is not a mapping | says what it parsed as |
+| **No `web/src` in the tree** | **refuses to run** |
+
+The last row is the one worth the care. It does not raise: `rglob` over a
+missing directory yields nothing, so the script would print a confident, fully
+formatted report claiming every mutating endpoint in the API is unreachable from
+the UI, and exit non-zero under `--check`. **A wrong answer that looks right is
+worse than a traceback**, particularly from a script whose entire job is saying
+that about other people's code.
+
+## Prerequisites
+
+`python3` and **PyYAML**. The repository's other tooling needs neither, so
+`make parity` is the one target that can fail on a machine where everything else
+builds — which is why the missing-dependency message names the install command
+rather than leaving a stack trace.
