@@ -25,6 +25,7 @@ const TABS: readonly Tab[] = [
   { to: "tls", label: "TLS" },
   { to: "metrics", label: "Metrics" },
   { to: "alerts", label: "Alerts" },
+  { to: "updates", label: "Updates" },
   { to: "usage", label: "Usage" },
   { to: "api", label: "API" },
   { to: "diagnostics", label: "Diagnostics" },

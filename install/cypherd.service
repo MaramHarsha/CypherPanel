@@ -29,6 +29,21 @@ RestartSec=5
 StateDirectory=cypherd
 Environment=CYPHERD_DATA_DIR=/var/lib/cypherd
 
+# The upgrade handoff (panel-updates.md §3). The plane's entire power over its
+# own version is to write a request file HERE; the swap is performed by
+# cypherd-upgrade.service, which runs as root. Joining the group rather than
+# naming a UID is what makes this work regardless of which UID DynamicUser
+# picked this boot.
+#
+# Two lines and one directory is the whole increase in install surface, and it
+# is a real cost against "adding a tool, not adopting a platform" — accepted
+# because the alternative is the operator doing the same steps by hand, less
+# carefully, at the moment they are least calm. Omit both and the panel simply
+# reports `manual` mode.
+SupplementaryGroups=cypherpanel-upgrade
+ReadWritePaths=/var/lib/cypherpanel/upgrade
+Environment=CYPHERD_UPGRADE_DIR=/var/lib/cypherpanel/upgrade
+
 # Hardening: cypherd needs no special privileges (it is a network service with
 # a data dir), so lock it down.
 DynamicUser=true

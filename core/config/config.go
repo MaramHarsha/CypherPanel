@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -104,6 +105,21 @@ type Config struct {
 	MetricsRetention time.Duration
 	UsageRetention   time.Duration
 
+	// Guided panel upgrades (panel-updates.md §3). UpgradeDir is the handoff
+	// directory shared with the root helper; empty means this install has no
+	// helper and the panel reports `manual` mode rather than drawing a button
+	// that would not work.
+	UpgradeDir        string
+	UpgradeBinaryPath string
+	UpgradeUnit       string
+	UpgradeReadyURL   string
+	UpgradeProbation  time.Duration
+	// ReleaseBaseURL is where release assets live, with a %s for the tag.
+	ReleaseBaseURL string
+	// SnapshotRetention is the default a snapshot is created with; the operator
+	// picks per upgrade and 0 keeps forever.
+	SnapshotRetention time.Duration
+
 	// RevisionRetain is how many of an application's images the plane wants
 	// kept on a node, newest first and including the deployed one
 	// (disk-management.md §7). It is the whole garbage-collection policy: the
@@ -149,6 +165,13 @@ func Load() (Config, error) {
 		StatusRetention:   envDuration("CYPHERD_STATUS_RETENTION", 90*24*time.Hour),
 		MetricsRetention:  envDuration("CYPHERD_METRICS_RETENTION", 14*24*time.Hour),
 		UsageRetention:    envDuration("CYPHERD_USAGE_RETENTION", 400*24*time.Hour),
+		UpgradeDir:        envOr("CYPHERD_UPGRADE_DIR", ""),
+		UpgradeBinaryPath: envOr("CYPHERD_UPGRADE_BINARY", "/usr/local/bin/cypherd"),
+		UpgradeUnit:       envOr("CYPHERD_UPGRADE_UNIT", "cypherd.service"),
+		UpgradeReadyURL:   envOr("CYPHERD_UPGRADE_READY_URL", "http://127.0.0.1:8080/readyz"),
+		UpgradeProbation:  envDuration("CYPHERD_UPGRADE_PROBATION", 120*time.Second),
+		ReleaseBaseURL:    envOr("CYPHERD_RELEASE_BASE_URL", "https://github.com/MaramHarsha/CypherPanel/releases/download/%s"),
+		SnapshotRetention: envDuration("CYPHERD_SNAPSHOT_RETENTION", 7*24*time.Hour),
 		// Minimum 1 enforced below: the deployed revision is never reclaimable,
 		// so a zero here would be a request to delete what is running.
 		RevisionRetain:  envInt("CYPHERD_REVISION_RETAIN", 3),
@@ -333,4 +356,10 @@ func envDuration(key string, def time.Duration) time.Duration {
 		return def
 	}
 	return d
+}
+
+// SnapshotDir is where fallback snapshots live: under the data directory, so
+// one path is what an operator backs up and one path is what fills a disk.
+func (c Config) SnapshotDir() string {
+	return filepath.Join(c.DataDir, "snapshots")
 }

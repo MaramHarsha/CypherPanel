@@ -100,12 +100,18 @@ const (
 	ActionMetricsSettingsChanged = "panel.metrics_settings_changed"
 	// Threshold alert rules. Who is told what, and when, is configuration
 	// worth a record: a rule quietly deleted is an alarm quietly disabled.
-	ActionAlertRuleCreated   = "alert_rule.created"
-	ActionAlertRuleChanged   = "alert_rule.changed"
-	ActionAlertRuleDeleted   = "alert_rule.deleted"
-	ActionEnvironmentCreated = "environment.created"
-	ActionEnvironmentRenamed = "environment.renamed"
-	ActionEnvironmentDeleted = "environment.deleted"
+	ActionAlertRuleCreated = "alert_rule.created"
+	ActionAlertRuleChanged = "alert_rule.changed"
+	ActionAlertRuleDeleted = "alert_rule.deleted"
+	// Guided panel upgrades. What code the control plane runs, and who decided
+	// it should — the single most consequential change in the install.
+	ActionPanelUpgradeStarted   = "panel.upgrade_started"
+	ActionPanelUpgradeCancelled = "panel.upgrade_cancelled"
+	ActionPanelSnapshotDeleted  = "panel.snapshot_deleted"
+	ActionPanelSnapshotRestored = "panel.snapshot_restored"
+	ActionEnvironmentCreated    = "environment.created"
+	ActionEnvironmentRenamed    = "environment.renamed"
+	ActionEnvironmentDeleted    = "environment.deleted"
 	// A template install creates several applications and databases in one
 	// action, so it is recorded ONCE against the environment that received
 	// them — six silent creates is not an answer to "where did these come
@@ -304,6 +310,11 @@ var actions = map[string]bool{
 	ActionAlertRuleCreated: true,
 	ActionAlertRuleChanged: true,
 	ActionAlertRuleDeleted: true,
+
+	ActionPanelUpgradeStarted:   true,
+	ActionPanelUpgradeCancelled: true,
+	ActionPanelSnapshotDeleted:  true,
+	ActionPanelSnapshotRestored: true,
 
 	ActionRegistryCreated: true, ActionRegistryUpdated: true,
 	ActionRegistryDeleted: true,

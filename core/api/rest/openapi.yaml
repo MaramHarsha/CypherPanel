@@ -1653,6 +1653,159 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/v1/panel/updates:
+    get:
+      operationId: getPanelUpdates
+      tags: [panel]
+      summary: What is running, what is available, and any upgrade in flight (member+)
+      description: >-
+        `mode` is `assisted` on a systemd install and `manual` in a container,
+        where the panel CANNOT upgrade itself and says so rather than drawing a
+        button that would not work.
+      responses:
+        "200": { description: The state., content: { application/json: { schema: { $ref: "#/components/schemas/PanelUpdates" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/panel/updates/preflight:
+    get:
+      operationId: preflightPanelUpdate
+      tags: [panel]
+      summary: The five checks, before anything changes (panel OWNER, session only)
+      description: >-
+        Changes nothing, which is why it is a GET. Signature, disk headroom,
+        agent compatibility, snapshot readiness and quiescence.
+
+
+        A signature failure is a REFUSAL, never a warning: an unverifiable
+        artifact is the one thing this feature exists to not install. A disk
+        refusal names BOTH numbers, because a disk that fills during an upgrade
+        is how you end up with a panel that is neither the old version nor the
+        new one. Agents below the release's floor are NAMED, and proceeding
+        anyway needs the target version typed back.
+      parameters:
+        - { name: version, in: query, required: true, schema: { type: string } }
+      responses:
+        "200": { description: The checks., content: { application/json: { schema: { $ref: "#/components/schemas/UpdatePreflight" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/panel/updates/upgrade:
+    post:
+      operationId: startPanelUpgrade
+      tags: [panel]
+      summary: Run the guided upgrade (panel OWNER, session only)
+      description: >-
+        Owner, and session-only. This is the control that decides what code the
+        control plane runs, and an API token may live in a CI runner.
+
+
+        The plane does NOT perform the swap: it writes a request file that a
+        separate root one-shot consumes. That helper has no dependency on the
+        session that asked, so closing the tab, losing the network or signing
+        out changes nothing.
+
+
+        The panel goes read-only for about a minute and is unreachable for the
+        few seconds of restart inside that. YOUR APPLICATIONS KEEP SERVING —
+        they do not depend on the control plane.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/StartUpgradeRequest" } } }
+      responses:
+        "202": { description: Started., content: { application/json: { schema: { $ref: "#/components/schemas/PanelUpgrade" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: An upgrade is already running., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /api/v1/panel/updates/cancel:
+    post:
+      operationId: cancelPanelUpgrade
+      tags: [panel]
+      summary: Cancel before the swap (panel OWNER, session only)
+      description: >-
+        Only before the swap. After it the helper owns the host and the panel
+        has nothing to cancel with — it answers 409 and says the upgrade will
+        roll itself back if the new version does not come up.
+      responses:
+        "204": { description: Cancelled. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: The swap has already started., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /api/v1/panel/updates/history:
+    get:
+      operationId: listPanelUpgrades
+      tags: [panel]
+      summary: Version history and the snapshots it kept (panel OWNER, session only)
+      description: >-
+        Records what RAN, not only what this panel performed: a boot whose
+        version differs from the last recorded one writes a row with an
+        `external` actor, which is what a container install's upgrades look
+        like from in here.
+      responses:
+        "200": { description: The history., content: { application/json: { schema: { $ref: "#/components/schemas/PanelUpgradeHistory" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/panel/snapshots/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Snapshot ID. }
+    patch:
+      operationId: setSnapshotRetention
+      tags: [panel]
+      summary: Extend, pin or expire a snapshot (panel OWNER, session only)
+      description: >-
+        Retention is the one decision this feature leaves to the operator, and
+        it must not be made for them: the snapshot is the only thing standing
+        between a bad release and a lost panel. A PINNED snapshot is never
+        swept whatever its expiry says.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SnapshotRetentionRequest" } } }
+      responses:
+        "200": { description: Saved., content: { application/json: { schema: { $ref: "#/components/schemas/PanelSnapshot" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: deletePanelSnapshot
+      tags: [panel]
+      summary: Delete a snapshot and its file (panel OWNER, session only)
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/panel/snapshots/{id}/restore:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Snapshot ID. }
+    post:
+      operationId: restorePanelSnapshot
+      tags: [panel]
+      summary: Put the panel's database back (panel OWNER, session only)
+      description: >-
+        THE LAST RESORT. It rewinds the panel's own database to the moment the
+        snapshot was taken, and everything written since is gone. The automatic
+        rollback does not reach for this — it renames the previous binary back
+        first, and only restores when the old build cannot start on the new
+        schema.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [confirm], properties: { confirm: { type: string, description: "Must be the word restore." } } } } }
+      responses:
+        "202": { description: Started. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: An upgrade is already running., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
   /api/v1/alert-rules:
     get:
       operationId: listAlertRules
@@ -7974,6 +8127,99 @@ components:
       properties:
         backup_record_id: { type: string }
         confirm: { type: boolean, description: Must be true — restore overwrites the database. }
+
+    PanelUpdates:
+      type: object
+      required: [current, mode]
+      properties:
+        current: { type: string }
+        latest: { type: string }
+        kind: { type: string, enum: [patch, minor, major] }
+        notes_url: { type: string }
+        mode:
+          type: string
+          enum: [assisted, manual]
+          description: "`manual` is a container install, which cannot upgrade itself and hands over the two commands instead."
+        active:
+          oneOf:
+            - $ref: "#/components/schemas/PanelUpgrade"
+            - type: "null"
+    PanelUpgrade:
+      type: object
+      required: [id, from_version, to_version, phase, detail, actor, rollback, started_at]
+      properties:
+        id: { type: string, description: pup_… prefixed ID. }
+        from_version: { type: string }
+        to_version: { type: string }
+        phase:
+          type: string
+          enum: [preflight, waiting_for_quiesce, snapshotting, downloading, verifying, migrating, restarting, health_gate, succeeded, rolled_back, failed]
+        detail: { type: string }
+        actor: { type: string, description: "Who asked. `external` marks a version change the panel observed rather than performed." }
+        rollback: { type: boolean }
+        snapshot_id: { type: string }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
+    PanelSnapshot:
+      type: object
+      required: [id, version, size_bytes, created_at, pinned]
+      properties:
+        id: { type: string, description: psn_… prefixed ID. }
+        version: { type: string }
+        size_bytes: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: [string, "null"], format: date-time, description: Null means keep forever. }
+        pinned: { type: boolean, description: A pinned snapshot is never swept, whatever its expiry says. }
+    PanelUpgradeHistory:
+      type: object
+      required: [upgrades, snapshots]
+      properties:
+        upgrades:
+          type: array
+          items: { $ref: "#/components/schemas/PanelUpgrade" }
+        snapshots:
+          type: array
+          items: { $ref: "#/components/schemas/PanelSnapshot" }
+    StartUpgradeRequest:
+      type: object
+      required: [version]
+      properties:
+        version: { type: string }
+        snapshot_retention_days: { type: integer, description: "0 keeps the fallback forever. You decide when, if ever, it is pruned." }
+        acknowledge_incompatible_agents:
+          type: string
+          description: >-
+            The typed confirm, required only when the pre-flight found agents
+            below the release's floor. It must equal the target version.
+    SnapshotRetentionRequest:
+      type: object
+      properties:
+        retention_days: { type: integer, description: "0 keeps it forever." }
+        pinned: { type: boolean }
+    UpdatePreflight:
+      type: object
+      required: [version, mode, checks, can_proceed, needs_typed_confirm, incompatible_agents, running_work, checked_at]
+      properties:
+        version: { type: string }
+        mode: { type: string, enum: [assisted, manual] }
+        can_proceed: { type: boolean, description: False when any check refused. A warning never blocks. }
+        needs_typed_confirm: { type: boolean }
+        incompatible_agents:
+          type: array
+          items: { type: string }
+        running_work: { type: integer }
+        checked_at: { type: string, format: date-time }
+        checks:
+          type: array
+          items: { $ref: "#/components/schemas/UpdateCheck" }
+    UpdateCheck:
+      type: object
+      required: [key, status, text]
+      properties:
+        key: { type: string, enum: [signature, disk, agents, snapshot, quiescence, mode] }
+        status: { type: string, enum: [ok, warn, refused] }
+        text: { type: string }
+        remedy: { type: string, description: "What to do about it. A refusal with no remedy is a dead end." }
 
     AlertRule:
       type: object

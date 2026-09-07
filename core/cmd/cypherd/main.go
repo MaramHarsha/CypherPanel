@@ -71,6 +71,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/teams"
 	"github.com/MaramHarsha/cypherpanel/core/templates"
 	"github.com/MaramHarsha/cypherpanel/core/updates"
+	"github.com/MaramHarsha/cypherpanel/core/upgrade"
 	"github.com/MaramHarsha/cypherpanel/core/usage"
 	"github.com/MaramHarsha/cypherpanel/core/webhooks"
 	"github.com/MaramHarsha/cypherpanel/pkg/pki"
@@ -117,6 +118,29 @@ func main() {
 	))
 	if len(os.Args) > 1 && os.Args[1] == "version" {
 		printVersion()
+		return
+	}
+	// `cypherd upgrade` is the ROOT, one-shot helper started by
+	// cypherd-upgrade.path when the plane leaves a request file
+	// (panel-updates.md §3). Same binary, different entry point, so there stays
+	// one artifact to sign and ship — and the plane's own process never gains
+	// the power to write its own binary.
+	if len(os.Args) > 1 && os.Args[1] == "upgrade" {
+		if err := runUpgradeHelper(log); err != nil {
+			log.Error("upgrade helper failed", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
+	// `cypherd migrate` applies migrations and exits. The helper runs it with
+	// the NEW binary before starting the service, so a migration failure is
+	// attributable ("migration 42 failed") rather than "the panel did not come
+	// back". Boot-time migration then finds nothing to do.
+	if len(os.Args) > 1 && os.Args[1] == "migrate" {
+		if err := runMigrate(log); err != nil {
+			log.Error("migrate failed", "error", err)
+			os.Exit(1)
+		}
 		return
 	}
 	if err := run(log, ring); err != nil {
@@ -638,6 +662,33 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 	// (threshold-alerts.md). It delivers through the notifier each RULE names,
 	// and writes the two states that deliver nothing — no_data and flapping —
 	// to the inbox instead.
+	// Guided panel upgrades (panel-updates.md). The plane never performs a
+	// swap: this service writes a request file and reads what the root helper
+	// wrote back.
+	upgradeSvc := upgrade.NewService(upgrade.Options{
+		Store: st, Dir: upgrade.Dir(cfg.UpgradeDir), SnapshotDir: cfg.SnapshotDir(),
+		BaseURL: cfg.ReleaseBaseURL, Fetcher: updateChecker,
+		CurrentVersion: version, MinFreeBytes: int64(cfg.MinDiskFree),
+		Log: log.With("component", "upgrade"),
+		// The same stat the boot-time guard uses, so "enough room" means one
+		// thing in both places.
+		FreeBytes: func(path string) (int64, error) {
+			n, err := guard.FreeBytes(path)
+			return int64(n), err
+		},
+	})
+	// The restart an upgrade causes happens in the MIDDLE of it, so the plane
+	// that started one is not the plane that records its outcome. Boot mirrors
+	// the helper's file before anything else reads it, and a version that
+	// changed without us is recorded as `external`.
+	upgradeSvc.Sync(ctx)
+	upgradeSvc.RecordExternalUpgrade(ctx)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		upgradeSvc.RunRetention(ctx, time.Hour)
+	}()
+
 	notifySvc.WatchAlertRules(st)
 	alertEval := alerts.New(st,
 		alerts.NewDelivery(st, notifyMgr),
@@ -699,6 +750,8 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		StatusPages:      st,
 		Metrics:          st,
 		Alerts:           st,
+		Upgrades:         upgradeSvc,
+		Updates:          updateChecker,
 		AlertBacktest:    alertEval,
 		StatusServer:     statusSrv,
 		StatusRoutes:     statusSrv,

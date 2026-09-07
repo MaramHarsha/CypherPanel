@@ -34,6 +34,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/sharedvars"
 	"github.com/MaramHarsha/cypherpanel/core/statuspage"
 	"github.com/MaramHarsha/cypherpanel/core/templates"
+	"github.com/MaramHarsha/cypherpanel/core/updates"
 	"github.com/MaramHarsha/cypherpanel/core/webhooks"
 )
 
@@ -330,6 +331,13 @@ type StatusPageStore interface {
 	GetEnvironment(ctx context.Context, id string) (domain.Environment, error)
 }
 
+// UpdateChecker reports the running build and the newest release seen
+// (consumer-defined; *updates.Checker satisfies it).
+type UpdateChecker interface {
+	Current() updates.Info
+	Latest() *updates.Release
+}
+
 // StatusPageRoutes registers the public, unauthenticated status routes.
 type StatusPageRoutes interface {
 	Routes(mux *http.ServeMux)
@@ -395,6 +403,11 @@ type Deps struct {
 	// "what would this rule have done" (threshold-alerts.md §6).
 	Alerts        AlertStore
 	AlertBacktest AlertBacktester
+	// Upgrades is the guided panel upgrade (panel-updates.md). nil is a panel
+	// with no helper, and every route here answers 501 rather than pretending.
+	Upgrades UpgradeService
+	// Updates is the release-feed checker, for what version is available.
+	Updates UpdateChecker
 	// PanelURL is the panel's own advertised base URL, used to tell the
 	// operator where their status page is reachable without any DNS.
 	PanelURL string
@@ -597,6 +610,18 @@ func (a *API) Handler() http.Handler {
 	// operator who may deploy the app may decide who reaches it.
 	// Volume backups (volume-backups.md §3): one schedule per application,
 	// covering every volume it marks as backed up.
+	// Guided panel upgrades (panel-updates.md §10). Owner, and session-only, on
+	// everything that acts: this is the control that decides what code the
+	// control plane runs, and an API token may live in a CI runner.
+	mux.HandleFunc("GET /api/v1/panel/updates", a.authed(a.handleGetUpdates))
+	mux.HandleFunc("GET /api/v1/panel/updates/preflight", a.sessionOnly(a.handlePreflight))
+	mux.HandleFunc("POST /api/v1/panel/updates/upgrade", a.sessionOnly(a.handleStartUpgrade))
+	mux.HandleFunc("POST /api/v1/panel/updates/cancel", a.sessionOnly(a.handleCancelUpgrade))
+	mux.HandleFunc("GET /api/v1/panel/updates/history", a.sessionOnly(a.handleUpgradeHistory))
+	mux.HandleFunc("PATCH /api/v1/panel/snapshots/{id}", a.sessionOnly(a.handleSetSnapshotRetention))
+	mux.HandleFunc("DELETE /api/v1/panel/snapshots/{id}", a.sessionOnly(a.handleDeleteSnapshot))
+	mux.HandleFunc("POST /api/v1/panel/snapshots/{id}/restore", a.sessionOnly(a.handleRestoreSnapshot))
+
 	// Threshold alerts (threshold-alerts.md §7).
 	mux.HandleFunc("GET /api/v1/alert-rules", a.authed(a.handleListAlertRules))
 	mux.HandleFunc("POST /api/v1/alert-rules", a.authed(a.handleCreateAlertRule))
@@ -944,10 +969,41 @@ func (a *API) authed(next http.HandlerFunc) http.HandlerFunc {
 			writeError(w, http.StatusForbidden, "this token is scoped to one project and cannot reach panel-wide routes")
 			return
 		}
+		// The upgrade read-only lock. Reads and SSE continue; anything that
+		// mutates answers 503 with a Retry-After, so a deploy submitted while
+		// the plane is being replaced is refused clearly rather than half
+		// applied across a restart (panel-updates.md §6).
+		if a.upgradeLocked(r) {
+			w.Header().Set("Retry-After", "60")
+			writeError(w, http.StatusServiceUnavailable,
+				"The panel is upgrading and is read-only for about a minute. Your applications keep serving — they do not depend on the control plane.")
+			return
+		}
 		ctx := context.WithValue(r.Context(), principalKey, principal)
 		ctx = context.WithValue(ctx, rawTokenKey, token)
 		next(w, r.WithContext(ctx))
 	}
+}
+
+// upgradeLocked reports whether this request must be refused because a guided
+// upgrade holds the lock.
+//
+// Only mutating methods are refused, and the upgrade's OWN routes are always
+// allowed: an operator watching the progress screen must be able to read status
+// and to cancel, and locking them out of the thing they are watching would be
+// the worst possible moment to do it.
+func (a *API) upgradeLocked(r *http.Request) bool {
+	if a.deps.Upgrades == nil {
+		return false
+	}
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/v1/panel/updates") {
+		return false
+	}
+	return a.deps.Upgrades.Locked(r.Context())
 }
 
 // sessionOnly further restricts a route to interactive sessions. Credential

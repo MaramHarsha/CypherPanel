@@ -32,6 +32,7 @@ import { Route as AppSettingsProfileRouteImport } from './routes/_app/settings/p
 import { Route as AppSettingsRegistriesRouteImport } from './routes/_app/settings/registries'
 import { Route as AppSettingsTeamsRouteImport } from './routes/_app/settings/teams'
 import { Route as AppSettingsTlsRouteImport } from './routes/_app/settings/tls'
+import { Route as AppSettingsUpdatesRouteImport } from './routes/_app/settings/updates'
 import { Route as AppSettingsUsageRouteImport } from './routes/_app/settings/usage'
 import { Route as AppSettingsUsersRouteImport } from './routes/_app/settings/users'
 import { Route as AppTemplatesIndexRouteImport } from './routes/_app/templates/index'
@@ -177,6 +178,11 @@ const AppSettingsTeamsRoute = AppSettingsTeamsRouteImport.update({
 const AppSettingsTlsRoute = AppSettingsTlsRouteImport.update({
   id: '/tls',
   path: '/tls',
+  getParentRoute: () => AppSettingsRoute,
+} as any)
+const AppSettingsUpdatesRoute = AppSettingsUpdatesRouteImport.update({
+  id: '/updates',
+  path: '/updates',
   getParentRoute: () => AppSettingsRoute,
 } as any)
 const AppSettingsUsageRoute = AppSettingsUsageRouteImport.update({
@@ -383,6 +389,7 @@ export interface FileRoutesByFullPath {
   '/settings/registries': typeof AppSettingsRegistriesRoute
   '/settings/teams': typeof AppSettingsTeamsRoute
   '/settings/tls': typeof AppSettingsTlsRoute
+  '/settings/updates': typeof AppSettingsUpdatesRoute
   '/settings/usage': typeof AppSettingsUsageRoute
   '/settings/users': typeof AppSettingsUsersRoute
   '/projects/': typeof AppProjectsIndexRoute
@@ -437,6 +444,7 @@ export interface FileRoutesByTo {
   '/settings/registries': typeof AppSettingsRegistriesRoute
   '/settings/teams': typeof AppSettingsTeamsRoute
   '/settings/tls': typeof AppSettingsTlsRoute
+  '/settings/updates': typeof AppSettingsUpdatesRoute
   '/settings/usage': typeof AppSettingsUsageRoute
   '/settings/users': typeof AppSettingsUsersRoute
   '/projects': typeof AppProjectsIndexRoute
@@ -490,6 +498,7 @@ export interface FileRoutesById {
   '/_app/settings/registries': typeof AppSettingsRegistriesRoute
   '/_app/settings/teams': typeof AppSettingsTeamsRoute
   '/_app/settings/tls': typeof AppSettingsTlsRoute
+  '/_app/settings/updates': typeof AppSettingsUpdatesRoute
   '/_app/settings/usage': typeof AppSettingsUsageRoute
   '/_app/settings/users': typeof AppSettingsUsersRoute
   '/_app/projects/': typeof AppProjectsIndexRoute
@@ -547,6 +556,7 @@ export interface FileRouteTypes {
     | '/settings/registries'
     | '/settings/teams'
     | '/settings/tls'
+    | '/settings/updates'
     | '/settings/usage'
     | '/settings/users'
     | '/projects/'
@@ -601,6 +611,7 @@ export interface FileRouteTypes {
     | '/settings/registries'
     | '/settings/teams'
     | '/settings/tls'
+    | '/settings/updates'
     | '/settings/usage'
     | '/settings/users'
     | '/projects'
@@ -653,6 +664,7 @@ export interface FileRouteTypes {
     | '/_app/settings/registries'
     | '/_app/settings/teams'
     | '/_app/settings/tls'
+    | '/_app/settings/updates'
     | '/_app/settings/usage'
     | '/_app/settings/users'
     | '/_app/projects/'
@@ -856,6 +868,13 @@ declare module '@tanstack/react-router' {
       path: '/tls'
       fullPath: '/settings/tls'
       preLoaderRoute: typeof AppSettingsTlsRouteImport
+      parentRoute: typeof AppSettingsRoute
+    }
+    '/_app/settings/updates': {
+      id: '/_app/settings/updates'
+      path: '/updates'
+      fullPath: '/settings/updates'
+      preLoaderRoute: typeof AppSettingsUpdatesRouteImport
       parentRoute: typeof AppSettingsRoute
     }
     '/_app/settings/usage': {
@@ -1092,6 +1111,7 @@ interface AppSettingsRouteChildren {
   AppSettingsRegistriesRoute: typeof AppSettingsRegistriesRoute
   AppSettingsTeamsRoute: typeof AppSettingsTeamsRoute
   AppSettingsTlsRoute: typeof AppSettingsTlsRoute
+  AppSettingsUpdatesRoute: typeof AppSettingsUpdatesRoute
   AppSettingsUsageRoute: typeof AppSettingsUsageRoute
   AppSettingsUsersRoute: typeof AppSettingsUsersRoute
   AppSettingsIndexRoute: typeof AppSettingsIndexRoute
@@ -1111,6 +1131,7 @@ const AppSettingsRouteChildren: AppSettingsRouteChildren = {
   AppSettingsRegistriesRoute: AppSettingsRegistriesRoute,
   AppSettingsTeamsRoute: AppSettingsTeamsRoute,
   AppSettingsTlsRoute: AppSettingsTlsRoute,
+  AppSettingsUpdatesRoute: AppSettingsUpdatesRoute,
   AppSettingsUsageRoute: AppSettingsUsageRoute,
   AppSettingsUsersRoute: AppSettingsUsersRoute,
   AppSettingsIndexRoute: AppSettingsIndexRoute,

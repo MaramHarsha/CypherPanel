@@ -255,6 +255,58 @@ EOF
 chmod 600 "$ENV_FILE"
 ok "wrote $ENV_FILE (0600)"
 
+# ── the upgrade helper ───────────────────────────────────────────────────────
+#
+# The plane cannot replace its own binary — it runs with DynamicUser and
+# ProtectSystem=strict, deliberately, because relaxing that would turn any
+# remote-code-execution bug in the API into persistence on this host. So the
+# swap is performed by a separate root one-shot, and the plane's entire power is
+# to write a request file into a directory they share (panel-updates.md §3).
+#
+# One group and one directory. A panel installed without them still works and
+# simply reports that it cannot upgrade itself, which is better than a button
+# that does nothing.
+
+groupadd -f cypherpanel-upgrade >/dev/null 2>&1 || true
+install -d -m 0770 -o root -g cypherpanel-upgrade /var/lib/cypherpanel/upgrade
+install -d -m 0770 -o root -g cypherpanel-upgrade /var/lib/cypherpanel/upgrade/slots
+
+cat > /etc/systemd/system/cypherd-upgrade.service <<'EOF'
+[Unit]
+Description=CypherPanel control-plane upgrade helper
+Documentation=https://github.com/MaramHarsha/CypherPanel
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Read-only. This file holds the master key, and destroying it during an update
+# is the exact failure this design exists to not repeat.
+EnvironmentFile=/etc/cypherpanel/cypherd.env
+Environment=CYPHERD_UPGRADE_DIR=/var/lib/cypherpanel/upgrade
+ExecStart=/usr/local/bin/cypherd upgrade
+# Deliberately not sandboxed the way cypherd.service is: this process exists to
+# write /usr/local/bin/cypherd and call systemctl. What bounds it is the
+# signature, not the sandbox — it installs only artifacts that verify against
+# the release key baked into its own binary.
+TimeoutStartSec=1800
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat > /etc/systemd/system/cypherd-upgrade.path <<'EOF'
+[Unit]
+Description=Watch for a CypherPanel upgrade request
+Documentation=https://github.com/MaramHarsha/CypherPanel
+
+[Path]
+PathExists=/var/lib/cypherpanel/upgrade/request.json
+Unit=cypherd-upgrade.service
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 # ── service ──────────────────────────────────────────────────────────────────
 
 cat > "$UNIT" <<'EOF'
@@ -276,6 +328,12 @@ RestartSec=5
 StateDirectory=cypherd
 Environment=CYPHERD_DATA_DIR=/var/lib/cypherd
 
+# The upgrade handoff. Joining the group rather than naming a UID is what makes
+# this work regardless of which UID DynamicUser picked this boot.
+SupplementaryGroups=cypherpanel-upgrade
+ReadWritePaths=/var/lib/cypherpanel/upgrade
+Environment=CYPHERD_UPGRADE_DIR=/var/lib/cypherpanel/upgrade
+
 # cypherd is a network service with a data directory and needs nothing else.
 DynamicUser=true
 NoNewPrivileges=true
@@ -293,6 +351,8 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
+systemctl enable cypherd-upgrade.path >/dev/null 2>&1 || true
+systemctl start cypherd-upgrade.path >/dev/null 2>&1 || true
 systemctl enable cypherd >/dev/null 2>&1
 systemctl restart cypherd
 say "waiting for the panel"

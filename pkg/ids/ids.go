@@ -117,6 +117,10 @@ const (
 	PrefixAlertRule  = "alr"
 	PrefixAlertEvent = "ale"
 
+	// Guided panel upgrades and their fallback snapshots (panel-updates.md).
+	PrefixPanelUpgrade  = "pup"
+	PrefixPanelSnapshot = "psn"
+
 	// V1.x: team invitations and access requests
 	// (docs/features/invitations-and-access-requests.md §2). An invite id is
 	// also the PUBLIC half of its wire token (`inv_….<secret>`), which is what

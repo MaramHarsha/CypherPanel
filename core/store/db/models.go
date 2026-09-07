@@ -445,11 +445,35 @@ type PanelMail struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
+type PanelSnapshot struct {
+	ID        string
+	Version   string
+	Path      string
+	SizeBytes int64
+	CreatedAt pgtype.Timestamptz
+	ExpiresAt pgtype.Timestamptz
+	Pinned    bool
+}
+
 type PanelTl struct {
 	ID           int32
 	AcmeEmail    string
 	AcmeCaServer string
 	UpdatedAt    pgtype.Timestamptz
+}
+
+type PanelUpgrade struct {
+	ID          string
+	FromVersion string
+	ToVersion   string
+	Phase       string
+	Detail      string
+	Actor       string
+	Rollback    bool
+	SnapshotID  pgtype.Text
+	StartedAt   pgtype.Timestamptz
+	FinishedAt  pgtype.Timestamptz
+	ExpiresAt   pgtype.Timestamptz
 }
 
 type PlaneCa struct {

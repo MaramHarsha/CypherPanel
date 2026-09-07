@@ -45,14 +45,23 @@ import type {
   NotFoundResponse,
   PanelLogs,
   PanelMailSettings,
+  PanelSnapshot,
   PanelTLSSettings,
+  PanelUpdates,
+  PanelUpgrade,
+  PanelUpgradeHistory,
   PanelVersion,
+  PreflightPanelUpdateParams,
+  RestorePanelSnapshotBody,
   SetAlertRuleEnabledBody,
   SetPanelDNSRequest,
   SetPanelMailRequest,
   SetPanelTLSRequest,
+  SnapshotRetentionRequest,
+  StartUpgradeRequest,
   UnauthorizedResponse,
   UnavailableResponse,
+  UpdatePreflight,
   Usage
 } from '../model';
 
@@ -1359,6 +1368,678 @@ export const useTestPanelMail = <TError = BadRequestResponse | UnauthorizedRespo
         TContext
       > => {
       return useMutation(getTestPanelMailMutationOptions(options), queryClient);
+    }
+    export const getGetPanelUpdatesUrl = () => {
+
+
+
+
+  return `/api/v1/panel/updates`
+}
+
+/**
+ * `mode` is `assisted` on a systemd install and `manual` in a container, where the panel CANNOT upgrade itself and says so rather than drawing a button that would not work.
+ * @summary What is running, what is available, and any upgrade in flight (member+)
+ */
+export const getPanelUpdates = async ( options?: RequestInit): Promise<PanelUpdates> => {
+
+  return apiFetch<PanelUpdates>(getGetPanelUpdatesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPanelUpdatesQueryKey = () => {
+    return [
+    `/api/v1/panel/updates`
+    ] as const;
+    }
+
+
+export const getGetPanelUpdatesQueryOptions = <TData = Awaited<ReturnType<typeof getPanelUpdates>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelUpdates>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPanelUpdatesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPanelUpdates>>> = ({ signal }) => getPanelUpdates({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPanelUpdates>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetPanelUpdatesQueryResult = NonNullable<Awaited<ReturnType<typeof getPanelUpdates>>>
+export type GetPanelUpdatesQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useGetPanelUpdates<TData = Awaited<ReturnType<typeof getPanelUpdates>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelUpdates>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getPanelUpdates>>,
+          TError,
+          Awaited<ReturnType<typeof getPanelUpdates>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetPanelUpdates<TData = Awaited<ReturnType<typeof getPanelUpdates>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelUpdates>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getPanelUpdates>>,
+          TError,
+          Awaited<ReturnType<typeof getPanelUpdates>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetPanelUpdates<TData = Awaited<ReturnType<typeof getPanelUpdates>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelUpdates>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary What is running, what is available, and any upgrade in flight (member+)
+ */
+
+export function useGetPanelUpdates<TData = Awaited<ReturnType<typeof getPanelUpdates>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelUpdates>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetPanelUpdatesQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getPreflightPanelUpdateUrl = (params: PreflightPanelUpdateParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/panel/updates/preflight?${stringifiedParams}` : `/api/v1/panel/updates/preflight`
+}
+
+/**
+ * Changes nothing, which is why it is a GET. Signature, disk headroom, agent compatibility, snapshot readiness and quiescence.
+ *
+ * A signature failure is a REFUSAL, never a warning: an unverifiable artifact is the one thing this feature exists to not install. A disk refusal names BOTH numbers, because a disk that fills during an upgrade is how you end up with a panel that is neither the old version nor the new one. Agents below the release's floor are NAMED, and proceeding anyway needs the target version typed back.
+ * @summary The five checks, before anything changes (panel OWNER, session only)
+ */
+export const preflightPanelUpdate = async (params: PreflightPanelUpdateParams, options?: RequestInit): Promise<UpdatePreflight> => {
+
+  return apiFetch<UpdatePreflight>(getPreflightPanelUpdateUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getPreflightPanelUpdateQueryKey = (params?: PreflightPanelUpdateParams,) => {
+    return [
+    `/api/v1/panel/updates/preflight`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getPreflightPanelUpdateQueryOptions = <TData = Awaited<ReturnType<typeof preflightPanelUpdate>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(params: PreflightPanelUpdateParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof preflightPanelUpdate>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getPreflightPanelUpdateQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof preflightPanelUpdate>>> = ({ signal }) => preflightPanelUpdate(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof preflightPanelUpdate>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type PreflightPanelUpdateQueryResult = NonNullable<Awaited<ReturnType<typeof preflightPanelUpdate>>>
+export type PreflightPanelUpdateQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+
+
+export function usePreflightPanelUpdate<TData = Awaited<ReturnType<typeof preflightPanelUpdate>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ params: PreflightPanelUpdateParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof preflightPanelUpdate>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof preflightPanelUpdate>>,
+          TError,
+          Awaited<ReturnType<typeof preflightPanelUpdate>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function usePreflightPanelUpdate<TData = Awaited<ReturnType<typeof preflightPanelUpdate>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ params: PreflightPanelUpdateParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof preflightPanelUpdate>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof preflightPanelUpdate>>,
+          TError,
+          Awaited<ReturnType<typeof preflightPanelUpdate>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function usePreflightPanelUpdate<TData = Awaited<ReturnType<typeof preflightPanelUpdate>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ params: PreflightPanelUpdateParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof preflightPanelUpdate>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary The five checks, before anything changes (panel OWNER, session only)
+ */
+
+export function usePreflightPanelUpdate<TData = Awaited<ReturnType<typeof preflightPanelUpdate>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ params: PreflightPanelUpdateParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof preflightPanelUpdate>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getPreflightPanelUpdateQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getStartPanelUpgradeUrl = () => {
+
+
+
+
+  return `/api/v1/panel/updates/upgrade`
+}
+
+/**
+ * Owner, and session-only. This is the control that decides what code the control plane runs, and an API token may live in a CI runner.
+ *
+ * The plane does NOT perform the swap: it writes a request file that a separate root one-shot consumes. That helper has no dependency on the session that asked, so closing the tab, losing the network or signing out changes nothing.
+ *
+ * The panel goes read-only for about a minute and is unreachable for the few seconds of restart inside that. YOUR APPLICATIONS KEEP SERVING — they do not depend on the control plane.
+ * @summary Run the guided upgrade (panel OWNER, session only)
+ */
+export const startPanelUpgrade = async (startUpgradeRequest: StartUpgradeRequest, options?: RequestInit): Promise<PanelUpgrade> => {
+
+  return apiFetch<PanelUpgrade>(getStartPanelUpgradeUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(startUpgradeRequest)
+  }
+);}
+
+
+
+
+
+export const getStartPanelUpgradeMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startPanelUpgrade>>, TError,{data: StartUpgradeRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof startPanelUpgrade>>, TError,{data: StartUpgradeRequest}, TContext> => {
+
+const mutationKey = ['startPanelUpgrade'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startPanelUpgrade>>, {data: StartUpgradeRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  startPanelUpgrade(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StartPanelUpgradeMutationResult = NonNullable<Awaited<ReturnType<typeof startPanelUpgrade>>>
+    export type StartPanelUpgradeMutationBody = StartUpgradeRequest
+    export type StartPanelUpgradeMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error
+
+    /**
+ * @summary Run the guided upgrade (panel OWNER, session only)
+ */
+export const useStartPanelUpgrade = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startPanelUpgrade>>, TError,{data: StartUpgradeRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof startPanelUpgrade>>,
+        TError,
+        {data: StartUpgradeRequest},
+        TContext
+      > => {
+      return useMutation(getStartPanelUpgradeMutationOptions(options), queryClient);
+    }
+    export const getCancelPanelUpgradeUrl = () => {
+
+
+
+
+  return `/api/v1/panel/updates/cancel`
+}
+
+/**
+ * Only before the swap. After it the helper owns the host and the panel has nothing to cancel with — it answers 409 and says the upgrade will roll itself back if the new version does not come up.
+ * @summary Cancel before the swap (panel OWNER, session only)
+ */
+export const cancelPanelUpgrade = async ( options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getCancelPanelUpgradeUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getCancelPanelUpgradeMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelPanelUpgrade>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof cancelPanelUpgrade>>, TError,void, TContext> => {
+
+const mutationKey = ['cancelPanelUpgrade'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof cancelPanelUpgrade>>, void> = () => {
+
+
+          return  cancelPanelUpgrade(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CancelPanelUpgradeMutationResult = NonNullable<Awaited<ReturnType<typeof cancelPanelUpgrade>>>
+
+    export type CancelPanelUpgradeMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error
+
+    /**
+ * @summary Cancel before the swap (panel OWNER, session only)
+ */
+export const useCancelPanelUpgrade = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelPanelUpgrade>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof cancelPanelUpgrade>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getCancelPanelUpgradeMutationOptions(options), queryClient);
+    }
+    export const getListPanelUpgradesUrl = () => {
+
+
+
+
+  return `/api/v1/panel/updates/history`
+}
+
+/**
+ * Records what RAN, not only what this panel performed: a boot whose version differs from the last recorded one writes a row with an `external` actor, which is what a container install's upgrades look like from in here.
+ * @summary Version history and the snapshots it kept (panel OWNER, session only)
+ */
+export const listPanelUpgrades = async ( options?: RequestInit): Promise<PanelUpgradeHistory> => {
+
+  return apiFetch<PanelUpgradeHistory>(getListPanelUpgradesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListPanelUpgradesQueryKey = () => {
+    return [
+    `/api/v1/panel/updates/history`
+    ] as const;
+    }
+
+
+export const getListPanelUpgradesQueryOptions = <TData = Awaited<ReturnType<typeof listPanelUpgrades>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPanelUpgrades>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListPanelUpgradesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listPanelUpgrades>>> = ({ signal }) => listPanelUpgrades({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listPanelUpgrades>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListPanelUpgradesQueryResult = NonNullable<Awaited<ReturnType<typeof listPanelUpgrades>>>
+export type ListPanelUpgradesQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useListPanelUpgrades<TData = Awaited<ReturnType<typeof listPanelUpgrades>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPanelUpgrades>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listPanelUpgrades>>,
+          TError,
+          Awaited<ReturnType<typeof listPanelUpgrades>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListPanelUpgrades<TData = Awaited<ReturnType<typeof listPanelUpgrades>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPanelUpgrades>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listPanelUpgrades>>,
+          TError,
+          Awaited<ReturnType<typeof listPanelUpgrades>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListPanelUpgrades<TData = Awaited<ReturnType<typeof listPanelUpgrades>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPanelUpgrades>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Version history and the snapshots it kept (panel OWNER, session only)
+ */
+
+export function useListPanelUpgrades<TData = Awaited<ReturnType<typeof listPanelUpgrades>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPanelUpgrades>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListPanelUpgradesQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getSetSnapshotRetentionUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/panel/snapshots/${id}`
+}
+
+/**
+ * Retention is the one decision this feature leaves to the operator, and it must not be made for them: the snapshot is the only thing standing between a bad release and a lost panel. A PINNED snapshot is never swept whatever its expiry says.
+ * @summary Extend, pin or expire a snapshot (panel OWNER, session only)
+ */
+export const setSnapshotRetention = async (id: string,
+    snapshotRetentionRequest: SnapshotRetentionRequest, options?: RequestInit): Promise<PanelSnapshot> => {
+
+  return apiFetch<PanelSnapshot>(getSetSnapshotRetentionUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(snapshotRetentionRequest)
+  }
+);}
+
+
+
+
+
+export const getSetSnapshotRetentionMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setSnapshotRetention>>, TError,{id: string;data: SnapshotRetentionRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setSnapshotRetention>>, TError,{id: string;data: SnapshotRetentionRequest}, TContext> => {
+
+const mutationKey = ['setSnapshotRetention'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setSnapshotRetention>>, {id: string;data: SnapshotRetentionRequest}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  setSnapshotRetention(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetSnapshotRetentionMutationResult = NonNullable<Awaited<ReturnType<typeof setSnapshotRetention>>>
+    export type SetSnapshotRetentionMutationBody = SnapshotRetentionRequest
+    export type SetSnapshotRetentionMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Extend, pin or expire a snapshot (panel OWNER, session only)
+ */
+export const useSetSnapshotRetention = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setSnapshotRetention>>, TError,{id: string;data: SnapshotRetentionRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setSnapshotRetention>>,
+        TError,
+        {id: string;data: SnapshotRetentionRequest},
+        TContext
+      > => {
+      return useMutation(getSetSnapshotRetentionMutationOptions(options), queryClient);
+    }
+    export const getDeletePanelSnapshotUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/panel/snapshots/${id}`
+}
+
+/**
+ * @summary Delete a snapshot and its file (panel OWNER, session only)
+ */
+export const deletePanelSnapshot = async (id: string, options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getDeletePanelSnapshotUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeletePanelSnapshotMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deletePanelSnapshot>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deletePanelSnapshot>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['deletePanelSnapshot'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deletePanelSnapshot>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deletePanelSnapshot(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeletePanelSnapshotMutationResult = NonNullable<Awaited<ReturnType<typeof deletePanelSnapshot>>>
+
+    export type DeletePanelSnapshotMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Delete a snapshot and its file (panel OWNER, session only)
+ */
+export const useDeletePanelSnapshot = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deletePanelSnapshot>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deletePanelSnapshot>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getDeletePanelSnapshotMutationOptions(options), queryClient);
+    }
+    export const getRestorePanelSnapshotUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/panel/snapshots/${id}/restore`
+}
+
+/**
+ * THE LAST RESORT. It rewinds the panel's own database to the moment the snapshot was taken, and everything written since is gone. The automatic rollback does not reach for this — it renames the previous binary back first, and only restores when the old build cannot start on the new schema.
+ * @summary Put the panel's database back (panel OWNER, session only)
+ */
+export const restorePanelSnapshot = async (id: string,
+    restorePanelSnapshotBody: RestorePanelSnapshotBody, options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getRestorePanelSnapshotUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(restorePanelSnapshotBody)
+  }
+);}
+
+
+
+
+
+export const getRestorePanelSnapshotMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof restorePanelSnapshot>>, TError,{id: string;data: RestorePanelSnapshotBody}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof restorePanelSnapshot>>, TError,{id: string;data: RestorePanelSnapshotBody}, TContext> => {
+
+const mutationKey = ['restorePanelSnapshot'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof restorePanelSnapshot>>, {id: string;data: RestorePanelSnapshotBody}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  restorePanelSnapshot(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RestorePanelSnapshotMutationResult = NonNullable<Awaited<ReturnType<typeof restorePanelSnapshot>>>
+    export type RestorePanelSnapshotMutationBody = RestorePanelSnapshotBody
+    export type RestorePanelSnapshotMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error
+
+    /**
+ * @summary Put the panel's database back (panel OWNER, session only)
+ */
+export const useRestorePanelSnapshot = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof restorePanelSnapshot>>, TError,{id: string;data: RestorePanelSnapshotBody}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof restorePanelSnapshot>>,
+        TError,
+        {id: string;data: RestorePanelSnapshotBody},
+        TContext
+      > => {
+      return useMutation(getRestorePanelSnapshotMutationOptions(options), queryClient);
     }
     export const getListAlertRulesUrl = () => {
 
