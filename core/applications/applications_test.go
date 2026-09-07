@@ -21,6 +21,12 @@ func (fakeSealer) Seal(pt []byte) (ct, nonce []byte, err error) {
 	return append([]byte("sealed:"), pt...), []byte("nonce"), nil
 }
 
+// domainClaim pairs a hostname with the application already serving it.
+type domainClaim struct {
+	Domain string
+	Claim  domain.DomainClaim
+}
+
 type fakeStore struct {
 	envs    map[string]bool
 	servers map[string]bool
@@ -33,6 +39,8 @@ type fakeStore struct {
 	registries map[string]domain.Registry
 	// installations is the panel's GitHub App cache; empty means none connected.
 	installations []domain.GitHubInstallation
+	// claims are the domains already served, by whom.
+	claims []domainClaim
 	// registryLookups counts GetRegistry calls, so "an application that names
 	// no registry pays no lookup" is provable rather than assumed.
 	registryLookups int
@@ -165,6 +173,29 @@ func (f *fakeStore) GetRegistry(_ context.Context, id string) (domain.Registry, 
 // fakeStore.installations; empty means the panel has no App connected.
 func (f *fakeStore) ListGitHubInstallations(_ context.Context) ([]domain.GitHubInstallation, error) {
 	return f.installations, nil
+}
+
+// ApplicationsByRouteDomain backs the refusal of a domain another application
+// on the same server already serves. Seeded per test via fakeStore.claims.
+func (f *fakeStore) ApplicationsByRouteDomain(_ context.Context, routeDomain string) ([]domain.DomainClaim, error) {
+	var out []domain.DomainClaim
+	for _, c := range f.claims {
+		if strings.EqualFold(c.Domain, routeDomain) {
+			out = append(out, c.Claim)
+		}
+	}
+	return out, nil
+}
+
+// ListRouteDomainsByServer backs the "already in use" warning.
+func (f *fakeStore) ListRouteDomainsByServer(_ context.Context, serverID string) ([]string, error) {
+	var out []string
+	for _, c := range f.claims {
+		if c.Claim.ServerID == serverID {
+			out = append(out, strings.ToLower(c.Domain))
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeStore) ListSharedVariableKeysInScope(_ context.Context, _, _ string) ([]string, error) {

@@ -454,11 +454,51 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /api/v1/servers/{id}/domains:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Server ID. }
+    get:
+      operationId: listServerDomains
+      tags: [servers]
+      summary: Hostnames already served by this server (member)
+      description: >-
+        What the create and settings screens need to say "that domain is already
+        in use" BEFORE somebody submits, rather than after — a refusal you meet
+        only on save is a form you filled in twice.
+
+
+        It returns hostnames and nothing else: no application names, no project
+        or team. Those are the parts that would make this an enumeration tool,
+        and they are exactly what the conflict refusal withholds from a caller
+        outside the owning team. The hostnames themselves are public DNS, and a
+        create attempt already reveals whether one is taken.
+      responses:
+        "200":
+          description: The hostnames.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [domains]
+                properties:
+                  domains:
+                    type: array
+                    items: { type: string }
+                    description: Lowercased hostnames this server already routes.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /api/v1/panel/dns/zones:
     get:
       operationId: listDNSZones
       tags: [panel]
-      summary: The zones this panel can manage (panel admin)
+      summary: The zones this panel can manage (member)
+      description: >-
+        MEMBER rank, because creating an application needs it: the domain picker
+        offers these instead of asking somebody to type a hostname and discover
+        later that it was not one the panel can write DNS for. A zone row is a
+        hostname, an activation state and a count of managed records — no
+        credential, and connecting the provider stays panel admin.
       responses:
         "200": { description: The cached zone list., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/DNSZone" } } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }

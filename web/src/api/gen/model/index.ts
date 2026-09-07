@@ -201,6 +201,7 @@ export * from './listAuditEventsParams.ts';
 export * from './listDeployApprovalsParams.ts';
 export * from './listDeployApprovalsState.ts';
 export * from './listInboxParams.ts';
+export * from './listServerDomains200.ts';
 export * from './listTeamInvitesParams.ts';
 export * from './listTeamInvitesState.ts';
 export * from './listWebhookDeliveriesParams.ts';

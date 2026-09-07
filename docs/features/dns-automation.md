@@ -493,3 +493,53 @@ it: a per-domain toggle, plus the origin-certificate story that comes with it.
 **DNS-01** is the second, and it is what makes wildcard certificates possible —
 one Cloudflare token serves both, which is why this feature was worth building
 before that one.
+
+## Implementation note - the picker was missing where it mattered *(2026-09-07)*
+
+§6 specifies the Domain field as a subdomain box with a zone picker attached,
+built from the zones the provider returns. That shipped, and it shipped on the
+application **settings** screen only. The **create dialog** kept a plain text
+box, because the picker read its zones from `GET /applications/{id}/dns` and a
+application that does not exist yet has no id to ask about.
+
+So the one moment the picker is most useful - naming a domain for the first
+time - was the one place it was absent. An operator reported exactly that: "why
+are you asking me to write domain, already domain was given by cloudflare".
+
+`DomainField` now takes an OPTIONAL `applicationId`. With one it asks about the
+application, which also carries the verification state; without one it asks
+`GET /panel/dns/zones`, which is the same list. That endpoint moved from panel
+**admin** to **member** to make it reachable: creating an application needs to
+know which domains the panel can write DNS for, and a zone row is a hostname, an
+activation state and a record count - no credential. It is the argument
+[github-app.md](github-app.md) §5 already makes for listing repositories.
+
+## A hostname is claimed by ONE application per server *(2026-09-07)*
+
+Nothing refused two applications on the same hostname, and Traefik does not
+either: the file provider ends up with two routers whose rules are both
+`Host(...)` for the same host, serves one, and the other silently stops. The
+operator who reported the missing picker had already lost a working site to it -
+an apex domain that started answering 404 after a second application was created
+in the same project.
+
+Two halves, and both are needed:
+
+**The API refuses it** (`core/applications.checkDomainFree`, HTTP 409). The
+scope is the SERVER, not the panel: one node, one proxy, one rule table. Two
+nodes may legitimately serve the same hostname - that is how a migration or a
+blue/green cutover works - and refusing it panel-wide would forbid something
+operators actually do.
+
+The refusal NAMES the other application only to a caller who belongs to its
+team; everyone else is told "another application on this server". The collision
+is physical so the refusal is unconditional, but a create dialog must not become
+a way to enumerate other teams' hostnames - the rule
+[registries.md](registries.md) §7 states for credentials. Getting that check
+right needed care: `RoleInTeam` reports a non-member as `("", nil)`, so testing
+only the error named the application to everybody.
+
+**The form says so first**, from `GET /servers/{id}/domains` - hostnames only,
+member rank, no application names. A refusal met only on save is a form filled
+in twice. The endpoint reveals nothing the refusal does not: attempting the
+create already tells you whether a hostname is taken.

@@ -710,7 +710,8 @@ export const getListDNSZonesUrl = () => {
 }
 
 /**
- * @summary The zones this panel can manage (panel admin)
+ * MEMBER rank, because creating an application needs it: the domain picker offers these instead of asking somebody to type a hostname and discover later that it was not one the panel can write DNS for. A zone row is a hostname, an activation state and a count of managed records — no credential, and connecting the provider stays panel admin.
+ * @summary The zones this panel can manage (member)
  */
 export const listDNSZones = async ( options?: RequestInit): Promise<DNSZone[]> => {
 
@@ -781,7 +782,7 @@ export function useListDNSZones<TData = Awaited<ReturnType<typeof listDNSZones>>
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
- * @summary The zones this panel can manage (panel admin)
+ * @summary The zones this panel can manage (member)
  */
 
 export function useListDNSZones<TData = Awaited<ReturnType<typeof listDNSZones>>, TError = UnauthorizedResponse | ForbiddenResponse>(

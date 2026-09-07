@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/MaramHarsha/cypherpanel/core/applications"
@@ -333,7 +334,7 @@ func (a *API) handleCreateApplication(w http.ResponseWriter, r *http.Request) {
 	}
 	app, secret, err := a.deps.Applications.Create(r.Context(), r.PathValue("id"), req.toInput())
 	if err != nil {
-		a.writeAppError(w, err, "could not create application")
+		a.writeAppError(w, r, err, "could not create application")
 		return
 	}
 	a.audit(r, audit.Entry{
@@ -529,7 +530,7 @@ func (a *API) handlePatchApplication(w http.ResponseWriter, r *http.Request) {
 	in.PreviewEnabled, in.PreviewBaseDomain, in.PreviewTTLHours = req.PreviewEnabled, req.PreviewBaseDomain, req.PreviewTTLHours
 	app, err := a.deps.Applications.Update(r.Context(), r.PathValue("id"), in)
 	if err != nil {
-		a.writeAppError(w, err, "could not update application")
+		a.writeAppError(w, r, err, "could not update application")
 		return
 	}
 	// The changed field NAMES, not their contents: what an operator needs to
@@ -673,7 +674,7 @@ func (a *API) handleSetEnvVar(w http.ResponseWriter, r *http.Request) {
 	}
 	err := a.deps.Applications.SetEnvVar(r.Context(), r.PathValue("id"), r.PathValue("key"), req.Value)
 	if err != nil {
-		a.writeAppError(w, err, "could not set environment variable")
+		a.writeAppError(w, r, err, "could not set environment variable")
 		return
 	}
 	// The KEY, never the value (§6). `key` is deliberately not on the audit
@@ -723,13 +724,22 @@ func (a *API) auditApplication(r *http.Request, action, appID string, detail map
 
 // writeAppError maps applications-service errors to HTTP status codes: client
 // validation to 400, a missing environment or application to 404 (each named
-// correctly), a missing target server to 400, a duplicate name to 409, and
-// anything else to 500.
-func (a *API) writeAppError(w http.ResponseWriter, err error, genericMsg string) {
+// correctly), a missing target server to 400, a duplicate name or a domain
+// another application already serves to 409, and anything else to 500.
+//
+// It takes the request because one of those refusals is scoped: a domain
+// conflict NAMES the other application only when the caller belongs to its
+// team. The collision is physical so the refusal is unconditional, but a create
+// dialog must not become a way to enumerate other teams' hostnames — the rule
+// registries.md §7 already states for credentials.
+func (a *API) writeAppError(w http.ResponseWriter, r *http.Request, err error, genericMsg string) {
 	var ve *applications.ValidationError
+	var inUse *applications.DomainInUseError
 	switch {
 	case errors.As(err, &ve):
 		writeError(w, http.StatusBadRequest, ve.Msg)
+	case errors.As(err, &inUse):
+		writeError(w, http.StatusConflict, a.domainConflictMessage(r, inUse))
 	case errors.Is(err, applications.ErrServerNotFound):
 		writeError(w, http.StatusBadRequest, "target server not found")
 	case errors.Is(err, applications.ErrEnvironmentNotFound):
@@ -742,6 +752,29 @@ func (a *API) writeAppError(w http.ResponseWriter, err error, genericMsg string)
 		a.deps.Log.Error("application request failed", "error", err)
 		writeError(w, http.StatusInternalServerError, genericMsg)
 	}
+}
+
+// domainConflictMessage names the other application when the caller may see it,
+// and says only "another application" when they may not. Either way it names
+// the remedy, because a refusal an operator cannot act on is a dead end
+// (ui-principles §11).
+func (a *API) domainConflictMessage(r *http.Request, e *applications.DomainInUseError) string {
+	who := "another application on this server"
+	if user, ok := userFromContext(r.Context()); ok && a.deps.Teams != nil && e.Claim.TeamID != "" {
+		// The ROLE must be non-empty, not merely error-free: RoleInTeam reports
+		// a non-member as ("", nil), so checking only the error names the
+		// application to everybody — which is the leak this check exists to
+		// prevent. A panel owner is a member of every team by design
+		// (teams.go's owner bypass) and does see the name.
+		role, err := a.deps.Teams.RoleInTeam(r.Context(), user, e.Claim.TeamID)
+		if err == nil && role != "" && e.Claim.ApplicationName != "" {
+			who = strconv.Quote(e.Claim.ApplicationName)
+		}
+	}
+	return e.Domain + " is already served by " + who +
+		" — pick a subdomain such as app." + e.Domain + ", or another domain. " +
+		"Two applications on one host cannot share a domain: the proxy would " +
+		"serve one of them and the other would stop answering with no error to read."
 }
 
 // syncApplicationDNS re-derives this application's desired DNS Record after its
@@ -764,4 +797,37 @@ func (a *API) syncApplicationDNS(ctx context.Context, app domain.Application) {
 	if err := a.deps.DNS.SyncApplication(ctx, app, publicAddress); err != nil {
 		a.deps.Log.Error("syncing application dns", "app_id", app.ID, "error", err)
 	}
+}
+
+// handleListServerDomains reports the hostnames a server already routes.
+//
+// It is what lets the create and settings screens say "that domain is already
+// in use" BEFORE somebody submits — a refusal you meet only on save is a form
+// filled in twice, and this whole feature exists because an operator lost a
+// working site to a domain collision nothing warned about.
+//
+// MEMBER rank, and hostnames only. No application name, no project, no team:
+// those are the parts that would turn this into an enumeration tool, and they
+// are precisely what the conflict refusal withholds from a caller outside the
+// owning team. A hostname is public DNS, and attempting the create already
+// reveals whether one is taken.
+func (a *API) handleListServerDomains(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.requirePanelRole(w, user, domain.RoleMember) {
+		return
+	}
+	if a.deps.Applications == nil {
+		writeJSON(w, http.StatusOK, map[string][]string{"domains": {}})
+		return
+	}
+	domains, err := a.deps.Applications.RouteDomainsOnServer(r.Context(), r.PathValue("id"))
+	if err != nil {
+		a.deps.Log.Error("listing route domains", "server_id", r.PathValue("id"), "error", err)
+		writeError(w, http.StatusInternalServerError, "could not read the domains in use")
+		return
+	}
+	if domains == nil {
+		domains = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string][]string{"domains": domains})
 }

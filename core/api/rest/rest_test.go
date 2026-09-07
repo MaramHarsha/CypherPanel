@@ -596,6 +596,9 @@ type fakeAppsStore struct {
 	servers map[string]bool
 	apps    map[string]domain.Application
 	env     map[string][]domain.EnvVar
+	// domainClaims is what ApplicationsByRouteDomain reports — empty means
+	// every hostname is free, which is what most of these tests want.
+	domainClaims []domain.DomainClaim
 }
 
 func newFakeAppsStore() *fakeAppsStore {
@@ -729,6 +732,23 @@ func (f *fakeAppsStore) ListGitHubInstallations(_ context.Context) ([]domain.Git
 		ID: "ghi_test", InstallationID: 4242, AccountLogin: "acme",
 		AccountType: "Organization", RepoSelection: "all",
 	}}, nil
+}
+
+// ApplicationsByRouteDomain backs the domain-conflict refusal. This fake knows
+// of no claims, so every domain is free unless a test says otherwise.
+func (f *fakeAppsStore) ApplicationsByRouteDomain(_ context.Context, _ string) ([]domain.DomainClaim, error) {
+	return f.domainClaims, nil
+}
+
+// ListRouteDomainsByServer backs the "already in use" warning.
+func (f *fakeAppsStore) ListRouteDomainsByServer(_ context.Context, serverID string) ([]string, error) {
+	var out []string
+	for _, c := range f.domainClaims {
+		if c.ServerID == serverID {
+			out = append(out, c.ApplicationName)
+		}
+	}
+	return out, nil
 }
 
 // ListSharedVariableKeysInScope backs the write-time {{shared.KEY}} check
@@ -1073,7 +1093,22 @@ func newTestServerControl(t *testing.T) (*httptest.Server, *fakeDeployer, *fakeL
 	return ts, deployer, logs
 }
 
+// newTestServerApps hands back the applications store so a test can seed what
+// the panel already serves — the domain-conflict tests need that and nothing
+// else does.
+func newTestServerApps(t *testing.T) (*httptest.Server, *fakeAppsStore) {
+	t.Helper()
+	ts, _, _, _, _, apps := newTestServerPartsFull(t)
+	return ts, apps
+}
+
 func newTestServerParts(t *testing.T) (*httptest.Server, *fakeServersStore, *fakeLogs, *fakeDeployKeysStore, *fakeDeployer) {
+	t.Helper()
+	ts, srv, logs, dk, dep, _ := newTestServerPartsFull(t)
+	return ts, srv, logs, dk, dep
+}
+
+func newTestServerPartsFull(t *testing.T) (*httptest.Server, *fakeServersStore, *fakeLogs, *fakeDeployKeysStore, *fakeDeployer, *fakeAppsStore) {
 	t.Helper()
 	hash, err := auth.HashPassword(testPassword)
 	if err != nil {
@@ -1093,7 +1128,8 @@ func newTestServerParts(t *testing.T) (*httptest.Server, *fakeServersStore, *fak
 	dbReconciler := &fakeDbReconciler{}
 	dbSvc := databases.NewService(dbStore, box, dbReconciler)
 
-	appSvc := applications.NewService(newFakeAppsStore(), box)
+	appsStore := newFakeAppsStore()
+	appSvc := applications.NewService(appsStore, box)
 	deployer := &fakeDeployer{}
 	templateSvc, err := templates.New(appSvc, dbSvc, deployer, log)
 	if err != nil {
@@ -1121,7 +1157,7 @@ func newTestServerParts(t *testing.T) (*httptest.Server, *fakeServersStore, *fak
 	})
 	ts := httptest.NewServer(api.Handler())
 	t.Cleanup(ts.Close)
-	return ts, srvStore, logs, dkStore, deployer
+	return ts, srvStore, logs, dkStore, deployer, appsStore
 }
 
 func doJSON(t *testing.T, method, url, token, body string) (int, http.Header, []byte) {

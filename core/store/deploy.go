@@ -715,6 +715,32 @@ func (s *Store) ListApplicationsByDeployKey(ctx context.Context, keyID string) (
 	return out, nil
 }
 
+// ListRouteDomainsByServer reports the hostnames a server already routes.
+func (s *Store) ListRouteDomainsByServer(ctx context.Context, serverID string) ([]string, error) {
+	rows, err := s.q.ListRouteDomainsByServer(ctx, serverID)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing route domains: %w", err)
+	}
+	return rows, nil
+}
+
+// ApplicationsByRouteDomain names every application already claiming a domain,
+// so a second one can be refused before Traefik silently picks a winner.
+func (s *Store) ApplicationsByRouteDomain(ctx context.Context, routeDomain string) ([]domain.DomainClaim, error) {
+	rows, err := s.q.ApplicationsByRouteDomain(ctx, routeDomain)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing applications by route domain: %w", err)
+	}
+	out := make([]domain.DomainClaim, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, domain.DomainClaim{
+			ApplicationID: r.ID, ApplicationName: r.Name,
+			ServerID: r.RuntimeServerID, ProjectID: r.ProjectID, TeamID: r.TeamID,
+		})
+	}
+	return out, nil
+}
+
 func (s *Store) DeleteDeployKey(ctx context.Context, id string) error {
 	if err := s.q.DeleteDeployKey(ctx, id); err != nil {
 		return wrapDelete("deleting deploy key", err)

@@ -123,3 +123,32 @@ SET preview_password_enabled = $2,
     updated_at = now()
 WHERE id = $1
 RETURNING *;
+
+-- ApplicationsByRouteDomain names every application already claiming a domain.
+--
+-- THE FAILURE THIS EXISTS TO STOP. Nothing refused two applications on the same
+-- host, and Traefik's file provider does not either: it ends up with two
+-- routers whose rules are both `Host(`example.com`)`, picks one, and the other
+-- silently never serves. The operator sees a working deploy and a site that
+-- stopped answering, with nothing anywhere saying why.
+--
+-- The team and server travel with the row because the refusal has to be
+-- scoped: a conflict on the same server is a hard 409, and naming the other
+-- application is only safe when the caller is in its team.
+-- name: ApplicationsByRouteDomain :many
+SELECT a.id, a.name, a.runtime_server_id, e.project_id, p.team_id
+FROM applications a
+JOIN environments e ON e.id = a.environment_id
+JOIN projects p ON p.id = e.project_id
+WHERE lower(a.route_domain) = lower(sqlc.arg(route_domain))
+  AND a.route_domain <> '';
+
+-- ListRouteDomainsByServer is what a screen needs to warn "that one is taken"
+-- before somebody submits. Hostnames only: an application name here would make
+-- it an enumeration tool, which is precisely what the conflict refusal already
+-- withholds from a caller outside the owning team.
+-- name: ListRouteDomainsByServer :many
+SELECT DISTINCT lower(route_domain) AS domain
+FROM applications
+WHERE runtime_server_id = $1 AND route_domain <> ''
+ORDER BY domain;

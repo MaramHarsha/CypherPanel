@@ -177,6 +177,11 @@ type Store interface {
 	// first deploy, and a dead end discovered five minutes into a build is a
 	// bug (ui-principles §11).
 	ListGitHubInstallations(ctx context.Context) ([]domain.GitHubInstallation, error)
+	// ApplicationsByRouteDomain backs the refusal of a domain another
+	// application on the same server already serves.
+	ApplicationsByRouteDomain(ctx context.Context, routeDomain string) ([]domain.DomainClaim, error)
+	// ListRouteDomainsByServer backs the screen's "that one is taken" warning.
+	ListRouteDomainsByServer(ctx context.Context, serverID string) ([]string, error)
 }
 
 // Sealer seals plaintext for storage at rest. *secret.Box satisfies it.
@@ -228,6 +233,9 @@ func (s *Service) Create(ctx context.Context, envID string, in CreateInput) (app
 		return domain.Application{}, "", err
 	}
 	if err := s.checkGitHubInstallation(ctx, in.Source); err != nil {
+		return domain.Application{}, "", err
+	}
+	if err := s.checkDomainFree(ctx, "", in.Route, in.Runtime.ServerID); err != nil {
 		return domain.Application{}, "", err
 	}
 	if err := s.checkRegistries(ctx, env, in.Source, in.Build); err != nil {
@@ -424,6 +432,9 @@ func (s *Service) Update(ctx context.Context, appID string, in UpdateInput) (dom
 	if err := s.checkGitHubInstallation(ctx, merged.Source); err != nil {
 		return domain.Application{}, err
 	}
+	if err := s.checkDomainFree(ctx, appID, merged.Route, merged.Runtime.ServerID); err != nil {
+		return domain.Application{}, err
+	}
 	if err := s.checkRegistries(ctx, env, merged.Source, merged.Build); err != nil {
 		return domain.Application{}, err
 	}
@@ -598,6 +609,69 @@ func (s *Service) checkRegistries(ctx context.Context, env domain.Environment, s
 			"that registry is not allowed to push"); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// RouteDomainsOnServer reports the hostnames a server already routes, so a form
+// can warn before it is submitted rather than refuse after.
+//
+// Hostnames only, deliberately: an application name here would make this an
+// enumeration tool, and that is exactly what the conflict refusal withholds
+// from a caller outside the owning team.
+func (s *Service) RouteDomainsOnServer(ctx context.Context, serverID string) ([]string, error) {
+	return s.store.ListRouteDomainsByServer(ctx, serverID)
+}
+
+// DomainInUseError is the 409 for a domain another application already serves.
+//
+// It carries the other application's name ONLY when the caller may see it —
+// resolved by the handler, not here — because a create dialog must not become a
+// way to enumerate other teams' hostnames. The refusal happens either way: the
+// collision is physical.
+type DomainInUseError struct {
+	Domain string
+	// Claim is the winning application. Its name is blanked by the handler when
+	// the caller is not in its team.
+	Claim domain.DomainClaim
+}
+
+func (e *DomainInUseError) Error() string {
+	if e.Claim.ApplicationName != "" {
+		return fmt.Sprintf("%s is already served by %q on this server", e.Domain, e.Claim.ApplicationName)
+	}
+	return fmt.Sprintf("%s is already served by another application on this server", e.Domain)
+}
+
+// checkDomainFree refuses a domain a different application on the SAME SERVER
+// already routes.
+//
+// THE FAILURE THIS EXISTS TO STOP. Nothing refused this, and Traefik does not
+// either: two fragments both carrying `Host(`example.com`)` leave it to pick a
+// winner, and the loser silently never serves again. An operator sees a
+// successful deploy and a site that stopped answering, with no error anywhere
+// to read — which is the worst shape a failure can take.
+//
+// SAME SERVER is the scope because that is where the collision is real: one
+// node, one Traefik, one rule table. Two nodes may legitimately serve the same
+// hostname — that is how a blue/green or a migration between hosts works — and
+// refusing it panel-wide would forbid something operators actually do.
+//
+// selfID is empty on create and the application's own id on update, so saving
+// an application without changing its domain is not a conflict with itself.
+func (s *Service) checkDomainFree(ctx context.Context, selfID string, route domain.AppRoute, serverID string) error {
+	if route.Domain == "" {
+		return nil // a raw app claims no hostname
+	}
+	claims, err := s.store.ApplicationsByRouteDomain(ctx, route.Domain)
+	if err != nil {
+		return fmt.Errorf("applications: checking the domain: %w", err)
+	}
+	for _, c := range claims {
+		if c.ApplicationID == selfID || c.ServerID != serverID {
+			continue
+		}
+		return &DomainInUseError{Domain: route.Domain, Claim: c}
 	}
 	return nil
 }

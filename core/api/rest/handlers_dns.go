@@ -213,9 +213,18 @@ func (a *API) handleTestPanelDNS(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
+// handleListDNSZones is MEMBER rank, not admin, and deliberately so.
+//
+// Creating an application needs to know which domains this panel can manage —
+// otherwise the operator types a hostname and finds out whether it was one of
+// theirs when DNS silently fails to appear. That is the same argument
+// github-app.md §5 makes for listing repositories at member rank, and the zone
+// row carries the same kind of thing: a hostname, an activation state and a
+// record count. Nothing here is a credential; connecting the provider stays
+// panel admin and returns nothing readable either way.
 func (a *API) handleListDNSZones(w http.ResponseWriter, r *http.Request) {
 	user, ok := userFromContext(r.Context())
-	if !ok || !a.requirePanelRole(w, user, domain.RoleAdmin) {
+	if !ok || !a.requirePanelRole(w, user, domain.RoleMember) {
 		return
 	}
 	if a.deps.DNS == nil {

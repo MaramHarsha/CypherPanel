@@ -13,6 +13,7 @@ import { AppBuildKind } from "@/api/gen/model";
 import { useListDeployKeys } from "@/api/gen/deploy-keys/deploy-keys";
 import { useListGitHubRepositories } from "@/api/gen/panel/panel";
 import { useListServers } from "@/api/gen/servers/servers";
+import { DomainField } from "@/components/domain-field";
 import { AdvancedSection } from "@/components/advanced-section";
 import { BuildStrategyField } from "@/components/build-strategy-field";
 import { JoinServerFirstDialog } from "@/components/join-server-first-dialog";
@@ -323,11 +324,11 @@ export function NewAppDialog({
               </Field>
             </div>
 
-            <Field label="Domain" hint="TLS via Let's Encrypt, automatic. Leave empty for internal-only.">
-              {(id) => (
-                <Input id={id} value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="app.example.com" />
-              )}
-            </Field>
+            {/* Pick from the zones the panel already manages, plus a box for
+                what goes in front. Typing a hostname the panel knows was always
+                busywork, and nothing warned when it was already taken. */}
+            <DomainField value={domain} onChange={setDomain} serverId={chosenServer} />
+
 
             <AdvancedSection note="defaults work">
               <div className="grid gap-3 sm:grid-cols-2">

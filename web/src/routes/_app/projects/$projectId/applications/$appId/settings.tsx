@@ -558,7 +558,13 @@ function SettingsForm({
             so it does not chase the field while someone is typing. */}
         <Eyebrow className="pt-4">Route</Eyebrow>
         <div className="grid gap-3 sm:grid-cols-[1fr_130px]">
-          <DomainField applicationId={initial.id} value={domain} onChange={setDomain} />
+          <DomainField
+            applicationId={initial.id}
+            serverId={initial.runtime.server_id}
+            selfDomain={initial.route.domain}
+            value={domain}
+            onChange={setDomain}
+          />
           <Field label="Path prefix" hint="Only this path and below; empty means the whole host.">
             {(id, describedBy) => (
               <Input

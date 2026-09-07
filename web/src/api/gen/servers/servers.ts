@@ -33,6 +33,7 @@ import type {
   Error,
   ForbiddenResponse,
   GetServerMetricsParams,
+  ListServerDomains200,
   LocalServer,
   LocalServerCreated,
   NotFoundResponse,
@@ -64,6 +65,109 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   }
   return result;
 };
+
+export const getListServerDomainsUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/servers/${id}/domains`
+}
+
+/**
+ * What the create and settings screens need to say "that domain is already in use" BEFORE somebody submits, rather than after — a refusal you meet only on save is a form you filled in twice.
+ *
+ * It returns hostnames and nothing else: no application names, no project or team. Those are the parts that would make this an enumeration tool, and they are exactly what the conflict refusal withholds from a caller outside the owning team. The hostnames themselves are public DNS, and a create attempt already reveals whether one is taken.
+ * @summary Hostnames already served by this server (member)
+ */
+export const listServerDomains = async (id: string, options?: RequestInit): Promise<ListServerDomains200> => {
+
+  return apiFetch<ListServerDomains200>(getListServerDomainsUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListServerDomainsQueryKey = (id: string,) => {
+    return [
+    `/api/v1/servers/${id}/domains`
+    ] as const;
+    }
+
+
+export const getListServerDomainsQueryOptions = <TData = Awaited<ReturnType<typeof listServerDomains>>, TError = UnauthorizedResponse | ForbiddenResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServerDomains>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListServerDomainsQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listServerDomains>>> = ({ signal }) => listServerDomains(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listServerDomains>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListServerDomainsQueryResult = NonNullable<Awaited<ReturnType<typeof listServerDomains>>>
+export type ListServerDomainsQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useListServerDomains<TData = Awaited<ReturnType<typeof listServerDomains>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServerDomains>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listServerDomains>>,
+          TError,
+          Awaited<ReturnType<typeof listServerDomains>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListServerDomains<TData = Awaited<ReturnType<typeof listServerDomains>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServerDomains>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listServerDomains>>,
+          TError,
+          Awaited<ReturnType<typeof listServerDomains>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListServerDomains<TData = Awaited<ReturnType<typeof listServerDomains>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServerDomains>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Hostnames already served by this server (member)
+ */
+
+export function useListServerDomains<TData = Awaited<ReturnType<typeof listServerDomains>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServerDomains>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListServerDomainsQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
 
 export const getGetCaCertUrl = () => {
 

@@ -11,6 +11,60 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const applicationsByRouteDomain = `-- name: ApplicationsByRouteDomain :many
+SELECT a.id, a.name, a.runtime_server_id, e.project_id, p.team_id
+FROM applications a
+JOIN environments e ON e.id = a.environment_id
+JOIN projects p ON p.id = e.project_id
+WHERE lower(a.route_domain) = lower($1)
+  AND a.route_domain <> ''
+`
+
+type ApplicationsByRouteDomainRow struct {
+	ID              string
+	Name            string
+	RuntimeServerID string
+	ProjectID       string
+	TeamID          string
+}
+
+// ApplicationsByRouteDomain names every application already claiming a domain.
+//
+// THE FAILURE THIS EXISTS TO STOP. Nothing refused two applications on the same
+// host, and Traefik's file provider does not either: it ends up with two
+// routers whose rules are both `Host(`example.com`)`, picks one, and the other
+// silently never serves. The operator sees a working deploy and a site that
+// stopped answering, with nothing anywhere saying why.
+//
+// The team and server travel with the row because the refusal has to be
+// scoped: a conflict on the same server is a hard 409, and naming the other
+// application is only safe when the caller is in its team.
+func (q *Queries) ApplicationsByRouteDomain(ctx context.Context, routeDomain string) ([]ApplicationsByRouteDomainRow, error) {
+	rows, err := q.db.Query(ctx, applicationsByRouteDomain, routeDomain)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ApplicationsByRouteDomainRow{}
+	for rows.Next() {
+		var i ApplicationsByRouteDomainRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.RuntimeServerID,
+			&i.ProjectID,
+			&i.TeamID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const bumpApplicationRestartToken = `-- name: BumpApplicationRestartToken :one
 UPDATE applications
 SET restart_token = $2, updated_at = now()
@@ -576,6 +630,37 @@ func (q *Queries) ListApplicationsByServer(ctx context.Context, runtimeServerID 
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRouteDomainsByServer = `-- name: ListRouteDomainsByServer :many
+SELECT DISTINCT lower(route_domain) AS domain
+FROM applications
+WHERE runtime_server_id = $1 AND route_domain <> ''
+ORDER BY domain
+`
+
+// ListRouteDomainsByServer is what a screen needs to warn "that one is taken"
+// before somebody submits. Hostnames only: an application name here would make
+// it an enumeration tool, which is precisely what the conflict refusal already
+// withholds from a caller outside the owning team.
+func (q *Queries) ListRouteDomainsByServer(ctx context.Context, runtimeServerID string) ([]string, error) {
+	rows, err := q.db.Query(ctx, listRouteDomainsByServer, runtimeServerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var domain string
+		if err := rows.Scan(&domain); err != nil {
+			return nil, err
+		}
+		items = append(items, domain)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
