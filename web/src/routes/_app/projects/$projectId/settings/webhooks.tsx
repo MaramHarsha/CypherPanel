@@ -211,6 +211,11 @@ function EndpointCard({ projectId, endpoint: e }: { projectId: string; endpoint:
             >
               {e.enabled ? "Pause" : "Resume"}
             </ActionButton>
+            {/* Editing, which PATCH has always accepted. Without it a moved
+                receiver meant delete-and-re-add, and re-adding mints a NEW
+                signing secret — so changing a URL forced a redeploy of
+                whatever was verifying the old one. */}
+            <NewEndpointDialog projectId={projectId} endpoint={e} />
             <ActionButton
               size="sm"
               variant="ghost"
@@ -371,10 +376,32 @@ function OneTimeSecret({ secret, lead, onDismiss }: { secret: string; lead: stri
   );
 }
 
-function NewEndpointDialog({ projectId, primary }: { projectId: string; primary?: boolean }) {
+/**
+ * Adding an endpoint, and editing one.
+ *
+ * Editing was missing entirely: PATCH accepts url and events, the row renders
+ * both, and the only control was Pause. A receiver that moved, or a project
+ * that wanted one more event, meant deleting the endpoint and adding another —
+ * which mints a NEW signing secret, so every change forced a redeploy of
+ * whatever was verifying it.
+ *
+ * The secret is untouched by an edit, which is the point.
+ */
+function NewEndpointDialog({
+  projectId,
+  primary,
+  endpoint,
+}: {
+  projectId: string;
+  primary?: boolean;
+  endpoint?: WebhookEndpoint;
+}) {
+  const editing = endpoint != null;
   const qc = useQueryClient();
-  const [url, setUrl] = useState("");
-  const [events, setEvents] = useState<Set<string>>(new Set(["deploy.failed"]));
+  const [url, setUrl] = useState(endpoint?.url ?? "");
+  const [events, setEvents] = useState<Set<string>>(
+    new Set(endpoint?.events ?? ["deploy.failed"]),
+  );
   const [error, setError] = useState<string | null>(null);
   const [secret, setSecret] = useState<string | null>(null);
   const [createdUrl, setCreatedUrl] = useState("");
@@ -391,11 +418,22 @@ function NewEndpointDialog({ projectId, primary }: { projectId: string; primary?
     },
   });
 
-  const addState = useMutationActionState(create);
+  const update = useUpdateWebhookEndpoint({
+    mutation: {
+      onSuccess: () => {
+        void qc.invalidateQueries({ queryKey: getListWebhookEndpointsQueryKey(projectId) });
+        setError(null);
+        toastSuccess({ title: "Endpoint updated", detail: "Its signing secret is unchanged." });
+      },
+      onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not update the endpoint"),
+    },
+  });
+
+  const addState = useMutationActionState(editing ? update : create);
 
   const reset = () => {
-    setUrl("");
-    setEvents(new Set(["deploy.failed"]));
+    setUrl(endpoint?.url ?? "");
+    setEvents(new Set(endpoint?.events ?? ["deploy.failed"]));
     setError(null);
     setSecret(null);
     setCreatedUrl("");
@@ -408,15 +446,25 @@ function NewEndpointDialog({ projectId, primary }: { projectId: string; primary?
       setError("Pick at least one event to send");
       return;
     }
+    if (editing) {
+      update.mutate({ id: endpoint.id, data: { url, events: [...events] as never[] } });
+      return;
+    }
     create.mutate({ id: projectId, data: { url, events: [...events] as never[] } });
   };
 
   return (
     <Dialog onOpenChange={(open) => !open && reset()}>
       <DialogTrigger asChild>
-        <Button size="sm" variant={primary ? "primary" : "secondary"}>
-          <Plus className="h-3.5 w-3.5" /> Add endpoint
-        </Button>
+        {editing ? (
+          <Button size="sm" variant="ghost">
+            Edit
+          </Button>
+        ) : (
+          <Button size="sm" variant={primary ? "primary" : "secondary"}>
+            <Plus className="h-3.5 w-3.5" /> Add endpoint
+          </Button>
+        )}
       </DialogTrigger>
       <DialogContent title={secret ? "Endpoint added" : "Add an endpoint"}>
         {secret ? (
