@@ -66,10 +66,15 @@ const (
 	// Servers. `server.enrolled` is the one the threat model names by hand
 	// (§5.3, §8.1): a new server appearing must be a first-class, audited
 	// event, not a log line.
-	ActionServerCreated  = "server.created"
-	ActionServerUpdated  = "server.updated"
-	ActionServerDeleted  = "server.deleted"
-	ActionServerEnrolled = "server.enrolled"
+	ActionServerCreated = "server.created"
+	ActionServerUpdated = "server.updated"
+	// An owner installed an agent on the CONTROL PLANE's own host, rather than
+	// generating a join command someone runs elsewhere (local-server.md §7).
+	// Different acts with different blast radii; an audit log that cannot tell
+	// them apart is not much of one.
+	ActionServerLocalJoin = "server.local_join_requested"
+	ActionServerDeleted   = "server.deleted"
+	ActionServerEnrolled  = "server.enrolled"
 
 	// Deploy keys — the same class of credential as a token.
 	ActionDeployKeyCreated = "deploy_key.created"
@@ -304,7 +309,8 @@ var actions = map[string]bool{
 	ActionAccessGranted: true, ActionAccessDenied: true,
 
 	ActionServerCreated: true, ActionServerUpdated: true,
-	ActionServerDeleted: true, ActionServerEnrolled: true,
+	ActionServerLocalJoin: true,
+	ActionServerDeleted:   true, ActionServerEnrolled: true,
 
 	ActionDeployKeyCreated: true, ActionDeployKeyDeleted: true,
 

@@ -133,7 +133,7 @@ function OverviewTab() {
                 </Fact>
                 <Fact label="Container port">{a.runtime.port}</Fact>
                 <Fact label="Domain">
-                  <DomainLink applicationId={appId} domain={a.route.domain ?? ""} https={a.route.https} />
+                  <DomainLink applicationId={appId} domain={a.route.domain ?? ""} https={a.route.https} tlsState={a.tls_state} />
                 </Fact>
                 {a.route.domain && a.route.path_prefix && a.route.path_prefix !== "/" && (
                   <Fact label="Path">{a.route.path_prefix}</Fact>

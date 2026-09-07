@@ -36,6 +36,7 @@ var nav = []group{
 	{Title: "Getting started", Paths: []string{
 		"dev/deployment.md",
 		"features/first-run-setup.md",
+		"features/local-server.md",
 	}},
 	{Title: "Concepts", Paths: []string{
 		"architecture.md",

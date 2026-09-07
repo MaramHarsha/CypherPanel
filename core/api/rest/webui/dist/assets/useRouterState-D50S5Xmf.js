@@ -1,1 +1,0 @@
-import{a$ as t,b0 as a,b1 as n}from"./index-BYqwnGr8.js";function c(r){const u=t({warn:(r==null?void 0:r.router)===void 0}),e=(r==null?void 0:r.router)||u;return a(e.stores.__store,n(r,e))}export{c as u};

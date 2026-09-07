@@ -143,6 +143,16 @@ func main() {
 		}
 		return
 	}
+	// `cypherd join-local` installs an agent on THIS host, from a request the
+	// plane placed. Same handoff as `upgrade`, same reason: the plane cannot
+	// write a systemd unit and must not be able to (local-server.md §2).
+	if len(os.Args) > 1 && os.Args[1] == "join-local" {
+		if err := runLocalJoinHelper(log); err != nil {
+			log.Error("local join helper failed", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 	// `cypherd migrate` applies migrations and exits. The helper runs it with
 	// the NEW binary before starting the service, so a migration failure is
 	// attributable ("migration 42 failed") rather than "the panel did not come
@@ -841,6 +851,8 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		NATSURL:          cfg.AdvertisedNATSURL(),
 		Logs:             b,
 		ConsoleURL:       cfg.AdvertisedConsoleURL(),
+		PublicHost:       cfg.PublicHost,
+		UpgradeDir:       cfg.UpgradeDir,
 		TrustedProxies:   cfg.TrustedProxies,
 		Panel:            updateChecker,
 		PanelLogs:        panelLogs,

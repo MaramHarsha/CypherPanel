@@ -260,6 +260,13 @@ func (a *API) handleOpenAPI(w http.ResponseWriter, _ *http.Request) {
 //go:embed install-agent.sh
 var installScript []byte
 
+// AgentInstallScript is the installer this panel serves at /install/agent.sh.
+//
+// Exported so the local-join helper runs THE SAME BYTES rather than a second
+// copy that could drift (local-server.md §3): the pasted command and the "use
+// this machine" button differ in who types them and in nothing else.
+func AgentInstallScript() string { return string(installScript) }
+
 func (a *API) handleInstallScript(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	_, _ = w.Write(installScript)

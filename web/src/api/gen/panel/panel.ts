@@ -1509,7 +1509,9 @@ export const getSetAgentChannelUrl = (channel: 'stable' | 'canary',) => {
  *
  * Setting an older version than the channel already names permits the agents to move backwards; moving forward clears that permission. It is derived rather than a second checkbox, because an operator who has to remember one is an operator whose rollback does not happen. It stops an ACCIDENT — a stale desired set, a mistyped tag, a restored snapshot walking the fleet backwards — and not a compromised plane, whose bound is the signature the agent checks.
  *
- * Unless `CYPHERD_AGENT_UPDATE_PRECHECK=off`, the plane HEADs the release manifest first so a typo is refused where it is cheap. That probe takes threat-model §5.14's controls and refuses an address inside the panel's own network; the off switch is how an operator says "the agents can reach that mirror and you cannot".
+ * The version must be tag-shaped (`v1.2.3`, optionally with a pre-release suffix). It is bounded because it is concatenated into a URL by this pre-flight and by every agent's download, and `../` in a tag would aim a fetcher at a path the panel never named.
+ *
+ * Unless `CYPHERD_AGENT_UPDATE_PRECHECK=off`, the plane HEADs the release manifest first so a mistyped tag is refused where it is cheap. That probe goes to ONE host — the constant this project publishes releases from — and never to an `artifact_base` from this request body: the plane connecting to a host a caller named is a request-forgery primitive whatever guards sit in front of it, since a public host can redirect inward and a name can resolve differently the second time it is looked up (threat-model §5.14). A mirror is validated for SHAPE — absolute http(s), no credentials, query or fragment — and is otherwise the agents' business, which is what the off switch already meant.
  * @summary Set a channel's desired agent version (owner, session only)
  */
 export const setAgentChannel = async (channel: 'stable' | 'canary',

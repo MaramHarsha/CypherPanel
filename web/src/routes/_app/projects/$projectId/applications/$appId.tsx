@@ -133,7 +133,7 @@ function ApplicationLayout() {
                 panel will actually serve that hostname. An unverified domain
                 links nowhere, and offering the link anyway is how someone ends
                 up debugging DNS that was never published. */}
-            {domain && <HeaderDomain applicationId={appId} domain={domain} https={https} />}
+            {domain && <HeaderDomain applicationId={appId} domain={domain} https={https} tlsState={app.data?.tls_state} />}
           </span>
         }
         actions={<DeployButton appId={appId} branch={app.data?.source.branch} />}

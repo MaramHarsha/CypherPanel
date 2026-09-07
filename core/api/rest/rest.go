@@ -486,6 +486,14 @@ type Deps struct {
 	NATSURL     string // advertised data-plane URL
 	Logs        LogSubscriber
 	ConsoleURL  string // advertised HTTP base URL (installer + CA fetch)
+	// PublicHost is the address agents dial and this host answers at. It names
+	// the machine the "use this machine" button will change (local-server.md §8).
+	PublicHost string
+	// UpgradeDir is the root helper handoff directory, shared by the panel
+	// upgrade and the local-agent install. Empty is a container install, where
+	// there is no host service manager to install into and both say so rather
+	// than drawing a control that cannot work.
+	UpgradeDir string
 	// TrustedProxies are the peer CIDRs allowed to speak for a client through
 	// X-Forwarded-For / X-Real-IP / X-Request-Id. Empty means nothing is
 	// trusted and the TCP peer is always the client (§5).
@@ -791,6 +799,12 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/panel/agent-updates/{channel}", a.sessionOnly(a.handleSetAgentChannel))
 	mux.HandleFunc("POST /api/v1/panel/agent-updates/promote", a.sessionOnly(a.handlePromoteAgentChannel))
 	mux.HandleFunc("PUT /api/v1/servers/{id}/agent-channel", a.sessionOnly(a.handleSetServerAgentChannel))
+
+	// "Use this machine" (local-server.md §7). The POST is owner AND
+	// session-only: it installs software on the panel's own host as root, and
+	// an API token that can do that is an API token that owns the box.
+	mux.HandleFunc("GET /api/v1/servers/local", a.authed(a.handleGetLocalServer))
+	mux.HandleFunc("POST /api/v1/servers/local", a.sessionOnly(a.handleCreateLocalServer))
 	mux.HandleFunc("GET /api/v1/panel/logs", a.sessionOnly(a.handleGetPanelLogs))
 
 	// The panel's ACME account (agent-identity-and-tls.md §4). Owner-only: it

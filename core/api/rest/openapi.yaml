@@ -1814,6 +1814,62 @@ paths:
         "409": { description: The gate refused; the message names the canary servers and what they are running. }
         "503": { description: Agent updates are not enabled on this panel. }
 
+  /api/v1/servers/local:
+    get:
+      operationId: getLocalServer
+      tags: [servers]
+      summary: Whether this panel can add its own host as a server (admin+)
+      description: >-
+        The most common first server is the machine the panel is already
+        installed on, and the join command works there as well as anywhere —
+        it is just not discoverable, because the dialog says "run this on the
+        server you want to add" and the box you are signed into is not obviously
+        one of those.
+
+
+        `state` is `available`, `helper_missing` (this panel predates the
+        root helper — re-run install.sh), `unsupported` (a container install,
+        which has no host service manager to install into) or `already_joined`.
+        Anything but `available` carries a `reason` sentence to show in place of
+        the button: a disabled control with no explanation is a dead end.
+      responses:
+        "200": { description: The state., content: { application/json: { schema: { $ref: "#/components/schemas/LocalServer" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: createLocalServer
+      tags: [servers]
+      summary: Add this machine as a server (owner, session only)
+      description: >-
+        Creates the Server through the ordinary path, mints a join token, and
+        writes a request that a root one-shot performs. THE PLANE INSTALLS
+        NOTHING ITSELF: `cypherd` runs with `DynamicUser` and
+        `ProtectSystem=strict`, so writing the agent binary, a unit file, or
+        calling systemctl are all forbidden to it — deliberately, because
+        relaxing that turns any RCE in this API into persistence on the
+        control-plane host. Its entire power is to ask.
+
+
+        ADR-002 is not bent. Nothing reaches out: the request never leaves the
+        host, names no address, and holds no remote credential. The agent still
+        dials home to enroll exactly as a pasted command's agent does — what
+        changes is who types the command. The request has no field naming a
+        machine and must never gain one, which is what keeps this from becoming
+        a remote-execution primitive.
+
+
+        Owner AND session-only: this installs software on the panel's own host
+        as root, and API tokens live in CI. `POST /servers` stays admin and
+        token-reachable, because handing out a join command grants nothing.
+      responses:
+        "202":
+          description: The server exists and the install has been requested; poll GET for the phase.
+          content: { application/json: { schema: { $ref: "#/components/schemas/LocalServerCreated" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: This host already runs an agent for this panel. }
+        "501": { description: This panel cannot install an agent on its own host; the message names why and the remedy. }
+
   /api/v1/servers/{id}/agent-channel:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Server ID. }
@@ -6673,6 +6729,35 @@ components:
             passphrase:
               type: string
               description: Readable exactly once, in this response. Absent when the gate was cleared.
+
+    LocalServer:
+      type: object
+      required: [state, hostname]
+      properties:
+        state:
+          type: string
+          enum: [available, helper_missing, unsupported, already_joined]
+        reason:
+          type: string
+          description: Why the button is unavailable, as a sentence to show in its place.
+        hostname:
+          type: string
+          description: The machine this would change, so the button can name it.
+        server_id:
+          type: string
+          description: Set when this host is already enrolled, so the panel links to the server instead of offering the button.
+        phase:
+          type: string
+          description: The root helper's own progress - installing, enrolling, succeeded, failed - while an install is running. A real phase from a real process, not a spinner on a timer.
+        detail:
+          type: string
+
+    LocalServerCreated:
+      type: object
+      required: [server, local]
+      properties:
+        server: { $ref: "#/components/schemas/Server" }
+        local: { $ref: "#/components/schemas/LocalServer" }
 
     AgentChannel:
       type: object
