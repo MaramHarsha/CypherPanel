@@ -760,6 +760,12 @@ func (f *fakeAppsStore) SetApplicationWebhookSecret(_ context.Context, id string
 	return app, nil
 }
 
+// ListServerWorkloads backs "what runs on this host". Empty here; the tests
+// that care seed it.
+func (f *fakeAppsStore) ListServerWorkloads(_ context.Context, _ string) ([]domain.ServerWorkload, error) {
+	return nil, nil
+}
+
 // ListSharedVariableKeysInScope backs the write-time {{shared.KEY}} check
 // (shared-variables.md §3). Empty: no shared variable resolves in these tests,
 // so any reference an env-var write carries is a 400.

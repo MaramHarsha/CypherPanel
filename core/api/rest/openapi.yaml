@@ -495,6 +495,54 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/v1/servers/{id}/workloads:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Server ID. }
+    get:
+      operationId: listServerWorkloads
+      tags: [servers]
+      summary: What runs on this server (member)
+      description: >-
+        Applications, compose stacks and managed databases placed on this host,
+        with the project each belongs to.
+
+
+        The plane has always known — it assembles desired state from exactly
+        these three lists — and no route exposed it, so the panel could show a
+        server as degraded, or ask an operator to confirm removing it, without
+        ever being able to say what was on it. "What will I break" is the first
+        question anyone asks about a host, and the answer needed a database
+        query.
+
+
+        Scoped to what the caller may see: a workload in a team they do not
+        belong to is omitted rather than refused, so the count is honest about
+        their own view without revealing another team's.
+      responses:
+        "200":
+          description: The workloads.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [workloads]
+                properties:
+                  workloads:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, kind, name, project_id, project_name, status]
+                      properties:
+                        id: { type: string }
+                        kind: { type: string, enum: [application, compose_stack, database] }
+                        name: { type: string }
+                        project_id: { type: string }
+                        project_name: { type: string }
+                        status: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /api/v1/servers/{id}/domains:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Server ID. }

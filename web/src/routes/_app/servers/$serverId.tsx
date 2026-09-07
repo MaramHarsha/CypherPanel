@@ -7,6 +7,7 @@ import {
   getListServersQueryKey,
   useDeleteServer,
   useGetServer,
+  useListServerWorkloads,
   useGetServerMetrics,
 } from "@/api/gen/servers/servers";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
@@ -30,6 +31,9 @@ function ServerDetail() {
   const { serverId } = Route.useParams();
   const navigate = useNavigate();
   const server = useGetServer(serverId, { query: { refetchInterval: 5_000 } });
+  // What runs here — needed by the page AND by the remove confirm, which used
+  // to claim "its apps survive" without being able to say what they were.
+  const workloads = useListServerWorkloads(serverId).data?.workloads ?? [];
 
   useCrumbs([{ label: "servers", to: "/servers" }, { label: server.data?.name ?? serverId }]);
 
@@ -137,7 +141,9 @@ function ServerDetail() {
                     blastRadius={[
                       "its agent's identity — the live connection is cut and the certificate is refused on any reconnect",
                       "its pending join tokens — an install still in progress can't complete",
-                      "its place in the fleet (its apps survive: the remove is refused while any still runs here — move or delete them first)",
+                      workloads.length > 0
+                        ? `nothing that runs here — the remove is REFUSED while ${workloadSummary(workloads)} remain on it; move or delete them first`
+                        : "its place in the fleet (nothing runs here, so nothing is taken down)",
                     ]}
                     confirmName={srv.name}
                     actionLabel="Remove server"
@@ -146,6 +152,34 @@ function ServerDetail() {
                     onConfirm={() => del.mutate({ id: srv.id })}
                   />
                 </div>
+              </section>
+
+              {/* WHAT RUNS HERE. The plane assembles desired state from exactly
+                  these three lists and no screen ever showed them, so a server
+                  could be reported degraded — or offered for removal — without
+                  the operator being able to see what was on it. */}
+              <section className="rounded-lg border border-border bg-surface p-4.5">
+                <h2 className="eyebrow">Workloads</h2>
+                {workloads.length === 0 ? (
+                  <p className="mt-3 text-[12.5px] leading-relaxed text-text-dim">
+                    Nothing runs on this server yet. Applications, compose stacks and managed databases placed here
+                    will be listed.
+                  </p>
+                ) : (
+                  <ul className="mt-3 divide-y divide-border-subtle">
+                    {workloads.map((w) => (
+                      <li key={`${w.kind}-${w.id}`} className="flex flex-wrap items-baseline justify-between gap-2 py-2">
+                        <span className="min-w-0">
+                          <span className="text-[13px] text-text">{w.name}</span>{" "}
+                          <span className="mono text-[11px] text-text-faint">
+                            {w.kind.replace("_", " ")} · {w.project_name}
+                          </span>
+                        </span>
+                        <span className="mono text-[11.5px] text-text-mid">{w.status}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </section>
 
               {/* The node's own load is the sum of what it runs. There is no
@@ -233,4 +267,16 @@ function DiskCard({
       )}
     </FactCard>
   );
+}
+
+/** "2 applications and 1 database", for a refusal that names what blocks it. */
+function workloadSummary(workloads: { kind: string }[]): string {
+  const counts = new Map<string, number>();
+  for (const w of workloads) counts.set(w.kind, (counts.get(w.kind) ?? 0) + 1);
+  const parts = [...counts.entries()].map(([kind, n]) => {
+    const noun = kind === "compose_stack" ? "compose stack" : kind;
+    return `${n} ${noun}${n === 1 ? "" : "s"}`;
+  });
+  if (parts.length <= 1) return parts[0] ?? "nothing";
+  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
 }

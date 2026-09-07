@@ -1,1 +1,0 @@
-import{b3 as t,b4 as a,b5 as n}from"./index-DmfLZ2cS.js";function c(r){const u=t({warn:(r==null?void 0:r.router)===void 0}),e=(r==null?void 0:r.router)||u;return a(e.stores.__store,n(r,e))}export{c as u};

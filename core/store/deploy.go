@@ -724,6 +724,23 @@ func (s *Store) ListRouteDomainsByServer(ctx context.Context, serverID string) (
 	return rows, nil
 }
 
+// ListServerWorkloads reports everything placed on a host.
+func (s *Store) ListServerWorkloads(ctx context.Context, serverID string) ([]domain.ServerWorkload, error) {
+	rows, err := s.q.ListServerWorkloads(ctx, serverID)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing server workloads: %w", err)
+	}
+	out := make([]domain.ServerWorkload, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, domain.ServerWorkload{
+			ID: r.ID, Kind: r.Kind, Name: r.Name,
+			ProjectID: r.ProjectID, ProjectName: r.ProjectName,
+			Status: r.Status, TeamID: r.TeamID,
+		})
+	}
+	return out, nil
+}
+
 // ApplicationsByRouteDomain names every application already claiming a domain,
 // so a second one can be refused before Traefik silently picks a winner.
 func (s *Store) ApplicationsByRouteDomain(ctx context.Context, routeDomain string) ([]domain.DomainClaim, error) {

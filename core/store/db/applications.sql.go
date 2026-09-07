@@ -668,6 +668,75 @@ func (q *Queries) ListRouteDomainsByServer(ctx context.Context, runtimeServerID 
 	return items, nil
 }
 
+const listServerWorkloads = `-- name: ListServerWorkloads :many
+SELECT a.id, 'application' AS kind, a.name, e.project_id, p.name AS project_name,
+       a.status, p.team_id
+FROM applications a
+JOIN environments e ON e.id = a.environment_id
+JOIN projects p ON p.id = e.project_id
+WHERE a.runtime_server_id = $1
+UNION ALL
+SELECT c.id, 'compose_stack', c.name, e.project_id, p.name, c.status, p.team_id
+FROM compose_stacks c
+JOIN environments e ON e.id = c.environment_id
+JOIN projects p ON p.id = e.project_id
+WHERE c.server_id = $1
+UNION ALL
+SELECT d.id, 'database', d.name, e.project_id, p.name, d.status, p.team_id
+FROM databases d
+JOIN environments e ON e.id = d.environment_id
+JOIN projects p ON p.id = e.project_id
+WHERE d.server_id = $1 AND d.pending_delete = false
+ORDER BY kind, name
+`
+
+type ListServerWorkloadsRow struct {
+	ID          string
+	Kind        string
+	Name        string
+	ProjectID   string
+	ProjectName string
+	Status      string
+	TeamID      string
+}
+
+// ListServerWorkloads answers "what runs on this host" in one query.
+//
+// The plane assembles desired state from exactly these three lists and no route
+// ever exposed them, so the panel could report a server degraded, or ask for
+// confirmation before removing it, without being able to say what was on it.
+// "What will I break" is the first question anyone asks about a host.
+//
+// The project travels with each row because a workload without one is a name in
+// a list; the caller filters by what they may see.
+func (q *Queries) ListServerWorkloads(ctx context.Context, runtimeServerID string) ([]ListServerWorkloadsRow, error) {
+	rows, err := q.db.Query(ctx, listServerWorkloads, runtimeServerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListServerWorkloadsRow{}
+	for rows.Next() {
+		var i ListServerWorkloadsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Name,
+			&i.ProjectID,
+			&i.ProjectName,
+			&i.Status,
+			&i.TeamID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setApplicationAllowlist = `-- name: SetApplicationAllowlist :one
 UPDATE applications
 SET ip_allowlist_enabled = $2, ip_allowlist = $3, updated_at = now()
