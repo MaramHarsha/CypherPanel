@@ -635,3 +635,41 @@ jobs:
           echo "── agent (1) ──"; cat agent.log 2>/dev/null || true
           echo "── agent (2) ──"; cat agent2.log 2>/dev/null || true
           echo "── docker ──"; docker ps -a || true
+
+  browser:
+    name: Browser regression (real panel, real browser)
+    runs-on: ubuntu-latest
+    # No `services:` block on purpose: scripts/e2e.sh starts its own PostgreSQL,
+    # so CI and a developer's laptop run the SAME code path. A second way to
+    # provide the database would be a second thing to keep working, and the one
+    # that only ever runs in CI is the one that quietly rots.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: "**/go.sum"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      # These drive the real panel through a real browser, which is the only
+      # check here that fails when a control is MISSING rather than when an
+      # endpoint is wrong. Five defects found by review on 2026-09-07 were all
+      # invisible to the sixteen jobs that were green at the time, because the
+      # API worked and the screen had no field.
+      - name: Browser regression suite
+        run: ./scripts/e2e.sh
+
+      - name: Upload traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: web/e2e/test-results/
+          retention-days: 7
