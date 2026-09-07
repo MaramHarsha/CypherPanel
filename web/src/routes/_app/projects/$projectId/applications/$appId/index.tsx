@@ -17,7 +17,7 @@ import {
 import { getHandleGithubWebhookUrl } from "@/api/gen/deployments/deployments";
 import { useGetServer } from "@/api/gen/servers/servers";
 import type { Application } from "@/api/gen/model";
-import { CopyField } from "@/components/copy-field";
+import { PushToDeploy } from "@/components/push-to-deploy";
 import { MetricsCard, useMetricsWindow } from "@/components/metrics-card";
 import { ReplicaCard } from "@/components/replica-card";
 import { TrafficCard } from "@/components/traffic-card";
@@ -194,15 +194,7 @@ function OverviewTab() {
                 </p>
               </section>
             ) : (
-              <section className="rounded-lg border border-border bg-surface p-4.5">
-                <h2 className="eyebrow">Push to deploy</h2>
-                <p className="mt-3 max-w-2xl text-[12.5px] leading-relaxed text-text-dim">
-                  Add this webhook to the GitHub repository (Settings → Webhooks, content type JSON) and every push
-                  to <span className="font-mono text-[12px] text-text">{a.source.branch}</span> deploys
-                  automatically.
-                </p>
-                <CopyField value={webhookUrl} className="mt-2.5" />
-              </section>
+              <PushToDeploy appId={appId} webhookUrl={webhookUrl} branch={a.source.branch || "the default branch"} />
             )}
           </div>
         );

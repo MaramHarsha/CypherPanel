@@ -634,6 +634,9 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/servers/{id}", a.authed(a.handleGetServer))
 	// What this server already routes, so a form can warn before it refuses.
 	mux.HandleFunc("GET /api/v1/servers/{id}/domains", a.authed(a.handleListServerDomains))
+	// Push-to-deploy needs a secret the operator holds. sessionOnly because it
+	// is credential management: an API token must not mint one.
+	mux.HandleFunc("POST /api/v1/applications/{id}/webhook/rotate", a.sessionOnly(a.handleRotateApplicationWebhook))
 	mux.HandleFunc("PATCH /api/v1/servers/{id}", a.authed(a.handlePatchServer))
 	mux.HandleFunc("DELETE /api/v1/servers/{id}", a.authed(a.handleDeleteServer))
 

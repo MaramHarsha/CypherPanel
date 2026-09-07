@@ -182,6 +182,7 @@ type Store interface {
 	ApplicationsByRouteDomain(ctx context.Context, routeDomain string) ([]domain.DomainClaim, error)
 	// ListRouteDomainsByServer backs the screen's "that one is taken" warning.
 	ListRouteDomainsByServer(ctx context.Context, serverID string) ([]string, error)
+	SetApplicationWebhookSecret(ctx context.Context, id string, ct, nonce []byte) (domain.Application, error)
 }
 
 // Sealer seals plaintext for storage at rest. *secret.Box satisfies it.
@@ -621,6 +622,34 @@ func (s *Service) checkRegistries(ctx context.Context, env domain.Environment, s
 // from a caller outside the owning team.
 func (s *Service) RouteDomainsOnServer(ctx context.Context, serverID string) ([]string, error) {
 	return s.store.ListRouteDomainsByServer(ctx, serverID)
+}
+
+// RotateWebhookSecret mints a new push-webhook secret and returns it ONCE.
+//
+// THE FAILURE THIS EXISTS TO STOP. The secret was minted at create time and
+// returned exactly once, in the create response — which the create dialog threw
+// away. The application Overview then told the operator to add the webhook to
+// GitHub and showed them only the URL, while the endpoint refuses any delivery
+// without a valid signature. So push-to-deploy did not work for any application
+// made through the panel, and could not be made to work: no route read the
+// secret and none replaced it. The operator's report was "when I push to main
+// it does not deploy, I have to click Deploy".
+//
+// Rotating is the honest recovery rather than revealing the stored value: the
+// secret is sealed under the master key, and a route that unseals a credential
+// to show it is one that eventually shows it to the wrong person. A new secret
+// costs one paste into GitHub, which the operator is doing anyway.
+func (s *Service) RotateWebhookSecret(ctx context.Context, appID string) (domain.Application, string, error) {
+	secret := ids.Secret()
+	ct, nonce, err := s.sealer.Seal([]byte(secret))
+	if err != nil {
+		return domain.Application{}, "", fmt.Errorf("applications: sealing the webhook secret: %w", err)
+	}
+	app, err := s.store.SetApplicationWebhookSecret(ctx, appID, ct, nonce)
+	if err != nil {
+		return domain.Application{}, "", err
+	}
+	return app, secret, nil
 }
 
 // DomainInUseError is the 409 for a domain another application already serves.

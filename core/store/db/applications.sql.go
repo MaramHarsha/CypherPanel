@@ -1018,6 +1018,88 @@ func (q *Queries) SetApplicationStatus(ctx context.Context, arg SetApplicationSt
 	return err
 }
 
+const setApplicationWebhookSecret = `-- name: SetApplicationWebhookSecret :one
+UPDATE applications
+SET webhook_secret_ct = $2, webhook_secret_nonce = $3, updated_at = now()
+WHERE id = $1
+RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token, ip_allowlist_enabled, ip_allowlist, preview_password_enabled, preview_password_hash, preview_password_set_at, replica_status, maintenance_mode, maintenance_since, github_installation_id
+`
+
+type SetApplicationWebhookSecretParams struct {
+	ID                 string
+	WebhookSecretCt    []byte
+	WebhookSecretNonce []byte
+}
+
+// SetApplicationWebhookSecret replaces the inbound push webhook's secret.
+//
+// It exists because the original was returned exactly once, in the create
+// response, and the create dialog discarded it — so every application ever made
+// through the panel had a secret nobody held, the Overview told operators to
+// add a webhook to GitHub, and every delivery was refused 401. Push-to-deploy
+// was unreachable and unrecoverable: nothing could read the secret and nothing
+// could replace it.
+func (q *Queries) SetApplicationWebhookSecret(ctx context.Context, arg SetApplicationWebhookSecretParams) (Application, error) {
+	row := q.db.QueryRow(ctx, setApplicationWebhookSecret, arg.ID, arg.WebhookSecretCt, arg.WebhookSecretNonce)
+	var i Application
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.Name,
+		&i.SourceKind,
+		&i.SourceRepo,
+		&i.SourceBranch,
+		&i.SourceDeployKeyID,
+		&i.BuildKind,
+		&i.BuildDockerfilePath,
+		&i.BuildContext,
+		&i.RuntimeServerID,
+		&i.RuntimePort,
+		&i.RuntimeReplicas,
+		&i.RouteDomain,
+		&i.RouteHttps,
+		&i.RoutePathPrefix,
+		&i.HealthPath,
+		&i.HealthIntervalSeconds,
+		&i.HealthTimeoutSeconds,
+		&i.HealthRetries,
+		&i.WebhookID,
+		&i.WebhookSecretCt,
+		&i.WebhookSecretNonce,
+		&i.DesiredRevisionID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Status,
+		&i.StatusDetail,
+		&i.ObservedRevisionID,
+		&i.StatusObservedAt,
+		&i.PreviewEnabled,
+		&i.PreviewBaseDomain,
+		&i.PreviewTtlHours,
+		&i.CpuLimit,
+		&i.MemoryLimitMb,
+		&i.Volumes,
+		&i.Ports,
+		&i.HealthKind,
+		&i.SourceImage,
+		&i.EnvAppliedAt,
+		&i.SourceRegistryID,
+		&i.BuildPushRegistryID,
+		&i.BuildPushRepository,
+		&i.RestartToken,
+		&i.IpAllowlistEnabled,
+		&i.IpAllowlist,
+		&i.PreviewPasswordEnabled,
+		&i.PreviewPasswordHash,
+		&i.PreviewPasswordSetAt,
+		&i.ReplicaStatus,
+		&i.MaintenanceMode,
+		&i.MaintenanceSince,
+		&i.GithubInstallationID,
+	)
+	return i, err
+}
+
 const updateApplicationConfig = `-- name: UpdateApplicationConfig :one
 UPDATE applications
 SET name = $2,

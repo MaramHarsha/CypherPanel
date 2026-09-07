@@ -1029,6 +1029,17 @@ func accessFromRow(r db.Application) domain.AppAccess {
 
 // SetApplicationAllowlist replaces the allowlist wholesale. The CIDRs are
 // validated by the service before they reach here.
+// SetApplicationWebhookSecret replaces the inbound push webhook's secret.
+func (s *Store) SetApplicationWebhookSecret(ctx context.Context, id string, ct, nonce []byte) (domain.Application, error) {
+	row, err := s.q.SetApplicationWebhookSecret(ctx, db.SetApplicationWebhookSecretParams{
+		ID: id, WebhookSecretCt: ct, WebhookSecretNonce: nonce,
+	})
+	if err != nil {
+		return domain.Application{}, wrap("setting the webhook secret", err)
+	}
+	return applicationFromRow(row), nil
+}
+
 func (s *Store) SetApplicationAllowlist(ctx context.Context, id string, enabled bool, cidrs []string) (domain.Application, error) {
 	if cidrs == nil {
 		cidrs = []string{}

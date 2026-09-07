@@ -45,6 +45,7 @@ import type {
   PreviewPasswordResult,
   ResourceMetrics,
   ResourceTraffic,
+  RotateApplicationWebhookSecret200,
   SetAppAccessRequest,
   SetEnvVarRequest,
   SetPreviewPasswordRequest,
@@ -77,7 +78,82 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   return result;
 };
 
-export const getGetApplicationDNSUrl = (id: string,) => {
+export const getRotateApplicationWebhookSecretUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/applications/${id}/webhook/rotate`
+}
+
+/**
+ * Returns the new secret EXACTLY ONCE, in this response. It is sealed under the master key and no route ever reads it back.
+ *
+ * This exists because push-to-deploy was unreachable without it. The secret was minted at create time and returned once, in the create response, which the create dialog discarded — while the application's Overview told the operator to add the webhook to GitHub and showed them only the URL. The endpoint refuses any delivery whose signature does not verify, so every push was answered 401 and nothing deployed. No route read the secret and none replaced it, so there was no way out.
+ *
+ * Rotating rather than revealing is deliberate: a route that unseals a credential to display it is one that eventually displays it to the wrong person, and pasting a new secret into GitHub is work the operator is already doing. Rotating invalidates the old one immediately, so a webhook already configured stops working until the new secret is pasted in — which the screen says before it does it.
+ * @summary Mint a new push-to-deploy webhook secret (team admin, interactive session)
+ */
+export const rotateApplicationWebhookSecret = async (id: string, options?: RequestInit): Promise<RotateApplicationWebhookSecret200> => {
+
+  return apiFetch<RotateApplicationWebhookSecret200>(getRotateApplicationWebhookSecretUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRotateApplicationWebhookSecretMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rotateApplicationWebhookSecret>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof rotateApplicationWebhookSecret>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['rotateApplicationWebhookSecret'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rotateApplicationWebhookSecret>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  rotateApplicationWebhookSecret(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RotateApplicationWebhookSecretMutationResult = NonNullable<Awaited<ReturnType<typeof rotateApplicationWebhookSecret>>>
+
+    export type RotateApplicationWebhookSecretMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Mint a new push-to-deploy webhook secret (team admin, interactive session)
+ */
+export const useRotateApplicationWebhookSecret = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rotateApplicationWebhookSecret>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof rotateApplicationWebhookSecret>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getRotateApplicationWebhookSecretMutationOptions(options), queryClient);
+    }
+    export const getGetApplicationDNSUrl = (id: string,) => {
 
 
 

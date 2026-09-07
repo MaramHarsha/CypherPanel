@@ -198,6 +198,11 @@ func (f *fakeStore) ListRouteDomainsByServer(_ context.Context, serverID string)
 	return out, nil
 }
 
+// SetApplicationWebhookSecret backs push-webhook secret rotation.
+func (f *fakeStore) SetApplicationWebhookSecret(_ context.Context, id string, ct, nonce []byte) (domain.Application, error) {
+	return domain.Application{ID: id, WebhookSecretCT: ct, WebhookSecretNonce: nonce}, nil
+}
+
 func (f *fakeStore) ListSharedVariableKeysInScope(_ context.Context, _, _ string) ([]string, error) {
 	return f.sharedKeys, nil
 }

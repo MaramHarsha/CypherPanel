@@ -751,6 +751,15 @@ func (f *fakeAppsStore) ListRouteDomainsByServer(_ context.Context, serverID str
 	return out, nil
 }
 
+// SetApplicationWebhookSecret backs push-webhook secret rotation.
+func (f *fakeAppsStore) SetApplicationWebhookSecret(_ context.Context, id string, ct, nonce []byte) (domain.Application, error) {
+	app := f.apps[id]
+	app.ID = id
+	app.WebhookSecretCT, app.WebhookSecretNonce = ct, nonce
+	f.apps[id] = app
+	return app, nil
+}
+
 // ListSharedVariableKeysInScope backs the write-time {{shared.KEY}} check
 // (shared-variables.md §3). Empty: no shared variable resolves in these tests,
 // so any reference an env-var write carries is a 400.

@@ -107,3 +107,41 @@ directory, which itself is `os.RemoveAll`'d at the end of `Build`.
 Operator-supplied keypairs (accept a PEM upload) · RSA keys (Ed25519 only at
 launch) · GitHub App installation tokens (a V1.x auth method, not a deploy
 key) · agent-side key caching across builds (keys are ephemeral by design).
+
+## Implementation note - push-to-deploy was unreachable *(fixed 2026-09-07)*
+
+An operator reported that pushing to their branch did not deploy, and that they
+had to press Deploy by hand every time. Nothing was misconfigured on their side.
+
+`POST /webhooks/github/{id}` refuses any delivery whose `X-Hub-Signature-256`
+does not verify - correctly, it is an unauthenticated endpoint and the signature
+is the only thing in front of it. The secret it verifies against is minted when
+the application is created and returned **exactly once**, in the create
+response. The create dialog discarded that response's `webhook` object and
+navigated away. The application's Overview then said *"Add this webhook to the
+GitHub repository"* and showed the **URL alone**.
+
+So the operator added a webhook with no secret, every delivery was answered
+`401`, and no push ever deployed. No route read the secret back and none
+replaced it, so the state was also unrecoverable: the only way to get a usable
+secret was to delete the application and create another - which would have
+discarded the new secret in exactly the same way.
+
+**`POST /applications/{id}/webhook/rotate`** mints a new one and returns it once.
+Rotating rather than revealing is deliberate: the stored value is sealed under
+the master key, and a route that unseals a credential to display it is one that
+eventually displays it to the wrong person. Pasting a new secret into GitHub is
+work the operator is already doing. Team admin and interactive-session only,
+because it is credential management and an API token must not mint one.
+
+The Overview's card now asks for both halves, says that a delivery without a
+valid signature is refused, and warns - before the button, not after - that
+minting a new secret stops an already-configured webhook working until the new
+one is pasted in.
+
+**Separately, creating an application now deploys it.** The dialog's button says
+*Deploy*, and it did not: it created the application and navigated to a page
+showing `Stopped`, which is what produced the second half of the same report.
+A failed first deploy is not a failed create - the application exists and its
+own page has the button - so the failure is reported and the operator is left
+where they can retry.

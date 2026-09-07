@@ -454,6 +454,47 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /api/v1/applications/{id}/webhook/rotate:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Application ID. }
+    post:
+      operationId: rotateApplicationWebhookSecret
+      tags: [applications]
+      summary: Mint a new push-to-deploy webhook secret (team admin, interactive session)
+      description: >-
+        Returns the new secret EXACTLY ONCE, in this response. It is sealed under
+        the master key and no route ever reads it back.
+
+
+        This exists because push-to-deploy was unreachable without it. The secret
+        was minted at create time and returned once, in the create response,
+        which the create dialog discarded — while the application's Overview told
+        the operator to add the webhook to GitHub and showed them only the URL.
+        The endpoint refuses any delivery whose signature does not verify, so
+        every push was answered 401 and nothing deployed. No route read the
+        secret and none replaced it, so there was no way out.
+
+
+        Rotating rather than revealing is deliberate: a route that unseals a
+        credential to display it is one that eventually displays it to the wrong
+        person, and pasting a new secret into GitHub is work the operator is
+        already doing. Rotating invalidates the old one immediately, so a
+        webhook already configured stops working until the new secret is pasted
+        in — which the screen says before it does it.
+      responses:
+        "200":
+          description: The new secret.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [webhook]
+                properties:
+                  webhook: { $ref: "#/components/schemas/WebhookInfo" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /api/v1/servers/{id}/domains:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Server ID. }

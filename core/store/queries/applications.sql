@@ -152,3 +152,17 @@ SELECT DISTINCT lower(route_domain) AS domain
 FROM applications
 WHERE runtime_server_id = $1 AND route_domain <> ''
 ORDER BY domain;
+
+-- SetApplicationWebhookSecret replaces the inbound push webhook's secret.
+--
+-- It exists because the original was returned exactly once, in the create
+-- response, and the create dialog discarded it — so every application ever made
+-- through the panel had a secret nobody held, the Overview told operators to
+-- add a webhook to GitHub, and every delivery was refused 401. Push-to-deploy
+-- was unreachable and unrecoverable: nothing could read the secret and nothing
+-- could replace it.
+-- name: SetApplicationWebhookSecret :one
+UPDATE applications
+SET webhook_secret_ct = $2, webhook_secret_nonce = $3, updated_at = now()
+WHERE id = $1
+RETURNING *;

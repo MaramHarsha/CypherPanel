@@ -10,6 +10,7 @@ import { Plus } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { getListApplicationsQueryKey, useCreateApplication } from "@/api/gen/applications/applications";
 import { AppBuildKind } from "@/api/gen/model";
+import { useDeployApplication } from "@/api/gen/deployments/deployments";
 import { useListDeployKeys } from "@/api/gen/deploy-keys/deploy-keys";
 import { useListGitHubRepositories } from "@/api/gen/panel/panel";
 import { useListServers } from "@/api/gen/servers/servers";
@@ -72,6 +73,8 @@ export function NewAppDialog({
   const enrolled = (servers.data ?? []).filter((s) => s.enrolled && s.role !== "builder");
   const chosenServer = serverId || enrolled[0]?.id || "";
 
+  // Declared before `create` so its onSuccess can reach it.
+  const deploy = useDeployApplication();
   const create = useCreateApplication({
     mutation: {
       onSuccess: (res) => {
@@ -79,6 +82,21 @@ export function NewAppDialog({
         // so the list is refreshed on the way out rather than leaving the
         // operator to wonder where their new application went.
         void qc.invalidateQueries({ queryKey: getListApplicationsQueryKey(envId) });
+        // The button says "Deploy", so it deploys. Creating without deploying
+        // left an operator on an application page with a Stopped badge,
+        // wondering what they had just done — "when I create application it was
+        // not deploying, I need to click on deploy button manually". Failing to
+        // start is not failing to create: the application exists either way and
+        // its own page has the button, so this reports and moves on.
+        deploy.mutate(
+          { id: res.application.id, data: {} },
+          {
+            onError: (e: unknown) =>
+              toastFailed("Created, but the first deploy did not start", e, {
+                retry: () => deploy.mutate({ id: res.application.id, data: {} }),
+              }),
+          },
+        );
         void navigate({
           to: "/projects/$projectId/applications/$appId",
           params: { projectId, appId: res.application.id },

@@ -831,3 +831,33 @@ func (a *API) handleListServerDomains(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string][]string{"domains": domains})
 }
+
+// handleRotateApplicationWebhook mints a new push-to-deploy secret.
+//
+// Team ADMIN and interactive session: it is credential management, and the
+// codebase's rule is that an API token must not be able to mint or replace one.
+// It also invalidates the webhook already configured on the repository, which
+// is a change an operator should be making deliberately.
+func (a *API) handleRotateApplicationWebhook(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	appID := r.PathValue("id")
+	if !a.authorizeResolved(w, r, user, domain.RoleAdmin, func(ctx context.Context) (string, error) {
+		return a.projectIDForApplication(ctx, appID)
+	}) {
+		return
+	}
+	app, secret, err := a.deps.Applications.RotateWebhookSecret(r.Context(), appID)
+	if err != nil {
+		a.writeAppError(w, r, err, "could not rotate the webhook secret")
+		return
+	}
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionApplicationUpdated,
+		Resource: audit.Resource(audit.ResourceApplication, app.ID, app.Name),
+		// The fact of the rotation, never the value (threat-model §5.15).
+		Detail: map[string]any{"webhook_secret_rotated": true},
+	})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"webhook": webhookInfo{URL: a.deps.ConsoleURL + "/webhooks/github/" + app.WebhookID, Secret: secret},
+	})
+}

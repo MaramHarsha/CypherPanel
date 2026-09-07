@@ -305,6 +305,7 @@ export * from './restorePanelSnapshotBody.ts';
 export * from './restoreRequest.ts';
 export * from './revokeOtherSessions200.ts';
 export * from './rollbackComposeStackBody.ts';
+export * from './rotateApplicationWebhookSecret200.ts';
 export * from './runBackupResponse.ts';
 export * from './scheduledTask.ts';
 export * from './scheduledTaskRun.ts';
