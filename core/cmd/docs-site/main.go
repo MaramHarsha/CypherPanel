@@ -54,7 +54,10 @@ type builder struct {
 	pages     []page
 	byPath    map[string]*page
 	endpoints []endpoint
-	files     map[string][]byte
+	// openapi is the spec's own bytes, published alongside the pages generated
+	// from it.
+	openapi []byte
+	files   map[string][]byte
 }
 
 func build(docsDir, openapiPath, version string) (*builder, error) {
@@ -133,6 +136,9 @@ func build(docsDir, openapiPath, version string) (*builder, error) {
 		return nil, err
 	}
 	b.endpoints = endpoints
+	if raw, rerr := os.ReadFile(openapiPath); rerr == nil { //nolint:gosec // a build-time path from a flag
+		b.openapi = raw
+	}
 	b.site.APINav = groupEndpoints(endpoints)
 
 	b.site.Version = version
@@ -340,6 +346,12 @@ func (b *builder) renderAll() error {
 	}
 	b.files["docs.css"] = css
 	b.files["search.js"] = js
+	// The spec itself, beside the reference generated from it (canvas 19c's
+	// "openapi.json ↓"). A reader who wants to generate a client should not have
+	// to find the repository first.
+	if b.openapi != nil {
+		b.files["openapi.yaml"] = b.openapi
+	}
 
 	index, err := json.Marshal(b.searchIndex())
 	if err != nil {

@@ -183,6 +183,14 @@ core/cmd/docs-site/        the generator (a build-time tool, beside
 make docs-site             writes dist/docs/
 ```
 
+`docs-site` also publishes `openapi.yaml` itself beside the reference generated
+from it (canvas 19c's `openapi.json ↓`): a reader who wants to generate a client
+should not have to find the repository first. The "updated" stamp canvas 19b
+prints comes from `git log` rather than the file's mtime — a fresh clone
+rewrites every mtime to the moment it was cloned, which would have every page
+claiming it changed today — and it is omitted outside a checkout rather than
+invented.
+
 `github.com/yuin/goldmark` is added to the `core` module for CommonMark plus
 tables, strikethrough and heading anchors. It is pure Go with no transitive
 dependencies, and — this is the part that matters against vision.md's footprint
@@ -211,6 +219,13 @@ committed, and the site is published from a build rather than from the tree.
   a cookie banner attached.
 - **Edit this page.** Kept — it is a link to the file on GitHub, which costs
   nothing and is the single most effective docs contribution path.
+- **A docs URL the operator can configure.** The panel links out to the site
+  from one button in its control cluster (`web/src/components/docs-link.tsx`),
+  and the address is a constant. Every panel of a given version documents itself
+  at the same address, so a setting would be a field nobody fills in and a
+  support answer that begins "well, what did you put in it?". The button is
+  chrome and nothing in the panel depends on it, which is what makes an
+  air-gapped install fine rather than broken.
 - **The `Changelog` nav item.** `CHANGELOG.md` is already embedded in the binary
   and rendered in-panel (panel-updates.md §9). The site links to the repository's
   copy rather than rendering a second one.

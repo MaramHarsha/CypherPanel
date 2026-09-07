@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
@@ -56,8 +57,13 @@ type page struct {
 	Title   string
 	// Summary is the first paragraph, flattened — the contents blurb and the
 	// search index both read it, so it is computed once.
-	Summary  string
-	HTML     string
+	Summary string
+	HTML    string
+	// Updated is when the document last changed, as canvas 19b prints it
+	// ("UPDATED AUG 2026"). Read from git rather than from the file's mtime: a
+	// fresh clone rewrites every mtime to the moment it was cloned, which would
+	// have every page claiming it was updated today.
+	Updated  string
 	Headings []heading
 }
 
@@ -119,10 +125,24 @@ func (r *renderer) render(rel, group string) (page, error) {
 		return page{}, fmt.Errorf("docs-site: rendering %s: %w", rel, err)
 	}
 	p.HTML = buf.String()
+	p.Updated = r.lastChanged(rel)
 	if p.Title == "" {
 		p.Title = slugOf(rel)
 	}
 	return p, nil
+}
+
+// lastChanged asks git when the document last changed. It returns "" outside a
+// checkout — a tarball build still produces the site, just without the stamp,
+// which is better than printing a date it made up.
+func (r *renderer) lastChanged(rel string) string {
+	cmd := exec.Command("git", "log", "-1", "--format=%cd", "--date=format:%b %Y", "--", rel) //nolint:gosec // rel comes from the nav map
+	cmd.Dir = r.docsDir
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.ToUpper(strings.TrimSpace(string(out)))
 }
 
 // walk collects the title, the first paragraph and the on-this-page headings,

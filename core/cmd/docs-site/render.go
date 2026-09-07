@@ -183,6 +183,7 @@ if(t==="dark"||t==="light"){document.documentElement.dataset.theme=t;}}catch(e){
     <a href="https://github.com/MaramHarsha/CypherPanel/blob/main/CHANGELOG.md">Changelog</a>
   </nav>
   <div class="topright">
+    {{if eq .Tab "api"}}<a class="specdl" href="/openapi.yaml" download>openapi.yaml ↓</a>{{end}}
     <button class="searchbtn" data-search-open aria-label="Search the docs">⌕ Search the docs<kbd>/</kbd></button>
     <span class="version" title="This site documents one version">{{.Site.Version}}</span>
     <button class="themebtn" data-theme-toggle aria-label="Switch between light and dark"><span class="in-light">☾</span><span class="in-dark">☀</span></button>
@@ -268,18 +269,18 @@ const articleHTML = `{{define "article"}}{{$s := .Site}}
 <div class="cols">
   <aside class="railleft">
     {{range $s.Nav}}<div class="railgroup">
-      <div class="eyebrow">{{.Title}}</div>
+      <div class="eyebrow">{{.Title}} <span class="count">{{len .Items}}</span></div>
       <ul>{{range .Items}}<li{{if .Active}} class="on"{{end}}><a href="{{.URL}}">{{.Title}}</a></li>{{end}}</ul>
     </div>{{end}}
     <div class="railgroup">
-      <div class="eyebrow">DESIGN DECISIONS</div>
+      <div class="eyebrow">DESIGN DECISIONS <span class="count">{{len $s.ADRs}}</span></div>
       <ul>{{range $s.ADRs}}<li{{if eq .URL $.Page.URL}} class="on"{{end}}><a href="{{.URL}}">{{adrTitle .Title}}</a></li>{{end}}</ul>
     </div>
   </aside>
   <main class="article">
     <div class="crumb">{{.Page.Group}} / <span>{{.Page.Title}}</span></div>
     <h1>{{.Page.Title}}</h1>
-    <div class="articlemeta"><span>{{.Page.Section}}</span><span>·</span><span>{{.ReadMinutes}} MIN READ</span><span>·</span><a href="{{.EditURL}}">EDIT THIS PAGE ↗</a></div>
+    <div class="articlemeta">{{with .Page.Updated}}<span>UPDATED {{.}}</span><span>·</span>{{end}}<span>{{.ReadMinutes}} MIN READ</span><span>·</span><a href="{{.EditURL}}">EDIT THIS PAGE ↗</a></div>
     <div class="prose">{{raw .Page.HTML}}</div>
     <nav class="prevnext">
       {{with .Prev}}<a class="pn prev" href="{{.URL}}"><span>PREVIOUS</span>← {{.Title}}</a>{{else}}<span></span>{{end}}

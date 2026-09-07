@@ -152,6 +152,9 @@ code, kbd, pre, .mono { font-family: var(--font-mono); }
   padding: 5px 10px; background: var(--surface);
 }
 .ghlink { border: 0; background: none; }
+.specdl { font: 400 11px var(--font-mono); color: var(--text-dim); border: 1px solid var(--border-input); border-radius: 6px; padding: 5px 10px; background: var(--surface); align-self: center; }
+.specdl:hover { border-color: var(--border-strong); color: var(--text); }
+.eyebrow .count { color: var(--text-disabled, var(--text-faint)); }
 .themebtn {
   border: 1px solid var(--border-input); border-radius: 6px; background: var(--surface);
   color: var(--text-dim); cursor: pointer; padding: 4px 9px; font-size: 12px; line-height: 1.4;
