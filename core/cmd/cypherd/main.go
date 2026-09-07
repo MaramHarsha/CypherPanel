@@ -420,6 +420,10 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 	if err != nil {
 		return err
 	}
+	// Compose templates (compose-templates.md): a catalog entry whose resource
+	// is a stack. Wired separately so a template that declares one is refused
+	// with a sentence on a panel without it, rather than installing half.
+	templateSvc = templateSvc.WithStacks(composeSvc)
 
 	// Preview environments: PR events (via the app webhook) spawn/destroy
 	// templated child environments; a sweeper reclaims any past their TTL

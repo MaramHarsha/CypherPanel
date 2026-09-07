@@ -13,6 +13,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/MaramHarsha/cypherpanel/core/compose"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 )
 
@@ -36,6 +37,40 @@ type Template struct {
 type TplResources struct {
 	Databases    []TplDatabase    `yaml:"databases" json:"databases"`
 	Applications []TplApplication `yaml:"applications" json:"applications"`
+	// Stacks are Compose Stacks (compose-templates.md). The third kind exists
+	// because 163 entries in the Coolify import were refused for one structural
+	// reason — a service waiting on, or dialling, a sibling — and every part of
+	// that is something compose does natively while Applications cannot: a
+	// container named per revision has no address a sibling can use.
+	Stacks []TplStack `yaml:"stacks" json:"stacks"`
+}
+
+// TplStack is a Compose Stack a template installs.
+type TplStack struct {
+	Name string `yaml:"name" json:"name"`
+	// Compose is the file, verbatim, with the same placeholders the rest of a
+	// template uses: {{domain}}, {{secret.N}}, {{db.<name>.<field>}}.
+	Compose string `yaml:"compose" json:"compose"`
+	// Route names WHICH service answers and on which port. A stack cannot use
+	// the file's own Traefik labels — the managed Proxy runs the file provider
+	// only (ADR-004) — so the plane emits the fragment, and it needs to be told.
+	// Absent means the stack publishes nothing.
+	Route *TplStackRoute `yaml:"route,omitempty" json:"route,omitempty"`
+	// Env is where GENERATED values live, sealed, and reach compose through the
+	// env file the agent writes 0600 and removes on every exit path
+	// (compose-stacks.md §6). The compose file references them as ${VAR}.
+	//
+	// This is not a style preference. Resolving {{secret.N}} into the compose
+	// text would store a live credential in a file the stack's own page shows,
+	// which is exactly what that mechanism exists to prevent — so a secret
+	// placeholder inside `compose:` is REFUSED.
+	Env map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+}
+
+// TplStackRoute is the service and port a stack publishes at its domain.
+type TplStackRoute struct {
+	Service string `yaml:"service" json:"service"`
+	Port    int    `yaml:"port" json:"port"`
 }
 
 type TplDatabase struct {
@@ -216,8 +251,19 @@ func (t Template) Validate() error {
 		}
 	}
 
-	if n := len(t.Resources.Applications); n == 0 || n > 5 {
-		return invalid("between 1 and 5 applications")
+	if err := t.validateStacks(dbNames); err != nil {
+		return err
+	}
+
+	// A template installs SOMETHING. Applications and stacks are alternatives:
+	// a compose template expresses what the application schema cannot
+	// (compose-templates.md §1), so requiring applications would forbid exactly
+	// the shape this was added for.
+	if len(t.Resources.Applications) == 0 && len(t.Resources.Stacks) == 0 {
+		return invalid("a template must declare at least one application or stack")
+	}
+	if n := len(t.Resources.Applications); n > 5 {
+		return invalid("at most 5 applications")
 	}
 	appNames := map[string]bool{}
 	routed := 0
@@ -314,6 +360,81 @@ func validImageRef(ref string) bool {
 // against the §2 grammar without resolving it. A stray "{{" outside the token
 // grammar is an error — templates never smuggle un-resolved syntax into a
 // container's environment.
+// validateStacks holds a compose template to the same rules a hand-pasted stack
+// meets, at LOAD time.
+//
+// The load-time part is the point: a catalog entry that cannot install must
+// never be offered. The panel embeds its catalog, so a file that fails here
+// fails the build rather than an operator's afternoon.
+func (t Template) validateStacks(dbNames map[string]bool) error {
+	if len(t.Resources.Stacks) > 2 {
+		return invalid("at most 2 stacks")
+	}
+	names := map[string]bool{}
+	for _, st := range t.Resources.Stacks {
+		if !resNameRe.MatchString(st.Name) {
+			return invalid("stack name %q must be lowercase [a-z0-9-], ≤31 chars", st.Name)
+		}
+		if names[st.Name] {
+			return invalid("duplicate stack name %q", st.Name)
+		}
+		names[st.Name] = true
+		if strings.TrimSpace(st.Compose) == "" {
+			return invalid("stack %q: compose is required", st.Name)
+		}
+		// The placeholders are checked BEFORE the compose parse: an unresolved
+		// {{db.nope.host}} is a template bug, and reporting it as a YAML
+		// complaint would send the reader to the wrong line.
+		if err := validatePlaceholders(st.Compose, dbNames); err != nil {
+			return invalid("stack %q: %v", st.Name, err)
+		}
+		// A generated secret must never be resolved INTO the stored file: the
+		// stack's page shows that file. Sealed env rows reach compose through
+		// the 0600 env file instead, so the template declares the value under
+		// `env:` and the file says ${VAR}.
+		for _, m := range tokenRe.FindAllStringSubmatch(st.Compose, -1) {
+			if strings.HasPrefix(m[1], "secret.") {
+				return invalid("stack %q: compose must not contain %s — put it under the stack's env: "+
+					"and reference it as ${VAR}, so the secret lives in the sealed env file rather than "+
+					"in the compose file the stack's page displays", st.Name, m[0])
+			}
+		}
+		for k, v := range st.Env {
+			if !envKeyRe.MatchString(k) {
+				return invalid("stack %q: env key %q must be A-Z, 0-9 and underscores", st.Name, k)
+			}
+			if err := validatePlaceholders(v, dbNames); err != nil {
+				return invalid("stack %q: env %q: %v", st.Name, k, err)
+			}
+		}
+		// The same validator a pasted file meets — one rulebook for compose,
+		// whether it arrived as content or as an operator's paste.
+		if err := compose.ValidateFile(placeholderFree(st.Compose)); err != nil {
+			return invalid("stack %q: %v", st.Name, err)
+		}
+		if st.Route != nil {
+			if st.Route.Service == "" {
+				return invalid("stack %q: route.service is required when a route is declared", st.Name)
+			}
+			if st.Route.Port < 1 || st.Route.Port > 65535 {
+				return invalid("stack %q: route.port must be 1–65535", st.Name)
+			}
+		}
+	}
+	return nil
+}
+
+// placeholderFree substitutes a harmless literal for every placeholder so the
+// compose parser sees valid YAML.
+//
+// `{{secret.32}}` inside an unquoted scalar is not a YAML problem, but
+// `{{domain}}` at the start of one is — `{` opens a flow mapping. Validating
+// the raw text would therefore reject files that are fine once resolved, and
+// the operator would read a parser error about a document they never wrote.
+func placeholderFree(file string) string {
+	return tokenRe.ReplaceAllString(file, "placeholder")
+}
+
 func validatePlaceholders(v string, dbNames map[string]bool) error {
 	stripped := tokenRe.ReplaceAllString(v, "")
 	if strings.Contains(stripped, "{{") || strings.Contains(stripped, "}}") {
@@ -454,6 +575,13 @@ func (t Template) validateFirstLogin() error {
 	if app == nil && fl.Application == "" && len(t.Resources.Applications) > 0 {
 		app = &t.Resources.Applications[0]
 	}
+	// A COMPOSE template has no applications, so the env var lives in the
+	// stack's file instead. The proof is the same and so is the reason for it:
+	// a first_login pointing at a variable nothing sets is an install that ends
+	// at a sign-in screen with no way through.
+	if app == nil && len(t.Resources.Stacks) > 0 {
+		return t.validateStackFirstLogin()
+	}
 	if app == nil {
 		return invalid("first_login names application %q, which this template does not install", fl.Application)
 	}
@@ -471,6 +599,36 @@ func (t Template) validateFirstLogin() error {
 	// A username is optional: code-server, Duplicati and others authenticate
 	// with a password alone, and inventing a username to fill the field would
 	// be a wrong instruction rather than a missing one.
+	if fl.Password == "" && fl.PasswordEnv == "" {
+		return invalid("first_login with kind credentials needs a password or password_env")
+	}
+	return nil
+}
+
+// validateStackFirstLogin proves a compose template's first_login references
+// environment variables its own file actually sets.
+//
+// It reads the stack's `env:` rather than its compose file, because that is
+// where a generated credential lives — the file may not contain one at all.
+func (t Template) validateStackFirstLogin() error {
+	fl := t.FirstLogin
+	set := map[string]bool{}
+	for _, st := range t.Resources.Stacks {
+		for k := range st.Env {
+			set[k] = true
+		}
+	}
+	for _, ref := range []struct{ field, key string }{
+		{"password_env", fl.PasswordEnv},
+		{"username_env", fl.UsernameEnv},
+	} {
+		if ref.key == "" {
+			continue
+		}
+		if !set[ref.key] {
+			return invalid("first_login.%s references %q, which no service in this template's compose file sets", ref.field, ref.key)
+		}
+	}
 	if fl.Password == "" && fl.PasswordEnv == "" {
 		return invalid("first_login with kind credentials needs a password or password_env")
 	}

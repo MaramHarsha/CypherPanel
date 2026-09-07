@@ -403,7 +403,7 @@ function InstallDialog({ template }: { template: Template }) {
   const [domain, setDomain] = useState("");
   const [error, setError] = useState<string | null>(null);
   // What the 202 handed back, held until the first-login notice is dismissed.
-  const [installed, setInstalled] = useState<{ first: FirstLogin; appID: string | undefined } | null>(null);
+  const [installed, setInstalled] = useState<{ first: FirstLogin; appID: string | undefined; stackID?: string } | null>(null);
 
   // 12b asks only where: Project and Server. With exactly one project there
   // was never a choice to make, and the first enrolled server is the working
@@ -423,8 +423,17 @@ function InstallDialog({ template }: { template: Template }) {
   const chosenEnvID = environmentID || defaultEnv?.id || "";
   const chosenEnv = envList.find((env) => env.id === chosenEnvID);
 
-  const goTo = (appID: string | undefined) => {
-    if (appID) void navigate({ to: "/projects/$projectId/applications/$appId", params: { projectId: chosenProjectID, appId: appID } });
+  // A COMPOSE template installs no application (compose-templates.md), so the
+  // landing place is its stack. Navigating to `undefined` would have left the
+  // operator on the catalog wondering whether anything happened.
+  const goTo = (appID: string | undefined, stackID?: string) => {
+    if (appID) {
+      void navigate({ to: "/projects/$projectId/applications/$appId", params: { projectId: chosenProjectID, appId: appID } });
+      return;
+    }
+    if (stackID) {
+      void navigate({ to: "/projects/$projectId/compose/$stackId", params: { projectId: chosenProjectID, stackId: stackID } });
+    }
   };
 
   const install = useInstallTemplate({ mutation: {
@@ -435,14 +444,15 @@ function InstallDialog({ template }: { template: Template }) {
       void qc.invalidateQueries({ queryKey: getListApplicationsQueryKey(vars.data.environment_id) });
       void qc.invalidateQueries({ queryKey: getListDatabasesQueryKey(vars.data.environment_id) });
       const appID = result.applications[0];
+      const stackID = result.stacks?.[0];
       // A generated password appears in this response and nowhere else ever, so
       // navigating straight past it would destroy it. Hold the navigation until
       // the notice is dismissed; with nothing to say, go as before.
       if (result.first_login) {
-        setInstalled({ first: result.first_login, appID });
+        setInstalled({ first: result.first_login, appID, stackID });
         return;
       }
-      goTo(appID);
+      goTo(appID, stackID);
     },
     // The pill turns to "✕ Retry" and the toast carries the why (10b/10c); the
     // inline line keeps the server's sentence beside the form it is about.
@@ -646,10 +656,10 @@ function InstallDialog({ template }: { template: Template }) {
           first={installed.first}
           templateName={template.name}
           onContinue={() => {
-            const { appID } = installed;
+            const { appID, stackID } = installed;
             setInstalled(null);
             setOpen(false);
-            goTo(appID);
+            goTo(appID, stackID);
           }}
         />
       )}

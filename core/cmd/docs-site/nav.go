@@ -64,6 +64,7 @@ var nav = []group{
 		"features/deploy-protection.md",
 		"features/scheduled-tasks.md",
 		"features/compose-stacks.md",
+		"features/compose-templates.md",
 		"features/shared-variables.md",
 		"features/app-scaling.md",
 	}},

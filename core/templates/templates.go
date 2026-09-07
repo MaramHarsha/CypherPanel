@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/MaramHarsha/cypherpanel/core/applications"
+	"github.com/MaramHarsha/cypherpanel/core/compose"
 	"github.com/MaramHarsha/cypherpanel/core/databases"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 )
@@ -37,6 +38,15 @@ type DbService interface {
 	Delete(ctx context.Context, id string, deleteVolume bool) error
 }
 
+// StackService is the slice of the compose service an install consumes. Absent
+// (nil) on a panel wired without it, in which case a template declaring a stack
+// is refused rather than silently installing half of itself.
+type StackService interface {
+	Create(ctx context.Context, envID string, in compose.Input) (domain.ComposeStack, error)
+	Deploy(ctx context.Context, stackID string) (domain.ComposeStack, error)
+	Delete(ctx context.Context, id string, deleteVolumes bool) error
+}
+
 // Deployer starts pipelines and publishes desired absence — the same calls
 // the REST handlers make, so a templated resource lives and dies exactly like
 // a hand-made one.
@@ -50,6 +60,7 @@ type Service struct {
 	apps     AppService
 	dbs      DbService
 	deployer Deployer
+	stacks   StackService
 	log      *slog.Logger
 
 	catalog []Template // sorted by slug
@@ -59,6 +70,14 @@ type Service struct {
 // New loads and validates the embedded catalog. An invalid bundled template
 // is a programming error: it fails construction (and the catalog unit test),
 // never a runtime surprise.
+// WithStacks wires the compose service. Separate from New so every existing
+// caller keeps compiling and a panel that never installs a compose template
+// carries no new dependency.
+func (s *Service) WithStacks(st StackService) *Service {
+	s.stacks = st
+	return s
+}
+
 func New(apps AppService, dbs DbService, deployer Deployer, log *slog.Logger) (*Service, error) {
 	s := &Service{apps: apps, dbs: dbs, deployer: deployer, log: log, bySlug: map[string]Template{}}
 	entries, err := catalogFS.ReadDir("catalog")
@@ -105,6 +124,7 @@ type InstallInput struct {
 type InstallResult struct {
 	ApplicationIDs []string
 	DatabaseIDs    []string
+	StackIDs       []string
 	// FirstLogin is how to get into what was just installed. It is returned
 	// ONCE, in the install response, and never stored anywhere readable — the
 	// same discipline a managed database's root password follows. A literal
@@ -118,8 +138,11 @@ type InstallResult struct {
 type FirstLogin struct {
 	Kind          string
 	ApplicationID string
-	Username      string
-	Password      string
+	// StackID is set instead of ApplicationID for a compose template, which
+	// installs no application to point at (compose-templates.md §6).
+	StackID  string
+	Username string
+	Password string
 	// Generated marks a password the panel invented rather than an upstream
 	// default. The UI has to treat the two differently: one is public knowledge
 	// about the image, the other is shown exactly once and is gone afterwards.
@@ -174,6 +197,18 @@ func (t Template) needsDomain() bool {
 				if m[1] == "domain" {
 					return true
 				}
+			}
+		}
+	}
+	// A stack needs one for the same two reasons: it routes, or its compose
+	// file interpolates {{domain}} and would otherwise resolve it to "".
+	for _, st := range t.Resources.Stacks {
+		if st.Route != nil {
+			return true
+		}
+		for _, m := range tokenRe.FindAllStringSubmatch(st.Compose, -1) {
+			if m[1] == "domain" {
+				return true
 			}
 		}
 	}
@@ -343,8 +378,66 @@ func (s *Service) Install(ctx context.Context, slug string, in InstallInput) (In
 		apps = append(apps, created)
 	}
 
+	stackEnvByName := map[string]map[string]string{}
+	stackIDByName := map[string]string{}
+	// Stacks, after databases so {{db.*}} resolves and after applications so
+	// the ordering of the whole install stays one direction. A compose template
+	// usually has neither of the other two — it exists because the application
+	// schema could not express what it needed (compose-templates.md §1).
+	for _, st := range tpl.Resources.Stacks {
+		if s.stacks == nil {
+			return fail(&ValidationError{Msg: "this panel is not wired for compose stacks, so this template cannot be installed"})
+		}
+		file, err := resolve(st.Compose, dbInfos, in.Domain, newSecret)
+		if err != nil {
+			return fail(fmt.Errorf("templates: resolving stack %s: %w", st.Name, err))
+		}
+		// The env carries anything generated. It is sealed by the compose
+		// service and reaches the containers through the 0600 env file, so the
+		// stored compose file — which the stack's page displays — holds no
+		// credential. Validation refuses a {{secret}} inside `compose:` for
+		// exactly this reason.
+		stackEnv := make(map[string]string, len(st.Env))
+		for k, v := range st.Env {
+			rv, rerr := resolve(v, dbInfos, in.Domain, newSecret)
+			if rerr != nil {
+				return fail(fmt.Errorf("templates: resolving stack %s env %s: %w", st.Name, k, rerr))
+			}
+			stackEnv[k] = rv
+		}
+		var route domain.ComposeRoute
+		if st.Route != nil && in.Domain != "" {
+			route = domain.ComposeRoute{
+				Domain: in.Domain, Service: st.Route.Service, Port: st.Route.Port, HTTPS: true,
+			}
+		}
+		stack, err := s.stacks.Create(ctx, in.EnvironmentID, compose.Input{
+			Name:        appName(tpl, base, TplApplication{Name: st.Name}),
+			ServerID:    in.ServerID,
+			ComposeYAML: file,
+			Route:       route,
+			EnvVars:     stackEnv,
+		})
+		// Same reasoning as everything above: track anything persisted before
+		// failing, so cleanup can find it.
+		if stack.ID != "" {
+			res.StackIDs = append(res.StackIDs, stack.ID)
+		}
+		if err != nil {
+			return fail(operatorError(fmt.Errorf("templates: creating stack %s: %w", st.Name, err), err))
+		}
+		if _, err := s.stacks.Deploy(ctx, stack.ID); err != nil {
+			return fail(fmt.Errorf("templates: deploying stack %s: %w", st.Name, err))
+		}
+		stackEnvByName[st.Name] = stackEnv
+		stackIDByName[st.Name] = stack.ID
+	}
+
 	// Resolve the first-login answer while the plaintext env is still in hand.
 	res.FirstLogin = firstLoginFor(tpl, apps, resolvedEnv)
+	if res.FirstLogin == nil {
+		res.FirstLogin = stackFirstLoginFor(tpl, stackIDByName, stackEnvByName)
+	}
 
 	// 3. Deploys — the ordinary pipeline; image sources go straight to rollout.
 	for _, app := range apps {
@@ -398,6 +491,22 @@ func (s *Service) cleanup(ctx context.Context, res InstallResult) []string {
 			// Same as the DELETE handler: publish desired absence; the periodic
 			// sync converges it anyway if this fails.
 			_ = s.deployer.RemoveApp(ctx, serverID, id)
+		}
+	}
+	// Stacks first: they were created last, and cleanup runs in reverse so a
+	// half-install unwinds the way it wound.
+	for i := len(res.StackIDs) - 1; i >= 0; i-- {
+		id := res.StackIDs[i]
+		// Volumes go too. They are minutes old and belong to this failed
+		// install; keeping them would leave disk nobody can account for, which
+		// is the failure this product is positioned against.
+		if s.stacks == nil {
+			left = append(left, id)
+			continue
+		}
+		if err := s.stacks.Delete(ctx, id, true); err != nil {
+			s.log.Error("template install cleanup: deleting stack", "stack_id", id, "error", err)
+			left = append(left, id)
 		}
 	}
 	for i := len(res.DatabaseIDs) - 1; i >= 0; i-- {
@@ -530,6 +639,49 @@ func firstLoginFor(tpl Template, apps []domain.Application, env map[string]map[s
 	}
 	// A generated value beats a literal: the literal is only ever a fallback.
 	if e := env[targetName]; e != nil {
+		if fl.UsernameEnv != "" {
+			if v, ok := e[fl.UsernameEnv]; ok && v != "" {
+				out.Username = v
+			}
+		}
+		if fl.PasswordEnv != "" {
+			if v, ok := e[fl.PasswordEnv]; ok && v != "" {
+				out.Password, out.Generated = v, true
+			}
+		}
+	}
+	return out
+}
+
+// stackFirstLoginFor is firstLoginFor for a compose template.
+//
+// Separate rather than folded in, because the two have nothing in common but
+// the output: there is no routed application to pick, no per-application env
+// map, and the id that goes back is a stack's. Folding them would mean a
+// function whose every line asks which kind it is.
+func stackFirstLoginFor(tpl Template, ids map[string]string, env map[string]map[string]string) *FirstLogin {
+	fl := tpl.FirstLogin
+	if fl == nil || len(tpl.Resources.Stacks) == 0 {
+		return nil
+	}
+	// The routed stack, else the first. A template with one stack — which is
+	// all of them so far — needs no name.
+	target := tpl.Resources.Stacks[0]
+	for _, st := range tpl.Resources.Stacks {
+		if st.Route != nil {
+			target = st
+			break
+		}
+	}
+	out := &FirstLogin{
+		Kind:     fl.Kind,
+		StackID:  ids[target.Name],
+		Username: fl.Username,
+		Password: fl.Password,
+		Note:     fl.Note,
+	}
+	// A generated value beats a literal, exactly as it does for an application.
+	if e := env[target.Name]; e != nil {
 		if fl.UsernameEnv != "" {
 			if v, ok := e[fl.UsernameEnv]; ok && v != "" {
 				out.Username = v

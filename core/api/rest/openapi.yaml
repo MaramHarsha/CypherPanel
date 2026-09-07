@@ -9385,6 +9385,13 @@ components:
         databases:
           type: array
           items: { type: string }
+        stacks:
+          type: array
+          items: { type: string }
+          description: >-
+            Compose Stacks this template installed (compose-templates.md). A
+            compose template installs no application, so this is where the
+            screen finds what to navigate to.
         first_login:
           allOf: [{ $ref: "#/components/schemas/FirstLogin" }]
           description: >-
@@ -9402,6 +9409,11 @@ components:
           description: >-
             `credentials` — sign in with what is here. `setup` — the app creates the account
             itself on first visit. `none` — there is no sign-in.
+        stack_id:
+          type: string
+          description: >-
+            Set instead of application_id for a compose template, which installs
+            no application to point at.
         application_id:
           type: string
           description: The installed application these apply to.

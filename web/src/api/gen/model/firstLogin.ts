@@ -12,6 +12,8 @@ import type { FirstLoginKind } from './firstLoginKind.ts';
 export interface FirstLogin {
   /** `credentials` — sign in with what is here. `setup` — the app creates the account itself on first visit. `none` — there is no sign-in. */
   kind: FirstLoginKind;
+  /** Set instead of application_id for a compose template, which installs no application to point at. */
+  stack_id?: string;
   /** The installed application these apply to. */
   application_id?: string;
   username?: string;
