@@ -21,6 +21,7 @@ import {
 } from "@/api/gen/panel/panel";
 import type { GitHubApp } from "@/api/gen/model";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
+import { CopyField } from "@/components/copy-field";
 import { Eyebrow } from "@/components/eyebrow";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { PageState } from "@/components/page-state";
@@ -99,6 +100,7 @@ function Body({ data }: { data: GitHubApp }) {
 
   return (
     <>
+      {data.configured && <WebhookSetup />}
       <section className="space-y-2.5">
         <Eyebrow>Connection</Eyebrow>
         <div className="rounded-lg border border-border bg-surface p-4">
@@ -249,5 +251,64 @@ function Body({ data }: { data: GitHubApp }) {
         </section>
       )}
     </>
+  );
+}
+
+/**
+ * What to paste into the App's own settings on GitHub.
+ *
+ * "Connected" says the panel holds credentials GitHub accepted. It says nothing
+ * about whether a push will ever arrive — that needs a webhook URL, a secret,
+ * and the `push` event selected on the App, none of which the panel can do for
+ * the operator and none of which it used to name. The one screen that mentioned
+ * the endpoint at all mentioned it as a bare path inside a disconnect warning.
+ *
+ * This is the same shape the per-application PR webhook already uses (the
+ * previews screen): the full URL, ready to copy, built from the origin the
+ * operator is looking at.
+ */
+function WebhookSetup() {
+  const url = new URL("/webhooks/github/app", window.location.origin).toString();
+  const insecure = url.startsWith("http://");
+  return (
+    <section className="space-y-2.5">
+      <Eyebrow>Push deploys</Eyebrow>
+      <div className="space-y-3 rounded-lg border border-border bg-surface p-4">
+        <p className="text-[12.5px] leading-[1.5] text-text-mid">
+          Connecting the App lets the panel read repositories and mint clone tokens. Deploying on a push needs one
+          more thing, and it is set on GitHub rather than here: the App&rsquo;s own webhook.
+        </p>
+        <div className="space-y-1.5">
+          <p className="text-[12px] font-semibold text-text">1 · Webhook URL</p>
+          <CopyField value={url} />
+          {insecure && (
+            <p className="text-[11.5px] leading-[1.5] text-status-degraded-text">
+              This is the address you are browsing, and it is plain HTTP. GitHub will deliver to it, but the payload
+              crosses the network in the clear — put the panel behind HTTPS before relying on it.
+            </p>
+          )}
+        </div>
+        <div className="space-y-1">
+          <p className="text-[12px] font-semibold text-text">2 · Secret</p>
+          <p className="text-[12px] leading-[1.5] text-text-mid">
+            The same value as the webhook secret below. Without one this endpoint refuses every delivery — that is
+            deliberate: it is unauthenticated by design, and a signature is the only thing standing in front of it.
+          </p>
+        </div>
+        <div className="space-y-1">
+          <p className="text-[12px] font-semibold text-text">3 · Events</p>
+          <p className="text-[12px] leading-[1.5] text-text-mid">
+            Subscribe to <span className="mono">push</span> and nothing else is required. Everything else is
+            acknowledged and dropped, so extra events cost a request and change nothing.
+          </p>
+        </div>
+        <p className="text-[11.5px] leading-[1.5] text-text-faint">
+          GitHub shows the result under the App&rsquo;s Advanced &rarr; Recent Deliveries. A green tick means the
+          signature verified; open the delivery and read the response body to see how many deployments it started —{" "}
+          <span className="mono">{"{\"deployments\": 0}"}</span> means it verified and matched no application, which
+          is usually a branch that no application builds.
+        </p>
+      </div>
+    </section>
   );
 }
