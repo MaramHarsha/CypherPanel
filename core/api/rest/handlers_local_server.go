@@ -47,10 +47,22 @@ type localServerDTO struct {
 // localState resolves what the panel can honestly offer right now.
 func (a *API) localState() localServerDTO {
 	out := localServerDTO{Hostname: a.deps.PublicHost}
-	if id, ok := localjoin.LocalServerID(localjoin.AgentIdentityPath); ok {
+	id, joined, err := localjoin.LocalServerID(localjoin.AgentIdentityPath)
+	switch {
+	case joined:
 		out.State = localjoin.StateAlreadyJoined
 		out.ServerID = id
 		out.Reason = "this machine is already running an agent for this panel"
+		return out
+	case err != nil:
+		// FAIL CLOSED. The panel runs under DynamicUser and the agent's state
+		// directory belongs to root; if that read is refused, the honest answer
+		// is "cannot tell", never "not joined". Guessing the negative here is
+		// what created a second Server row and a second join token every time
+		// somebody clicked the button on an already-enrolled machine.
+		a.deps.Log.Warn("reading the local agent identity", "path", localjoin.AgentIdentityPath, "error", err)
+		out.State = localjoin.StateUnknown
+		out.Reason = "the panel cannot read this machine's agent identity, so it cannot tell whether an agent is already running here — upgrade the agent on this host, or add the server with its join command"
 		return out
 	}
 	dir := localjoin.Dir(a.deps.UpgradeDir)

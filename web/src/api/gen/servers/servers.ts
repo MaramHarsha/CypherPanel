@@ -690,7 +690,7 @@ export const useDeleteServer = <TError = UnauthorizedResponse | ForbiddenRespons
 /**
  * The most common first server is the machine the panel is already installed on, and the join command works there as well as anywhere — it is just not discoverable, because the dialog says "run this on the server you want to add" and the box you are signed into is not obviously one of those.
  *
- * `state` is `available`, `helper_missing` (this panel predates the root helper — re-run install.sh), `unsupported` (a container install, which has no host service manager to install into) or `already_joined`. Anything but `available` carries a `reason` sentence to show in place of the button: a disabled control with no explanation is a dead end.
+ * `state` is `available`, `helper_missing` (this panel predates the root helper — re-run install.sh), `unsupported` (a container install, which has no host service manager to install into), `already_joined`, or `unknown` when the panel cannot read this machine's agent identity and so cannot tell. Anything but `available` carries a `reason` sentence to show in place of the button: a disabled control with no explanation is a dead end.
  * @summary Whether this panel can add its own host as a server (admin+)
  */
 export const getLocalServer = async ( options?: RequestInit): Promise<LocalServer> => {

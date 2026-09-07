@@ -28,6 +28,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -47,6 +48,16 @@ const (
 	StateUnsupported = "unsupported"
 	// StateAlreadyJoined: this host already runs an enrolled agent.
 	StateAlreadyJoined = "already_joined"
+	// StateUnknown: the agent's identity file exists but could not be read, so
+	// the panel CANNOT tell whether this machine is already joined.
+	//
+	// This is a separate state because the alternative is the bug it was added
+	// for: `cypherd` runs under `DynamicUser=true` and the agent's state
+	// directory was created 0700 root-only, so every read failed, every failure
+	// read as "not joined", and the panel offered to enrol a machine it was
+	// already running an agent on — minting a fresh Server row and a fresh join
+	// token on every click. An unreadable answer is not a negative answer.
+	StateUnknown = "unknown"
 )
 
 // Phases the helper writes as it works. Real phases from a real process, so the
@@ -222,16 +233,30 @@ func (d Dir) Writable() bool {
 }
 
 // LocalServerID reads the Server this host is already enrolled as, if any.
-func LocalServerID(identityPath string) (string, bool) {
-	body, err := os.ReadFile(identityPath) //nolint:gosec // a fixed path, not input
-	if err != nil {
-		return "", false
+func LocalServerID(identityPath string) (id string, joined bool, err error) {
+	body, readErr := os.ReadFile(identityPath) //nolint:gosec // a fixed path, not input
+	switch {
+	case readErr == nil:
+	case errors.Is(readErr, fs.ErrNotExist):
+		// The only failure that is genuinely an ANSWER: no identity file means
+		// no agent has ever enrolled from this host.
+		return "", false, nil
+	default:
+		// Permission denied, an I/O error, a directory where a file should be.
+		// None of these say "not joined", and treating them as if they did is
+		// how the panel offered to enrol a machine that was already enrolled.
+		return "", false, readErr
 	}
-	var id struct {
+	var parsed struct {
 		ServerID string `json:"server_id"`
 	}
-	if err := json.Unmarshal(body, &id); err != nil || id.ServerID == "" {
-		return "", false
+	if jsonErr := json.Unmarshal(body, &parsed); jsonErr != nil {
+		return "", false, jsonErr
 	}
-	return id.ServerID, true
+	if parsed.ServerID == "" {
+		// Well-formed JSON with no server id: an agent that has been installed
+		// but has not finished enrolling. Not joined, and not an error.
+		return "", false, nil
+	}
+	return parsed.ServerID, true, nil
 }

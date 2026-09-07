@@ -8,6 +8,9 @@
  * OpenAPI spec version: 0.3.0
  */
 
+/**
+ * `unknown` means the panel could not READ this machine's agent identity, so it cannot tell whether an agent already runs here. It is a distinct state on purpose: `cypherd` runs under `DynamicUser=true` and the agent's state directory belongs to root, so a refused read used to be reported as "no agent here" and the panel offered to enrol a machine it was already running an agent on. An unreadable answer is not a negative answer, and no button is offered for it.
+ */
 export type LocalServerState = typeof LocalServerState[keyof typeof LocalServerState];
 
 
@@ -16,4 +19,5 @@ export const LocalServerState = {
   helper_missing: 'helper_missing',
   unsupported: 'unsupported',
   already_joined: 'already_joined',
+  unknown: 'unknown',
 } as const;

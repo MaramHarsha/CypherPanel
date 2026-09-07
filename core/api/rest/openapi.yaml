@@ -1977,7 +1977,9 @@ paths:
 
         `state` is `available`, `helper_missing` (this panel predates the
         root helper — re-run install.sh), `unsupported` (a container install,
-        which has no host service manager to install into) or `already_joined`.
+        which has no host service manager to install into), `already_joined`, or
+        `unknown` when the panel cannot read this machine's agent identity and
+        so cannot tell.
         Anything but `available` carries a `reason` sentence to show in place of
         the button: a disabled control with no explanation is a dead end.
       responses:
@@ -6984,7 +6986,15 @@ components:
       properties:
         state:
           type: string
-          enum: [available, helper_missing, unsupported, already_joined]
+          enum: [available, helper_missing, unsupported, already_joined, unknown]
+          description: >-
+            `unknown` means the panel could not READ this machine's agent
+            identity, so it cannot tell whether an agent already runs here. It is
+            a distinct state on purpose: `cypherd` runs under `DynamicUser=true`
+            and the agent's state directory belongs to root, so a refused read
+            used to be reported as "no agent here" and the panel offered to
+            enrol a machine it was already running an agent on. An unreadable
+            answer is not a negative answer, and no button is offered for it.
         reason:
           type: string
           description: Why the button is unavailable, as a sentence to show in its place.

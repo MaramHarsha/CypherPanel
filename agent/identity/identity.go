@@ -82,12 +82,40 @@ func altOf(cert, key string) (string, string) {
 	return certFile, keyFile
 }
 
+// stateDirMode is 0711: TRAVERSABLE, not listable.
+//
+// It was 0700, and that broke a feature two components away. `cypherd` runs
+// under `DynamicUser=true`, so the panel is not root; "use this machine" asks
+// whether an agent is already enrolled here by opening `identity.json`, and a
+// 0700 directory refuses that read no matter what mode the file itself carries.
+// Every refusal was read as "no agent here", so the panel offered to enrol a
+// machine it was already running an agent on, minting a Server row and a join
+// token on each click.
+//
+// 0711 gives away nothing. `--x` cannot list the directory, so the filenames
+// are not enumerable; it can only open a name it already knows, and only if
+// that file's own mode allows it. The private key stays 0600 and stays
+// unreadable. What becomes readable is `identity.json` at 0644 — a server id
+// and two addresses that the panel's own UI, its audit log and the join command
+// all show anyway.
+//
+// The panel also fails closed now (core/localjoin.LocalServerID), so a host
+// that never gets here is reported as "cannot tell" rather than as "available".
+// This is the half that makes the common case simply work.
+const stateDirMode = 0o711
+
 // Save writes the identity to dir, keeping the private key readable only by the
 // owner. It resets the material to the primary slot: enrollment is a fresh
 // start, so any half-written renewal from a previous life is discarded.
 func Save(dir string, id *Identity) error {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(dir, stateDirMode); err != nil {
 		return fmt.Errorf("identity: creating state dir: %w", err)
+	}
+	// MkdirAll leaves an EXISTING directory's mode alone, and every host
+	// enrolled before this change has one at 0700. Re-asserting it is what
+	// makes an agent upgrade repair the fleet instead of only fixing new joins.
+	if err := os.Chmod(dir, stateDirMode); err != nil {
+		return fmt.Errorf("identity: setting state dir mode: %w", err)
 	}
 	if err := writeFileAtomic(filepath.Join(dir, keyFile), id.KeyPEM, 0o600); err != nil {
 		return fmt.Errorf("identity: writing key: %w", err)
@@ -155,6 +183,12 @@ func Rotate(dir string, certPEM, keyPEM []byte) error {
 
 // Load reads a previously-saved identity from dir.
 func Load(dir string) (*Identity, error) {
+	// Repair on every start, best effort. Save only runs at enrollment and at a
+	// certificate renewal — two thirds of ninety days away — so without this an
+	// already-enrolled fleet would keep its 0700 directories, and "use this
+	// machine" would stay broken on them for months. A chmod that fails is not
+	// a reason to refuse to start: the panel fails closed either way.
+	_ = os.Chmod(dir, stateDirMode)
 	m, err := readMeta(dir)
 	if err != nil {
 		return nil, err

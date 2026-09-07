@@ -199,14 +199,46 @@ func TestNoFieldOnARequestCanNameAnotherMachine(t *testing.T) {
 // why the panel reads it rather than guessing from hostnames.
 func TestTheLocalServerIsReadFromTheAgentsOwnIdentity(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "identity.json")
-	if _, ok := LocalServerID(path); ok {
-		t.Fatal("reported a server before the agent enrolled")
+	if _, ok, err := LocalServerID(path); ok || err != nil {
+		t.Fatalf("a missing identity must read as not-joined with no error; got ok=%v err=%v", ok, err)
 	}
 	if err := os.WriteFile(path, []byte(`{"server_id":"srv_abc","plane_addr":"x"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	id, ok := LocalServerID(path)
-	if !ok || id != "srv_abc" {
-		t.Fatalf("LocalServerID = %q, %v", id, ok)
+	id, ok, err := LocalServerID(path)
+	if err != nil || !ok || id != "srv_abc" {
+		t.Fatalf("LocalServerID = %q, %v, %v", id, ok, err)
+	}
+}
+
+// An identity the panel CANNOT READ is not an identity that is absent.
+//
+// This is the whole bug the third return value exists for. `cypherd` runs under
+// DynamicUser=true and the agent's state directory belonged to root at 0700, so
+// the read was refused on every real install; the refusal was reported as "no
+// agent here", and the panel offered to enrol a machine it was already running
+// an agent on — a fresh Server row and a fresh join token on every click.
+func TestAnUnreadableIdentityIsNotReportedAsAbsent(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can read anything, so the refusal cannot be staged")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "identity.json")
+	if err := os.WriteFile(path, []byte(`{"server_id":"srv_abc"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Take away traversal, exactly as a 0700 root-owned directory does to a
+	// panel running as somebody else.
+	if err := os.Chmod(dir, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	id, ok, err := LocalServerID(path)
+	if err == nil {
+		t.Fatalf("an unreadable identity reported no error (id=%q ok=%v) — the caller cannot tell it apart from a machine that was never joined", id, ok)
+	}
+	if ok {
+		t.Fatal("an unreadable identity must not report a server")
 	}
 }

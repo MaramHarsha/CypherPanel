@@ -166,3 +166,50 @@ It is a real phase from a real process, not a spinner on a timer (ui-principles
   would make every panel host a workload host by default, which the vision's
   "the control plane never runs user workloads" argues against as a default even
   though it permits it as a choice.
+
+## Implementation note — the identity read fails closed *(2026-09-07)*
+
+The detection in §6 — *read the agent's own identity file, because matching
+hostnames against the fleet would be a guess* — was right about the source of
+truth and wrong about what a failed read means.
+
+**What was broken.** `cypherd` runs under `DynamicUser=true`, and the agent
+creates its state directory at `0700` owned by root. On the panel's own machine
+that read is refused:
+
+```
+# ls -ld /var/lib/cypher-agent
+drwx------ 3 root root /var/lib/cypher-agent
+# setpriv --reuid=63024 cat /var/lib/cypher-agent/identity.json
+cat: /var/lib/cypher-agent/identity.json: Permission denied
+```
+
+`LocalServerID` returned `("", false)` for that refusal — the same answer it
+returns for a machine that has never been joined. So the panel reported
+`available`, offered the button on a host already running
+`srv_ff5yxbrbznuvlir4fqzxm4bok5`, and `handleCreateLocalServer`'s only
+duplicate guard is `state == already_joined`. Each click therefore created
+another Server row and another join token.
+
+**Two fixes, and both are needed.**
+
+*The panel fails closed.* `LocalServerID` now returns three values and
+distinguishes `fs.ErrNotExist` — which genuinely means "no agent has enrolled
+here" — from every other error, which means "cannot tell". The handler maps the
+second to a new `unknown` state that offers no button and says why. This is the
+half that matters: even if packaging changes again and the read breaks again,
+the panel refuses rather than silently duplicating.
+
+*The agent makes the common case readable.* Its state directory is created — and
+re-asserted on every start, so an upgrade repairs an existing fleet — at `0711`
+instead of `0700`. `--x` is traversal without listing: the filenames are not
+enumerable, a name can only be opened if its own mode permits it, and
+`agent-key.pem` stays `0600`. What becomes readable is `identity.json` at `0644`,
+carrying a server id and two addresses that the panel's UI, its audit log and
+its join command all display anyway.
+
+**Why not publish status from the helper instead.** That was the first idea and
+it only fixes the machines the helper touched. The failure bites hardest on a
+host enrolled the ordinary way — `curl … | sh` with the join command — where no
+helper ever ran and no status file exists. The identity file is written by every
+enrollment path, which is why it was the right source of truth to begin with.
