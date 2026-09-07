@@ -550,6 +550,17 @@ func (f *fakeStore) ListServers(context.Context) ([]domain.Server, error) {
 	return f.servers, nil
 }
 
+func (f *fakeStore) GetServer(_ context.Context, id string) (domain.Server, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, srv := range f.servers {
+		if srv.ID == id {
+			return srv, nil
+		}
+	}
+	return domain.Server{}, store.ErrNotFound
+}
+
 func (f *fakeStore) SetApplicationReplicaStatus(context.Context, string, []domain.ReplicaObservation) error {
 	return nil
 }

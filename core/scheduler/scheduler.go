@@ -120,6 +120,7 @@ type Store interface {
 	ListActiveDeploymentsByApplication(ctx context.Context, appID string) ([]domain.Deployment, error)
 
 	ListServers(ctx context.Context) ([]domain.Server, error)
+	GetServer(ctx context.Context, id string) (domain.Server, error)
 
 	// GetPanelTLS is the panel's ACME account, carried to every node inside
 	// DesiredState (agent-identity-and-tls.md §4). store.ErrNotFound means TLS
@@ -315,6 +316,11 @@ type Scheduler struct {
 	// panelURL is the panel's own advertised base URL, and it is the ONLY
 	// thing a status page's Proxy fragment can point at (status-pages.md §4).
 	panelURL string
+
+	// agentUpdates resolves each server's desired agent version from the
+	// channel it follows (agent-updates.md §2). Optional: nil sends no
+	// instruction, which is exactly how a panel behaved before ADR-010.
+	agentUpdates AgentUpdates
 
 	// mu serializes pipeline transitions: deploy requests and event handlers
 	// race on the per-app queue, and the transitions are read-modify-write.
@@ -1998,6 +2004,21 @@ func (s *Scheduler) DesiredStateFor(ctx context.Context, serverID string) ([]byt
 		}
 	}
 
+	// V1: the agent's own desired version (agent-updates.md §7, ADR-010). A
+	// read failure sends NOTHING rather than a guess, and nothing means no
+	// instruction — the one direction that cannot replace a binary by accident.
+	if s.agentUpdates != nil {
+		if srv, serr := s.store.GetServer(ctx, serverID); serr != nil {
+			s.log.Error("desired state: reading server for the agent update", "server_id", serverID, "error", serr)
+		} else if version, base, rollback, aerr := s.agentUpdates.SpecFor(ctx, srv); aerr != nil {
+			s.log.Error("desired state: resolving the agent update", "server_id", serverID, "error", aerr)
+		} else if version != "" {
+			ds.AgentUpdate = &agentv1.AgentUpdateSpec{
+				Version: version, ArtifactBase: base, Rollback: rollback,
+			}
+		}
+	}
+
 	return proto.Marshal(ds)
 }
 
@@ -2119,6 +2140,30 @@ func (s *Scheduler) RequestResync(ctx context.Context, reason string) error {
 		return fmt.Errorf("scheduler: %d of %d servers could not be nudged to resync", failed, len(servers))
 	}
 	s.log.Info("fleet asked to re-read desired state", "reason", reason, "servers", len(servers))
+	return nil
+}
+
+// RequestServerResync nudges ONE server. A channel change is one host's
+// business, and waking the fleet for it would make every dropdown a fleet-wide
+// event (agent-updates.md §7). It publishes the same ResyncWork to the same
+// per-server subject the fleet nudge uses — the subject vocabulary is untouched
+// (ENGINEERING rule 14).
+func (s *Scheduler) RequestServerResync(ctx context.Context, serverID, reason string) error {
+	srv, err := s.store.GetServer(ctx, serverID)
+	if err != nil {
+		return fmt.Errorf("scheduler: reading server for resync: %w", err)
+	}
+	if srv.EnrolledAt == nil {
+		return nil // never joined: nothing is listening on its work subject
+	}
+	data, err := proto.Marshal(&agentv1.ResyncWork{Reason: reason})
+	if err != nil {
+		return fmt.Errorf("scheduler: marshaling resync: %w", err)
+	}
+	msgID := fmt.Sprintf("%s.resync.%d", srv.ID, s.now().UnixNano())
+	if err := s.bus.PublishWork(ctx, subjects.Resync(srv.ID), msgID, data); err != nil {
+		return fmt.Errorf("scheduler: nudging %s to resync: %w", srv.ID, err)
+	}
 	return nil
 }
 
@@ -2248,6 +2293,17 @@ func (s *Scheduler) SetGate(g Gate) { s.gate = g }
 // New so quotas stay an opt-in add-on: a panel that never calls this behaves
 // exactly as it did before the feature existed.
 func (s *Scheduler) SetQuotaGate(g QuotaGate) { s.quota = g }
+
+// AgentUpdates resolves one server's desired agent version (consumer-defined;
+// *agentupdates.Service satisfies it).
+type AgentUpdates interface {
+	SpecFor(ctx context.Context, srv domain.Server) (version, artifactBase string, rollback bool, err error)
+}
+
+// SetAgentUpdates wires the release channels. Without it DesiredState carries
+// no agent_update at all, and an agent that receives none does nothing —
+// which is the behaviour every fleet has until an operator opens the screen.
+func (s *Scheduler) SetAgentUpdates(a AgentUpdates) { s.agentUpdates = a }
 
 // SetRegistries wires private-registry credentials. Optional: an application
 // can only name a registry the panel stored, so a panel without this never has

@@ -338,6 +338,30 @@ message DesiredState {
   // carried to every node the way TLSSettings is. Absent means the defaults,
   // which is collection on and request analytics off.
   MetricsSettings metrics = 7;
+  // V1: which agent binary this server should be running (agent-updates.md §7,
+  // ADR-010). Absent — or an empty version — means NO INSTRUCTION, never
+  // "downgrade to nothing": upgrading a panel must not start replacing binaries
+  // across a fleet nobody asked it to touch.
+  AgentUpdateSpec agent_update = 8;
+}
+
+// AgentUpdateSpec is the desired agent version for one server, resolved from
+// the channel that server follows (agent-updates.md §2).
+//
+// The plane names a version and never stores or serves a byte of the binary
+// (ADR-010 §2): artifact_base is a PREFIX the agent fetches three fixed file
+// names under — the binary for its own GOARCH, SHA256SUMS, and SHA256SUMS.sig
+// — so a mirror mirrors the prefix and the plane never guesses the host's
+// architecture, which it has never needed to know.
+message AgentUpdateSpec {
+  string version = 1;
+  string artifact_base = 2;
+  // rollback permits a version BELOW the running one. Without it the agent
+  // refuses to go backwards (ADR-010 §3), which stops an accident — a stale
+  // desired set, a mistyped tag, a restored database snapshot walking the fleet
+  // backwards. It does not stop a compromised plane, and does not pretend to:
+  // that bound is the signature, and it is the one threat-model §5.1 states.
+  bool rollback = 3;
 }
 
 // MetricsSettings is what the operator can change about collection. Three

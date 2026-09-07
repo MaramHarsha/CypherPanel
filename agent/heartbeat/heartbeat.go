@@ -25,30 +25,56 @@ import (
 // server whose Proxy can never start still shows green while every routed
 // deploy silently fails (ui-principles §10).
 //
+// It is keyed BY SUBSYSTEM rather than holding one error, because there are now
+// two reporters — the Proxy and the self-updater — and a single slot would let
+// whichever ran last clobber the other's finding: a node whose Proxy cannot
+// bind :80 would go green the moment an update succeeded.
+//
 // The zero value is healthy and usable.
 type Health struct {
-	mu  sync.RWMutex
-	err error
+	mu   sync.RWMutex
+	errs map[string]error
 }
 
-// Set records the subsystem's latest outcome; nil clears it.
-func (h *Health) Set(err error) {
+// Set records one subsystem's latest outcome; nil clears that subsystem only.
+func (h *Health) Set(subsystem string, err error) {
 	if h == nil {
 		return
 	}
 	h.mu.Lock()
-	h.err = err
-	h.mu.Unlock()
+	defer h.mu.Unlock()
+	if err == nil {
+		delete(h.errs, subsystem)
+		return
+	}
+	if h.errs == nil {
+		h.errs = map[string]error{}
+	}
+	h.errs[subsystem] = err
 }
 
-// Err reports the last recorded failure, or nil when healthy.
+// Reporter adapts Set for a caller that hands out a plain func(error) sink —
+// the driver's OnProxyHealth, which knows nothing about subsystem names.
+func (h *Health) Reporter(subsystem string) func(error) {
+	return func(err error) { h.Set(subsystem, err) }
+}
+
+// Err reports one recorded failure, or nil when every subsystem is healthy.
+// Which one is unspecified and does not matter: the heartbeat carries a single
+// status word, and the detail of each subsystem's failure travels on its own
+// channel — the Proxy's in the agent log, the updater's in AgentUpdateStatus.
 func (h *Health) Err() error {
 	if h == nil {
 		return nil
 	}
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	return h.err
+	for _, err := range h.errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Publisher emits heartbeats for one server at a fixed interval.
@@ -64,7 +90,17 @@ type Publisher struct {
 	// (disk-management.md §4). Empty reports nothing, which the plane reads as
 	// unknown — a node that cannot answer is silent rather than alarming.
 	dataRoot string
-	log      *slog.Logger
+	// updates reports what the agent is doing about its own binary
+	// (agent-updates.md §7). Nil carries nothing, exactly as a pre-update agent
+	// did.
+	updates UpdateReporter
+	log     *slog.Logger
+}
+
+// UpdateReporter is the self-updater's observed half (consumer-defined;
+// *updater.Updater satisfies it).
+type UpdateReporter interface {
+	Status() *agentv1.AgentUpdateStatus
 }
 
 // NewPublisher wires the publisher. role is the agent's --role value
@@ -85,6 +121,9 @@ func NewPublisher(nc *nats.Conn, serverID, version, driver, role string, interva
 // /var/lib/docker, because an operator who moved it is exactly the one who will
 // not have moved an alert with it (disk-management.md §4).
 func (p *Publisher) SetDataRoot(path string) { p.dataRoot = path }
+
+// SetUpdateReporter adds the agent-update column to every heartbeat.
+func (p *Publisher) SetUpdateReporter(r UpdateReporter) { p.updates = r }
 
 // Run publishes one heartbeat immediately, then every interval until ctx is
 // cancelled. It owns its ticker's lifecycle (ENGINEERING rule 7).
@@ -128,6 +167,9 @@ func (p *Publisher) publish() {
 		if total, free, ok := diskUsage(p.dataRoot); ok {
 			hb.DiskTotalBytes, hb.DiskFreeBytes = total, free
 		}
+	}
+	if p.updates != nil {
+		hb.AgentUpdate = p.updates.Status()
 	}
 	data, err := proto.Marshal(hb)
 	if err != nil {

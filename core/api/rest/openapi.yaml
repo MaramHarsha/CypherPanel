@@ -1705,6 +1705,133 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/v1/panel/agent-updates:
+    get:
+      operationId: getAgentUpdates
+      tags: [panel]
+      summary: Release channels and the fleet's agent versions (member+)
+      description: >-
+        Two channels and a selector per server, rather than a desired version
+        per host: a forty-host fleet would otherwise be forty decisions that
+        must agree, and "promote" would be a bulk edit.
+
+
+        Both channels ship EMPTY, and empty means no instruction — upgrading a
+        panel must not start replacing binaries across a fleet nobody asked it
+        to touch. The cost is a fleet whose operator never opens this screen
+        stays stale, which is paid for by making the empty state the action.
+      responses:
+        "200": { description: The channels and the fleet., content: { application/json: { schema: { $ref: "#/components/schemas/AgentUpdates" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { description: Agent updates are not enabled on this panel. }
+
+  /api/v1/panel/agent-updates/{channel}:
+    parameters:
+      - { name: channel, in: path, required: true, schema: { type: string, enum: [stable, canary] }, description: Release channel. }
+    put:
+      operationId: setAgentChannel
+      tags: [panel]
+      summary: Set a channel's desired agent version (owner, session only)
+      description: >-
+        Owner AND session-only: this is the one control in the panel that
+        changes what code runs on every server, and an API token that can move a
+        channel is an API token that owns the fleet — API tokens live in CI.
+
+
+        An empty version clears the instruction, which is how a rollout an
+        operator no longer wants is stopped. A version NEWER than the panel's
+        own build is refused naming the remedy: additive-only proto guarantees
+        the old-agent direction, not the new-agent one. A development panel
+        cannot make that comparison and so does not.
+
+
+        Setting an older version than the channel already names permits the
+        agents to move backwards; moving forward clears that permission. It is
+        derived rather than a second checkbox, because an operator who has to
+        remember one is an operator whose rollback does not happen. It stops an
+        ACCIDENT — a stale desired set, a mistyped tag, a restored snapshot
+        walking the fleet backwards — and not a compromised plane, whose bound
+        is the signature the agent checks.
+
+
+        Unless `CYPHERD_AGENT_UPDATE_PRECHECK=off`, the plane HEADs the release
+        manifest first so a typo is refused where it is cheap. That probe takes
+        threat-model §5.14's controls and refuses an address inside the panel's
+        own network; the off switch is how an operator says "the agents can
+        reach that mirror and you cannot".
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetAgentChannelRequest" } } }
+      responses:
+        "200": { description: Set., content: { application/json: { schema: { $ref: "#/components/schemas/AgentChannel" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { description: Agent updates are not enabled on this panel. }
+
+  /api/v1/panel/agent-updates/promote:
+    post:
+      operationId: promoteAgentChannel
+      tags: [panel]
+      summary: Promote canary to stable (owner, session only)
+      description: >-
+        Refused with 409 when no canary server has CONVERGED on the candidate —
+        promoting a version no host has run defeats a gate whose whole purpose
+        is that a host ran it — or when any canary server reports it rolled
+        back. Both refusals name what they refused on. There is no override
+        flag: an operator who believes a rollback was spurious sets stable's
+        version directly and owns that explicitly.
+
+
+        A canary server that is merely OFFLINE neither blocks nor counts:
+        blocking would make one powered-down host a permanent hold on every
+        fleet update.
+
+
+        Promotion moves every stable host at once. No waves and no percentages —
+        ADR-010 §6 names staged rollout as a later refinement on this same
+        primitive, and there is no automatic promotion on a health timer,
+        because the only available health signal is "it reached the bus" and a
+        timer that promotes on it converts one bad release into a fleet-wide
+        outage while nobody is watching.
+      responses:
+        "200": { description: Promoted., content: { application/json: { schema: { $ref: "#/components/schemas/AgentChannel" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: The gate refused; the message names the canary servers and what they are running. }
+        "503": { description: Agent updates are not enabled on this panel. }
+
+  /api/v1/servers/{id}/agent-channel:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Server ID. }
+    put:
+      operationId: setServerAgentChannel
+      tags: [servers]
+      summary: Move one server between release channels (owner, session only)
+      description: >-
+        Its own route rather than a field on `PATCH /servers/{id}`. That PATCH
+        is panel-admin and deliberately reachable by a provisioning token, so
+        re-ranking it would take `public_address` away from every admin that
+        sets it today — while a field-level rank check would be the first in
+        this API, and a new authorization precedent is a bad thing to introduce
+        incidentally inside a feature.
+
+
+        Only this server is nudged to re-read desired state: a channel change is
+        one host's business.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetServerChannelRequest" } } }
+      responses:
+        "200": { description: Moved., content: { application/json: { schema: { $ref: "#/components/schemas/Server" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { description: Agent updates are not enabled on this panel. }
+
   /api/v1/panel/updates:
     get:
       operationId: getPanelUpdates
@@ -6536,6 +6663,96 @@ components:
               type: string
               description: Readable exactly once, in this response. Absent when the gate was cleared.
 
+    AgentChannel:
+      type: object
+      required: [channel, desired_version, artifact_base, resolved_artifact_base, rollback, updated_at]
+      properties:
+        channel: { type: string, enum: [stable, canary] }
+        desired_version:
+          type: string
+          description: Empty means NO INSTRUCTION, never "downgrade to nothing".
+        artifact_base:
+          type: string
+          description: >-
+            Prefix holding `cypher-agent-linux-<arch>`, `SHA256SUMS` and
+            `SHA256SUMS.sig`. One prefix rather than three URLs, because the
+            three file names are fixed by the release layout: a mirror mirrors
+            the prefix. Empty derives it from the version.
+        resolved_artifact_base:
+          type: string
+          description: What an empty artifact_base actually resolves to, so the screen shows where binaries come from rather than a blank field.
+        rollback:
+          type: boolean
+          description: Whether agents may move BELOW their running version. Derived from the direction of the change, not asked for.
+        updated_at: { type: string, format: date-time }
+        updated_by: { type: [string, "null"] }
+
+    AgentServer:
+      type: object
+      required: [id, name, status, channel, running_version, desired_version, converged, phase, target_version, detail]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        status: { type: string }
+        channel: { type: string, enum: [stable, canary] }
+        running_version:
+          type: string
+          description: What the agent last reported. This — never a phase — is what the plane asserts a version from.
+        desired_version: { type: string }
+        converged:
+          type: boolean
+          description: >-
+            Running equals desired. An empty desired version is converged by
+            definition: no instruction is not a pending update.
+        phase:
+          type: string
+          description: >-
+            The updater's observed phase - one of idle, pending, downloading,
+            verifying, swapping, rolled_back, failed, disabled - or empty for an
+            agent that has never reported one. `disabled` is a host visibly
+            EXCLUDED rather than failing forever - CYPHER_UPDATE_DISABLE, a
+            binary path that is not writable, or a build trusting no release
+            key. `rolled_back` also raises the server's own status to degraded.
+        target_version: { type: string }
+        detail:
+          type: string
+          description: Operator-facing prose about the phase; never a secret.
+
+    AgentUpdates:
+      type: object
+      required: [panel_version, channels, servers, running_versions]
+      properties:
+        panel_version:
+          type: string
+          description: The plane's own build, which is the ceiling on what may be asked of an agent.
+        channels:
+          type: array
+          items: { $ref: "#/components/schemas/AgentChannel" }
+        servers:
+          type: array
+          items: { $ref: "#/components/schemas/AgentServer" }
+        running_versions:
+          type: object
+          additionalProperties: { type: integer }
+          description: Running version to host count - the fleet histogram the empty state shows.
+
+    SetAgentChannelRequest:
+      type: object
+      required: [version]
+      properties:
+        version:
+          type: string
+          description: Empty clears the instruction.
+        artifact_base:
+          type: string
+          description: Empty derives the prefix from the version, which is every fleet using the project's own releases.
+
+    SetServerChannelRequest:
+      type: object
+      required: [channel]
+      properties:
+        channel: { type: string, enum: [stable, canary] }
+
     PanelVersion:
       type: object
       required: [version, commit, built_at, go_version, latest]
@@ -7523,6 +7740,26 @@ components:
             (`CYPHERD_DISK_WARN_PERCENT`, default 85). Crossing it, and crossing
             back, writes one notification-inbox item for the panel's owners and
             admins — on the transition, never on every heartbeat.
+        agent_channel:
+          type: string
+          enum: [stable, canary]
+          description: >-
+            Which release channel this server's agent follows
+            (agent-updates.md §2). Its desired version is that channel's; there
+            is no per-server version, so promotion is one write rather than a
+            bulk edit. Changed through `PUT /servers/{id}/agent-channel`, which
+            is owner and session-only — never through `PATCH /servers/{id}`.
+        agent_update_phase:
+          type: string
+          description: >-
+            What the agent last said about its own binary: idle, pending,
+            downloading, verifying, swapping, rolled_back, failed or disabled;
+            empty for an agent that has never reported one.
+        agent_update_target:
+          type: string
+        agent_update_detail:
+          type: string
+          description: Operator-facing prose about the phase; never a secret.
         enrolled:
           type: boolean
           description: Whether an agent has completed enrollment.

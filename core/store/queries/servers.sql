@@ -37,6 +37,37 @@ RETURNING *;
 -- name: SetServerDiskLow :exec
 UPDATE servers SET disk_low = $2, updated_at = now() WHERE id = $1;
 
+-- SetServerAgentUpdate records the observed half of ADR-010. Separate from the
+-- heartbeat write because it changes rarely while a heartbeat arrives every few
+-- seconds, and because the plane compares the PREVIOUS phase to decide whether
+-- a rollback is a transition worth announcing (agent-updates.md §7).
+-- name: SetServerAgentUpdate :exec
+UPDATE servers
+SET agent_update_phase  = $2,
+    agent_update_target = $3,
+    agent_update_detail = $4,
+    updated_at = now()
+WHERE id = $1;
+
+-- name: SetServerAgentChannel :one
+UPDATE servers SET agent_channel = $2, updated_at = now() WHERE id = $1 RETURNING *;
+
+-- name: ListAgentChannels :many
+SELECT * FROM agent_channels ORDER BY channel;
+
+-- name: GetAgentChannel :one
+SELECT * FROM agent_channels WHERE channel = $1;
+
+-- name: SetAgentChannel :one
+UPDATE agent_channels
+SET desired_version = $2,
+    artifact_base   = $3,
+    rollback        = $4,
+    updated_at      = now(),
+    updated_by      = $5
+WHERE channel = $1
+RETURNING *;
+
 -- name: MarkStaleServersUnknown :many
 UPDATE servers
 SET status = 'unknown',

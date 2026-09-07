@@ -37,6 +37,7 @@ import (
 	robfig "github.com/robfig/cron/v3"
 
 	"github.com/MaramHarsha/cypherpanel/core/access"
+	"github.com/MaramHarsha/cypherpanel/core/agentupdates"
 	"github.com/MaramHarsha/cypherpanel/core/alerts"
 	grpcapi "github.com/MaramHarsha/cypherpanel/core/api/grpc"
 	"github.com/MaramHarsha/cypherpanel/core/api/rest"
@@ -761,6 +762,13 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 	quotaSvc := quota.New(st, quotaAnnouncer{inbox: inboxSvc}, log.With("component", "quota"))
 	sched.SetQuotaGate(quotaGate{svc: quotaSvc})
 
+	// Agent version channels (ADR-010). Both rows ship empty and empty means no
+	// instruction, so upgrading a panel does not start replacing binaries
+	// across a fleet nobody asked it to touch.
+	agentUpdateSvc := agentupdates.New(st, sched, version, cfg.AgentUpdatePrecheck,
+		log.With("component", "agent-updates"))
+	sched.SetAgentUpdates(agentUpdateSvc)
+
 	mailHostSvc := mailhost.NewService(st, box, mailDNSWriter{dns: dnsSvc})
 	mailHostSvc.SetLogger(log.With("component", "mailhost"))
 
@@ -844,6 +852,7 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		LogDrains:        drainSvc,
 		PlaneDR:          planeDR,
 		MailHost:         mailHostSvc,
+		AgentUpdates:     agentUpdateSvc,
 		Quotas:           quotaSvc,
 		Promotion:        sched,
 		PlaneDRFetch:     planeObjects.Get,

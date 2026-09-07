@@ -143,6 +143,15 @@ type Config struct {
 	// whole answer for an air-gapped install. The panel never updates itself
 	// either way (ADR-010; control-plane-hardening.md §3).
 	UpdateCheck bool
+	// AgentUpdatePrecheck is whether the plane HEADs a release manifest when an
+	// operator SETS a channel version, so a typo is refused where it is cheap
+	// rather than discovered by forty hosts (agent-updates.md §4a).
+	//
+	// It is the plane connecting to a host named in a request body, so it takes
+	// threat-model §5.14's controls and refuses a private address. `off` is how
+	// an operator says "the agents can reach that mirror and you cannot" —
+	// rather than the plane relaxing a control because a request body asked.
+	AgentUpdatePrecheck bool
 	// UpdateFeedURL is the feed to poll; empty means the package default
 	// (GitHub's releases/latest for this project).
 	UpdateFeedURL string
@@ -185,10 +194,11 @@ func Load() (Config, error) {
 		DrainMaxBackoff:    envDuration("CYPHERD_DRAIN_MAX_BACKOFF", time.Minute),
 		// Minimum 1 enforced below: the deployed revision is never reclaimable,
 		// so a zero here would be a request to delete what is running.
-		RevisionRetain:  envInt("CYPHERD_REVISION_RETAIN", 3),
-		DiskWarnPercent: envInt("CYPHERD_DISK_WARN_PERCENT", 85),
-		UpdateCheck:     !strings.EqualFold(envOr("CYPHERD_UPDATE_CHECK", "on"), "off"),
-		UpdateFeedURL:   envOr("CYPHERD_UPDATE_FEED_URL", ""),
+		RevisionRetain:      envInt("CYPHERD_REVISION_RETAIN", 3),
+		DiskWarnPercent:     envInt("CYPHERD_DISK_WARN_PERCENT", 85),
+		UpdateCheck:         !strings.EqualFold(envOr("CYPHERD_UPDATE_CHECK", "on"), "off"),
+		UpdateFeedURL:       envOr("CYPHERD_UPDATE_FEED_URL", ""),
+		AgentUpdatePrecheck: !strings.EqualFold(envOr("CYPHERD_AGENT_UPDATE_PRECHECK", "on"), "off"),
 	}
 
 	runtimeBytes, err := envBytes("CYPHERD_RUNTIME_LOGS_MAX_BYTES", 536870912) // 512 MiB

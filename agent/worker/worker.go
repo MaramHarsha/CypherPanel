@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -124,6 +125,14 @@ type Worker struct {
 	staticRouter   StaticRouter
 	metrics        MetricsSink
 	proxyAccessLog AccessLogSink
+	updater        SelfUpdater
+
+	// working is true while a work item is being handled. It is the quiescence
+	// signal the self-updater waits on: a restart mid-build throws away ten
+	// minutes of CPU and a restart mid-restore interrupts a database that is
+	// already offline (agent-updates.md §3.1). The work loop is single
+	// threaded, so this is exact rather than approximate.
+	working atomic.Bool
 
 	mu           sync.Mutex
 	state        map[string]*agentv1.AppSpec     // map[app_id]spec
@@ -137,6 +146,13 @@ type Worker struct {
 	// (status-pages.md §4). Replaced wholesale on every sync like the specs,
 	// with the same absence-means-remove contract.
 	staticRoutes map[string]*agentv1.StaticRouteSpec
+}
+
+// SelfUpdater converges the agent's own binary onto the version desired state
+// names (consumer-defined; *updater.Updater satisfies it). Optional: a nil one
+// makes a node behave exactly as it did before agent updates existed.
+type SelfUpdater interface {
+	Apply(ctx context.Context, spec *agentv1.AgentUpdateSpec)
 }
 
 // MetricsSink receives the panel-wide collection policy. Consumer-defined and
@@ -222,6 +238,15 @@ func (w *Worker) SetStaticRouter(r StaticRouter) { w.staticRouter = r }
 // SetMetrics attaches the metrics collector (metrics-and-usage.md §5).
 func (w *Worker) SetMetrics(m MetricsSink) { w.metrics = m }
 
+// SetUpdater wires the self-updater. Without it an AgentUpdateSpec in desired
+// state is simply ignored, which is what a builder-role agent and every unit
+// test want.
+func (w *Worker) SetUpdater(u SelfUpdater) { w.updater = u }
+
+// Quiet reports that no work item is in flight. It is what the updater waits
+// on before replacing the binary underneath a running build.
+func (w *Worker) Quiet() bool { return !w.working.Load() }
+
 // SetProxyAccessLog attaches the Proxy's access-log switch.
 func (w *Worker) SetProxyAccessLog(a AccessLogSink) { w.proxyAccessLog = a }
 
@@ -271,7 +296,9 @@ func (w *Worker) Run(ctx context.Context) error {
 			}
 			continue
 		}
+		w.working.Store(true)
 		w.handleMsg(ctx, msg)
+		w.working.Store(false)
 		lastConverge = time.Now()
 	}
 }
@@ -381,6 +408,17 @@ func (w *Worker) syncState(ctx context.Context) error {
 	}
 	if w.proxyAccessLog != nil {
 		w.proxyAccessLog.SetAccessLog(ms.Enabled && ms.RequestAnalytics)
+	}
+
+	// The agent's own version rides along with the desired set like the ACME
+	// account and the metrics policy do. It runs on its own goroutine because
+	// converging it means WAITING — for the jitter, and for this very work loop
+	// to go quiet — and a sync that blocked on that would deadlock the loop it
+	// is waiting for. Apply is re-entrant-safe, so a second nudge during a
+	// download is a no-op rather than a second download.
+	if w.updater != nil {
+		spec := ds.GetAgentUpdate()
+		go w.updater.Apply(ctx, spec)
 	}
 
 	w.log.Info("worker: desired-state sync complete",

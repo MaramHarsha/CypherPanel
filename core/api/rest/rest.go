@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/MaramHarsha/cypherpanel/core/access"
+	"github.com/MaramHarsha/cypherpanel/core/agentupdates"
 	"github.com/MaramHarsha/cypherpanel/core/api/rest/webui"
 	"github.com/MaramHarsha/cypherpanel/core/applications"
 	"github.com/MaramHarsha/cypherpanel/core/audit"
@@ -335,6 +336,15 @@ type StatusPageStore interface {
 	GetEnvironment(ctx context.Context, id string) (domain.Environment, error)
 }
 
+// AgentUpdateService is the plane's half of ADR-010 (consumer-defined;
+// *agentupdates.Service satisfies it).
+type AgentUpdateService interface {
+	Get(ctx context.Context) (agentupdates.View, error)
+	Set(ctx context.Context, channel, version, artifactBase, by string) (domain.AgentChannelRow, error)
+	Promote(ctx context.Context, by string) (domain.AgentChannelRow, error)
+	SetServerChannel(ctx context.Context, serverID, channel string) (domain.Server, error)
+}
+
 // PromotionService plans and performs a revision promotion (consumer-defined).
 type PromotionService interface {
 	PlanPromotion(ctx context.Context, sourceRevisionID, targetApplicationID string) (scheduler.PromotionPlan, error)
@@ -425,6 +435,11 @@ type Deps struct {
 	Quotas QuotaService
 	// MailHost is provider-backed email for verified domains (managed-email.md).
 	MailHost MailHostService
+	// AgentUpdates owns the two release channels and the gate between them
+	// (agent-updates.md, ADR-010). nil answers 503 on every route here, which
+	// is a panel that has not wired the feature rather than one that has no
+	// version to name.
+	AgentUpdates AgentUpdateService
 	// PlaneDR is the control plane backing itself up, and PlaneDRFetch reads
 	// one object back so a Recovery Key can be proven to still work.
 	PlaneDR      PlaneDRService
@@ -767,6 +782,15 @@ func (a *API) Handler() http.Handler {
 	// and session-only, because it names hosts and resources and an API token
 	// must never be able to lift it.
 	mux.HandleFunc("GET /api/v1/panel/version", a.authed(a.handleGetPanelVersion))
+
+	// Agent version channels (agent-updates.md §7, ADR-010). The three mutating
+	// routes are owner AND session-only: this is the one control that changes
+	// what code runs on every server, and an API token that can move a channel
+	// is an API token that owns the fleet.
+	mux.HandleFunc("GET /api/v1/panel/agent-updates", a.authed(a.handleGetAgentUpdates))
+	mux.HandleFunc("PUT /api/v1/panel/agent-updates/{channel}", a.sessionOnly(a.handleSetAgentChannel))
+	mux.HandleFunc("POST /api/v1/panel/agent-updates/promote", a.sessionOnly(a.handlePromoteAgentChannel))
+	mux.HandleFunc("PUT /api/v1/servers/{id}/agent-channel", a.sessionOnly(a.handleSetServerAgentChannel))
 	mux.HandleFunc("GET /api/v1/panel/logs", a.sessionOnly(a.handleGetPanelLogs))
 
 	// The panel's ACME account (agent-identity-and-tls.md §4). Owner-only: it

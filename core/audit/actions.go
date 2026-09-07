@@ -107,6 +107,13 @@ const (
 	// it should — the single most consequential change in the install.
 	ActionPanelUpgradeStarted   = "panel.upgrade_started"
 	ActionPanelUpgradeCancelled = "panel.upgrade_cancelled"
+	// The two agent-update decisions (agent-updates.md §7). A channel's version
+	// is the one control in the panel that changes what CODE runs on every
+	// server, so both edges are recorded: who named the version, and who
+	// promoted it to the fleet. The per-server channel move rides the existing
+	// server.updated.
+	ActionAgentVersionSet       = "agent.version_set"
+	ActionAgentPromoted         = "agent.promoted"
 	ActionPanelSnapshotDeleted  = "panel.snapshot_deleted"
 	ActionPanelSnapshotRestored = "panel.snapshot_restored"
 	// Log drains (log-drains.md §9). Where an install's logs go is a
@@ -355,6 +362,8 @@ var actions = map[string]bool{
 
 	ActionPanelUpgradeStarted:   true,
 	ActionPanelUpgradeCancelled: true,
+	ActionAgentVersionSet:       true,
+	ActionAgentPromoted:         true,
 	ActionPanelSnapshotDeleted:  true,
 	ActionPanelSnapshotRestored: true,
 

@@ -37,6 +37,7 @@ import type {
   PatchServerRequest,
   ResourceMetrics,
   Server,
+  SetServerChannelRequest,
   UnauthorizedResponse
 } from '../model';
 
@@ -675,6 +676,80 @@ export const useDeleteServer = <TError = UnauthorizedResponse | ForbiddenRespons
         TContext
       > => {
       return useMutation(getDeleteServerMutationOptions(options), queryClient);
+    }
+    export const getSetServerAgentChannelUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/servers/${id}/agent-channel`
+}
+
+/**
+ * Its own route rather than a field on `PATCH /servers/{id}`. That PATCH is panel-admin and deliberately reachable by a provisioning token, so re-ranking it would take `public_address` away from every admin that sets it today — while a field-level rank check would be the first in this API, and a new authorization precedent is a bad thing to introduce incidentally inside a feature.
+ *
+ * Only this server is nudged to re-read desired state: a channel change is one host's business.
+ * @summary Move one server between release channels (owner, session only)
+ */
+export const setServerAgentChannel = async (id: string,
+    setServerChannelRequest: SetServerChannelRequest, options?: RequestInit): Promise<Server> => {
+
+  return apiFetch<Server>(getSetServerAgentChannelUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(setServerChannelRequest)
+  }
+);}
+
+
+
+
+
+export const getSetServerAgentChannelMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setServerAgentChannel>>, TError,{id: string;data: SetServerChannelRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setServerAgentChannel>>, TError,{id: string;data: SetServerChannelRequest}, TContext> => {
+
+const mutationKey = ['setServerAgentChannel'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setServerAgentChannel>>, {id: string;data: SetServerChannelRequest}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  setServerAgentChannel(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetServerAgentChannelMutationResult = NonNullable<Awaited<ReturnType<typeof setServerAgentChannel>>>
+    export type SetServerAgentChannelMutationBody = SetServerChannelRequest
+    export type SetServerAgentChannelMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | void
+
+    /**
+ * @summary Move one server between release channels (owner, session only)
+ */
+export const useSetServerAgentChannel = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setServerAgentChannel>>, TError,{id: string;data: SetServerChannelRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setServerAgentChannel>>,
+        TError,
+        {id: string;data: SetServerChannelRequest},
+        TContext
+      > => {
+      return useMutation(getSetServerAgentChannelMutationOptions(options), queryClient);
     }
     export const getGetServerMetricsUrl = (id: string,
     params?: GetServerMetricsParams,) => {

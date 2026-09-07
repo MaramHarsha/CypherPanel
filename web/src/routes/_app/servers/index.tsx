@@ -20,6 +20,7 @@ import { CopyButton } from "@/components/copy-field";
 import { EmptyState } from "@/components/empty-state";
 import { HeaderStat, PageBody, PageHeader } from "@/components/page-header";
 import { PageState } from "@/components/page-state";
+import { ServersTabs } from "@/components/servers-tabs";
 import { normalizeStatus, StatusDot, StatusPill } from "@/components/status-badge";
 import { ActionButton } from "@/components/ui/action-button";
 import { Button } from "@/components/ui/button";
@@ -63,6 +64,7 @@ function ServersPage() {
       <JoinServerDialog open={joinOpen} onOpenChange={setJoinOpen} />
       <PageHeader
         title="Servers"
+        below={<ServersTabs />}
         actions={
           <>
             {list.length > 0 && (

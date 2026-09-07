@@ -13,6 +13,7 @@ rendered.
 
 ## v0.4.0 — 2026-09-07
 
+- Agent updates: name a version per release channel and every agent converges on it, verifying a signed release itself and putting its previous binary back if the new one cannot dial home.
 - Maintenance mode: serve a holding page while you migrate; the application keeps running and can still be deployed underneath.
 - Revision promotion: ship a revision that is already proven in staging to production without rebuilding it.
 - Resource quotas: a per-team or per-project ceiling on CPU, memory and disk, enforced when a deploy is admitted rather than billed for afterwards.

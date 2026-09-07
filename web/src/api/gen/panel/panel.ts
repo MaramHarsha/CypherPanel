@@ -27,6 +27,8 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AgentChannel,
+  AgentUpdates,
   AlertBacktest,
   AlertEvent,
   AlertRule,
@@ -71,6 +73,7 @@ import type {
   ResetMailboxPassword200,
   ResetMailboxPasswordBody,
   RestorePanelSnapshotBody,
+  SetAgentChannelRequest,
   SetAlertRuleEnabledBody,
   SetPanelDNSRequest,
   SetPanelMailRequest,
@@ -1387,6 +1390,262 @@ export const useTestPanelMail = <TError = BadRequestResponse | UnauthorizedRespo
         TContext
       > => {
       return useMutation(getTestPanelMailMutationOptions(options), queryClient);
+    }
+    export const getGetAgentUpdatesUrl = () => {
+
+
+
+
+  return `/api/v1/panel/agent-updates`
+}
+
+/**
+ * Two channels and a selector per server, rather than a desired version per host: a forty-host fleet would otherwise be forty decisions that must agree, and "promote" would be a bulk edit.
+ *
+ * Both channels ship EMPTY, and empty means no instruction — upgrading a panel must not start replacing binaries across a fleet nobody asked it to touch. The cost is a fleet whose operator never opens this screen stays stale, which is paid for by making the empty state the action.
+ * @summary Release channels and the fleet's agent versions (member+)
+ */
+export const getAgentUpdates = async ( options?: RequestInit): Promise<AgentUpdates> => {
+
+  return apiFetch<AgentUpdates>(getGetAgentUpdatesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAgentUpdatesQueryKey = () => {
+    return [
+    `/api/v1/panel/agent-updates`
+    ] as const;
+    }
+
+
+export const getGetAgentUpdatesQueryOptions = <TData = Awaited<ReturnType<typeof getAgentUpdates>>, TError = UnauthorizedResponse | ForbiddenResponse | void>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentUpdates>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAgentUpdatesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAgentUpdates>>> = ({ signal }) => getAgentUpdates({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAgentUpdates>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetAgentUpdatesQueryResult = NonNullable<Awaited<ReturnType<typeof getAgentUpdates>>>
+export type GetAgentUpdatesQueryError = UnauthorizedResponse | ForbiddenResponse | void
+
+
+export function useGetAgentUpdates<TData = Awaited<ReturnType<typeof getAgentUpdates>>, TError = UnauthorizedResponse | ForbiddenResponse | void>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentUpdates>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getAgentUpdates>>,
+          TError,
+          Awaited<ReturnType<typeof getAgentUpdates>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAgentUpdates<TData = Awaited<ReturnType<typeof getAgentUpdates>>, TError = UnauthorizedResponse | ForbiddenResponse | void>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentUpdates>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getAgentUpdates>>,
+          TError,
+          Awaited<ReturnType<typeof getAgentUpdates>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAgentUpdates<TData = Awaited<ReturnType<typeof getAgentUpdates>>, TError = UnauthorizedResponse | ForbiddenResponse | void>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentUpdates>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Release channels and the fleet's agent versions (member+)
+ */
+
+export function useGetAgentUpdates<TData = Awaited<ReturnType<typeof getAgentUpdates>>, TError = UnauthorizedResponse | ForbiddenResponse | void>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentUpdates>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetAgentUpdatesQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getSetAgentChannelUrl = (channel: 'stable' | 'canary',) => {
+
+
+
+
+  return `/api/v1/panel/agent-updates/${channel}`
+}
+
+/**
+ * Owner AND session-only: this is the one control in the panel that changes what code runs on every server, and an API token that can move a channel is an API token that owns the fleet — API tokens live in CI.
+ *
+ * An empty version clears the instruction, which is how a rollout an operator no longer wants is stopped. A version NEWER than the panel's own build is refused naming the remedy: additive-only proto guarantees the old-agent direction, not the new-agent one. A development panel cannot make that comparison and so does not.
+ *
+ * Setting an older version than the channel already names permits the agents to move backwards; moving forward clears that permission. It is derived rather than a second checkbox, because an operator who has to remember one is an operator whose rollback does not happen. It stops an ACCIDENT — a stale desired set, a mistyped tag, a restored snapshot walking the fleet backwards — and not a compromised plane, whose bound is the signature the agent checks.
+ *
+ * Unless `CYPHERD_AGENT_UPDATE_PRECHECK=off`, the plane HEADs the release manifest first so a typo is refused where it is cheap. That probe takes threat-model §5.14's controls and refuses an address inside the panel's own network; the off switch is how an operator says "the agents can reach that mirror and you cannot".
+ * @summary Set a channel's desired agent version (owner, session only)
+ */
+export const setAgentChannel = async (channel: 'stable' | 'canary',
+    setAgentChannelRequest: SetAgentChannelRequest, options?: RequestInit): Promise<AgentChannel> => {
+
+  return apiFetch<AgentChannel>(getSetAgentChannelUrl(channel),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(setAgentChannelRequest)
+  }
+);}
+
+
+
+
+
+export const getSetAgentChannelMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setAgentChannel>>, TError,{channel: 'stable' | 'canary';data: SetAgentChannelRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setAgentChannel>>, TError,{channel: 'stable' | 'canary';data: SetAgentChannelRequest}, TContext> => {
+
+const mutationKey = ['setAgentChannel'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setAgentChannel>>, {channel: 'stable' | 'canary';data: SetAgentChannelRequest}> = (props) => {
+          const {channel,data} = props ?? {};
+
+          return  setAgentChannel(channel,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetAgentChannelMutationResult = NonNullable<Awaited<ReturnType<typeof setAgentChannel>>>
+    export type SetAgentChannelMutationBody = SetAgentChannelRequest
+    export type SetAgentChannelMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | void
+
+    /**
+ * @summary Set a channel's desired agent version (owner, session only)
+ */
+export const useSetAgentChannel = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setAgentChannel>>, TError,{channel: 'stable' | 'canary';data: SetAgentChannelRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setAgentChannel>>,
+        TError,
+        {channel: 'stable' | 'canary';data: SetAgentChannelRequest},
+        TContext
+      > => {
+      return useMutation(getSetAgentChannelMutationOptions(options), queryClient);
+    }
+    export const getPromoteAgentChannelUrl = () => {
+
+
+
+
+  return `/api/v1/panel/agent-updates/promote`
+}
+
+/**
+ * Refused with 409 when no canary server has CONVERGED on the candidate — promoting a version no host has run defeats a gate whose whole purpose is that a host ran it — or when any canary server reports it rolled back. Both refusals name what they refused on. There is no override flag: an operator who believes a rollback was spurious sets stable's version directly and owns that explicitly.
+ *
+ * A canary server that is merely OFFLINE neither blocks nor counts: blocking would make one powered-down host a permanent hold on every fleet update.
+ *
+ * Promotion moves every stable host at once. No waves and no percentages — ADR-010 §6 names staged rollout as a later refinement on this same primitive, and there is no automatic promotion on a health timer, because the only available health signal is "it reached the bus" and a timer that promotes on it converts one bad release into a fleet-wide outage while nobody is watching.
+ * @summary Promote canary to stable (owner, session only)
+ */
+export const promoteAgentChannel = async ( options?: RequestInit): Promise<AgentChannel> => {
+
+  return apiFetch<AgentChannel>(getPromoteAgentChannelUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getPromoteAgentChannelMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof promoteAgentChannel>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof promoteAgentChannel>>, TError,void, TContext> => {
+
+const mutationKey = ['promoteAgentChannel'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof promoteAgentChannel>>, void> = () => {
+
+
+          return  promoteAgentChannel(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PromoteAgentChannelMutationResult = NonNullable<Awaited<ReturnType<typeof promoteAgentChannel>>>
+
+    export type PromoteAgentChannelMutationError = UnauthorizedResponse | ForbiddenResponse | void
+
+    /**
+ * @summary Promote canary to stable (owner, session only)
+ */
+export const usePromoteAgentChannel = <TError = UnauthorizedResponse | ForbiddenResponse | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof promoteAgentChannel>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof promoteAgentChannel>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getPromoteAgentChannelMutationOptions(options), queryClient);
     }
     export const getGetPanelUpdatesUrl = () => {
 

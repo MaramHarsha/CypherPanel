@@ -500,8 +500,59 @@ a reviewer can see a route's rank at the mux. `PUT /api/v1/servers/{id}/agent-ch
 costs one endpoint and keeps that property.
 
 **The signature check is never stubbed.** ADR-010 §3 forbids it, and
-`docs/dev/release-signing.md` records that agent-side verification is
-unimplemented while this repository has no published release. The desired-version
-model, the channel, the reconciler and the UI are therefore buildable now; the
-binary swap is not, and must land with the release pipeline rather than ahead of
-it behind a disabled check.
+`docs/dev/release-signing.md` records that this repository has published no
+signed release.
+
+## Implementation note (shipped)
+
+All of it is built, including the swap — and the way that stays inside ADR-010
+§3 is worth stating precisely, because "the updater cannot land before the
+release pipeline" was this spec's own conclusion and it turned out to be one
+step too strong.
+
+**The trust store is a list, and it ships EMPTY.** `agent/updater.publicKeys` is
+a comma-separated base64 key list set with `-ldflags` at build time (the command
+is in release-signing.md), capped at the two keys rotation needs. A build made
+without it trusts nothing, and an updater that can verify nothing DOES NOT RUN:
+`disabledReason` reports `PHASE_DISABLED` naming the missing key, `Apply`
+returns before touching the network, and no file is renamed. That is a real
+check failing closed rather than a stubbed one passing open — the opposite of
+what §3 forbids — and it is asserted by
+`TestABuildWithNoReleaseKeyRefusesToUpdateAndSaysSo`, which fails if the updater
+so much as fetches a manifest. There is no flag that skips verification.
+
+So the release pipeline supplies a KEY, not the code. Everything else is here:
+
+- `pkg/fetch` is the bounded getter §3.2 asks for, re-implemented rather than
+  reused (go.work makes `core/updates` unimportable from `agent/`), and
+  deliberately WITHOUT the private-address refusal — that control is the
+  plane's, and refusing a private mirror agent-side would break the air-gapped
+  case this feature exists to allow.
+- `agent/updater` is the reconciler: jitter, quiescence against the work loop,
+  manifest verify, digest check while streaming to disk, `<staged> version`
+  pre-flight, marker-before-swap, two-slot rename, and a probation timer armed
+  in `Recover` before identity is loaded or the bus is dialled. `DialedHome`
+  clears it on the first heartbeat and deliberately not on the desired-state
+  sync, for the reason §4c gives.
+- `core/agentupdates` owns the two channels, the panel-version ceiling, the
+  §5.14-shaped pre-flight probe, and the promotion gate.
+- The screen is `Servers → Updates`, a tab rather than a fifth nav item.
+
+Three things differ from the spec as written, all of them narrowings:
+
+- **`rollback` is derived, not asked for.** §6 describes a flag behind a
+  confirmation. What ships sets it when the version being written is older than
+  the one the channel already names, and clears it when it moves forward, with
+  the dialog stating the blast radius. An operator who has to remember a second
+  checkbox to make a rollback work is an operator whose rollback does not
+  happen — and the flag's whole purpose is stopping an accident, which a
+  checkbox nobody ticks does not do.
+- **`Health` became keyed by subsystem**, as §7 requires, and the adapter is
+  `Health.Reporter(name)` rather than a changed `Set` signature at every call
+  site. `TestOneSubsystemClearingItselfDoesNotClearAnother` is the reason it was
+  worth doing: with one slot, a node whose Proxy could not bind :80 went green
+  the moment an unrelated subsystem cleared.
+- **An agent carrying NO update status leaves the stored phase alone.** Every
+  agent before this release sends none, and absence is silence rather than
+  "idle" — overwriting a `rolled_back` row with a blank because one old
+  heartbeat arrived would erase the amber row an operator has to act on.

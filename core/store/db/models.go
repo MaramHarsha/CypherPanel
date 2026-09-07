@@ -22,6 +22,15 @@ type AccessRequest struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
+type AgentChannel struct {
+	Channel        string
+	DesiredVersion string
+	ArtifactBase   string
+	Rollback       bool
+	UpdatedAt      pgtype.Timestamptz
+	UpdatedBy      pgtype.Text
+}
+
 type AlertEvent struct {
 	ID         string
 	RuleID     string
@@ -728,21 +737,25 @@ type ScheduledTaskRun struct {
 }
 
 type Server struct {
-	ID             string
-	Name           string
-	Status         string
-	Driver         string
-	AgentVersion   string
-	Hostname       string
-	EnrolledAt     pgtype.Timestamptz
-	LastSeenAt     pgtype.Timestamptz
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
-	Role           string
-	PublicAddress  string
-	DiskTotalBytes int64
-	DiskFreeBytes  int64
-	DiskLow        bool
+	ID                string
+	Name              string
+	Status            string
+	Driver            string
+	AgentVersion      string
+	Hostname          string
+	EnrolledAt        pgtype.Timestamptz
+	LastSeenAt        pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	Role              string
+	PublicAddress     string
+	DiskTotalBytes    int64
+	DiskFreeBytes     int64
+	DiskLow           bool
+	AgentChannel      string
+	AgentUpdatePhase  string
+	AgentUpdateTarget string
+	AgentUpdateDetail string
 }
 
 type Session struct {

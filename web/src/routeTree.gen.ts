@@ -18,6 +18,7 @@ import { Route as InviteTokenRouteImport } from './routes/invite.$token'
 import { Route as AppProjectsIndexRouteImport } from './routes/_app/projects/index'
 import { Route as AppServersIndexRouteImport } from './routes/_app/servers/index'
 import { Route as AppServersServerIdRouteImport } from './routes/_app/servers/$serverId'
+import { Route as AppServersUpdatesRouteImport } from './routes/_app/servers/updates'
 import { Route as AppSettingsIndexRouteImport } from './routes/_app/settings/index'
 import { Route as AppSettingsAlertsRouteImport } from './routes/_app/settings/alerts'
 import { Route as AppSettingsApiRouteImport } from './routes/_app/settings/api'
@@ -111,6 +112,11 @@ const AppServersIndexRoute = AppServersIndexRouteImport.update({
 const AppServersServerIdRoute = AppServersServerIdRouteImport.update({
   id: '/servers/$serverId',
   path: '/servers/$serverId',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppServersUpdatesRoute = AppServersUpdatesRouteImport.update({
+  id: '/servers/updates',
+  path: '/servers/updates',
   getParentRoute: () => AppRoute,
 } as any)
 const AppSettingsIndexRoute = AppSettingsIndexRouteImport.update({
@@ -402,6 +408,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof AppSettingsRouteWithChildren
   '/invite/$token': typeof InviteTokenRoute
   '/servers/$serverId': typeof AppServersServerIdRoute
+  '/servers/updates': typeof AppServersUpdatesRoute
   '/settings/alerts': typeof AppSettingsAlertsRoute
   '/settings/api': typeof AppSettingsApiRoute
   '/settings/audit': typeof AppSettingsAuditRoute
@@ -461,6 +468,7 @@ export interface FileRoutesByTo {
   '/invite/$token': typeof InviteTokenRoute
   '/': typeof AppIndexRoute
   '/servers/$serverId': typeof AppServersServerIdRoute
+  '/servers/updates': typeof AppServersUpdatesRoute
   '/settings/alerts': typeof AppSettingsAlertsRoute
   '/settings/api': typeof AppSettingsApiRoute
   '/settings/audit': typeof AppSettingsAuditRoute
@@ -519,6 +527,7 @@ export interface FileRoutesById {
   '/invite/$token': typeof InviteTokenRoute
   '/_app/': typeof AppIndexRoute
   '/_app/servers/$serverId': typeof AppServersServerIdRoute
+  '/_app/servers/updates': typeof AppServersUpdatesRoute
   '/_app/settings/alerts': typeof AppSettingsAlertsRoute
   '/_app/settings/api': typeof AppSettingsApiRoute
   '/_app/settings/audit': typeof AppSettingsAuditRoute
@@ -581,6 +590,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/invite/$token'
     | '/servers/$serverId'
+    | '/servers/updates'
     | '/settings/alerts'
     | '/settings/api'
     | '/settings/audit'
@@ -640,6 +650,7 @@ export interface FileRouteTypes {
     | '/invite/$token'
     | '/'
     | '/servers/$serverId'
+    | '/servers/updates'
     | '/settings/alerts'
     | '/settings/api'
     | '/settings/audit'
@@ -697,6 +708,7 @@ export interface FileRouteTypes {
     | '/invite/$token'
     | '/_app/'
     | '/_app/servers/$serverId'
+    | '/_app/servers/updates'
     | '/_app/settings/alerts'
     | '/_app/settings/api'
     | '/_app/settings/audit'
@@ -820,6 +832,13 @@ declare module '@tanstack/react-router' {
       path: '/servers/$serverId'
       fullPath: '/servers/$serverId'
       preLoaderRoute: typeof AppServersServerIdRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/servers/updates': {
+      id: '/_app/servers/updates'
+      path: '/servers/updates'
+      fullPath: '/servers/updates'
+      preLoaderRoute: typeof AppServersUpdatesRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/settings/': {
@@ -1350,6 +1369,7 @@ interface AppRouteChildren {
   AppSettingsRoute: typeof AppSettingsRouteWithChildren
   AppIndexRoute: typeof AppIndexRoute
   AppServersServerIdRoute: typeof AppServersServerIdRoute
+  AppServersUpdatesRoute: typeof AppServersUpdatesRoute
   AppProjectsIndexRoute: typeof AppProjectsIndexRoute
   AppServersIndexRoute: typeof AppServersIndexRoute
   AppTemplatesIndexRoute: typeof AppTemplatesIndexRoute
@@ -1365,6 +1385,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppSettingsRoute: AppSettingsRouteWithChildren,
   AppIndexRoute: AppIndexRoute,
   AppServersServerIdRoute: AppServersServerIdRoute,
+  AppServersUpdatesRoute: AppServersUpdatesRoute,
   AppProjectsIndexRoute: AppProjectsIndexRoute,
   AppServersIndexRoute: AppServersIndexRoute,
   AppTemplatesIndexRoute: AppTemplatesIndexRoute,
