@@ -11,6 +11,7 @@ import {
   useListEnvVarKeys,
   useUpdateApplication,
 } from "@/api/gen/applications/applications";
+import { useListDeployKeys } from "@/api/gen/deploy-keys/deploy-keys";
 import { useListDeployments } from "@/api/gen/deployments/deployments";
 import type { Application } from "@/api/gen/model";
 import { useListPreviews } from "@/api/gen/previews/previews";
@@ -53,9 +54,16 @@ function SettingsForm({
 }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const deployKeys = useListDeployKeys().data ?? [];
   const [name, setName] = useState(initial.name);
   const [repo, setRepo] = useState(initial.source.repo);
   const [branch, setBranch] = useState(initial.source.branch);
+  // The deploy key an application clones a PRIVATE repository with. The API has
+  // taken it on create and update since deploy-key-private-repos.md shipped and
+  // nothing in the panel ever offered it, so the only way to attach one was the
+  // API — which meant a private repository failed to clone with no way to fix
+  // it from the screen that owns the source.
+  const [deployKeyID, setDeployKeyID] = useState(initial.source.deploy_key_id ?? "");
   const [image, setImage] = useState(initial.source.image ?? "");
   // An image-source app has no repository, branch, or build step — showing
   // those fields would invite edits the server rejects.
@@ -73,6 +81,7 @@ function SettingsForm({
     name !== initial.name ||
     repo !== initial.source.repo ||
     branch !== initial.source.branch ||
+    deployKeyID !== (initial.source.deploy_key_id ?? "") ||
     image !== (initial.source.image ?? "") ||
     domain !== (initial.route.domain ?? "") ||
     normalizePrefix(pathPrefix) !== normalizePrefix(initial.route.path_prefix) ||
@@ -169,7 +178,11 @@ function SettingsForm({
       id: appId,
       data: {
         name,
-        source: isImageSource ? { ...initial.source, image } : { ...initial.source, repo, branch },
+        source: isImageSource
+          ? { ...initial.source, image }
+          : // Empty means "no key": a public repository needs none, and the API
+            // reads null as exactly that.
+            { ...initial.source, repo, branch, deploy_key_id: deployKeyID || null },
         build: { ...initial.build, kind: buildKind, dockerfile_path: dockerfile, context },
         route: { ...initial.route, domain: domain || undefined, path_prefix: prefix },
         preview_enabled: previewEnabled,
@@ -200,18 +213,53 @@ function SettingsForm({
                 {(id) => <Input id={id} value={branch} onChange={(e) => setBranch(e.target.value)} className="mono" />}
               </Field>
             </div>
+            <Field
+              label="Deploy key"
+              qualifier="· for a private repository"
+              hint={
+                deployKeys.length === 0
+                  ? "No deploy keys yet. Create one in Settings → Deploy keys, then add its public half to the repository."
+                  : "The panel clones over SSH with this key. Add its public half to the repository's own Deploy keys first."
+              }
+            >
+              {(id, describedBy) => (
+                <Select
+                  id={id}
+                  aria-describedby={describedBy}
+                  value={deployKeyID}
+                  onChange={(e) => setDeployKeyID(e.target.value)}
+                >
+                  <option value="">None — the repository is public</option>
+                  {deployKeys.map((k) => (
+                    <option key={k.id} value={k.id}>
+                      {k.name}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
           </>
         )}
         {/* No build stage runs for an image source — the agent pulls the
             reference and rolls it out, so build settings would be inert. */}
         {!isImageSource && (
           <>
-            <Field label="How to build it" hint="Detect picks a Dockerfile if the repository has one, otherwise serves it as a static site.">
+            <Field
+              label="How to build it"
+              hint="Detect prefers a Dockerfile, then Nixpacks where it is installed on the builder, then a static site."
+            >
               {(id) => (
                 <Select id={id} value={buildKind} onChange={(e) => setBuildKind(e.target.value as typeof buildKind)}>
                   <option value="auto">Detect automatically</option>
                   <option value="dockerfile">Dockerfile</option>
                   <option value="static">Static site (HTML, CSS, JS)</option>
+                  {/* Both packs are legal on the API and neither was offered
+                      here, so a framework app could only be built by editing it
+                      through the API. Chosen explicitly they are an assertion:
+                      a builder without the binary fails loudly rather than
+                      silently falling back (pack-builds.md §4). */}
+                  <option value="nixpacks">Nixpacks (framework auto-build)</option>
+                  <option value="railpack">Railpack (needs buildx)</option>
                 </Select>
               )}
             </Field>

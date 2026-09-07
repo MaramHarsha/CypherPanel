@@ -10,6 +10,7 @@ import { Plus } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { getListApplicationsQueryKey, useCreateApplication } from "@/api/gen/applications/applications";
 import { AppBuildKind } from "@/api/gen/model";
+import { useListDeployKeys } from "@/api/gen/deploy-keys/deploy-keys";
 import { useListServers } from "@/api/gen/servers/servers";
 import { AdvancedSection } from "@/components/advanced-section";
 import { BuildStrategyField } from "@/components/build-strategy-field";
@@ -37,11 +38,17 @@ export function NewAppDialog({
   const navigate = useNavigate();
   const qc = useQueryClient();
   const servers = useListServers();
+  const deployKeys = useListDeployKeys().data ?? [];
   const [name, setName] = useState("");
   const [sourceKind, setSourceKind] = useState<"github" | "image">("github");
   const [repo, setRepo] = useState("");
   const [image, setImage] = useState("");
   const [branch, setBranch] = useState("main");
+  // Offered HERE rather than only after creation: the hint below has always
+  // said "private with a deploy key", and Settings → Deploy keys only CREATES
+  // one — so a private repository was a dead end at the first screen, and the
+  // application failed its first clone with no way to fix it.
+  const [deployKeyID, setDeployKeyID] = useState("");
   const [domain, setDomain] = useState("");
   const [serverId, setServerId] = useState("");
   const [port, setPort] = useState("8080");
@@ -84,7 +91,10 @@ export function NewAppDialog({
       id: envId,
       data: {
         name,
-        source: sourceKind === "image" ? { kind: "image", image } : { kind: "github", repo, branch },
+        source:
+          sourceKind === "image"
+            ? { kind: "image", image }
+            : { kind: "github", repo, branch, deploy_key_id: deployKeyID || null },
         build: { kind: buildKind, dockerfile_path: dockerfile, context },
         runtime: { server_id: chosenServer, port: Number(port), replicas: 1 },
         route: { domain: domain || undefined, https: true, path_prefix: "" },
@@ -143,18 +153,45 @@ export function NewAppDialog({
               )}
             </Field>
             {sourceKind === "github" ? (
-              <Field label="Repository" hint="Public, or private with a deploy key (Settings → Deploy keys).">
-                {(id) => (
-                  <Input
-                    id={id}
-                    required
-                    autoFocus
-                    value={repo}
-                    onChange={(e) => setRepo(e.target.value)}
-                    placeholder="github.com/acme/web"
-                  />
-                )}
-              </Field>
+              <>
+                <Field label="Repository" hint="Public, or private with a deploy key below.">
+                  {(id) => (
+                    <Input
+                      id={id}
+                      required
+                      autoFocus
+                      value={repo}
+                      onChange={(e) => setRepo(e.target.value)}
+                      placeholder="github.com/acme/web"
+                    />
+                  )}
+                </Field>
+                <Field
+                  label="Deploy key"
+                  qualifier="· for a private repository"
+                  hint={
+                    deployKeys.length === 0
+                      ? "None yet — create one in Settings → Deploy keys, then add its public half to the repository."
+                      : "Add the key's public half to the repository's own Deploy keys first, or the clone will be refused."
+                  }
+                >
+                  {(id, describedBy) => (
+                    <Select
+                      id={id}
+                      aria-describedby={describedBy}
+                      value={deployKeyID}
+                      onChange={(e) => setDeployKeyID(e.target.value)}
+                    >
+                      <option value="">None — the repository is public</option>
+                      {deployKeys.map((k) => (
+                        <option key={k.id} value={k.id}>
+                          {k.name}
+                        </option>
+                      ))}
+                    </Select>
+                  )}
+                </Field>
+              </>
             ) : (
               <Field label="Image" hint="Any public registry reference; the server pulls it directly.">
                 {(id) => (
