@@ -32,7 +32,8 @@ import { ActionButton } from "@/components/ui/action-button";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
+import { Input, Select } from "@/components/ui/input";
+import { useListTeams } from "@/api/gen/teams/teams";
 import { useCrumbs } from "@/lib/crumbs";
 import { toastFailed, toastSuccess } from "@/lib/toast";
 import { cn } from "@/lib/utils";
@@ -343,6 +344,14 @@ function AddRegistryDialog({ primary }: { primary?: boolean }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [canPush, setCanPush] = useState(false);
+  // Which team owns the credential. The API takes it as optional and infers it
+  // when you belong to exactly one team, so the control appears only when there
+  // is genuinely a choice — asking somebody with one team to pick it is a field
+  // that can only be answered one way. With two, the API REQUIRES it, and
+  // without this control the dialog simply could not create a registry.
+  const teams = useListTeams();
+  const choices = teams.data ?? [];
+  const [teamId, setTeamId] = useState("");
   const [url, setUrl] = useState("");
   const [username, setUsername] = useState("");
   const [token, setToken] = useState("");
@@ -382,6 +391,7 @@ function AddRegistryDialog({ primary }: { primary?: boolean }) {
         token,
         can_pull: true,
         can_push: canPush,
+        ...(choices.length > 1 ? { team_id: teamId } : {}),
       },
     });
   }
@@ -398,6 +408,22 @@ function AddRegistryDialog({ primary }: { primary?: boolean }) {
           <Field label="Name" qualifier="· what you pick it by">
             {(id) => <Input id={id} name="name" required maxLength={100} placeholder="ghcr" autoFocus />}
           </Field>
+          {choices.length > 1 && (
+            <Field label="Team" qualifier="· who may attach it to an application">
+              {(id) => (
+                <Select id={id} required value={teamId} onChange={(e) => setTeamId(e.target.value)}>
+                  <option value="" disabled>
+                    Choose a team…
+                  </option>
+                  {choices.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+          )}
           {/* No scheme: a registry reference carries none, and accepting one
               would produce image names nothing can pull. */}
           <Field label="Host" qualifier="· no scheme — ghcr.io, ghcr.io/acme, registry:5000">

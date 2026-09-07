@@ -91,6 +91,10 @@ test-store: ## Run the real-Postgres store tests against a throwaway container
 		go test ./store/ -run TestStore -v; status=$$?; \
 		docker rm -f cypher-store-test-pg >/dev/null; exit $$status
 
+.PHONY: parity
+parity: ## Audit that every mutating API field is reachable from a screen (docs/dev/api-ui-parity.md)
+	python3 scripts/api-ui-parity.py --check
+
 .PHONY: vet
 vet: ## go vet across all modules
 	@for m in $(MODULES); do (cd $$m && go vet ./...) || exit 1; done

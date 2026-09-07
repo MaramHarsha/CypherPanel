@@ -6,9 +6,13 @@
 // host, a credential you write but never read back, and a Test that proves it
 // before you rely on it.
 //
-// The password is write-only. Saved settings come back as a hint naming the host
-// and the from address, never the credential, which is what makes it safe for
-// this page to exist at all.
+// The password is write-only, and it is the ONLY field that is: the host, the
+// port, the username, the from address and the transport mode all read back, so
+// changing the port on a working transport is changing the port rather than
+// retyping the whole connection and hoping. That is what the API has always
+// offered (`PanelMailSettings`); this screen used to ignore it and show the
+// saved values as placeholders, which meant every edit was a re-entry and a
+// mistyped host silently replaced a good one.
 import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
@@ -21,18 +25,29 @@ import {
   useTestPanelMail,
 } from "@/api/gen/panel/panel";
 import { useGetMe } from "@/api/gen/auth/auth";
+import type { PanelMailSettings, SetPanelMailRequestTls } from "@/api/gen/model";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
 import { Button } from "@/components/ui/button";
 import { PageState } from "@/components/page-state";
 import { PanelRoleRefusal } from "@/components/role-refusal";
 import { ActionButton, useMutationActionState } from "@/components/ui/action-button";
 import { Field } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
+import { Input, Select } from "@/components/ui/input";
 import { useCrumbs } from "@/lib/crumbs";
 import { atLeast, type Role } from "@/lib/roles";
 import { toastFailed, toastSuccess } from "@/lib/toast";
 
 export const Route = createFileRoute("/_app/settings/mail")({ component: MailTab });
+
+/** What each mode actually does, in the words the API's own description uses. */
+const TLS_COPY: Record<SetPanelMailRequestTls, string> = {
+  starttls: "· upgrades the connection, and refuses to send if the server will not",
+  implicit: "· TLS from the first byte",
+  none: "· in the clear; only defensible for a relay you control",
+};
+
+/** The port each mode conventionally uses. A default, never a lock. */
+const TLS_PORT: Record<SetPanelMailRequestTls, string> = { starttls: "587", implicit: "465", none: "25" };
 
 /**
  * The hint is the non-secret half, "smtp.acme.com → ops@acme.com" (core/mail
@@ -62,19 +77,28 @@ function MailTab() {
         One SMTP transport for mail the panel sends in its own name — email-change confirmations today, invites and
         digests later. Project notifiers keep their own.
       </p>
-      <PageState query={mail}>{(settings) => <MailForm hint={settings.config_hint} configured={settings.configured} />}</PageState>
+      {/* Keyed on what came back, so a fresh answer after a save or a forget
+          re-seeds the fields rather than leaving the old typing in place. */}
+      <PageState query={mail}>
+        {(settings) => <MailForm key={settings.config_hint} settings={settings} />}
+      </PageState>
     </div>
   );
 }
 
-function MailForm({ hint, configured }: { hint: string; configured: boolean }) {
+function MailForm({ settings }: { settings: PanelMailSettings }) {
   const qc = useQueryClient();
+  const { config_hint: hint, configured } = settings;
   const saved = configured ? parseHint(hint) : null;
-  const [host, setHost] = useState("");
-  const [port, setPort] = useState("587");
-  const [username, setUsername] = useState("");
+  // Seeded from what is saved, not from placeholders: an edit is an edit.
+  const [host, setHost] = useState(settings.smtp_host ?? "");
+  const [port, setPort] = useState(settings.smtp_port ? String(settings.smtp_port) : "587");
+  const [username, setUsername] = useState(settings.username ?? "");
   const [password, setPassword] = useState("");
-  const [from, setFrom] = useState("");
+  const [from, setFrom] = useState(settings.from ?? "");
+  const [tls, setTls] = useState<SetPanelMailRequestTls>(
+    (settings.tls as SetPanelMailRequestTls | undefined) ?? "starttls",
+  );
   const [error, setError] = useState<string | null>(null);
   // Who the last test went to. The banner outlives the pill's 2s success hold
   // because "check the inbox" is an instruction, not a flash.
@@ -121,7 +145,7 @@ function MailForm({ hint, configured }: { hint: string; configured: boolean }) {
       return;
     }
     setError(null);
-    save.mutate({ data: { smtp_host: host, smtp_port: portNumber, username, password, from } });
+    save.mutate({ data: { smtp_host: host, smtp_port: portNumber, username, password, from, tls } });
   };
 
   return (
@@ -137,16 +161,13 @@ function MailForm({ hint, configured }: { hint: string; configured: boolean }) {
               required
               autoComplete="off"
               spellCheck={false}
-              placeholder={saved?.host ?? "smtp.example.com"}
+              placeholder="smtp.example.com"
               value={host}
               onChange={(e) => setHost(e.target.value)}
             />
           )}
         </Field>
-        {/* No TLS picker: the sender is net/smtp, which issues STARTTLS when the
-            server offers it and has no implicit-TLS mode to choose. A control
-            that could not change that would be a lie. */}
-        <Field label="Port" qualifier="· STARTTLS when offered">
+        <Field label="Port">
           {(id) => (
             <Input
               id={id}
@@ -159,6 +180,31 @@ function MailForm({ hint, configured }: { hint: string; configured: boolean }) {
           )}
         </Field>
       </div>
+
+      {/* The mode is a real choice, not a formality: a provider on 465 speaks
+          TLS from the first byte and never offers STARTTLS, so a panel that
+          could only do the latter simply could not send through it. Changing
+          this moves the port to the one that mode conventionally uses — a port
+          and a mode that disagree is the mistake this pairing exists to stop,
+          and it is only a default, so a relay on an odd port can still be
+          typed. */}
+      <Field label="Transport security" qualifier={TLS_COPY[tls]} className="max-w-[320px]">
+        {(id) => (
+          <Select
+            id={id}
+            value={tls}
+            onChange={(e) => {
+              const next = e.target.value as SetPanelMailRequestTls;
+              setTls(next);
+              setPort(TLS_PORT[next]);
+            }}
+          >
+            <option value="starttls">STARTTLS · 587</option>
+            <option value="implicit">Implicit TLS · 465</option>
+            <option value="none">None · 25</option>
+          </Select>
+        )}
+      </Field>
 
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Username" qualifier="· empty for an open relay">
@@ -193,7 +239,7 @@ function MailForm({ hint, configured }: { hint: string; configured: boolean }) {
             required
             autoComplete="off"
             spellCheck={false}
-            placeholder={saved?.from ?? "panel@example.com"}
+            placeholder="panel@example.com"
             value={from}
             onChange={(e) => setFrom(e.target.value)}
           />

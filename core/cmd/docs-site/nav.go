@@ -132,6 +132,7 @@ var excluded = []string{
 	"product/",
 	"dev/ci.md",
 	"dev/review-bot.md",
+	"dev/api-ui-parity.md",
 	"dev/template-import.md",
 	"dev/template-import-report.md",
 }

@@ -36,6 +36,22 @@ EXEMPT = {
     ("CreateComposeStackRequest", "env_vars"): "the stack's own env editor after creation",
 }
 
+# The create dialogs ask the MINIMUM and let Settings own the rest
+# (ui-principles §6). Each field below was checked to be reachable on the
+# resource's own settings screen before it was listed here — a deferral is only
+# legitimate when there is somewhere to defer TO, and the seven-field gap on the
+# application settings screen is exactly what happens when there is not.
+_CREATE_DEFERRED = "asked on the resource's settings screen instead — the create dialog asks the minimum"
+for _field in (
+    "cpu_limit", "memory_limit_mb", "volumes",
+    "registry_id", "push_registry_id", "push_repository",
+    "health", "interval_seconds", "timeout_seconds",
+    "preview_enabled", "preview_base_domain", "preview_ttl_hours",
+):
+    EXEMPT[("CreateApplicationRequest", _field)] = _CREATE_DEFERRED
+for _field in ("cpu_limit", "memory_limit_mb"):
+    EXEMPT[("CreateDatabaseRequest", _field)] = _CREATE_DEFERRED
+
 # Whole operations the panel deliberately does not call. An entry here is a
 # DECISION with a reason, not a to-do: the checker's whole value is that an
 # unreachable endpoint is loud, so silencing one has to be an argument.
