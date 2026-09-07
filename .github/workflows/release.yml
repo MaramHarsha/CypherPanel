@@ -77,8 +77,18 @@ jobs:
           # only main.version, so it gets only that — an -X for a symbol the
           # binary does not define is silently dropped, which would hide a typo.
           COMMIT=$(git rev-parse --short HEAD)
-          BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          # The COMMIT's date, never `date -u` — see scripts/release-sign.sh for
+          # why this one line decides whether a release can be signed at all. A
+          # wall-clock build timestamp is not reproducible by anyone, so the
+          # byte-for-byte rebuild the offline key depends on could never match,
+          # and `make release-sign` would abort on every release forever.
+          BUILD_DATE=$(git log -1 --format=%cd --date=format:%Y-%m-%dT%H:%M:%SZ)
+          # The release key comes from the TAG, not from CI settings, so the
+          # rebuild reproduces it (release-pubkey.README.md). Empty is honest:
+          # the agent then trusts nothing and reports its updater `disabled`.
+          PUBKEYS=$(tr -d '[:space:]' < release-pubkey.txt 2>/dev/null || true)
           PLANE_STAMPS="-X main.version=$VERSION -X main.commit=$COMMIT -X main.buildDate=$BUILD_DATE"
+          AGENT_STAMPS="-X main.version=$VERSION -X github.com/MaramHarsha/cypherpanel/agent/updater.publicKeys=$PUBKEYS"
           for arch in amd64 arm64; do
             # Static, no cgo: these land on unknown distros and must not need a
             # matching libc.
@@ -86,7 +96,7 @@ jobs:
               go build -C core -trimpath -ldflags "-s -w $PLANE_STAMPS" \
                 -o "../dist/cypherd-linux-$arch" ./cmd/cypherd
             CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
-              go build -C agent -trimpath -ldflags "-s -w -X main.version=$VERSION" \
+              go build -C agent -trimpath -ldflags "-s -w $AGENT_STAMPS" \
                 -o "../dist/cypher-agent-linux-$arch" ./cmd/cypher-agent
           done
           ls -la dist

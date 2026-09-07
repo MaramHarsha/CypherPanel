@@ -54,7 +54,14 @@ Then:
 1. **Do not** put the private key in GitHub Actions secrets, or anywhere else CI
    can read. It lives on the signing machine and is exported into the
    environment only for the length of a signing run.
-2. Record the public key below, and bake it into the agent at build time:
+2. Put the public key in **`release-pubkey.txt`** at the repository root and
+   commit it. Both CI and `release-sign.sh` read it from the tag, so the
+   rebuild reproduces exactly what CI published — a key held in CI settings
+   could not be reproduced from a checkout, and the byte-for-byte comparison
+   this whole procedure rests on would be impossible. See
+   `release-pubkey.README.md`.
+
+   For a one-off local build, the same value goes in by hand:
 
 ```sh
 go build -ldflags "-X github.com/MaramHarsha/cypherpanel/agent/updater.publicKeys=$RELEASE_PUBKEY" ./cmd/cypher-agent
@@ -123,8 +130,8 @@ fetched, the downloaded binary is checked against the signed digest before it is
 ever renamed, and ADR-010 §4–5's pre-flight, two-slot swap and self-rollback are
 in place with tests that assert each refusal leaves the running binary alone.
 
-**What is missing is the key, not the check.** `RELEASE_PUBKEY` above has not
-been generated, so a build made without the `-ldflags` line above trusts no key
+**What is missing is the key, not the check.** `release-pubkey.txt` is empty, so
+a build made from this tree trusts no key
 — and an updater with nothing to verify against does not run: it reports
 `disabled` in the panel's fleet table, naming the reason, and never renames a
 file. That is the opposite of a stubbed check, and it is what ADR-010 §3

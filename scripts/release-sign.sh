@@ -45,13 +45,27 @@ git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null \
 # A worktree, so an unclean working tree cannot leak into what gets signed.
 git worktree add --detach --force "$WORK/src" "$VERSION" >/dev/null
 
+# CI's flags, LITERALLY — this block and the one in .github/workflows/release.yml
+# have to agree exactly or every comparison below fails and no release can ever
+# be signed. They previously did not: CI stamped the plane with `main.commit` and
+# `main.buildDate` and this rebuilt with neither, so `cmp` was guaranteed to
+# mismatch on the very first release. Worse, CI's build date came from `date -u`
+# at run time, which nothing can reproduce — the comparison was impossible by
+# construction rather than merely misconfigured. Both now derive every stamp
+# from the TAG: the commit, the commit's date, and the release key checked in
+# beside this script.
 echo "==> Rebuilding with CI's flags"
+COMMIT=$(git -C "$WORK/src" rev-parse --short HEAD)
+BUILD_DATE=$(git -C "$WORK/src" log -1 --format=%cd --date=format:%Y-%m-%dT%H:%M:%SZ)
+PUBKEYS=$(tr -d '[:space:]' < "$WORK/src/release-pubkey.txt" 2>/dev/null || true)
+PLANE_STAMPS="-X main.version=$VERSION -X main.commit=$COMMIT -X main.buildDate=$BUILD_DATE"
+AGENT_STAMPS="-X main.version=$VERSION -X github.com/MaramHarsha/cypherpanel/agent/updater.publicKeys=$PUBKEYS"
 for arch in amd64 arm64; do
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
-    go build -C "$WORK/src/core" -trimpath -ldflags "-s -w -X main.version=$VERSION" \
+    go build -C "$WORK/src/core" -trimpath -ldflags "-s -w $PLANE_STAMPS" \
       -o "$(pwd)/$WORK/built/cypherd-linux-$arch" ./cmd/cypherd
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
-    go build -C "$WORK/src/agent" -trimpath -ldflags "-s -w -X main.version=$VERSION" \
+    go build -C "$WORK/src/agent" -trimpath -ldflags "-s -w $AGENT_STAMPS" \
       -o "$(pwd)/$WORK/built/cypher-agent-linux-$arch" ./cmd/cypher-agent
 done
 
