@@ -15,7 +15,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -129,6 +131,160 @@ func (b *BackupConn) CopyFrom(ctx context.Context, r io.Reader, table string) er
 	_, err = conn.Conn().PgConn().CopyFrom(ctx, r, `COPY "`+table+`" FROM STDIN`)
 	return err
 }
+
+// deferrableFKs names every foreign key that is not already deferrable. The
+// restore makes these deferrable for the length of its transaction and puts
+// them back before it commits, so a restored panel's schema is the same shape a
+// fresh install has.
+const deferrableFKs = `
+SELECT child.relname, k.conname
+FROM pg_constraint k
+JOIN pg_class child ON child.oid = k.conrelid
+JOIN pg_namespace n ON n.oid = child.relnamespace
+WHERE k.contype = 'f' AND n.nspname = 'public' AND NOT k.condeferrable
+ORDER BY child.relname, k.conname`
+
+// BackupTx is the restore's single transaction: every table loads inside it,
+// with foreign keys deferred, and nothing is visible until it commits.
+//
+// WHY DEFERRED, and this is the whole reason this type exists. Three pairs of
+// tables in this schema reference each other — an Application names its desired
+// Revision while a Revision names its Application, and Databases and Projects
+// do the same — so NO load order satisfies every constraint row by row. The
+// first version of the snapshot refused to run at all rather than answer that,
+// which meant the plane could never back itself up.
+//
+// Deferring is also what makes the spec's own promise true: all or nothing. A
+// failed restore leaves an EMPTY database rather than half a panel, because
+// every COPY happened in one transaction that rolled back.
+type BackupTx struct {
+	tx   pgx.Tx
+	undo [][2]string // (table, constraint) to put back before commit
+	done bool
+}
+
+// BeginLoad opens the restore transaction and defers every foreign key in it.
+func (b *BackupConn) BeginLoad(ctx context.Context) (*BackupTx, error) {
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("store: starting the restore transaction: %w", err)
+	}
+	lt := &BackupTx{tx: tx}
+	rows, err := tx.Query(ctx, deferrableFKs)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, fmt.Errorf("store: reading the foreign keys to defer: %w", err)
+	}
+	for rows.Next() {
+		var table, name string
+		if err := rows.Scan(&table, &name); err != nil {
+			rows.Close()
+			_ = tx.Rollback(ctx)
+			return nil, err
+		}
+		lt.undo = append(lt.undo, [2]string{table, name})
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, err
+	}
+	for _, fk := range lt.undo {
+		stmt := "ALTER TABLE " + ident(fk[0]) + " ALTER CONSTRAINT " + ident(fk[1]) + " DEFERRABLE INITIALLY DEFERRED"
+		if _, err := tx.Exec(ctx, stmt); err != nil {
+			_ = tx.Rollback(ctx)
+			return nil, fmt.Errorf("store: deferring %s on %s: %w", fk[1], fk[0], err)
+		}
+	}
+	if _, err := tx.Exec(ctx, "SET CONSTRAINTS ALL DEFERRED"); err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, fmt.Errorf("store: deferring constraints: %w", err)
+	}
+	return lt, nil
+}
+
+// ClearAll empties every table the restore is about to load, inside the same
+// transaction.
+//
+// WHY THIS IS NEEDED AT ALL. "Restore into an empty database" is not what the
+// target looks like by the time the load starts: the restore has just replayed
+// the migrations, and migrations SEED — the default team, both release
+// channels. Loading the snapshot's own copies of those rows on top is a
+// duplicate key, which is how a first restore failed on `teams` after the
+// snapshot itself was finally fixed.
+//
+// It truncates rather than deletes, in one statement so foreign keys between
+// the tables do not order it, and `goose_db_version` is excluded because the
+// schema the migrations just built is the one being loaded into.
+func (t *BackupTx) ClearAll(ctx context.Context) error {
+	rows, err := t.tx.Query(ctx, tableCatalog)
+	if err != nil {
+		return fmt.Errorf("store: listing the tables to clear: %w", err)
+	}
+	var names []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			rows.Close()
+			return err
+		}
+		names = append(names, ident(n))
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	if _, err := t.tx.Exec(ctx, "TRUNCATE TABLE "+strings.Join(names, ", ")+" RESTART IDENTITY CASCADE"); err != nil {
+		return fmt.Errorf("store: clearing the target: %w", err)
+	}
+	return nil
+}
+
+// CopyFrom streams one table in, inside the transaction.
+func (t *BackupTx) CopyFrom(ctx context.Context, r io.Reader, table string) error {
+	_, err := t.tx.Conn().PgConn().CopyFrom(ctx, r, `COPY `+ident(table)+` FROM STDIN`)
+	return err
+}
+
+// Commit checks every deferred constraint, puts the constraints back the way
+// they were, and commits. The explicit SET CONSTRAINTS ALL IMMEDIATE is what
+// makes a violation attributable: it fails HERE, naming the constraint, rather
+// than inside COMMIT where the error has no step to blame.
+func (t *BackupTx) Commit(ctx context.Context) error {
+	if t.done {
+		return nil
+	}
+	t.done = true
+	if _, err := t.tx.Exec(ctx, "SET CONSTRAINTS ALL IMMEDIATE"); err != nil {
+		_ = t.tx.Rollback(ctx)
+		return fmt.Errorf("store: the restored rows do not satisfy the schema: %w", err)
+	}
+	for _, fk := range t.undo {
+		stmt := "ALTER TABLE " + ident(fk[0]) + " ALTER CONSTRAINT " + ident(fk[1]) + " NOT DEFERRABLE"
+		if _, err := t.tx.Exec(ctx, stmt); err != nil {
+			_ = t.tx.Rollback(ctx)
+			return fmt.Errorf("store: restoring %s on %s: %w", fk[1], fk[0], err)
+		}
+	}
+	return t.tx.Commit(ctx)
+}
+
+// Rollback discards everything. Safe to call after Commit.
+func (t *BackupTx) Rollback(ctx context.Context) {
+	if t.done {
+		return
+	}
+	t.done = true
+	_ = t.tx.Rollback(ctx)
+}
+
+// ident quotes a catalog-supplied identifier. The names come from pg_class and
+// pg_constraint rather than from a request, but quoting them is what keeps that
+// true of the next caller too.
+func ident(name string) string { return pgx.Identifier{name}.Sanitize() }
 
 // SchemaVersion is goose's own bookkeeping — the version the snapshot's data
 // belongs to, and the version a restore replays migrations up to before it

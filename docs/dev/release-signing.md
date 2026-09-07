@@ -76,6 +76,25 @@ go build -ldflags "-X github.com/MaramHarsha/cypherpanel/agent/updater.publicKey
 RELEASE_PUBKEY = <not yet generated — see "Status" below>
 ```
 
+## Rehearsing, before the first tag
+
+`make release-rehearsal` runs the release on this machine, end to end, against
+throwaway containers it removes afterwards. It builds the artifacts with the
+workflow's own ldflags, **rebuilds one of them and compares byte for byte**
+(without that, `make release-sign` could never verify a rebuild and the offline
+key would be unusable), installs onto an empty database, enrols a server,
+restarts the plane, migrates a database made by the PREVIOUS release's binary,
+and takes a snapshot to a real S3 endpoint and restores it into a database it
+did not come from.
+
+It starts no agent reconciler, so it is safe to run on a host that is already
+serving a panel.
+
+It is not decoration. Its first run found that the plane could not take a
+snapshot at all, and then two more defects behind that one — all three recorded
+in `docs/features/plane-disaster-recovery.md`. Nothing else in the repository
+could have found them, because every other test used a fake schema.
+
 ## Releasing
 
 Tagging builds the binaries and creates a **draft** release. It stays a draft —

@@ -882,3 +882,56 @@ this spec does not claim they do.
   load into a live schema breaks referential integrity in ways that surface
   weeks later, and the transaction boundary in §6 is what makes the failure
   mode "nothing happened" instead of "something happened".
+
+## Implementation note — it could not take a snapshot at all *(2026-09-07)*
+
+The first version of this shipped with the archive, the encryption, the
+schedule, the retention sweep, the screen, and a passing test suite. **No panel
+running it could ever have produced a snapshot.**
+
+`§3.2`'s load order is a topological sort of the foreign key graph, and the sort
+treated a cycle as a fatal error — "the foreign key graph has a cycle at %q — a
+restore could not order the load" — with a comment saying the failure would be
+caught at export time, in CI. It was tested: `TestACycleFailsAtExportTime`
+passed, on a two-table graph invented for the test. Nobody ran it against this
+schema, which has **three cycles by design**:
+
+- `applications.desired_revision_id → revisions` and `revisions.application_id → applications`
+- `databases.desired_revision_id → database_revisions` and back
+- `projects.default_environment_id → environments` and `environments.project_id → projects`
+
+Every one of those is a resource naming its current revision, which is the shape
+ADR-005 asks for. So every snapshot the panel attempted failed on the first
+query, before a byte was written, and the check that was meant to protect the
+restore is what stopped the backup existing.
+
+**There is no load order that satisfies a cycle**, so the restore no longer asks
+for one. It opens ONE transaction, makes every foreign key
+`DEFERRABLE INITIALLY DEFERRED` inside it, loads every table, then
+`SET CONSTRAINTS ALL IMMEDIATE` before it commits and puts the constraints back
+the way it found them — so a restored panel's schema is the shape a fresh
+install has, and a violation fails at a named constraint rather than inside
+`COMMIT`. The sort survives because the acyclic majority still loads
+parents-first, which keeps the deferred set small; a back edge is simply
+dropped, deterministically, so two exports of an unchanged panel stay
+byte-identical.
+
+That transaction is also what finally makes §6's own promise true. The load was
+never in one: each `COPY` took its own pooled connection, so a restore that
+failed halfway left half a panel — exactly what "all or nothing; a failed
+restore leaves an empty database" says it does not.
+
+**And then the first real restore failed on `teams`.** "Restore into an empty
+database" is not what the target looks like when the load starts: the restore
+has just replayed the migrations, and migrations SEED — the default team, both
+release channels. The snapshot carries its own copies. So the transaction now
+truncates every table it is about to load, in one statement, after the
+migrations and before the first `COPY`.
+
+Three defects, one after another, each hidden behind the one in front of it.
+None was reachable by any test in the repository, because the layer that was
+wrong was the live schema and every test used a fake one. Two tests now run
+against the real database — `TestTablesOrdersTheRealSchema` and
+`TestBeginLoadDefersEveryForeignKey` — and `scripts/release-rehearsal.sh` takes
+a snapshot to a real S3 endpoint and restores it into a database it did not come
+from, which is the only check that would have caught all three.

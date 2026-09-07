@@ -95,6 +95,10 @@ test-store: ## Run the real-Postgres store tests against a throwaway container
 e2e: ## Browser regression tests against a real panel (web/e2e/README.md)
 	./scripts/e2e.sh
 
+.PHONY: release-rehearsal
+release-rehearsal: ## Rehearse a release on this machine: build, upgrade, snapshot, restore (scripts/release-rehearsal.sh)
+	./scripts/release-rehearsal.sh
+
 .PHONY: parity
 parity: ## Audit that every capability is reachable: schema -> contract -> screen (docs/dev/api-ui-parity.md)
 	python3 scripts/schema-contract-parity.py --check

@@ -757,7 +757,7 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 	store.SetTableSorter(planebackup.SortTables)
 	planeObjects := planeObjectStore{box: box}
 	planeDR := planebackup.New(planebackup.Options{
-		Store: st, DB: st.BackupSurface(), Enc: planebackup.AgeCrypto{},
+		Store: st, DB: backupSurface{st.BackupSurface()}, Enc: planebackup.AgeCrypto{},
 		Objects: planeObjects, PanelVersion: version,
 		MasterKey: os.Getenv("CYPHERD_MASTER_KEY"),
 		Log:       log.With("component", "plane-backup"),

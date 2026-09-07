@@ -127,6 +127,17 @@ func Restore(ctx context.Context, r io.Reader, o RestoreOptions) (RestoreResult,
 		return RestoreResult{}, fmt.Errorf("planebackup: rebuilding the schema: %w", err)
 	}
 
+	tx, err := o.DB.BeginLoad(ctx)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	// The migrations above seeded the target. Everything below replaces it.
+	if err := tx.ClearAll(ctx); err != nil {
+		return RestoreResult{}, err
+	}
+
 	loaded := 0
 	for _, t := range man.Tables {
 		body, ok := members["tables/"+t.Name+".copy.gz"]
@@ -139,13 +150,20 @@ func Restore(ctx context.Context, r io.Reader, o RestoreOptions) (RestoreResult,
 		if err != nil {
 			return RestoreResult{}, fmt.Errorf("planebackup: decompressing %s: %w", t.Name, err)
 		}
-		if err := o.DB.CopyFrom(ctx, gz, t.Name); err != nil {
+		if err := tx.CopyFrom(ctx, gz, t.Name); err != nil {
 			return RestoreResult{}, fmt.Errorf("planebackup: loading %s: %w", t.Name, err)
 		}
 		_ = gz.Close()
 		loaded++
 		logf("loaded %s (%d rows)", t.Name, t.Rows)
 	}
+
+	// Every constraint is checked here, before anything is visible. Up to this
+	// point the whole load can still be thrown away.
+	if err := tx.Commit(ctx); err != nil {
+		return RestoreResult{}, err
+	}
+	logf("loaded %d tables", loaded)
 
 	logf("migrating forward to this build")
 	if err := o.Migrate.Up(ctx); err != nil {
