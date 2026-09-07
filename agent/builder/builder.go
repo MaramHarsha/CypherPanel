@@ -75,6 +75,37 @@ func (b *Builder) availablePacks() map[string]bool {
 	return out
 }
 
+// cloneFailure turns git's exit status into something an operator can act on.
+//
+// The panel had every piece of information needed to explain this and threw it
+// away: a private repository cloned with no credential fails with "could not
+// read Username for 'https://github.com'", which reads like a terminal problem,
+// and the deployment then showed "git clone failed: exit status 128". The most
+// common cause by far is a deploy key that exists in the panel and was never
+// attached to the application — so say that, with the remedy.
+func cloneFailure(output string, credentialled bool, err error) string {
+	lower := strings.ToLower(output)
+	authFailed := strings.Contains(lower, "could not read username") ||
+		strings.Contains(lower, "authentication failed") ||
+		strings.Contains(lower, "repository not found") ||
+		strings.Contains(lower, "permission denied") ||
+		strings.Contains(lower, "please make sure you have the correct access rights")
+
+	switch {
+	case authFailed && !credentialled:
+		return "the repository needs a credential and none was attached — " +
+			"if it is private, attach a deploy key to this application (Settings → Source), " +
+			"or connect the panel's GitHub App and pick the repository"
+	case authFailed:
+		return "the credential was refused — check the deploy key is still on the repository, " +
+			"or that the GitHub App is still installed on it"
+	default:
+		// Anything else is git's own problem to describe, and its output is
+		// already in the build log above.
+		return err.Error()
+	}
+}
+
 // sshCloneURL rewrites an https://github.com/ repository URL to its SSH form
 // so the deploy key — an SSH credential — can authenticate the clone
 // (deploy-key-private-repos.md §4). Every other URL passes through unchanged:
@@ -113,7 +144,13 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 	}
 
 	cloneEnv := gitEnv
+	// Whether this clone carried ANY credential. It is what turns "exit status
+	// 128" into a sentence naming the likely cause: git's own message for a
+	// private repository reached anonymously is "could not read Username",
+	// which reads like a terminal problem rather than a missing key.
+	credentialled := false
 	if cred := work.GetGitCredential(); cred.GetPassword() != "" {
+		credentialled = true
 		// An HTTPS clone credential — a GitHub App installation token, minted
 		// for this build and valid about an hour (github-app.md §4).
 		//
@@ -149,6 +186,7 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 		}
 		defer func() { _ = os.Remove(keyFile) }()
 
+		credentialled = true
 		repoURL = sshCloneURL(repoURL)
 
 		// accept-new with no persistent known_hosts: the agent keeps no
@@ -166,7 +204,7 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		onLog(string(out))
-		return "", fmt.Errorf("git clone failed: %w", err)
+		return "", fmt.Errorf("git clone failed: %s", cloneFailure(string(out), credentialled, err))
 	}
 
 	// Check out the requested ref (a commit SHA, or a branch name when the
