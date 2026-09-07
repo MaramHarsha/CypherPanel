@@ -390,10 +390,14 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 		}
 		if err := b.buildKit.Build(ctx, BuildKitRequest{
 			ContextDir: contextDir,
-			PlanFile:   planFile,
-			Frontend:   plan.Frontend,
-			Tag:        work.Image,
-			Labels:     labels,
+			// Under the agent's own work directory, which is writable by
+			// construction — the one place this process is certain to be able
+			// to write on a host it does not own.
+			StateDir: filepath.Join(b.workDir, ".docker"),
+			PlanFile: planFile,
+			Frontend: plan.Frontend,
+			Tag:      work.Image,
+			Labels:   labels,
 		}, onLog); err != nil {
 			return "", fmt.Errorf("build failed: %w", err)
 		}

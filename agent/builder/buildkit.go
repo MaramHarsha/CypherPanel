@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -34,6 +35,16 @@ type BuildKitBuilder interface {
 // BuildKitRequest is one frontend build.
 type BuildKitRequest struct {
 	ContextDir string
+	// StateDir is a writable directory buildx may keep its own config in. It
+	// exists because the agent's unit sets ProtectHome=true, so `docker buildx`
+	// cannot create ~/.docker and fails with "mkdir /root/.docker: read-only
+	// file system" — an error about the CLI's config directory, which reads
+	// like a broken host rather than a sandbox doing its job.
+	//
+	// The fix belongs here rather than in the unit: ProtectHome is correct, the
+	// agent has no business reading /root or anyone's home, and an operator
+	// should not have to relax a security setting to make a build work.
+	StateDir string
 	// PlanFile is the frontend's input, relative to ContextDir — what `-f`
 	// points at, standing where a Dockerfile normally would.
 	PlanFile string
@@ -80,6 +91,15 @@ func (BuildxCLI) Build(ctx context.Context, req BuildKitRequest, onLog func(stri
 
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Dir = req.ContextDir
+	if req.StateDir != "" {
+		if err := os.MkdirAll(req.StateDir, 0o700); err != nil {
+			return fmt.Errorf("creating the buildx config directory: %w", err)
+		}
+		// DOCKER_CONFIG also relocates BUILDX_CONFIG, which defaults beneath
+		// it — one variable covers both. 0700 because this is where a `docker
+		// login` would land if anything ever performed one here.
+		cmd.Env = append(os.Environ(), "DOCKER_CONFIG="+req.StateDir)
+	}
 
 	// Streamed rather than collected: a frontend build pulls base images and
 	// runs the whole build, and an operator watching it needs the output as it
