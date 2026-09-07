@@ -25,6 +25,11 @@ installsh: ## Copy the canonical installer into core for go:embed (one home: /in
 changelog: ## Copy the canonical changelog into core for go:embed (one home: the repo root)
 	cp CHANGELOG.md core/changelog/CHANGELOG.md
 
+.PHONY: docs-site
+docs-site: ## Generate the public documentation site from docs/ + the OpenAPI spec into dist/docs
+	cd core && go run ./cmd/docs-site \
+		-docs ../docs -openapi api/rest/openapi.yaml -out ../dist/docs
+
 .PHONY: proto
 proto: ## Generate Go stubs from proto/ (buf)
 	buf lint proto

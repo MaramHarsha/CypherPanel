@@ -36,7 +36,7 @@ on the VPS.
 git clone https://github.com/MaramHarsha/cypherpanel && cd cypherpanel/deploy
 cp cypherd.env.example cypherd.env
 $EDITOR cypherd.env          # set POSTGRES_PASSWORD, CYPHERD_MASTER_KEY, CYPHERD_PUBLIC_HOST
-docker compose up -d --build # builds the cypherd image (web UI embedded) and starts everything
+docker compose --env-file cypherd.env up -d --build # builds the cypherd image (web UI embedded) and starts everything
 docker compose logs -f cypherd
 ```
 
@@ -195,7 +195,7 @@ the value to quote when reporting a fault.
 
 ## Upgrades
 
-- **Compose:** `git pull && docker compose up -d --build`.
+- **Compose:** `git pull && docker compose --env-file cypherd.env up -d --build`.
 - **Binary:** rebuild, replace `/usr/local/bin/cypherd`, `systemctl restart
   cypherd`.
 

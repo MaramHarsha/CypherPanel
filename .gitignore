@@ -10,6 +10,9 @@ go.work.sum
 
 # Local dev state — agent identity material, plane CA, secrets
 /.dev/
+# The real panel env, beside its committed .example. It carries the master key
+# that seals every secret in the database, so it must never be committed.
+/deploy/cypherd.env
 *.pem
 *.key
 *.crt

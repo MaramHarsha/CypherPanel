@@ -78,7 +78,7 @@ call.
   regardless. Strength meters and rotation are out of scope.
 - Setup carries no secret in `GET`; `POST` accepts a password over the same
   TLS the rest of the API uses (the operator terminates TLS in front of the
-  panel — [deployment docs](../dev/README.md)).
+  panel — [deployment docs](../dev/deployment.md)).
 
 ## 6. UI (web-ui-design.md)
 
