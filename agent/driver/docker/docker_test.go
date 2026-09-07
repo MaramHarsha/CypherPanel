@@ -249,7 +249,7 @@ func (f *fakeClient) addRestartedContainer(appID, revID, restartToken string, ru
 	id := "c" + itoa(f.nextID)
 	f.containers[id] = &Container{
 		ID:           id,
-		Name:         containerName(appID, revID, restartToken),
+		Name:         containerName(appID, revID, restartToken, 1),
 		AppID:        appID,
 		RevisionID:   revID,
 		RestartToken: restartToken,
@@ -291,16 +291,17 @@ func (r *fakeRouter) AttachNetwork(_ context.Context, network string) error {
 // bytes and skips an identical write. The fake models that contract: a call
 // that changes nothing is not a mutation, which is what the converge-twice
 // invariant actually asserts.
-func (r *fakeRouter) SetRoute(_ context.Context, appID string, _ *agentv1.RouteSpec, upstream string) error {
+func (r *fakeRouter) SetRoute(_ context.Context, appID string, _ *agentv1.RouteSpec, upstreams []string) error {
 	if r.setErr != nil {
 		return r.setErr
 	}
 	r.setCalls++
-	if cur, ok := r.routes[appID]; ok && cur == upstream {
+	joined := strings.Join(upstreams, ",")
+	if cur, ok := r.routes[appID]; ok && cur == joined {
 		return nil
 	}
 	r.mutations++
-	r.routes[appID] = upstream
+	r.routes[appID] = joined
 	return nil
 }
 
@@ -310,9 +311,12 @@ func (r *fakeRouter) RemoveRoute(_ context.Context, appID string) error {
 	return nil
 }
 
-func (r *fakeRouter) Route(_ context.Context, appID string) (string, bool, error) {
+func (r *fakeRouter) Route(_ context.Context, appID string) ([]string, bool, error) {
 	up, ok := r.routes[appID]
-	return up, ok, nil
+	if !ok || up == "" {
+		return nil, false, nil
+	}
+	return strings.Split(up, ","), true, nil
 }
 
 type fakeProber struct {
@@ -1664,5 +1668,78 @@ func TestGCKeepsAnImageAnotherApplicationStillWants(t *testing.T) {
 	// app1 is not desired, but the image is shared with app2 — so it survives.
 	if len(c.removedImages) != 0 {
 		t.Fatalf("removed %v from an image another application still wants", c.removedImages)
+	}
+}
+
+// The compatibility promise of app-scaling.md §2, asserted rather than trusted:
+// index 1 keeps EXACTLY the name and labels it had before replicas existed.
+//
+// Without this, upgrading the agent would make every existing container in
+// every fleet read as drift and get recreated on the next reconcile, turning a
+// version bump into a fleet-wide rolling restart.
+func TestReplicaOneIsIndistinguishableFromABeforeTimesContainer(t *testing.T) {
+	if got, want := containerName("app_1", "rev_1", "", 1), "cypher-app_1-rev_1"; got != want {
+		t.Errorf("containerName index 1 = %q, want %q", got, want)
+	}
+	if got, want := containerName("app_1", "rev_1", "tok", 1), "cypher-app_1-rev_1-tok"; got != want {
+		t.Errorf("containerName index 1 with a token = %q, want %q", got, want)
+	}
+	if got, want := containerName("app_1", "rev_1", "", 3), "cypher-app_1-rev_1-r3"; got != want {
+		t.Errorf("containerName index 3 = %q, want %q", got, want)
+	}
+
+	spec := &agentv1.AppSpec{AppId: "app_1", RevisionId: "rev_1"}
+	if _, stamped := managedLabels(spec, 1)[driver.LabelReplicaIndex]; stamped {
+		t.Error("index 1 must carry no replica-index label — a container that predates replicas has none, and a stamped one would read as drift")
+	}
+	if got := managedLabels(spec, 4)[driver.LabelReplicaIndex]; got != "4" {
+		t.Errorf("index 4 label = %q, want \"4\"", got)
+	}
+}
+
+// Empty means [1], which is every application that exists today.
+func TestAnAbsentReplicaSetIsOneReplica(t *testing.T) {
+	if got := desiredIndexes(&agentv1.AppSpec{}); len(got) != 1 || got[0] != 1 {
+		t.Fatalf("desiredIndexes of an empty spec = %v, want [1]", got)
+	}
+	got := desiredIndexes(&agentv1.AppSpec{ReplicaIndexes: []uint32{3, 1, 3, 0, 2}})
+	if len(got) != 3 || got[0] != 1 || got[1] != 2 || got[2] != 3 {
+		t.Fatalf("desiredIndexes = %v, want a sorted deduplicated [1 2 3] with the zero dropped", got)
+	}
+}
+
+// Three replicas means three containers and three upstreams behind one
+// fragment — Traefik round-robins them, so scaling out needs no new address
+// and no new port.
+func TestThreeReplicasProduceThreeContainersBehindOneRoute(t *testing.T) {
+	c := newFakeClient()
+	r := newFakeRouter()
+	p := &fakeProber{}
+	d := newDriver(c, r, p)
+
+	sp := spec("app1", "rev1", "img:1")
+	sp.ReplicaIndexes = []uint32{1, 2, 3}
+
+	statuses, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{sp}, nil)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(statuses) != 1 || statuses[0].State != stateRunning {
+		t.Fatalf("status = %+v, want one running app", statuses[0])
+	}
+	if len(statuses[0].Replicas) != 3 {
+		t.Fatalf("reported %d replicas, want 3", len(statuses[0].Replicas))
+	}
+	running := 0
+	for _, ct := range c.containers {
+		if ct.AppID == sp.AppId && ct.Running {
+			running++
+		}
+	}
+	if running != 3 {
+		t.Errorf("%d containers running, want 3", running)
+	}
+	if got := strings.Count(r.routes[sp.AppId], ",") + 1; got != 3 {
+		t.Errorf("the fragment carries %d upstreams, want 3 — one per replica behind one route", got)
 	}
 }

@@ -191,8 +191,23 @@ type Application struct {
 	// closes by recreating the container. Empty means no restart has been
 	// asked for, which is every application's birth value.
 	RestartToken string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// Replicas is what the agent last SAW, one entry per running container
+	// (app-scaling.md §8). Runtime.Replicas is what should run; these two are
+	// allowed to differ, and the gap is what the panel draws as
+	// "desired 3, running 2".
+	Replicas  []ReplicaObservation
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// ReplicaObservation is one container of a multi-replica Application, as
+// reported by the node that runs it.
+type ReplicaObservation struct {
+	Index       int    `json:"index"`
+	ContainerID string `json:"container_id,omitempty"`
+	RevisionID  string `json:"revision_id,omitempty"`
+	State       string `json:"state"`
+	Detail      string `json:"detail,omitempty"`
 }
 
 // Preview status vocabulary (preview-environments.md §3). Orchestration state,

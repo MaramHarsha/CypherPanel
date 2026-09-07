@@ -113,6 +113,34 @@ func validateVolumes(vols []domain.VolumeMount) error {
 	return nil
 }
 
+// maxReplicas is a sanity ceiling, not a capacity model: an operator asking for
+// a hundred containers of one application on one host is describing a mistake.
+const maxReplicas = 20
+
+// validateReplicas holds the two refusals of app-scaling.md §3. Both are
+// refusals rather than warnings because in each case there is no correct
+// behaviour to fall back to — only two different ways to be wrong.
+func validateReplicas(replicas int, volumes []domain.VolumeMount, ports []domain.PortMapping) error {
+	if replicas <= 1 {
+		return nil
+	}
+	// Two containers sharing one named volume is one filesystem with two
+	// writers, which is how a SQLite file or an embedded index gets corrupted.
+	// This is "databases don't scale this way; replicas are for stateless
+	// apps", said in the one place it can be enforced.
+	if len(volumes) > 0 {
+		return invalid("this application mounts the volume " + volumes[0].Name +
+			", so it holds state on disk and cannot run more than one replica — two containers writing one volume is how data gets corrupted")
+	}
+	// Two containers cannot bind the same host port, and allocating a different
+	// port per replica would break the one contract a raw publish has: that the
+	// port is the number the operator wrote down.
+	if len(ports) > 0 {
+		return invalid(fmt.Sprintf("this application publishes host port %d directly, and two containers cannot bind one port — remove the port publish to run more than one replica", ports[0].HostPort))
+	}
+	return nil
+}
+
 // Store is the persistence the service needs (consumer-defined).
 type Store interface {
 	CreateApplicationWithEnv(ctx context.Context, a domain.Application, envVars []domain.EnvVar) (domain.Application, error)
@@ -291,6 +319,9 @@ type UpdateInput struct {
 	// (same "non-nil zero removes" convention as database updates).
 	CPULimit      *float64
 	MemoryLimitMB *int
+	// Replicas: nil = unchanged. Changing it is desired state, not an action —
+	// the reconciler already knows how to make reality match (app-scaling.md §2).
+	Replicas *int
 	// Volumes: nil = unchanged; a non-nil slice (possibly empty) replaces the set.
 	Volumes *[]domain.VolumeMount
 	// Ports: nil = unchanged; a non-nil slice (possibly empty) replaces the set.
@@ -347,6 +378,9 @@ func (s *Service) Update(ctx context.Context, appID string, in UpdateInput) (dom
 	}
 	if in.Volumes != nil {
 		app.Volumes = *in.Volumes
+	}
+	if in.Replicas != nil {
+		app.Runtime.Replicas = *in.Replicas
 	}
 	if in.Ports != nil {
 		app.Ports = *in.Ports
@@ -711,8 +745,8 @@ func validateAndDefault(in CreateInput) (CreateInput, error) {
 	if in.Runtime.Replicas == 0 {
 		in.Runtime.Replicas = 1
 	}
-	if in.Runtime.Replicas != 1 {
-		return in, invalid("runtime.replicas must be 1 (multiple replicas are post-v1)")
+	if in.Runtime.Replicas < 1 || in.Runtime.Replicas > maxReplicas {
+		return in, invalid(fmt.Sprintf("runtime.replicas must be between 1 and %d", maxReplicas))
 	}
 	// Resource limits (feature-matrix V1). nil = no limit; a value must be sane,
 	// and memory_limit_mb is persisted as int32 so it must not wrap on the cast
@@ -731,6 +765,9 @@ func validateAndDefault(in CreateInput) (CreateInput, error) {
 		return in, err
 	}
 	if err := validatePorts(in.Ports); err != nil {
+		return in, err
+	}
+	if err := validateReplicas(in.Runtime.Replicas, in.Volumes, in.Ports); err != nil {
 		return in, err
 	}
 

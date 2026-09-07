@@ -19,6 +19,7 @@ import { useGetServer } from "@/api/gen/servers/servers";
 import type { Application } from "@/api/gen/model";
 import { CopyField } from "@/components/copy-field";
 import { MetricsCard, useMetricsWindow } from "@/components/metrics-card";
+import { ReplicaCard } from "@/components/replica-card";
 import { TrafficCard } from "@/components/traffic-card";
 import { DomainLink } from "@/components/domain-link";
 import { Fact, FactCard } from "@/components/fact-card";
@@ -173,6 +174,8 @@ function OverviewTab() {
             {/* Resources and traffic sit under the facts, not above them: the
                 question "is it running and what is it serving" is answered by
                 the cards above, and this is the follow-up. */}
+            <ReplicaCard app={a} />
+
             <AppMetrics appId={appId} routed={Boolean(a.route.domain)} />
 
             {a.route.domain && <DomainCheck appId={appId} domain={a.route.domain} serverId={a.runtime.server_id} />}

@@ -6926,6 +6926,16 @@ components:
             an uploads directory have opposite answers, and backing up the cache
             costs storage for data whose whole point is being disposable.
 
+    AppReplica:
+      type: object
+      required: [index, state]
+      properties:
+        index: { type: integer, description: "1-based and stable: index 1 is the application's first replica, wherever it lives." }
+        container_id: { type: string }
+        revision_id: { type: string }
+        state: { type: string }
+        detail: { type: string }
+
     AppRuntime:
       type: object
       required: [server_id, port, replicas]
@@ -6938,7 +6948,14 @@ components:
           maximum: 65535
         replicas:
           type: integer
-          description: Fixed at 1 for v1 (multiple replicas are post-v1).
+          minimum: 1
+          maximum: 20
+          description: >-
+            How many containers of this application run, load-balanced by the
+            Proxy on its node. More than one is refused for an application that
+            mounts a volume (two writers on one filesystem is how data gets
+            corrupted) or publishes a raw host port (two containers cannot bind
+            one port).
         cpu_limit:
           type: [number, "null"]
           description: Fractional cores; null/omitted/0 = no limit (noisy-neighbor control).
@@ -7026,6 +7043,14 @@ components:
           type: array
           items: { $ref: "#/components/schemas/AppPort" }
           description: Raw host-port publishes (tcp/udp), independent of the HTTP route.
+        replicas:
+          type: array
+          items: { $ref: "#/components/schemas/AppReplica" }
+          description: >-
+            What the node last SAW, one entry per container. Empty for a
+            single-replica application. `runtime.replicas` is what should run
+            and this is what is running; the two are allowed to differ, and the
+            gap is what the panel draws.
         webhook_id:
           type: string
           description: Public webhook identifier used in the webhook URL.
@@ -7186,7 +7211,7 @@ components:
 
     PatchApplicationRequest:
       type: object
-      description: Absent sections stay unchanged; a present section replaces that section wholesale. The runtime server and replicas are not patchable.
+      description: Absent sections stay unchanged; a present section replaces that section wholesale. The runtime server is not patchable.
       properties:
         name:
           type: string
@@ -7199,6 +7224,17 @@ components:
           properties:
             port:
               type: integer
+            replicas:
+              type: integer
+              minimum: 1
+              maximum: 20
+              description: >-
+                Desired state, not an action: the reconciler converges to it.
+                Scaling out surges — the new replicas start alongside the old
+                ones before the route flips — so a node needs headroom for
+                twice the count during a rollout. Scaling in drains first: the
+                departing replica leaves the route, in-flight requests finish,
+                and only then is the container stopped.
             cpu_limit:
               type: [number, "null"]
               description: Fractional cores; a non-positive value clears the limit.

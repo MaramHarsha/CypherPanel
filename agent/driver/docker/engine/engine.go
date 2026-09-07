@@ -231,10 +231,26 @@ func (c *Client) ListManaged(ctx context.Context) ([]docker.Container, error) {
 			AppID:        s.Labels[driver.LabelAppID],
 			RevisionID:   s.Labels[driver.LabelRevisionID],
 			RestartToken: s.Labels[driver.LabelRestartToken],
+			ReplicaIndex: replicaIndex(s.Labels),
 			Running:      s.State == "running",
 		})
 	}
 	return out, nil
+}
+
+// replicaIndex reads the container's replica index. An absent label is index 1
+// — every container that existed before replicas did — which is what stops an
+// agent upgrade from reading a whole fleet as drift.
+func replicaIndex(labels map[string]string) int {
+	raw := labels[driver.LabelReplicaIndex]
+	if raw == "" {
+		return 1
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 {
+		return 1
+	}
+	return n
 }
 
 // CreateContainer creates (does not start) a container per the driver's spec:

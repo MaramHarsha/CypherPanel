@@ -12,6 +12,7 @@ import type { AppHealth } from './appHealth.ts';
 import type { ApplicationStatus } from './applicationStatus.ts';
 import type { ApplicationTlsState } from './applicationTlsState.ts';
 import type { AppPort } from './appPort.ts';
+import type { AppReplica } from './appReplica.ts';
 import type { AppRoute } from './appRoute.ts';
 import type { AppRuntime } from './appRuntime.ts';
 import type { AppSource } from './appSource.ts';
@@ -31,6 +32,8 @@ export interface Application {
   volumes?: AppVolume[];
   /** Raw host-port publishes (tcp/udp), independent of the HTTP route. */
   ports?: AppPort[];
+  /** What the node last SAW, one entry per container. Empty for a single-replica application. `runtime.replicas` is what should run and this is what is running; the two are allowed to differ, and the gap is what the panel draws. */
+  replicas?: AppReplica[];
   /** Public webhook identifier used in the webhook URL. */
   webhook_id: string;
   /**

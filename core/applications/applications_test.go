@@ -256,11 +256,22 @@ func TestCreateValidation(t *testing.T) {
 		// A kind outside the closed set. "nixpacks" used to sit here and is
 		// now supported (pack-builds.md), which is exactly why the assertion
 		// has to name something that is not.
-		"bad build":    func(in *CreateInput) { in.Build.Kind = "buildpacks" },
-		"zero port":    func(in *CreateInput) { in.Runtime.Port = 0 },
-		"huge port":    func(in *CreateInput) { in.Runtime.Port = 70000 },
-		"two replicas": func(in *CreateInput) { in.Runtime.Replicas = 2 },
-		"no server":    func(in *CreateInput) { in.Runtime.ServerID = "" },
+		"bad build":         func(in *CreateInput) { in.Build.Kind = "buildpacks" },
+		"zero port":         func(in *CreateInput) { in.Runtime.Port = 0 },
+		"huge port":         func(in *CreateInput) { in.Runtime.Port = 70000 },
+		"too many replicas": func(in *CreateInput) { in.Runtime.Replicas = 21 },
+		// The two refusals of app-scaling.md §3. Both are refusals rather than
+		// warnings because in each case there is no correct behaviour to fall
+		// back to, only two different ways to be wrong.
+		"replicas with a volume": func(in *CreateInput) {
+			in.Runtime.Replicas = 3
+			in.Volumes = []domain.VolumeMount{{Name: "uploads", Path: "/data"}}
+		},
+		"replicas with a raw port": func(in *CreateInput) {
+			in.Runtime.Replicas = 3
+			in.Ports = []domain.PortMapping{{HostPort: 25565, ContainerPort: 25565, Protocol: "tcp"}}
+		},
+		"no server": func(in *CreateInput) { in.Runtime.ServerID = "" },
 		// Health kind must be a known gate (feature-matrix V1: non-HTTP apps).
 		"bad health kind": func(in *CreateInput) { in.Health.Kind = "grpc" },
 		// Raw port publishes (feature-matrix V1): valid ranges, protocol, uniqueness.

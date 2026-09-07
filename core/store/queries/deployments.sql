@@ -46,3 +46,8 @@ ORDER BY created_at;
 SELECT * FROM deployments
 WHERE application_id = $1 AND status NOT IN ('succeeded', 'failed', 'awaiting_approval')
 ORDER BY created_at;
+
+-- Replica observations are replaced wholesale by the reporting node
+-- (app-scaling.md §8).
+-- name: SetApplicationReplicaStatus :exec
+UPDATE applications SET replica_status = $2, updated_at = now() WHERE id = $1;

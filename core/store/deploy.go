@@ -25,6 +25,20 @@ func volumesJSON(v []domain.VolumeMount) []byte {
 	return b
 }
 
+// replicasFromJSON parses the observation document. A row written before this
+// feature decodes to nil, which reads as "one replica, unobserved" rather than
+// as an empty set — the same distinction ADR-010 draws between unknown and zero.
+func replicasFromJSON(b []byte) []domain.ReplicaObservation {
+	if len(b) == 0 {
+		return nil
+	}
+	var out []domain.ReplicaObservation
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
 // volumesFromJSON parses the JSONB column back to volume mounts.
 func volumesFromJSON(b []byte) []domain.VolumeMount {
 	if len(b) == 0 {
@@ -852,8 +866,9 @@ func applicationFromRow(r db.Application) domain.Application {
 			HTTPS:      r.RouteHttps,
 			PathPrefix: r.RoutePathPrefix,
 		},
-		Volumes: volumesFromJSON(r.Volumes),
-		Ports:   portsFromJSON(r.Ports),
+		Volumes:  volumesFromJSON(r.Volumes),
+		Replicas: replicasFromJSON(r.ReplicaStatus),
+		Ports:    portsFromJSON(r.Ports),
 		Health: domain.AppHealth{
 			Kind:            r.HealthKind,
 			Path:            r.HealthPath,
@@ -974,4 +989,19 @@ func (s *Store) SetApplicationPreviewPassword(ctx context.Context, id string, en
 		return domain.Application{}, fmt.Errorf("store: setting preview password: %w", err)
 	}
 	return applicationFromRow(row), nil
+}
+
+// SetApplicationReplicaStatus replaces the observation document wholesale. That
+// IS the scale-down sweep: an index no longer reported is no longer present.
+func (s *Store) SetApplicationReplicaStatus(ctx context.Context, appID string, replicas []domain.ReplicaObservation) error {
+	body, err := json.Marshal(replicas)
+	if err != nil {
+		return fmt.Errorf("store: marshaling replica status: %w", err)
+	}
+	if err := s.q.SetApplicationReplicaStatus(ctx, db.SetApplicationReplicaStatusParams{
+		ID: appID, ReplicaStatus: body,
+	}); err != nil {
+		return wrap("recording replica status", err)
+	}
+	return nil
 }

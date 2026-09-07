@@ -203,6 +203,22 @@ func (q *Queries) ListDeploymentsByApplication(ctx context.Context, arg ListDepl
 	return items, nil
 }
 
+const setApplicationReplicaStatus = `-- name: SetApplicationReplicaStatus :exec
+UPDATE applications SET replica_status = $2, updated_at = now() WHERE id = $1
+`
+
+type SetApplicationReplicaStatusParams struct {
+	ID            string
+	ReplicaStatus []byte
+}
+
+// Replica observations are replaced wholesale by the reporting node
+// (app-scaling.md §8).
+func (q *Queries) SetApplicationReplicaStatus(ctx context.Context, arg SetApplicationReplicaStatusParams) error {
+	_, err := q.db.Exec(ctx, setApplicationReplicaStatus, arg.ID, arg.ReplicaStatus)
+	return err
+}
+
 const setDeploymentBuilder = `-- name: SetDeploymentBuilder :one
 UPDATE deployments SET builder_server_id = $2, updated_at = now()
 WHERE id = $1

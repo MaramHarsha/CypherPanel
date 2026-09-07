@@ -83,6 +83,12 @@ message AppSpec {
   // recreate still mutates nothing, because the running container then carries
   // the token the spec names. Empty is every application's birth value.
   string restart_token = 17;
+  // V1: which replica indexes THIS server runs (app-scaling.md §2). Empty
+  // means [1], which is every application that exists today — an agent that
+  // predates this ignores the field and runs exactly one container under
+  // exactly the name it runs now, which is what makes rolling this feature out
+  // safe.
+  repeated uint32 replica_indexes = 18;
 }
 
 // RetainSpec names the revisions of one Application whose images must be kept
@@ -465,6 +471,15 @@ message ResyncWork {
 // AppStatus is one Application's observed state, reported on
 // state.<server_id>.app.<app_id>. The plane asserts "deploy succeeded" only
 // from these reports — never from work-item completion (ADR-005).
+// ReplicaStatus is one container of a multi-replica Application.
+message ReplicaStatus {
+  uint32 index = 1;
+  string container_id = 2;  // short id
+  string revision_id = 3;
+  string state = 4;         // the ui-principles §5 vocabulary
+  string detail = 5;
+}
+
 message AppStatus {
   string app_id = 1;
   // revision_id actually serving traffic right now (empty if none).
@@ -484,6 +499,13 @@ message AppStatus {
   // digest, which is the only way it can know it (ADR-001: the control plane
   // never talks to a registry; ADR-005: status is observation).
   string resolved_image = 6;
+  // V1: one observation per replica (app-scaling.md §8), reported by the node
+  // that owns them. The aggregate `state` above is DERIVED from these: running
+  // iff every desired index is running, degraded if some but not all, error if
+  // none. Losing one replica of three is a degradation, not a crash — so a
+  // partial loss pages nobody, which is correct, because the application is
+  // still serving.
+  repeated ReplicaStatus replicas = 7;
 }
 
 // DeployEvent reports a work item's terminal outcome for a deployment,

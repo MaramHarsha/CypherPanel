@@ -76,7 +76,7 @@ func TestFragmentWriteObserveRemove(t *testing.T) {
 	}
 
 	spec := &agentv1.RouteSpec{Domain: "example.com", PathPrefix: "/api", Https: true}
-	if err := w.SetRoute(ctx, "app1", spec, "10.0.0.1:8080"); err != nil {
+	if err := w.SetRoute(ctx, "app1", spec, []string{"10.0.0.1:8080"}); err != nil {
 		t.Fatalf("SetRoute: %v", err)
 	}
 
@@ -101,7 +101,7 @@ func TestFragmentWriteObserveRemove(t *testing.T) {
 	wantEntryPoints(t, f1, "app1-http", "web")
 
 	// An HTTP-only route gets neither TLS nor redirect plumbing.
-	if err := w.SetRoute(ctx, "app2", &agentv1.RouteSpec{Domain: "plain.example.com"}, "10.0.0.2:8080"); err != nil {
+	if err := w.SetRoute(ctx, "app2", &agentv1.RouteSpec{Domain: "plain.example.com"}, []string{"10.0.0.2:8080"}); err != nil {
 		t.Fatalf("SetRoute http-only: %v", err)
 	}
 	b2, err := os.ReadFile(filepath.Join(dir, "apps", "app2.yml"))
@@ -116,7 +116,7 @@ func TestFragmentWriteObserveRemove(t *testing.T) {
 	wantEntryPoints(t, readFragment(t, dir, "app2"), "app2", "web")
 
 	up, ok, err := w.Route(ctx, "app1")
-	if err != nil || !ok || up != "10.0.0.1:8080" {
+	if err != nil || !ok || len(up) != 1 || up[0] != "10.0.0.1:8080" {
 		t.Fatalf("Route = %q ok:%v err:%v, want 10.0.0.1:8080", up, ok, err)
 	}
 
@@ -275,7 +275,7 @@ func TestHTTPSRouteServesPlainHTTPWithoutAResolver(t *testing.T) {
 	w := proxy.New(proxy.Config{Dir: dir})
 
 	spec := &agentv1.RouteSpec{Domain: "app.example.com", Https: true}
-	if err := w.SetRoute(context.Background(), "app1", spec, "10.0.0.1:8080"); err != nil {
+	if err := w.SetRoute(context.Background(), "app1", spec, []string{"10.0.0.1:8080"}); err != nil {
 		t.Fatalf("SetRoute: %v", err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "apps", "app1.yml"))
@@ -309,7 +309,7 @@ func TestSetACMEFromDesiredStateEnablesTLS(t *testing.T) {
 	ctx := context.Background()
 
 	spec := &agentv1.RouteSpec{Domain: "app.example.com", Https: true}
-	if err := p.SetRoute(ctx, "app1", spec, "10.0.0.1:8080"); err != nil {
+	if err := p.SetRoute(ctx, "app1", spec, []string{"10.0.0.1:8080"}); err != nil {
 		t.Fatalf("SetRoute before: %v", err)
 	}
 	if err := p.EnsureProxy(ctx); err != nil {
@@ -332,7 +332,7 @@ func TestSetACMEFromDesiredStateEnablesTLS(t *testing.T) {
 			t.Fatalf("static config missing %q after SetACME:\n%s", want, after)
 		}
 	}
-	if err := p.SetRoute(ctx, "app1", spec, "10.0.0.1:8080"); err != nil {
+	if err := p.SetRoute(ctx, "app1", spec, []string{"10.0.0.1:8080"}); err != nil {
 		t.Fatalf("SetRoute after: %v", err)
 	}
 	frag, _ := os.ReadFile(filepath.Join(dir, "apps", "app1.yml"))
@@ -393,7 +393,7 @@ func TestRouteConvergenceIsIdempotent(t *testing.T) {
 			ctx := context.Background()
 			spec := &agentv1.RouteSpec{Domain: "app.example.com", Https: true, PathPrefix: "/api"}
 
-			if err := p.SetRoute(ctx, "app1", spec, "10.0.0.1:8080"); err != nil {
+			if err := p.SetRoute(ctx, "app1", spec, []string{"10.0.0.1:8080"}); err != nil {
 				t.Fatalf("first SetRoute: %v", err)
 			}
 			path := filepath.Join(dir, "apps", "app1.yml")
@@ -407,7 +407,7 @@ func TestRouteConvergenceIsIdempotent(t *testing.T) {
 			}
 			firstMod := info.ModTime()
 
-			if err := p.SetRoute(ctx, "app1", spec, "10.0.0.1:8080"); err != nil {
+			if err := p.SetRoute(ctx, "app1", spec, []string{"10.0.0.1:8080"}); err != nil {
 				t.Fatalf("second SetRoute: %v", err)
 			}
 			second, err := os.ReadFile(path)
@@ -426,7 +426,7 @@ func TestRouteConvergenceIsIdempotent(t *testing.T) {
 			}
 			// And the observed route is unchanged.
 			up, ok, err := p.Route(ctx, "app1")
-			if err != nil || !ok || up != "10.0.0.1:8080" {
+			if err != nil || !ok || len(up) != 1 || up[0] != "10.0.0.1:8080" {
 				t.Fatalf("Route = %q ok:%v err:%v", up, ok, err)
 			}
 		})
@@ -450,7 +450,7 @@ func TestAccessMiddlewaresAreAppendedAfterTheMark(t *testing.T) {
 			BasicAuthUsers: []string{"preview:$2a$10$abcdefghijklmnopqrstuv"},
 		},
 	}
-	if err := w.SetRoute(ctx, "app1", spec, "10.0.0.1:8080"); err != nil {
+	if err := w.SetRoute(ctx, "app1", spec, []string{"10.0.0.1:8080"}); err != nil {
 		t.Fatalf("SetRoute: %v", err)
 	}
 	content := string(mustRead(t, filepath.Join(dir, "apps", "app1.yml")))
@@ -478,7 +478,7 @@ func TestNoAccessSpecMeansNoRestriction(t *testing.T) {
 	dir := t.TempDir()
 	w := proxy.New(proxy.Config{Dir: dir})
 	spec := &agentv1.RouteSpec{Domain: "open.example.com"}
-	if err := w.SetRoute(context.Background(), "app2", spec, "10.0.0.2:8080"); err != nil {
+	if err := w.SetRoute(context.Background(), "app2", spec, []string{"10.0.0.2:8080"}); err != nil {
 		t.Fatalf("SetRoute: %v", err)
 	}
 	content := string(mustRead(t, filepath.Join(dir, "apps", "app2.yml")))
@@ -494,7 +494,7 @@ func TestNoAccessSpecMeansNoRestriction(t *testing.T) {
 func TestFragmentsAreNotWorldReadable(t *testing.T) {
 	dir := t.TempDir()
 	w := proxy.New(proxy.Config{Dir: dir})
-	if err := w.SetRoute(context.Background(), "app3", &agentv1.RouteSpec{Domain: "x.example.com"}, "10.0.0.3:80"); err != nil {
+	if err := w.SetRoute(context.Background(), "app3", &agentv1.RouteSpec{Domain: "x.example.com"}, []string{"10.0.0.3:80"}); err != nil {
 		t.Fatalf("SetRoute: %v", err)
 	}
 	fi, err := os.Stat(filepath.Join(dir, "apps", "app3.yml"))

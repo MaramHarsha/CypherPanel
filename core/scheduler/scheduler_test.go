@@ -550,6 +550,10 @@ func (f *fakeStore) ListServers(context.Context) ([]domain.Server, error) {
 	return f.servers, nil
 }
 
+func (f *fakeStore) SetApplicationReplicaStatus(context.Context, string, []domain.ReplicaObservation) error {
+	return nil
+}
+
 func (f *fakeStore) GetMetricsSettings(context.Context) (domain.MetricsSettings, error) {
 	return domain.DefaultMetricsSettings(), nil
 }

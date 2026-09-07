@@ -102,8 +102,15 @@ func (t *Traefik) Name() string { return "traefik" }
 
 // SetRoute writes the Traefik fragment for an app atomically. The upstream is
 // a bare host:port, which is what a container is.
-func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.RouteSpec, upstream string) error {
-	return t.setRoute(ctx, appID, route, "http://"+upstream, "")
+// SetRoute writes the fragment for an app, load-balancing across every healthy
+// replica on this node. One server entry per replica: Traefik round-robins
+// them, so scaling out needs no new address to configure and no new port.
+func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.RouteSpec, upstreams []string) error {
+	urls := make([]string, 0, len(upstreams))
+	for _, u := range upstreams {
+		urls = append(urls, "http://"+u)
+	}
+	return t.setRoute(ctx, appID, route, urls, "")
 }
 
 // SetStaticRoute writes a fragment for an upstream that is not a container
@@ -120,10 +127,10 @@ func (t *Traefik) SetStaticRoute(ctx context.Context, routeID string, route *age
 	if !strings.HasPrefix(upstreamURL, "http://") && !strings.HasPrefix(upstreamURL, "https://") {
 		return fmt.Errorf("static route upstream must be an absolute http(s) URL")
 	}
-	return t.setRoute(ctx, routeID, route, upstreamURL, addPrefix)
+	return t.setRoute(ctx, routeID, route, []string{upstreamURL}, addPrefix)
 }
 
-func (t *Traefik) setRoute(ctx context.Context, appID string, route *agentv1.RouteSpec, upstreamURL, addPrefix string) error {
+func (t *Traefik) setRoute(ctx context.Context, appID string, route *agentv1.RouteSpec, upstreamURLs []string, addPrefix string) error {
 	if route == nil {
 		return fmt.Errorf("route spec is nil")
 	}
@@ -307,9 +314,15 @@ func (t *Traefik) setRoute(ctx context.Context, appID string, route *agentv1.Rou
 	}
 
 	srv := Service{}
-	srv.LoadBalancer.Servers = []struct {
+	servers := make([]struct {
 		URL string `yaml:"url"`
-	}{{URL: upstreamURL}}
+	}, 0, len(upstreamURLs))
+	for _, u := range upstreamURLs {
+		servers = append(servers, struct {
+			URL string `yaml:"url"`
+		}{URL: u})
+	}
+	srv.LoadBalancer.Servers = servers
 
 	doc.HTTP.Services[appID] = srv
 
@@ -368,59 +381,64 @@ func (t *Traefik) RemoveRoute(ctx context.Context, appID string) error {
 }
 
 // Route returns the currently configured upstream for an app, if any.
-func (t *Traefik) Route(ctx context.Context, appID string) (upstream string, ok bool, err error) {
+func (t *Traefik) Route(ctx context.Context, appID string) (upstreams []string, ok bool, err error) {
 	if strings.Contains(appID, "..") || strings.Contains(appID, "/") || strings.Contains(appID, "\\") {
-		return "", false, fmt.Errorf("invalid appID")
+		return nil, false, fmt.Errorf("invalid appID")
 	}
 	cleanAppsDir := filepath.Clean(t.appsDir)
 	finalPath := filepath.Clean(filepath.Join(cleanAppsDir, appID+".yml"))
 	if !strings.HasPrefix(finalPath, cleanAppsDir) {
-		return "", false, fmt.Errorf("invalid route path")
+		return nil, false, fmt.Errorf("invalid route path")
 	}
 	b, err := os.ReadFile(finalPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", false, nil
+			return nil, false, nil
 		}
-		return "", false, fmt.Errorf("reading route file: %w", err)
+		return nil, false, fmt.Errorf("reading route file: %w", err)
 	}
 
 	var doc map[string]interface{}
 	if err := yaml.Unmarshal(b, &doc); err != nil {
-		return "", false, fmt.Errorf("parsing route file: %w", err)
+		return nil, false, fmt.Errorf("parsing route file: %w", err)
 	}
 
 	httpMap, ok := doc["http"].(map[string]interface{})
 	if !ok {
-		return "", false, nil
+		return nil, false, nil
 	}
 	servicesMap, ok := httpMap["services"].(map[string]interface{})
 	if !ok {
-		return "", false, nil
+		return nil, false, nil
 	}
 	appSrv, ok := servicesMap[appID].(map[string]interface{})
 	if !ok {
-		return "", false, nil
+		return nil, false, nil
 	}
 	lb, ok := appSrv["loadBalancer"].(map[string]interface{})
 	if !ok {
-		return "", false, nil
+		return nil, false, nil
 	}
 	servers, ok := lb["servers"].([]interface{})
 	if !ok || len(servers) == 0 {
-		return "", false, nil
+		return nil, false, nil
 	}
-	srv, ok := servers[0].(map[string]interface{})
-	if !ok {
-		return "", false, nil
+	out := make([]string, 0, len(servers))
+	for _, entry := range servers {
+		srv, ok := entry.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		url, ok := srv["url"].(string)
+		if !ok {
+			continue
+		}
+		out = append(out, strings.TrimPrefix(url, "http://"))
 	}
-	url, ok := srv["url"].(string)
-	if !ok {
-		return "", false, nil
+	if len(out) == 0 {
+		return nil, false, nil
 	}
-
-	url = strings.TrimPrefix(url, "http://")
-	return url, true, nil
+	return out, true, nil
 }
 
 // ServedByHeader marks responses that actually passed through this panel's

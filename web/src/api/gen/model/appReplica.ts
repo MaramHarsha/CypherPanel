@@ -8,22 +8,11 @@
  * OpenAPI spec version: 0.3.0
  */
 
-export type PatchApplicationRequestRuntime = {
-  port?: number;
-  /**
-     * Desired state, not an action: the reconciler converges to it. Scaling out surges — the new replicas start alongside the old ones before the route flips — so a node needs headroom for twice the count during a rollout. Scaling in drains first: the departing replica leaves the route, in-flight requests finish, and only then is the container stopped.
-     * @minimum 1
-     * @maximum 20
-     */
-  replicas?: number;
-  /**
-     * Fractional cores; a non-positive value clears the limit.
-     * @nullable
-     */
-  cpu_limit?: number | null;
-  /**
-     * MiB; a non-positive value clears the limit.
-     * @nullable
-     */
-  memory_limit_mb?: number | null;
-};
+export interface AppReplica {
+  /** 1-based and stable: index 1 is the application's first replica, wherever it lives. */
+  index: number;
+  container_id?: string;
+  revision_id?: string;
+  state: string;
+  detail?: string;
+}

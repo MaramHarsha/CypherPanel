@@ -102,6 +102,8 @@ type Store interface {
 	BumpApplicationRestartToken(ctx context.Context, appID, token string) (domain.Application, error)
 	SetApplicationStatus(ctx context.Context, appID, status, detail string) error
 	SetApplicationObservedStatus(ctx context.Context, appID, status, detail, observedRevisionID string, observedAt time.Time) error
+	// Replica observations, replaced wholesale (app-scaling.md §8).
+	SetApplicationReplicaStatus(ctx context.Context, appID string, replicas []domain.ReplicaObservation) error
 	ListEnvVars(ctx context.Context, appID string) ([]domain.EnvVar, error)
 	GetEnvironment(ctx context.Context, id string) (domain.Environment, error)
 
@@ -1193,7 +1195,29 @@ func (s *Scheduler) buildSpec(ctx context.Context, app domain.Application, rev d
 		MemoryLimitMb: memLimitValue(app.Runtime.MemoryLimitMB),
 		Volumes:       volumeMounts(app.ID, app.Volumes),
 		Ports:         portMappings(app.Ports),
+		// Replica indexes rather than a count, because AppSpec is already
+		// per-application-per-server: this node runs THESE replicas
+		// (app-scaling.md §2). Stage 1 places them all on the application's own
+		// server, so the set is 1..N; an agent that predates the field ignores
+		// it and runs exactly one container under exactly the name it runs
+		// today, which is what makes rolling this out safe.
+		ReplicaIndexes: replicaIndexes(app.Runtime.Replicas),
 	}, nil
+}
+
+// replicaIndexes is 1..N. It returns nil for a single replica so the wire
+// stays byte-identical to what every application already sends — a spec that
+// changed shape for every app in the fleet would make the whole fleet read as
+// drift on the upgrade that shipped this.
+func replicaIndexes(n int) []uint32 {
+	if n <= 1 {
+		return nil
+	}
+	out := make([]uint32, 0, n)
+	for i := 1; i <= n; i++ {
+		out = append(out, uint32(i))
+	}
+	return out
 }
 
 // portMappings maps an app's raw host-port publishes to the wire.
@@ -1415,6 +1439,21 @@ func (s *Scheduler) HandleAppStatus(ctx context.Context, serverID string, st *ag
 	if err := s.store.SetApplicationObservedStatus(ctx, st.GetAppId(), st.GetState(), st.GetDetail(), st.GetRevisionId(), observedAt); err != nil {
 		s.log.Error("app status: recording observation", "app_id", st.GetAppId(), "error", err)
 		return
+	}
+	// Only when the report carries replicas: a failure path reports the state
+	// and nothing else, and overwriting the set with an empty one there would
+	// erase the last thing we actually knew (app-scaling.md §8).
+	if reps := st.GetReplicas(); len(reps) > 0 {
+		out := make([]domain.ReplicaObservation, 0, len(reps))
+		for _, r := range reps {
+			out = append(out, domain.ReplicaObservation{
+				Index: int(r.GetIndex()), ContainerID: r.GetContainerId(),
+				RevisionID: r.GetRevisionId(), State: r.GetState(), Detail: r.GetDetail(),
+			})
+		}
+		if err := s.store.SetApplicationReplicaStatus(ctx, st.GetAppId(), out); err != nil {
+			s.log.Error("app status: recording replicas", "app_id", st.GetAppId(), "error", err)
+		}
 	}
 	// Announce the TRANSITION, from the status that was stored a moment ago —
 	// never the observation, which arrives continuously (deployment-control.md

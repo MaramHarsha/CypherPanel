@@ -28,6 +28,7 @@ export * from './applicationStatus.ts';
 export * from './applicationTlsState.ts';
 export * from './appPort.ts';
 export * from './appPortProtocol.ts';
+export * from './appReplica.ts';
 export * from './appRoute.ts';
 export * from './appRuntime.ts';
 export * from './appSource.ts';

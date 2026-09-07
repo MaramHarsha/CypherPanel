@@ -92,6 +92,7 @@ type Application struct {
 	PreviewPasswordEnabled bool
 	PreviewPasswordHash    string
 	PreviewPasswordSetAt   pgtype.Timestamptz
+	ReplicaStatus          []byte
 }
 
 type AuditEvent struct {

@@ -35,6 +35,11 @@ const (
 	LabelAppID = "cypherpanel.app-id"
 	// LabelRevisionID carries the revision the resource was created from.
 	LabelRevisionID = "cypherpanel.revision-id"
+	// LabelReplicaIndex carries this container's replica index (app-scaling.md
+	// §2). Absent means index 1, which is every container that existed before
+	// replicas did — identity comes from labels, never from the name, so a
+	// driver can discover its own replicas on a host it has never seen.
+	LabelReplicaIndex = "cypherpanel.replica-index"
 	// LabelRestartToken carries the restart token the container was created
 	// under (deployment-control.md §3). It is part of the container's identity
 	// so a NEW token reads as drift — the same way a new revision does — and
