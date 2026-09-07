@@ -722,12 +722,18 @@ func (a *API) Handler() http.Handler {
 	// Resource quotas (resource-quotas.md §9; ADR-012). Reading is a member;
 	// SETTING is admin, because capping what a scope may consume is a decision
 	// about shared capacity rather than about the scope's own code.
+	//
+	// Every mutation is sessionOnly for the reason the protection policy
+	// already records: an API token inherits its owner's role, so a `write`
+	// token belonging to an admin could otherwise raise the cap and then deploy
+	// freely — and a control a leaked CI credential can switch off is
+	// decorative (§3).
 	mux.HandleFunc("GET /api/v1/projects/{id}/quota", a.authed(a.handleGetProjectQuota))
-	mux.HandleFunc("PUT /api/v1/projects/{id}/quota", a.authed(a.handleSetProjectQuota))
-	mux.HandleFunc("DELETE /api/v1/projects/{id}/quota", a.authed(a.handleDeleteProjectQuota))
+	mux.HandleFunc("PUT /api/v1/projects/{id}/quota", a.sessionOnly(a.handleSetProjectQuota))
+	mux.HandleFunc("DELETE /api/v1/projects/{id}/quota", a.sessionOnly(a.handleDeleteProjectQuota))
 	mux.HandleFunc("GET /api/v1/teams/{id}/quota", a.authed(a.handleGetTeamQuota))
-	mux.HandleFunc("PUT /api/v1/teams/{id}/quota", a.authed(a.handleSetTeamQuota))
-	mux.HandleFunc("DELETE /api/v1/teams/{id}/quota", a.authed(a.handleDeleteTeamQuota))
+	mux.HandleFunc("PUT /api/v1/teams/{id}/quota", a.sessionOnly(a.handleSetTeamQuota))
+	mux.HandleFunc("DELETE /api/v1/teams/{id}/quota", a.sessionOnly(a.handleDeleteTeamQuota))
 
 	// Email for verified domains, via a provider (managed-email.md). The panel
 	// writes DNS and manages mailboxes; it runs no MTA and stores no message.

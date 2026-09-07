@@ -1,63 +1,162 @@
 #!/usr/bin/env python3
-"""API -> UI parity audit.
+"""API → UI parity audit (docs/dev/api-ui-parity.md).
 
-Walks every request-body schema in openapi.yaml and asks whether the web app
-mentions each field at all. It is deliberately CRUDE: a field name appearing
-anywhere in web/src is counted as reachable. That means it under-reports (a
-field named in a comment counts) and never over-reports — so anything it flags
-is a field the UI does not mention ONCE, which is the failure we keep hitting.
+The panel's claim is that every mutating capability the API exposes is reachable
+from the web UI. That claim was false in seven places at once on the application
+settings screen alone, and each was found the same way: a deploy failed, and the
+control that would have fixed it did not exist.
+
+This finds them mechanically instead.
+
+For every mutating operation it resolves the request body's fields, finds the
+hand-written file that calls that operation's generated hook, and reports fields
+that file never mentions. Per SCREEN, not globally — `port` appeared in the
+create dialog while being absent from settings, so a global check reported
+nothing while the gap was real.
+
+It is deliberately conservative: a field named anywhere in the calling file
+counts as reachable, so it under-reports and never cries wolf. Anything it flags
+is a field whose own screen does not mention it once.
+
+    python3 scripts/api-ui-parity.py            # report
+    python3 scripts/api-ui-parity.py --check    # non-zero exit if anything is missing
 """
-import json, re, subprocess, sys, pathlib, collections
+import json, subprocess, sys, pathlib, re, collections
 
-root = pathlib.Path("/root/CypherPanel-backend")
-spec = json.loads(subprocess.run(
-    ["python3","-c","import sys,yaml,json;json.dump(yaml.safe_load(open(sys.argv[1])),sys.stdout)",
-     str(root/"core/api/rest/openapi.yaml")],capture_output=True,text=True).stdout)
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+WEB = ROOT / "web/src"
 
-schemas = spec.get("components",{}).get("schemas",{})
+# Fields a screen legitimately does not render, with the reason. An exemption
+# list a reviewer can audit beats a checker nobody runs because it is noisy.
+EXEMPT = {
+    # Handled by its own dedicated card rather than the settings form.
+    ("PatchApplicationRequest", "replicas"): "the scaling card on the Overview tab",
+    # Set once at creation; changing it would rewrite history rather than config.
+    ("CreateApplicationRequest", "env_vars"): "the Env tab owns variables after creation",
+    ("CreateComposeStackRequest", "env_vars"): "the stack's own env editor after creation",
+}
 
-def resolve(node, depth=0):
-    """Yield (name, node) for every property of a schema, following $ref/allOf."""
-    if depth > 4 or not isinstance(node, dict): return
+# Whole operations the panel deliberately does not call. An entry here is a
+# DECISION with a reason, not a to-do: the checker's whole value is that an
+# unreachable endpoint is loud, so silencing one has to be an argument.
+UNREACHABLE_BY_DESIGN = {
+    # invitations-and-access-requests.md §1: adding a member directly would
+    # create an account nobody chose a password for, so the panel invites an
+    # address instead and the invitee signs themselves in. The API keeps the
+    # route for scripts that manage users out of band.
+    "addTeamMember": "invitations replaced direct member-adding (invite-member-dialog.tsx)",
+}
+
+def load_spec():
+    out = subprocess.run(
+        ["python3", "-c", "import sys,yaml,json;json.dump(yaml.safe_load(open(sys.argv[1])),sys.stdout)",
+         str(ROOT / "core/api/rest/openapi.yaml")], capture_output=True, text=True)
+    return json.loads(out.stdout)
+
+def fields_of(schemas, node, depth=0):
+    if depth > 4 or not isinstance(node, dict):
+        return
     if "$ref" in node:
-        target = node["$ref"].split("/")[-1]
-        yield from resolve(schemas.get(target,{}), depth+1); return
-    for part in node.get("allOf",[]) or []:
-        yield from resolve(part, depth+1)
+        yield from fields_of(schemas, schemas.get(node["$ref"].split("/")[-1], {}), depth + 1)
+        return
+    for part in node.get("allOf", []) or []:
+        yield from fields_of(schemas, part, depth + 1)
     for name, prop in (node.get("properties") or {}).items():
-        yield name, prop
-        if isinstance(prop,dict) and (prop.get("type")=="object" or "properties" in prop or "$ref" in prop):
-            yield from resolve(prop, depth+1)
+        yield name
+        if isinstance(prop, dict) and ("properties" in prop or "$ref" in prop):
+            yield from fields_of(schemas, prop, depth + 1)
 
-# Every request body across every mutating operation.
-wanted = collections.defaultdict(set)   # schema name -> field names
-for path, ops in (spec.get("paths") or {}).items():
-    for method, op in (ops or {}).items():
-        if method not in ("post","put","patch"): continue
-        if not isinstance(op, dict): continue
-        body = ((op.get("requestBody") or {}).get("content") or {}).get("application/json") or {}
-        sch = body.get("schema")
-        if not sch: continue
-        label = sch.get("$ref","").split("/")[-1] or f"{method.upper()} {path}"
-        for name,_ in resolve(sch):
-            wanted[label].add(name)
+def hand_written():
+    """Every non-generated source file, by path."""
+    return [p for p in WEB.rglob("*.ts*") if "/api/gen/" not in str(p)]
 
-# What the web app mentions anywhere outside generated code.
-src = subprocess.run(
-    ["bash","-c",
-     "grep -rho --exclude-dir=gen \"[a-z_][a-z0-9_]*\" %s/web/src --include=*.tsx --include=*.ts "
-     "| sort -u" % root],
-    capture_output=True, text=True).stdout.split("\n")
-mentioned = set(src)
+LOCAL_IMPORT = re.compile(r'from\s+"@/([^"]+)"')
 
-missing = {}
-for label, fields in sorted(wanted.items()):
-    gone = sorted(f for f in fields if f not in mentioned)
-    if gone: missing[label] = gone
+def resolve(spec):
+    """`@/components/quota-meter` -> the file on disk, or None."""
+    base = WEB / spec
+    for cand in (base, base.with_suffix(".tsx"), base.with_suffix(".ts"),
+                 base / "index.tsx", base / "index.ts"):
+        if cand.is_file():
+            return cand
+    return None
 
-total = sum(len(v) for v in wanted.values())
-gone  = sum(len(v) for v in missing.values())
-print(f"{total} request fields across {len(wanted)} bodies; {gone} never mentioned in web/src\n")
-for label, fields in missing.items():
-    print(f"  {label}")
-    for f in fields: print(f"      {f}")
+def reachable_text(path, files):
+    """A caller's own source, plus the hand-written modules it imports.
+
+    A screen may legitimately delegate its request body to a shared component —
+    `quota-meter.tsx` builds `SetQuotaRequest` for both the project and the team
+    quota screens — and checking only the caller file would report every field
+    of it as missing. One level deep is enough for that shape and keeps the
+    check from degenerating into "somewhere in the app".
+    """
+    text = files[path]
+    for spec in LOCAL_IMPORT.findall(text):
+        target = resolve(spec)
+        if target is not None and target in files:
+            text += files[target]
+    return text
+
+def main():
+    spec = load_spec()
+    schemas = spec.get("components", {}).get("schemas", {})
+    files = {p: p.read_text(errors="ignore") for p in hand_written()}
+
+    findings, checked, unreachable = [], 0, []
+    for path, ops in (spec.get("paths") or {}).items():
+        for method, op in (ops or {}).items():
+            if method not in ("post", "put", "patch") or not isinstance(op, dict):
+                continue
+            body = ((op.get("requestBody") or {}).get("content") or {}).get("application/json") or {}
+            schema = body.get("schema")
+            opid = op.get("operationId")
+            if not schema or not opid:
+                continue
+            label = schema.get("$ref", "").split("/")[-1] or opid
+            names = sorted(set(fields_of(schemas, schema)))
+            if not names:
+                continue
+
+            # Who calls this operation. BOTH shapes count: orval generates a
+            # `useX` hook and a bare `x()` function, and screens legitimately
+            # use either — matching only the hook reported three screens as
+            # having no caller when they simply called the function.
+            hook = "use" + opid[0].upper() + opid[1:]
+            callers = [p for p, src in files.items()
+                       if re.search(rf"\b(?:{hook}|{re.escape(opid)})\b", src)]
+            visible = {c: reachable_text(c, files) for c in callers}
+            if not callers:
+                if opid not in UNREACHABLE_BY_DESIGN:
+                    unreachable.append((f"{method.upper()} {path}", opid))
+                continue
+
+            for name in names:
+                if EXEMPT.get((label, name)):
+                    continue
+                checked += 1
+                if not any(name in visible[c] for c in callers):
+                    findings.append((label, name, opid,
+                                     ", ".join(str(c.relative_to(ROOT)) for c in callers)))
+
+    print(f"checked {checked} request fields against the screens that call their endpoint")
+    if unreachable:
+        print(f"\n{len(unreachable)} mutating endpoint(s) NO screen calls:")
+        for route, opid in sorted(unreachable):
+            print(f"    {route}   ({opid})")
+    if findings:
+        print(f"\n{len(findings)} field(s) whose own screen never mentions them:")
+        by_screen = collections.defaultdict(list)
+        for label, name, opid, where in findings:
+            by_screen[where].append(f"{label}.{name}")
+        for where, items in sorted(by_screen.items()):
+            print(f"    {where}")
+            for i in sorted(items):
+                print(f"        {i}")
+    if not findings and not unreachable:
+        print("\nno gaps: every mutating endpoint has a caller, and every field is mentioned there")
+    if "--check" in sys.argv and (findings or unreachable):
+        return 1
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())

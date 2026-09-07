@@ -739,3 +739,54 @@ Against real Postgres (ENGINEERING rule 29).
   metrics-and-usage's screens; a second chart of the same buckets with a
   horizontal line on it is a UI decision, not a feature, and it can be added the
   day someone misses it.
+
+## Implementation note (shipped)
+
+Everything above is built except **the Quota Override (§7)**, which is named
+here as unbuilt rather than left to be discovered: there is no
+`quota_overrides` table, no `POST …/quota/override` route and no control. What
+makes that safe to defer is that nothing promises it — the refusal a deploy
+gets names the scope, the dimension and both numbers, and offers *raise the
+cap*, never *override it*, so no screen has a dead end pointing at a route that
+does not exist (ui-principles §11). When it lands it needs its own PR, because
+the interesting half is the audit trail and the 30-minute expiry, not the
+column.
+
+Three things about what did ship are narrower or wider than §9 as written.
+
+**Every quota mutation is `sessionOnly`, and that is the spec taken literally
+rather than paraphrased.** §3 says both `PUT`s and both override `POST`s are
+session-only; the first implementation wired all four routes through `authed`,
+which meant a `write`-ability API token belonging to an admin could raise the
+cap it was about to be refused by. That is the exact failure §3 describes when
+it says a control a leaked CI credential can switch off is decorative. All four
+mutations now require an interactive session; every `GET` still does not,
+because a member whose deploy was refused has to be able to read the reason.
+
+**A team quota is set by a PANEL admin, not by the team's own admin.** §3's
+table says so and gives the argument — a cap the capped team can raise guards
+nothing against that team, which is the only thing it exists to guard against —
+and the first implementation used `requireTeamRole`, which is the rank the
+argument rules out. Reading stays team member. Because the rank check is no
+longer membership, a mistyped team id would otherwise fail on a foreign key and
+answer `500`; there is an explicit existence check so it answers `404`.
+
+**`uncapped_projects` travels with `committed`.** §3 owes the team screen "the
+sum of the team's project caps against the team cap", and that number alone is
+the more flattering half of the truth: zero committed across eleven projects
+with no caps of their own reads as *nothing promised* when it means *nothing
+bounded*. So each dimension of a **team** report carries both — the sum, and
+how many projects have no cap on that dimension. A **project** report carries
+neither, and the absence is the signal: nothing sits below a project, and a
+`0` there would be an answer to a question nobody asked.
+
+The screen §10 specifies as *Team → Settings → Quotas* is the **Capacity**
+section of the team's card in Settings → Teams. There is no per-team settings
+page in this panel and inventing one for a single section would put the
+capacity of a team somewhere its members, its invitations and its access
+requests are not — the argument
+[invitations-and-access-requests.md](invitations-and-access-requests.md) §6
+already made for those two. The meter, its three rows and the caps form are one
+component shared with the project screen, because they are the same instrument
+at two scopes and the first thing two copies would drift on is the thresholds,
+which is the part an operator reads as a promise.

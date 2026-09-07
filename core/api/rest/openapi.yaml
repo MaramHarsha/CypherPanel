@@ -2411,11 +2411,15 @@ paths:
     put:
       operationId: setProjectQuota
       tags: [projects]
-      summary: Cap what this project may consume (team admin)
+      summary: Cap what this project may consume (team admin, interactive session)
       description: >-
         A GUARDRAIL, not a meter. It is denominated in bytes and counts, there
         is no monetary concept anywhere in it, and it is set by an operator on
         infrastructure they own (ADR-012).
+
+
+        Requires an interactive session. An API token inherits its owner's role,
+        and a cap a leaked CI credential can raise is decorative.
 
 
         A null limit means that dimension is uncapped. A limit of ZERO is
@@ -2441,7 +2445,7 @@ paths:
     delete:
       operationId: deleteProjectQuota
       tags: [projects]
-      summary: Remove the cap (team admin)
+      summary: Remove the cap (team admin, interactive session)
       responses:
         "204": { description: Removed. }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -2455,7 +2459,15 @@ paths:
       operationId: getTeamQuota
       tags: [teams]
       summary: This team's caps and what it is using (member+)
-      description: A team's meter is the sum of its projects'. A refusal by either scope is a refusal — a team cap a project could exceed by having its own is not a cap.
+      description: >-
+        A team's meter is the sum of its projects'. A refusal by either scope is
+        a refusal — a team cap a project could exceed by having its own is not a
+        cap.
+
+
+        Each dimension additionally carries `committed` (the sum of this team's
+        project caps) and `uncapped_projects`, which a project report does not.
+      
       responses:
         "200": { description: The report., content: { application/json: { schema: { $ref: "#/components/schemas/QuotaReport" } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -2464,7 +2476,19 @@ paths:
     put:
       operationId: setTeamQuota
       tags: [teams]
-      summary: Cap what this team may consume (team admin)
+      summary: Cap what this team may consume (panel admin, interactive session)
+      description: >-
+        PANEL admin, not team admin, and the asymmetry is the point: a team
+        quota set by that team's own admin would guard nothing against that
+        team, which is the only thing it exists to guard against. Panel admin is
+        the rank that already owns servers, deploy keys and backup targets —
+        shared infrastructure — and a fleet-wide capacity policy is that.
+
+
+        Requires an interactive session. An API token inherits its owner's role,
+        so a `write` token belonging to an admin could otherwise raise the cap
+        and then deploy freely, and a control a leaked CI credential can switch
+        off is decorative.
       requestBody:
         required: true
         content: { application/json: { schema: { $ref: "#/components/schemas/SetQuotaRequest" } } }
@@ -2478,7 +2502,8 @@ paths:
     delete:
       operationId: deleteTeamQuota
       tags: [teams]
-      summary: Remove the cap (team admin)
+      summary: Remove the cap (panel admin, interactive session)
+      description: Panel admin and interactive-session only, for the same reasons setting one is — removing a cap is setting it to "none".
       responses:
         "204": { description: Removed. }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -9567,6 +9592,28 @@ components:
         used: { type: integer, format: int64 }
         limit: { type: [integer, "null"], format: int64, description: "Null means uncapped, which reads as no cap rather than as zero." }
         state: { type: string, enum: [ok, warn, exceeded], description: "warn at 90%, exceeded at 100%. Uncapped is always ok." }
+        committed:
+          type: integer
+          format: int64
+          description: >-
+            TEAM REPORTS ONLY: the sum of this team's project caps on this
+            dimension. Absent on a project report, which has nothing below it to
+            sum — absent means "does not apply", never zero.
+
+
+            It may exceed `limit`, and that is not an error. Over-commitment is
+            allowed on purpose: thin provisioning is the normal case, eleven
+            clients do not peak together, and forcing an operator to keep two
+            numbers in lockstep would buy a refusal at the moment they were
+            being careful. It is shown, not forbidden.
+        uncapped_projects:
+          type: integer
+          description: >-
+            TEAM REPORTS ONLY: how many projects in this team have no cap of
+            their own on this dimension. It travels with `committed` because the
+            sum alone is the more flattering half of the truth — zero committed
+            across eleven uncapped projects reads as "nothing promised" when it
+            means "nothing bounded".
 
     MailProviderStatus:
       type: object
