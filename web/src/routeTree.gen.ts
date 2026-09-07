@@ -26,6 +26,7 @@ import { Route as AppSettingsBackupTargetsRouteImport } from './routes/_app/sett
 import { Route as AppSettingsDeployKeysRouteImport } from './routes/_app/settings/deploy-keys'
 import { Route as AppSettingsDiagnosticsRouteImport } from './routes/_app/settings/diagnostics'
 import { Route as AppSettingsDnsRouteImport } from './routes/_app/settings/dns'
+import { Route as AppSettingsLogDrainsRouteImport } from './routes/_app/settings/log-drains'
 import { Route as AppSettingsMailRouteImport } from './routes/_app/settings/mail'
 import { Route as AppSettingsMetricsRouteImport } from './routes/_app/settings/metrics'
 import { Route as AppSettingsProfileRouteImport } from './routes/_app/settings/profile'
@@ -148,6 +149,11 @@ const AppSettingsDiagnosticsRoute = AppSettingsDiagnosticsRouteImport.update({
 const AppSettingsDnsRoute = AppSettingsDnsRouteImport.update({
   id: '/dns',
   path: '/dns',
+  getParentRoute: () => AppSettingsRoute,
+} as any)
+const AppSettingsLogDrainsRoute = AppSettingsLogDrainsRouteImport.update({
+  id: '/log-drains',
+  path: '/log-drains',
   getParentRoute: () => AppSettingsRoute,
 } as any)
 const AppSettingsMailRoute = AppSettingsMailRouteImport.update({
@@ -383,6 +389,7 @@ export interface FileRoutesByFullPath {
   '/settings/deploy-keys': typeof AppSettingsDeployKeysRoute
   '/settings/diagnostics': typeof AppSettingsDiagnosticsRoute
   '/settings/dns': typeof AppSettingsDnsRoute
+  '/settings/log-drains': typeof AppSettingsLogDrainsRoute
   '/settings/mail': typeof AppSettingsMailRoute
   '/settings/metrics': typeof AppSettingsMetricsRoute
   '/settings/profile': typeof AppSettingsProfileRoute
@@ -438,6 +445,7 @@ export interface FileRoutesByTo {
   '/settings/deploy-keys': typeof AppSettingsDeployKeysRoute
   '/settings/diagnostics': typeof AppSettingsDiagnosticsRoute
   '/settings/dns': typeof AppSettingsDnsRoute
+  '/settings/log-drains': typeof AppSettingsLogDrainsRoute
   '/settings/mail': typeof AppSettingsMailRoute
   '/settings/metrics': typeof AppSettingsMetricsRoute
   '/settings/profile': typeof AppSettingsProfileRoute
@@ -492,6 +500,7 @@ export interface FileRoutesById {
   '/_app/settings/deploy-keys': typeof AppSettingsDeployKeysRoute
   '/_app/settings/diagnostics': typeof AppSettingsDiagnosticsRoute
   '/_app/settings/dns': typeof AppSettingsDnsRoute
+  '/_app/settings/log-drains': typeof AppSettingsLogDrainsRoute
   '/_app/settings/mail': typeof AppSettingsMailRoute
   '/_app/settings/metrics': typeof AppSettingsMetricsRoute
   '/_app/settings/profile': typeof AppSettingsProfileRoute
@@ -550,6 +559,7 @@ export interface FileRouteTypes {
     | '/settings/deploy-keys'
     | '/settings/diagnostics'
     | '/settings/dns'
+    | '/settings/log-drains'
     | '/settings/mail'
     | '/settings/metrics'
     | '/settings/profile'
@@ -605,6 +615,7 @@ export interface FileRouteTypes {
     | '/settings/deploy-keys'
     | '/settings/diagnostics'
     | '/settings/dns'
+    | '/settings/log-drains'
     | '/settings/mail'
     | '/settings/metrics'
     | '/settings/profile'
@@ -658,6 +669,7 @@ export interface FileRouteTypes {
     | '/_app/settings/deploy-keys'
     | '/_app/settings/diagnostics'
     | '/_app/settings/dns'
+    | '/_app/settings/log-drains'
     | '/_app/settings/mail'
     | '/_app/settings/metrics'
     | '/_app/settings/profile'
@@ -826,6 +838,13 @@ declare module '@tanstack/react-router' {
       path: '/dns'
       fullPath: '/settings/dns'
       preLoaderRoute: typeof AppSettingsDnsRouteImport
+      parentRoute: typeof AppSettingsRoute
+    }
+    '/_app/settings/log-drains': {
+      id: '/_app/settings/log-drains'
+      path: '/log-drains'
+      fullPath: '/settings/log-drains'
+      preLoaderRoute: typeof AppSettingsLogDrainsRouteImport
       parentRoute: typeof AppSettingsRoute
     }
     '/_app/settings/mail': {
@@ -1105,6 +1124,7 @@ interface AppSettingsRouteChildren {
   AppSettingsDeployKeysRoute: typeof AppSettingsDeployKeysRoute
   AppSettingsDiagnosticsRoute: typeof AppSettingsDiagnosticsRoute
   AppSettingsDnsRoute: typeof AppSettingsDnsRoute
+  AppSettingsLogDrainsRoute: typeof AppSettingsLogDrainsRoute
   AppSettingsMailRoute: typeof AppSettingsMailRoute
   AppSettingsMetricsRoute: typeof AppSettingsMetricsRoute
   AppSettingsProfileRoute: typeof AppSettingsProfileRoute
@@ -1125,6 +1145,7 @@ const AppSettingsRouteChildren: AppSettingsRouteChildren = {
   AppSettingsDeployKeysRoute: AppSettingsDeployKeysRoute,
   AppSettingsDiagnosticsRoute: AppSettingsDiagnosticsRoute,
   AppSettingsDnsRoute: AppSettingsDnsRoute,
+  AppSettingsLogDrainsRoute: AppSettingsLogDrainsRoute,
   AppSettingsMailRoute: AppSettingsMailRoute,
   AppSettingsMetricsRoute: AppSettingsMetricsRoute,
   AppSettingsProfileRoute: AppSettingsProfileRoute,
