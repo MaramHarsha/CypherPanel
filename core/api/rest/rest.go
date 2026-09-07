@@ -30,6 +30,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/projects"
 	"github.com/MaramHarsha/cypherpanel/core/protection"
 	"github.com/MaramHarsha/cypherpanel/core/scheduledtasks"
+	"github.com/MaramHarsha/cypherpanel/core/scheduler"
 	"github.com/MaramHarsha/cypherpanel/core/servers"
 	"github.com/MaramHarsha/cypherpanel/core/sharedvars"
 	"github.com/MaramHarsha/cypherpanel/core/statuspage"
@@ -101,6 +102,9 @@ type ProtectionService interface {
 type DeploymentReader interface {
 	GetDeployment(ctx context.Context, id string) (domain.Deployment, error)
 	ListDeploymentsByApplication(ctx context.Context, appID string, limit int32) ([]domain.Deployment, error)
+	// GetRevision resolves a revision to its application, which is what a
+	// promotion needs to authorize the SOURCE end.
+	GetRevision(ctx context.Context, id string) (domain.Revision, error)
 }
 
 // Opener unseals the webhook HMAC secret for verification (consumer-defined;
@@ -331,6 +335,12 @@ type StatusPageStore interface {
 	GetEnvironment(ctx context.Context, id string) (domain.Environment, error)
 }
 
+// PromotionService plans and performs a revision promotion (consumer-defined).
+type PromotionService interface {
+	PlanPromotion(ctx context.Context, sourceRevisionID, targetApplicationID string) (scheduler.PromotionPlan, error)
+	Promote(ctx context.Context, sourceRevisionID, targetApplicationID, requestedBy string) (domain.Deployment, error)
+}
+
 // UpdateChecker reports the running build and the newest release seen
 // (consumer-defined; *updates.Checker satisfies it).
 type UpdateChecker interface {
@@ -408,6 +418,9 @@ type Deps struct {
 	Upgrades UpgradeService
 	// LogDrains is the panel's outbox for log lines (log-drains.md).
 	LogDrains LogDrainService
+	// Promotion ships a tested artifact to another environment
+	// (revision-promotion.md). *scheduler.Scheduler satisfies it.
+	Promotion PromotionService
 	// Quotas is admission control on aggregate consumption (ADR-012).
 	Quotas QuotaService
 	// MailHost is provider-backed email for verified domains (managed-email.md).
@@ -642,6 +655,12 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/panel/disaster-recovery/run", a.sessionOnly(a.handleRunPlaneDR))
 	mux.HandleFunc("POST /api/v1/panel/disaster-recovery/verify", a.sessionOnly(a.handleVerifyPlaneDR))
 	mux.HandleFunc("GET /api/v1/panel/disaster-recovery/snapshots", a.sessionOnly(a.handleListPlaneSnapshots))
+
+	// Revision promotion (revision-promotion.md §6). The plan is a GET because
+	// it writes nothing, and it IS the screen: an operator decides from what
+	// would change rather than from a confirmation dialog.
+	mux.HandleFunc("GET /api/v1/revisions/{id}/promotion-plan", a.authed(a.handlePlanPromotion))
+	mux.HandleFunc("POST /api/v1/revisions/{id}/promote", a.authed(a.handlePromote))
 
 	// Resource quotas (resource-quotas.md §9; ADR-012). Reading is a member;
 	// SETTING is admin, because capping what a scope may consume is a decision

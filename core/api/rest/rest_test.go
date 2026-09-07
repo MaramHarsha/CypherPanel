@@ -842,6 +842,10 @@ func (f *fakeDeployer) Restart(_ context.Context, appID string) (domain.Applicat
 
 type fakeDeploymentReader struct{}
 
+func (fakeDeploymentReader) GetRevision(context.Context, string) (domain.Revision, error) {
+	return domain.Revision{}, store.ErrNotFound
+}
+
 func (fakeDeploymentReader) GetDeployment(_ context.Context, id string) (domain.Deployment, error) {
 	// dep_unbuilt exists (so authz resolution succeeds) but its revision was
 	// never built — the deployer answers its rollback with 409.

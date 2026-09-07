@@ -1925,6 +1925,73 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /api/v1/revisions/{id}/promotion-plan:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: The source revision. }
+    get:
+      operationId: planPromotion
+      tags: [deployments]
+      summary: Exactly what promoting this revision would change (member+)
+      description: >-
+        Ship the artifact that was TESTED, rather than rebuilding one that
+        should be the same. The plan writes nothing, which is why it is a GET,
+        and it IS the screen: an operator decides from what would change rather
+        than from a confirmation dialog.
+
+
+        NOTHING ABOUT ENVIRONMENT VARIABLES IS EVER COPIED by a promotion — not
+        optionally, not behind a checkbox. Copying variables across environments
+        is the most effective way there is to point production at a staging
+        database, and a panel that offers it will eventually do it. The
+        disagreement is made VISIBLE instead: `only_in_source` and
+        `only_in_target` are computed from KEY NAMES ONLY, because a key present
+        in both with a different value is not drift, it is the normal, intended
+        difference between environments.
+
+
+        `note` carries the one cost that has no fix inside the panel: the image
+        is byte-for-byte the one that ran in staging, including anything baked
+        in at build time.
+      parameters:
+        - { name: target_application_id, in: query, required: true, schema: { type: string } }
+      responses:
+        "200": { description: The plan., content: { application/json: { schema: { $ref: "#/components/schemas/PromotionPlan" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/revisions/{id}/promote:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: The source revision. }
+    post:
+      operationId: promoteRevision
+      tags: [deployments]
+      summary: Ship this revision's artifact to another environment (member+)
+      description: >-
+        No build runs and no source is fetched. The promoted revision carries the
+        TARGET application's own canonical image tag — not the source's — because
+        the agent parses ownership out of a tag and would otherwise reclaim, on
+        the target server, the image that server is running from.
+
+
+        The target's own configuration applies: port, health check, route,
+        limits and environment are the target's. Only the artifact moves.
+
+
+        Deploy protection and quotas both apply, exactly as they do to an
+        ordinary deploy to the target.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [target_application_id], properties: { target_application_id: { type: string } } } } }
+      responses:
+        "202": { description: Started., content: { application/json: { schema: { $ref: "#/components/schemas/Deployment" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: "A freeze window or a resource quota refused it; the body says which." , content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
   /api/v1/projects/{id}/quota:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Project ID. }
@@ -8793,6 +8860,34 @@ components:
         detail: { type: string }
         started_at: { type: string, format: date-time }
         finished_at: { type: [string, "null"], format: date-time }
+
+    PromotionPlan:
+      type: object
+      required: [source_application, target_application, source_revision_id, source_commit, image, same_server, only_in_source, only_in_target, unresolved_in_target, blockers, note]
+      properties:
+        source_application: { type: string }
+        target_application: { type: string }
+        source_revision_id: { type: string }
+        target_revision_id: { type: string, description: What the target is serving now, so the card can say what is being replaced. }
+        source_commit: { type: string }
+        image: { type: string }
+        same_server: { type: boolean, description: "A same-server promotion is instant; a cross-server one relays the artifact." }
+        only_in_source:
+          type: array
+          items: { type: string }
+          description: "Environment-variable KEYS the source has and the target does not. Advisory — nothing is ever copied."
+        only_in_target:
+          type: array
+          items: { type: string }
+        unresolved_in_target:
+          type: array
+          items: { type: string }
+          description: "A shared-variable reference the target's scope cannot resolve. A blocker, surfaced here so it is fixed before the deploy rather than by a failed one."
+        blockers:
+          type: array
+          items: { type: string }
+          description: Empty means this can proceed.
+        note: { type: string, description: "The build-time configuration caveat, which the panel cannot detect and does not pretend to." }
 
     ResourceQuota:
       type: object

@@ -694,12 +694,13 @@ type ResourceUsageDaily struct {
 }
 
 type Revision struct {
-	ID             string
-	ApplicationID  string
-	Image          string
-	SourceCommit   string
-	ConfigSnapshot []byte
-	CreatedAt      pgtype.Timestamptz
+	ID                     string
+	ApplicationID          string
+	Image                  string
+	SourceCommit           string
+	ConfigSnapshot         []byte
+	CreatedAt              pgtype.Timestamptz
+	PromotedFromRevisionID pgtype.Text
 }
 
 type ScheduledTask struct {

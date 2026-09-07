@@ -520,6 +520,22 @@ func (s *Store) CreateRevision(ctx context.Context, id, appID, sourceCommit stri
 	return revisionFromRow(row), nil
 }
 
+// CreatePromotedRevision writes a revision whose artifact already exists. The
+// image is the TARGET's canonical tag — what a build would have produced — so
+// nothing downstream has to know this revision was promoted in order to be
+// correct about ownership.
+func (s *Store) CreatePromotedRevision(ctx context.Context, id, appID, sourceCommit string, configSnapshot []byte, image, fromRevisionID string) (domain.Revision, error) {
+	row, err := s.q.CreatePromotedRevision(ctx, db.CreatePromotedRevisionParams{
+		ID: id, ApplicationID: appID, SourceCommit: sourceCommit,
+		ConfigSnapshot: configSnapshot, Image: image,
+		PromotedFromRevisionID: pgText(fromRevisionID),
+	})
+	if err != nil {
+		return domain.Revision{}, wrapCreate("creating the promoted revision", err)
+	}
+	return revisionFromRow(row), nil
+}
+
 func (s *Store) GetRevision(ctx context.Context, id string) (domain.Revision, error) {
 	row, err := s.q.GetRevision(ctx, id)
 	if err != nil {
@@ -896,12 +912,13 @@ func applicationFromRow(r db.Application) domain.Application {
 
 func revisionFromRow(r db.Revision) domain.Revision {
 	return domain.Revision{
-		ID:             r.ID,
-		ApplicationID:  r.ApplicationID,
-		Image:          r.Image,
-		SourceCommit:   r.SourceCommit,
-		ConfigSnapshot: r.ConfigSnapshot,
-		CreatedAt:      r.CreatedAt.Time,
+		ID:                     r.ID,
+		PromotedFromRevisionID: r.PromotedFromRevisionID.String,
+		ApplicationID:          r.ApplicationID,
+		Image:                  r.Image,
+		SourceCommit:           r.SourceCommit,
+		ConfigSnapshot:         r.ConfigSnapshot,
+		CreatedAt:              r.CreatedAt.Time,
 	}
 }
 

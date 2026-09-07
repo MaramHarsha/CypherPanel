@@ -28,6 +28,7 @@ import type { Deployment } from "@/api/gen/model";
 import { EmptyState } from "@/components/empty-state";
 import { LogViewer } from "@/components/log-viewer";
 import { PageState } from "@/components/page-state";
+import { PromoteCard } from "@/components/promote-card";
 import { failedStage, PipelineStages } from "@/components/pipeline-stages";
 import { StatusDot } from "@/components/status-badge";
 import { ActionButton, useMutationActionState } from "@/components/ui/action-button";
@@ -280,6 +281,21 @@ function DeploymentsTab() {
   return (
     <div className="lg:flex lg:items-stretch">
       <div className="min-w-0 flex-1 lg:pr-8">
+        {/* Promotion sits above the list rather than beside a row: it is a
+            decision about THIS application's current build going somewhere
+            else, not about one historical deployment. */}
+        {app?.observed_revision_id && (
+          <div className="mb-3.5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface px-4 py-3">
+            <div className="min-w-0">
+              <p className="text-[13px] font-medium text-text">Promote what is running</p>
+              <p className="mt-0.5 text-[12.5px] leading-[1.5] text-text-mid">
+                Ship this exact image to another environment. No rebuild, so what arrives is what has been running
+                here.
+              </p>
+            </div>
+            <PromoteCard app={app} projectId={projectId} revisionId={app.observed_revision_id} />
+          </div>
+        )}
         <PageState
           query={deployments}
           empty={

@@ -137,8 +137,12 @@ const (
 	// Resource quotas (ADR-012). The quota row cascades with its project or
 	// team; the audit row is what survives that, and is therefore the evidence
 	// that a cap existed at all.
-	ActionQuotaSet           = "quota.set"
-	ActionQuotaRemoved       = "quota.removed"
+	ActionQuotaSet     = "quota.set"
+	ActionQuotaRemoved = "quota.removed"
+	// A revision's ARTIFACT shipped to another environment without a rebuild
+	// (revision-promotion.md). Recorded against the target, which is where the
+	// change landed, naming the revision it came from.
+	ActionRevisionPromoted   = "application.revision_promoted"
 	ActionEnvironmentCreated = "environment.created"
 	ActionEnvironmentRenamed = "environment.renamed"
 	ActionEnvironmentDeleted = "environment.deleted"
@@ -365,6 +369,8 @@ var actions = map[string]bool{
 
 	ActionQuotaSet:     true,
 	ActionQuotaRemoved: true,
+
+	ActionRevisionPromoted: true,
 
 	ActionRegistryCreated: true, ActionRegistryUpdated: true,
 	ActionRegistryDeleted: true,

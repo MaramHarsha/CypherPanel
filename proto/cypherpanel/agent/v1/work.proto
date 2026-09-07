@@ -282,6 +282,17 @@ message DistributeWork {
   string deployment_id = 1;
   string app_id = 2;
   string image = 3;
+  // V1: the name the image must run under on THIS host (revision-promotion.md
+  // §5). Empty means it already has it, which is every deploy today.
+  //
+  // A promotion moves a tested artifact rather than rebuilding it, so the image
+  // arrives under the SOURCE application's managed tag and has to be renamed
+  // to the target's. This is not cosmetic: the agent parses ownership out of
+  // the tag, and gcImages reclaims every managed reference whose application is
+  // absent from this server's desired set — so an image left under the source's
+  // name would be reclaimed on the first reconcile after the rollout, while
+  // production was serving from it.
+  string target_image = 4;
 }
 
 // DesiredState is the full desired set for one server: the reply to the

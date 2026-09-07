@@ -1535,10 +1535,21 @@ func (x *PushImageWork) GetImage() string {
 // the plane's relay. Idempotent: an agent that already has the image reports
 // success without pulling (the redelivery/crash-recovery anchor, spec §6).
 type DistributeWork struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	DeploymentId  string                 `protobuf:"bytes,1,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
-	AppId         string                 `protobuf:"bytes,2,opt,name=app_id,json=appId,proto3" json:"app_id,omitempty"`
-	Image         string                 `protobuf:"bytes,3,opt,name=image,proto3" json:"image,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	DeploymentId string                 `protobuf:"bytes,1,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
+	AppId        string                 `protobuf:"bytes,2,opt,name=app_id,json=appId,proto3" json:"app_id,omitempty"`
+	Image        string                 `protobuf:"bytes,3,opt,name=image,proto3" json:"image,omitempty"`
+	// V1: the name the image must run under on THIS host (revision-promotion.md
+	// §5). Empty means it already has it, which is every deploy today.
+	//
+	// A promotion moves a tested artifact rather than rebuilding it, so the image
+	// arrives under the SOURCE application's managed tag and has to be renamed
+	// to the target's. This is not cosmetic: the agent parses ownership out of
+	// the tag, and gcImages reclaims every managed reference whose application is
+	// absent from this server's desired set — so an image left under the source's
+	// name would be reclaimed on the first reconcile after the rollout, while
+	// production was serving from it.
+	TargetImage   string `protobuf:"bytes,4,opt,name=target_image,json=targetImage,proto3" json:"target_image,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1590,6 +1601,13 @@ func (x *DistributeWork) GetAppId() string {
 func (x *DistributeWork) GetImage() string {
 	if x != nil {
 		return x.Image
+	}
+	return ""
+}
+
+func (x *DistributeWork) GetTargetImage() string {
+	if x != nil {
+		return x.TargetImage
 	}
 	return ""
 }
@@ -4592,11 +4610,12 @@ const file_cypherpanel_agent_v1_work_proto_rawDesc = "" +
 	"\rPushImageWork\x12#\n" +
 	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12\x15\n" +
 	"\x06app_id\x18\x02 \x01(\tR\x05appId\x12\x14\n" +
-	"\x05image\x18\x03 \x01(\tR\x05image\"b\n" +
+	"\x05image\x18\x03 \x01(\tR\x05image\"\x85\x01\n" +
 	"\x0eDistributeWork\x12#\n" +
 	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12\x15\n" +
 	"\x06app_id\x18\x02 \x01(\tR\x05appId\x12\x14\n" +
-	"\x05image\x18\x03 \x01(\tR\x05image\"\xc0\x03\n" +
+	"\x05image\x18\x03 \x01(\tR\x05image\x12!\n" +
+	"\ftarget_image\x18\x04 \x01(\tR\vtargetImage\"\xc0\x03\n" +
 	"\fDesiredState\x123\n" +
 	"\x05specs\x18\x01 \x03(\v2\x1d.cypherpanel.agent.v1.AppSpecR\x05specs\x127\n" +
 	"\bdb_specs\x18\x02 \x03(\v2\x1c.cypherpanel.agent.v1.DbSpecR\adbSpecs\x12F\n" +

@@ -7,12 +7,55 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const createPromotedRevision = `-- name: CreatePromotedRevision :one
+INSERT INTO revisions (id, application_id, source_commit, config_snapshot, image, promoted_from_revision_id)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, application_id, image, source_commit, config_snapshot, created_at, promoted_from_revision_id
+`
+
+type CreatePromotedRevisionParams struct {
+	ID                     string
+	ApplicationID          string
+	SourceCommit           string
+	ConfigSnapshot         []byte
+	Image                  string
+	PromotedFromRevisionID pgtype.Text
+}
+
+// A promoted revision is created with its image ALREADY NAMED — the target
+// application's own canonical tag, which is exactly what a build would have
+// produced — and with a pointer back to where the artifact came from
+// (revision-promotion.md §5).
+func (q *Queries) CreatePromotedRevision(ctx context.Context, arg CreatePromotedRevisionParams) (Revision, error) {
+	row := q.db.QueryRow(ctx, createPromotedRevision,
+		arg.ID,
+		arg.ApplicationID,
+		arg.SourceCommit,
+		arg.ConfigSnapshot,
+		arg.Image,
+		arg.PromotedFromRevisionID,
+	)
+	var i Revision
+	err := row.Scan(
+		&i.ID,
+		&i.ApplicationID,
+		&i.Image,
+		&i.SourceCommit,
+		&i.ConfigSnapshot,
+		&i.CreatedAt,
+		&i.PromotedFromRevisionID,
+	)
+	return i, err
+}
 
 const createRevision = `-- name: CreateRevision :one
 INSERT INTO revisions (id, application_id, source_commit, config_snapshot)
 VALUES ($1, $2, $3, $4)
-RETURNING id, application_id, image, source_commit, config_snapshot, created_at
+RETURNING id, application_id, image, source_commit, config_snapshot, created_at, promoted_from_revision_id
 `
 
 type CreateRevisionParams struct {
@@ -37,12 +80,13 @@ func (q *Queries) CreateRevision(ctx context.Context, arg CreateRevisionParams) 
 		&i.SourceCommit,
 		&i.ConfigSnapshot,
 		&i.CreatedAt,
+		&i.PromotedFromRevisionID,
 	)
 	return i, err
 }
 
 const getRevision = `-- name: GetRevision :one
-SELECT id, application_id, image, source_commit, config_snapshot, created_at FROM revisions WHERE id = $1
+SELECT id, application_id, image, source_commit, config_snapshot, created_at, promoted_from_revision_id FROM revisions WHERE id = $1
 `
 
 func (q *Queries) GetRevision(ctx context.Context, id string) (Revision, error) {
@@ -55,12 +99,13 @@ func (q *Queries) GetRevision(ctx context.Context, id string) (Revision, error) 
 		&i.SourceCommit,
 		&i.ConfigSnapshot,
 		&i.CreatedAt,
+		&i.PromotedFromRevisionID,
 	)
 	return i, err
 }
 
 const listRevisionsByApplication = `-- name: ListRevisionsByApplication :many
-SELECT id, application_id, image, source_commit, config_snapshot, created_at FROM revisions WHERE application_id = $1 ORDER BY created_at DESC
+SELECT id, application_id, image, source_commit, config_snapshot, created_at, promoted_from_revision_id FROM revisions WHERE application_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListRevisionsByApplication(ctx context.Context, applicationID string) ([]Revision, error) {
@@ -79,6 +124,7 @@ func (q *Queries) ListRevisionsByApplication(ctx context.Context, applicationID 
 			&i.SourceCommit,
 			&i.ConfigSnapshot,
 			&i.CreatedAt,
+			&i.PromotedFromRevisionID,
 		); err != nil {
 			return nil, err
 		}
@@ -91,7 +137,7 @@ func (q *Queries) ListRevisionsByApplication(ctx context.Context, applicationID 
 }
 
 const setRevisionImage = `-- name: SetRevisionImage :one
-UPDATE revisions SET image = $2 WHERE id = $1 RETURNING id, application_id, image, source_commit, config_snapshot, created_at
+UPDATE revisions SET image = $2 WHERE id = $1 RETURNING id, application_id, image, source_commit, config_snapshot, created_at, promoted_from_revision_id
 `
 
 type SetRevisionImageParams struct {
@@ -109,12 +155,13 @@ func (q *Queries) SetRevisionImage(ctx context.Context, arg SetRevisionImagePara
 		&i.SourceCommit,
 		&i.ConfigSnapshot,
 		&i.CreatedAt,
+		&i.PromotedFromRevisionID,
 	)
 	return i, err
 }
 
 const setRevisionSourceCommit = `-- name: SetRevisionSourceCommit :one
-UPDATE revisions SET source_commit = $2 WHERE id = $1 RETURNING id, application_id, image, source_commit, config_snapshot, created_at
+UPDATE revisions SET source_commit = $2 WHERE id = $1 RETURNING id, application_id, image, source_commit, config_snapshot, created_at, promoted_from_revision_id
 `
 
 type SetRevisionSourceCommitParams struct {
@@ -132,6 +179,7 @@ func (q *Queries) SetRevisionSourceCommit(ctx context.Context, arg SetRevisionSo
 		&i.SourceCommit,
 		&i.ConfigSnapshot,
 		&i.CreatedAt,
+		&i.PromotedFromRevisionID,
 	)
 	return i, err
 }

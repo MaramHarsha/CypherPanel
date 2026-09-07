@@ -558,6 +558,18 @@ func (f *fakeStore) GetMetricsSettings(context.Context) (domain.MetricsSettings,
 	return domain.DefaultMetricsSettings(), nil
 }
 
+func (f *fakeStore) CreatePromotedRevision(_ context.Context, id, appID, sourceCommit string, snapshot []byte, image, from string) (domain.Revision, error) {
+	rev := domain.Revision{
+		ID: id, ApplicationID: appID, SourceCommit: sourceCommit,
+		ConfigSnapshot: snapshot, Image: image, PromotedFromRevisionID: from,
+	}
+	if f.revisions == nil {
+		f.revisions = map[string]domain.Revision{}
+	}
+	f.revisions[id] = rev
+	return rev, nil
+}
+
 func (f *fakeStore) ListRoutableStatusPages(context.Context) ([]domain.StatusPage, error) {
 	return nil, nil
 }

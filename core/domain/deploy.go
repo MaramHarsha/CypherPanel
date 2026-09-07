@@ -294,7 +294,15 @@ type Revision struct {
 	Image          string
 	SourceCommit   string
 	ConfigSnapshot []byte // JSON snapshot of the spec at creation
-	CreatedAt      time.Time
+	// PromotedFromRevisionID names the revision whose ARTIFACT this one runs,
+	// when the revision was promoted rather than built (revision-promotion.md
+	// §5). Empty for every ordinary revision.
+	//
+	// The image is still the TARGET application's own canonical tag: the agent
+	// parses ownership out of a tag, and one carrying the source application's
+	// name would be reclaimed on the target's first reconcile.
+	PromotedFromRevisionID string
+	CreatedAt              time.Time
 }
 
 // DeploymentStatus is the lifecycle of a Deployment. Distinct from the

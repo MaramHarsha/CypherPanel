@@ -54,7 +54,9 @@ type Message interface {
 // work items with a clear error instead of guessing.
 type ImageRelay interface {
 	PushImage(ctx context.Context, deploymentID, image string) error
-	PullImage(ctx context.Context, deploymentID, image string) error
+	// PullImage fetches the deployment's image and, when targetImage is set,
+	// gives it the name it must RUN under here (revision-promotion.md §5).
+	PullImage(ctx context.Context, deploymentID, image, targetImage string) error
 }
 
 // BackupRunner executes one database backup or restore and returns the terminal
@@ -575,7 +577,7 @@ func (w *Worker) handleMsg(ctx context.Context, msg Message) {
 			if w.relay == nil {
 				return errNoRelay
 			}
-			return w.relay.PullImage(ctx, work.DeploymentId, work.Image)
+			return w.relay.PullImage(ctx, work.DeploymentId, work.Image, work.TargetImage)
 		})
 		return
 

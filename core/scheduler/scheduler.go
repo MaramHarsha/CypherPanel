@@ -129,6 +129,8 @@ type Store interface {
 	ListRoutableStatusPages(ctx context.Context) ([]domain.StatusPage, error)
 	// Panel-wide metrics policy, carried to every node (metrics-and-usage.md §5).
 	GetMetricsSettings(ctx context.Context) (domain.MetricsSettings, error)
+	// A revision whose artifact already exists (revision-promotion.md §5).
+	CreatePromotedRevision(ctx context.Context, id, appID, sourceCommit string, configSnapshot []byte, image, fromRevisionID string) (domain.Revision, error)
 
 	GetDeployKey(ctx context.Context, id string) (domain.DeployKey, error)
 
@@ -849,6 +851,18 @@ func (s *Scheduler) start(ctx context.Context, dep domain.Deployment) error {
 		}
 		return err
 	}
+	if rev.PromotedFromRevisionID != "" {
+		// A promotion: the artifact exists, but on the SOURCE's server. The
+		// distribute stage's meaning generalises by one word — from "obtain
+		// this deployment's image from the relay" to "make this deployment's
+		// image exist, under the name it will run as, on this host" — and that
+		// is the whole of the change (revision-promotion.md §5).
+		//
+		// Same-server is the cheap case and still goes through here: the relay
+		// short-circuits when the image is already present under its run name,
+		// so the path is one call rather than two code paths that can diverge.
+		return s.startDistribute(ctx, dep, app, rev)
+	}
 	if rev.Image != "" {
 		// Already built (rollback): straight to rollout.
 		return s.startRollout(ctx, dep, app, rev)
@@ -1472,14 +1486,30 @@ func (s *Scheduler) startDistribute(ctx context.Context, dep domain.Deployment, 
 	}
 	builderID := builderFor(dep, app)
 
-	push, err := proto.Marshal(&agentv1.PushImageWork{DeploymentId: dep.ID, AppId: app.ID, Image: image})
+	pushImage := image
+	if source := s.promotedSourceImage(ctx, rev); source != "" {
+		pushImage = source
+	}
+	push, err := proto.Marshal(&agentv1.PushImageWork{DeploymentId: dep.ID, AppId: app.ID, Image: pushImage})
 	if err != nil {
 		return fmt.Errorf("scheduler: marshaling push work: %w", err)
 	}
 	if err := s.bus.PublishWork(ctx, subjects.PushImage(builderID), dep.ID+".push", push); err != nil {
 		return fmt.Errorf("scheduler: publishing push: %w", err)
 	}
-	dist, err := proto.Marshal(&agentv1.DistributeWork{DeploymentId: dep.ID, AppId: app.ID, Image: image})
+	// For a promotion the image ARRIVES under the source application's tag and
+	// must RUN under the target's, so both names ride the work item. For every
+	// other deploy the two are the same and target_image is empty, which is
+	// what every agent that predates this reads.
+	target := ""
+	if rev.PromotedFromRevisionID != "" {
+		if source := s.promotedSourceImage(ctx, rev); source != "" {
+			image, target = source, rev.Image
+		}
+	}
+	dist, err := proto.Marshal(&agentv1.DistributeWork{
+		DeploymentId: dep.ID, AppId: app.ID, Image: image, TargetImage: target,
+	})
 	if err != nil {
 		return fmt.Errorf("scheduler: marshaling distribute work: %w", err)
 	}
