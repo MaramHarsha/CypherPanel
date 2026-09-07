@@ -47,6 +47,27 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# REFUSE TO RUN BESIDE A LIVE AGENT.
+#
+# The Proxy's container name (`cypher-proxy`) is a HOST-GLOBAL constant, not a
+# per-agent one (agent/proxy/ensure.go). So a second agent on the same host
+# converges that same container and re-points it at its own Traefik directory,
+# taking over routing for whatever the first agent was serving until the first
+# one converges it back. On a laptop that is a puzzle; on a machine running a
+# real panel it is an outage — and this suite ran on exactly such a machine
+# once before the check existed.
+#
+# A suite that exists to catch defects must not cause them.
+if [ "${E2E_I_KNOW_THIS_HOST_HAS_NO_AGENT:-}" != 1 ] \
+    && command -v docker >/dev/null 2>&1 \
+    && docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^cypher-proxy$'; then
+    fail "a CypherPanel proxy is already running on this host, so an agent is too.
+  Two agents on one host fight over the container named 'cypher-proxy' and over
+  Traefik's configuration directory, so running this suite here would disturb
+  whatever that agent is serving. Run it on a host with no agent, or in CI.
+  E2E_I_KNOW_THIS_HOST_HAS_NO_AGENT=1 overrides this, and you should be sure."
+fi
+
 mkdir -p "$WORK"
 
 # wait_for polls a command until it succeeds, then reports honestly if it never
