@@ -85,6 +85,17 @@ type Config struct {
 	// requirement and the wrong default for a panel nobody prunes.
 	AuditRetention time.Duration
 
+	// Status pages (status-pages.md §11). StatusDwell is how long a component
+	// must hold a state before the page records it — and therefore the page's
+	// own resolution, which it states out loud rather than implying a
+	// stopwatch. StatusCacheTTL bounds what anonymous traffic can cost the
+	// plane. StatusRetention keeps intervals longer than the 30-day window the
+	// page shows, so a wider window is possible later with no hole; 0 keeps
+	// them forever.
+	StatusDwell     time.Duration
+	StatusCacheTTL  time.Duration
+	StatusRetention time.Duration
+
 	// RevisionRetain is how many of an application's images the plane wants
 	// kept on a node, newest first and including the deployed one
 	// (disk-management.md §7). It is the whole garbage-collection policy: the
@@ -125,6 +136,9 @@ func Load() (Config, error) {
 		DataDir:           envOr("CYPHERD_DATA_DIR", "/var/lib/cypherd"),
 		RuntimeLogsMaxAge: envDuration("CYPHERD_RUNTIME_LOGS_MAX_AGE", 24*time.Hour),
 		AuditRetention:    envDuration("CYPHERD_AUDIT_RETENTION", 90*24*time.Hour),
+		StatusDwell:       envDuration("CYPHERD_STATUS_DWELL", time.Minute),
+		StatusCacheTTL:    envDuration("CYPHERD_STATUS_CACHE_TTL", 15*time.Second),
+		StatusRetention:   envDuration("CYPHERD_STATUS_RETENTION", 90*24*time.Hour),
 		// Minimum 1 enforced below: the deployed revision is never reclaimable,
 		// so a zero here would be a request to delete what is running.
 		RevisionRetain:  envInt("CYPHERD_REVISION_RETAIN", 3),

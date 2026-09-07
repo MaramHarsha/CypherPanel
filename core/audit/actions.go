@@ -84,9 +84,19 @@ const (
 	// A bulk read of a project's whole configuration, recorded before the
 	// stream starts so an abandoned download is still on the record.
 	ActionProjectExported = "project.exported"
-	ActionEnvironmentCreated = "environment.created"
-	ActionEnvironmentRenamed = "environment.renamed"
-	ActionEnvironmentDeleted = "environment.deleted"
+	// Status pages (status-pages.md §8). Publishing and unpublishing are their
+	// own actions rather than details on `.updated`, because "we made this
+	// project's health public, on this date, and this person did it" is
+	// precisely the fact an audit read exists to find.
+	ActionStatusPageCreated           = "status_page.created"
+	ActionStatusPageUpdated           = "status_page.updated"
+	ActionStatusPageDeleted           = "status_page.deleted"
+	ActionStatusPagePublished         = "status_page.published"
+	ActionStatusPageUnpublished       = "status_page.unpublished"
+	ActionStatusPageIncidentAnnotated = "status_page.incident_annotated"
+	ActionEnvironmentCreated          = "environment.created"
+	ActionEnvironmentRenamed          = "environment.renamed"
+	ActionEnvironmentDeleted          = "environment.deleted"
 	// A template install creates several applications and databases in one
 	// action, so it is recorded ONCE against the environment that received
 	// them — six silent creates is not an answer to "where did these come
@@ -110,8 +120,8 @@ const (
 	// Volume backup schedule changed, and a run started.
 	ActionVolumeBackupChanged = "application.volume_backup_changed"
 	ActionVolumeBackupRan     = "application.volume_backup_ran"
-	ActionEnvVarSet            = "application.env_var_set"
-	ActionEnvVarRemoved        = "application.env_var_removed"
+	ActionEnvVarSet           = "application.env_var_set"
+	ActionEnvVarRemoved       = "application.env_var_removed"
 
 	// Compose Stacks (compose-stacks.md §7). The detail records THAT the file
 	// changed, never its content: a compose file can carry an inline secret an
@@ -270,9 +280,15 @@ var actions = map[string]bool{
 	ActionWebhookSecretRotated: true,
 
 	ActionApplicationAccessChanged: true,
-	ActionVolumeBackupChanged: true, ActionVolumeBackupRan: true,
+	ActionVolumeBackupChanged:      true, ActionVolumeBackupRan: true,
 
 	ActionProjectExported: true,
+
+	ActionStatusPageCreated:   true,
+	ActionStatusPageUpdated:   true,
+	ActionStatusPageDeleted:   true,
+	ActionStatusPagePublished: true, ActionStatusPageUnpublished: true,
+	ActionStatusPageIncidentAnnotated: true,
 
 	ActionRegistryCreated: true, ActionRegistryUpdated: true,
 	ActionRegistryDeleted: true,

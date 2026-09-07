@@ -123,6 +123,8 @@ type Store interface {
 	// DesiredState (agent-identity-and-tls.md §4). store.ErrNotFound means TLS
 	// is not configured, which is a normal state, not a failure.
 	GetPanelTLS(ctx context.Context) (domain.PanelTLS, error)
+	// Status page routes for the desired-state build (status-pages.md §4).
+	ListRoutableStatusPages(ctx context.Context) ([]domain.StatusPage, error)
 
 	GetDeployKey(ctx context.Context, id string) (domain.DeployKey, error)
 
@@ -245,11 +247,11 @@ type Scheduler struct {
 	// from, so the shared prune event can delete the right rows once the
 	// objects are confirmed gone rather than optimistically.
 	volumePrunes map[string]string
-	store  Store
-	bus    Bus
-	opener Opener
-	log    *slog.Logger
-	now    func() time.Time
+	store        Store
+	bus          Bus
+	opener       Opener
+	log          *slog.Logger
+	now          func() time.Time
 
 	// sinks receive terminal outcomes. An empty slice is already a no-op, so
 	// the call sites need no nil guard (outbound-webhooks.md §5).
@@ -276,6 +278,9 @@ type Scheduler struct {
 	// Zero means the default — the wiring sets it, and a test that does not
 	// still gets a sane window.
 	revisionRetain int
+	// panelURL is the panel's own advertised base URL, and it is the ONLY
+	// thing a status page's Proxy fragment can point at (status-pages.md §4).
+	panelURL string
 
 	// mu serializes pipeline transitions: deploy requests and event handlers
 	// race on the per-app queue, and the transitions are read-modify-write.
@@ -1818,7 +1823,50 @@ func (s *Scheduler) DesiredStateFor(ctx context.Context, serverID string) ([]byt
 		ds.Tls = &agentv1.TLSSettings{AcmeEmail: tls.ACMEEmail, AcmeCaServer: tls.ACMECAServer}
 	}
 
+	// V1: status page routes (status-pages.md §4). Absence-means-remove like
+	// the specs, so a read failure here CANNOT be swallowed: an empty list is
+	// an instruction to remove every status route on the node.
+	staticRoutes, err := s.statusRoutesFor(ctx, serverID)
+	if err != nil {
+		return nil, err
+	}
+	ds.StaticRoutes = staticRoutes
+
 	return proto.Marshal(ds)
+}
+
+// statusRoutesFor names the status-page fragments this node's Proxy must
+// serve. The upstream is the panel's own base URL, taken from the plane's
+// configuration — never from anything an operator typed into the page's form,
+// which is what stops this from being a way to aim a node's Proxy anywhere.
+//
+// A page with no panel URL configured is skipped rather than routed at a
+// guessed address: pointing a public hostname at the wrong upstream is worse
+// than not routing it, and the settings tab says which pages are waiting on it.
+func (s *Scheduler) statusRoutesFor(ctx context.Context, serverID string) ([]*agentv1.StaticRouteSpec, error) {
+	if s.panelURL == "" {
+		return nil, nil
+	}
+	pages, err := s.store.ListRoutableStatusPages(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("scheduler: listing status page routes for %s: %w", serverID, err)
+	}
+	out := make([]*agentv1.StaticRouteSpec, 0, len(pages))
+	for _, p := range pages {
+		if p.RouteServerID != serverID {
+			continue
+		}
+		out = append(out, &agentv1.StaticRouteSpec{
+			RouteId:     p.ID,
+			Route:       &agentv1.RouteSpec{Domain: p.Domain, Https: p.HTTPS},
+			UpstreamUrl: s.panelURL,
+			// The prefix is why the plane needs no Host-header dispatch: the
+			// Proxy rewrites / to /status/<slug>, so one ordinary path serves
+			// the same page under any number of domains.
+			AddPrefix: "/status/" + p.Slug,
+		})
+	}
+	return out, nil
 }
 
 // retainFor names, per application, the revisions whose images must survive on
@@ -2034,6 +2082,11 @@ func (s *Scheduler) SetGate(g Gate) { s.gate = g }
 // can only name a registry the panel stored, so a panel without this never has
 // one to resolve (registries.md §5).
 func (s *Scheduler) SetRegistries(r RegistryCredentials) { s.registries = r }
+
+// SetPanelURL gives the scheduler the panel's own base URL, which status page
+// route fragments point at. Empty means no page is routed — the settings tab
+// says so rather than the plane guessing an address.
+func (s *Scheduler) SetPanelURL(u string) { s.panelURL = strings.TrimRight(u, "/") }
 
 // SetRevisionRetain sets how many of an application's images a node keeps
 // (disk-management.md §7). Below 1 is ignored: the deployed revision is never

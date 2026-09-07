@@ -44,8 +44,8 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/deploykeys"
 	"github.com/MaramHarsha/cypherpanel/core/dns"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
-	"github.com/MaramHarsha/cypherpanel/core/export"
 	"github.com/MaramHarsha/cypherpanel/core/enroll"
+	"github.com/MaramHarsha/cypherpanel/core/export"
 	"github.com/MaramHarsha/cypherpanel/core/guard"
 	"github.com/MaramHarsha/cypherpanel/core/identity"
 	"github.com/MaramHarsha/cypherpanel/core/inbox"
@@ -65,6 +65,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/servers"
 	"github.com/MaramHarsha/cypherpanel/core/sharedvars"
 	"github.com/MaramHarsha/cypherpanel/core/status"
+	"github.com/MaramHarsha/cypherpanel/core/statuspage"
 	"github.com/MaramHarsha/cypherpanel/core/store"
 	"github.com/MaramHarsha/cypherpanel/core/teams"
 	"github.com/MaramHarsha/cypherpanel/core/templates"
@@ -269,6 +270,8 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 	// garbage-collection policy, converged to rather than swept for
 	// (disk-management.md §2).
 	sched.SetRevisionRetain(cfg.RevisionRetain)
+	// The only address a status page's Proxy fragment can point at.
+	sched.SetPanelURL(cfg.AdvertisedConsoleURL())
 
 	// The panel's ACME account (agent-identity-and-tls.md §4): one setting,
 	// carried to every node in its desired state. The scheduler is the fleet
@@ -590,6 +593,19 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 	}
 
 	// REST API + console.
+	// Status pages: the evaluator writes the interval time series, and the
+	// server renders and caches the public documents (status-pages.md §§3, 6).
+	statusEval := statuspage.New(st, statuspage.Config{
+		Dwell:     cfg.StatusDwell,
+		Retention: cfg.StatusRetention,
+	}, log.With("component", "status-pages"))
+	statusSrv := statuspage.NewServer(st, st, cfg.StatusCacheTTL)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		statusEval.Run(ctx)
+	}()
+
 	api := rest.New(rest.Deps{
 		Auth:             authr,
 		Onboarding:       onboardSvc,
@@ -637,6 +653,10 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		Panel:            updateChecker,
 		PanelLogs:        panelLogs,
 		DataDir:          cfg.DataDir,
+		StatusPages:      st,
+		StatusServer:     statusSrv,
+		StatusRoutes:     statusSrv,
+		PanelURL:         cfg.AdvertisedConsoleURL(),
 		Log:              log,
 	})
 	httpSrv := &http.Server{

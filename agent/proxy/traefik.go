@@ -79,8 +79,30 @@ func (t *Traefik) hasResolver() bool {
 // Name identifies the proxy driver ("traefik"; "caddy" is a later driver).
 func (t *Traefik) Name() string { return "traefik" }
 
-// SetRoute writes the Traefik fragment for an app atomically.
+// SetRoute writes the Traefik fragment for an app atomically. The upstream is
+// a bare host:port, which is what a container is.
 func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.RouteSpec, upstream string) error {
+	return t.setRoute(ctx, appID, route, "http://"+upstream, "")
+}
+
+// SetStaticRoute writes a fragment for an upstream that is not a container
+// (status-pages.md §4). Two things differ from SetRoute and only two: the
+// upstream arrives as an ABSOLUTE URL — a control plane behind a TLS
+// terminator has to be expressible as https:// — and an addPrefix middleware
+// rewrites the path, which is why the plane needs no Host-header dispatch and
+// the same page works under any number of domains.
+//
+// upstreamURL is the plane's own base URL, filled in by the plane. It is never
+// operator input, so this is not a way to aim a node's Proxy at an address
+// somebody typed into a form.
+func (t *Traefik) SetStaticRoute(ctx context.Context, routeID string, route *agentv1.RouteSpec, upstreamURL, addPrefix string) error {
+	if !strings.HasPrefix(upstreamURL, "http://") && !strings.HasPrefix(upstreamURL, "https://") {
+		return fmt.Errorf("static route upstream must be an absolute http(s) URL")
+	}
+	return t.setRoute(ctx, routeID, route, upstreamURL, addPrefix)
+}
+
+func (t *Traefik) setRoute(ctx context.Context, appID string, route *agentv1.RouteSpec, upstreamURL, addPrefix string) error {
 	if route == nil {
 		return fmt.Errorf("route spec is nil")
 	}
@@ -130,6 +152,9 @@ func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.Rou
 			// The app must never see the credential it might log.
 			RemoveHeader bool `yaml:"removeHeader"`
 		} `yaml:"basicAuth,omitempty"`
+		AddPrefix *struct {
+			Prefix string `yaml:"prefix"`
+		} `yaml:"addPrefix,omitempty"`
 	}
 
 	doc := struct {
@@ -180,6 +205,22 @@ func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.Rou
 			doc.HTTP.Middlewares[name] = mw
 			chain = append(chain, name)
 		}
+	}
+
+	// addPrefix goes LAST in the chain, after the mark and after any access
+	// control: rewriting the path for a visitor the allowlist is about to
+	// reject would be work done for a 403.
+	if addPrefix != "" {
+		if strings.Contains(addPrefix, "`") || !strings.HasPrefix(addPrefix, "/") {
+			return fmt.Errorf("invalid add prefix")
+		}
+		name := appID + "-prefix"
+		mw := Middleware{}
+		mw.AddPrefix = &struct {
+			Prefix string `yaml:"prefix"`
+		}{Prefix: addPrefix}
+		doc.HTTP.Middlewares[name] = mw
+		chain = append(chain, name)
 	}
 
 	rule := fmt.Sprintf("Host(`%s`)", route.Domain)
@@ -247,7 +288,7 @@ func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.Rou
 	srv := Service{}
 	srv.LoadBalancer.Servers = []struct {
 		URL string `yaml:"url"`
-	}{{URL: "http://" + upstream}}
+	}{{URL: upstreamURL}}
 
 	doc.HTTP.Services[appID] = srv
 

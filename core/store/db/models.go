@@ -533,6 +533,43 @@ type SharedVariable struct {
 	UpdatedAt     pgtype.Timestamptz
 }
 
+type StatusEvaluation struct {
+	ID          string
+	EvaluatedAt pgtype.Timestamptz
+}
+
+type StatusInterval struct {
+	ID          string
+	ComponentID string
+	State       string
+	StartedAt   pgtype.Timestamptz
+	EndedAt     pgtype.Timestamptz
+	Message     string
+}
+
+type StatusPage struct {
+	ID            string
+	ProjectID     string
+	Slug          string
+	Title         string
+	Enabled       bool
+	Domain        string
+	Https         bool
+	RouteServerID pgtype.Text
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
+type StatusPageComponent struct {
+	ID            string
+	StatusPageID  string
+	ResourceKind  string
+	ResourceID    string
+	Label         string
+	Position      int32
+	TrackingSince pgtype.Timestamptz
+}
+
 type Team struct {
 	ID        string
 	Name      string

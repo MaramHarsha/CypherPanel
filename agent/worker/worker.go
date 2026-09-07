@@ -118,6 +118,7 @@ type Worker struct {
 	driftInterval time.Duration
 	cron          CronRunner
 	proxyTLS      ProxyTLS
+	staticRouter  StaticRouter
 
 	mu           sync.Mutex
 	state        map[string]*agentv1.AppSpec     // map[app_id]spec
@@ -127,6 +128,18 @@ type Worker struct {
 	// images must survive (disk-management.md §2). Held beside the specs and
 	// replaced wholesale on every sync, like them.
 	retain []*agentv1.RetainSpec
+	// staticRoutes are proxy fragments for upstreams that are not containers
+	// (status-pages.md §4). Replaced wholesale on every sync like the specs,
+	// with the same absence-means-remove contract.
+	staticRoutes map[string]*agentv1.StaticRouteSpec
+}
+
+// StaticRouter writes and removes proxy fragments whose upstream is not a
+// container. Consumer-defined and optional: a node whose agent was built
+// without a Proxy driver simply carries no status routes.
+type StaticRouter interface {
+	SetStaticRoute(ctx context.Context, routeID string, route *agentv1.RouteSpec, upstreamURL, addPrefix string) error
+	RemoveRoute(ctx context.Context, routeID string) error
 }
 
 // CronRunner arms scheduled tasks from desired state and fires them on schedule
@@ -166,6 +179,7 @@ func New(bus Bus, serverID string, drv driver.Reconciler, dbRec driver.DbReconci
 		state:         make(map[string]*agentv1.AppSpec),
 		dbState:       make(map[string]*agentv1.DbSpec),
 		composeState:  make(map[string]*agentv1.ComposeSpec),
+		staticRoutes:  make(map[string]*agentv1.StaticRouteSpec),
 	}
 }
 
@@ -182,6 +196,10 @@ func (w *Worker) SetCron(c CronRunner) { w.cron = c }
 // SetProxyTLS attaches the Proxy's TLS settings sink, wired only on nodes that
 // run a Proxy (agent-identity-and-tls.md §4).
 func (w *Worker) SetProxyTLS(p ProxyTLS) { w.proxyTLS = p }
+
+// SetStaticRouter attaches the writer for non-container proxy fragments,
+// wired only on nodes that run a Proxy (status-pages.md §4).
+func (w *Worker) SetStaticRouter(r StaticRouter) { w.staticRouter = r }
 
 // Run performs an initial desired-state sync, converges once on boot, then
 // processes work items until the context is canceled. Between work items it
@@ -285,10 +303,34 @@ func (w *Worker) syncState(ctx context.Context) error {
 	for _, spec := range ds.ComposeSpecs {
 		composeState[spec.StackId] = spec
 	}
+	staticState := make(map[string]*agentv1.StaticRouteSpec, len(ds.StaticRoutes))
+	for _, sr := range ds.StaticRoutes {
+		if sr.GetRouteId() != "" {
+			staticState[sr.GetRouteId()] = sr
+		}
+	}
+
 	w.mu.Lock()
+	var gone []string
+	for id := range w.staticRoutes {
+		if _, still := staticState[id]; !still {
+			gone = append(gone, id)
+		}
+	}
 	w.state, w.dbState, w.composeState = state, dbState, composeState
 	w.retain = ds.Retain
+	w.staticRoutes = staticState
 	w.mu.Unlock()
+
+	// Absence means remove, and it is done here rather than in reconcile
+	// because this is the only place that knows what USED to be present.
+	if w.staticRouter != nil {
+		for _, id := range gone {
+			if err := w.staticRouter.RemoveRoute(ctx, id); err != nil {
+				w.log.Error("worker: removing static route", "route_id", id, "error", err)
+			}
+		}
+	}
 
 	// Node-wide TLS settings ride along with the desired set: one panel, one
 	// ACME account, every node (agent-identity-and-tls.md §4). An empty
@@ -786,6 +828,11 @@ func (w *Worker) reconcile(ctx context.Context, triggerDeploymentID, triggerAppI
 		w.log.Error("worker: compose reconcile failed", "error", err)
 	}
 
+	// V1: static routes (status-pages.md §4). One fragment each, rewritten
+	// every cycle — the writer skips an identical write, so this costs a
+	// stat and a compare rather than a Traefik reload.
+	w.reconcileStaticRoutes(ctx)
+
 	// Publish the terminal outcome for the triggering app work item, if any. A
 	// failed rollout or teardown surfaces as the triggered app's 'error'
 	// AppStatus; anything else is success.
@@ -805,6 +852,27 @@ func (w *Worker) reconcile(ctx context.Context, triggerDeploymentID, triggerAppI
 	}
 
 	return nil
+}
+
+// reconcileStaticRoutes converges the node's non-container proxy fragments.
+// A failure on one route is logged and the rest still converge: a status page
+// that will not route is not a reason to leave an application's route stale.
+func (w *Worker) reconcileStaticRoutes(ctx context.Context) {
+	if w.staticRouter == nil {
+		return
+	}
+	w.mu.Lock()
+	desired := make([]*agentv1.StaticRouteSpec, 0, len(w.staticRoutes))
+	for _, sr := range w.staticRoutes {
+		desired = append(desired, sr)
+	}
+	w.mu.Unlock()
+
+	for _, sr := range desired {
+		if err := w.staticRouter.SetStaticRoute(ctx, sr.GetRouteId(), sr.GetRoute(), sr.GetUpstreamUrl(), sr.GetAddPrefix()); err != nil {
+			w.log.Error("worker: writing static route", "route_id", sr.GetRouteId(), "error", err)
+		}
+	}
 }
 
 // reconcileDatabases converges the local database set toward w.dbState and

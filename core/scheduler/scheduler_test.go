@@ -22,8 +22,8 @@ import (
 // ─── fakes ──────────────────────────────────────────────────────────────────
 
 type fakeStore struct {
-	volumeBackups map[string]domain.VolumeBackup
-	volumeRecords map[string]domain.VolumeBackupRecord
+	volumeBackups  map[string]domain.VolumeBackup
+	volumeRecords  map[string]domain.VolumeBackupRecord
 	restores       map[string]domain.DatabaseRestore
 	dbStatuses     map[string]string
 	mu             sync.Mutex
@@ -548,6 +548,10 @@ func (f *fakeStore) ListServers(context.Context) ([]domain.Server, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.servers, nil
+}
+
+func (f *fakeStore) ListRoutableStatusPages(context.Context) ([]domain.StatusPage, error) {
+	return nil, nil
 }
 
 func (f *fakeStore) GetPanelTLS(context.Context) (domain.PanelTLS, error) {

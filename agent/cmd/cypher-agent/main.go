@@ -213,8 +213,9 @@ func runAgent(args []string, log *slog.Logger) error {
 		// everything except builder-role agents, which run nothing and must
 		// not bind :80/:443 (builder-role-and-relay.md §1).
 		var drv driver.Reconciler
-		var dockerDrv *docker.Driver // concrete handle for the cron executor
-		var proxyTLS worker.ProxyTLS // the Proxy's ACME sink, on app-role nodes
+		var dockerDrv *docker.Driver         // concrete handle for the cron executor
+		var proxyTLS worker.ProxyTLS         // the Proxy's ACME sink, on app-role nodes
+		var staticRouter worker.StaticRouter // non-container fragments (status pages)
 		var composeRec driver.ComposeReconciler
 		if *role != "builder" {
 			// The Proxy owns this host directory (routing-and-tls.md §5):
@@ -237,6 +238,7 @@ func runAgent(args []string, log *slog.Logger) error {
 				Log:          log,
 			})
 			proxyTLS = prx
+			staticRouter = prx
 			prb := prober.New()
 			strm := stream.NewStreamer(nc, eng, id.ServerID)
 			go strm.Start(ctx, 10*time.Second)
@@ -277,6 +279,9 @@ func runAgent(args []string, log *slog.Logger) error {
 		w := worker.New(wbus, id.ServerID, drv, dbRec, backupRunner, bld, imgRelay, log)
 		if proxyTLS != nil {
 			w.SetProxyTLS(proxyTLS)
+		}
+		if staticRouter != nil {
+			w.SetStaticRouter(staticRouter)
 		}
 		if dockerDrv != nil {
 			// Scheduled tasks run only on app-role nodes (they need a container

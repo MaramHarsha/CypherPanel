@@ -1653,6 +1653,161 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/v1/projects/{id}/status-page:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Project ID. }
+    get:
+      operationId: getStatusPage
+      tags: [projects]
+      summary: The project's public status page (member+)
+      responses:
+        "200": { description: The page., content: { application/json: { schema: { $ref: "#/components/schemas/StatusPage" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: setStatusPage
+      tags: [projects]
+      summary: Create or replace the status page (TEAM ADMIN)
+      description: >-
+        One page per project — "which of our four status pages is the real one"
+        is not a question this product can be asked.
+
+
+        This is TEAM ADMIN, not member, and the reason is the whole feature:
+        publishing a project's health, under names of somebody's choosing, at a
+        hostname customers will read, is a disclosure decision. It sits at the
+        rank that already decides who joins the team, not at the rank that
+        ships code.
+
+
+        Nothing about a resource becomes public except the label an operator
+        types for it. Not its name, not its server, not its route domain, not
+        its revision, and never the agent's own status detail.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetStatusPageRequest" } } }
+      responses:
+        "200": { description: Saved., content: { application/json: { schema: { $ref: "#/components/schemas/StatusPage" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: That slug is already taken by another status page., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      operationId: deleteStatusPage
+      tags: [projects]
+      summary: Remove the status page and its history (TEAM ADMIN)
+      responses:
+        "204": { description: Removed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/status-pages/{id}/components:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Status page ID. }
+    get:
+      operationId: listStatusPageComponents
+      tags: [projects]
+      summary: The ordered component list (member+)
+      responses:
+        "200":
+          description: The components.
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/StatusPageComponent" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: setStatusPageComponents
+      tags: [projects]
+      summary: Replace the whole ordered component list (TEAM ADMIN)
+      description: >-
+        Wholesale, because the list IS the page: adding and removing one row at
+        a time through two routes would make "what does this page publish right
+        now" a question with two answers mid-edit. A row that survives a save
+        keeps its id, and with it the history its bars are drawn from — so
+        fixing a typo in a label does not reset thirty days of uptime.
+
+
+        A component naming a resource in a PREVIEW environment is refused with
+        a reason. A preview is created by a machine from an outsider's pull
+        request, so a page that could include one would publish branch names
+        and pull request titles written by people outside the team. That is a
+        rejection, not a default.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetStatusPageComponentsRequest" } } }
+      responses:
+        "200":
+          description: Saved.
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/StatusPageComponent" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/status-pages/{id}/preview:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Status page ID. }
+    get:
+      operationId: previewStatusPage
+      tags: [projects]
+      summary: The real public payload, for a page that is not enabled yet (member+)
+      description: >-
+        The preview IS the disclosure control, and it is a better one than a
+        warning. A confirmation dialog that says "this will be public" is read
+        by nobody; a rendered page with the customer's name on it is read by
+        everybody, because it looks like the thing it is.
+
+
+        It is built by the same code that serves the public page — two
+        renderers would be two chances to disclose different things.
+      responses:
+        "200": { description: The payload., content: { application/json: { schema: { $ref: "#/components/schemas/PublicStatusPage" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/status-pages/{id}/domain-check:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Status page ID. }
+    get:
+      operationId: checkStatusPageDomain
+      tags: [projects]
+      summary: What the public internet gets back for the status domain (member+)
+      responses:
+        "200": { description: The verdict., content: { application/json: { schema: { $ref: "#/components/schemas/DomainCheck" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/status-pages/{id}/incidents/{iid}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Status page ID. }
+      - { name: iid, in: path, required: true, schema: { type: string }, description: Incident (interval) ID. }
+    patch:
+      operationId: annotateStatusIncident
+      tags: [projects]
+      summary: One line of public text on a live incident (member+)
+      description: >-
+        A member, deliberately. The person who notices at 02:00 is on call, not
+        an admin, and making them find one before they can write "we are aware
+        and investigating" is how a status page stops being used. The blast
+        radius is bounded to 280 characters of plain text on a page that is
+        already public, it is audited with the author's name, and it is never
+        linkified — the text is escaped and rendered as text, so the page
+        cannot become a redirect on a hostname the customer trusts.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/AnnotateIncidentRequest" } } }
+      responses:
+        "204": { description: Saved. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /api/v1/applications/{id}/volume-backup:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Application ID. }
@@ -7438,6 +7593,114 @@ components:
       properties:
         backup_record_id: { type: string }
         confirm: { type: boolean, description: Must be true — restore overwrites the database. }
+
+    StatusPage:
+      type: object
+      required: [id, project_id, slug, title, enabled, domain, https, route_server_id, panel_url]
+      properties:
+        id: { type: string, description: sp_… prefixed ID. }
+        project_id: { type: string }
+        slug: { type: string, description: The public handle — 3–40 lowercase letters, digits and dashes. Globally unique. }
+        title: { type: string, description: The public display name. It is public whether the page is enabled or not. }
+        enabled: { type: boolean, description: Whether the public routes answer. Disabling makes both 404 within the cache TTL. }
+        domain: { type: string, description: Custom domain, or empty for the panel origin only. }
+        https: { type: boolean }
+        route_server_id: { type: string, description: The server whose Proxy fronts the domain. Required when a domain is set. }
+        panel_url: { type: string, description: Where the page is reachable with no DNS at all — the address to copy before a domain exists. }
+    SetStatusPageRequest:
+      type: object
+      required: [slug, title, enabled]
+      properties:
+        slug: { type: string }
+        title: { type: string }
+        enabled: { type: boolean }
+        domain: { type: string }
+        https: { type: boolean }
+        route_server_id: { type: string, description: Required when domain is set — a domain with no serving node cannot be routed. }
+    StatusPageComponent:
+      type: object
+      required: [id, resource_kind, resource_id, label, position]
+      properties:
+        id: { type: string, description: spc_… prefixed ID. }
+        resource_kind: { type: string, enum: [application, compose_stack, database] }
+        resource_id: { type: string }
+        label: { type: string, description: The ONLY name that becomes public. The resource's own name never leaves the panel. }
+        position: { type: integer }
+    SetStatusPageComponentsRequest:
+      type: object
+      required: [components]
+      properties:
+        components:
+          type: array
+          items:
+            type: object
+            required: [resource_kind, resource_id, label]
+            properties:
+              resource_kind: { type: string, enum: [application, compose_stack, database] }
+              resource_id: { type: string }
+              label: { type: string }
+    AnnotateIncidentRequest:
+      type: object
+      required: [message]
+      properties:
+        message: { type: string, maxLength: 280, description: Plain text. An empty string clears the annotation. }
+    PublicStatusPage:
+      type: object
+      description: >-
+        The payload an anonymous visitor gets, and the only shape they ever
+        get. It is its own type rather than a narrowed internal DTO: there is
+        no resource id in it, no server field, no route domain, no revision and
+        no status detail to forget to omit.
+      required: [title, domain, state, headline, components, incidents, updated_at, window_days]
+      properties:
+        title: { type: string }
+        domain: { type: string }
+        state: { type: string, enum: [operational, degraded, down, unknown] }
+        headline: { type: string }
+        window_days: { type: integer }
+        updated_at: { type: string, format: date-time }
+        components:
+          type: array
+          items: { $ref: "#/components/schemas/PublicStatusComponent" }
+        incidents:
+          type: array
+          items: { $ref: "#/components/schemas/PublicStatusIncident" }
+    PublicStatusComponent:
+      type: object
+      required: [label, state, days]
+      properties:
+        label: { type: string }
+        state: { type: string, enum: [operational, degraded, down, unknown] }
+        uptime:
+          type: [number, "null"]
+          description: >-
+            Percentage over OBSERVED time, or null when nothing was observed.
+            Null renders as "—", never as 100% — printing a perfect score for a
+            service that has measured nothing is the most common dishonesty in
+            this product category.
+        days:
+          type: array
+          items: { $ref: "#/components/schemas/PublicStatusDay" }
+    PublicStatusDay:
+      type: object
+      required: [date, state, down_seconds, degraded_seconds, covered_seconds, title]
+      properties:
+        date: { type: string, description: The UTC day, YYYY-MM-DD. }
+        state: { type: string, enum: [operational, degraded, down, unknown] }
+        down_seconds: { type: integer, format: int64 }
+        degraded_seconds: { type: integer, format: int64 }
+        covered_seconds: { type: integer, format: int64, description: Seconds observed and not unknown. Zero means the day is grey and excluded from the percentage. }
+        title: { type: string, description: The bar's tooltip, pre-rendered so the page explains itself with no script. }
+    PublicStatusIncident:
+      type: object
+      required: [id, component, started_at, duration, message]
+      properties:
+        id: { type: string }
+        component: { type: string }
+        started_at: { type: string, format: date-time }
+        ended_at: { type: [string, "null"], format: date-time }
+        duration: { type: string }
+        message: { type: string, description: The operator's one line, or empty. }
 
     VolumeBackup:
       type: object

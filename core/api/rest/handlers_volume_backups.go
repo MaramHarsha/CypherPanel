@@ -56,7 +56,7 @@ func toVolumeRecordDTO(r domain.VolumeBackupRecord) volumeRecordDTO {
 	return volumeRecordDTO{
 		ID: r.ID, VolumeName: r.VolumeName, ObjectKey: r.ObjectKey, SizeBytes: r.SizeBytes,
 		Status: r.Status, Detail: r.Detail,
-		StartedAt: r.StartedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+		StartedAt:  r.StartedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 		FinishedAt: formatTime(r.FinishedAt),
 	}
 }

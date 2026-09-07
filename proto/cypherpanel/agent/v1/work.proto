@@ -307,6 +307,23 @@ message DesiredState {
   // serves plain HTTP and says so, rather than pointing routes at a resolver
   // that does not exist.
   TLSSettings tls = 3;
+  // V1: routes to upstreams that are not containers (status-pages.md §4).
+  // Today that is exactly one thing — a Status Page served by the control
+  // plane. Absence means remove, the same contract apps and databases follow.
+  repeated StaticRouteSpec static_routes = 6;
+}
+
+// StaticRouteSpec routes a domain to an upstream that is not a container.
+//
+// It carries no command and no credential — a hostname, an absolute URL and a
+// path prefix. upstream_url is filled by the PLANE from its own configuration
+// and is NEVER operator input, which is what keeps this from being a way to
+// aim a node's Proxy at an address someone typed.
+message StaticRouteSpec {
+  string route_id = 1;      // fragment identity on the node (sp_…)
+  RouteSpec route = 2;      // domain + https, exactly as an Application's route
+  string upstream_url = 3;  // absolute http(s) URL of the control plane
+  string add_prefix = 4;    // prepended to the request path before forwarding
 }
 
 // TLSSettings is the panel's ACME account as the Proxy driver needs it. It

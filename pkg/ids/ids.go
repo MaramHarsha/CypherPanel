@@ -107,6 +107,12 @@ const (
 	// a verb the agent obeys.
 	PrefixRestart = "rst"
 
+	// Status pages (status-pages.md §5): the page, one component on it, and
+	// one interval in its time series.
+	PrefixStatusPage      = "sp"
+	PrefixStatusComponent = "spc"
+	PrefixStatusInterval  = "si"
+
 	// V1.x: team invitations and access requests
 	// (docs/features/invitations-and-access-requests.md §2). An invite id is
 	// also the PUBLIC half of its wire token (`inv_….<secret>`), which is what

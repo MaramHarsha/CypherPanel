@@ -14,8 +14,8 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/MaramHarsha/cypherpanel/core/domain"
-	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
 	"github.com/MaramHarsha/cypherpanel/pkg/ids"
+	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
 	"github.com/MaramHarsha/cypherpanel/pkg/subjects"
 )
 

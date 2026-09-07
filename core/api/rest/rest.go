@@ -7,9 +7,9 @@ package rest
 
 import (
 	"context"
-	"io"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/netip"
@@ -32,6 +32,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/scheduledtasks"
 	"github.com/MaramHarsha/cypherpanel/core/servers"
 	"github.com/MaramHarsha/cypherpanel/core/sharedvars"
+	"github.com/MaramHarsha/cypherpanel/core/statuspage"
 	"github.com/MaramHarsha/cypherpanel/core/templates"
 	"github.com/MaramHarsha/cypherpanel/core/webhooks"
 )
@@ -312,6 +313,34 @@ type ProjectExporter interface {
 	WriteTo(ctx context.Context, w io.Writer, projectID string) error
 }
 
+// StatusPageStore is the read/write surface the status page routes need
+// (consumer-defined). It embeds statuspage.Reader because the preview route
+// builds the real public payload from the same code the public page uses —
+// two renderers would be two chances to disclose different things.
+type StatusPageStore interface {
+	statuspage.Reader
+	GetStatusPage(ctx context.Context, id string) (domain.StatusPage, error)
+	GetStatusPageByProject(ctx context.Context, projectID string) (domain.StatusPage, error)
+	UpsertStatusPage(ctx context.Context, p domain.StatusPage) (domain.StatusPage, error)
+	DeleteStatusPage(ctx context.Context, projectID string) error
+	UpsertStatusPageComponent(ctx context.Context, c domain.StatusPageComponent) (domain.StatusPageComponent, error)
+	DeleteStatusPageComponentsNotIn(ctx context.Context, pageID string, keep []string) error
+	GetStatusInterval(ctx context.Context, id string) (domain.StatusInterval, error)
+	SetStatusIntervalMessage(ctx context.Context, id, message string) error
+	GetEnvironment(ctx context.Context, id string) (domain.Environment, error)
+}
+
+// StatusPageRoutes registers the public, unauthenticated status routes.
+type StatusPageRoutes interface {
+	Routes(mux *http.ServeMux)
+}
+
+// StatusPageCache is the rendered-page cache, so an operator who renames or
+// disables a page sees it change now rather than waiting out the TTL.
+type StatusPageCache interface {
+	Invalidate(slug string)
+}
+
 // VolumeBackupStore is the schedule and history surface the volume-backup
 // routes need (consumer-defined, ENGINEERING rule 6). nil answers 501, the
 // shape every optional surface here takes.
@@ -353,7 +382,16 @@ type Deps struct {
 	Export ProjectExporter
 	// VolumeBackups is the volume schedule store (volume-backups.md).
 	VolumeBackups VolumeBackupStore
-	Inbox   InboxService
+	// StatusPages is the public status page surface (status-pages.md).
+	StatusPages  StatusPageStore
+	StatusServer StatusPageCache
+	// StatusRoutes registers the two PUBLIC routes. Separate from
+	// StatusServer so a panel can hold the cache without opening the routes.
+	StatusRoutes StatusPageRoutes
+	// PanelURL is the panel's own advertised base URL, used to tell the
+	// operator where their status page is reachable without any DNS.
+	PanelURL string
+	Inbox    InboxService
 	// Audit records every sensitive action and serves the log back
 	// (audit-log.md). nil records nothing and serves an empty log.
 	Audit           AuditRecorder
@@ -423,6 +461,16 @@ func (a *API) Handler() http.Handler {
 	// Health (unauthenticated).
 	mux.HandleFunc("GET /healthz", a.handleHealthz)
 	mux.HandleFunc("GET /readyz", a.handleReadyz)
+
+	// Public status pages (status-pages.md §8). The third route family this
+	// panel opens to people outside it — after the inbound GitHub webhook and
+	// the invitation links — and the first meant for an anonymous audience
+	// rather than for someone holding a secret. Read-only, no body, no query
+	// parameters, and one undifferentiated 404 for an unknown slug, a disabled
+	// page and a deleted page alike.
+	if a.deps.StatusRoutes != nil {
+		a.deps.StatusRoutes.Routes(mux)
+	}
 
 	// Live status stream (SSE): the UI subscribes once and refetches the
 	// resources it names as they change, instead of polling (ui-principles §10).
@@ -542,6 +590,17 @@ func (a *API) Handler() http.Handler {
 	// operator who may deploy the app may decide who reaches it.
 	// Volume backups (volume-backups.md §3): one schedule per application,
 	// covering every volume it marks as backed up.
+	// Status pages (status-pages.md §8). Enabling one is TEAM ADMIN;
+	// annotating a live incident is a member, on purpose.
+	mux.HandleFunc("GET /api/v1/projects/{id}/status-page", a.authed(a.handleGetStatusPage))
+	mux.HandleFunc("PUT /api/v1/projects/{id}/status-page", a.authed(a.handleSetStatusPage))
+	mux.HandleFunc("DELETE /api/v1/projects/{id}/status-page", a.authed(a.handleDeleteStatusPage))
+	mux.HandleFunc("GET /api/v1/status-pages/{id}/components", a.authed(a.handleListStatusComponents))
+	mux.HandleFunc("PUT /api/v1/status-pages/{id}/components", a.authed(a.handleSetStatusComponents))
+	mux.HandleFunc("GET /api/v1/status-pages/{id}/domain-check", a.authed(a.handleCheckStatusPageDomain))
+	mux.HandleFunc("GET /api/v1/status-pages/{id}/preview", a.authed(a.handlePreviewStatusPage))
+	mux.HandleFunc("PATCH /api/v1/status-pages/{id}/incidents/{iid}", a.authed(a.handleAnnotateIncident))
+
 	mux.HandleFunc("GET /api/v1/applications/{id}/volume-backup", a.authed(a.handleGetVolumeBackup))
 	mux.HandleFunc("PUT /api/v1/applications/{id}/volume-backup", a.authed(a.handleSetVolumeBackup))
 	mux.HandleFunc("DELETE /api/v1/applications/{id}/volume-backup", a.authed(a.handleDeleteVolumeBackup))

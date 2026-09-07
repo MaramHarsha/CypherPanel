@@ -738,7 +738,7 @@ func (f *fakeAppsStore) DeleteEnvVar(_ context.Context, appID, key string) error
 }
 
 type fakeDeployer struct {
-	resyncs    []string
+	resyncs   []string
 	deploys   []string // "appID/trigger/ref"
 	removed   []string // "serverID/appID"
 	rollbacks []string

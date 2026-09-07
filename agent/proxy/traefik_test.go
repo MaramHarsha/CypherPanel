@@ -467,7 +467,7 @@ func TestAccessMiddlewaresAreAppendedAfterTheMark(t *testing.T) {
 	if mark < 0 || allow < 0 || auth < 0 {
 		t.Fatalf("fragment does not name all three middlewares:\n%s", content)
 	}
-	if !(mark < allow && allow < auth) {
+	if mark >= allow || allow >= auth {
 		t.Errorf("middleware order is mark=%d allow=%d auth=%d; the mark must come first so a rejected visitor still gets X-Served-By", mark, allow, auth)
 	}
 }
