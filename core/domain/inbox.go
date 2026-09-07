@@ -51,6 +51,16 @@ const (
 	// learns to be ignored.
 	InboxAlertNoData   = "alert.no_data"
 	InboxAlertFlapping = "alert.flapping"
+
+	// A scope crossed 90% of a cap, or reached it (resource-quotas.md §5).
+	// Panel-level for the reason the disk warning is: a quota is set by an
+	// administrator on shared capacity, and crossing one is news for the people
+	// who can act on it rather than an event on a project's timeline.
+	//
+	// Announced on the TRANSITION only. A warning repeated on every deploy is a
+	// warning nobody reads by the second week.
+	InboxQuotaWarn     = "quota.warn"
+	InboxQuotaExceeded = "quota.exceeded"
 )
 
 // panelInboxKinds is the panel-level half of the inbox taxonomy.
@@ -60,6 +70,8 @@ var panelInboxKinds = []string{
 	InboxKindServerDiskRecovered,
 	InboxAlertNoData,
 	InboxAlertFlapping,
+	InboxQuotaWarn,
+	InboxQuotaExceeded,
 }
 
 // Deploy-protection inbox kinds (deploy-protection.md §9). Like the panel-level

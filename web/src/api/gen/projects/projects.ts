@@ -42,6 +42,9 @@ import type {
   Project,
   ProjectDetail,
   PublicStatusPage,
+  QuotaReport,
+  ResourceQuota,
+  SetQuotaRequest,
   SetStatusPageComponentsRequest,
   SetStatusPageRequest,
   StatusPage,
@@ -904,6 +907,255 @@ export const useDeleteEnvironment = <TError = UnauthorizedResponse | ForbiddenRe
         TContext
       > => {
       return useMutation(getDeleteEnvironmentMutationOptions(options), queryClient);
+    }
+    export const getGetProjectQuotaUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/projects/${id}/quota`
+}
+
+/**
+ * The meter is computed, never stored. Memory is DECLARED — the sum of each resource's memory limit times its replicas — not observed, because a workload that has not started uses nothing, so an observed meter could never refuse a new application before it exists.
+ *
+ * `uncounted_compose_stacks` is a real hole stated rather than hidden: a stack's memory is declared inside its own file, and reading it out would meter a six-service stack as two services' worth and look complete.
+ * @summary This project's caps and what it is using (member+)
+ */
+export const getProjectQuota = async (id: string, options?: RequestInit): Promise<QuotaReport> => {
+
+  return apiFetch<QuotaReport>(getGetProjectQuotaUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetProjectQuotaQueryKey = (id: string,) => {
+    return [
+    `/api/v1/projects/${id}/quota`
+    ] as const;
+    }
+
+
+export const getGetProjectQuotaQueryOptions = <TData = Awaited<ReturnType<typeof getProjectQuota>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProjectQuota>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetProjectQuotaQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getProjectQuota>>> = ({ signal }) => getProjectQuota(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getProjectQuota>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetProjectQuotaQueryResult = NonNullable<Awaited<ReturnType<typeof getProjectQuota>>>
+export type GetProjectQuotaQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useGetProjectQuota<TData = Awaited<ReturnType<typeof getProjectQuota>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProjectQuota>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getProjectQuota>>,
+          TError,
+          Awaited<ReturnType<typeof getProjectQuota>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetProjectQuota<TData = Awaited<ReturnType<typeof getProjectQuota>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProjectQuota>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getProjectQuota>>,
+          TError,
+          Awaited<ReturnType<typeof getProjectQuota>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetProjectQuota<TData = Awaited<ReturnType<typeof getProjectQuota>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProjectQuota>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary This project's caps and what it is using (member+)
+ */
+
+export function useGetProjectQuota<TData = Awaited<ReturnType<typeof getProjectQuota>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProjectQuota>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetProjectQuotaQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getSetProjectQuotaUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/projects/${id}/quota`
+}
+
+/**
+ * A GUARDRAIL, not a meter. It is denominated in bytes and counts, there is no monetary concept anywhere in it, and it is set by an operator on infrastructure they own (ADR-012).
+ *
+ * A null limit means that dimension is uncapped. A limit of ZERO is refused: removing a quota is DELETE, and zero means "nothing may be deployed here", which is deploy protection's job and says so more clearly.
+ *
+ * A memory cap over a scope containing a resource with NO declared limit is refused with a 409 that names them, because such a cap would be a fiction — and the runaway project this exists to stop is precisely the one that never set a limit.
+ * @summary Cap what this project may consume (team admin)
+ */
+export const setProjectQuota = async (id: string,
+    setQuotaRequest: SetQuotaRequest, options?: RequestInit): Promise<ResourceQuota> => {
+
+  return apiFetch<ResourceQuota>(getSetProjectQuotaUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(setQuotaRequest)
+  }
+);}
+
+
+
+
+
+export const getSetProjectQuotaMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setProjectQuota>>, TError,{id: string;data: SetQuotaRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setProjectQuota>>, TError,{id: string;data: SetQuotaRequest}, TContext> => {
+
+const mutationKey = ['setProjectQuota'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setProjectQuota>>, {id: string;data: SetQuotaRequest}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  setProjectQuota(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetProjectQuotaMutationResult = NonNullable<Awaited<ReturnType<typeof setProjectQuota>>>
+    export type SetProjectQuotaMutationBody = SetQuotaRequest
+    export type SetProjectQuotaMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error
+
+    /**
+ * @summary Cap what this project may consume (team admin)
+ */
+export const useSetProjectQuota = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setProjectQuota>>, TError,{id: string;data: SetQuotaRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setProjectQuota>>,
+        TError,
+        {id: string;data: SetQuotaRequest},
+        TContext
+      > => {
+      return useMutation(getSetProjectQuotaMutationOptions(options), queryClient);
+    }
+    export const getDeleteProjectQuotaUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/projects/${id}/quota`
+}
+
+/**
+ * @summary Remove the cap (team admin)
+ */
+export const deleteProjectQuota = async (id: string, options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getDeleteProjectQuotaUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteProjectQuotaMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteProjectQuota>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteProjectQuota>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['deleteProjectQuota'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteProjectQuota>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteProjectQuota(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteProjectQuotaMutationResult = NonNullable<Awaited<ReturnType<typeof deleteProjectQuota>>>
+
+    export type DeleteProjectQuotaMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Remove the cap (team admin)
+ */
+export const useDeleteProjectQuota = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteProjectQuota>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteProjectQuota>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getDeleteProjectQuotaMutationOptions(options), queryClient);
     }
     export const getGetStatusPageUrl = (id: string,) => {
 

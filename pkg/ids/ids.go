@@ -131,6 +131,9 @@ const (
 	PrefixMailDomain  = "mdm"
 	PrefixMailboxLink = "mbx"
 
+	// Resource quotas (resource-quotas.md §8; ADR-012).
+	PrefixQuota = "quo"
+
 	// V1.x: team invitations and access requests
 	// (docs/features/invitations-and-access-requests.md §2). An invite id is
 	// also the PUBLIC half of its wire token (`inv_….<secret>`), which is what

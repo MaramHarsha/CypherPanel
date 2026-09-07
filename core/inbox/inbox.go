@@ -214,6 +214,40 @@ func (s *Service) RecordAlertQuiet(ctx context.Context, kind, ruleID, title, bod
 	return nil
 }
 
+// RecordQuota writes a scope crossing a cap. It takes the kind the way
+// RecordServerDisk does, because "nearly full" and "full" are different news
+// with the same audience — and the dedupe key is the SCOPE and dimension, so a
+// cap crossed and recrossed leaves one current item rather than a log.
+func (s *Service) RecordQuota(ctx context.Context, kind, scopeRef, title, body string) error {
+	recipients, err := s.store.ListPanelInboxRecipients(ctx, kind)
+	if err != nil {
+		return fmt.Errorf("inbox: resolving panel recipients: %w", err)
+	}
+	if len(recipients) == 0 {
+		return nil
+	}
+	severity := domain.NotifyError
+	if kind == domain.InboxQuotaWarn {
+		severity = domain.NotifyInfo
+	}
+	f := store.InboxFanout{
+		IDs:       mintIDs(len(recipients)),
+		UserIDs:   recipients,
+		Kind:      kind,
+		Severity:  string(severity),
+		Title:     title,
+		Body:      clampBody(body),
+		DedupeKey: kind + ":" + scopeRef,
+	}
+	if err := s.store.InsertPanelInboxItems(ctx, f); err != nil {
+		return fmt.Errorf("inbox: inserting panel items: %w", err)
+	}
+	if err := s.store.PruneInboxItems(ctx, recipients, domain.InboxRetention); err != nil {
+		return fmt.Errorf("inbox: pruning: %w", err)
+	}
+	return nil
+}
+
 func (s *Service) RecordServerDisk(ctx context.Context, serverID, serverName, kind, title, body string) error {
 	recipients, err := s.store.ListPanelInboxRecipients(ctx, kind)
 	if err != nil {

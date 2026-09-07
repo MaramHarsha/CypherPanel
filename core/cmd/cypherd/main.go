@@ -66,6 +66,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/previews"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
 	"github.com/MaramHarsha/cypherpanel/core/protection"
+	"github.com/MaramHarsha/cypherpanel/core/quota"
 	"github.com/MaramHarsha/cypherpanel/core/registries"
 	"github.com/MaramHarsha/cypherpanel/core/relay"
 	"github.com/MaramHarsha/cypherpanel/core/scheduledtasks"
@@ -754,6 +755,12 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 	// Provider-backed mail (managed-email.md). The panel writes the DNS through
 	// the automation it already has and manages mailboxes through the
 	// provider's API; it runs no MTA and holds no DKIM private key.
+	// Resource quotas: admission control on aggregate consumption, permitted by
+	// ADR-012. Nothing new runs on a node, nothing new rides the wire, and no
+	// agent learns that quotas exist.
+	quotaSvc := quota.New(st, quotaAnnouncer{inbox: inboxSvc}, log.With("component", "quota"))
+	sched.SetQuotaGate(quotaGate{svc: quotaSvc})
+
 	mailHostSvc := mailhost.NewService(st, box, mailDNSWriter{dns: dnsSvc})
 	mailHostSvc.SetLogger(log.With("component", "mailhost"))
 
@@ -837,6 +844,7 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		LogDrains:        drainSvc,
 		PlaneDR:          planeDR,
 		MailHost:         mailHostSvc,
+		Quotas:           quotaSvc,
 		PlaneDRFetch:     planeObjects.Get,
 		Updates:          updateChecker,
 		AlertBacktest:    alertEval,
@@ -1084,4 +1092,40 @@ func (m mailDNSWriter) EnsureRecord(ctx context.Context, zoneDomain string, r ma
 
 func (m mailDNSWriter) Verified(ctx context.Context, domainName string) (bool, error) {
 	return m.dns.CanManage(ctx, domainName)
+}
+
+// quotaGate adapts the quota service to the scheduler's own seam, so the
+// scheduler depends on an interface it declares rather than on the package.
+type quotaGate struct{ svc *quota.Service }
+
+func (g quotaGate) Admit(ctx context.Context, projectID string, delta scheduler.QuotaDelta) (domain.QuotaAdmission, error) {
+	return g.svc.Admit(ctx, projectID, quota.Delta{MemoryBytes: delta.MemoryBytes, Previews: delta.Previews})
+}
+
+// quotaAnnouncer writes a crossing into the inbox. Panel-level, like the disk
+// warning it most resembles: a quota is set by an administrator and crossing
+// one is news for the people who can act on it, not an event on a project's
+// timeline.
+type quotaAnnouncer struct{ inbox *inbox.Service }
+
+func (q quotaAnnouncer) AnnounceQuota(ctx context.Context, scopeKind, scopeID, dimension, state string, usage domain.QuotaUsage) error {
+	if q.inbox == nil || state == domain.QuotaOK {
+		return nil
+	}
+	kind := domain.InboxQuotaWarn
+	title := "Quota warning: " + dimension
+	body := fmt.Sprintf("This %s is at %d%% of its %s cap. Nothing is refused yet.", scopeKind, percentOf(usage), dimension)
+	if state == domain.QuotaExceeded {
+		kind = domain.InboxQuotaExceeded
+		title = "Quota reached: " + dimension
+		body = fmt.Sprintf("This %s has reached its %s cap. New deploys here are refused until something is freed or the cap is raised. Rollbacks are never refused — recovery always works.", scopeKind, dimension)
+	}
+	return q.inbox.RecordQuota(ctx, kind, scopeKind+":"+scopeID+":"+dimension, title, body)
+}
+
+func percentOf(u domain.QuotaUsage) int {
+	if u.Limit == nil || *u.Limit <= 0 {
+		return 0
+	}
+	return int(float64(u.Used) / float64(*u.Limit) * 100)
 }

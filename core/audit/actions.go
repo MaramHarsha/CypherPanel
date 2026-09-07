@@ -134,9 +134,14 @@ const (
 	ActionMailboxCreated           = "mail.mailbox_created"
 	ActionMailboxDeleted           = "mail.mailbox_deleted"
 	ActionMailboxPasswordReset     = "mail.mailbox_password_reset"
-	ActionEnvironmentCreated       = "environment.created"
-	ActionEnvironmentRenamed       = "environment.renamed"
-	ActionEnvironmentDeleted       = "environment.deleted"
+	// Resource quotas (ADR-012). The quota row cascades with its project or
+	// team; the audit row is what survives that, and is therefore the evidence
+	// that a cap existed at all.
+	ActionQuotaSet           = "quota.set"
+	ActionQuotaRemoved       = "quota.removed"
+	ActionEnvironmentCreated = "environment.created"
+	ActionEnvironmentRenamed = "environment.renamed"
+	ActionEnvironmentDeleted = "environment.deleted"
 	// A template install creates several applications and databases in one
 	// action, so it is recorded ONCE against the environment that received
 	// them — six silent creates is not an answer to "where did these come
@@ -357,6 +362,9 @@ var actions = map[string]bool{
 	ActionMailboxCreated:           true,
 	ActionMailboxDeleted:           true,
 	ActionMailboxPasswordReset:     true,
+
+	ActionQuotaSet:     true,
+	ActionQuotaRemoved: true,
 
 	ActionRegistryCreated: true, ActionRegistryUpdated: true,
 	ActionRegistryDeleted: true,

@@ -47,6 +47,7 @@ import { Route as AppProjectsProjectIdDatabasesDbIdRouteImport } from './routes/
 import { Route as AppProjectsProjectIdSettingsIndexRouteImport } from './routes/_app/projects/$projectId/settings/index'
 import { Route as AppProjectsProjectIdSettingsNotifiersRouteImport } from './routes/_app/projects/$projectId/settings/notifiers'
 import { Route as AppProjectsProjectIdSettingsProtectionRouteImport } from './routes/_app/projects/$projectId/settings/protection'
+import { Route as AppProjectsProjectIdSettingsQuotasRouteImport } from './routes/_app/projects/$projectId/settings/quotas'
 import { Route as AppProjectsProjectIdSettingsSharedVariablesRouteImport } from './routes/_app/projects/$projectId/settings/shared-variables'
 import { Route as AppProjectsProjectIdSettingsStatusPageRouteImport } from './routes/_app/projects/$projectId/settings/status-page'
 import { Route as AppProjectsProjectIdSettingsWebhooksRouteImport } from './routes/_app/projects/$projectId/settings/webhooks'
@@ -267,6 +268,12 @@ const AppProjectsProjectIdSettingsProtectionRoute =
     path: '/protection',
     getParentRoute: () => AppProjectsProjectIdSettingsRoute,
   } as any)
+const AppProjectsProjectIdSettingsQuotasRoute =
+  AppProjectsProjectIdSettingsQuotasRouteImport.update({
+    id: '/quotas',
+    path: '/quotas',
+    getParentRoute: () => AppProjectsProjectIdSettingsRoute,
+  } as any)
 const AppProjectsProjectIdSettingsSharedVariablesRoute =
   AppProjectsProjectIdSettingsSharedVariablesRouteImport.update({
     id: '/shared-variables',
@@ -425,6 +432,7 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/databases/$dbId': typeof AppProjectsProjectIdDatabasesDbIdRouteWithChildren
   '/projects/$projectId/settings/notifiers': typeof AppProjectsProjectIdSettingsNotifiersRoute
   '/projects/$projectId/settings/protection': typeof AppProjectsProjectIdSettingsProtectionRoute
+  '/projects/$projectId/settings/quotas': typeof AppProjectsProjectIdSettingsQuotasRoute
   '/projects/$projectId/settings/shared-variables': typeof AppProjectsProjectIdSettingsSharedVariablesRoute
   '/projects/$projectId/settings/status-page': typeof AppProjectsProjectIdSettingsStatusPageRoute
   '/projects/$projectId/settings/webhooks': typeof AppProjectsProjectIdSettingsWebhooksRoute
@@ -479,6 +487,7 @@ export interface FileRoutesByTo {
   '/projects/$projectId': typeof AppProjectsProjectIdIndexRoute
   '/projects/$projectId/settings/notifiers': typeof AppProjectsProjectIdSettingsNotifiersRoute
   '/projects/$projectId/settings/protection': typeof AppProjectsProjectIdSettingsProtectionRoute
+  '/projects/$projectId/settings/quotas': typeof AppProjectsProjectIdSettingsQuotasRoute
   '/projects/$projectId/settings/shared-variables': typeof AppProjectsProjectIdSettingsSharedVariablesRoute
   '/projects/$projectId/settings/status-page': typeof AppProjectsProjectIdSettingsStatusPageRoute
   '/projects/$projectId/settings/webhooks': typeof AppProjectsProjectIdSettingsWebhooksRoute
@@ -540,6 +549,7 @@ export interface FileRoutesById {
   '/_app/projects/$projectId/databases/$dbId': typeof AppProjectsProjectIdDatabasesDbIdRouteWithChildren
   '/_app/projects/$projectId/settings/notifiers': typeof AppProjectsProjectIdSettingsNotifiersRoute
   '/_app/projects/$projectId/settings/protection': typeof AppProjectsProjectIdSettingsProtectionRoute
+  '/_app/projects/$projectId/settings/quotas': typeof AppProjectsProjectIdSettingsQuotasRoute
   '/_app/projects/$projectId/settings/shared-variables': typeof AppProjectsProjectIdSettingsSharedVariablesRoute
   '/_app/projects/$projectId/settings/status-page': typeof AppProjectsProjectIdSettingsStatusPageRoute
   '/_app/projects/$projectId/settings/webhooks': typeof AppProjectsProjectIdSettingsWebhooksRoute
@@ -601,6 +611,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/databases/$dbId'
     | '/projects/$projectId/settings/notifiers'
     | '/projects/$projectId/settings/protection'
+    | '/projects/$projectId/settings/quotas'
     | '/projects/$projectId/settings/shared-variables'
     | '/projects/$projectId/settings/status-page'
     | '/projects/$projectId/settings/webhooks'
@@ -655,6 +666,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId'
     | '/projects/$projectId/settings/notifiers'
     | '/projects/$projectId/settings/protection'
+    | '/projects/$projectId/settings/quotas'
     | '/projects/$projectId/settings/shared-variables'
     | '/projects/$projectId/settings/status-page'
     | '/projects/$projectId/settings/webhooks'
@@ -715,6 +727,7 @@ export interface FileRouteTypes {
     | '/_app/projects/$projectId/databases/$dbId'
     | '/_app/projects/$projectId/settings/notifiers'
     | '/_app/projects/$projectId/settings/protection'
+    | '/_app/projects/$projectId/settings/quotas'
     | '/_app/projects/$projectId/settings/shared-variables'
     | '/_app/projects/$projectId/settings/status-page'
     | '/_app/projects/$projectId/settings/webhooks'
@@ -1012,6 +1025,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppProjectsProjectIdSettingsProtectionRouteImport
       parentRoute: typeof AppProjectsProjectIdSettingsRoute
     }
+    '/_app/projects/$projectId/settings/quotas': {
+      id: '/_app/projects/$projectId/settings/quotas'
+      path: '/quotas'
+      fullPath: '/projects/$projectId/settings/quotas'
+      preLoaderRoute: typeof AppProjectsProjectIdSettingsQuotasRouteImport
+      parentRoute: typeof AppProjectsProjectIdSettingsRoute
+    }
     '/_app/projects/$projectId/settings/shared-variables': {
       id: '/_app/projects/$projectId/settings/shared-variables'
       path: '/shared-variables'
@@ -1208,6 +1228,7 @@ const AppSettingsRouteWithChildren = AppSettingsRoute._addFileChildren(
 interface AppProjectsProjectIdSettingsRouteChildren {
   AppProjectsProjectIdSettingsNotifiersRoute: typeof AppProjectsProjectIdSettingsNotifiersRoute
   AppProjectsProjectIdSettingsProtectionRoute: typeof AppProjectsProjectIdSettingsProtectionRoute
+  AppProjectsProjectIdSettingsQuotasRoute: typeof AppProjectsProjectIdSettingsQuotasRoute
   AppProjectsProjectIdSettingsSharedVariablesRoute: typeof AppProjectsProjectIdSettingsSharedVariablesRoute
   AppProjectsProjectIdSettingsStatusPageRoute: typeof AppProjectsProjectIdSettingsStatusPageRoute
   AppProjectsProjectIdSettingsWebhooksRoute: typeof AppProjectsProjectIdSettingsWebhooksRoute
@@ -1220,6 +1241,8 @@ const AppProjectsProjectIdSettingsRouteChildren: AppProjectsProjectIdSettingsRou
       AppProjectsProjectIdSettingsNotifiersRoute,
     AppProjectsProjectIdSettingsProtectionRoute:
       AppProjectsProjectIdSettingsProtectionRoute,
+    AppProjectsProjectIdSettingsQuotasRoute:
+      AppProjectsProjectIdSettingsQuotasRoute,
     AppProjectsProjectIdSettingsSharedVariablesRoute:
       AppProjectsProjectIdSettingsSharedVariablesRoute,
     AppProjectsProjectIdSettingsStatusPageRoute:

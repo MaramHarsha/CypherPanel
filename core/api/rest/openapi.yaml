@@ -1925,6 +1925,105 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /api/v1/projects/{id}/quota:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Project ID. }
+    get:
+      operationId: getProjectQuota
+      tags: [projects]
+      summary: This project's caps and what it is using (member+)
+      description: >-
+        The meter is computed, never stored. Memory is DECLARED — the sum of
+        each resource's memory limit times its replicas — not observed, because
+        a workload that has not started uses nothing, so an observed meter could
+        never refuse a new application before it exists.
+
+
+        `uncounted_compose_stacks` is a real hole stated rather than hidden: a
+        stack's memory is declared inside its own file, and reading it out would
+        meter a six-service stack as two services' worth and look complete.
+      responses:
+        "200": { description: The report., content: { application/json: { schema: { $ref: "#/components/schemas/QuotaReport" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: setProjectQuota
+      tags: [projects]
+      summary: Cap what this project may consume (team admin)
+      description: >-
+        A GUARDRAIL, not a meter. It is denominated in bytes and counts, there
+        is no monetary concept anywhere in it, and it is set by an operator on
+        infrastructure they own (ADR-012).
+
+
+        A null limit means that dimension is uncapped. A limit of ZERO is
+        refused: removing a quota is DELETE, and zero means "nothing may be
+        deployed here", which is deploy protection's job and says so more
+        clearly.
+
+
+        A memory cap over a scope containing a resource with NO declared limit
+        is refused with a 409 that names them, because such a cap would be a
+        fiction — and the runaway project this exists to stop is precisely the
+        one that never set a limit.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetQuotaRequest" } } }
+      responses:
+        "200": { description: Saved., content: { application/json: { schema: { $ref: "#/components/schemas/ResourceQuota" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: "A resource in this scope has no memory limit, so the cap could not be enforced; the body names them.", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      operationId: deleteProjectQuota
+      tags: [projects]
+      summary: Remove the cap (team admin)
+      responses:
+        "204": { description: Removed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/teams/{id}/quota:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Team ID. }
+    get:
+      operationId: getTeamQuota
+      tags: [teams]
+      summary: This team's caps and what it is using (member+)
+      description: A team's meter is the sum of its projects'. A refusal by either scope is a refusal — a team cap a project could exceed by having its own is not a cap.
+      responses:
+        "200": { description: The report., content: { application/json: { schema: { $ref: "#/components/schemas/QuotaReport" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: setTeamQuota
+      tags: [teams]
+      summary: Cap what this team may consume (team admin)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetQuotaRequest" } } }
+      responses:
+        "200": { description: Saved., content: { application/json: { schema: { $ref: "#/components/schemas/ResourceQuota" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: "A resource in this scope has no memory limit." , content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      operationId: deleteTeamQuota
+      tags: [teams]
+      summary: Remove the cap (team admin)
+      responses:
+        "204": { description: Removed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /api/v1/mail/provider:
     get:
       operationId: getMailProvider
@@ -8694,6 +8793,52 @@ components:
         detail: { type: string }
         started_at: { type: string, format: date-time }
         finished_at: { type: [string, "null"], format: date-time }
+
+    ResourceQuota:
+      type: object
+      required: [id, scope_kind, scope_id, updated_by]
+      properties:
+        id: { type: string, description: quo_… prefixed ID. }
+        scope_kind: { type: string, enum: [project, team] }
+        scope_id: { type: string }
+        memory_limit_bytes: { type: [integer, "null"], format: int64, description: "Null means uncapped. Metered against DECLARED memory, not observed." }
+        disk_limit_bytes: { type: [integer, "null"], format: int64 }
+        preview_limit: { type: [integer, "null"] }
+        updated_by: { type: string }
+    SetQuotaRequest:
+      type: object
+      properties:
+        memory_limit_bytes: { type: [integer, "null"], format: int64, description: "Null clears this dimension. Zero is refused — use DELETE." }
+        disk_limit_bytes: { type: [integer, "null"], format: int64 }
+        preview_limit: { type: [integer, "null"] }
+    QuotaReport:
+      type: object
+      required: [scope_kind, scope_id, usage, uncounted_compose_stacks, unlimited]
+      properties:
+        scope_kind: { type: string, enum: [project, team] }
+        scope_id: { type: string }
+        usage:
+          type: array
+          items: { $ref: "#/components/schemas/QuotaUsage" }
+        uncounted_compose_stacks:
+          type: integer
+          description: >-
+            Compose stacks are NOT in the memory meter: their memory is declared
+            inside their own file, and reading it out would meter a six-service
+            stack as two services' worth and look complete. Stated rather than
+            hidden.
+        unlimited:
+          type: array
+          items: { type: string }
+          description: "Resources with no declared memory limit. They make a memory cap a fiction, so they are named."
+    QuotaUsage:
+      type: object
+      required: [dimension, used, state]
+      properties:
+        dimension: { type: string, enum: [memory, disk, previews] }
+        used: { type: integer, format: int64 }
+        limit: { type: [integer, "null"], format: int64, description: "Null means uncapped, which reads as no cap rather than as zero." }
+        state: { type: string, enum: [ok, warn, exceeded], description: "warn at 90%, exceeded at 100%. Uncapped is always ok." }
 
     MailProviderStatus:
       type: object

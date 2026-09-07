@@ -227,6 +227,33 @@ type DomainVerifier interface {
 // nil-guard the optional DomainVerifier uses. It is deliberately NOT a sink:
 // the gate can refuse, so its errors are propagated, never swallowed (§5, fail
 // closed).
+// QuotaGate is the quota admission check (consumer-defined; *quota.Service
+// satisfies it), exactly as protection's Gate already is.
+type QuotaGate interface {
+	Admit(ctx context.Context, projectID string, delta QuotaDelta) (domain.QuotaAdmission, error)
+}
+
+// QuotaDelta is what an admission asks for on top of what is already there.
+type QuotaDelta struct {
+	MemoryBytes int64
+	Previews    int
+}
+
+// QuotaError is a refusal for space. Distinct from FrozenError because the two
+// are different answers — one says "not now", the other says "not here until
+// something is freed" — and a caller that collapsed them would give the
+// operator the wrong remedy.
+type QuotaError struct {
+	Dimension string
+	Detail    string
+}
+
+func (e *QuotaError) Error() string { return e.Detail }
+func (e *QuotaError) Unwrap() error { return ErrQuotaExceeded }
+
+// ErrQuotaExceeded is the sentinel a handler maps to 409.
+var ErrQuotaExceeded = errors.New("scheduler: a resource quota refused this")
+
 type Gate interface {
 	Admit(ctx context.Context, environmentID string) (domain.DeployAdmission, error)
 	// Park records the gate decision for a deployment the scheduler has just
@@ -269,7 +296,8 @@ type Scheduler struct {
 	// gate is deploy protection (deploy-protection.md). nil when it is not
 	// wired, which admit() treats as "every deploy is clear" — the behaviour
 	// of every panel before this feature existed.
-	gate Gate
+	gate  Gate
+	quota QuotaGate
 
 	// registries resolves the sealed credential for a private registry
 	// (registries.md). nil is the ordinary panel: no application can name a
@@ -409,6 +437,20 @@ func (s *Scheduler) DeployAs(ctx context.Context, appID, trigger, ref, requested
 	if admission.Frozen {
 		return domain.Deployment{}, &FrozenError{Detail: admission.FreezeDetail}
 	}
+	// The quota check runs immediately after the freeze check and BEFORE any
+	// row is written — same reason: a refused deploy must leave no orphan
+	// Revision behind. It also runs before the approval branch, so a deploy
+	// that will be refused for space is refused rather than parked; a hard
+	// "not now" is more useful than parking something that would have to be
+	// refused later anyway (resource-quotas.md §6).
+	//
+	// Note the ROLLBACK path deliberately does not get this check. A rollback
+	// is the recovery path, and a guardrail that blocks recovery has become the
+	// outage it was installed to prevent — and a rollback re-runs a revision
+	// whose consumption the scope already had.
+	if qerr := s.admitQuota(ctx, app); qerr != nil {
+		return domain.Deployment{}, qerr
+	}
 	snapshot, err := snapshotOf(app)
 	if err != nil {
 		return domain.Deployment{}, err
@@ -521,6 +563,39 @@ func (s *Scheduler) admit(ctx context.Context, app domain.Application) (domain.D
 		return domain.DeployAdmission{}, fmt.Errorf("scheduler: evaluating deploy protection for %s: %w", app.ID, err)
 	}
 	return adm, nil
+}
+
+// admitQuota asks the quota gate whether this application's project has room.
+// No gate means no quota, which is how every panel behaved before the feature
+// existed.
+//
+// A gate that ERRORS admits, which is the opposite of deploy protection's
+// stance and deliberately so: protection fails closed because a protection
+// control that fails open is worse than none, while a quota that fails closed
+// on its own database error becomes the outage it was installed to prevent.
+// One control exists to stop the wrong code shipping; the other exists to stop
+// a fleet filling up, and only the first is worth an outage to enforce.
+func (s *Scheduler) admitQuota(ctx context.Context, app domain.Application) error {
+	if s.quota == nil {
+		return nil
+	}
+	env, envErr := s.store.GetEnvironment(ctx, app.EnvironmentID)
+	if envErr != nil {
+		// An environment that cannot be read is a scope that cannot be metered,
+		// and this control admits rather than refuses when it cannot see —
+		// see the doc comment above.
+		s.log.Error("quota: could not resolve the project; admitting", "app_id", app.ID, "error", envErr)
+		return nil
+	}
+	adm, err := s.quota.Admit(ctx, env.ProjectID, QuotaDelta{})
+	if err != nil {
+		s.log.Error("quota: evaluating admission; admitting", "app_id", app.ID, "error", err)
+		return nil
+	}
+	if adm.Allowed {
+		return nil
+	}
+	return &QuotaError{Dimension: adm.Dimension, Detail: adm.Reason}
 }
 
 // park holds a freshly created Deployment at the gate: it moves to
@@ -2138,6 +2213,11 @@ func (s *Scheduler) SetDomainVerifier(v DomainVerifier) { s.dns = v }
 // admitted, which is exactly how the panel behaved before the feature existed
 // (deploy-protection.md §4).
 func (s *Scheduler) SetGate(g Gate) { s.gate = g }
+
+// SetQuotaGate attaches quota admission (resource-quotas.md §6). Kept out of
+// New so quotas stay an opt-in add-on: a panel that never calls this behaves
+// exactly as it did before the feature existed.
+func (s *Scheduler) SetQuotaGate(g QuotaGate) { s.quota = g }
 
 // SetRegistries wires private-registry credentials. Optional: an application
 // can only name a registry the panel stored, so a panel without this never has

@@ -408,6 +408,8 @@ type Deps struct {
 	Upgrades UpgradeService
 	// LogDrains is the panel's outbox for log lines (log-drains.md).
 	LogDrains LogDrainService
+	// Quotas is admission control on aggregate consumption (ADR-012).
+	Quotas QuotaService
 	// MailHost is provider-backed email for verified domains (managed-email.md).
 	MailHost MailHostService
 	// PlaneDR is the control plane backing itself up, and PlaneDRFetch reads
@@ -640,6 +642,16 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/panel/disaster-recovery/run", a.sessionOnly(a.handleRunPlaneDR))
 	mux.HandleFunc("POST /api/v1/panel/disaster-recovery/verify", a.sessionOnly(a.handleVerifyPlaneDR))
 	mux.HandleFunc("GET /api/v1/panel/disaster-recovery/snapshots", a.sessionOnly(a.handleListPlaneSnapshots))
+
+	// Resource quotas (resource-quotas.md §9; ADR-012). Reading is a member;
+	// SETTING is admin, because capping what a scope may consume is a decision
+	// about shared capacity rather than about the scope's own code.
+	mux.HandleFunc("GET /api/v1/projects/{id}/quota", a.authed(a.handleGetProjectQuota))
+	mux.HandleFunc("PUT /api/v1/projects/{id}/quota", a.authed(a.handleSetProjectQuota))
+	mux.HandleFunc("DELETE /api/v1/projects/{id}/quota", a.authed(a.handleDeleteProjectQuota))
+	mux.HandleFunc("GET /api/v1/teams/{id}/quota", a.authed(a.handleGetTeamQuota))
+	mux.HandleFunc("PUT /api/v1/teams/{id}/quota", a.authed(a.handleSetTeamQuota))
+	mux.HandleFunc("DELETE /api/v1/teams/{id}/quota", a.authed(a.handleDeleteTeamQuota))
 
 	// Email for verified domains, via a provider (managed-email.md). The panel
 	// writes DNS and manages mailboxes; it runs no MTA and stores no message.

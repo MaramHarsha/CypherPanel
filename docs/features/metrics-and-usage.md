@@ -477,8 +477,8 @@ agency answer to *what do I bill client X*", so the tension is real and worth
 resolving in writing rather than hoping nobody notices.
 
 What is banned is the panel doing commerce: prices, currency, rate cards,
-invoices, plans, payment integrations, and quota enforcement. **None of that is
-here, and the boundary is enforceable by three rules:**
+invoices, plans and payment integrations. **None of that is here, and the
+boundary is enforceable by three rules:**
 
 1. No monetary concept exists anywhere in the feature — no price, no rate, no
    currency field, in the schema, the API or the UI.
@@ -491,9 +491,16 @@ here, and the boundary is enforceable by three rules:**
 The primary framing is the capacity one the same design screen gives —
 *"which project forces the next server"* — which is an operations question a
 self-hoster with one team asks as often as an agency with twenty. If a future
-feature wants price fields or quota enforcement, that is a change to the
-vision's out-of-scope list and needs a recorded decision, not an extra column
-on this table.
+feature wants price fields, that is a change to the vision's out-of-scope list
+and needs a recorded decision, not an extra column on this table.
+
+**Enforcement went the other way, and has its own decision.** Rule 2 above
+stays true of THIS feature — nothing here refuses anything — but
+[resource-quotas.md](resource-quotas.md) does refuse work at a cap, and it
+crosses the same vision line deliberately rather than by increment.
+[ADR-012](../adrs/ADR-012-guardrail-quotas-are-not-metering.md) is the recorded
+decision this paragraph asked for: a guardrail with teeth, bounded by the same
+three rules minus the second, and structurally incapable of becoming commerce.
 
 ## 9. Security and privacy
 

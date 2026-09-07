@@ -35,7 +35,10 @@ import type {
   Error,
   ForbiddenResponse,
   NotFoundResponse,
+  QuotaReport,
   RenameTeamRequest,
+  ResourceQuota,
+  SetQuotaRequest,
   SetUserRoleRequest,
   Team,
   TeamMember,
@@ -65,7 +68,249 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   return result;
 };
 
-export const getListTeamsUrl = () => {
+export const getGetTeamQuotaUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/teams/${id}/quota`
+}
+
+/**
+ * A team's meter is the sum of its projects'. A refusal by either scope is a refusal — a team cap a project could exceed by having its own is not a cap.
+ * @summary This team's caps and what it is using (member+)
+ */
+export const getTeamQuota = async (id: string, options?: RequestInit): Promise<QuotaReport> => {
+
+  return apiFetch<QuotaReport>(getGetTeamQuotaUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetTeamQuotaQueryKey = (id: string,) => {
+    return [
+    `/api/v1/teams/${id}/quota`
+    ] as const;
+    }
+
+
+export const getGetTeamQuotaQueryOptions = <TData = Awaited<ReturnType<typeof getTeamQuota>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTeamQuota>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTeamQuotaQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTeamQuota>>> = ({ signal }) => getTeamQuota(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTeamQuota>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetTeamQuotaQueryResult = NonNullable<Awaited<ReturnType<typeof getTeamQuota>>>
+export type GetTeamQuotaQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useGetTeamQuota<TData = Awaited<ReturnType<typeof getTeamQuota>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTeamQuota>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getTeamQuota>>,
+          TError,
+          Awaited<ReturnType<typeof getTeamQuota>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetTeamQuota<TData = Awaited<ReturnType<typeof getTeamQuota>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTeamQuota>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getTeamQuota>>,
+          TError,
+          Awaited<ReturnType<typeof getTeamQuota>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetTeamQuota<TData = Awaited<ReturnType<typeof getTeamQuota>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTeamQuota>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary This team's caps and what it is using (member+)
+ */
+
+export function useGetTeamQuota<TData = Awaited<ReturnType<typeof getTeamQuota>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTeamQuota>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetTeamQuotaQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getSetTeamQuotaUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/teams/${id}/quota`
+}
+
+/**
+ * @summary Cap what this team may consume (team admin)
+ */
+export const setTeamQuota = async (id: string,
+    setQuotaRequest: SetQuotaRequest, options?: RequestInit): Promise<ResourceQuota> => {
+
+  return apiFetch<ResourceQuota>(getSetTeamQuotaUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(setQuotaRequest)
+  }
+);}
+
+
+
+
+
+export const getSetTeamQuotaMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setTeamQuota>>, TError,{id: string;data: SetQuotaRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setTeamQuota>>, TError,{id: string;data: SetQuotaRequest}, TContext> => {
+
+const mutationKey = ['setTeamQuota'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setTeamQuota>>, {id: string;data: SetQuotaRequest}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  setTeamQuota(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetTeamQuotaMutationResult = NonNullable<Awaited<ReturnType<typeof setTeamQuota>>>
+    export type SetTeamQuotaMutationBody = SetQuotaRequest
+    export type SetTeamQuotaMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error
+
+    /**
+ * @summary Cap what this team may consume (team admin)
+ */
+export const useSetTeamQuota = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setTeamQuota>>, TError,{id: string;data: SetQuotaRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setTeamQuota>>,
+        TError,
+        {id: string;data: SetQuotaRequest},
+        TContext
+      > => {
+      return useMutation(getSetTeamQuotaMutationOptions(options), queryClient);
+    }
+    export const getDeleteTeamQuotaUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/teams/${id}/quota`
+}
+
+/**
+ * @summary Remove the cap (team admin)
+ */
+export const deleteTeamQuota = async (id: string, options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getDeleteTeamQuotaUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteTeamQuotaMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteTeamQuota>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteTeamQuota>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['deleteTeamQuota'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteTeamQuota>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteTeamQuota(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteTeamQuotaMutationResult = NonNullable<Awaited<ReturnType<typeof deleteTeamQuota>>>
+
+    export type DeleteTeamQuotaMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Remove the cap (team admin)
+ */
+export const useDeleteTeamQuota = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteTeamQuota>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteTeamQuota>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getDeleteTeamQuotaMutationOptions(options), queryClient);
+    }
+    export const getListTeamsUrl = () => {
 
 
 

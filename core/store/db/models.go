@@ -584,6 +584,14 @@ type Project struct {
 	LastActivityAt       pgtype.Timestamptz
 }
 
+type QuotaState struct {
+	ScopeKind string
+	ScopeID   string
+	Dimension string
+	State     string
+	ChangedAt pgtype.Timestamptz
+}
+
 type Registry struct {
 	ID             string
 	TeamID         string
@@ -651,6 +659,18 @@ type ResourceMetric struct {
 	MemoryLimitBytes  int64
 	SampleCount       int32
 	CoveredSeconds    int32
+}
+
+type ResourceQuota struct {
+	ID               string
+	ProjectID        pgtype.Text
+	TeamID           pgtype.Text
+	MemoryLimitBytes pgtype.Int8
+	DiskLimitBytes   pgtype.Int8
+	PreviewLimit     pgtype.Int4
+	UpdatedBy        string
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
 }
 
 type ResourceUsageDaily struct {
