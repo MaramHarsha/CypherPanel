@@ -741,14 +741,21 @@ func gitRemote(raw string) (string, error) {
 		return repo, nil
 	case scpLike.MatchString(repo):
 		return repo, nil
+	case strings.HasPrefix(repo, "/"):
+		// An ABSOLUTE path is a real remote: git clones a directory on the
+		// builder, and the deploy integration suite and any air-gapped mirror
+		// depend on it. It is also unambiguous, which is the whole difference
+		// from the case below — nobody types a leading slash by accident.
+		return repo, nil
 	case schemeless.MatchString(repo):
 		// The one guess, and it is not really a guess.
 		return "https://" + repo, nil
 	}
 	return "", invalid("source.repo must be a git remote — an https:// URL like " +
-		"https://github.com/acme/web, or the SSH form git@github.com:acme/web.git. " +
-		"Anything else is treated by git as a local directory on the builder, " +
-		"and the clone fails with nothing useful to read.")
+		"https://github.com/acme/web, the SSH form git@github.com:acme/web.git, " +
+		"or an absolute path on the builder. A RELATIVE value like \"acme/web\" is " +
+		"refused because git reads it as a directory that does not exist, and the " +
+		"clone then fails with nothing useful to read.")
 }
 
 func validateAndDefault(in CreateInput) (CreateInput, error) {

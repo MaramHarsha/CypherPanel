@@ -27,8 +27,13 @@ say() { printf '\033[36m=>\033[0m %s\n' "$1"; }
 fail() { printf '\033[31merror:\033[0m %s\n' "$1" >&2; exit 1; }
 
 cleanup() {
-    [ -f "$WORK/cypherd.pid" ] && kill "$(cat "$WORK/cypherd.pid")" 2>/dev/null || true
-    [ -f "$WORK/agent.pid" ] && kill "$(cat "$WORK/agent.pid")" 2>/dev/null || true
+    # E2E_KEEP means KEEP: killing the panel and then announcing it was left
+    # running is worse than not offering the option, and it cost a debugging
+    # round when this script did exactly that.
+    if [ "${E2E_KEEP:-}" != 1 ]; then
+        [ -f "$WORK/cypherd.pid" ] && kill "$(cat "$WORK/cypherd.pid")" 2>/dev/null || true
+        [ -f "$WORK/agent.pid" ] && kill "$(cat "$WORK/agent.pid")" 2>/dev/null || true
+    fi
     if [ "${E2E_KEEP:-}" != 1 ]; then
         docker rm -f "$PG_NAME" >/dev/null 2>&1 || true
         # The RUN state only. Deleting all of $WORK would also delete binaries

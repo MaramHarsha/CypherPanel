@@ -14,7 +14,9 @@ export interface AppSource {
   /**
      * Git remote; required for `github` and `git_url`, empty for `image`.
      *
-     * It must be something git can clone: an `https://`, `http://`, `ssh://`, `git://` or `file://` URL, or the SCP-like `git@host:owner/repo.git`. The schemeless shorthand `github.com/acme/web` is accepted and normalised to `https://github.com/acme/web`. Anything else is a 400 — a bare `acme/web` is deliberately NOT accepted, because git reads a schemeless string with no host as a local directory on the builder, so it would store happily and fail at clone time with `exit status 128`.
+     * It must be something git can clone: an `https://`, `http://`, `ssh://`, `git://` or `file://` URL, the SCP-like `git@host:owner/repo.git`, or an ABSOLUTE path to a repository on the builder. The schemeless shorthand `github.com/acme/web` is accepted and normalised to `https://github.com/acme/web`.
+     *
+     * A RELATIVE value such as `acme/web` is a 400. That is the one shape worth refusing: git reads it as a directory that does not exist on the builder, so it would store happily and fail at clone time with `exit status 128`, naming neither the field nor the mistake. An absolute path is allowed because it is unambiguous — nobody types a leading slash by accident — and cloning a local mirror is a real thing operators do.
      * @maxLength 512
      */
   repo?: string;
