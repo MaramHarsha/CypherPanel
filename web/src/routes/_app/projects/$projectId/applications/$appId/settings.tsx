@@ -268,8 +268,18 @@ function SettingsForm({
           </>
         ) : (
           <>
-            <Field label="Repository">
-              {(id) => <Input id={id} value={repo} onChange={(e) => setRepo(e.target.value)} className="mono" />}
+            <Field label="Repository" hint="An https:// URL, or git@host:owner/repo.git.">
+              {(id, describedBy) => (
+                <Input
+                  id={id}
+                  aria-describedby={describedBy}
+                  value={repo}
+                  onChange={(e) => setRepo(e.target.value)}
+                  placeholder="https://github.com/acme/web"
+                  spellCheck={false}
+                  className="mono"
+                />
+              )}
             </Field>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Branch">

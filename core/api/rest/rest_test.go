@@ -1422,7 +1422,7 @@ func TestApplicationAcceptsSpecShapedBuild(t *testing.T) {
 	ts := newTestServer(t)
 	token := login(t, ts)
 
-	body := `{"name":"specshape","source":{"kind":"github","repo":"acme/web","branch":"main"},` +
+	body := `{"name":"specshape","source":{"kind":"github","repo": "https://github.com/acme/web","branch":"main"},` +
 		`"build":{"kind":"dockerfile","dockerfile_path":"./Dockerfile","context":"."},` +
 		`"runtime":{"server_id":"srv_test","port":8080,"replicas":1},` +
 		`"route":{"domain":"spec.example.com","https":true,"path_prefix":"/"}}`
@@ -1455,7 +1455,7 @@ func TestApplicationAcceptsSpecShapedBuild(t *testing.T) {
 	}
 
 	// An unsupported kind is still a validation error, not a decode error.
-	bad := `{"name":"nope","source":{"kind":"github","repo":"acme/x"},` +
+	bad := `{"name":"nope","source":{"kind":"github","repo":"https://github.com/acme/x"},` +
 		`"build":{"kind":"buildpacks","dockerfile_path":"./Dockerfile","context":"."},` +
 		`"runtime":{"server_id":"srv_test","port":8080},"route":{"domain":"n.example.com"}}`
 	status, _, resp = doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, bad)
@@ -1472,7 +1472,7 @@ func TestApplicationLifecycleOverHTTP(t *testing.T) {
 	token := login(t, ts)
 
 	// Create under the seeded env_test, targeting the seeded srv_test.
-	body := `{"name":"web","source":{"kind":"github","repo":"acme/web"},` +
+	body := `{"name":"web","source":{"kind":"github","repo": "https://github.com/acme/web"},` +
 		`"runtime":{"server_id":"srv_test","port":8080},"route":{"domain":"web.example.com"},` +
 		`"env_vars":{"DATABASE_URL":"postgres://secret"}}`
 	status, _, resp := doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, body)
@@ -1666,7 +1666,7 @@ func TestConflictAndInUseAre409(t *testing.T) {
 	}
 
 	// Duplicate application name inside one environment.
-	body := `{"name":"web","source":{"kind":"github","repo":"acme/web"},` +
+	body := `{"name":"web","source":{"kind":"github","repo": "https://github.com/acme/web"},` +
 		`"runtime":{"server_id":"srv_test","port":8080},"route":{"domain":"web.example.com"}}`
 	if status, _, _ = doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, body); status != http.StatusCreated {
 		t.Fatalf("create application: status %d", status)
@@ -1701,7 +1701,7 @@ func TestDeployAndRollbackEndpoints(t *testing.T) {
 	token := login(t, ts)
 
 	// Create an app to deploy.
-	body := `{"name":"web","source":{"kind":"github","repo":"acme/web"},` +
+	body := `{"name":"web","source":{"kind":"github","repo": "https://github.com/acme/web"},` +
 		`"runtime":{"server_id":"srv_test","port":8080},"route":{"domain":"web.example.com"}}`
 	status, _, resp := doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, body)
 	if status != http.StatusCreated {
@@ -1743,7 +1743,7 @@ func TestDeployAndRollbackEndpoints(t *testing.T) {
 func TestPatchApplication(t *testing.T) {
 	ts := newTestServer(t)
 	token := login(t, ts)
-	body := `{"name":"web","source":{"kind":"github","repo":"acme/web"},` +
+	body := `{"name":"web","source":{"kind":"github","repo": "https://github.com/acme/web"},` +
 		`"runtime":{"server_id":"srv_test","port":8080},"route":{"domain":"web.example.com"}}`
 	status, _, resp := doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, body)
 	if status != http.StatusCreated {
@@ -1775,7 +1775,7 @@ func TestPatchApplication(t *testing.T) {
 func TestGitHubWebhook(t *testing.T) {
 	ts := newTestServer(t)
 	token := login(t, ts)
-	body := `{"name":"web","source":{"kind":"github","repo":"acme/web"},` +
+	body := `{"name":"web","source":{"kind":"github","repo": "https://github.com/acme/web"},` +
 		`"runtime":{"server_id":"srv_test","port":8080},"route":{"domain":"web.example.com"}}`
 	status, _, resp := doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, body)
 	if status != http.StatusCreated {
@@ -1875,7 +1875,7 @@ func TestApplicationLogsSSEReplaysHistory(t *testing.T) {
 	ts, _, logs, _ := newTestServerFull(t)
 	token := login(t, ts)
 
-	body := `{"name":"web","source":{"kind":"github","repo":"acme/web"},` +
+	body := `{"name":"web","source":{"kind":"github","repo": "https://github.com/acme/web"},` +
 		`"runtime":{"server_id":"srv_test","port":8080},"route":{"domain":"web.example.com"}}`
 	status, _, resp := doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, body)
 	if status != http.StatusCreated {
@@ -2108,7 +2108,7 @@ func TestDeleteProjectRefusesWhileResourcesRemain(t *testing.T) {
 		token := login(t, ts)
 
 		// The seeded env_test is the one the applications fixture knows.
-		body := `{"name":"web","source":{"kind":"github","repo":"acme/web"},` +
+		body := `{"name":"web","source":{"kind":"github","repo": "https://github.com/acme/web"},` +
 			`"runtime":{"server_id":"srv_test","port":8080},"route":{"domain":"guard.example.com"}}`
 		if st, _, b := doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, body); st != http.StatusCreated {
 			t.Fatalf("seeding an application: %d %s", st, b)

@@ -203,7 +203,7 @@ func (f *fakeStore) DeleteEnvVar(_ context.Context, appID, key string) error {
 func validInput() CreateInput {
 	return CreateInput{
 		Name:    "web",
-		Source:  domain.AppSource{Kind: "github", Repo: "acme/web"},
+		Source:  domain.AppSource{Kind: "github", Repo: "https://github.com/acme/web"},
 		Runtime: domain.AppRuntime{ServerID: "srv_1", Port: 8080},
 		Route:   domain.AppRoute{Domain: "web.example.com", HTTPS: true},
 		EnvVars: map[string]string{"DATABASE_URL": "postgres://secret"},

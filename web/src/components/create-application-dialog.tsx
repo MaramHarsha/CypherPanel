@@ -154,15 +154,27 @@ export function NewAppDialog({
             </Field>
             {sourceKind === "github" ? (
               <>
-                <Field label="Repository" hint="Public, or private with a deploy key below.">
-                  {(id) => (
+                {/* The placeholder is a full URL because git needs one: it
+                    reads a schemeless string as a LOCAL directory on the
+                    builder, so the old `github.com/acme/web` suggestion
+                    produced an application that saved and then failed to clone
+                    with `exit status 128`. The API normalises that shorthand
+                    now; the field stops teaching it. */}
+                <Field
+                  label="Repository"
+                  hint="An https:// URL, or git@host:owner/repo.git. Public, or private with a deploy key below."
+                >
+                  {(id, describedBy) => (
                     <Input
                       id={id}
+                      aria-describedby={describedBy}
                       required
                       autoFocus
+                      className="mono"
+                      spellCheck={false}
                       value={repo}
                       onChange={(e) => setRepo(e.target.value)}
-                      placeholder="github.com/acme/web"
+                      placeholder="https://github.com/acme/web"
                     />
                   )}
                 </Field>

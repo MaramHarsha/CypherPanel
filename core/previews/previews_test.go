@@ -197,7 +197,7 @@ func (failingRecorder) Record(context.Context, audit.Entry) (domain.AuditEvent, 
 func sourceApp() domain.Application {
 	return domain.Application{
 		ID: "app_src", EnvironmentID: "env_prod", Name: "web",
-		Source:            domain.AppSource{Kind: "git_url", Repo: "acme/web", Branch: "main"},
+		Source:            domain.AppSource{Kind: "git_url", Repo: "https://github.com/acme/web", Branch: "main"},
 		Runtime:           domain.AppRuntime{ServerID: "srv_1", Port: 8080, Replicas: 1},
 		Route:             domain.AppRoute{Domain: "web.acme.com", HTTPS: true},
 		PreviewEnabled:    true,

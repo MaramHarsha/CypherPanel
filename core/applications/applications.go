@@ -665,6 +665,52 @@ func validRepositoryComponent(part string) bool {
 	return !prevSep
 }
 
+// schemeless matches the shorthand people actually type — `github.com/acme/web`
+// — which is a host, a slash, and a path. The first segment must carry a dot so
+// a bare `acme/web` is NOT silently turned into a host that does not exist.
+var schemeless = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+(:[0-9]{1,5})?/\S+$`)
+
+// schemed matches a remote that already names its transport. The trailing
+// `\S` matters: `https://` on its own carries a scheme and no repository, and
+// accepting it would hand git a URL with nothing to fetch.
+var schemed = regexp.MustCompile(`^(https?|ssh|git|file)://\S+$`)
+
+// scpLike matches git's other remote form, `git@github.com:acme/web.git`.
+var scpLike = regexp.MustCompile(`^[^/@\s]+@[^:/\s]+:\S+$`)
+
+// gitRemote normalises what an operator typed into something git can clone, and
+// refuses what it cannot.
+//
+// THE FAILURE THIS EXISTS TO STOP. The create dialog suggested
+// `github.com/acme/web`, nothing between the form and the builder looked at the
+// value, and `git clone github.com/acme/web` treats a schemeless string as a
+// LOCAL PATH. So the application was created successfully, the build then died
+// with `exit status 128`, and the operator was left with a status line that
+// named neither the field nor the mistake. A credential that fails at first use
+// is a dead end, and so is a repository that does.
+//
+// The shorthand is normalised rather than rejected, because it is the form
+// people type and the expansion is unambiguous: a host with a dot in it,
+// followed by a path, can only be an https remote. Prepending https also stays
+// correct for a private repository — the builder rewrites https to SSH itself
+// when a deploy key is attached.
+func gitRemote(raw string) (string, error) {
+	repo := strings.TrimSpace(raw)
+	switch {
+	case schemed.MatchString(repo):
+		return repo, nil
+	case scpLike.MatchString(repo):
+		return repo, nil
+	case schemeless.MatchString(repo):
+		// The one guess, and it is not really a guess.
+		return "https://" + repo, nil
+	}
+	return "", invalid("source.repo must be a git remote — an https:// URL like " +
+		"https://github.com/acme/web, or the SSH form git@github.com:acme/web.git. " +
+		"Anything else is treated by git as a local directory on the builder, " +
+		"and the clone fails with nothing useful to read.")
+}
+
 func validateAndDefault(in CreateInput) (CreateInput, error) {
 	in.Name = strings.TrimSpace(in.Name)
 	if in.Name == "" || len(in.Name) > 100 {
@@ -676,6 +722,11 @@ func validateAndDefault(in CreateInput) (CreateInput, error) {
 		if strings.TrimSpace(in.Source.Repo) == "" {
 			return in, invalid("source.repo is required")
 		}
+		repo, err := gitRemote(in.Source.Repo)
+		if err != nil {
+			return in, err
+		}
+		in.Source.Repo = repo
 		if in.Source.Branch == "" {
 			in.Source.Branch = "main"
 		}

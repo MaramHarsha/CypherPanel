@@ -91,7 +91,20 @@ func cloneFailure(output string, credentialled bool, err error) string {
 		strings.Contains(lower, "permission denied") ||
 		strings.Contains(lower, "please make sure you have the correct access rights")
 
+	// git's answer to a schemeless remote. `git clone github.com/acme/web` treats
+	// the string as a LOCAL directory, and the only thing that reaches the
+	// deployment row otherwise is `exit status 128` — which names neither the
+	// field nor the mistake. The API refuses this shape now; this is what an
+	// application configured before it did still gets to read.
+	notARemote := strings.Contains(lower, "does not exist") ||
+		strings.Contains(lower, "does not appear to be a git repository")
+
 	switch {
+	case notARemote:
+		return "the repository is not a git remote git could reach — set it to a full " +
+			"https:// URL, or the SSH form git@host:owner/repo.git. A value with no " +
+			"scheme is read as a directory on the builder, which is why this says " +
+			"the repository does not exist"
 	case authFailed && !credentialled:
 		return "the repository needs a credential and none was attached — " +
 			"if it is private, attach a deploy key to this application (Settings → Source), " +

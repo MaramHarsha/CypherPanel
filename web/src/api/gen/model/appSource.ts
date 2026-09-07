@@ -11,7 +11,12 @@ import type { AppSourceKind } from './appSourceKind.ts';
 
 export interface AppSource {
   kind: AppSourceKind;
-  /** Git remote; required for `github` and `git_url`, empty for `image`. */
+  /**
+     * Git remote; required for `github` and `git_url`, empty for `image`.
+     *
+     * It must be something git can clone: an `https://`, `http://`, `ssh://`, `git://` or `file://` URL, or the SCP-like `git@host:owner/repo.git`. The schemeless shorthand `github.com/acme/web` is accepted and normalised to `https://github.com/acme/web`. Anything else is a 400 — a bare `acme/web` is deliberately NOT accepted, because git reads a schemeless string with no host as a local directory on the builder, so it would store happily and fail at clone time with `exit status 128`.
+     * @maxLength 512
+     */
   repo?: string;
   /** Branch to build; defaults to `main` for git kinds, empty for `image`. */
   branch?: string;
