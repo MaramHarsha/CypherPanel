@@ -21,6 +21,8 @@ import { useListScheduledTasks } from "@/api/gen/scheduled-tasks/scheduled-tasks
 import { AppAccessCard } from "@/components/app-access-card";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
 import { Eyebrow } from "@/components/eyebrow";
+import { PushToDeploy } from "@/components/push-to-deploy";
+import { getHandleGithubWebhookUrl } from "@/api/gen/deployments/deployments";
 import { PageState } from "@/components/page-state";
 import { ActionButton, useMutationActionState } from "@/components/ui/action-button";
 import { Button } from "@/components/ui/button";
@@ -91,6 +93,10 @@ function SettingsForm({
   // An image-source app has no repository, branch, or build step — showing
   // those fields would invite edits the server rejects.
   const isImageSource = initial.source.kind === "image";
+  const webhookUrl = new URL(
+    getHandleGithubWebhookUrl(initial.webhook_id),
+    window.location.origin,
+  ).toString();
   const [domain, setDomain] = useState(initial.route.domain ?? "");
   const [pathPrefix, setPathPrefix] = useState(initial.route.path_prefix);
   const [buildKind, setBuildKind] = useState(initial.build.kind ?? "dockerfile");
@@ -375,6 +381,15 @@ function SettingsForm({
               )}
             </Field>
           </>
+        )}
+        {/* Push-to-deploy is SOURCE configuration, and it lives here because
+            this is where an operator comes to configure a source. It used to
+            sit on the Overview tab, and the operator who needed it looked in
+            Settings, then in Project → Settings → Webhooks — which is a
+            different feature that happens to share the word — and found
+            neither. An image source has no repository to push to. */}
+        {!isImageSource && (
+          <PushToDeploy appId={initial.id} webhookUrl={webhookUrl} branch={initial.source.branch || "the branch"} />
         )}
         {/* No build stage runs for an image source — the agent pulls the
             reference and rolls it out, so build settings would be inert. */}

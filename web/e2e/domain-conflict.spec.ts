@@ -19,6 +19,8 @@ test.describe("a domain already in use", () => {
   test("is called out in the create dialog before submitting", async ({ signedIn: page }) => {
     const taken = `apex-${Date.now().toString(36)}.example.com`;
     await makeProject(page, "domain-conflict");
+    // Creating an application navigates to it, so remember where the board is.
+    const board = page.url();
 
     // The first application claims it.
     await page.getByRole("button", { name: /new application/i }).first().click();
@@ -30,6 +32,7 @@ test.describe("a domain already in use", () => {
     await expect(dialog).toBeHidden({ timeout: 20_000 });
 
     // A second one tries the same hostname on the same server.
+    await page.goto(board);
     await page.getByRole("button", { name: /new application/i }).first().click();
     dialog = page.getByRole("dialog");
     await dialog.getByLabel("Name").fill("second");
@@ -48,6 +51,7 @@ test.describe("a domain already in use", () => {
   test("is refused by the API even if the warning is ignored", async ({ signedIn: page }) => {
     const taken = `apex2-${Date.now().toString(36)}.example.com`;
     await makeProject(page, "domain-conflict-refused");
+    const board = page.url();
 
     await page.getByRole("button", { name: /new application/i }).first().click();
     let dialog = page.getByRole("dialog");
@@ -57,6 +61,7 @@ test.describe("a domain already in use", () => {
     await dialog.getByRole("button", { name: /deploy/i }).click();
     await expect(dialog).toBeHidden({ timeout: 20_000 });
 
+    await page.goto(board);
     await page.getByRole("button", { name: /new application/i }).first().click();
     dialog = page.getByRole("dialog");
     await dialog.getByLabel("Name").fill("second");
