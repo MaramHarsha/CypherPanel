@@ -676,3 +676,35 @@ because an air-gapped panel deserves the signature check most of all.
   selector would be a second, weaker version of the fleet's channel model for
   a population of one host. An operator who wants a pre-release types its
   version.
+
+## Implementation note — rollback was unreachable *(fixed 2026-09-07)*
+
+§7 of this spec draws `[↺ Roll back]` on each version-history row, and its
+confirmation copy is *"Nothing you created is lost — in either direction."*
+The mechanism was built: `core/upgrade/helper.go` refuses any downgrade unless
+the request carries `rollback` AND `ranBefore(version)` proves this host has run
+it, then downloads, verifies, migrates and swaps while keeping every row.
+
+`handleStartUpgrade` passed a literal `false`. It was the only caller of
+`Start`. So the entire branch was unreachable from every client, and the only
+backward control on the screen was the snapshot restore — whose own blast radius
+reads *"everything recorded since — deploys, users, tokens, audit rows — is
+gone"*. An owner who upgraded into a bad release chose between losing an hour of
+work and editing systemd by hand.
+
+`rollback` is now a field on `StartUpgradeRequest`, the handler passes it, and
+each succeeded upgrade that came from somewhere offers the button. The helper is
+still the gate: a version this host never ran is refused there, so the screen
+cannot invent a target.
+
+**Both parity scripts were blind to this**, which is worth recording because it
+shows their edges. `api-ui-parity.py` had no request field to check — the
+contract did not declare one. `schema-contract-parity.py` lists `PanelUpgrade`
+in `INTERNAL_TABLES`, so its `rollback` column was never compared. The finding
+came from reading the spec against the code, which is the thing neither script
+can do.
+
+**Not done here:** §7's disabled-with-a-reason affordance. `rollback_floor` is
+parsed in `core/upgrade/release.go` and enforced nowhere, so the screen would
+have nothing to gate on. Offering a button that is never disabled is honest;
+offering one disabled by a rule that does not exist is not.

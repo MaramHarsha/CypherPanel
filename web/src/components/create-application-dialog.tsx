@@ -292,7 +292,7 @@ export function NewAppDialog({
                 </Field>
               </>
             ) : (
-              <Field label="Image" hint="Any public registry reference; the server pulls it directly.">
+              <Field label="Image" hint="A registry reference. Private? Attach a pull registry on the application's settings after it is created.">
                 {(id) => (
                   <Input
                     id={id}

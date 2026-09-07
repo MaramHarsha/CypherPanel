@@ -232,7 +232,7 @@ function SettingsForm({
       data: {
         name,
         source: isImageSource
-          ? { ...initial.source, image }
+          ? { ...initial.source, image, registry_id: registryID || null }
           : // Empty means "no key": a public repository needs none, and the API
             // reads null as exactly that.
             {
@@ -273,6 +273,34 @@ function SettingsForm({
     });
   };
 
+  // One definition, rendered in both branches. The hint differs because the
+  // credential means different things: for an image it authenticates the pull
+  // itself, for a git source only the private base image a Dockerfile FROMs.
+  const pullRegistryField = (
+    <Field
+      label="Pull registry"
+      qualifier="· optional"
+      hint={
+        isImageSource
+          ? "The credential this image is pulled with, for a private registry. Only registries marked as allowing pulls are listed."
+          : "For a private base image in your Dockerfile. Only registries marked as allowing pulls are listed."
+      }
+    >
+      {(id, describedBy) => (
+        <Select id={id} aria-describedby={describedBy} value={registryID} onChange={(e) => setRegistryID(e.target.value)}>
+          <option value="">None</option>
+          {registries
+            .filter((r) => r.can_pull)
+            .map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name} · {r.url}
+              </option>
+            ))}
+        </Select>
+      )}
+    </Field>
+  );
+
   return (
     <div className="max-w-xl space-y-8">
       <form onSubmit={submit} className="space-y-4">
@@ -283,6 +311,12 @@ function SettingsForm({
             <Field label="Image" hint="A moving tag is re-pulled on every deploy; a digest is pinned.">
               {(id) => <Input id={id} required value={image} onChange={(e) => setImage(e.target.value)} className="mono" />}
             </Field>
+            {/* The credential for a PRIVATE image, and this is the kind that
+                actually uses it: the scheduler attaches it only on the pulling
+                path, which is exactly `kind: image`. It rendered for git
+                sources alone, so deploying a private image — a shipped V1
+                capability — had no way to authenticate from any screen. */}
+            {pullRegistryField}
           </>
         ) : (
           <>
@@ -304,22 +338,7 @@ function SettingsForm({
                 {(id) => <Input id={id} value={branch} onChange={(e) => setBranch(e.target.value)} className="mono" />}
               </Field>
             </div>
-            <Field
-              label="Pull registry"
-              qualifier="· optional"
-              hint="For a private base image in your Dockerfile. Only registries marked as allowing pulls are listed."
-            >
-              {(id, describedBy) => (
-                <Select id={id} aria-describedby={describedBy} value={registryID} onChange={(e) => setRegistryID(e.target.value)}>
-                  <option value="">None</option>
-                  {registries.filter((r) => r.can_pull).map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.name} · {r.url}
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </Field>
+            {pullRegistryField}
             {/* github-app.md §5: an application records `github_installation_id`
                 beside its `repo`, and that is what distinguishes "this GitHub
                 repository, through the App" from "this URL, through a deploy

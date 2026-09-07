@@ -440,6 +440,20 @@ function History() {
                     : u.actor || "unknown"}
                 </p>
                 {u.detail && <p className="mt-0.5 text-[12px] leading-[1.5] text-text-mid">{u.detail}</p>}
+                {/* Going BACK to a version this host already ran, keeping every
+                    row written since. It is offered only on a succeeded upgrade
+                    that came FROM somewhere — there is nothing to return to
+                    otherwise — and the helper refuses any version this host has
+                    not run, so the button cannot invent a target.
+
+                    Until this existed the only backward move was the snapshot
+                    restore below, which rewinds the database and discards every
+                    deploy, user, token and audit row since. An owner who hit a
+                    bad release had to choose between losing an hour of work and
+                    editing systemd by hand. */}
+                {u.phase === "succeeded" && u.from_version && (
+                  <RollBackButton toVersion={u.from_version} fromVersion={u.to_version} />
+                )}
               </li>
             ))}
           </ul>
@@ -523,5 +537,57 @@ function SnapshotRow({ snapshot: s }: { snapshot: PanelSnapshot }) {
         />
       </div>
     </li>
+  );
+}
+
+/**
+ * Putting an earlier version back.
+ *
+ * Deliberately NOT the upgrade dialog with a different label. The pre-flight it
+ * runs is about moving forward — incompatible agents, a typed confirmation for
+ * orphaning the fleet — and none of those questions are the ones a rollback
+ * raises. What a rollback needs said is what it KEEPS, because the control
+ * beside it (snapshot restore) keeps nothing.
+ */
+function RollBackButton({ toVersion, fromVersion }: { toVersion: string; fromVersion: string }) {
+  const qc = useQueryClient();
+  const start = useStartPanelUpgrade({
+    mutation: {
+      onSuccess: () => {
+        void qc.invalidateQueries({ queryKey: getGetPanelUpdatesQueryKey() });
+        toastSuccess({
+          title: `Rolling back to ${toVersion}`,
+          detail: "Safe to leave this page — it runs on the host, not in your browser.",
+        });
+      },
+      onError: (e: unknown) => toastFailed("Could not start the rollback", e),
+    },
+  });
+
+  return (
+    <div className="mt-1.5">
+      <ConfirmDestructive
+        trigger={
+          <Button variant="ghost" size="sm" className="h-auto px-0 text-[12px]">
+            ↺ Roll back to {toVersion}
+          </Button>
+        }
+        title={`Roll back to ${toVersion}?`}
+        lead={`The panel restarts on ${toVersion} instead of ${fromVersion}.`}
+        blastRadius={[
+          "Nothing you created is lost — every project, deploy, user, token and audit row written since stays exactly as it is.",
+          "The panel is briefly unavailable while it swaps and restarts; agents keep running and reconverge on their own.",
+          "A schema change that shipped in the newer version is migrated back down, so anything only the newer version could store is what you lose.",
+        ]}
+        actionLabel={`Roll back to ${toVersion}`}
+        pendingLabel="Starting…"
+        pending={start.isPending}
+        onConfirm={() =>
+          start.mutate({
+            data: { version: toVersion, snapshot_retention_days: 7, rollback: true },
+          })
+        }
+      />
+    </div>
   );
 }

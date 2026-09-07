@@ -9,6 +9,14 @@
  */
 
 export interface StartUpgradeRequest {
+  /**
+     * Put back a version this host has ALREADY RUN, keeping every row written since. The upgrade path and the rollback path are the same code — download, verify, migrate, swap — and this is the flag that distinguishes a deliberate downgrade from an accidental one.
+     *
+     * The helper refuses any downgrade without it, and refuses one WITH it unless it can prove this host ran that version before. So the danger it opens is bounded by history rather than by trust.
+     *
+     * Without it the only backward move a panel owner had was the snapshot restore, which rewinds the database and discards every deploy, user, token and audit row written since the upgrade. That is a very different act, and offering only it meant an owner who hit a bad release either lost an hour of work or edited systemd by hand.
+     */
+  rollback?: boolean;
   version: string;
   /** 0 keeps the fallback forever. You decide when, if ever, it is pruned. */
   snapshot_retention_days?: number;
