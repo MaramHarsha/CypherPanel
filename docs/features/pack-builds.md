@@ -105,6 +105,9 @@ the `nixpacks` binary is actually on the builder. Without it, detection falls
 through to step 3 and every existing `auto` application resolves exactly as it
 does today. A node that has not installed the pack does not start failing
 builds it used to complete — the worst possible outcome for a detection change.
+Since §8, the joiner installs the binary, so on a fleet joined by the panel's
+own command step 2 fires; the fall-through is what a host that opted out, or
+whose download failed, still gets.
 
 **`auto` never infers `railpack`.** Both packs claim the same repositories, so
 choosing between them by detection would be arbitrary — and the tie-break that
@@ -171,9 +174,10 @@ failure, the same courtesy `docker compose` gets in
 
 ## 7. Deliberately out of scope
 
-- **Installing a pack for the operator.** The agent installer is deliberately
-  small (`curl | sh`, Docker, the binary). A pack is an opt-in the operator adds
-  to a builder, and `auto` is written so that not adding one costs nothing.
+- **Installing Railpack for the operator.** It needs BuildKit as well as its own
+  binary, `auto` never infers it (§4), and a pack an operator chose explicitly is
+  one they can install explicitly. Nixpacks is now installed by the joiner —
+  see §8, which records why that reversed.
 - **Per-work registry credentials on the BuildKit transport.** §5. It needs a
   buildx-shaped credential mechanism rather than the classic endpoint's header.
 - **Multi-arch and cache mounts.** The transport that makes them possible now
@@ -184,3 +188,38 @@ failure, the same courtesy `docker compose` gets in
 - **Other packs** (Paketo, Heroku buildpacks). The same shape would fit — a
   pack declares what it produced and the builder picks a transport — but none
   has the demand that moved these two.
+
+## 8. Implementation note — the joiner installs Nixpacks *(reversed 2026-09-07)*
+
+§7 used to list *installing a pack for the operator* as out of scope, on the
+argument that the agent installer is deliberately small and that `auto` is
+written so not adding one costs nothing. `install/agent.sh` now installs
+Nixpacks on any host that builds (`all` or `builder`), and the second half of
+that argument is what changed.
+
+**What happened.** The first application deployed on a real panel was a Next.js
+repository with no Dockerfile, `build_kind: auto`, on a freshly joined server.
+No pack was installed, so detection fell through to `static` — and the static
+path served the repository's source directory. The build succeeded, the rollout
+succeeded, the health gate passed, and what was published was a source tree.
+That is precisely the failure §4 calls *"looked like a successful deploy and was
+not"*, and the sentence *"not adding one costs nothing"* only holds for
+applications that already existed when the pack landed. For a **new** `auto`
+application with no Dockerfile it is false: the cost is a wrong deploy that
+reports success.
+
+**What is installed, and how.** A pinned version, from the project's own
+release, verified against a checksum recorded in the installer — not
+`curl | bash` from the vendor's install script. That script resolves *latest* at
+run time, so two servers joined a week apart would build the same repository
+with two different builders and nothing would say which. `CYPHER_SKIP_NIXPACKS=1`
+opts out; a `worker` never gets it because a worker never builds; and a failed
+download is a **warning, never fatal** — `auto` then resolves exactly as it did
+before, and refusing to join a fleet over an optional convenience would be the
+worse trade.
+
+**What did not change.** Railpack is still the operator's to install: it needs
+BuildKit as well as its own binary, and `auto` never infers it. And the
+availability condition in §4 is untouched — the detection still asks whether the
+binary is there rather than assuming it, which is what keeps an opted-out host
+behaving as it always did.
