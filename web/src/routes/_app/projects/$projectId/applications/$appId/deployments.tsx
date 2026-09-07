@@ -11,6 +11,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Undo2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { ApprovalActions } from "@/components/approval-actions";
 import { ConfirmRollback } from "@/components/confirm-rollback";
 import { toastDeployment } from "@/components/deploy-toast";
 import {
@@ -618,6 +619,9 @@ function DeployPanel({
   /** How the panel takes its height: the column stretches it, the sheet fills it. */
   className?: string;
 }) {
+  // Its own client: approving a parked deploy changes state this drawer,
+  // the list behind it and the application header all render.
+  const panelQc = useQueryClient();
   const dep = useGetDeployment(depId, {
     query: {
       // The events stream invalidates the application and its lists, not this
@@ -697,6 +701,23 @@ function DeployPanel({
           button's own line, because "cancel" reads as "make it stop" and a
           build already in flight finishes regardless — its image is reclaimed
           by desired-state GC afterwards, because nothing desires its revision. */}
+      {/* The gate's release, on the screen that SHOWS the deploy parked. It
+          lived only on Project → Settings → Protection, so whoever noticed had
+          to leave, find a settings page two levels away and identify the deploy
+          again by id. The approval summary rides on the deployment already, so
+          this needs no second request. */}
+      {d.status === "awaiting_approval" && (
+        <div className="mt-3 rounded-md border border-status-degraded/40 bg-status-degraded/[0.06] p-3">
+          <p className="text-[12.5px] leading-[1.5] text-toast-text">
+            Parked for approval
+            {d.approval?.requested_by_email ? ` — pushed by ${d.approval.requested_by_email}` : ""}.
+            {d.approval?.required_role ? ` Needs ${d.approval.required_role}.` : ""}
+          </p>
+          <div className="mt-2.5">
+            <ApprovalActions deploymentId={d.id} onSettled={() => void panelQc.invalidateQueries()} />
+          </div>
+        </div>
+      )}
       {isCancellable(d.status) && (
         <div className="mt-3 flex items-center justify-between gap-3">
           <span className="font-mono text-[11.5px] text-toast-faint">
