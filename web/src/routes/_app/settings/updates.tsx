@@ -98,11 +98,20 @@ function Available({
 }) {
   if (!u.latest) {
     return (
-      <div className="rounded-lg border border-border bg-surface px-4 py-4">
-        <p className="text-[13px] font-medium text-text">You're on {u.current}</p>
-        <p className="mt-0.5 text-[12.5px] leading-[1.5] text-text-mid">
-          This is the newest release the panel knows about.
-        </p>
+      <div className="space-y-3 rounded-lg border border-border bg-surface px-4 py-4">
+        <div>
+          <p className="text-[13px] font-medium text-text">You&rsquo;re on {u.current}</p>
+          <p className="mt-0.5 text-[12.5px] leading-[1.5] text-text-mid">
+            This is the newest release the panel knows about — or the release check is off, in which case it knows
+            about none.
+          </p>
+        </div>
+        {/* A panel could only ever install whatever the feed called latest. So
+            an operator who turned the check off, or who is behind a network
+            that cannot reach it, could not upgrade AT ALL — and neither could
+            one who wanted a specific version for a reason. The pre-flight and
+            the same dialog do the rest; this only supplies the tag. */}
+        <SpecificVersion />
       </div>
     );
   }
@@ -588,6 +597,56 @@ function RollBackButton({ toVersion, fromVersion }: { toVersion: string; fromVer
           })
         }
       />
+    </div>
+  );
+}
+
+/**
+ * Installing a version by name.
+ *
+ * The screen offered exactly one target — the release feed's `latest` — so a
+ * panel with the update check off, or behind a network that cannot reach the
+ * feed, had no way to upgrade from the panel at all. The typed tag runs the
+ * same pre-flight and opens the same dialog; nothing about the upgrade path
+ * changes, only how its target is chosen.
+ */
+function SpecificVersion() {
+  const [tag, setTag] = useState("");
+  const [armed, setArmed] = useState(false);
+  const valid = /^v?\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/.test(tag.trim());
+
+  return (
+    <div className="border-t border-border-subtle pt-3">
+      <p className="text-[12px] font-semibold text-text">Install a specific version</p>
+      <div className="mt-1.5 flex flex-wrap items-center gap-2">
+        <Input
+          value={tag}
+          onChange={(e) => {
+            setTag(e.target.value);
+            setArmed(false);
+          }}
+          placeholder="v1.2.0"
+          className="mono max-w-[160px]"
+          aria-label="Version to install"
+        />
+        {armed && valid ? (
+          <UpgradeDialog version={tag.trim()} />
+        ) : (
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            disabled={!valid}
+            onClick={() => setArmed(true)}
+          >
+            Check {valid ? tag.trim() : "version"}
+          </Button>
+        )}
+      </div>
+      <p className="mt-1.5 text-[11.5px] leading-[1.5] text-text-faint">
+        The pre-flight runs against the tag you name, exactly as it does for an offered release — a version that does
+        not exist, or that this panel cannot move to, is refused there rather than half-installed.
+      </p>
     </div>
   );
 }
