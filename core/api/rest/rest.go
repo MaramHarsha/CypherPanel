@@ -408,6 +408,8 @@ type Deps struct {
 	Upgrades UpgradeService
 	// LogDrains is the panel's outbox for log lines (log-drains.md).
 	LogDrains LogDrainService
+	// MailHost is provider-backed email for verified domains (managed-email.md).
+	MailHost MailHostService
 	// PlaneDR is the control plane backing itself up, and PlaneDRFetch reads
 	// one object back so a Recovery Key can be proven to still work.
 	PlaneDR      PlaneDRService
@@ -638,6 +640,21 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/panel/disaster-recovery/run", a.sessionOnly(a.handleRunPlaneDR))
 	mux.HandleFunc("POST /api/v1/panel/disaster-recovery/verify", a.sessionOnly(a.handleVerifyPlaneDR))
 	mux.HandleFunc("GET /api/v1/panel/disaster-recovery/snapshots", a.sessionOnly(a.handleListPlaneSnapshots))
+
+	// Email for verified domains, via a provider (managed-email.md). The panel
+	// writes DNS and manages mailboxes; it runs no MTA and stores no message.
+	mux.HandleFunc("GET /api/v1/mail/provider", a.authed(a.handleGetMailHost))
+	mux.HandleFunc("PUT /api/v1/mail/provider", a.authed(a.handleConnectMailHost))
+	mux.HandleFunc("DELETE /api/v1/mail/provider", a.authed(a.handleDisconnectMailHost))
+	mux.HandleFunc("GET /api/v1/mail/domains", a.authed(a.handleListMailDomains))
+	mux.HandleFunc("POST /api/v1/mail/domains", a.authed(a.handleEnableMailDomain))
+	mux.HandleFunc("GET /api/v1/mail/domains/{id}/records", a.authed(a.handleMailDomainRecords))
+	mux.HandleFunc("POST /api/v1/mail/domains/{id}/records", a.authed(a.handleRewriteMailRecords))
+	mux.HandleFunc("DELETE /api/v1/mail/domains/{id}", a.authed(a.handleDisableMailDomain))
+	mux.HandleFunc("GET /api/v1/mail/domains/{id}/mailboxes", a.authed(a.handleListMailboxes))
+	mux.HandleFunc("POST /api/v1/mail/domains/{id}/mailboxes", a.authed(a.handleCreateMailbox))
+	mux.HandleFunc("DELETE /api/v1/mail/domains/{id}/mailboxes", a.authed(a.handleDeleteMailbox))
+	mux.HandleFunc("POST /api/v1/mail/domains/{id}/mailboxes/password", a.authed(a.handleResetMailboxPassword))
 
 	// Log drains (log-drains.md §9). Panel admin: a drain spends the panel's
 	// stream, CPU and egress, and a project-scoped one still ships lines out

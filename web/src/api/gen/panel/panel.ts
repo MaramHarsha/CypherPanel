@@ -36,9 +36,13 @@ import type {
   Changelog,
   ChooseAccountError,
   CreateAlertRuleRequest,
+  CreateMailboxRequest,
+  CreateMailboxResponse,
   DNSDisconnectPreview,
   DNSSettings,
   DNSZone,
+  DeleteMailboxParams,
+  EnableMailDomainBody,
   Error,
   ExportUsageParams,
   ForbiddenResponse,
@@ -46,6 +50,11 @@ import type {
   GetUsageParams,
   LogDrain,
   LogDrainRequest,
+  MailDomain,
+  MailDomainRecords,
+  MailProviderConfig,
+  MailProviderStatus,
+  Mailbox,
   MetricsSettings,
   NotFoundResponse,
   PanelLogs,
@@ -59,6 +68,8 @@ import type {
   PlaneDisasterRecovery,
   PlaneSnapshot,
   PreflightPanelUpdateParams,
+  ResetMailboxPassword200,
+  ResetMailboxPasswordBody,
   RestorePanelSnapshotBody,
   SetAlertRuleEnabledBody,
   SetPanelDNSRequest,
@@ -2639,7 +2650,988 @@ export function useListPlaneSnapshots<TData = Awaited<ReturnType<typeof listPlan
 
 
 
-export const getListLogDrainsUrl = () => {
+export const getGetMailProviderUrl = () => {
+
+
+
+
+  return `/api/v1/mail/provider`
+}
+
+/**
+ * @summary Whether a mail provider is connected (panel admin)
+ */
+export const getMailProvider = async ( options?: RequestInit): Promise<MailProviderStatus> => {
+
+  return apiFetch<MailProviderStatus>(getGetMailProviderUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetMailProviderQueryKey = () => {
+    return [
+    `/api/v1/mail/provider`
+    ] as const;
+    }
+
+
+export const getGetMailProviderQueryOptions = <TData = Awaited<ReturnType<typeof getMailProvider>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMailProvider>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMailProviderQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMailProvider>>> = ({ signal }) => getMailProvider({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMailProvider>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetMailProviderQueryResult = NonNullable<Awaited<ReturnType<typeof getMailProvider>>>
+export type GetMailProviderQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useGetMailProvider<TData = Awaited<ReturnType<typeof getMailProvider>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMailProvider>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getMailProvider>>,
+          TError,
+          Awaited<ReturnType<typeof getMailProvider>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMailProvider<TData = Awaited<ReturnType<typeof getMailProvider>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMailProvider>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getMailProvider>>,
+          TError,
+          Awaited<ReturnType<typeof getMailProvider>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMailProvider<TData = Awaited<ReturnType<typeof getMailProvider>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMailProvider>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Whether a mail provider is connected (panel admin)
+ */
+
+export function useGetMailProvider<TData = Awaited<ReturnType<typeof getMailProvider>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMailProvider>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetMailProviderQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getConnectMailProviderUrl = () => {
+
+
+
+
+  return `/api/v1/mail/provider`
+}
+
+/**
+ * THE PANEL IS NOT BECOMING A MAIL SERVER. It writes MX, SPF, DKIM and DMARC through the DNS provider already connected, and creates mailboxes through this provider's API. It runs no MTA, stores no message, and never holds a DKIM private key — the provider generates that pair and publishes only the public half.
+ *
+ * The credential is tested before it is stored, then sealed under the master key and never returned. A credential saved and later found broken is one an operator discovers when a mailbox creation fails, which is the wrong moment.
+ * @summary Connect a mail provider (panel admin)
+ */
+export const connectMailProvider = async (mailProviderConfig: MailProviderConfig, options?: RequestInit): Promise<MailProviderStatus> => {
+
+  return apiFetch<MailProviderStatus>(getConnectMailProviderUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(mailProviderConfig)
+  }
+);}
+
+
+
+
+
+export const getConnectMailProviderMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof connectMailProvider>>, TError,{data: MailProviderConfig}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof connectMailProvider>>, TError,{data: MailProviderConfig}, TContext> => {
+
+const mutationKey = ['connectMailProvider'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof connectMailProvider>>, {data: MailProviderConfig}> = (props) => {
+          const {data} = props ?? {};
+
+          return  connectMailProvider(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ConnectMailProviderMutationResult = NonNullable<Awaited<ReturnType<typeof connectMailProvider>>>
+    export type ConnectMailProviderMutationBody = MailProviderConfig
+    export type ConnectMailProviderMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary Connect a mail provider (panel admin)
+ */
+export const useConnectMailProvider = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof connectMailProvider>>, TError,{data: MailProviderConfig}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof connectMailProvider>>,
+        TError,
+        {data: MailProviderConfig},
+        TContext
+      > => {
+      return useMutation(getConnectMailProviderMutationOptions(options), queryClient);
+    }
+    export const getDisconnectMailProviderUrl = () => {
+
+
+
+
+  return `/api/v1/mail/provider`
+}
+
+/**
+ * Domains and mailboxes at the provider are untouched — disconnecting the panel is not the same decision as deleting somebody's mail.
+ * @summary Forget the provider credential (panel admin)
+ */
+export const disconnectMailProvider = async ( options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getDisconnectMailProviderUrl(),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDisconnectMailProviderMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof disconnectMailProvider>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof disconnectMailProvider>>, TError,void, TContext> => {
+
+const mutationKey = ['disconnectMailProvider'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof disconnectMailProvider>>, void> = () => {
+
+
+          return  disconnectMailProvider(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DisconnectMailProviderMutationResult = NonNullable<Awaited<ReturnType<typeof disconnectMailProvider>>>
+
+    export type DisconnectMailProviderMutationError = UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary Forget the provider credential (panel admin)
+ */
+export const useDisconnectMailProvider = <TError = UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof disconnectMailProvider>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof disconnectMailProvider>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getDisconnectMailProviderMutationOptions(options), queryClient);
+    }
+    export const getListMailDomainsUrl = () => {
+
+
+
+
+  return `/api/v1/mail/domains`
+}
+
+/**
+ * @summary Domains with mail enabled (panel admin)
+ */
+export const listMailDomains = async ( options?: RequestInit): Promise<MailDomain[]> => {
+
+  return apiFetch<MailDomain[]>(getListMailDomainsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListMailDomainsQueryKey = () => {
+    return [
+    `/api/v1/mail/domains`
+    ] as const;
+    }
+
+
+export const getListMailDomainsQueryOptions = <TData = Awaited<ReturnType<typeof listMailDomains>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMailDomains>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListMailDomainsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listMailDomains>>> = ({ signal }) => listMailDomains({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listMailDomains>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListMailDomainsQueryResult = NonNullable<Awaited<ReturnType<typeof listMailDomains>>>
+export type ListMailDomainsQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useListMailDomains<TData = Awaited<ReturnType<typeof listMailDomains>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMailDomains>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listMailDomains>>,
+          TError,
+          Awaited<ReturnType<typeof listMailDomains>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListMailDomains<TData = Awaited<ReturnType<typeof listMailDomains>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMailDomains>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listMailDomains>>,
+          TError,
+          Awaited<ReturnType<typeof listMailDomains>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListMailDomains<TData = Awaited<ReturnType<typeof listMailDomains>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMailDomains>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Domains with mail enabled (panel admin)
+ */
+
+export function useListMailDomains<TData = Awaited<ReturnType<typeof listMailDomains>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMailDomains>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListMailDomainsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getEnableMailDomainUrl = () => {
+
+
+
+
+  return `/api/v1/mail/domains`
+}
+
+/**
+ * Refused for a domain the panel cannot write DNS for. That is not gatekeeping: on such a domain this feature can do nothing but print instructions, and enabling it would be claiming to have done something.
+ * @summary Enable mail on a verified domain (panel admin)
+ */
+export const enableMailDomain = async (enableMailDomainBody: EnableMailDomainBody, options?: RequestInit): Promise<MailDomainRecords> => {
+
+  return apiFetch<MailDomainRecords>(getEnableMailDomainUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(enableMailDomainBody)
+  }
+);}
+
+
+
+
+
+export const getEnableMailDomainMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof enableMailDomain>>, TError,{data: EnableMailDomainBody}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof enableMailDomain>>, TError,{data: EnableMailDomainBody}, TContext> => {
+
+const mutationKey = ['enableMailDomain'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof enableMailDomain>>, {data: EnableMailDomainBody}> = (props) => {
+          const {data} = props ?? {};
+
+          return  enableMailDomain(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type EnableMailDomainMutationResult = NonNullable<Awaited<ReturnType<typeof enableMailDomain>>>
+    export type EnableMailDomainMutationBody = EnableMailDomainBody
+    export type EnableMailDomainMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary Enable mail on a verified domain (panel admin)
+ */
+export const useEnableMailDomain = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof enableMailDomain>>, TError,{data: EnableMailDomainBody}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof enableMailDomain>>,
+        TError,
+        {data: EnableMailDomainBody},
+        TContext
+      > => {
+      return useMutation(getEnableMailDomainMutationOptions(options), queryClient);
+    }
+    export const getDisableMailDomainUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/mail/domains/${id}`
+}
+
+/**
+ * The domain and its mailboxes stay at the provider. Deleting somebody's mail because a panel switch was turned off is not a trade this feature makes.
+ * @summary Stop managing this domain's mail (panel admin)
+ */
+export const disableMailDomain = async (id: string, options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getDisableMailDomainUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDisableMailDomainMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof disableMailDomain>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof disableMailDomain>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['disableMailDomain'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof disableMailDomain>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  disableMailDomain(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DisableMailDomainMutationResult = NonNullable<Awaited<ReturnType<typeof disableMailDomain>>>
+
+    export type DisableMailDomainMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Stop managing this domain's mail (panel admin)
+ */
+export const useDisableMailDomain = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof disableMailDomain>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof disableMailDomain>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getDisableMailDomainMutationOptions(options), queryClient);
+    }
+    export const getGetMailDomainRecordsUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/mail/domains/${id}/records`
+}
+
+/**
+ * @summary The records this domain's mail requires (panel admin)
+ */
+export const getMailDomainRecords = async (id: string, options?: RequestInit): Promise<MailDomainRecords> => {
+
+  return apiFetch<MailDomainRecords>(getGetMailDomainRecordsUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetMailDomainRecordsQueryKey = (id: string,) => {
+    return [
+    `/api/v1/mail/domains/${id}/records`
+    ] as const;
+    }
+
+
+export const getGetMailDomainRecordsQueryOptions = <TData = Awaited<ReturnType<typeof getMailDomainRecords>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMailDomainRecords>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMailDomainRecordsQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMailDomainRecords>>> = ({ signal }) => getMailDomainRecords(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMailDomainRecords>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetMailDomainRecordsQueryResult = NonNullable<Awaited<ReturnType<typeof getMailDomainRecords>>>
+export type GetMailDomainRecordsQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useGetMailDomainRecords<TData = Awaited<ReturnType<typeof getMailDomainRecords>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMailDomainRecords>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getMailDomainRecords>>,
+          TError,
+          Awaited<ReturnType<typeof getMailDomainRecords>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMailDomainRecords<TData = Awaited<ReturnType<typeof getMailDomainRecords>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMailDomainRecords>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getMailDomainRecords>>,
+          TError,
+          Awaited<ReturnType<typeof getMailDomainRecords>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMailDomainRecords<TData = Awaited<ReturnType<typeof getMailDomainRecords>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMailDomainRecords>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary The records this domain's mail requires (panel admin)
+ */
+
+export function useGetMailDomainRecords<TData = Awaited<ReturnType<typeof getMailDomainRecords>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMailDomainRecords>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetMailDomainRecordsQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getRewriteMailDomainRecordsUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/mail/domains/${id}/records`
+}
+
+/**
+ * For a domain whose last attempt left something unwritten. Idempotent — a record that is already correct is left alone.
+ * @summary Write the records again (panel admin)
+ */
+export const rewriteMailDomainRecords = async (id: string, options?: RequestInit): Promise<MailDomain> => {
+
+  return apiFetch<MailDomain>(getRewriteMailDomainRecordsUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRewriteMailDomainRecordsMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rewriteMailDomainRecords>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof rewriteMailDomainRecords>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['rewriteMailDomainRecords'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rewriteMailDomainRecords>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  rewriteMailDomainRecords(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RewriteMailDomainRecordsMutationResult = NonNullable<Awaited<ReturnType<typeof rewriteMailDomainRecords>>>
+
+    export type RewriteMailDomainRecordsMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Write the records again (panel admin)
+ */
+export const useRewriteMailDomainRecords = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rewriteMailDomainRecords>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof rewriteMailDomainRecords>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getRewriteMailDomainRecordsMutationOptions(options), queryClient);
+    }
+    export const getListMailboxesUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/mail/domains/${id}/mailboxes`
+}
+
+/**
+ * Read from the PROVIDER, which owns them. The panel caches nothing that would go stale; the only thing it stores is the link to a panel account, because that is a fact the provider knows nothing about.
+ * @summary The domain's mailboxes (panel admin)
+ */
+export const listMailboxes = async (id: string, options?: RequestInit): Promise<Mailbox[]> => {
+
+  return apiFetch<Mailbox[]>(getListMailboxesUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListMailboxesQueryKey = (id: string,) => {
+    return [
+    `/api/v1/mail/domains/${id}/mailboxes`
+    ] as const;
+    }
+
+
+export const getListMailboxesQueryOptions = <TData = Awaited<ReturnType<typeof listMailboxes>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMailboxes>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListMailboxesQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listMailboxes>>> = ({ signal }) => listMailboxes(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listMailboxes>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListMailboxesQueryResult = NonNullable<Awaited<ReturnType<typeof listMailboxes>>>
+export type ListMailboxesQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useListMailboxes<TData = Awaited<ReturnType<typeof listMailboxes>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMailboxes>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listMailboxes>>,
+          TError,
+          Awaited<ReturnType<typeof listMailboxes>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListMailboxes<TData = Awaited<ReturnType<typeof listMailboxes>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMailboxes>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listMailboxes>>,
+          TError,
+          Awaited<ReturnType<typeof listMailboxes>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListMailboxes<TData = Awaited<ReturnType<typeof listMailboxes>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMailboxes>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary The domain's mailboxes (panel admin)
+ */
+
+export function useListMailboxes<TData = Awaited<ReturnType<typeof listMailboxes>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMailboxes>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListMailboxesQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getCreateMailboxUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/mail/domains/${id}/mailboxes`
+}
+
+/**
+ * The password appears in THIS response and never again. The panel cannot read it back because it does not have it — the provider stores the hash and the panel forwarded it once, which is the contract an invitation link already has.
+ * @summary Create a mailbox (panel admin)
+ */
+export const createMailbox = async (id: string,
+    createMailboxRequest: CreateMailboxRequest, options?: RequestInit): Promise<CreateMailboxResponse> => {
+
+  return apiFetch<CreateMailboxResponse>(getCreateMailboxUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(createMailboxRequest)
+  }
+);}
+
+
+
+
+
+export const getCreateMailboxMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createMailbox>>, TError,{id: string;data: CreateMailboxRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createMailbox>>, TError,{id: string;data: CreateMailboxRequest}, TContext> => {
+
+const mutationKey = ['createMailbox'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createMailbox>>, {id: string;data: CreateMailboxRequest}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  createMailbox(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateMailboxMutationResult = NonNullable<Awaited<ReturnType<typeof createMailbox>>>
+    export type CreateMailboxMutationBody = CreateMailboxRequest
+    export type CreateMailboxMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Create a mailbox (panel admin)
+ */
+export const useCreateMailbox = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createMailbox>>, TError,{id: string;data: CreateMailboxRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof createMailbox>>,
+        TError,
+        {id: string;data: CreateMailboxRequest},
+        TContext
+      > => {
+      return useMutation(getCreateMailboxMutationOptions(options), queryClient);
+    }
+    export const getDeleteMailboxUrl = (id: string,
+    params: DeleteMailboxParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/mail/domains/${id}/mailboxes?${stringifiedParams}` : `/api/v1/mail/domains/${id}/mailboxes`
+}
+
+/**
+ * @summary Delete a mailbox (panel admin)
+ */
+export const deleteMailbox = async (id: string,
+    params: DeleteMailboxParams, options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getDeleteMailboxUrl(id,params),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteMailboxMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteMailbox>>, TError,{id: string;params: DeleteMailboxParams}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteMailbox>>, TError,{id: string;params: DeleteMailboxParams}, TContext> => {
+
+const mutationKey = ['deleteMailbox'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteMailbox>>, {id: string;params: DeleteMailboxParams}> = (props) => {
+          const {id,params} = props ?? {};
+
+          return  deleteMailbox(id,params,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteMailboxMutationResult = NonNullable<Awaited<ReturnType<typeof deleteMailbox>>>
+
+    export type DeleteMailboxMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Delete a mailbox (panel admin)
+ */
+export const useDeleteMailbox = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteMailbox>>, TError,{id: string;params: DeleteMailboxParams}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteMailbox>>,
+        TError,
+        {id: string;params: DeleteMailboxParams},
+        TContext
+      > => {
+      return useMutation(getDeleteMailboxMutationOptions(options), queryClient);
+    }
+    export const getResetMailboxPasswordUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/mail/domains/${id}/mailboxes/password`
+}
+
+/**
+ * Shown once, like the create response, and for the same reason.
+ * @summary Mint a new mailbox password (panel admin)
+ */
+export const resetMailboxPassword = async (id: string,
+    resetMailboxPasswordBody: ResetMailboxPasswordBody, options?: RequestInit): Promise<ResetMailboxPassword200> => {
+
+  return apiFetch<ResetMailboxPassword200>(getResetMailboxPasswordUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(resetMailboxPasswordBody)
+  }
+);}
+
+
+
+
+
+export const getResetMailboxPasswordMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resetMailboxPassword>>, TError,{id: string;data: ResetMailboxPasswordBody}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof resetMailboxPassword>>, TError,{id: string;data: ResetMailboxPasswordBody}, TContext> => {
+
+const mutationKey = ['resetMailboxPassword'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof resetMailboxPassword>>, {id: string;data: ResetMailboxPasswordBody}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  resetMailboxPassword(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ResetMailboxPasswordMutationResult = NonNullable<Awaited<ReturnType<typeof resetMailboxPassword>>>
+    export type ResetMailboxPasswordMutationBody = ResetMailboxPasswordBody
+    export type ResetMailboxPasswordMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Mint a new mailbox password (panel admin)
+ */
+export const useResetMailboxPassword = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resetMailboxPassword>>, TError,{id: string;data: ResetMailboxPasswordBody}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof resetMailboxPassword>>,
+        TError,
+        {id: string;data: ResetMailboxPasswordBody},
+        TContext
+      > => {
+      return useMutation(getResetMailboxPasswordMutationOptions(options), queryClient);
+    }
+    export const getListLogDrainsUrl = () => {
 
 
 

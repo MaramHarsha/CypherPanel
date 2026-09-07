@@ -434,6 +434,32 @@ type LogDrain struct {
 	UpdatedAt     pgtype.Timestamptz
 }
 
+type MailDomain struct {
+	ID               string
+	Domain           string
+	RecordsWrittenAt pgtype.Timestamptz
+	LastError        string
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+type MailProvider struct {
+	ID          int32
+	Kind        string
+	ConfigCt    []byte
+	ConfigNonce []byte
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type MailboxLink struct {
+	ID        string
+	DomainID  string
+	Address   string
+	UserID    pgtype.Text
+	CreatedAt pgtype.Timestamptz
+}
+
 type MetricsSetting struct {
 	ID               int32
 	Enabled          bool

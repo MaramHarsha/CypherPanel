@@ -123,9 +123,20 @@ const (
 	ActionPlaneDRDisarmed    = "panel.dr_disarmed"
 	ActionPlaneDRVerified    = "panel.dr_verified"
 	ActionPlaneSnapshotTaken = "panel.snapshot_taken"
-	ActionEnvironmentCreated = "environment.created"
-	ActionEnvironmentRenamed = "environment.renamed"
-	ActionEnvironmentDeleted = "environment.deleted"
+	// Provider-backed mail (managed-email.md). Where a domain's mail is
+	// delivered is decided by records this panel writes, so the decision is on
+	// the record. Never the credential, and never a mailbox password — the
+	// panel does not have the second one at all.
+	ActionMailProviderConnected    = "mail.provider_connected"
+	ActionMailProviderDisconnected = "mail.provider_disconnected"
+	ActionMailDomainEnabled        = "mail.domain_enabled"
+	ActionMailDomainDisabled       = "mail.domain_disabled"
+	ActionMailboxCreated           = "mail.mailbox_created"
+	ActionMailboxDeleted           = "mail.mailbox_deleted"
+	ActionMailboxPasswordReset     = "mail.mailbox_password_reset"
+	ActionEnvironmentCreated       = "environment.created"
+	ActionEnvironmentRenamed       = "environment.renamed"
+	ActionEnvironmentDeleted       = "environment.deleted"
 	// A template install creates several applications and databases in one
 	// action, so it is recorded ONCE against the environment that received
 	// them — six silent creates is not an answer to "where did these come
@@ -338,6 +349,14 @@ var actions = map[string]bool{
 	ActionPlaneDRDisarmed:    true,
 	ActionPlaneDRVerified:    true,
 	ActionPlaneSnapshotTaken: true,
+
+	ActionMailProviderConnected:    true,
+	ActionMailProviderDisconnected: true,
+	ActionMailDomainEnabled:        true,
+	ActionMailDomainDisabled:       true,
+	ActionMailboxCreated:           true,
+	ActionMailboxDeleted:           true,
+	ActionMailboxPasswordReset:     true,
 
 	ActionRegistryCreated: true, ActionRegistryUpdated: true,
 	ActionRegistryDeleted: true,

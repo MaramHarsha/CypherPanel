@@ -1925,6 +1925,188 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /api/v1/mail/provider:
+    get:
+      operationId: getMailProvider
+      tags: [panel]
+      summary: Whether a mail provider is connected (panel admin)
+      responses:
+        "200": { description: The status., content: { application/json: { schema: { $ref: "#/components/schemas/MailProviderStatus" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: connectMailProvider
+      tags: [panel]
+      summary: Connect a mail provider (panel admin)
+      description: >-
+        THE PANEL IS NOT BECOMING A MAIL SERVER. It writes MX, SPF, DKIM and
+        DMARC through the DNS provider already connected, and creates mailboxes
+        through this provider's API. It runs no MTA, stores no message, and
+        never holds a DKIM private key — the provider generates that pair and
+        publishes only the public half.
+
+
+        The credential is tested before it is stored, then sealed under the
+        master key and never returned. A credential saved and later found broken
+        is one an operator discovers when a mailbox creation fails, which is the
+        wrong moment.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/MailProviderConfig" } } }
+      responses:
+        "200": { description: Connected., content: { application/json: { schema: { $ref: "#/components/schemas/MailProviderStatus" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    delete:
+      operationId: disconnectMailProvider
+      tags: [panel]
+      summary: Forget the provider credential (panel admin)
+      description: Domains and mailboxes at the provider are untouched — disconnecting the panel is not the same decision as deleting somebody's mail.
+      responses:
+        "204": { description: Disconnected. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/mail/domains:
+    get:
+      operationId: listMailDomains
+      tags: [panel]
+      summary: Domains with mail enabled (panel admin)
+      responses:
+        "200":
+          description: The domains.
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/MailDomain" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: enableMailDomain
+      tags: [panel]
+      summary: Enable mail on a verified domain (panel admin)
+      description: >-
+        Refused for a domain the panel cannot write DNS for. That is not
+        gatekeeping: on such a domain this feature can do nothing but print
+        instructions, and enabling it would be claiming to have done something.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [domain], properties: { domain: { type: string } } } } }
+      responses:
+        "201": { description: Enabled., content: { application/json: { schema: { $ref: "#/components/schemas/MailDomainRecords" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/mail/domains/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Mail domain ID. }
+    delete:
+      operationId: disableMailDomain
+      tags: [panel]
+      summary: Stop managing this domain's mail (panel admin)
+      description: The domain and its mailboxes stay at the provider. Deleting somebody's mail because a panel switch was turned off is not a trade this feature makes.
+      responses:
+        "204": { description: Disabled. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/mail/domains/{id}/records:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Mail domain ID. }
+    get:
+      operationId: getMailDomainRecords
+      tags: [panel]
+      summary: The records this domain's mail requires (panel admin)
+      responses:
+        "200": { description: The records., content: { application/json: { schema: { $ref: "#/components/schemas/MailDomainRecords" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: rewriteMailDomainRecords
+      tags: [panel]
+      summary: Write the records again (panel admin)
+      description: For a domain whose last attempt left something unwritten. Idempotent — a record that is already correct is left alone.
+      responses:
+        "200": { description: Written., content: { application/json: { schema: { $ref: "#/components/schemas/MailDomain" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/mail/domains/{id}/mailboxes:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Mail domain ID. }
+    get:
+      operationId: listMailboxes
+      tags: [panel]
+      summary: The domain's mailboxes (panel admin)
+      description: >-
+        Read from the PROVIDER, which owns them. The panel caches nothing that
+        would go stale; the only thing it stores is the link to a panel account,
+        because that is a fact the provider knows nothing about.
+      responses:
+        "200":
+          description: The mailboxes.
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Mailbox" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: createMailbox
+      tags: [panel]
+      summary: Create a mailbox (panel admin)
+      description: >-
+        The password appears in THIS response and never again. The panel cannot
+        read it back because it does not have it — the provider stores the hash
+        and the panel forwarded it once, which is the contract an invitation
+        link already has.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateMailboxRequest" } } }
+      responses:
+        "201":
+          description: Created. `password` appears here and nowhere else, ever.
+          content: { application/json: { schema: { $ref: "#/components/schemas/CreateMailboxResponse" } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: deleteMailbox
+      tags: [panel]
+      summary: Delete a mailbox (panel admin)
+      parameters:
+        - { name: address, in: query, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Deleted. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/mail/domains/{id}/mailboxes/password:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Mail domain ID. }
+    post:
+      operationId: resetMailboxPassword
+      tags: [panel]
+      summary: Mint a new mailbox password (panel admin)
+      description: Shown once, like the create response, and for the same reason.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [address], properties: { address: { type: string } } } } }
+      responses:
+        "200":
+          description: Reset. The password appears here and nowhere else.
+          content: { application/json: { schema: { type: object, required: [password], properties: { password: { type: string } } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /api/v1/log-drains:
     get:
       operationId: listLogDrains
@@ -8512,6 +8694,71 @@ components:
         detail: { type: string }
         started_at: { type: string, format: date-time }
         finished_at: { type: [string, "null"], format: date-time }
+
+    MailProviderStatus:
+      type: object
+      required: [connected, config_hint]
+      properties:
+        connected: { type: boolean }
+        config_hint: { type: string, description: "The credential, masked. It is never returned." }
+    MailProviderConfig:
+      type: object
+      required: [account, api_key]
+      properties:
+        account: { type: string, description: The admin address the API key belongs to. }
+        api_key: { type: string, description: "Sealed under the master key and never returned." }
+        base_url: { type: string, description: "Overrides the endpoint, for a test double or a self-hosted proxy." }
+    MailDomain:
+      type: object
+      required: [id, domain, last_error]
+      properties:
+        id: { type: string, description: mdm_… prefixed ID. }
+        domain: { type: string }
+        records_written_at:
+          type: [string, "null"]
+          format: date-time
+          description: "Null means asked but not confirmed — pending, not done."
+        last_error: { type: string, description: "Which record did not land, so the operator can fix that one rather than starting over." }
+    MailDomainRecords:
+      type: object
+      required: [domain, records]
+      properties:
+        domain: { $ref: "#/components/schemas/MailDomain" }
+        records:
+          type: array
+          items: { $ref: "#/components/schemas/MailRecord" }
+    MailRecord:
+      type: object
+      required: [type, name, content, ttl, purpose]
+      properties:
+        type: { type: string }
+        name: { type: string, description: Fully qualified. }
+        content: { type: string }
+        ttl: { type: integer }
+        priority: { type: integer }
+        purpose: { type: string, description: "What the record is FOR, in words. Four TXT records are indistinguishable without it." }
+    Mailbox:
+      type: object
+      required: [address, name]
+      properties:
+        address: { type: string }
+        name: { type: string }
+        quota_bytes: { type: integer, format: int64 }
+        storage_bytes: { type: integer, format: int64 }
+        user_id: { type: string, description: "The panel account this mailbox belongs to, if one was linked. Deleting that account never deletes the mailbox." }
+    CreateMailboxRequest:
+      type: object
+      required: [local_part]
+      properties:
+        local_part: { type: string, description: "The part before the @. Lowercase letters, digits, and . - _ + — deliberately narrower than the RFC allows." }
+        name: { type: string }
+        user_id: { type: string, description: "Optional: link it to a panel account." }
+    CreateMailboxResponse:
+      type: object
+      required: [mailbox, password]
+      properties:
+        mailbox: { $ref: "#/components/schemas/Mailbox" }
+        password: { type: string, description: "Appears here and nowhere else, ever." }
 
     LogDrain:
       type: object

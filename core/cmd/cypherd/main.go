@@ -58,6 +58,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/logdrain"
 	"github.com/MaramHarsha/cypherpanel/core/logring"
 	"github.com/MaramHarsha/cypherpanel/core/mail"
+	"github.com/MaramHarsha/cypherpanel/core/mailhost"
 	"github.com/MaramHarsha/cypherpanel/core/notify"
 	"github.com/MaramHarsha/cypherpanel/core/onboarding"
 	"github.com/MaramHarsha/cypherpanel/core/paneltls"
@@ -750,6 +751,12 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		planeDR.Run(ctx, time.Minute, planeSnapshotDue)
 	}()
 
+	// Provider-backed mail (managed-email.md). The panel writes the DNS through
+	// the automation it already has and manages mailboxes through the
+	// provider's API; it runs no MTA and holds no DKIM private key.
+	mailHostSvc := mailhost.NewService(st, box, mailDNSWriter{dns: dnsSvc})
+	mailHostSvc.SetLogger(log.With("component", "mailhost"))
+
 	drainSvc := logdrain.NewService(st, box, box)
 	drainMgr := logdrain.New(logdrain.Options{
 		Store: st, Bus: busDrainAdapter{b}, Opener: box,
@@ -829,6 +836,7 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		Upgrades:         upgradeSvc,
 		LogDrains:        drainSvc,
 		PlaneDR:          planeDR,
+		MailHost:         mailHostSvc,
 		PlaneDRFetch:     planeObjects.Get,
 		Updates:          updateChecker,
 		AlertBacktest:    alertEval,
@@ -1062,4 +1070,18 @@ func planeSnapshotDue(schedule string, last *time.Time, now time.Time) bool {
 		anchor = *last
 	}
 	return !parsed.Next(anchor).After(now)
+}
+
+// mailDNSWriter adapts the DNS service to the mail package's narrow seam: two
+// methods, one of which only asks a question. The mail package must not be able
+// to reach the rest of DNS automation — it has one job with records and no
+// reason to touch an application's.
+type mailDNSWriter struct{ dns *dns.Service }
+
+func (m mailDNSWriter) EnsureRecord(ctx context.Context, zoneDomain string, r mailhost.Record) error {
+	return m.dns.EnsureStaticRecord(ctx, mailhost.RecordName(r, zoneDomain), r.Type, r.Content, r.TTL, r.Priority)
+}
+
+func (m mailDNSWriter) Verified(ctx context.Context, domainName string) (bool, error) {
+	return m.dns.CanManage(ctx, domainName)
 }

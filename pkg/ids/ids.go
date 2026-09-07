@@ -127,6 +127,10 @@ const (
 	// Plane snapshots (plane-disaster-recovery.md §9.2).
 	PrefixPlaneSnapshot = "snap"
 
+	// Mail (managed-email.md §§4, 5).
+	PrefixMailDomain  = "mdm"
+	PrefixMailboxLink = "mbx"
+
 	// V1.x: team invitations and access requests
 	// (docs/features/invitations-and-access-requests.md §2). An invite id is
 	// also the PUBLIC half of its wire token (`inv_….<secret>`), which is what
