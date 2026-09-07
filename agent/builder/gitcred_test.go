@@ -78,3 +78,48 @@ func TestACloneThatNeededACredentialSaysSoAndNamesTheRemedy(t *testing.T) {
 		t.Fatalf("a non-auth failure was reinterpreted as %q", got)
 	}
 }
+
+// pack-builds.md assumed Nixpacks emits an ordinary Dockerfile the classic
+// /build endpoint can parse. That is no longer true: it emits
+// `RUN --mount=type=cache` for every Node, Python and Go project, and the
+// classic endpoint answers "the --mount option requires BuildKit" — which reads
+// like a daemon misconfiguration rather than output the builder cannot consume.
+//
+// So the transport is chosen from what the file ACTUALLY CONTAINS, which is
+// also what stops this breaking again the next time a pack changes its output.
+func TestADockerfileUsingCacheMountsIsRoutedToBuildKit(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	// What nixpacks actually produced for a Next.js repository.
+	needs := write("buildkit", "FROM node:22\nWORKDIR /app\n"+
+		"RUN --mount=type=cache,id=x,target=/root/.npm npm ci\nCMD [\"npm\",\"start\"]\n")
+	got, err := dockerfileNeedsBuildKit(needs)
+	if err != nil || !got {
+		t.Fatalf("cache mounts = %v, %v; want true", got, err)
+	}
+
+	// A plain Dockerfile must STAY on the classic path: routing it to a
+	// transport the host may not have would trade a working build for a
+	// missing binary.
+	plain := write("plain", "FROM node:22\nWORKDIR /app\nRUN npm ci\nCMD [\"npm\",\"start\"]\n")
+	got, err = dockerfileNeedsBuildKit(plain)
+	if err != nil || got {
+		t.Fatalf("plain Dockerfile = %v, %v; want false", got, err)
+	}
+
+	// A Plan carrying such a Dockerfile reports that it needs the second
+	// transport, which is what the builder branches on.
+	if !(Plan{Dockerfile: ".nixpacks/Dockerfile", BuildKitDockerfile: true}).NeedsBuildKit() {
+		t.Fatal("a BuildKit Dockerfile plan did not ask for the BuildKit transport")
+	}
+	if (Plan{Dockerfile: "Dockerfile"}).NeedsBuildKit() {
+		t.Fatal("an ordinary Dockerfile plan asked for the BuildKit transport")
+	}
+}

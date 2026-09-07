@@ -377,11 +377,20 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 		// itself. It is still closed by the deferred Close above, which stops
 		// the walking goroutine.
 		if b.buildKit == nil {
-			return "", ErrRailpackUnavailable
+			if plan.Frontend != "" {
+				return "", ErrRailpackUnavailable
+			}
+			return "", ErrBuildKitUnavailable
+		}
+		// A frontend plan names its own file; a Dockerfile that merely needs
+		// BuildKit is built from the Dockerfile the pack wrote.
+		planFile := plan.PlanFile
+		if planFile == "" {
+			planFile = dockerfilePath
 		}
 		if err := b.buildKit.Build(ctx, BuildKitRequest{
 			ContextDir: contextDir,
-			PlanFile:   plan.PlanFile,
+			PlanFile:   planFile,
 			Frontend:   plan.Frontend,
 			Tag:        work.Image,
 			Labels:     labels,

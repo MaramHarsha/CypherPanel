@@ -53,19 +53,24 @@ type BuildxCLI struct{}
 // the daemon would fail at rollout with nothing to explain it.
 func (BuildxCLI) Build(ctx context.Context, req BuildKitRequest, onLog func(string)) error {
 	if !buildKitAvailable() {
-		return ErrRailpackUnavailable
+		return ErrBuildKitUnavailable
 	}
-	args := []string{
-		"buildx", "build",
+	args := []string{"buildx", "build"}
+	if req.Frontend != "" {
 		// The frontend, passed the way Railpack's own reference documents it.
-		"--build-arg", "BUILDKIT_SYNTAX=" + req.Frontend,
+		// Only for a frontend PLAN: a Dockerfile routed here because it uses
+		// cache mounts is built by BuildKit's own parser, and naming a syntax
+		// image for it would replace that parser with one that cannot read it.
+		args = append(args, "--build-arg", "BUILDKIT_SYNTAX="+req.Frontend)
+	}
+	args = append(args,
 		"--file", req.PlanFile,
 		"--tag", req.Tag,
 		"--load",
 		// Plain progress: this output is streamed to an operator reading a
 		// build log, not to a terminal that can redraw itself.
 		"--progress", "plain",
-	}
+	)
 	// Sorted, so the same inputs produce the same invocation — a build that
 	// differs only in argument order is one nobody can reason about.
 	for _, k := range sortedKeys(req.Labels) {
