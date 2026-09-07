@@ -163,67 +163,18 @@ case "$PUBLIC_URL" in
     *) fail "CYPHERD_PUBLIC_URL must start with http:// or https:// (got '$PUBLIC_URL')" ;;
 esac
 
-# ── postgres ─────────────────────────────────────────────────────────────────
-
-if docker inspect "$PG_NAME" >/dev/null 2>&1; then
-    docker start "$PG_NAME" >/dev/null 2>&1 || true
-    ok "PostgreSQL container already exists — left as is"
-else
-    say "starting PostgreSQL ($PG_IMAGE)"
-    # Bound to loopback: the database is never a public service. The panel and
-    # the database live on the same host by design (ADR-001).
-    docker run -d --name "$PG_NAME" \
-        --restart unless-stopped \
-        -e POSTGRES_USER=cypherpanel \
-        -e POSTGRES_PASSWORD="$PG_PASSWORD" \
-        -e POSTGRES_DB=cypherpanel \
-        -p 127.0.0.1:5432:5432 \
-        -v cypherpanel-pgdata:/var/lib/postgresql/data \
-        "$PG_IMAGE" >/dev/null || fail "could not start PostgreSQL"
-fi
-
-say "waiting for PostgreSQL"
-i=0
-while [ "$i" -lt 60 ]; do
-    docker exec "$PG_NAME" pg_isready -U cypherpanel -d cypherpanel >/dev/null 2>&1 && break
-    i=$((i + 1)); sleep 1
-done
-docker exec "$PG_NAME" pg_isready -U cypherpanel -d cypherpanel >/dev/null 2>&1 \
-    || fail "PostgreSQL did not become ready within 60s (docker logs $PG_NAME)"
-ok "PostgreSQL ready"
-
-# ── binary ───────────────────────────────────────────────────────────────────
-
-URL="${CYPHERD_URL:-https://github.com/$REPO/releases/latest/download/cypherd-linux-{arch}}"
-URL="$(printf '%s' "$URL" | sed "s/{arch}/$ARCH/g")"
-
-TMP="$(mktemp -d)"
-cleanup() { rm -rf "$TMP"; }
-trap cleanup EXIT INT TERM
-
-say "downloading cypherd"
-if ! fetch -o "$TMP/cypherd" "$URL"; then
-    fail "could not download cypherd from $URL
-  No release published yet? Build it from a checkout instead:
-      git clone https://github.com/$REPO && cd CypherPanel/core
-      go build -o /usr/local/bin/cypherd ./cmd/cypherd
-  then re-run this script with CYPHERD_URL=file:///usr/local/bin/cypherd"
-fi
-
-if [ -n "${CYPHERD_SHA256:-}" ]; then
-    command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required to verify CYPHERD_SHA256"
-    got="$(sha256sum "$TMP/cypherd" | awk '{print $1}')"
-    [ "$got" = "$CYPHERD_SHA256" ] || fail "checksum mismatch: expected $CYPHERD_SHA256, got $got"
-    ok "checksum verified"
-fi
-
-chmod 0755 "$TMP/cypherd"
-"$TMP/cypherd" --version >/dev/null 2>&1 || true
-install -m 0755 "$TMP/cypherd" "$BIN"
-ok "installed $BIN"
-
 # ── config ───────────────────────────────────────────────────────────────────
 
+# Written BEFORE anything uses these secrets, and the ordering is the fix for a
+# real failure: the database password used to exist only inside the Postgres
+# container until this file was written, so any run that failed in between —
+# most obviously the download, which fails on every host until a release is
+# published — left a container nobody held the password for. Every later run
+# then reused that container, generated a fresh password, and died on
+# "password authentication failed", which reads like a bug in Postgres rather
+# than a half-finished install. Persisting first makes the re-run converge,
+# which is what the header promises.
+#
 # Written whole each run so upgrades pick up new defaults, with the two values
 # that must never change carried over from above.
 umask 077
@@ -254,6 +205,89 @@ CYPHERD_ADMIN_PASSWORD=
 EOF
 chmod 600 "$ENV_FILE"
 ok "wrote $ENV_FILE (0600)"
+
+# ── postgres ─────────────────────────────────────────────────────────────────
+
+if docker inspect "$PG_NAME" >/dev/null 2>&1; then
+    docker start "$PG_NAME" >/dev/null 2>&1 || true
+    ok "PostgreSQL container already exists — left as is"
+else
+    say "starting PostgreSQL ($PG_IMAGE)"
+    # Bound to loopback: the database is never a public service. The panel and
+    # the database live on the same host by design (ADR-001).
+    docker run -d --name "$PG_NAME" \
+        --restart unless-stopped \
+        -e POSTGRES_USER=cypherpanel \
+        -e POSTGRES_PASSWORD="$PG_PASSWORD" \
+        -e POSTGRES_DB=cypherpanel \
+        -p 127.0.0.1:5432:5432 \
+        -v cypherpanel-pgdata:/var/lib/postgresql/data \
+        "$PG_IMAGE" >/dev/null || fail "could not start PostgreSQL"
+fi
+
+say "waiting for PostgreSQL"
+i=0
+while [ "$i" -lt 60 ]; do
+    docker exec "$PG_NAME" pg_isready -U cypherpanel -d cypherpanel >/dev/null 2>&1 && break
+    i=$((i + 1)); sleep 1
+done
+docker exec "$PG_NAME" pg_isready -U cypherpanel -d cypherpanel >/dev/null 2>&1 \
+    || fail "PostgreSQL did not become ready within 60s (docker logs $PG_NAME)"
+
+# pg_isready answers "the server is accepting connections", not "these
+# credentials work" — so an existing container whose password we do not hold
+# passes it and then fails the panel four restarts later, with an error that
+# names SASL rather than this. Ask the question directly, here, where the
+# remedy is obvious.
+if ! docker exec -e PGPASSWORD="$PG_PASSWORD" "$PG_NAME" \
+        psql -U cypherpanel -d cypherpanel -c 'SELECT 1' >/dev/null 2>&1; then
+    fail "the existing '$PG_NAME' container does not accept the password in $ENV_FILE.
+  It was created by an earlier install whose password was never written down.
+  Nothing in it is yours yet, so remove it and re-run:
+      docker rm -f $PG_NAME && docker volume rm cypherpanel-pgdata
+  If that database DOES hold data you want, set POSTGRES_PASSWORD in
+  $ENV_FILE to its real password instead."
+fi
+ok "PostgreSQL ready"
+
+# ── binary ───────────────────────────────────────────────────────────────────
+
+# The default is assigned on its own line rather than inlined as
+# ${CYPHERD_URL:-…{arch}}: the `}` in `{arch}` closes the parameter expansion
+# early, so the shell read that as ${CYPHERD_URL:-…{arch} followed by a literal
+# `}`. With CYPHERD_URL unset the two halves happened to reassemble correctly;
+# with it SET the value came out with a stray `}` appended and curl refused the
+# URL — and that override is the documented path while no release exists, so it
+# broke the only way anyone can install this today. agent.sh already avoids the
+# shape by branching instead of nesting; this follows it.
+DEFAULT_URL="https://github.com/$REPO/releases/latest/download/cypherd-linux-{arch}"
+URL="${CYPHERD_URL:-$DEFAULT_URL}"
+URL="$(printf '%s' "$URL" | sed "s/{arch}/$ARCH/g")"
+
+TMP="$(mktemp -d)"
+cleanup() { rm -rf "$TMP"; }
+trap cleanup EXIT INT TERM
+
+say "downloading cypherd"
+if ! fetch -o "$TMP/cypherd" "$URL"; then
+    fail "could not download cypherd from $URL
+  No release published yet? Build it from a checkout instead:
+      git clone https://github.com/$REPO && cd CypherPanel/core
+      go build -o /usr/local/bin/cypherd ./cmd/cypherd
+  then re-run this script with CYPHERD_URL=file:///usr/local/bin/cypherd"
+fi
+
+if [ -n "${CYPHERD_SHA256:-}" ]; then
+    command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required to verify CYPHERD_SHA256"
+    got="$(sha256sum "$TMP/cypherd" | awk '{print $1}')"
+    [ "$got" = "$CYPHERD_SHA256" ] || fail "checksum mismatch: expected $CYPHERD_SHA256, got $got"
+    ok "checksum verified"
+fi
+
+chmod 0755 "$TMP/cypherd"
+"$TMP/cypherd" --version >/dev/null 2>&1 || true
+install -m 0755 "$TMP/cypherd" "$BIN"
+ok "installed $BIN"
 
 # ── the upgrade helper ───────────────────────────────────────────────────────
 #
