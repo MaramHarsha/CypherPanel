@@ -390,6 +390,11 @@ type Deps struct {
 	StatusRoutes StatusPageRoutes
 	// Metrics is the metrics, traffic and usage surface (metrics-and-usage.md).
 	Metrics MetricsStore
+	// Alerts is the threshold-rule surface, and AlertBacktest is the SAME
+	// evaluator the loop uses — two implementations would be two answers to
+	// "what would this rule have done" (threshold-alerts.md §6).
+	Alerts        AlertStore
+	AlertBacktest AlertBacktester
 	// PanelURL is the panel's own advertised base URL, used to tell the
 	// operator where their status page is reachable without any DNS.
 	PanelURL string
@@ -592,6 +597,14 @@ func (a *API) Handler() http.Handler {
 	// operator who may deploy the app may decide who reaches it.
 	// Volume backups (volume-backups.md §3): one schedule per application,
 	// covering every volume it marks as backed up.
+	// Threshold alerts (threshold-alerts.md §7).
+	mux.HandleFunc("GET /api/v1/alert-rules", a.authed(a.handleListAlertRules))
+	mux.HandleFunc("POST /api/v1/alert-rules", a.authed(a.handleCreateAlertRule))
+	mux.HandleFunc("POST /api/v1/alert-rules/backtest", a.authed(a.handleBacktestAlertRule))
+	mux.HandleFunc("PATCH /api/v1/alert-rules/{id}", a.authed(a.handleSetAlertRuleEnabled))
+	mux.HandleFunc("DELETE /api/v1/alert-rules/{id}", a.authed(a.handleDeleteAlertRule))
+	mux.HandleFunc("GET /api/v1/alert-rules/{id}/events", a.authed(a.handleListAlertEvents))
+
 	// Metrics, traffic and usage (metrics-and-usage.md §10). Fixed endpoints,
 	// not a query language: they answer the questions the screens ask.
 	mux.HandleFunc("GET /api/v1/applications/{id}/metrics", a.authed(a.handleApplicationMetrics))

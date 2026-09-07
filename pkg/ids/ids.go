@@ -113,6 +113,10 @@ const (
 	PrefixStatusComponent = "spc"
 	PrefixStatusInterval  = "si"
 
+	// Threshold alerts (threshold-alerts.md §2): the rule and one episode.
+	PrefixAlertRule  = "alr"
+	PrefixAlertEvent = "ale"
+
 	// V1.x: team invitations and access requests
 	// (docs/features/invitations-and-access-requests.md §2). An invite id is
 	// also the PUBLIC half of its wire token (`inv_….<secret>`), which is what

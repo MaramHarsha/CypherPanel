@@ -19,6 +19,7 @@ import { Route as AppProjectsIndexRouteImport } from './routes/_app/projects/ind
 import { Route as AppServersIndexRouteImport } from './routes/_app/servers/index'
 import { Route as AppServersServerIdRouteImport } from './routes/_app/servers/$serverId'
 import { Route as AppSettingsIndexRouteImport } from './routes/_app/settings/index'
+import { Route as AppSettingsAlertsRouteImport } from './routes/_app/settings/alerts'
 import { Route as AppSettingsApiRouteImport } from './routes/_app/settings/api'
 import { Route as AppSettingsAuditRouteImport } from './routes/_app/settings/audit'
 import { Route as AppSettingsBackupTargetsRouteImport } from './routes/_app/settings/backup-targets'
@@ -110,6 +111,11 @@ const AppServersServerIdRoute = AppServersServerIdRouteImport.update({
 const AppSettingsIndexRoute = AppSettingsIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => AppSettingsRoute,
+} as any)
+const AppSettingsAlertsRoute = AppSettingsAlertsRouteImport.update({
+  id: '/alerts',
+  path: '/alerts',
   getParentRoute: () => AppSettingsRoute,
 } as any)
 const AppSettingsApiRoute = AppSettingsApiRouteImport.update({
@@ -364,6 +370,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof AppSettingsRouteWithChildren
   '/invite/$token': typeof InviteTokenRoute
   '/servers/$serverId': typeof AppServersServerIdRoute
+  '/settings/alerts': typeof AppSettingsAlertsRoute
   '/settings/api': typeof AppSettingsApiRoute
   '/settings/audit': typeof AppSettingsAuditRoute
   '/settings/backup-targets': typeof AppSettingsBackupTargetsRoute
@@ -417,6 +424,7 @@ export interface FileRoutesByTo {
   '/invite/$token': typeof InviteTokenRoute
   '/': typeof AppIndexRoute
   '/servers/$serverId': typeof AppServersServerIdRoute
+  '/settings/alerts': typeof AppSettingsAlertsRoute
   '/settings/api': typeof AppSettingsApiRoute
   '/settings/audit': typeof AppSettingsAuditRoute
   '/settings/backup-targets': typeof AppSettingsBackupTargetsRoute
@@ -469,6 +477,7 @@ export interface FileRoutesById {
   '/invite/$token': typeof InviteTokenRoute
   '/_app/': typeof AppIndexRoute
   '/_app/servers/$serverId': typeof AppServersServerIdRoute
+  '/_app/settings/alerts': typeof AppSettingsAlertsRoute
   '/_app/settings/api': typeof AppSettingsApiRoute
   '/_app/settings/audit': typeof AppSettingsAuditRoute
   '/_app/settings/backup-targets': typeof AppSettingsBackupTargetsRoute
@@ -525,6 +534,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/invite/$token'
     | '/servers/$serverId'
+    | '/settings/alerts'
     | '/settings/api'
     | '/settings/audit'
     | '/settings/backup-targets'
@@ -578,6 +588,7 @@ export interface FileRouteTypes {
     | '/invite/$token'
     | '/'
     | '/servers/$serverId'
+    | '/settings/alerts'
     | '/settings/api'
     | '/settings/audit'
     | '/settings/backup-targets'
@@ -629,6 +640,7 @@ export interface FileRouteTypes {
     | '/invite/$token'
     | '/_app/'
     | '/_app/servers/$serverId'
+    | '/_app/settings/alerts'
     | '/_app/settings/api'
     | '/_app/settings/audit'
     | '/_app/settings/backup-targets'
@@ -753,6 +765,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/settings/'
       preLoaderRoute: typeof AppSettingsIndexRouteImport
+      parentRoute: typeof AppSettingsRoute
+    }
+    '/_app/settings/alerts': {
+      id: '/_app/settings/alerts'
+      path: '/alerts'
+      fullPath: '/settings/alerts'
+      preLoaderRoute: typeof AppSettingsAlertsRouteImport
       parentRoute: typeof AppSettingsRoute
     }
     '/_app/settings/api': {
@@ -1060,6 +1079,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface AppSettingsRouteChildren {
+  AppSettingsAlertsRoute: typeof AppSettingsAlertsRoute
   AppSettingsApiRoute: typeof AppSettingsApiRoute
   AppSettingsAuditRoute: typeof AppSettingsAuditRoute
   AppSettingsBackupTargetsRoute: typeof AppSettingsBackupTargetsRoute
@@ -1078,6 +1098,7 @@ interface AppSettingsRouteChildren {
 }
 
 const AppSettingsRouteChildren: AppSettingsRouteChildren = {
+  AppSettingsAlertsRoute: AppSettingsAlertsRoute,
   AppSettingsApiRoute: AppSettingsApiRoute,
   AppSettingsAuditRoute: AppSettingsAuditRoute,
   AppSettingsBackupTargetsRoute: AppSettingsBackupTargetsRoute,

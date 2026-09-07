@@ -28,6 +28,17 @@ const (
 	// most-wanted notification a PaaS has.
 	EventAppCrashed   = "app.crashed"
 	EventAppRecovered = "app.recovered"
+
+	// EventAlertFiring / EventAlertResolved are a threshold rule crossing its
+	// own line (threshold-alerts.md §5).
+	//
+	// Subscribable by the same test the health transitions pass — an observed
+	// transition of a resource — but note that a rule DELIVERS through the
+	// notifier it names rather than through a subscription. Membership here is
+	// what lets an operator also subscribe a channel to every alert, without
+	// making that the only way to receive one.
+	EventAlertFiring   = "alert.firing"
+	EventAlertResolved = "alert.resolved"
 )
 
 // eventTypes is the subscribable taxonomy in one place. Both notifiers
@@ -41,6 +52,8 @@ var eventTypes = []string{
 	EventBackupFailed,
 	EventAppCrashed,
 	EventAppRecovered,
+	EventAlertFiring,
+	EventAlertResolved,
 }
 
 // EventTypes returns the subscribable event keys, in documentation order. The

@@ -107,6 +107,23 @@ type Collector struct {
 	lineWindow time.Time
 	lineCount  int
 	sampleRate uint32
+
+	// dataRoot is the Docker data root, for the host's own filesystem figure.
+	dataRoot string
+	// prevHost is the previous cumulative CPU reading of the HOST, differenced
+	// the same way a container's is.
+	prevHost    HostSample
+	prevHostSet bool
+}
+
+// SetDataRoot tells the collector which filesystem the host's disk figure
+// describes. Empty means no host disk row rather than a guess at
+// /var/lib/docker: an operator who moved the data root is exactly the operator
+// who would not have moved a hard-coded path with it.
+func (c *Collector) SetDataRoot(path string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.dataRoot = path
 }
 
 func New(sampler Sampler, bus Publisher, serverID string, log *slog.Logger) *Collector {
@@ -234,6 +251,57 @@ func (c *Collector) sample(ctx context.Context) {
 		if !live[id] {
 			delete(c.prevCPU, id)
 		}
+	}
+
+	c.sampleHostLocked(b)
+}
+
+// sampleHostLocked folds the node's OWN totals into the bucket, as a
+// resource_kind = "server" row.
+//
+// This is not the sum of the containers above, and the difference is the whole
+// point: a threshold rule on "memory above 90%" must see what the HOST is
+// doing, including the operator's own processes. A figure summed from managed
+// containers reports calm on a box somebody else filled.
+func (c *Collector) sampleHostLocked(b *Bucket) {
+	host, err := ReadHost(c.dataRoot)
+	if err != nil || host.MemoryTotal == 0 {
+		return
+	}
+	prev := c.prevHost
+	seen := c.prevHostSet
+	c.prevHost, c.prevHostSet = host, true
+	if !seen || host.CPUTotalJiffies <= prev.CPUTotalJiffies {
+		// First sight, or a counter that went backwards across a reboot. There
+		// is no delta to attribute and inventing one would put the host's whole
+		// uptime of CPU into one bucket.
+		return
+	}
+
+	totalDelta := host.CPUTotalJiffies - prev.CPUTotalJiffies
+	idleDelta := host.CPUIdleJiffies - prev.CPUIdleJiffies
+	busy := float64(0)
+	if totalDelta > idleDelta {
+		busy = float64(totalDelta-idleDelta) / float64(totalDelta)
+	}
+	interval := int(c.sampleInterval / time.Second)
+	if interval <= 0 {
+		interval = 1
+	}
+	// Expressed the same way a container's is — core-milliseconds — so one
+	// reader divides by covered_seconds and gets a percentage either way. For a
+	// host that percentage is of ALL its cores, which is what a person means by
+	// "the box is at 90%".
+	cores := host.Cores
+	if cores < 1 {
+		cores = 1
+	}
+	cpuCoreMs := uint64(busy * float64(interval) * 1000 * float64(cores))
+	b.AddSample("server", c.serverID, cpuCoreMs, busy*100, host.MemoryUsed, host.MemoryTotal, interval)
+
+	if host.DiskTotal > 0 {
+		used := host.DiskTotal - host.DiskFree
+		b.AddDisk("server", c.serverID, 0, 0, used)
 	}
 }
 

@@ -42,6 +42,15 @@ const (
 	// over by attaching a server to an arbitrary project.
 	InboxKindServerDiskLow       = "server.disk_low"
 	InboxKindServerDiskRecovered = "server.disk_recovered"
+
+	// A threshold alert has stopped delivering, for one of the two reasons it
+	// can (threshold-alerts.md §§4, 5). Inbox-only rather than subscribable by
+	// the same test the kinds above pass: "your rule stopped watching" is
+	// governance news for the person who wrote it, not an observed transition
+	// of a resource — and putting it on an ops channel is how the channel
+	// learns to be ignored.
+	InboxAlertNoData   = "alert.no_data"
+	InboxAlertFlapping = "alert.flapping"
 )
 
 // panelInboxKinds is the panel-level half of the inbox taxonomy.
@@ -49,6 +58,8 @@ var panelInboxKinds = []string{
 	InboxKindPanelUpdateAvailable,
 	InboxKindServerDiskLow,
 	InboxKindServerDiskRecovered,
+	InboxAlertNoData,
+	InboxAlertFlapping,
 }
 
 // Deploy-protection inbox kinds (deploy-protection.md §9). Like the panel-level

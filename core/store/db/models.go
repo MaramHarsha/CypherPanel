@@ -22,6 +22,33 @@ type AccessRequest struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
+type AlertEvent struct {
+	ID         string
+	RuleID     string
+	StartedAt  pgtype.Timestamptz
+	ResolvedAt pgtype.Timestamptz
+	PeakValue  float64
+	Delivered  bool
+}
+
+type AlertRule struct {
+	ID              string
+	TargetKind      string
+	TargetID        string
+	Signal          string
+	Threshold       float64
+	ThresholdUnit   string
+	WindowSeconds   int32
+	NotifierID      string
+	Enabled         bool
+	State           string
+	StateSince      pgtype.Timestamptz
+	RearmUntil      pgtype.Timestamptz
+	QuietNotifiedAt pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type ApiToken struct {
 	ID         string
 	UserID     string

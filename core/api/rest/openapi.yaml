@@ -1653,6 +1653,129 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/v1/alert-rules:
+    get:
+      operationId: listAlertRules
+      tags: [panel]
+      summary: Every threshold rule, with its current state (member+)
+      description: >-
+        A rule has no name: the SENTENCE names it, rendered from the row, so
+        this list, the modal, the Discord message and this response all say the
+        same words and no label typed in March can drift from what the rule now
+        does.
+
+
+        All four states appear, including the two that deliver nothing —
+        `no_data` and `flapping`. A rule quiet for a bad reason must not look
+        like one quiet for a good reason.
+      responses:
+        "200":
+          description: The rules.
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/AlertRule" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: createAlertRule
+      tags: [panel]
+      summary: Add a threshold rule (panel admin)
+      description: >-
+        The condition is not "the value is above the threshold". It is: every
+        bucket covering the last `window_seconds` breached, with no gaps in that
+        span. A four-second spike moves a five-minute mean by about a percent
+        and does not fire, and a bucket the agent barely covered is `unknown` —
+        neither high nor low — so an agent restart never reads as a breach.
+
+
+        `p95_latency_ms` and `requests_per_second` are refused on a SERVER, and
+        the refusal is substantive: a server's request buckets are the traffic
+        that matched no route, so "p95 on this node" would silently mean "p95 of
+        what hit nothing".
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateAlertRuleRequest" } } }
+      responses:
+        "201": { description: Created., content: { application/json: { schema: { $ref: "#/components/schemas/AlertRule" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: An identical rule already exists., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /api/v1/alert-rules/backtest:
+    post:
+      operationId: backtestAlertRule
+      tags: [panel]
+      summary: What this rule would have done over the last week (panel admin)
+      description: >-
+        Every alerting product treats "what number should I type" as the
+        operator's problem and hands them nothing to solve it with. This panel
+        already keeps a fortnight of exactly the series the rule reads, so the
+        answer is one range scan over data already on disk — and it runs before
+        Create does anything.
+
+
+        It counts EPISODES, not evaluations: an hour above the line is one
+        alert, and counting ticks would make every rule look catastrophic. It
+        uses the same evaluator the loop uses, because two implementations would
+        be two answers to one question. `had_data: false` means the series has
+        too many gaps to say anything, which is more useful than a confident 0.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateAlertRuleRequest" } } }
+      responses:
+        "200": { description: The verdict., content: { application/json: { schema: { $ref: "#/components/schemas/AlertBacktest" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/alert-rules/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Alert rule ID. }
+    patch:
+      operationId: setAlertRuleEnabled
+      tags: [panel]
+      summary: Pause or resume a rule (panel admin)
+      description: >-
+        Pausing keeps the rule, its history and its notifier and stops it
+        delivering — which is what an operator wants during a migration, and is
+        not what deleting does.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [enabled], properties: { enabled: { type: boolean } } } } }
+      responses:
+        "200": { description: Saved., content: { application/json: { schema: { $ref: "#/components/schemas/AlertRule" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: deleteAlertRule
+      tags: [panel]
+      summary: Remove a rule and its history (panel admin)
+      responses:
+        "204": { description: Removed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/alert-rules/{id}/events:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Alert rule ID. }
+    get:
+      operationId: listAlertEvents
+      tags: [panel]
+      summary: This rule's episodes, newest first (member+)
+      description: >-
+        One row per EPISODE, not per evaluation — an hour above the line is one
+        row. `delivered: false` marks an episode the flap guard held: it still
+        happened and is still counted, it just was not sent.
+      responses:
+        "200":
+          description: Up to 50 episodes.
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/AlertEvent" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /api/v1/applications/{id}/metrics:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Application ID. }
@@ -7851,6 +7974,59 @@ components:
       properties:
         backup_record_id: { type: string }
         confirm: { type: boolean, description: Must be true — restore overwrites the database. }
+
+    AlertRule:
+      type: object
+      required: [id, target_kind, target_id, target_name, signal, threshold, threshold_unit, window_seconds, notifier_id, notifier_name, enabled, state, state_since, sentence]
+      properties:
+        id: { type: string, description: alr_… prefixed ID. }
+        target_kind: { type: string, enum: [server, application] }
+        target_id: { type: string }
+        target_name: { type: string }
+        signal: { type: string, enum: [cpu, memory, disk, p95_latency_ms, requests_per_second] }
+        threshold: { type: number }
+        threshold_unit:
+          type: string
+          enum: [percent, bytes, milliseconds, per_second]
+          description: "Stored, not derived: 90 is percent for a server's memory and bytes for an application's disk, and a rule must never be reinterpreted in a unit it was not written in."
+        window_seconds: { type: integer, description: "The `for`. One metrics bucket is the floor: sample-level data does not exist on the plane, which is what makes even the cheapest rule immune to a single spike." }
+        notifier_id: { type: string }
+        notifier_name: { type: string }
+        enabled: { type: boolean }
+        state:
+          type: string
+          enum: [ok, firing, no_data, flapping]
+          description: "All four are shown, including the two that deliver nothing: a rule quiet for a bad reason must not look like one quiet for a good reason."
+        state_since: { type: string, format: date-time }
+        sentence: { type: string, description: "The rule's name, rendered from the row. Everything that displays a rule shows this." }
+    CreateAlertRuleRequest:
+      type: object
+      required: [target_kind, target_id, signal, threshold, notifier_id]
+      properties:
+        target_kind: { type: string, enum: [server, application] }
+        target_id: { type: string }
+        signal: { type: string, enum: [cpu, memory, disk, p95_latency_ms, requests_per_second] }
+        threshold: { type: number }
+        threshold_unit: { type: string, enum: [percent, bytes, milliseconds, per_second], description: "Omitted takes the signal's natural unit." }
+        window_seconds: { type: integer, description: "Rounded up to one bucket; at most 24 hours." }
+        notifier_id: { type: string, description: "The rule delivers HERE, not through a project subscription: page on-call and post to a status channel are two rules over one signal." }
+    AlertEvent:
+      type: object
+      required: [id, started_at, peak_value, delivered]
+      properties:
+        id: { type: string, description: ale_… prefixed ID. }
+        started_at: { type: string, format: date-time }
+        resolved_at: { type: [string, "null"], format: date-time }
+        peak_value: { type: number, description: "The worst bucket of the episode — the number an operator wants once they know the alert is real." }
+        delivered: { type: boolean, description: "False when the flap guard held it. The episode still happened and is still counted." }
+    AlertBacktest:
+      type: object
+      required: [would_have_fired, days, summary, had_data]
+      properties:
+        would_have_fired: { type: integer, description: Episodes, not evaluations. }
+        days: { type: integer }
+        summary: { type: string }
+        had_data: { type: boolean, description: "False when the series has too many gaps to say anything — more useful than a confident zero." }
 
     ResourceMetrics:
       type: object

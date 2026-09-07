@@ -192,9 +192,11 @@ func runAgent(args []string, log *slog.Logger) error {
 		// Report free space on the filesystem the daemon actually uses. A
 		// failure here costs the disk report and nothing else, so it is logged
 		// rather than fatal (disk-management.md §4).
+		dataRoot := ""
 		if root, rerr := eng.DataRoot(ctx); rerr != nil {
 			log.Warn("reading the docker data root; disk usage will not be reported", "error", rerr)
 		} else {
+			dataRoot = root
 			hb.SetDataRoot(root)
 		}
 
@@ -293,6 +295,10 @@ func runAgent(args []string, log *slog.Logger) error {
 		// measure (metrics-and-usage.md §4).
 		if dockerDrv != nil {
 			mc := metrics.New(metricsource.New(eng), wbus, id.ServerID, log.With("component", "metrics"))
+			// The host's own filesystem, not the sum of its containers': a
+			// threshold rule on "the box is nearly full" must see what the box
+			// sees (threshold-alerts.md §3.2).
+			mc.SetDataRoot(dataRoot)
 			w.SetMetrics(mc)
 			if proxyAccessLog != nil {
 				w.SetProxyAccessLog(proxyAccessLog)

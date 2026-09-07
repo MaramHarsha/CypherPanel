@@ -27,8 +27,12 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AlertBacktest,
+  AlertEvent,
+  AlertRule,
   BadRequestResponse,
   ChooseAccountError,
+  CreateAlertRuleRequest,
   DNSDisconnectPreview,
   DNSSettings,
   DNSZone,
@@ -38,10 +42,12 @@ import type {
   GetPanelLogsParams,
   GetUsageParams,
   MetricsSettings,
+  NotFoundResponse,
   PanelLogs,
   PanelMailSettings,
   PanelTLSSettings,
   PanelVersion,
+  SetAlertRuleEnabledBody,
   SetPanelDNSRequest,
   SetPanelMailRequest,
   SetPanelTLSRequest,
@@ -1354,7 +1360,499 @@ export const useTestPanelMail = <TError = BadRequestResponse | UnauthorizedRespo
       > => {
       return useMutation(getTestPanelMailMutationOptions(options), queryClient);
     }
-    export const getGetUsageUrl = (params?: GetUsageParams,) => {
+    export const getListAlertRulesUrl = () => {
+
+
+
+
+  return `/api/v1/alert-rules`
+}
+
+/**
+ * A rule has no name: the SENTENCE names it, rendered from the row, so this list, the modal, the Discord message and this response all say the same words and no label typed in March can drift from what the rule now does.
+ *
+ * All four states appear, including the two that deliver nothing — `no_data` and `flapping`. A rule quiet for a bad reason must not look like one quiet for a good reason.
+ * @summary Every threshold rule, with its current state (member+)
+ */
+export const listAlertRules = async ( options?: RequestInit): Promise<AlertRule[]> => {
+
+  return apiFetch<AlertRule[]>(getListAlertRulesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAlertRulesQueryKey = () => {
+    return [
+    `/api/v1/alert-rules`
+    ] as const;
+    }
+
+
+export const getListAlertRulesQueryOptions = <TData = Awaited<ReturnType<typeof listAlertRules>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAlertRules>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAlertRulesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAlertRules>>> = ({ signal }) => listAlertRules({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAlertRules>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListAlertRulesQueryResult = NonNullable<Awaited<ReturnType<typeof listAlertRules>>>
+export type ListAlertRulesQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useListAlertRules<TData = Awaited<ReturnType<typeof listAlertRules>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAlertRules>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listAlertRules>>,
+          TError,
+          Awaited<ReturnType<typeof listAlertRules>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListAlertRules<TData = Awaited<ReturnType<typeof listAlertRules>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAlertRules>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listAlertRules>>,
+          TError,
+          Awaited<ReturnType<typeof listAlertRules>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListAlertRules<TData = Awaited<ReturnType<typeof listAlertRules>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAlertRules>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Every threshold rule, with its current state (member+)
+ */
+
+export function useListAlertRules<TData = Awaited<ReturnType<typeof listAlertRules>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAlertRules>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListAlertRulesQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getCreateAlertRuleUrl = () => {
+
+
+
+
+  return `/api/v1/alert-rules`
+}
+
+/**
+ * The condition is not "the value is above the threshold". It is: every bucket covering the last `window_seconds` breached, with no gaps in that span. A four-second spike moves a five-minute mean by about a percent and does not fire, and a bucket the agent barely covered is `unknown` — neither high nor low — so an agent restart never reads as a breach.
+ *
+ * `p95_latency_ms` and `requests_per_second` are refused on a SERVER, and the refusal is substantive: a server's request buckets are the traffic that matched no route, so "p95 on this node" would silently mean "p95 of what hit nothing".
+ * @summary Add a threshold rule (panel admin)
+ */
+export const createAlertRule = async (createAlertRuleRequest: CreateAlertRuleRequest, options?: RequestInit): Promise<AlertRule> => {
+
+  return apiFetch<AlertRule>(getCreateAlertRuleUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(createAlertRuleRequest)
+  }
+);}
+
+
+
+
+
+export const getCreateAlertRuleMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAlertRule>>, TError,{data: CreateAlertRuleRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createAlertRule>>, TError,{data: CreateAlertRuleRequest}, TContext> => {
+
+const mutationKey = ['createAlertRule'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAlertRule>>, {data: CreateAlertRuleRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createAlertRule(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateAlertRuleMutationResult = NonNullable<Awaited<ReturnType<typeof createAlertRule>>>
+    export type CreateAlertRuleMutationBody = CreateAlertRuleRequest
+    export type CreateAlertRuleMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error
+
+    /**
+ * @summary Add a threshold rule (panel admin)
+ */
+export const useCreateAlertRule = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAlertRule>>, TError,{data: CreateAlertRuleRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof createAlertRule>>,
+        TError,
+        {data: CreateAlertRuleRequest},
+        TContext
+      > => {
+      return useMutation(getCreateAlertRuleMutationOptions(options), queryClient);
+    }
+    export const getBacktestAlertRuleUrl = () => {
+
+
+
+
+  return `/api/v1/alert-rules/backtest`
+}
+
+/**
+ * Every alerting product treats "what number should I type" as the operator's problem and hands them nothing to solve it with. This panel already keeps a fortnight of exactly the series the rule reads, so the answer is one range scan over data already on disk — and it runs before Create does anything.
+ *
+ * It counts EPISODES, not evaluations: an hour above the line is one alert, and counting ticks would make every rule look catastrophic. It uses the same evaluator the loop uses, because two implementations would be two answers to one question. `had_data: false` means the series has too many gaps to say anything, which is more useful than a confident 0.
+ * @summary What this rule would have done over the last week (panel admin)
+ */
+export const backtestAlertRule = async (createAlertRuleRequest: CreateAlertRuleRequest, options?: RequestInit): Promise<AlertBacktest> => {
+
+  return apiFetch<AlertBacktest>(getBacktestAlertRuleUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(createAlertRuleRequest)
+  }
+);}
+
+
+
+
+
+export const getBacktestAlertRuleMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof backtestAlertRule>>, TError,{data: CreateAlertRuleRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof backtestAlertRule>>, TError,{data: CreateAlertRuleRequest}, TContext> => {
+
+const mutationKey = ['backtestAlertRule'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof backtestAlertRule>>, {data: CreateAlertRuleRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  backtestAlertRule(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type BacktestAlertRuleMutationResult = NonNullable<Awaited<ReturnType<typeof backtestAlertRule>>>
+    export type BacktestAlertRuleMutationBody = CreateAlertRuleRequest
+    export type BacktestAlertRuleMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary What this rule would have done over the last week (panel admin)
+ */
+export const useBacktestAlertRule = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof backtestAlertRule>>, TError,{data: CreateAlertRuleRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof backtestAlertRule>>,
+        TError,
+        {data: CreateAlertRuleRequest},
+        TContext
+      > => {
+      return useMutation(getBacktestAlertRuleMutationOptions(options), queryClient);
+    }
+    export const getSetAlertRuleEnabledUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/alert-rules/${id}`
+}
+
+/**
+ * Pausing keeps the rule, its history and its notifier and stops it delivering — which is what an operator wants during a migration, and is not what deleting does.
+ * @summary Pause or resume a rule (panel admin)
+ */
+export const setAlertRuleEnabled = async (id: string,
+    setAlertRuleEnabledBody: SetAlertRuleEnabledBody, options?: RequestInit): Promise<AlertRule> => {
+
+  return apiFetch<AlertRule>(getSetAlertRuleEnabledUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(setAlertRuleEnabledBody)
+  }
+);}
+
+
+
+
+
+export const getSetAlertRuleEnabledMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setAlertRuleEnabled>>, TError,{id: string;data: SetAlertRuleEnabledBody}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setAlertRuleEnabled>>, TError,{id: string;data: SetAlertRuleEnabledBody}, TContext> => {
+
+const mutationKey = ['setAlertRuleEnabled'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setAlertRuleEnabled>>, {id: string;data: SetAlertRuleEnabledBody}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  setAlertRuleEnabled(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetAlertRuleEnabledMutationResult = NonNullable<Awaited<ReturnType<typeof setAlertRuleEnabled>>>
+    export type SetAlertRuleEnabledMutationBody = SetAlertRuleEnabledBody
+    export type SetAlertRuleEnabledMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Pause or resume a rule (panel admin)
+ */
+export const useSetAlertRuleEnabled = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setAlertRuleEnabled>>, TError,{id: string;data: SetAlertRuleEnabledBody}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setAlertRuleEnabled>>,
+        TError,
+        {id: string;data: SetAlertRuleEnabledBody},
+        TContext
+      > => {
+      return useMutation(getSetAlertRuleEnabledMutationOptions(options), queryClient);
+    }
+    export const getDeleteAlertRuleUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/alert-rules/${id}`
+}
+
+/**
+ * @summary Remove a rule and its history (panel admin)
+ */
+export const deleteAlertRule = async (id: string, options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getDeleteAlertRuleUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteAlertRuleMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAlertRule>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteAlertRule>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['deleteAlertRule'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteAlertRule>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteAlertRule(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteAlertRuleMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAlertRule>>>
+
+    export type DeleteAlertRuleMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Remove a rule and its history (panel admin)
+ */
+export const useDeleteAlertRule = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAlertRule>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteAlertRule>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getDeleteAlertRuleMutationOptions(options), queryClient);
+    }
+    export const getListAlertEventsUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/alert-rules/${id}/events`
+}
+
+/**
+ * One row per EPISODE, not per evaluation — an hour above the line is one row. `delivered: false` marks an episode the flap guard held: it still happened and is still counted, it just was not sent.
+ * @summary This rule's episodes, newest first (member+)
+ */
+export const listAlertEvents = async (id: string, options?: RequestInit): Promise<AlertEvent[]> => {
+
+  return apiFetch<AlertEvent[]>(getListAlertEventsUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAlertEventsQueryKey = (id: string,) => {
+    return [
+    `/api/v1/alert-rules/${id}/events`
+    ] as const;
+    }
+
+
+export const getListAlertEventsQueryOptions = <TData = Awaited<ReturnType<typeof listAlertEvents>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAlertEvents>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAlertEventsQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAlertEvents>>> = ({ signal }) => listAlertEvents(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAlertEvents>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListAlertEventsQueryResult = NonNullable<Awaited<ReturnType<typeof listAlertEvents>>>
+export type ListAlertEventsQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useListAlertEvents<TData = Awaited<ReturnType<typeof listAlertEvents>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAlertEvents>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listAlertEvents>>,
+          TError,
+          Awaited<ReturnType<typeof listAlertEvents>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListAlertEvents<TData = Awaited<ReturnType<typeof listAlertEvents>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAlertEvents>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listAlertEvents>>,
+          TError,
+          Awaited<ReturnType<typeof listAlertEvents>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListAlertEvents<TData = Awaited<ReturnType<typeof listAlertEvents>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAlertEvents>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary This rule's episodes, newest first (member+)
+ */
+
+export function useListAlertEvents<TData = Awaited<ReturnType<typeof listAlertEvents>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAlertEvents>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListAlertEventsQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getGetUsageUrl = (params?: GetUsageParams,) => {
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {

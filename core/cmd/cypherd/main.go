@@ -32,6 +32,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/MaramHarsha/cypherpanel/core/access"
+	"github.com/MaramHarsha/cypherpanel/core/alerts"
 	grpcapi "github.com/MaramHarsha/cypherpanel/core/api/grpc"
 	"github.com/MaramHarsha/cypherpanel/core/api/rest"
 	"github.com/MaramHarsha/cypherpanel/core/applications"
@@ -633,6 +634,21 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		statusEval.Run(ctx)
 	}()
 
+	// Threshold alerts: one owned goroutine over the stored series
+	// (threshold-alerts.md). It delivers through the notifier each RULE names,
+	// and writes the two states that deliver nothing — no_data and flapping —
+	// to the inbox instead.
+	notifySvc.WatchAlertRules(st)
+	alertEval := alerts.New(st,
+		alerts.NewDelivery(st, notifyMgr),
+		alerts.NewQuiet(inboxSvc),
+		log.With("component", "alerts"))
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		alertEval.Run(ctx, time.Minute)
+	}()
+
 	api := rest.New(rest.Deps{
 		Auth:             authr,
 		Onboarding:       onboardSvc,
@@ -682,6 +698,8 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		DataDir:          cfg.DataDir,
 		StatusPages:      st,
 		Metrics:          st,
+		Alerts:           st,
+		AlertBacktest:    alertEval,
 		StatusServer:     statusSrv,
 		StatusRoutes:     statusSrv,
 		PanelURL:         cfg.AdvertisedConsoleURL(),

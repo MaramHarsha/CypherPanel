@@ -177,6 +177,43 @@ func (s *Service) RecordPanelUpdate(ctx context.Context, u PanelUpdate) error {
 // Panel-level, to the owners and admins who can act on a server. Deduped on the
 // kind and the server, so the two transitions replace each other in a reader's
 // inbox rather than stacking up as a history nobody wants.
+// RecordAlertQuiet writes the one message a rule that has stopped delivering
+// owes its author (threshold-alerts.md §§4, 5). It takes the kind the way
+// RecordServerDisk does, because the two states it covers are different news
+// with the same audience.
+//
+// It goes down the PANEL-level path even for an application's rule: the
+// generic project-scoped writer returns early without a ProjectID, and an
+// alert rule is configuration the panel's owners and admins are responsible
+// for rather than an event on a project's timeline.
+func (s *Service) RecordAlertQuiet(ctx context.Context, kind, ruleID, title, body string) error {
+	recipients, err := s.store.ListPanelInboxRecipients(ctx, kind)
+	if err != nil {
+		return fmt.Errorf("inbox: resolving panel recipients: %w", err)
+	}
+	if len(recipients) == 0 {
+		return nil
+	}
+	f := store.InboxFanout{
+		IDs:      mintIDs(len(recipients)),
+		UserIDs:  recipients,
+		Kind:     kind,
+		Severity: string(domain.NotifyError),
+		Title:    title,
+		Body:     clampBody(body),
+		// The rule, not the moment: a rule that goes quiet and comes back
+		// should leave one current item per reason, not a log.
+		DedupeKey: kind + ":" + ruleID,
+	}
+	if err := s.store.InsertPanelInboxItems(ctx, f); err != nil {
+		return fmt.Errorf("inbox: inserting panel items: %w", err)
+	}
+	if err := s.store.PruneInboxItems(ctx, recipients, domain.InboxRetention); err != nil {
+		return fmt.Errorf("inbox: pruning: %w", err)
+	}
+	return nil
+}
+
 func (s *Service) RecordServerDisk(ctx context.Context, serverID, serverName, kind, title, body string) error {
 	recipients, err := s.store.ListPanelInboxRecipients(ctx, kind)
 	if err != nil {
