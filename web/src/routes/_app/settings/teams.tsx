@@ -38,6 +38,7 @@ import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
 import { InviteMemberDialog } from "@/components/invite-member-dialog";
 import { PageState } from "@/components/page-state";
+import { TeamQuota } from "@/components/team-quota";
 import { ActionButton, useMutationActionState } from "@/components/ui/action-button";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
@@ -107,6 +108,10 @@ function TeamCard({ team, open, onToggle }: { team: Team; open: boolean; onToggl
               (invitations-and-access-requests.md §6). */}
           <PendingInvites team={team} />
           <AccessRequests team={team} />
+          {/* Capacity last: it is the one section about the team's resources
+              rather than its people, and it is read far less often than the
+              member list it would otherwise push down the card. */}
+          <TeamQuota team={team} />
         </>
       )}
     </li>

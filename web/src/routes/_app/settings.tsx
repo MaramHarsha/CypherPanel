@@ -17,6 +17,10 @@ const TABS: readonly Tab[] = [
   { to: "teams", label: "Teams" },
   { to: "users", label: "Users" },
   { to: "deploy-keys", label: "Deploy keys" },
+  // Beside deploy keys deliberately: they answer the same question — how does
+  // this panel reach a private repository — and an App replaces the key for the
+  // GitHub case without replacing it anywhere else (github-app.md §1).
+  { to: "github", label: "GitHub App" },
   { to: "registries", label: "Registries" },
   { to: "audit", label: "Audit" },
   { to: "backup-targets", label: "Backup targets" },

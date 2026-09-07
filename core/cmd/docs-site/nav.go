@@ -36,6 +36,8 @@ var nav = []group{
 	{Title: "Getting started", Paths: []string{
 		"dev/deployment.md",
 		"features/first-run-setup.md",
+		"features/local-server.md",
+		"features/guided-onboarding.md",
 	}},
 	{Title: "Concepts", Paths: []string{
 		"architecture.md",
@@ -54,6 +56,7 @@ var nav = []group{
 		"features/pack-builds.md",
 		"features/builder-role-and-relay.md",
 		"features/deploy-key-private-repos.md",
+		"features/github-app.md",
 		"features/application-deploy.md",
 		"features/deployment-control.md",
 		"features/preview-environments.md",
@@ -61,6 +64,7 @@ var nav = []group{
 		"features/deploy-protection.md",
 		"features/scheduled-tasks.md",
 		"features/compose-stacks.md",
+		"features/compose-templates.md",
 		"features/shared-variables.md",
 		"features/app-scaling.md",
 	}},
@@ -129,6 +133,7 @@ var excluded = []string{
 	"product/",
 	"dev/ci.md",
 	"dev/review-bot.md",
+	"dev/api-ui-parity.md",
 	"dev/template-import.md",
 	"dev/template-import-report.md",
 }

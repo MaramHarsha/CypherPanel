@@ -1,0 +1,107 @@
+schema: v1
+slug: openclaw
+name: OpenClaw
+description: AI coding assistant with multi-provider support and browser automation.
+category: ai
+version: "2026.2.6"
+# A COMPOSE template (compose-templates.md), and the entry that motivated them.
+#
+# The importer refused this one four times over, and each refusal was correct:
+#
+#   - service "browser" sizes shared memory        -> no schema field
+#   - service "openclaw" waits on "browser"        -> applications have no ordering
+#   - service "browser" names no port              -> the schema requires one
+#   - BROWSER_CDP_URL dials the sibling "browser"  -> application containers are
+#                                                     named per revision and have
+#                                                     no stable address
+#
+# All four are things compose does natively, which is why this ships as a stack
+# rather than as two applications the panel would have to invent a relationship
+# between.
+#
+# Translated from Coolify's templates/compose/openclaw.yaml. Its magic-env
+# convention maps onto this catalog's placeholders: SERVICE_USER_OPENCLAW and
+# SERVICE_PASSWORD_OPENCLAW become {{secret.N}} under the stack's env:,
+# SERVICE_FQDN_OPENCLAW_8080 becomes {{domain}}. The provider API keys are NOT carried: they are the
+# operator's own credentials, they are optional, and a template that pre-declares
+# twenty empty keys makes the env editor unreadable. Add the one you use.
+resources:
+  stacks:
+    - name: openclaw
+      route:
+        service: openclaw
+        port: 8080
+      # Generated values live here, sealed, and reach the containers through the
+      # env file the agent writes 0600 and removes on every exit path. The
+      # compose file below says ${VAR} and holds no credential — a stack's page
+      # displays that file.
+      env:
+        AUTH_USERNAME: "admin"
+        AUTH_PASSWORD: "{{secret.24}}"
+        OPENCLAW_GATEWAY_TOKEN: "{{secret.48}}"
+      compose: |
+        services:
+          openclaw:
+            image: "coollabsio/openclaw:2026.2.6@sha256:a43ffaca3cc802ec28c16afa37c9d4cd28a9040ddd84aa386467bd09740e3dee"
+            restart: unless-stopped
+            environment:
+              PORT: "8080"
+              AUTH_USERNAME: ${AUTH_USERNAME}
+              AUTH_PASSWORD: ${AUTH_PASSWORD}
+              OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
+              OPENCLAW_GATEWAY_PORT: "18789"
+              # loopback, not the default: the gateway is an unauthenticated
+              # control channel and the stack publishes only 8080 through the
+              # panel's proxy. Binding it wider would put it on the environment
+              # network for anything else in the project to reach.
+              OPENCLAW_GATEWAY_BIND: "loopback"
+              OPENCLAW_STATE_DIR: "/data/.openclaw"
+              OPENCLAW_WORKSPACE_DIR: "/data/workspace"
+              # The sibling, by compose's own service name. This single line is
+              # why the entry is a stack: an Application's container is named
+              # per revision and there is nothing stable to dial.
+              BROWSER_CDP_URL: "http://browser:9223"
+              BROWSER_DEFAULT_PROFILE: "openclaw"
+              BROWSER_EVALUATE_ENABLED: "true"
+              BROWSER_SNAPSHOT_MODE: "efficient"
+            volumes:
+              - "openclaw-data:/data"
+            depends_on:
+              browser:
+                condition: service_healthy
+            healthcheck:
+              test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/healthz"]
+              interval: 10s
+              timeout: 10s
+              retries: 5
+          browser:
+            # Upstream publishes only :latest for the browser. A tag that moves
+            # is a stack that changes underneath the operator, so the digest is
+            # pinned here and the tag is kept for readability — the same rule
+            # every other entry in this catalog follows.
+            image: "coollabsio/openclaw-browser:latest@sha256:c5f8a9d812992429be2c5a0b6b8f5d70d63e81cc1b381c5475e067a91e0d3179"
+            restart: unless-stopped
+            environment:
+              PUID: "1000"
+              PGID: "1000"
+              TZ: "Etc/UTC"
+              CHROME_CLI: "--remote-debugging-port=9222"
+            volumes:
+              - "browser-data:/config"
+            # Chromium shares memory between renderer processes and dies on the
+            # 64 MB a container gets by default. This is the field the native
+            # application schema has no way to express.
+            shm_size: 2g
+            healthcheck:
+              test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/9222' || exit 1"]
+              interval: 5s
+              timeout: 5s
+              retries: 10
+        volumes:
+          openclaw-data:
+          browser-data:
+first_login:
+  kind: credentials
+  username: admin
+  password_env: AUTH_PASSWORD
+  note: "Sign in with admin and the generated password. Add a provider API key (ANTHROPIC_API_KEY, OPENAI_API_KEY, ...) in the stack's environment before it can answer."

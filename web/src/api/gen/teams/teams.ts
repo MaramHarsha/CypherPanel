@@ -78,6 +78,8 @@ export const getGetTeamQuotaUrl = (id: string,) => {
 
 /**
  * A team's meter is the sum of its projects'. A refusal by either scope is a refusal — a team cap a project could exceed by having its own is not a cap.
+ *
+ * Each dimension additionally carries `committed` (the sum of this team's project caps) and `uncapped_projects`, which a project report does not.
  * @summary This team's caps and what it is using (member+)
  */
 export const getTeamQuota = async (id: string, options?: RequestInit): Promise<QuotaReport> => {
@@ -178,7 +180,10 @@ export const getSetTeamQuotaUrl = (id: string,) => {
 }
 
 /**
- * @summary Cap what this team may consume (team admin)
+ * PANEL admin, not team admin, and the asymmetry is the point: a team quota set by that team's own admin would guard nothing against that team, which is the only thing it exists to guard against. Panel admin is the rank that already owns servers, deploy keys and backup targets — shared infrastructure — and a fleet-wide capacity policy is that.
+ *
+ * Requires an interactive session. An API token inherits its owner's role, so a `write` token belonging to an admin could otherwise raise the cap and then deploy freely, and a control a leaked CI credential can switch off is decorative.
+ * @summary Cap what this team may consume (panel admin, interactive session)
  */
 export const setTeamQuota = async (id: string,
     setQuotaRequest: SetQuotaRequest, options?: RequestInit): Promise<ResourceQuota> => {
@@ -228,7 +233,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type SetTeamQuotaMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error
 
     /**
- * @summary Cap what this team may consume (team admin)
+ * @summary Cap what this team may consume (panel admin, interactive session)
  */
 export const useSetTeamQuota = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setTeamQuota>>, TError,{id: string;data: SetQuotaRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
@@ -249,7 +254,8 @@ export const useSetTeamQuota = <TError = BadRequestResponse | UnauthorizedRespon
 }
 
 /**
- * @summary Remove the cap (team admin)
+ * Panel admin and interactive-session only, for the same reasons setting one is — removing a cap is setting it to "none".
+ * @summary Remove the cap (panel admin, interactive session)
  */
 export const deleteTeamQuota = async (id: string, options?: RequestInit): Promise<void> => {
 
@@ -298,7 +304,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type DeleteTeamQuotaMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
     /**
- * @summary Remove the cap (team admin)
+ * @summary Remove the cap (panel admin, interactive session)
  */
 export const useDeleteTeamQuota = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteTeamQuota>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}

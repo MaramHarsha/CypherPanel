@@ -39,11 +39,13 @@ import type {
   ForbiddenResponse,
   GetApplicationMetricsParams,
   GetApplicationTrafficParams,
+  GithubAppWebhook202,
   NotFoundResponse,
   PatchApplicationRequest,
   PreviewPasswordResult,
   ResourceMetrics,
   ResourceTraffic,
+  RotateApplicationWebhookSecret200,
   SetAppAccessRequest,
   SetEnvVarRequest,
   SetPreviewPasswordRequest,
@@ -76,7 +78,82 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   return result;
 };
 
-export const getGetApplicationDNSUrl = (id: string,) => {
+export const getRotateApplicationWebhookSecretUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/applications/${id}/webhook/rotate`
+}
+
+/**
+ * Returns the new secret EXACTLY ONCE, in this response. It is sealed under the master key and no route ever reads it back.
+ *
+ * This exists because push-to-deploy was unreachable without it. The secret was minted at create time and returned once, in the create response, which the create dialog discarded — while the application's Overview told the operator to add the webhook to GitHub and showed them only the URL. The endpoint refuses any delivery whose signature does not verify, so every push was answered 401 and nothing deployed. No route read the secret and none replaced it, so there was no way out.
+ *
+ * Rotating rather than revealing is deliberate: a route that unseals a credential to display it is one that eventually displays it to the wrong person, and pasting a new secret into GitHub is work the operator is already doing. Rotating invalidates the old one immediately, so a webhook already configured stops working until the new secret is pasted in — which the screen says before it does it.
+ * @summary Mint a new push-to-deploy webhook secret (team admin, interactive session)
+ */
+export const rotateApplicationWebhookSecret = async (id: string, options?: RequestInit): Promise<RotateApplicationWebhookSecret200> => {
+
+  return apiFetch<RotateApplicationWebhookSecret200>(getRotateApplicationWebhookSecretUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRotateApplicationWebhookSecretMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rotateApplicationWebhookSecret>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof rotateApplicationWebhookSecret>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['rotateApplicationWebhookSecret'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rotateApplicationWebhookSecret>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  rotateApplicationWebhookSecret(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RotateApplicationWebhookSecretMutationResult = NonNullable<Awaited<ReturnType<typeof rotateApplicationWebhookSecret>>>
+
+    export type RotateApplicationWebhookSecretMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Mint a new push-to-deploy webhook secret (team admin, interactive session)
+ */
+export const useRotateApplicationWebhookSecret = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rotateApplicationWebhookSecret>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof rotateApplicationWebhookSecret>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getRotateApplicationWebhookSecretMutationOptions(options), queryClient);
+    }
+    export const getGetApplicationDNSUrl = (id: string,) => {
 
 
 
@@ -1199,6 +1276,81 @@ export const useEndMaintenance = <TError = UnauthorizedResponse | ForbiddenRespo
         TContext
       > => {
       return useMutation(getEndMaintenanceMutationOptions(options), queryClient);
+    }
+    export const getGithubAppWebhookUrl = () => {
+
+
+
+
+  return `/webhooks/github/app`
+}
+
+/**
+ * Unauthenticated by design and verified by the App's webhook secret over the RAW body — a signature checked after decoding is a signature over something the sender did not sign.
+ *
+ * A push deploys EVERY application whose repository and branch it matches. Every one, deliberately: a repository can legitimately be deployed by several environments, and picking one would silently skip the rest. The per-application webhook cannot have this problem because its URL names the application; this endpoint has to resolve it, so resolving it to a set is the only correct answer.
+ *
+ * An unverified signature is a `401` and nothing else — no lookup, no log of the body, no hint about which applications exist. Events other than `push` are acknowledged and dropped, which is what stops GitHub disabling a delivery for something the panel simply does not act on.
+ * @summary The GitHub App's deliveries (HMAC, no session)
+ */
+export const githubAppWebhook = async ( options?: RequestInit): Promise<GithubAppWebhook202 | void> => {
+
+  return apiFetch<GithubAppWebhook202 | void>(getGithubAppWebhookUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getGithubAppWebhookMutationOptions = <TError = BadRequestResponse | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof githubAppWebhook>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof githubAppWebhook>>, TError,void, TContext> => {
+
+const mutationKey = ['githubAppWebhook'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof githubAppWebhook>>, void> = () => {
+
+
+          return  githubAppWebhook(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type GithubAppWebhookMutationResult = NonNullable<Awaited<ReturnType<typeof githubAppWebhook>>>
+
+    export type GithubAppWebhookMutationError = BadRequestResponse | void
+
+    /**
+ * @summary The GitHub App's deliveries (HMAC, no session)
+ */
+export const useGithubAppWebhook = <TError = BadRequestResponse | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof githubAppWebhook>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof githubAppWebhook>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getGithubAppWebhookMutationOptions(options), queryClient);
     }
     export const getGetApplicationMetricsUrl = (id: string,
     params?: GetApplicationMetricsParams,) => {

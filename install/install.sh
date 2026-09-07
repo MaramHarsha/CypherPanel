@@ -341,6 +341,54 @@ Unit=cypherd-upgrade.service
 WantedBy=multi-user.target
 EOF
 
+# ── the local-agent helper ───────────────────────────────────────────────────
+#
+# "Use this machine" installs an agent on THIS host from the panel, with no
+# command to paste (local-server.md). Same handoff as the upgrade helper and for
+# the same reason: cypherd runs with DynamicUser and ProtectSystem=strict, so it
+# cannot write /usr/local/bin or a unit file — deliberately, because relaxing
+# that turns an RCE in the API into persistence on this host.
+#
+# A panel without these units still works and simply reports that the button is
+# unavailable, naming this script as the remedy.
+
+cat > /etc/systemd/system/cypherd-localjoin.service <<'EOF'
+[Unit]
+Description=CypherPanel local agent install
+Documentation=https://github.com/MaramHarsha/CypherPanel/blob/main/docs/features/local-server.md
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+# Read-only, like the upgrade helper's: this file holds the master key and the
+# helper has no business writing it.
+EnvironmentFile=/etc/cypherpanel/cypherd.env
+Environment=CYPHERD_UPGRADE_DIR=/var/lib/cypherpanel/upgrade
+ExecStart=/usr/local/bin/cypherd join-local
+# Deliberately not sandboxed the way cypherd.service is: this process exists to
+# install a binary and a unit on this host, which is precisely what the plane's
+# own sandbox forbids it (local-server.md §2). What bounds it is that it acts
+# only on a request the plane placed, only on THIS machine — the request has no
+# field naming another — and only within two minutes of a person clicking.
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat > /etc/systemd/system/cypherd-localjoin.path <<'EOF'
+[Unit]
+Description=Watch for a CypherPanel local agent install request
+Documentation=https://github.com/MaramHarsha/CypherPanel/blob/main/docs/features/local-server.md
+
+[Path]
+PathExists=/var/lib/cypherpanel/upgrade/localjoin.json
+Unit=cypherd-localjoin.service
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 # ── service ──────────────────────────────────────────────────────────────────
 
 cat > "$UNIT" <<'EOF'
@@ -387,6 +435,8 @@ EOF
 systemctl daemon-reload
 systemctl enable cypherd-upgrade.path >/dev/null 2>&1 || true
 systemctl start cypherd-upgrade.path >/dev/null 2>&1 || true
+systemctl enable cypherd-localjoin.path >/dev/null 2>&1 || true
+systemctl start cypherd-localjoin.path >/dev/null 2>&1 || true
 systemctl enable cypherd >/dev/null 2>&1
 systemctl restart cypherd
 say "waiting for the panel"

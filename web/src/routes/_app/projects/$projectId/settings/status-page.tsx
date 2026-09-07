@@ -48,6 +48,7 @@ import { CopyField } from "@/components/copy-field";
 import { DomainCheckRow } from "@/components/domain-check-row";
 import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
+import { IncidentAnnotations } from "@/components/incident-annotations";
 import { PageState } from "@/components/page-state";
 import { StatusPagePreview } from "@/components/status-page-preview";
 import { ActionButton } from "@/components/ui/action-button";
@@ -769,7 +770,15 @@ function Preview({ page }: { page: StatusPage }) {
         Exactly what a visitor gets — the same code renders both. {page.enabled ? "This is live right now." : "Nothing here is published yet."}
       </p>
       <PageState query={preview} isEmpty={() => false} skeletonRows={3}>
-        {(payload: PublicStatusPage) => <StatusPagePreview page={payload} />}
+        {(payload: PublicStatusPage) => (
+          <>
+            <StatusPagePreview page={payload} />
+            {/* Beside the preview, because that is where the incident is
+                visible: you read what a visitor reads, and write the line into
+                the thing you are looking at (status-pages.md). */}
+            <IncidentAnnotations pageId={page.id} incidents={payload.incidents} />
+          </>
+        )}
       </PageState>
     </section>
   );

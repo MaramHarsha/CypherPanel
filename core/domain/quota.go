@@ -65,6 +65,20 @@ type QuotaUsage struct {
 	// Limit nil means uncapped, which reads as "no cap" rather than as zero.
 	Limit *int64 `json:"limit"`
 	State string `json:"state"`
+	// Committed is the sum of the PROJECT caps below this scope, on a TEAM
+	// report only (resource-quotas.md §3, §9). Nil on a project report, which
+	// has nothing below it — nil is "does not apply", never zero.
+	//
+	// It may exceed Limit, and that is not an error: thin provisioning is the
+	// normal case and eleven clients do not peak together, so the
+	// over-commitment is SHOWN rather than forbidden.
+	Committed *int64 `json:"committed,omitempty"`
+	// UncappedProjects counts the projects in this team with no cap of their
+	// own on this dimension. It travels WITH Committed because the sum alone is
+	// the more flattering half of the truth: zero committed across eleven
+	// uncapped projects reads as "nothing promised" when it means "nothing
+	// bounded".
+	UncappedProjects *int `json:"uncapped_projects,omitempty"`
 }
 
 // QuotaState derives the state from a reading. Uncapped is always ok: a

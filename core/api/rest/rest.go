@@ -26,8 +26,10 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/databases"
 	"github.com/MaramHarsha/cypherpanel/core/deploykeys"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
+	"github.com/MaramHarsha/cypherpanel/core/githubapp"
 	"github.com/MaramHarsha/cypherpanel/core/inbox"
 	"github.com/MaramHarsha/cypherpanel/core/notify"
+	"github.com/MaramHarsha/cypherpanel/core/onboarding"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
 	"github.com/MaramHarsha/cypherpanel/core/protection"
 	"github.com/MaramHarsha/cypherpanel/core/scheduledtasks"
@@ -310,6 +312,28 @@ type LogSubscriber interface {
 type OnboardingService interface {
 	NeedsSetup(ctx context.Context) (bool, error)
 	CreateFirstOwner(ctx context.Context, email, password string) (domain.User, error)
+	// Progress is the guided band's four derived steps. Same service, because
+	// "has this panel been set up" and "how far through setting it up is it"
+	// are the same question asked at two resolutions (guided-onboarding.md).
+	Progress(ctx context.Context, ps onboarding.ProgressStore) (onboarding.Progress, error)
+}
+
+// GitHubAppService owns the App credential and what it can reach
+// (consumer-defined; *githubapp.Service satisfies it).
+type GitHubAppService interface {
+	Get(ctx context.Context) (githubapp.Settings, error)
+	Set(ctx context.Context, c githubapp.Config) (githubapp.Settings, error)
+	Delete(ctx context.Context) error
+	RefreshInstallations(ctx context.Context) ([]domain.GitHubInstallation, error)
+	Repositories(ctx context.Context) ([]githubapp.Repository, error)
+	WebhookSecret(ctx context.Context) (string, error)
+}
+
+// GitHubPushHandler deploys every application a push matches. EVERY one,
+// deliberately: a repository can be deployed by several environments, and
+// picking one would silently skip the rest (github-app.md §6).
+type GitHubPushHandler interface {
+	DeployFromPush(ctx context.Context, payload []byte) (int, error)
 }
 
 // ProjectExporter writes a project's portable archive. Consumer-defined
@@ -435,6 +459,16 @@ type Deps struct {
 	Quotas QuotaService
 	// MailHost is provider-backed email for verified domains (managed-email.md).
 	MailHost MailHostService
+	// GitHubApp is the panel's App: repository discovery and a short-lived
+	// clone credential (github-app.md). nil is a panel that has not enabled it,
+	// and every route answers accordingly rather than pretending.
+	GitHubApp GitHubAppService
+	// GitHubPush turns one App delivery into deployments.
+	GitHubPush GitHubPushHandler
+	// OnboardingCounts is what the guided band counts. nil answers "done",
+	// which is the honest degradation: a band that cannot know what is left
+	// must not claim work remains.
+	OnboardingCounts onboarding.ProgressStore
 	// AgentUpdates owns the two release channels and the gate between them
 	// (agent-updates.md, ADR-010). nil answers 503 on every route here, which
 	// is a panel that has not wired the feature rather than one that has no
@@ -486,6 +520,14 @@ type Deps struct {
 	NATSURL     string // advertised data-plane URL
 	Logs        LogSubscriber
 	ConsoleURL  string // advertised HTTP base URL (installer + CA fetch)
+	// PublicHost is the address agents dial and this host answers at. It names
+	// the machine the "use this machine" button will change (local-server.md §8).
+	PublicHost string
+	// UpgradeDir is the root helper handoff directory, shared by the panel
+	// upgrade and the local-agent install. Empty is a container install, where
+	// there is no host service manager to install into and both say so rather
+	// than drawing a control that cannot work.
+	UpgradeDir string
 	// TrustedProxies are the peer CIDRs allowed to speak for a client through
 	// X-Forwarded-For / X-Real-IP / X-Request-Id. Empty means nothing is
 	// trusted and the TCP peer is always the client (§5).
@@ -590,6 +632,11 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/servers", a.authed(a.handleListServers))
 	mux.HandleFunc("POST /api/v1/servers", a.authed(a.handleCreateServer))
 	mux.HandleFunc("GET /api/v1/servers/{id}", a.authed(a.handleGetServer))
+	// What this server already routes, so a form can warn before it refuses.
+	mux.HandleFunc("GET /api/v1/servers/{id}/domains", a.authed(a.handleListServerDomains))
+	// Push-to-deploy needs a secret the operator holds. sessionOnly because it
+	// is credential management: an API token must not mint one.
+	mux.HandleFunc("POST /api/v1/applications/{id}/webhook/rotate", a.sessionOnly(a.handleRotateApplicationWebhook))
 	mux.HandleFunc("PATCH /api/v1/servers/{id}", a.authed(a.handlePatchServer))
 	mux.HandleFunc("DELETE /api/v1/servers/{id}", a.authed(a.handleDeleteServer))
 
@@ -680,12 +727,18 @@ func (a *API) Handler() http.Handler {
 	// Resource quotas (resource-quotas.md §9; ADR-012). Reading is a member;
 	// SETTING is admin, because capping what a scope may consume is a decision
 	// about shared capacity rather than about the scope's own code.
+	//
+	// Every mutation is sessionOnly for the reason the protection policy
+	// already records: an API token inherits its owner's role, so a `write`
+	// token belonging to an admin could otherwise raise the cap and then deploy
+	// freely — and a control a leaked CI credential can switch off is
+	// decorative (§3).
 	mux.HandleFunc("GET /api/v1/projects/{id}/quota", a.authed(a.handleGetProjectQuota))
-	mux.HandleFunc("PUT /api/v1/projects/{id}/quota", a.authed(a.handleSetProjectQuota))
-	mux.HandleFunc("DELETE /api/v1/projects/{id}/quota", a.authed(a.handleDeleteProjectQuota))
+	mux.HandleFunc("PUT /api/v1/projects/{id}/quota", a.sessionOnly(a.handleSetProjectQuota))
+	mux.HandleFunc("DELETE /api/v1/projects/{id}/quota", a.sessionOnly(a.handleDeleteProjectQuota))
 	mux.HandleFunc("GET /api/v1/teams/{id}/quota", a.authed(a.handleGetTeamQuota))
-	mux.HandleFunc("PUT /api/v1/teams/{id}/quota", a.authed(a.handleSetTeamQuota))
-	mux.HandleFunc("DELETE /api/v1/teams/{id}/quota", a.authed(a.handleDeleteTeamQuota))
+	mux.HandleFunc("PUT /api/v1/teams/{id}/quota", a.sessionOnly(a.handleSetTeamQuota))
+	mux.HandleFunc("DELETE /api/v1/teams/{id}/quota", a.sessionOnly(a.handleDeleteTeamQuota))
 
 	// Email for verified domains, via a provider (managed-email.md). The panel
 	// writes DNS and manages mailboxes; it runs no MTA and stores no message.
@@ -787,10 +840,31 @@ func (a *API) Handler() http.Handler {
 	// routes are owner AND session-only: this is the one control that changes
 	// what code runs on every server, and an API token that can move a channel
 	// is an API token that owns the fleet.
+	// Guided onboarding: the thread between the golden path's four steps
+	// (guided-onboarding.md).
+	mux.HandleFunc("GET /api/v1/onboarding", a.authed(a.handleGetOnboarding))
+
+	// The GitHub App (github-app.md §7). Writing is owner AND session-only: the
+	// private key can mint a token for every repository the App reaches.
+	mux.HandleFunc("GET /api/v1/github/app", a.authed(a.handleGetGitHubApp))
+	mux.HandleFunc("PUT /api/v1/github/app", a.sessionOnly(a.handleSetGitHubApp))
+	mux.HandleFunc("DELETE /api/v1/github/app", a.sessionOnly(a.handleDeleteGitHubApp))
+	mux.HandleFunc("POST /api/v1/github/installations/refresh", a.authed(a.handleRefreshGitHubInstallations))
+	mux.HandleFunc("GET /api/v1/github/repositories", a.authed(a.handleListGitHubRepositories))
+	// Unauthenticated by design, verified by the App's own HMAC — the second
+	// such route, beside the per-application webhook it does not replace.
+	mux.HandleFunc("POST /webhooks/github/app", a.handleGitHubAppWebhook)
+
 	mux.HandleFunc("GET /api/v1/panel/agent-updates", a.authed(a.handleGetAgentUpdates))
 	mux.HandleFunc("PUT /api/v1/panel/agent-updates/{channel}", a.sessionOnly(a.handleSetAgentChannel))
 	mux.HandleFunc("POST /api/v1/panel/agent-updates/promote", a.sessionOnly(a.handlePromoteAgentChannel))
 	mux.HandleFunc("PUT /api/v1/servers/{id}/agent-channel", a.sessionOnly(a.handleSetServerAgentChannel))
+
+	// "Use this machine" (local-server.md §7). The POST is owner AND
+	// session-only: it installs software on the panel's own host as root, and
+	// an API token that can do that is an API token that owns the box.
+	mux.HandleFunc("GET /api/v1/servers/local", a.authed(a.handleGetLocalServer))
+	mux.HandleFunc("POST /api/v1/servers/local", a.sessionOnly(a.handleCreateLocalServer))
 	mux.HandleFunc("GET /api/v1/panel/logs", a.sessionOnly(a.handleGetPanelLogs))
 
 	// The panel's ACME account (agent-identity-and-tls.md §4). Owner-only: it

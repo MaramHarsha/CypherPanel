@@ -9,8 +9,11 @@
  */
 import type { TemplateApplication } from './templateApplication.ts';
 import type { TemplateDatabase } from './templateDatabase.ts';
+import type { TemplateStack } from './templateStack.ts';
 
 export interface TemplateResources {
   databases: TemplateDatabase[];
   applications: TemplateApplication[];
+  /** Compose Stacks this template installs (compose-templates.md). Optional: nearly every entry installs applications instead, and a client written before compose templates existed must keep working. */
+  stacks?: TemplateStack[];
 }

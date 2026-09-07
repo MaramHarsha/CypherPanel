@@ -32,6 +32,7 @@ import {
   useRewriteMailDomainRecords,
 } from "@/api/gen/panel/panel";
 import type { MailDomain, MailRecord, Mailbox } from "@/api/gen/model";
+import { useListUsers } from "@/api/gen/teams/teams";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
 import { CopyButton, CopyField } from "@/components/copy-field";
 import { EmptyState } from "@/components/empty-state";
@@ -41,7 +42,7 @@ import { ActionButton } from "@/components/ui/action-button";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
+import { Input, Select } from "@/components/ui/input";
 import { useCrumbs } from "@/lib/crumbs";
 import { relativeTime } from "@/lib/time";
 import { toastFailed, toastSuccess } from "@/lib/toast";
@@ -306,6 +307,11 @@ function MailboxRow({ domainId, mailbox: b }: { domainId: string; mailbox: Mailb
   const qc = useQueryClient();
   const [issued, setIssued] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // An id whose account has since been deleted still prints as an id: the link
+  // survives the account (ON DELETE SET NULL is the row, not the display), and
+  // showing nothing would hide a fact the panel still holds.
+  const users = useListUsers();
+  const linkedTo = b.user_id ? ((users.data ?? []).find((u) => u.id === b.user_id)?.email ?? b.user_id) : null;
 
   const del = useDeleteMailbox({
     mutation: {
@@ -320,7 +326,12 @@ function MailboxRow({ domainId, mailbox: b }: { domainId: string; mailbox: Mailb
   return (
     <li className="py-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="mono min-w-0 truncate text-[12.5px] text-text">{b.address}</span>
+        <span className="mono min-w-0 truncate text-[12.5px] text-text">
+          {b.address}
+          {/* A link the panel stores and the provider does not know about, so
+              nothing else on this row could tell you it exists. */}
+          {linkedTo && <span className="ml-2 text-[11px] text-text-faint">· {linkedTo}</span>}
+        </span>
         <span className="flex shrink-0 items-center gap-1.5">
           <ActionButton
             size="sm"
@@ -380,6 +391,7 @@ function ConnectDialog({ primary }: { primary?: boolean }) {
   const [open, setOpen] = useState(false);
   const [account, setAccount] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const connect = useConnectMailProvider({
@@ -409,7 +421,13 @@ function ConnectDialog({ primary }: { primary?: boolean }) {
           onSubmit={(e: FormEvent) => {
             e.preventDefault();
             setError(null);
-            connect.mutate({ data: { account: account.trim(), api_key: apiKey.trim() } });
+            connect.mutate({
+              data: {
+                account: account.trim(),
+                api_key: apiKey.trim(),
+                ...(baseUrl.trim() ? { base_url: baseUrl.trim() } : {}),
+              },
+            });
           }}
           className="space-y-4"
         >
@@ -437,6 +455,27 @@ function ConnectDialog({ primary }: { primary?: boolean }) {
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 className="mono"
+                autoComplete="off"
+              />
+            )}
+          </Field>
+          {/* Empty is the ordinary case and stays the default. It is here
+              because a provider on a regional or self-hosted endpoint is
+              otherwise unreachable from this panel at all, and the credential
+              is tested against whatever this names before anything is stored —
+              so a wrong endpoint is refused here rather than at the first
+              mailbox. */}
+          <Field label="API endpoint" qualifier="· optional" hint="Leave empty for the provider's own. Set it for a regional or self-hosted endpoint.">
+            {(id, describedBy) => (
+              <Input
+                id={id}
+                aria-describedby={describedBy}
+                type="url"
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder="https://api.eu.example.com"
+                className="mono"
+                spellCheck={false}
                 autoComplete="off"
               />
             )}
@@ -555,6 +594,12 @@ function MailboxDialog({ domainId, domainName }: { domainId: string; domainName:
   const [open, setOpen] = useState(false);
   const [local, setLocal] = useState("");
   const [name, setName] = useState("");
+  // Who this mailbox belongs to, as a PANEL fact the provider knows nothing
+  // about. Optional on purpose: a shared address like hello@ belongs to nobody,
+  // and deleting the account never deletes the mailbox — the mail is the
+  // person's, and orphaning the link is the correct degradation.
+  const [userId, setUserId] = useState("");
+  const users = useListUsers();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Held only until the dialog closes: the API returns it exactly once.
@@ -565,7 +610,11 @@ function MailboxDialog({ domainId, domainName }: { domainId: string; domainName:
     setBusy(true);
     setError(null);
     try {
-      const res = await createMailbox(domainId, { local_part: local.trim().toLowerCase(), name: name.trim() });
+      const res = await createMailbox(domainId, {
+        local_part: local.trim().toLowerCase(),
+        name: name.trim(),
+        ...(userId ? { user_id: userId } : {}),
+      });
       void qc.invalidateQueries();
       setIssued({ address: res.mailbox.address, password: res.password });
     } catch (err) {
@@ -584,6 +633,7 @@ function MailboxDialog({ domainId, domainName }: { domainId: string; domainName:
           setIssued(null);
           setLocal("");
           setName("");
+          setUserId("");
           setError(null);
         }
       }}
@@ -638,6 +688,27 @@ function MailboxDialog({ domainId, domainName }: { domainId: string; domainName:
             </Field>
             <Field label="Name" qualifier="· optional">
               {(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} placeholder="Support" />}
+            </Field>
+            <Field
+              label="Panel account"
+              qualifier="· optional"
+              hint="Records whose mailbox this is. It changes no permission and grants no access — deleting the account leaves the mailbox and its mail untouched."
+            >
+              {(id, describedBy) => (
+                <Select
+                  id={id}
+                  aria-describedby={describedBy}
+                  value={userId}
+                  onChange={(e) => setUserId(e.target.value)}
+                >
+                  <option value="">Nobody — a shared address</option>
+                  {(users.data ?? []).map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.email}
+                    </option>
+                  ))}
+                </Select>
+              )}
             </Field>
             {error && (
               <p role="alert" className="text-[13px] text-danger">

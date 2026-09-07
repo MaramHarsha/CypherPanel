@@ -177,19 +177,88 @@ func (s *Service) Report(ctx context.Context, scopeKind, scopeID string) (domain
 		return domain.QuotaReport{}, err
 	}
 	previewLimit := int64Ptr(q.PreviewLimit)
+	usage := []domain.QuotaUsage{
+		{Dimension: domain.QuotaMemory, Used: memory, Limit: q.MemoryLimitBytes,
+			State: domain.QuotaState(memory, q.MemoryLimitBytes)},
+		{Dimension: domain.QuotaDisk, Used: disk, Limit: q.DiskLimitBytes,
+			State: domain.QuotaState(disk, q.DiskLimitBytes)},
+		{Dimension: domain.QuotaPreviews, Used: int64(previews), Limit: previewLimit,
+			State: domain.QuotaState(int64(previews), previewLimit)},
+	}
+	// A team report also carries what its PROJECTS have promised (§3). A
+	// project report does not: there is nothing below a project to sum, and a
+	// zero there would read as "nothing committed" rather than "not applicable".
+	if scopeKind == domain.QuotaScopeTeam {
+		committed, err := s.committed(ctx, scopeID)
+		if err != nil {
+			return domain.QuotaReport{}, err
+		}
+		for i := range usage {
+			c := committed[usage[i].Dimension]
+			total, uncapped := c.total, c.uncapped
+			usage[i].Committed, usage[i].UncappedProjects = &total, &uncapped
+		}
+	}
 	return domain.QuotaReport{
 		ScopeKind: scopeKind, ScopeID: scopeID,
-		Usage: []domain.QuotaUsage{
-			{Dimension: domain.QuotaMemory, Used: memory, Limit: q.MemoryLimitBytes,
-				State: domain.QuotaState(memory, q.MemoryLimitBytes)},
-			{Dimension: domain.QuotaDisk, Used: disk, Limit: q.DiskLimitBytes,
-				State: domain.QuotaState(disk, q.DiskLimitBytes)},
-			{Dimension: domain.QuotaPreviews, Used: int64(previews), Limit: previewLimit,
-				State: domain.QuotaState(int64(previews), previewLimit)},
-		},
+		Usage:                  usage,
 		UncountedComposeStacks: stacks,
 		Unlimited:              unlimited,
 	}, nil
+}
+
+// commitment is what a team's project caps add up to on one dimension, and how
+// many of its projects contributed nothing because they have no cap at all.
+type commitment struct {
+	total    int64
+	uncapped int
+}
+
+// committed sums the project caps below a team, per dimension (§3).
+//
+// OVER-COMMITMENT IS ALLOWED ON PURPOSE, so this number exists to be shown, not
+// to be checked: the sum may exceed the team cap, thin provisioning is the
+// normal case, and forcing an operator to keep two numbers in lockstep would
+// buy a refusal at the moment they were trying to be careful.
+//
+// A project with no quota row is the ordinary case rather than a failure, and
+// is treated the way Report already treats a missing quota for its own scope:
+// absence, not an error.
+func (s *Service) committed(ctx context.Context, teamID string) (map[string]commitment, error) {
+	projects, err := s.store.ListProjectsInTeam(ctx, teamID)
+	if err != nil {
+		return nil, err
+	}
+	dimensions := []string{domain.QuotaMemory, domain.QuotaDisk, domain.QuotaPreviews}
+	out := make(map[string]commitment, len(dimensions))
+	for _, d := range dimensions {
+		out[d] = commitment{}
+	}
+	for _, p := range projects {
+		q, err := s.store.GetProjectQuota(ctx, p)
+		if err != nil {
+			for _, d := range dimensions {
+				c := out[d]
+				c.uncapped++
+				out[d] = c
+			}
+			continue
+		}
+		for d, limit := range map[string]*int64{
+			domain.QuotaMemory:   q.MemoryLimitBytes,
+			domain.QuotaDisk:     q.DiskLimitBytes,
+			domain.QuotaPreviews: int64Ptr(q.PreviewLimit),
+		} {
+			c := out[d]
+			if limit == nil {
+				c.uncapped++
+			} else {
+				c.total += *limit
+			}
+			out[d] = c
+		}
+	}
+	return out, nil
 }
 
 func int64Ptr(v *int) *int64 {

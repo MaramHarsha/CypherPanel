@@ -269,6 +269,25 @@ message BuildWork {
   // rather than reporting success for an image that is not where it was
   // promised to be.
   RegistryPush push = 12;
+  // An HTTPS clone credential, for a repository reached through the panel's
+  // GitHub App (github-app.md §4). Additive beside deploy_key_pem rather than
+  // replacing it: a GitLab, Gitea or self-hosted repository has no App and must
+  // keep working through its deploy key exactly as it does.
+  //
+  // It is a ONE-HOUR token minted for this build and never stored, which is the
+  // security argument for the whole feature: a deploy key is a long-lived
+  // credential sitting in the database, and this does not exist until a build
+  // needs it. Transported only over mTLS (rule 23), never logged (rule 20).
+  GitCredential git_credential = 13;
+}
+
+// GitCredential is an HTTPS username/password pair for `git clone`. GitHub's
+// installation tokens take this shape — the username is fixed and the token is
+// the password — and so does every other forge's PAT, which is why it is not
+// named after GitHub.
+message GitCredential {
+  string username = 1;
+  string password = 2;
 }
 
 // PushImageWork commands a builder-role agent to stream a built image to the

@@ -11,12 +11,28 @@ import type { AppSourceKind } from './appSourceKind.ts';
 
 export interface AppSource {
   kind: AppSourceKind;
-  /** Git remote; required for `github` and `git_url`, empty for `image`. */
+  /**
+     * Git remote; required for `github` and `git_url`, empty for `image`.
+     *
+     * It must be something git can clone: an `https://`, `http://`, `ssh://`, `git://` or `file://` URL, the SCP-like `git@host:owner/repo.git`, or an ABSOLUTE path to a repository on the builder. The schemeless shorthand `github.com/acme/web` is accepted and normalised to `https://github.com/acme/web`.
+     *
+     * A RELATIVE value such as `acme/web` is a 400. That is the one shape worth refusing: git reads it as a directory that does not exist on the builder, so it would store happily and fail at clone time with `exit status 128`, naming neither the field nor the mistake. An absolute path is allowed because it is unambiguous — nobody types a leading slash by accident — and cloning a local mirror is a real thing operators do.
+     * @maxLength 512
+     */
   repo?: string;
   /** Branch to build; defaults to `main` for git kinds, empty for `image`. */
   branch?: string;
   /** @nullable */
   deploy_key_id?: string | null;
+  /**
+     * Clone this repository through the panel's GitHub App, using the installation with this id — the numbers `GET /github/app` lists, and the same one `GET /github/repositories` reports per repository.
+     *
+     * It is the alternative to `deploy_key_id`, not a companion to it: an installation token is minted per build and never stored, where a deploy key is a long-lived secret sitting in the database. Setting both is a 400 — two credentials for one clone is a configuration whose failure mode is "which one was actually used".
+     *
+     * Null is every application that does not use the App: a public repository, or a private one with a deploy key. Both are unchanged.
+     * @nullable
+     */
+  github_installation_id?: number | null;
   /**
      * OCI image reference (registry/repository[:tag][@digest]); required for kind `image`, empty otherwise. The target agent pulls it — no build stage runs, and deploys go straight to rollout. A digest is immutable and fetched once; a tag is re-fetched on every deploy, so redeploying a moved tag runs the new image rather than a cached one.
      * @maxLength 512

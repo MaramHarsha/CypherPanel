@@ -21,6 +21,7 @@ import { EmptyState } from "@/components/empty-state";
 import { HeaderStat, PageBody, PageHeader } from "@/components/page-header";
 import { PageState } from "@/components/page-state";
 import { ServersTabs } from "@/components/servers-tabs";
+import { UseThisMachine } from "@/components/use-this-machine";
 import { normalizeStatus, StatusDot, StatusPill } from "@/components/status-badge";
 import { ActionButton } from "@/components/ui/action-button";
 import { Button } from "@/components/ui/button";
@@ -252,6 +253,13 @@ function JoinServerDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
           description="Name the host first — the join command is generated for it, valid once, and expires shortly."
         >
           <form onSubmit={submit} className="space-y-4">
+            {/* The quieter path, above the paste (local-server.md §8): the most
+                common first server is the machine the panel is already on, and
+                the command works there — it is just not discoverable, because
+                "run this on the server you want to add" does not read as "the
+                box you are signed into". The paste stays the primary below,
+                because most servers are not this one. */}
+            <UseThisMachine onStarted={() => onOpenChange(false)} />
             {/* A server name is a machine handle you will type again in deploy
                 targets and logs, so it keeps the mono default. */}
             <Field label="Name" qualifier="· how you'll recognise this host" error={error ?? undefined}>

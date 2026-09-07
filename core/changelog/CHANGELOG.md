@@ -13,6 +13,9 @@ rendered.
 
 ## v0.4.0 — 2026-09-07
 
+- GitHub App: pick a repository instead of typing a URL, and clone with a token minted for each build rather than a long-lived deploy key.
+- Guided onboarding: the four steps from a fresh panel to a live URL, on the page you already land on.
+- Use this machine: add the panel's own host as a server from the panel, with no command to paste.
 - Documentation site: every guide, decision and API endpoint as a public, searchable site generated from the repository's own docs.
 - Agent updates: name a version per release channel and every agent converges on it, verifying a signed release itself and putting its previous binary back if the new one cannot dial home.
 - Maintenance mode: serve a holding page while you migrate; the application keeps running and can still be deployed underneath.

@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch for a CypherPanel local agent install request
+Documentation=https://github.com/MaramHarsha/CypherPanel/blob/main/docs/features/local-server.md
+
+[Path]
+PathExists=/var/lib/cypherpanel/upgrade/localjoin.json
+Unit=cypherd-localjoin.service
+
+[Install]
+WantedBy=multi-user.target

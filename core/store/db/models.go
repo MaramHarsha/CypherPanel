@@ -131,6 +131,7 @@ type Application struct {
 	ReplicaStatus          []byte
 	MaintenanceMode        bool
 	MaintenanceSince       pgtype.Timestamptz
+	GithubInstallationID   pgtype.Int8
 }
 
 type AuditEvent struct {
@@ -390,6 +391,24 @@ type FreezeWindow struct {
 	EndMinute     int32
 	Timezone      string
 	CreatedAt     pgtype.Timestamptz
+}
+
+type GithubApp struct {
+	ID          int16
+	AppID       int64
+	Slug        string
+	ConfigCt    []byte
+	ConfigNonce []byte
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type GithubInstallation struct {
+	ID             string
+	InstallationID int64
+	AccountLogin   string
+	AccountType    string
+	RepoSelection  string
+	RefreshedAt    pgtype.Timestamptz
 }
 
 type InboxItem struct {

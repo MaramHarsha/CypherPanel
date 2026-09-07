@@ -1022,10 +1022,12 @@ export const getSetProjectQuotaUrl = (id: string,) => {
 /**
  * A GUARDRAIL, not a meter. It is denominated in bytes and counts, there is no monetary concept anywhere in it, and it is set by an operator on infrastructure they own (ADR-012).
  *
+ * Requires an interactive session. An API token inherits its owner's role, and a cap a leaked CI credential can raise is decorative.
+ *
  * A null limit means that dimension is uncapped. A limit of ZERO is refused: removing a quota is DELETE, and zero means "nothing may be deployed here", which is deploy protection's job and says so more clearly.
  *
  * A memory cap over a scope containing a resource with NO declared limit is refused with a 409 that names them, because such a cap would be a fiction — and the runaway project this exists to stop is precisely the one that never set a limit.
- * @summary Cap what this project may consume (team admin)
+ * @summary Cap what this project may consume (team admin, interactive session)
  */
 export const setProjectQuota = async (id: string,
     setQuotaRequest: SetQuotaRequest, options?: RequestInit): Promise<ResourceQuota> => {
@@ -1075,7 +1077,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type SetProjectQuotaMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error
 
     /**
- * @summary Cap what this project may consume (team admin)
+ * @summary Cap what this project may consume (team admin, interactive session)
  */
 export const useSetProjectQuota = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setProjectQuota>>, TError,{id: string;data: SetQuotaRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
@@ -1096,7 +1098,7 @@ export const useSetProjectQuota = <TError = BadRequestResponse | UnauthorizedRes
 }
 
 /**
- * @summary Remove the cap (team admin)
+ * @summary Remove the cap (team admin, interactive session)
  */
 export const deleteProjectQuota = async (id: string, options?: RequestInit): Promise<void> => {
 
@@ -1145,7 +1147,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type DeleteProjectQuotaMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
 
     /**
- * @summary Remove the cap (team admin)
+ * @summary Remove the cap (team admin, interactive session)
  */
 export const useDeleteProjectQuota = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteProjectQuota>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}

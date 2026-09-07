@@ -60,6 +60,23 @@ func (a *API) quotasReady(w http.ResponseWriter) bool {
 	return true
 }
 
+// teamExists is the 404 a panel admin gets for a team id that is not one.
+//
+// The rank check above is deliberately NOT team membership, so nothing else on
+// the path would notice a mistyped id — without this the upsert fails on a
+// foreign key and answers 500 for what is plainly the caller's typo.
+func (a *API) teamExists(w http.ResponseWriter, r *http.Request, teamID string) bool {
+	if a.deps.Teams == nil {
+		writeError(w, http.StatusInternalServerError, "authorization is not configured")
+		return false
+	}
+	if _, err := a.deps.Teams.Get(r.Context(), teamID); err != nil {
+		writeError(w, http.StatusNotFound, "no such team")
+		return false
+	}
+	return true
+}
+
 // writeQuotaError maps the two refusals that are the operator's to fix.
 func (a *API) writeQuotaError(w http.ResponseWriter, err error) {
 	var invalid *quota.ValidationError
@@ -172,13 +189,22 @@ func (a *API) handleGetTeamQuota(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, report)
 }
 
+// handleSetTeamQuota is PANEL admin, not team admin, and the asymmetry is the
+// point of the feature (§3): a team quota set by that team's own admin would
+// guard nothing against that team, which is the only thing it exists to guard
+// against. Panel admin is the rank that already owns servers, deploy keys and
+// backup targets — shared infrastructure — and a fleet-wide capacity policy is
+// that.
 func (a *API) handleSetTeamQuota(w http.ResponseWriter, r *http.Request) {
 	if !a.quotasReady(w) {
 		return
 	}
 	user, _ := userFromContext(r.Context())
 	teamID := r.PathValue("id")
-	if !a.requireTeamRole(w, r, user, teamID, domain.RoleAdmin) {
+	if !a.requirePanelRole(w, user, domain.RoleAdmin) {
+		return
+	}
+	if !a.teamExists(w, r, teamID) {
 		return
 	}
 	var req setQuotaRequest
@@ -205,13 +231,18 @@ func (a *API) handleSetTeamQuota(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toQuotaDTO(q))
 }
 
+// handleDeleteTeamQuota is panel admin for the same reason handleSetTeamQuota
+// is: removing a cap is setting it to "none".
 func (a *API) handleDeleteTeamQuota(w http.ResponseWriter, r *http.Request) {
 	if !a.quotasReady(w) {
 		return
 	}
 	user, _ := userFromContext(r.Context())
 	teamID := r.PathValue("id")
-	if !a.requireTeamRole(w, r, user, teamID, domain.RoleAdmin) {
+	if !a.requirePanelRole(w, user, domain.RoleAdmin) {
+		return
+	}
+	if !a.teamExists(w, r, teamID) {
 		return
 	}
 	if err := a.deps.Quotas.Delete(r.Context(), domain.QuotaScopeTeam, teamID); err != nil {

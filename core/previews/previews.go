@@ -174,9 +174,20 @@ func (m *Manager) ensureAndDeploy(ctx context.Context, source domain.Application
 
 	clone, _, err := m.apps.Create(ctx, childEnv.ID, applications.CreateInput{
 		Name: fmt.Sprintf("%s-pr-%d", source.Name, prNumber),
+		// The preview clones the source's CREDENTIAL along with its repository:
+		// a preview of a private application is a clone of a private
+		// repository, and one that inherits the repo but not the way in fails
+		// its first build with an authentication error nobody configured.
+		// Both credentials travel, because the source may legitimately carry
+		// either (github-app.md §5).
 		Source: domain.AppSource{
 			Kind: source.Source.Kind, Repo: source.Source.Repo,
-			Branch: prBranch, DeployKeyID: source.Source.DeployKeyID,
+			Branch:      prBranch,
+			DeployKeyID: source.Source.DeployKeyID,
+			// Registry too: a private base image in the Dockerfile is the same
+			// build in a preview as in production.
+			RegistryID:           source.Source.RegistryID,
+			GitHubInstallationID: source.Source.GitHubInstallationID,
 		},
 		Build:   source.Build,
 		Runtime: source.Runtime,

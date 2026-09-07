@@ -53,6 +53,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/enroll"
 	"github.com/MaramHarsha/cypherpanel/core/export"
+	"github.com/MaramHarsha/cypherpanel/core/githubapp"
 	"github.com/MaramHarsha/cypherpanel/core/guard"
 	"github.com/MaramHarsha/cypherpanel/core/identity"
 	"github.com/MaramHarsha/cypherpanel/core/inbox"
@@ -139,6 +140,16 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "upgrade" {
 		if err := runUpgradeHelper(log); err != nil {
 			log.Error("upgrade helper failed", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
+	// `cypherd join-local` installs an agent on THIS host, from a request the
+	// plane placed. Same handoff as `upgrade`, same reason: the plane cannot
+	// write a systemd unit and must not be able to (local-server.md §2).
+	if len(os.Args) > 1 && os.Args[1] == "join-local" {
+		if err := runLocalJoinHelper(log); err != nil {
+			log.Error("local join helper failed", "error", err)
 			os.Exit(1)
 		}
 		return
@@ -409,6 +420,10 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 	if err != nil {
 		return err
 	}
+	// Compose templates (compose-templates.md): a catalog entry whose resource
+	// is a stack. Wired separately so a template that declares one is refused
+	// with a sentence on a panel without it, rather than installing half.
+	templateSvc = templateSvc.WithStacks(composeSvc)
 
 	// Preview environments: PR events (via the app webhook) spawn/destroy
 	// templated child environments; a sweeper reclaims any past their TTL
@@ -769,6 +784,11 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		log.With("component", "agent-updates"))
 	sched.SetAgentUpdates(agentUpdateSvc)
 
+	// The GitHub App: repository discovery and a short-lived clone credential
+	// (github-app.md). One panel-level credential on the DNS provider's shape.
+	githubAppSvc := githubapp.New(st, box, log.With("component", "github-app"))
+	sched.SetGitHubApp(githubAppSvc)
+
 	mailHostSvc := mailhost.NewService(st, box, mailDNSWriter{dns: dnsSvc})
 	mailHostSvc.SetLogger(log.With("component", "mailhost"))
 
@@ -841,6 +861,8 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		NATSURL:          cfg.AdvertisedNATSURL(),
 		Logs:             b,
 		ConsoleURL:       cfg.AdvertisedConsoleURL(),
+		PublicHost:       cfg.PublicHost,
+		UpgradeDir:       cfg.UpgradeDir,
 		TrustedProxies:   cfg.TrustedProxies,
 		Panel:            updateChecker,
 		PanelLogs:        panelLogs,
@@ -853,6 +875,9 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		PlaneDR:          planeDR,
 		MailHost:         mailHostSvc,
 		AgentUpdates:     agentUpdateSvc,
+		OnboardingCounts: st,
+		GitHubApp:        githubAppSvc,
+		GitHubPush:       sched,
 		Quotas:           quotaSvc,
 		Promotion:        sched,
 		PlaneDRFetch:     planeObjects.Get,

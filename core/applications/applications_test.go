@@ -21,6 +21,12 @@ func (fakeSealer) Seal(pt []byte) (ct, nonce []byte, err error) {
 	return append([]byte("sealed:"), pt...), []byte("nonce"), nil
 }
 
+// domainClaim pairs a hostname with the application already serving it.
+type domainClaim struct {
+	Domain string
+	Claim  domain.DomainClaim
+}
+
 type fakeStore struct {
 	envs    map[string]bool
 	servers map[string]bool
@@ -31,6 +37,10 @@ type fakeStore struct {
 	sharedKeys []string
 	// registries the panel knows about, by id (registries.md §5).
 	registries map[string]domain.Registry
+	// installations is the panel's GitHub App cache; empty means none connected.
+	installations []domain.GitHubInstallation
+	// claims are the domains already served, by whom.
+	claims []domainClaim
 	// registryLookups counts GetRegistry calls, so "an application that names
 	// no registry pays no lookup" is provable rather than assumed.
 	registryLookups int
@@ -158,6 +168,41 @@ func (f *fakeStore) GetRegistry(_ context.Context, id string) (domain.Registry, 
 	return reg, nil
 }
 
+// ListGitHubInstallations backs the check that an attached App installation is
+// one the panel actually has (github-app.md §3). Seeded per test via
+// fakeStore.installations; empty means the panel has no App connected.
+func (f *fakeStore) ListGitHubInstallations(_ context.Context) ([]domain.GitHubInstallation, error) {
+	return f.installations, nil
+}
+
+// ApplicationsByRouteDomain backs the refusal of a domain another application
+// on the same server already serves. Seeded per test via fakeStore.claims.
+func (f *fakeStore) ApplicationsByRouteDomain(_ context.Context, routeDomain string) ([]domain.DomainClaim, error) {
+	var out []domain.DomainClaim
+	for _, c := range f.claims {
+		if strings.EqualFold(c.Domain, routeDomain) {
+			out = append(out, c.Claim)
+		}
+	}
+	return out, nil
+}
+
+// ListRouteDomainsByServer backs the "already in use" warning.
+func (f *fakeStore) ListRouteDomainsByServer(_ context.Context, serverID string) ([]string, error) {
+	var out []string
+	for _, c := range f.claims {
+		if c.Claim.ServerID == serverID {
+			out = append(out, strings.ToLower(c.Domain))
+		}
+	}
+	return out, nil
+}
+
+// SetApplicationWebhookSecret backs push-webhook secret rotation.
+func (f *fakeStore) SetApplicationWebhookSecret(_ context.Context, id string, ct, nonce []byte) (domain.Application, error) {
+	return domain.Application{ID: id, WebhookSecretCT: ct, WebhookSecretNonce: nonce}, nil
+}
+
 func (f *fakeStore) ListSharedVariableKeysInScope(_ context.Context, _, _ string) ([]string, error) {
 	return f.sharedKeys, nil
 }
@@ -203,7 +248,7 @@ func (f *fakeStore) DeleteEnvVar(_ context.Context, appID, key string) error {
 func validInput() CreateInput {
 	return CreateInput{
 		Name:    "web",
-		Source:  domain.AppSource{Kind: "github", Repo: "acme/web"},
+		Source:  domain.AppSource{Kind: "github", Repo: "https://github.com/acme/web"},
 		Runtime: domain.AppRuntime{ServerID: "srv_1", Port: 8080},
 		Route:   domain.AppRoute{Domain: "web.example.com", HTTPS: true},
 		EnvVars: map[string]string{"DATABASE_URL": "postgres://secret"},

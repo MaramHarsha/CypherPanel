@@ -18,6 +18,7 @@ import type { Project } from "@/api/gen/model";
 import { CreateProjectDialog } from "@/components/create-project-dialog";
 import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
+import { OnboardingBand } from "@/components/onboarding-band";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { PageState } from "@/components/page-state";
 import { normalizeStatus, StatusDot, StatusPill, StatusWord, type Status } from "@/components/status-badge";
@@ -70,6 +71,11 @@ function ProjectsPage() {
           <h1 className="sr-only">Projects</h1>
           <Eyebrow>Projects · worst first</Eyebrow>
         </div>
+        {/* Above the list, on the page an operator already lands on — Projects
+            is the landing page and a home dashboard is post-v1 (ui-principles
+            §4), so onboarding does not get a route of its own to become one.
+            It removes itself once a deploy has succeeded. */}
+        <OnboardingBand />
         <PageState
           query={projects}
           // The skeleton mirrors this page's own grid (10e), so nothing moves

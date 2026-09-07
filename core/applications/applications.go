@@ -171,6 +171,18 @@ type Store interface {
 	// the boundary a credential may not cross.
 	GetRegistry(ctx context.Context, id string) (domain.Registry, error)
 	GetProject(ctx context.Context, id string) (domain.Project, error)
+	// ListGitHubInstallations is the OBSERVED cache of where the panel's App is
+	// installed (github-app.md §3). Attaching one is checked against it for the
+	// reason a registry is: a credential that cannot mint a token fails at the
+	// first deploy, and a dead end discovered five minutes into a build is a
+	// bug (ui-principles §11).
+	ListGitHubInstallations(ctx context.Context) ([]domain.GitHubInstallation, error)
+	// ApplicationsByRouteDomain backs the refusal of a domain another
+	// application on the same server already serves.
+	ApplicationsByRouteDomain(ctx context.Context, routeDomain string) ([]domain.DomainClaim, error)
+	// ListRouteDomainsByServer backs the screen's "that one is taken" warning.
+	ListRouteDomainsByServer(ctx context.Context, serverID string) ([]string, error)
+	SetApplicationWebhookSecret(ctx context.Context, id string, ct, nonce []byte) (domain.Application, error)
 }
 
 // Sealer seals plaintext for storage at rest. *secret.Box satisfies it.
@@ -219,6 +231,12 @@ func (s *Service) Create(ctx context.Context, envID string, in CreateInput) (app
 	}
 	in, err = validateAndDefault(in)
 	if err != nil {
+		return domain.Application{}, "", err
+	}
+	if err := s.checkGitHubInstallation(ctx, in.Source); err != nil {
+		return domain.Application{}, "", err
+	}
+	if err := s.checkDomainFree(ctx, "", in.Route, in.Runtime.ServerID); err != nil {
 		return domain.Application{}, "", err
 	}
 	if err := s.checkRegistries(ctx, env, in.Source, in.Build); err != nil {
@@ -412,6 +430,12 @@ func (s *Service) Update(ctx context.Context, appID string, in UpdateInput) (dom
 	if err != nil {
 		return domain.Application{}, fmt.Errorf("applications: getting environment: %w", err)
 	}
+	if err := s.checkGitHubInstallation(ctx, merged.Source); err != nil {
+		return domain.Application{}, err
+	}
+	if err := s.checkDomainFree(ctx, appID, merged.Route, merged.Runtime.ServerID); err != nil {
+		return domain.Application{}, err
+	}
 	if err := s.checkRegistries(ctx, env, merged.Source, merged.Build); err != nil {
 		return domain.Application{}, err
 	}
@@ -590,6 +614,125 @@ func (s *Service) checkRegistries(ctx context.Context, env domain.Environment, s
 	return nil
 }
 
+// RouteDomainsOnServer reports the hostnames a server already routes, so a form
+// can warn before it is submitted rather than refuse after.
+//
+// Hostnames only, deliberately: an application name here would make this an
+// enumeration tool, and that is exactly what the conflict refusal withholds
+// from a caller outside the owning team.
+func (s *Service) RouteDomainsOnServer(ctx context.Context, serverID string) ([]string, error) {
+	return s.store.ListRouteDomainsByServer(ctx, serverID)
+}
+
+// RotateWebhookSecret mints a new push-webhook secret and returns it ONCE.
+//
+// THE FAILURE THIS EXISTS TO STOP. The secret was minted at create time and
+// returned exactly once, in the create response — which the create dialog threw
+// away. The application Overview then told the operator to add the webhook to
+// GitHub and showed them only the URL, while the endpoint refuses any delivery
+// without a valid signature. So push-to-deploy did not work for any application
+// made through the panel, and could not be made to work: no route read the
+// secret and none replaced it. The operator's report was "when I push to main
+// it does not deploy, I have to click Deploy".
+//
+// Rotating is the honest recovery rather than revealing the stored value: the
+// secret is sealed under the master key, and a route that unseals a credential
+// to show it is one that eventually shows it to the wrong person. A new secret
+// costs one paste into GitHub, which the operator is doing anyway.
+func (s *Service) RotateWebhookSecret(ctx context.Context, appID string) (domain.Application, string, error) {
+	secret := ids.Secret()
+	ct, nonce, err := s.sealer.Seal([]byte(secret))
+	if err != nil {
+		return domain.Application{}, "", fmt.Errorf("applications: sealing the webhook secret: %w", err)
+	}
+	app, err := s.store.SetApplicationWebhookSecret(ctx, appID, ct, nonce)
+	if err != nil {
+		return domain.Application{}, "", err
+	}
+	return app, secret, nil
+}
+
+// DomainInUseError is the 409 for a domain another application already serves.
+//
+// It carries the other application's name ONLY when the caller may see it —
+// resolved by the handler, not here — because a create dialog must not become a
+// way to enumerate other teams' hostnames. The refusal happens either way: the
+// collision is physical.
+type DomainInUseError struct {
+	Domain string
+	// Claim is the winning application. Its name is blanked by the handler when
+	// the caller is not in its team.
+	Claim domain.DomainClaim
+}
+
+func (e *DomainInUseError) Error() string {
+	if e.Claim.ApplicationName != "" {
+		return fmt.Sprintf("%s is already served by %q on this server", e.Domain, e.Claim.ApplicationName)
+	}
+	return fmt.Sprintf("%s is already served by another application on this server", e.Domain)
+}
+
+// checkDomainFree refuses a domain a different application on the SAME SERVER
+// already routes.
+//
+// THE FAILURE THIS EXISTS TO STOP. Nothing refused this, and Traefik does not
+// either: two fragments both carrying `Host(`example.com`)` leave it to pick a
+// winner, and the loser silently never serves again. An operator sees a
+// successful deploy and a site that stopped answering, with no error anywhere
+// to read — which is the worst shape a failure can take.
+//
+// SAME SERVER is the scope because that is where the collision is real: one
+// node, one Traefik, one rule table. Two nodes may legitimately serve the same
+// hostname — that is how a blue/green or a migration between hosts works — and
+// refusing it panel-wide would forbid something operators actually do.
+//
+// selfID is empty on create and the application's own id on update, so saving
+// an application without changing its domain is not a conflict with itself.
+func (s *Service) checkDomainFree(ctx context.Context, selfID string, route domain.AppRoute, serverID string) error {
+	if route.Domain == "" {
+		return nil // a raw app claims no hostname
+	}
+	claims, err := s.store.ApplicationsByRouteDomain(ctx, route.Domain)
+	if err != nil {
+		return fmt.Errorf("applications: checking the domain: %w", err)
+	}
+	for _, c := range claims {
+		if c.ApplicationID == selfID || c.ServerID != serverID {
+			continue
+		}
+		return &DomainInUseError{Domain: route.Domain, Claim: c}
+	}
+	return nil
+}
+
+// checkGitHubInstallation refuses an installation the panel does not have.
+//
+// The cache is OBSERVED from GitHub and never authored (github-app.md §3), so
+// "not in it" means the App is not installed there — which is a thing the
+// operator fixes on GitHub, and the refusal says so. Unlike a registry there is
+// no team scoping to apply: the App is one panel-level credential, and which
+// repositories it can see is GitHub's answer, not ours.
+func (s *Service) checkGitHubInstallation(ctx context.Context, src domain.AppSource) error {
+	if src.GitHubInstallationID == nil {
+		return nil // the overwhelming majority: no lookup, no cost
+	}
+	installs, err := s.store.ListGitHubInstallations(ctx)
+	if err != nil {
+		return fmt.Errorf("applications: listing github installations: %w", err)
+	}
+	for _, in := range installs {
+		if in.InstallationID == *src.GitHubInstallationID {
+			return nil
+		}
+	}
+	if len(installs) == 0 {
+		return invalid("source.github_installation_id: this panel has no GitHub App installations — " +
+			"connect an App in Settings → GitHub and install it on the account that owns this repository")
+	}
+	return invalid("source.github_installation_id: the panel's GitHub App is not installed there — " +
+		"install it on that account, then refresh the installations in Settings → GitHub")
+}
+
 func (s *Service) checkRegistry(ctx context.Context, teamID, id, field string, allows func(domain.Registry) bool, refusal string) error {
 	reg, err := s.store.GetRegistry(ctx, id)
 	if err != nil {
@@ -665,6 +808,59 @@ func validRepositoryComponent(part string) bool {
 	return !prevSep
 }
 
+// schemeless matches the shorthand people actually type — `github.com/acme/web`
+// — which is a host, a slash, and a path. The first segment must carry a dot so
+// a bare `acme/web` is NOT silently turned into a host that does not exist.
+var schemeless = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+(:[0-9]{1,5})?/\S+$`)
+
+// schemed matches a remote that already names its transport. The trailing
+// `\S` matters: `https://` on its own carries a scheme and no repository, and
+// accepting it would hand git a URL with nothing to fetch.
+var schemed = regexp.MustCompile(`^(https?|ssh|git|file)://\S+$`)
+
+// scpLike matches git's other remote form, `git@github.com:acme/web.git`.
+var scpLike = regexp.MustCompile(`^[^/@\s]+@[^:/\s]+:\S+$`)
+
+// gitRemote normalises what an operator typed into something git can clone, and
+// refuses what it cannot.
+//
+// THE FAILURE THIS EXISTS TO STOP. The create dialog suggested
+// `github.com/acme/web`, nothing between the form and the builder looked at the
+// value, and `git clone github.com/acme/web` treats a schemeless string as a
+// LOCAL PATH. So the application was created successfully, the build then died
+// with `exit status 128`, and the operator was left with a status line that
+// named neither the field nor the mistake. A credential that fails at first use
+// is a dead end, and so is a repository that does.
+//
+// The shorthand is normalised rather than rejected, because it is the form
+// people type and the expansion is unambiguous: a host with a dot in it,
+// followed by a path, can only be an https remote. Prepending https also stays
+// correct for a private repository — the builder rewrites https to SSH itself
+// when a deploy key is attached.
+func gitRemote(raw string) (string, error) {
+	repo := strings.TrimSpace(raw)
+	switch {
+	case schemed.MatchString(repo):
+		return repo, nil
+	case scpLike.MatchString(repo):
+		return repo, nil
+	case strings.HasPrefix(repo, "/"):
+		// An ABSOLUTE path is a real remote: git clones a directory on the
+		// builder, and the deploy integration suite and any air-gapped mirror
+		// depend on it. It is also unambiguous, which is the whole difference
+		// from the case below — nobody types a leading slash by accident.
+		return repo, nil
+	case schemeless.MatchString(repo):
+		// The one guess, and it is not really a guess.
+		return "https://" + repo, nil
+	}
+	return "", invalid("source.repo must be a git remote — an https:// URL like " +
+		"https://github.com/acme/web, the SSH form git@github.com:acme/web.git, " +
+		"or an absolute path on the builder. A RELATIVE value like \"acme/web\" is " +
+		"refused because git reads it as a directory that does not exist, and the " +
+		"clone then fails with nothing useful to read.")
+}
+
 func validateAndDefault(in CreateInput) (CreateInput, error) {
 	in.Name = strings.TrimSpace(in.Name)
 	if in.Name == "" || len(in.Name) > 100 {
@@ -675,6 +871,21 @@ func validateAndDefault(in CreateInput) (CreateInput, error) {
 	case "github", "git_url":
 		if strings.TrimSpace(in.Source.Repo) == "" {
 			return in, invalid("source.repo is required")
+		}
+		repo, err := gitRemote(in.Source.Repo)
+		if err != nil {
+			return in, err
+		}
+		in.Source.Repo = repo
+		// Both credentials at once is LEGAL and is not refused here.
+		// github-app.md §5: "both remain legal". The builder already has a
+		// precedence — the App credential, else the deploy key
+		// (agent/builder/builder.go) — and refusing the combination would also
+		// 400 a PATCH on an application that already carries both, because
+		// Update re-validates the MERGED result. The screen names which one
+		// wins instead, which is the honest treatment of a legal combination.
+		if in.Source.GitHubInstallationID != nil && *in.Source.GitHubInstallationID <= 0 {
+			return in, invalid("source.github_installation_id must be a GitHub installation id")
 		}
 		if in.Source.Branch == "" {
 			in.Source.Branch = "main"
@@ -688,6 +899,9 @@ func validateAndDefault(in CreateInput) (CreateInput, error) {
 		if in.Source.Image == "" {
 			return in, invalid(`source.image is required when source.kind is "image"`)
 		}
+		// Nothing is cloned, so a clone credential is meaningless here. Cleared
+		// rather than refused, exactly as repo and branch are below.
+		in.Source.GitHubInstallationID = nil
 		if len(in.Source.Image) > 512 || !validImageRef(in.Source.Image) {
 			return in, invalid("source.image must be a single OCI image reference")
 		}

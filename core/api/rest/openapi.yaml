@@ -454,11 +454,92 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /api/v1/applications/{id}/webhook/rotate:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Application ID. }
+    post:
+      operationId: rotateApplicationWebhookSecret
+      tags: [applications]
+      summary: Mint a new push-to-deploy webhook secret (team admin, interactive session)
+      description: >-
+        Returns the new secret EXACTLY ONCE, in this response. It is sealed under
+        the master key and no route ever reads it back.
+
+
+        This exists because push-to-deploy was unreachable without it. The secret
+        was minted at create time and returned once, in the create response,
+        which the create dialog discarded — while the application's Overview told
+        the operator to add the webhook to GitHub and showed them only the URL.
+        The endpoint refuses any delivery whose signature does not verify, so
+        every push was answered 401 and nothing deployed. No route read the
+        secret and none replaced it, so there was no way out.
+
+
+        Rotating rather than revealing is deliberate: a route that unseals a
+        credential to display it is one that eventually displays it to the wrong
+        person, and pasting a new secret into GitHub is work the operator is
+        already doing. Rotating invalidates the old one immediately, so a
+        webhook already configured stops working until the new secret is pasted
+        in — which the screen says before it does it.
+      responses:
+        "200":
+          description: The new secret.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [webhook]
+                properties:
+                  webhook: { $ref: "#/components/schemas/WebhookInfo" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/servers/{id}/domains:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Server ID. }
+    get:
+      operationId: listServerDomains
+      tags: [servers]
+      summary: Hostnames already served by this server (member)
+      description: >-
+        What the create and settings screens need to say "that domain is already
+        in use" BEFORE somebody submits, rather than after — a refusal you meet
+        only on save is a form you filled in twice.
+
+
+        It returns hostnames and nothing else: no application names, no project
+        or team. Those are the parts that would make this an enumeration tool,
+        and they are exactly what the conflict refusal withholds from a caller
+        outside the owning team. The hostnames themselves are public DNS, and a
+        create attempt already reveals whether one is taken.
+      responses:
+        "200":
+          description: The hostnames.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [domains]
+                properties:
+                  domains:
+                    type: array
+                    items: { type: string }
+                    description: Lowercased hostnames this server already routes.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /api/v1/panel/dns/zones:
     get:
       operationId: listDNSZones
       tags: [panel]
-      summary: The zones this panel can manage (panel admin)
+      summary: The zones this panel can manage (member)
+      description: >-
+        MEMBER rank, because creating an application needs it: the domain picker
+        offers these instead of asking somebody to type a hostname and discover
+        later that it was not one the panel can write DNS for. A zone row is a
+        hostname, an activation state and a count of managed records — no
+        credential, and connecting the provider stays panel admin.
       responses:
         "200": { description: The cached zone list., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/DNSZone" } } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -1814,6 +1895,212 @@ paths:
         "409": { description: The gate refused; the message names the canary servers and what they are running. }
         "503": { description: Agent updates are not enabled on this panel. }
 
+  /webhooks/github/app:
+    post:
+      operationId: githubAppWebhook
+      tags: [applications]
+      summary: The GitHub App's deliveries (HMAC, no session)
+      description: >-
+        Unauthenticated by design and verified by the App's webhook secret over
+        the RAW body — a signature checked after decoding is a signature over
+        something the sender did not sign.
+
+
+        A push deploys EVERY application whose repository and branch it matches.
+        Every one, deliberately: a repository can legitimately be deployed by
+        several environments, and picking one would silently skip the rest. The
+        per-application webhook cannot have this problem because its URL names
+        the application; this endpoint has to resolve it, so resolving it to a
+        set is the only correct answer.
+
+
+        An unverified signature is a `401` and nothing else — no lookup, no log
+        of the body, no hint about which applications exist. Events other than
+        `push` are acknowledged and dropped, which is what stops GitHub
+        disabling a delivery for something the panel simply does not act on.
+      responses:
+        "202":
+          description: Accepted; the body reports how many deployments started.
+          content: { application/json: { schema: { type: object, properties: { deployments: { type: integer } } } } }
+        "204": { description: An event this panel does not act on. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { description: The signature did not verify. }
+        "503": { description: The GitHub App is not enabled on this panel. }
+
+  /api/v1/github/app:
+    get:
+      operationId: getGitHubApp
+      tags: [panel]
+      summary: Whether a GitHub App is connected, and where it is installed (admin+)
+      description: >-
+        NEVER returns the private key, not even redacted: a field that is
+        sometimes a secret is a field that eventually leaks one.
+      responses:
+        "200": { description: The App., content: { application/json: { schema: { $ref: "#/components/schemas/GitHubApp" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: setGitHubApp
+      tags: [panel]
+      summary: Connect a GitHub App (owner, session only)
+      description: >-
+        Owner AND session-only: the private key can mint a token for every
+        repository the App is installed on, and API tokens live in CI. It is the
+        rule break glass and the agent channel already carry, applied to the
+        credential with the widest reach in the panel.
+
+
+        The credentials are validated against GitHub BEFORE anything is stored —
+        a credential that fails at first use is a dead end, and a dead end is a
+        bug. On success the installations are cached from GitHub's own answer.
+
+
+        `private_key_pem` is write-only.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetGitHubAppRequest" } } }
+      responses:
+        "200": { description: Connected., content: { application/json: { schema: { $ref: "#/components/schemas/GitHubApp" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    delete:
+      operationId: deleteGitHubApp
+      tags: [panel]
+      summary: Disconnect the GitHub App (owner, session only)
+      description: >-
+        Applications that reached their repository through it fail their next
+        deploy with a reason, rather than silently falling back to an anonymous
+        clone — which would succeed for a public repository and fail confusingly
+        for a private one.
+      responses:
+        "204": { description: Disconnected. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/github/installations/refresh:
+    post:
+      operationId: refreshGitHubInstallations
+      tags: [panel]
+      summary: Re-read where the App is installed (admin+)
+      description: >-
+        Installations are OBSERVED, never authored: the panel does not decide
+        which organisations its App is installed on, GitHub does. This replaces
+        the cache with GitHub's answer, so an installation it no longer reports
+        is gone — the same contract the DNS zone cache follows, for the same
+        reason: an operator-entered list would be a second place to lie about
+        what access exists.
+      responses:
+        "200": { description: Refreshed., content: { application/json: { schema: { $ref: "#/components/schemas/GitHubApp" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "502": { description: GitHub could not be reached. }
+
+  /api/v1/github/repositories:
+    get:
+      operationId: listGitHubRepositories
+      tags: [panel]
+      summary: Repositories the App can deploy (member+)
+      description: >-
+        Read live rather than cached: the list changes when someone adds a
+        repository, and a stale list that omits the one you just made is worse
+        than a request. An empty list is what a panel with no App returns, and a
+        client reads that as "type a URL instead".
+      responses:
+        "200":
+          description: What can be deployed.
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/GitHubRepository" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "502": { description: GitHub could not be reached. }
+
+  /api/v1/onboarding:
+    get:
+      operationId: getOnboarding
+      tags: [panel]
+      summary: How far this panel is through the golden path (member+)
+      description: >-
+        Four steps — an owner account, a server, a project, a deployment that
+        SUCCEEDED — each read from what exists rather than from a stored flag.
+
+
+        Deriving it is the design, not an optimisation. A stored flag has to be
+        written by whoever completes a step, so every creation path would have
+        to remember: the template installer, preview environments, the API, a
+        future CLI. DNS automation shipped with exactly that bug and the first
+        real use hit it. Derived progress also self-heals in the direction that
+        matters — delete every server and the panel says you need one again,
+        which is true, where a flag would have lied.
+
+
+        `done` is what a client renders on: the guided band appears only while it
+        is false, and because nothing is stored it then stays gone rather than
+        greeting an operator with a beginner's wizard after routine maintenance.
+        There is deliberately no dismiss route — there is no flag to clear.
+      responses:
+        "200": { description: The four steps., content: { application/json: { schema: { $ref: "#/components/schemas/Onboarding" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/servers/local:
+    get:
+      operationId: getLocalServer
+      tags: [servers]
+      summary: Whether this panel can add its own host as a server (admin+)
+      description: >-
+        The most common first server is the machine the panel is already
+        installed on, and the join command works there as well as anywhere —
+        it is just not discoverable, because the dialog says "run this on the
+        server you want to add" and the box you are signed into is not obviously
+        one of those.
+
+
+        `state` is `available`, `helper_missing` (this panel predates the
+        root helper — re-run install.sh), `unsupported` (a container install,
+        which has no host service manager to install into), `already_joined`, or
+        `unknown` when the panel cannot read this machine's agent identity and
+        so cannot tell.
+        Anything but `available` carries a `reason` sentence to show in place of
+        the button: a disabled control with no explanation is a dead end.
+      responses:
+        "200": { description: The state., content: { application/json: { schema: { $ref: "#/components/schemas/LocalServer" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: createLocalServer
+      tags: [servers]
+      summary: Add this machine as a server (owner, session only)
+      description: >-
+        Creates the Server through the ordinary path, mints a join token, and
+        writes a request that a root one-shot performs. THE PLANE INSTALLS
+        NOTHING ITSELF: `cypherd` runs with `DynamicUser` and
+        `ProtectSystem=strict`, so writing the agent binary, a unit file, or
+        calling systemctl are all forbidden to it — deliberately, because
+        relaxing that turns any RCE in this API into persistence on the
+        control-plane host. Its entire power is to ask.
+
+
+        ADR-002 is not bent. Nothing reaches out: the request never leaves the
+        host, names no address, and holds no remote credential. The agent still
+        dials home to enroll exactly as a pasted command's agent does — what
+        changes is who types the command. The request has no field naming a
+        machine and must never gain one, which is what keeps this from becoming
+        a remote-execution primitive.
+
+
+        Owner AND session-only: this installs software on the panel's own host
+        as root, and API tokens live in CI. `POST /servers` stays admin and
+        token-reachable, because handing out a join command grants nothing.
+      responses:
+        "202":
+          description: The server exists and the install has been requested; poll GET for the phase.
+          content: { application/json: { schema: { $ref: "#/components/schemas/LocalServerCreated" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: This host already runs an agent for this panel. }
+        "501": { description: This panel cannot install an agent on its own host; the message names why and the remedy. }
+
   /api/v1/servers/{id}/agent-channel:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Server ID. }
@@ -2207,11 +2494,15 @@ paths:
     put:
       operationId: setProjectQuota
       tags: [projects]
-      summary: Cap what this project may consume (team admin)
+      summary: Cap what this project may consume (team admin, interactive session)
       description: >-
         A GUARDRAIL, not a meter. It is denominated in bytes and counts, there
         is no monetary concept anywhere in it, and it is set by an operator on
         infrastructure they own (ADR-012).
+
+
+        Requires an interactive session. An API token inherits its owner's role,
+        and a cap a leaked CI credential can raise is decorative.
 
 
         A null limit means that dimension is uncapped. A limit of ZERO is
@@ -2237,7 +2528,7 @@ paths:
     delete:
       operationId: deleteProjectQuota
       tags: [projects]
-      summary: Remove the cap (team admin)
+      summary: Remove the cap (team admin, interactive session)
       responses:
         "204": { description: Removed. }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -2251,7 +2542,15 @@ paths:
       operationId: getTeamQuota
       tags: [teams]
       summary: This team's caps and what it is using (member+)
-      description: A team's meter is the sum of its projects'. A refusal by either scope is a refusal — a team cap a project could exceed by having its own is not a cap.
+      description: >-
+        A team's meter is the sum of its projects'. A refusal by either scope is
+        a refusal — a team cap a project could exceed by having its own is not a
+        cap.
+
+
+        Each dimension additionally carries `committed` (the sum of this team's
+        project caps) and `uncapped_projects`, which a project report does not.
+      
       responses:
         "200": { description: The report., content: { application/json: { schema: { $ref: "#/components/schemas/QuotaReport" } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -2260,7 +2559,19 @@ paths:
     put:
       operationId: setTeamQuota
       tags: [teams]
-      summary: Cap what this team may consume (team admin)
+      summary: Cap what this team may consume (panel admin, interactive session)
+      description: >-
+        PANEL admin, not team admin, and the asymmetry is the point: a team
+        quota set by that team's own admin would guard nothing against that
+        team, which is the only thing it exists to guard against. Panel admin is
+        the rank that already owns servers, deploy keys and backup targets —
+        shared infrastructure — and a fleet-wide capacity policy is that.
+
+
+        Requires an interactive session. An API token inherits its owner's role,
+        so a `write` token belonging to an admin could otherwise raise the cap
+        and then deploy freely, and a control a leaked CI credential can switch
+        off is decorative.
       requestBody:
         required: true
         content: { application/json: { schema: { $ref: "#/components/schemas/SetQuotaRequest" } } }
@@ -2274,7 +2585,8 @@ paths:
     delete:
       operationId: deleteTeamQuota
       tags: [teams]
-      summary: Remove the cap (team admin)
+      summary: Remove the cap (panel admin, interactive session)
+      description: Panel admin and interactive-session only, for the same reasons setting one is — removing a cap is setting it to "none".
       responses:
         "204": { description: Removed. }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -5103,6 +5415,26 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
       operationId: deleteDatabase
+      parameters:
+        - name: delete_volume
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+          description: >-
+            Also destroy the data volume. This is the difference between "the
+            container is gone" and "the data is gone", and it defaults to FALSE
+            so a delete cannot take data with it by accident.
+
+
+            It was undeclared here for its whole life, which meant no generated
+            client could send it — while the panel's own delete dialog told the
+            operator it "deletes its data volume". It did not: the volume
+            survived on the host, holding disk nobody could account for, after
+            the operator had been told twice that it was gone.
+
+
+            Backup files already uploaded to an S3 target are unaffected either
+            way.
       tags: [databases]
       summary: Delete a database
       responses:
@@ -6674,6 +7006,118 @@ components:
               type: string
               description: Readable exactly once, in this response. Absent when the gate was cleared.
 
+    GitHubApp:
+      type: object
+      required: [configured, installations]
+      properties:
+        configured: { type: boolean }
+        app_id: { type: integer, format: int64 }
+        slug: { type: string }
+        install_url:
+          type: string
+          description: Where to send an operator to install the App, built from the slug so nobody is told to "go and find your App".
+        updated_at: { type: string, format: date-time }
+        installations:
+          type: array
+          items: { $ref: "#/components/schemas/GitHubInstallation" }
+
+    GitHubInstallation:
+      type: object
+      required: [installation_id, account_login, account_type, repo_selection]
+      properties:
+        installation_id: { type: integer, format: int64 }
+        account_login: { type: string }
+        account_type: { type: string }
+        repo_selection: { type: string, enum: [all, selected] }
+
+    SetGitHubAppRequest:
+      type: object
+      required: [app_id, private_key_pem]
+      properties:
+        app_id:
+          type: integer
+          format: int64
+          description: The number on the App's settings page.
+        slug:
+          type: string
+          description: The App's URL slug, used to build the install link.
+        private_key_pem:
+          type: string
+          description: The RSA private key GitHub generated. WRITE-ONLY - no route ever returns it.
+        webhook_secret:
+          type: string
+          description: Verifies the App's deliveries to /webhooks/github/app. Write-only.
+
+    GitHubRepository:
+      type: object
+      required: [full_name, private, default_branch, clone_url, installation_id]
+      properties:
+        full_name: { type: string }
+        private: { type: boolean }
+        default_branch: { type: string }
+        clone_url: { type: string }
+        installation_id:
+          type: integer
+          format: int64
+          description: Which installation to mint this repository's clone token from.
+
+    Onboarding:
+      type: object
+      required: [steps, done]
+      properties:
+        done:
+          type: boolean
+          description: The last step is complete; clients stop showing the guided band.
+        steps:
+          type: array
+          items:
+            type: object
+            required: [name, complete, count]
+            properties:
+              name: { type: string, enum: [owner, server, project, deploy] }
+              complete: { type: boolean }
+              count:
+                type: integer
+                format: int64
+                description: What the step counts - enrolled servers, projects, succeeded deployments - so "1 server" reads as a fact rather than a tick.
+
+    LocalServer:
+      type: object
+      required: [state, hostname]
+      properties:
+        state:
+          type: string
+          enum: [available, helper_missing, unsupported, already_joined, unknown]
+          description: >-
+            `unknown` means the panel could not READ this machine's agent
+            identity, so it cannot tell whether an agent already runs here. It is
+            a distinct state on purpose: `cypherd` runs under `DynamicUser=true`
+            and the agent's state directory belongs to root, so a refused read
+            used to be reported as "no agent here" and the panel offered to
+            enrol a machine it was already running an agent on. An unreadable
+            answer is not a negative answer, and no button is offered for it.
+        reason:
+          type: string
+          description: Why the button is unavailable, as a sentence to show in its place.
+        hostname:
+          type: string
+          description: The machine this would change, so the button can name it.
+        server_id:
+          type: string
+          description: Set when this host is already enrolled, so the panel links to the server instead of offering the button.
+        phase:
+          type: string
+          description: The root helper's own progress - installing, enrolling, succeeded, failed - while an install is running. A real phase from a real process, not a spinner on a timer.
+        detail:
+          type: string
+
+    LocalServerCreated:
+      type: object
+      required: [server, local]
+      properties:
+        server: { $ref: "#/components/schemas/Server" }
+        local: { $ref: "#/components/schemas/LocalServer" }
+
     AgentChannel:
       type: object
       required: [channel, desired_version, artifact_base, resolved_artifact_base, rollback, updated_at]
@@ -7949,12 +8393,48 @@ components:
           enum: [github, git_url, image]
         repo:
           type: string
-          description: Git remote; required for `github` and `git_url`, empty for `image`.
+          maxLength: 512
+          description: >-
+            Git remote; required for `github` and `git_url`, empty for `image`.
+
+
+            It must be something git can clone: an `https://`, `http://`,
+            `ssh://`, `git://` or `file://` URL, the SCP-like
+            `git@host:owner/repo.git`, or an ABSOLUTE path to a repository on
+            the builder. The schemeless shorthand `github.com/acme/web` is
+            accepted and normalised to `https://github.com/acme/web`.
+
+
+            A RELATIVE value such as `acme/web` is a 400. That is the one shape
+            worth refusing: git reads it as a directory that does not exist on
+            the builder, so it would store happily and fail at clone time with
+            `exit status 128`, naming neither the field nor the mistake. An
+            absolute path is allowed because it is unambiguous — nobody types a
+            leading slash by accident — and cloning a local mirror is a real
+            thing operators do.
         branch:
           type: string
           description: Branch to build; defaults to `main` for git kinds, empty for `image`.
         deploy_key_id:
           type: [string, "null"]
+        github_installation_id:
+          type: [integer, "null"]
+          format: int64
+          description: >-
+            Clone this repository through the panel's GitHub App, using the
+            installation with this id — the numbers `GET /github/app` lists, and
+            the same one `GET /github/repositories` reports per repository.
+
+
+            It is the alternative to `deploy_key_id`, not a companion to it: an
+            installation token is minted per build and never stored, where a
+            deploy key is a long-lived secret sitting in the database. Setting
+            both is a 400 — two credentials for one clone is a configuration
+            whose failure mode is "which one was actually used".
+
+
+            Null is every application that does not use the App: a public
+            repository, or a private one with a deploy key. Both are unchanged.
         image:
           type: string
           maxLength: 512
@@ -8828,6 +9308,19 @@ components:
       type: object
       required: [schema, slug, name, description, category, version, resources]
       properties:
+        needs_domain:
+          type: boolean
+          description: >-
+            Whether installing this template REQUIRES a domain — it routes, or
+            it interpolates `{{domain}}` somewhere.
+
+
+            Computed by the server and served, rather than re-derived by each
+            client. The panel used to mirror the predicate in TypeScript, and
+            the mirror went stale the day compose templates landed: it read
+            applications only, so a compose template never rendered its domain
+            field and the install came back refused for a control the form did
+            not have.
         schema: { type: string, enum: [v1] }
         slug: { type: string }
         name: { type: string }
@@ -8846,6 +9339,35 @@ components:
         applications:
           type: array
           items: { $ref: "#/components/schemas/TemplateApplication" }
+        stacks:
+          type: array
+          items: { $ref: "#/components/schemas/TemplateStack" }
+          description: >-
+            Compose Stacks this template installs (compose-templates.md).
+            Optional: nearly every entry installs applications instead, and a
+            client written before compose templates existed must keep working.
+    TemplateStack:
+      type: object
+      required: [name, compose]
+      properties:
+        name: { type: string }
+        compose:
+          type: string
+          description: The compose file, with this catalog's placeholders unresolved.
+        route:
+          type: object
+          description: Which service answers, and on which port. Absent means the stack publishes nothing.
+          required: [service, port]
+          properties:
+            service: { type: string }
+            port: { type: integer }
+        env:
+          type: object
+          additionalProperties: { type: string }
+          description: >-
+            Values sealed on install and delivered through the stack's env file.
+            Generated ones are `{{secret.N}}` here; the compose file references
+            them as `${VAR}` and never contains the value.
     TemplateDatabase:
       type: object
       required: [name, engine, version]
@@ -8905,6 +9427,13 @@ components:
         databases:
           type: array
           items: { type: string }
+        stacks:
+          type: array
+          items: { type: string }
+          description: >-
+            Compose Stacks this template installed (compose-templates.md). A
+            compose template installs no application, so this is where the
+            screen finds what to navigate to.
         first_login:
           allOf: [{ $ref: "#/components/schemas/FirstLogin" }]
           description: >-
@@ -8922,6 +9451,11 @@ components:
           description: >-
             `credentials` — sign in with what is here. `setup` — the app creates the account
             itself on first visit. `none` — there is no sign-in.
+        stack_id:
+          type: string
+          description: >-
+            Set instead of application_id for a compose template, which installs
+            no application to point at.
         application_id:
           type: string
           description: The installed application these apply to.
@@ -9259,6 +9793,28 @@ components:
         used: { type: integer, format: int64 }
         limit: { type: [integer, "null"], format: int64, description: "Null means uncapped, which reads as no cap rather than as zero." }
         state: { type: string, enum: [ok, warn, exceeded], description: "warn at 90%, exceeded at 100%. Uncapped is always ok." }
+        committed:
+          type: integer
+          format: int64
+          description: >-
+            TEAM REPORTS ONLY: the sum of this team's project caps on this
+            dimension. Absent on a project report, which has nothing below it to
+            sum — absent means "does not apply", never zero.
+
+
+            It may exceed `limit`, and that is not an error. Over-commitment is
+            allowed on purpose: thin provisioning is the normal case, eleven
+            clients do not peak together, and forcing an operator to keep two
+            numbers in lockstep would buy a refusal at the moment they were
+            being careful. It is shown, not forbidden.
+        uncapped_projects:
+          type: integer
+          description: >-
+            TEAM REPORTS ONLY: how many projects in this team have no cap of
+            their own on this dimension. It travels with `committed` because the
+            sum alone is the more flattering half of the truth — zero committed
+            across eleven uncapped projects reads as "nothing promised" when it
+            means "nothing bounded".
 
     MailProviderStatus:
       type: object

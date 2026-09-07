@@ -208,7 +208,7 @@ func TestPanelTLSRequiresAuthentication(t *testing.T) {
 
 func createRoutedApp(t *testing.T, ts *httptest.Server, token, name, domainName string, https bool) map[string]any {
 	t.Helper()
-	body := `{"name":"` + name + `","source":{"kind":"github","repo":"acme/web"},` +
+	body := `{"name":"` + name + `","source":{"kind":"github","repo": "https://github.com/acme/web"},` +
 		`"runtime":{"server_id":"srv_test","port":8080},` +
 		`"route":{"domain":"` + domainName + `","https":` + boolText(https) + `,"path_prefix":""}}`
 	status, _, resp := doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, body)

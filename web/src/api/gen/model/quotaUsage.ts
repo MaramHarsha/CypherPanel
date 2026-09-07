@@ -20,4 +20,12 @@ export interface QuotaUsage {
   limit?: number | null;
   /** warn at 90%, exceeded at 100%. Uncapped is always ok. */
   state: QuotaUsageState;
+  /**
+     * TEAM REPORTS ONLY: the sum of this team's project caps on this dimension. Absent on a project report, which has nothing below it to sum — absent means "does not apply", never zero.
+     *
+     * It may exceed `limit`, and that is not an error. Over-commitment is allowed on purpose: thin provisioning is the normal case, eleven clients do not peak together, and forcing an operator to keep two numbers in lockstep would buy a refusal at the moment they were being careful. It is shown, not forbidden.
+     */
+  committed?: number;
+  /** TEAM REPORTS ONLY: how many projects in this team have no cap of their own on this dimension. It travels with `committed` because the sum alone is the more flattering half of the truth — zero committed across eleven uncapped projects reads as "nothing promised" when it means "nothing bounded". */
+  uncapped_projects?: number;
 }

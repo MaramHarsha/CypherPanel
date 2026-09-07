@@ -47,3 +47,32 @@ PR labeler, stale-issue policy, `CODEOWNERS`, issue templates. Before that they'
 - **Path-filter aggressively** — both reference repos do; contributors deserve fast feedback.
 - **Read Coolify's Actions before writing `release.yml`** — their multi-arch Docker build setup is battle-tested and worth mining (extraction rules in [research/coolify.md](../../research/coolify.md) apply).
 - A red main branch blocks all merges; there is no "merge anyway" culture (ENGINEERING.md rule 30).
+
+## Browser regression (`integration.yml` → `browser`)
+
+The newest job, and the one with a different failure mode from every other:
+**it fails when a control is missing**, where the rest fail when an endpoint is
+wrong.
+
+It exists because an external review on 2026-09-07 found five defects on a
+branch whose sixteen jobs were all green. Four were the same shape — a
+capability the database, the store, the scheduler and the agent all supported,
+with no way to reach it from a screen. No API test can see that, because the API
+was working; the gap was between the API and the UI.
+
+`scripts/e2e.sh` boots a throwaway PostgreSQL, a real `cypherd` with the built UI
+embedded, and a real enrolled agent, then drives the panel with Playwright.
+Nothing is mocked. CI and a laptop run the same script — the job deliberately
+has no `services:` block, because a database provided one way in CI and another
+way locally is a second thing to keep working, and the CI-only path is the one
+that quietly rots.
+
+It does **not** run a deploy: the `deploy` job already proves that against real
+Docker and real Traefik, and a slower, flakier copy of a passing test is worth
+nothing.
+
+Retries are set to **0**. A flaky browser test is worse than no browser test,
+because it teaches people to re-run until green; if one of these is unstable
+that is a bug in the test.
+
+What the suite covers is in [web/e2e/README.md](../../web/e2e/README.md).

@@ -12,6 +12,12 @@ import type { TemplateResources } from './templateResources.ts';
 import type { TemplateSchema } from './templateSchema.ts';
 
 export interface Template {
+  /**
+     * Whether installing this template REQUIRES a domain — it routes, or it interpolates `{{domain}}` somewhere.
+     *
+     * Computed by the server and served, rather than re-derived by each client. The panel used to mirror the predicate in TypeScript, and the mirror went stale the day compose templates landed: it read applications only, so a compose template never rendered its domain field and the install came back refused for a control the form did not have.
+     */
+  needs_domain?: boolean;
   schema: TemplateSchema;
   slug: string;
   name: string;

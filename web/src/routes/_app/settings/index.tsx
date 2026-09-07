@@ -11,6 +11,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Check, Plus } from "lucide-react";
 import { useState, type FormEvent } from "react";
+import { useListProjects } from "@/api/gen/projects/projects";
 import {
   getGetTotpStatusQueryKey,
   getListSessionsQueryKey,
@@ -99,6 +100,7 @@ function AccountTab() {
                   lastUsed={t.last_used_at}
                   expires={t.expires_at}
                   created={t.created_at}
+                  projectId={t.project_id}
                 />
               ))}
             </ul>
@@ -562,6 +564,7 @@ function TokenRow({
   lastUsed,
   expires,
   created,
+  projectId,
 }: {
   id: string;
   name: string;
@@ -569,8 +572,17 @@ function TokenRow({
   lastUsed?: string;
   expires?: string;
   created: string;
+  projectId?: string;
 }) {
   const qc = useQueryClient();
+  // A scoped token's reach is the thing to see at a glance, so it is named
+  // rather than left to be inferred from its absence. The lookup is the list
+  // the page already has; an id nobody can resolve still prints, because
+  // "scoped to something you cannot see" is more honest than "unscoped".
+  const projects = useListProjects();
+  const scope = projectId
+    ? ((projects.data ?? []).find((p) => p.id === projectId)?.name ?? projectId)
+    : null;
   const del = useDeleteToken({
     mutation: {
       // Nothing pushes token changes down the live stream, so the revoked row
@@ -588,6 +600,11 @@ function TokenRow({
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="flex items-center gap-2">
           <span className="truncate text-[13px] font-semibold text-text">{name}</span>
+          {scope && (
+            <span className="mono shrink-0 rounded bg-raised px-1.5 py-0.5 text-[10.5px] text-accent" title={`Confined to ${scope}`}>
+              {scope}
+            </span>
+          )}
           {abilities.map((a) => (
             <span key={a} className="mono rounded bg-raised px-1.5 py-0.5 text-[10.5px] uppercase text-text-faint">
               {a}
@@ -643,6 +660,11 @@ function CreateTokenDialog({ primary }: { primary?: boolean }) {
   const [name, setName] = useState("");
   const [abilities, setAbilities] = useState<Ability[]>([Ability.read, Ability.deploy]);
   const [expiryDays, setExpiryDays] = useState(90);
+  // Abilities say what a credential may do; the scope says WHERE. They are
+  // different questions, and a CI credential that only ever deploys one project
+  // has no business being able to read the rest of the fleet.
+  const [projectId, setProjectId] = useState("");
+  const projects = useListProjects();
   const [minted, setMinted] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -666,7 +688,9 @@ function CreateTokenDialog({ primary }: { primary?: boolean }) {
   const submit = (e: FormEvent) => {
     e.preventDefault();
     setError(null);
-    create.mutate({ data: { name, abilities, expires_in_days: expiryDays } });
+    create.mutate({
+      data: { name, abilities, expires_in_days: expiryDays, ...(projectId ? { project_id: projectId } : {}) },
+    });
   };
 
   // The plain-language line stays on the page rather than in a tooltip
@@ -683,6 +707,7 @@ function CreateTokenDialog({ primary }: { primary?: boolean }) {
           setName("");
           setAbilities([Ability.read, Ability.deploy]);
           setExpiryDays(90);
+          setProjectId("");
           setError(null);
           create.reset();
         }
@@ -730,8 +755,10 @@ function CreateTokenDialog({ primary }: { primary?: boolean }) {
               </div>
               <p className="text-[12px] leading-relaxed text-text-mid">{abilityHelp}</p>
             </fieldset>
-            {/* Half-width, as in 13ac — the canvas pairs it with a per-project
-                scope the API has no field for, so that cell stays empty. */}
+            {/* The pair canvas 13ac draws: a lifetime and a scope. The scope
+                cell stood empty while the API had no field for it; it has one,
+                and a token that can only reach one project is the narrowing a
+                leaked CI credential is worth the most. */}
             <div className="grid grid-cols-2 gap-3">
               <Field label="Expires">
                 {(id) => (
@@ -749,7 +776,31 @@ function CreateTokenDialog({ primary }: { primary?: boolean }) {
                   </Select>
                 )}
               </Field>
+              <Field label="Scope" qualifier="· where it may act">
+                {(id) => (
+                  <Select
+                    id={id}
+                    className="font-sans"
+                    value={projectId}
+                    onChange={(e) => setProjectId(e.target.value)}
+                  >
+                    <option value="">Every project you can see</option>
+                    {(projects.data ?? []).map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
             </div>
+            {projectId !== "" && (
+              <p className="text-[12px] leading-[1.5] text-text-mid">
+                Confined to that one project: every other project answers “not found” — the same answer a non-member
+                gets, so the token cannot be used to find out what else you can see — and panel- and team-level routes
+                are refused, because they belong to no project.
+              </p>
+            )}
             <div className="flex items-center justify-end gap-2.5">
               <span className="mr-auto text-[11.5px] text-text-faint">value shown once, then sealed</span>
               <ActionButton

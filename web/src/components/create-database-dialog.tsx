@@ -115,6 +115,9 @@ export function NewDatabaseDialog({
   const [serverId, setServerId] = useState("");
   const [initialDatabase, setInitialDatabase] = useState("");
   const [expose, setExpose] = useState(false);
+  // Redis and Valkey treat auth as optional, so the panel has to ask. Every
+  // other engine requires a root password and gets one without being asked.
+  const [requirePassword, setRequirePassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Redis and Valkey number their databases rather than naming them, so there
@@ -190,6 +193,7 @@ export function NewDatabaseDialog({
         version,
         server_id: chosenServer,
         ...(expose ? { expose_port: ENGINES[engine].port } : {}),
+        ...(!namesDatabases && requirePassword ? { require_password: true } : {}),
         ...(namesDatabases && initialDatabase.trim() !== ""
           ? { initial_database: initialDatabase.trim() }
           : {}),
@@ -330,6 +334,33 @@ export function NewDatabaseDialog({
                 </div>
                 <Toggle checked={expose} onChange={setExpose} label="Expose externally" />
               </div>
+
+              {/* Only Redis and Valkey: every other engine requires a root
+                  password and is given one without being asked. Off is the
+                  engine's own default and the panel does not quietly change it
+                  — but off plus exposed is an open database on a public
+                  address, so that combination says so where the choice is made
+                  rather than in a runbook nobody reads. */}
+              {!namesDatabases && (
+                <div className="flex items-center gap-3 rounded-lg border border-border bg-surface px-3.5 py-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[13px] font-semibold text-text">Require a password</p>
+                    <p
+                      className={cn(
+                        "mt-0.5 text-xs leading-relaxed",
+                        expose && !requirePassword ? "text-status-degraded-text" : "text-text-mid",
+                      )}
+                    >
+                      {requirePassword
+                        ? "One is generated and shown once, here, when the database is created."
+                        : expose
+                          ? "Off, and exposed: anything that can reach the server can read and write this database with no credential."
+                          : "Off = no auth, which is this engine's own default. Reachable only from apps in this project."}
+                    </p>
+                  </div>
+                  <Toggle checked={requirePassword} onChange={setRequirePassword} label="Require a password" />
+                </div>
+              )}
 
               {/* Everything with a working default folds in here (ui-principles
                   §6); Redis and Valkey have nothing to fold. */}

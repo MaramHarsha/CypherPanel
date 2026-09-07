@@ -18,6 +18,7 @@ import (
 	"net"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/MaramHarsha/cypherpanel/agent/driver"
@@ -417,7 +418,11 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 		if newly[idx] || (!maintenance && (!routed || !slices.Contains(applied, up))) {
 			if err := d.prober.Probe(ctx, up, spec.GetHealth()); err != nil {
 				d.discardNew(ctx, current, newly)
-				return status(spec.GetAppId(), currentRevision(existing), stateError, "health check failed: "+err.Error())
+				// No prefix: the prober's own message already leads with
+				// "health check failed", and stacking one on top produced
+				// "health check failed: health check failed after 3 retries"
+				// on a real panel — a sentence that says nothing twice.
+				return status(spec.GetAppId(), currentRevision(existing), stateError, healthDetail(err))
 			}
 		}
 		upstreams = append(upstreams, up)
@@ -904,6 +909,17 @@ func (d *Driver) discard(ctx context.Context, id string) {
 	if err := d.client.RemoveContainer(ctx, id); err != nil {
 		d.log.Warn("discarding failed container", "container", id, "error", err)
 	}
+}
+
+// healthDetail is the prober's sentence, prefixed only when it does not already
+// say what it is. The real prober always does; a HealthProber that returns a
+// bare error still gets labelled.
+func healthDetail(err error) string {
+	msg := err.Error()
+	if strings.HasPrefix(msg, "health check failed") {
+		return msg
+	}
+	return "health check failed: " + msg
 }
 
 func (d *Driver) upstreamOf(ctx context.Context, containerID string, spec *agentv1.AppSpec) (string, error) {

@@ -37,3 +37,10 @@ go.work.sum
 
 # Build-tool scratch (coolify-import registry answers — regenerable)
 /.cache/
+
+# scripts/e2e.sh scratch: binaries, panel state and Playwright artefacts.
+.e2e/
+web/e2e/node_modules/
+web/e2e/test-results/
+web/e2e/package-lock.json
+web/e2e/package.json
