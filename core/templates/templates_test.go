@@ -2,16 +2,18 @@ package templates
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/MaramHarsha/cypherpanel/core/compose"
-	"gopkg.in/yaml.v3"
 	"log/slog"
 	"regexp"
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/MaramHarsha/cypherpanel/core/applications"
+	"github.com/MaramHarsha/cypherpanel/core/compose"
 	"github.com/MaramHarsha/cypherpanel/core/databases"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 )
@@ -787,5 +789,39 @@ func TestAComposeTemplateNeedsTheComposeService(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "compose stacks") {
 		t.Fatalf("want a refusal naming compose stacks, got %v", err)
+	}
+}
+
+// Optional collections are empty arrays on the wire, never null.
+//
+// A compose template declares no applications, and `applications: null` made
+// the catalog screen throw on `null.length` the moment its install dialog
+// opened — a blank error page for a template whose every other layer was
+// correct. Parse's own comment already promised this ("optional YAML
+// collections are represented as empty arrays/objects, never null"); it covered
+// one of the three.
+func TestOptionalCollectionsAreNeverNullOnTheWire(t *testing.T) {
+	s := newTestService(t, &fakeApps{}, &fakeDbs{}, &fakeDeployer{})
+	for _, tpl := range s.List() {
+		raw, err := json.Marshal(tpl)
+		if err != nil {
+			t.Fatalf("%s: marshal: %v", tpl.Slug, err)
+		}
+		var back struct {
+			Resources map[string]json.RawMessage `json:"resources"`
+		}
+		if err := json.Unmarshal(raw, &back); err != nil {
+			t.Fatalf("%s: unmarshal: %v", tpl.Slug, err)
+		}
+		for _, key := range []string{"applications", "databases", "stacks"} {
+			v, ok := back.Resources[key]
+			if !ok {
+				t.Errorf("%s: resources.%s is absent; a client reading it gets undefined", tpl.Slug, key)
+				continue
+			}
+			if string(v) == "null" {
+				t.Errorf("%s: resources.%s serialized as null — the screen does .length on it", tpl.Slug, key)
+			}
+		}
 	}
 }

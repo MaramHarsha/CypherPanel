@@ -62,7 +62,7 @@ function composeServices(file: string): string[] {
 function needsDomain(template: Template) {
   if (template.needs_domain !== undefined) return template.needs_domain;
   return (
-    template.resources.applications.some(
+    (template.resources.applications ?? []).some(
       (app) => app.route || Object.values(app.env ?? {}).some((v) => /\{\{\s*domain\s*\}\}/.test(v)),
     ) || (template.resources.stacks ?? []).some((st) => st.route != null)
   );
@@ -248,9 +248,9 @@ function TemplateCard({ template }: { template: Template }) {
             about something that runs two containers is a card that lies. */}
         {(template.resources.stacks ?? []).length > 0
           ? count((template.resources.stacks ?? []).length, "stack")
-          : count(template.resources.applications.length, "app")}
+          : count((template.resources.applications ?? []).length, "app")}
         <span className="mx-1">·</span>
-        <Database className="h-3 w-3" /> {count(template.resources.databases.length, "database", "databases")}
+        <Database className="h-3 w-3" /> {count((template.resources.databases ?? []).length, "database", "databases")}
       </p>
       <div className="mt-4"><InstallDialog template={template} /></div>
     </li>
@@ -267,8 +267,10 @@ function TemplateCard({ template }: { template: Template }) {
 // The closing promise is assembled from what this template actually does,
 // because "TLS + subdomain" is a lie on a template that publishes nothing.
 function TemplateContents({ template }: { template: Template }) {
-  const apps = template.resources.applications;
-  const dbs = template.resources.databases;
+  // `?? []` on all three: the server normalises these to empty arrays, and a
+  // panel older than that normalisation must not be able to blank the screen.
+  const apps = template.resources.applications ?? [];
+  const dbs = template.resources.databases ?? [];
   const handled = [
     needsDomain(template) && "TLS + subdomain",
     dbs.length > 0 && "generated secrets",

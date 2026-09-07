@@ -58,7 +58,12 @@ trap cleanup EXIT
 # once before the check existed.
 #
 # A suite that exists to catch defects must not cause them.
-if [ "${E2E_I_KNOW_THIS_HOST_HAS_NO_AGENT:-}" != 1 ] \
+# E2E_NO_AGENT=1 boots the panel alone. The contention this guard exists for is
+# between AGENTS — two of them converge the same `cypher-proxy` container — so a
+# run that starts none cannot disturb anything, and the specs that need no
+# enrolled server can be debugged on a host that has one.
+if [ "${E2E_NO_AGENT:-}" != 1 ] \
+    && [ "${E2E_I_KNOW_THIS_HOST_HAS_NO_AGENT:-}" != 1 ] \
     && command -v docker >/dev/null 2>&1 \
     && docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^cypher-proxy$'; then
     fail "a CypherPanel proxy is already running on this host, so an agent is too.
@@ -66,6 +71,16 @@ if [ "${E2E_I_KNOW_THIS_HOST_HAS_NO_AGENT:-}" != 1 ] \
   Traefik's configuration directory, so running this suite here would disturb
   whatever that agent is serving. Run it on a host with no agent, or in CI.
   E2E_I_KNOW_THIS_HOST_HAS_NO_AGENT=1 overrides this, and you should be sure."
+fi
+
+# A panel already answering on this port is one THIS RUN did not start, almost
+# always an E2E_KEEP=1 leftover. Reusing it silently means testing an older
+# binary and believing the result — which cost two debugging rounds before this
+# check existed, both spent on a fix that was already correct.
+if curl -sf "$API/readyz" >/dev/null 2>&1; then
+    fail "something is already serving $API — probably a panel left by E2E_KEEP=1.
+  This run would test THAT binary, not the one you just built.
+  Stop it first:  pkill -f '$WORK/cypherd'; docker rm -f $PG_NAME"
 fi
 
 mkdir -p "$WORK"
@@ -162,6 +177,9 @@ fi
 # An enrolled agent, because the create-application dialog offers only servers
 # that are actually enrolled — so without one the screens under test cannot be
 # reached at all.
+if [ "${E2E_NO_AGENT:-}" = 1 ]; then
+    say "E2E_NO_AGENT=1 — no agent; specs needing an enrolled server will fail"
+else
 say "enrolling an agent"
 TOKEN=$(curl -sf -X POST "$API/api/v1/auth/login" -H 'Content-Type: application/json' \
     -d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}" | sed 's/.*"token":"\([^"]*\)".*/\1/')
@@ -180,6 +198,7 @@ agent_running() {
 if ! STREAK=1 wait_for "the agent" 30 agent_running; then
     tail -20 "$WORK/agent.log" >&2
     fail "the agent never reported running — the screens under test need an enrolled server"
+fi
 fi
 
 say "running the browser suite"

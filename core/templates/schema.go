@@ -165,6 +165,17 @@ func Parse(data []byte) (Template, error) {
 	if t.Resources.Databases == nil {
 		t.Resources.Databases = []TplDatabase{}
 	}
+	// The same for the other two, and it is not cosmetic. A compose template
+	// declares no applications, so `applications` serialized as null and the
+	// catalog screen did `null.length` the moment somebody opened OpenClaw's
+	// install dialog — a blank error page from a template that was otherwise
+	// correct end to end. Every consumer sees one resolved shape or none does.
+	if t.Resources.Applications == nil {
+		t.Resources.Applications = []TplApplication{}
+	}
+	if t.Resources.Stacks == nil {
+		t.Resources.Stacks = []TplStack{}
+	}
 	for i := range t.Resources.Applications {
 		a := &t.Resources.Applications[i]
 		if a.Health.Kind == "" {
