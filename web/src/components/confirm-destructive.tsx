@@ -33,6 +33,15 @@ interface ConfirmDestructiveProps {
   lead?: string;
   /** When set, the user must type this (resource name) to arm the action. */
   confirmName?: string;
+  /**
+   * An extra control shown between the blast radius and the confirmation — a
+   * choice that CHANGES the blast radius, such as whether a database's volume
+   * goes with it. It sits there rather than on the page behind because the
+   * radius above has to describe what the choice currently means, and a
+   * checkbox the operator cannot see while reading that list is one they will
+   * answer from memory.
+   */
+  extra?: ReactNode;
   actionLabel: string;
   onConfirm: () => void;
   pending?: boolean;
@@ -46,6 +55,7 @@ export function ConfirmDestructive({
   blastRadius,
   lead = "This permanently removes:",
   confirmName,
+  extra,
   actionLabel,
   onConfirm,
   pending,
@@ -100,6 +110,8 @@ export function ConfirmDestructive({
             </li>
           ))}
         </ul>
+
+        {extra && <div className="mt-3">{extra}</div>}
 
         {confirmName && (
           <div className="mt-3">
