@@ -120,6 +120,12 @@ type Store interface {
 	GetApplicationByWebhookID(ctx context.Context, webhookID string) (domain.Application, error)
 	ListApplicationsByEnvironment(ctx context.Context, envID string) ([]domain.Application, error)
 	UpdateApplicationConfig(ctx context.Context, a domain.Application) (domain.Application, error)
+	// Access control is set on its own rather than through
+	// UpdateApplicationConfig: it is current state, not a revision snapshot, and
+	// folding it in would let a config PATCH silently clear an allowlist
+	// (app-access-control.md §3).
+	SetApplicationAllowlist(ctx context.Context, id string, enabled bool, cidrs []string) (domain.Application, error)
+	SetApplicationPreviewPassword(ctx context.Context, id string, enabled bool, hash string) (domain.Application, error)
 	DeleteApplication(ctx context.Context, id string) error
 	GetEnvironment(ctx context.Context, id string) (domain.Environment, error)
 	GetServer(ctx context.Context, id string) (domain.Server, error)

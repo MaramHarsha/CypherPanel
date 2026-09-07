@@ -868,6 +868,7 @@ func applicationFromRow(r db.Application) domain.Application {
 		PreviewBaseDomain:  r.PreviewBaseDomain,
 		PreviewTTLHours:    int(r.PreviewTtlHours),
 		RestartToken:       r.RestartToken,
+		Access:             accessFromRow(r),
 		DesiredRevisionID:  ptrFromText(r.DesiredRevisionID),
 		Status:             r.Status,
 		StatusDetail:       r.StatusDetail,
@@ -926,4 +927,51 @@ func ptrFromText(t pgtype.Text) *string {
 // operand rather than a nullable column.
 func pgText(s string) pgtype.Text {
 	return pgtype.Text{String: s, Valid: true}
+}
+
+// accessFromRow reads the front-door policy off the application row. The CIDR
+// list is stored as JSONB; a row written before this feature decodes to an
+// empty list, which is "no allowlist" rather than "allow nothing".
+func accessFromRow(r db.Application) domain.AppAccess {
+	a := domain.AppAccess{
+		IPAllowlistEnabled:     r.IpAllowlistEnabled,
+		PreviewPasswordEnabled: r.PreviewPasswordEnabled,
+		PreviewPasswordHash:    r.PreviewPasswordHash,
+		PreviewPasswordSetAt:   ptrTime(r.PreviewPasswordSetAt),
+	}
+	if len(r.IpAllowlist) > 0 {
+		_ = json.Unmarshal(r.IpAllowlist, &a.IPAllowlist)
+	}
+	return a
+}
+
+// SetApplicationAllowlist replaces the allowlist wholesale. The CIDRs are
+// validated by the service before they reach here.
+func (s *Store) SetApplicationAllowlist(ctx context.Context, id string, enabled bool, cidrs []string) (domain.Application, error) {
+	if cidrs == nil {
+		cidrs = []string{}
+	}
+	raw, err := json.Marshal(cidrs)
+	if err != nil {
+		return domain.Application{}, fmt.Errorf("store: encoding allowlist: %w", err)
+	}
+	row, err := s.q.SetApplicationAllowlist(ctx, db.SetApplicationAllowlistParams{
+		ID: id, IpAllowlistEnabled: enabled, IpAllowlist: raw,
+	})
+	if err != nil {
+		return domain.Application{}, fmt.Errorf("store: setting allowlist: %w", err)
+	}
+	return applicationFromRow(row), nil
+}
+
+// SetApplicationPreviewPassword stores the bcrypt hash, never the passphrase.
+// An empty hash clears it, which also clears the set-at stamp.
+func (s *Store) SetApplicationPreviewPassword(ctx context.Context, id string, enabled bool, hash string) (domain.Application, error) {
+	row, err := s.q.SetApplicationPreviewPassword(ctx, db.SetApplicationPreviewPasswordParams{
+		ID: id, PreviewPasswordEnabled: enabled, PreviewPasswordHash: hash,
+	})
+	if err != nil {
+		return domain.Application{}, fmt.Errorf("store: setting preview password: %w", err)
+	}
+	return applicationFromRow(row), nil
 }

@@ -122,6 +122,14 @@ func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.Rou
 		Headers *struct {
 			CustomResponseHeaders map[string]string `yaml:"customResponseHeaders"`
 		} `yaml:"headers,omitempty"`
+		IPAllowList *struct {
+			SourceRange []string `yaml:"sourceRange"`
+		} `yaml:"ipAllowList,omitempty"`
+		BasicAuth *struct {
+			Users []string `yaml:"users"`
+			// The app must never see the credential it might log.
+			RemoveHeader bool `yaml:"removeHeader"`
+		} `yaml:"basicAuth,omitempty"`
 	}
 
 	doc := struct {
@@ -146,6 +154,33 @@ func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.Rou
 		CustomResponseHeaders map[string]string `yaml:"customResponseHeaders"`
 	}{CustomResponseHeaders: map[string]string{ServedByHeader: ServedByValue}}
 	doc.HTTP.Middlewares[markName] = mark
+
+	// Access control (app-access-control.md §4). MARK STAYS FIRST, deliberately:
+	// middlewares wrap in list order, so a visitor the allowlist rejects still
+	// gets X-Served-By on their 403 — and an operator locked out from a cafe
+	// learns the panel is refusing them rather than guessing at DNS.
+	chain := []string{markName}
+	if acc := route.GetAccess(); acc != nil {
+		if len(acc.GetAllowCidrs()) > 0 {
+			name := appID + "-allow"
+			mw := Middleware{}
+			mw.IPAllowList = &struct {
+				SourceRange []string `yaml:"sourceRange"`
+			}{SourceRange: acc.GetAllowCidrs()}
+			doc.HTTP.Middlewares[name] = mw
+			chain = append(chain, name)
+		}
+		if len(acc.GetBasicAuthUsers()) > 0 {
+			name := appID + "-auth"
+			mw := Middleware{}
+			mw.BasicAuth = &struct {
+				Users        []string `yaml:"users"`
+				RemoveHeader bool     `yaml:"removeHeader"`
+			}{Users: acc.GetBasicAuthUsers(), RemoveHeader: true}
+			doc.HTTP.Middlewares[name] = mw
+			chain = append(chain, name)
+		}
+	}
 
 	rule := fmt.Sprintf("Host(`%s`)", route.Domain)
 	if route.PathPrefix != "" {
@@ -172,7 +207,7 @@ func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.Rou
 		doc.HTTP.Routers[appID] = Router{
 			Rule:        rule,
 			EntryPoints: []string{"websecure"},
-			Middlewares: []string{markName},
+			Middlewares: chain,
 			Service:     appID,
 			TLS: &struct {
 				CertResolver string `yaml:"certResolver,omitempty"`
@@ -204,7 +239,7 @@ func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.Rou
 		doc.HTTP.Routers[appID] = Router{
 			Rule:        rule,
 			EntryPoints: []string{"web"},
-			Middlewares: []string{markName},
+			Middlewares: chain,
 			Service:     appID,
 		}
 	}
@@ -236,7 +271,14 @@ func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.Rou
 	}
 	tmpPath := filepath.Join(cleanAppsDir, "."+appID+".yml.tmp")
 
-	if err := os.WriteFile(tmpPath, b, 0644); err != nil {
+	// 0600, not 0644: a fragment can now carry a bcrypt credential hash, and a
+	// file mode that varies with content is a mode nobody can reason about. The
+	// node's existing rule for credential material (acme.json, the env file
+	// compose-stacks writes) is the same. This works because the agent and the
+	// Proxy's Traefik both run as root on the node — if Traefik is ever run as
+	// non-root this becomes a usersFile with matched ownership, and the routing
+	// integration test is what catches it (app-access-control.md §4).
+	if err := os.WriteFile(tmpPath, b, 0600); err != nil {
 		return fmt.Errorf("writing route tmp file: %w", err)
 	}
 	if err := os.Rename(tmpPath, finalPath); err != nil {

@@ -59,6 +59,13 @@ type Deployer interface {
 	// new (deployment-control.md §§2-3).
 	Cancel(ctx context.Context, deploymentID, by string) (domain.Deployment, error)
 	Restart(ctx context.Context, appID string) (domain.Application, error)
+	// RequestResync nudges the fleet to re-read desired state. Access control
+	// is current app state rather than a deploy, so a change must reach the
+	// Proxy without shipping a revision (app-access-control.md §8). Best-effort
+	// by design: the policy is already in Postgres, which is what makes it
+	// true — the nudge only decides whether it applies in a second or at the
+	// agent's next reconcile.
+	RequestResync(ctx context.Context, reason string) error
 }
 
 // ProtectionService is deploy protection (consumer-defined; *protection.Service
@@ -516,6 +523,11 @@ func (a *API) Handler() http.Handler {
 	// session-only: cancelling and restarting from CI is legitimate.
 	mux.HandleFunc("POST /api/v1/deployments/{id}/cancel", a.authed(a.handleCancelDeployment))
 	mux.HandleFunc("POST /api/v1/applications/{id}/restart", a.authed(a.handleRestartApplication))
+	// Front-door access control (app-access-control.md §9). Member rank: an
+	// operator who may deploy the app may decide who reaches it.
+	mux.HandleFunc("GET /api/v1/applications/{id}/access", a.authed(a.handleGetApplicationAccess))
+	mux.HandleFunc("PUT /api/v1/applications/{id}/access", a.authed(a.handleSetApplicationAccess))
+	mux.HandleFunc("POST /api/v1/applications/{id}/access/preview-password", a.authed(a.handleSetPreviewPassword))
 
 	// GitHub webhook: authenticated by per-app HMAC secret, not a session
 	// (spec §4) — the only unauthenticated mutating route.

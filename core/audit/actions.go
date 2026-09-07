@@ -102,6 +102,11 @@ const (
 	// A restart is not a deploy — no revision, no build — but it is a
 	// production action with a visible effect (deployment-control.md §3).
 	ActionApplicationRestarted = "application.restarted"
+	// Who may reach an application through the Proxy changed. Recorded by the
+	// FACT of the change and never by content: a list of the networks that
+	// reach a private admin panel is not something to copy into a second table
+	// (threat-model §5.15).
+	ActionApplicationAccessChanged = "application.access_changed"
 	ActionEnvVarSet            = "application.env_var_set"
 	ActionEnvVarRemoved        = "application.env_var_removed"
 
@@ -260,6 +265,8 @@ var actions = map[string]bool{
 	ActionNotifierDeleted: true, ActionWebhookCreated: true,
 	ActionWebhookUpdated: true, ActionWebhookDeleted: true,
 	ActionWebhookSecretRotated: true,
+
+	ActionApplicationAccessChanged: true,
 
 	ActionProjectExported: true,
 

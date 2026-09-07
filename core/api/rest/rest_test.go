@@ -648,6 +648,28 @@ func (f *fakeAppsStore) UpdateApplicationConfig(_ context.Context, a domain.Appl
 	return a, nil
 }
 
+func (f *fakeAppsStore) SetApplicationAllowlist(_ context.Context, id string, enabled bool, cidrs []string) (domain.Application, error) {
+	a, ok := f.apps[id]
+	if !ok {
+		return domain.Application{}, store.ErrNotFound
+	}
+	a.Access.IPAllowlistEnabled = enabled
+	a.Access.IPAllowlist = cidrs
+	f.apps[id] = a
+	return a, nil
+}
+
+func (f *fakeAppsStore) SetApplicationPreviewPassword(_ context.Context, id string, enabled bool, hash string) (domain.Application, error) {
+	a, ok := f.apps[id]
+	if !ok {
+		return domain.Application{}, store.ErrNotFound
+	}
+	a.Access.PreviewPasswordEnabled = enabled
+	a.Access.PreviewPasswordHash = hash
+	f.apps[id] = a
+	return a, nil
+}
+
 func (f *fakeAppsStore) ListApplicationsByEnvironment(_ context.Context, envID string) ([]domain.Application, error) {
 	var out []domain.Application
 	for _, a := range f.apps {
@@ -716,6 +738,7 @@ func (f *fakeAppsStore) DeleteEnvVar(_ context.Context, appID, key string) error
 }
 
 type fakeDeployer struct {
+	resyncs    []string
 	deploys   []string // "appID/trigger/ref"
 	removed   []string // "serverID/appID"
 	rollbacks []string
@@ -800,6 +823,13 @@ func (f *fakeDeployer) Cancel(_ context.Context, deploymentID, by string) (domai
 		status = domain.DeployFailed
 	}
 	return domain.Deployment{ID: deploymentID, ApplicationID: "app_test", Status: status, Detail: "cancelled by " + by}, f.cancelErr
+}
+
+// resyncs records the nudges an access change asks for, so a test can assert
+// the fleet was told rather than only that the row changed.
+func (f *fakeDeployer) RequestResync(_ context.Context, reason string) error {
+	f.resyncs = append(f.resyncs, reason)
+	return nil
 }
 
 func (f *fakeDeployer) Restart(_ context.Context, appID string) (domain.Application, error) {

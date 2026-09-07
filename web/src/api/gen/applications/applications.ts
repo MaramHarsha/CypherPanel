@@ -27,6 +27,7 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AppAccess,
   Application,
   ApplicationDNS,
   BadRequestResponse,
@@ -38,7 +39,10 @@ import type {
   ForbiddenResponse,
   NotFoundResponse,
   PatchApplicationRequest,
+  PreviewPasswordResult,
+  SetAppAccessRequest,
   SetEnvVarRequest,
+  SetPreviewPasswordRequest,
   StreamApplicationLogsParams,
   UnauthorizedResponse
 } from '../model';
@@ -793,7 +797,257 @@ export function useStreamApplicationLogs<TData = Awaited<ReturnType<typeof strea
 
 
 
-export const getRestartApplicationUrl = (id: string,) => {
+export const getGetApplicationAccessUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/applications/${id}/access`
+}
+
+/**
+ * @summary Who may reach this application through the Proxy (member+)
+ */
+export const getApplicationAccess = async (id: string, options?: RequestInit): Promise<AppAccess> => {
+
+  return apiFetch<AppAccess>(getGetApplicationAccessUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetApplicationAccessQueryKey = (id: string,) => {
+    return [
+    `/api/v1/applications/${id}/access`
+    ] as const;
+    }
+
+
+export const getGetApplicationAccessQueryOptions = <TData = Awaited<ReturnType<typeof getApplicationAccess>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationAccess>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetApplicationAccessQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getApplicationAccess>>> = ({ signal }) => getApplicationAccess(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getApplicationAccess>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetApplicationAccessQueryResult = NonNullable<Awaited<ReturnType<typeof getApplicationAccess>>>
+export type GetApplicationAccessQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useGetApplicationAccess<TData = Awaited<ReturnType<typeof getApplicationAccess>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationAccess>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getApplicationAccess>>,
+          TError,
+          Awaited<ReturnType<typeof getApplicationAccess>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetApplicationAccess<TData = Awaited<ReturnType<typeof getApplicationAccess>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationAccess>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getApplicationAccess>>,
+          TError,
+          Awaited<ReturnType<typeof getApplicationAccess>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetApplicationAccess<TData = Awaited<ReturnType<typeof getApplicationAccess>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationAccess>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Who may reach this application through the Proxy (member+)
+ */
+
+export function useGetApplicationAccess<TData = Awaited<ReturnType<typeof getApplicationAccess>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationAccess>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetApplicationAccessQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getSetApplicationAccessUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/applications/${id}/access`
+}
+
+/**
+ * Wholesale, because the list IS the policy: adding and removing one CIDR at a time through two routes would make "what does this allow right now" a question with two answers mid-edit.
+ *
+ * Entries are normalized — a bare address becomes a single-host prefix, and a prefix is masked — so what is stored is the network the operator described rather than a host address that looks like one. An enabled allowlist with no entries is refused: empty meaning "allow nothing" is a lockout nobody typed, and empty meaning "allow everything" is a control that silently does not apply.
+ *
+ * This is CURRENT application state, not part of a revision snapshot. A rollback must never lift a lockout or restore a deleted entry.
+ * @summary Replace the IP allowlist (member+)
+ */
+export const setApplicationAccess = async (id: string,
+    setAppAccessRequest: SetAppAccessRequest, options?: RequestInit): Promise<AppAccess> => {
+
+  return apiFetch<AppAccess>(getSetApplicationAccessUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(setAppAccessRequest)
+  }
+);}
+
+
+
+
+
+export const getSetApplicationAccessMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setApplicationAccess>>, TError,{id: string;data: SetAppAccessRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setApplicationAccess>>, TError,{id: string;data: SetAppAccessRequest}, TContext> => {
+
+const mutationKey = ['setApplicationAccess'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setApplicationAccess>>, {id: string;data: SetAppAccessRequest}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  setApplicationAccess(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetApplicationAccessMutationResult = NonNullable<Awaited<ReturnType<typeof setApplicationAccess>>>
+    export type SetApplicationAccessMutationBody = SetAppAccessRequest
+    export type SetApplicationAccessMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Replace the IP allowlist (member+)
+ */
+export const useSetApplicationAccess = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setApplicationAccess>>, TError,{id: string;data: SetAppAccessRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setApplicationAccess>>,
+        TError,
+        {id: string;data: SetAppAccessRequest},
+        TContext
+      > => {
+      return useMutation(getSetApplicationAccessMutationOptions(options), queryClient);
+    }
+    export const getSetPreviewPasswordUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/applications/${id}/access/preview-password`
+}
+
+/**
+ * Gates PREVIEW environments only — every `pr-*` environment asks for it before serving, so clients see staging and the internet does not. It is deliberately not applied to standing environments: a flag left on must not lock production behind a passphrase nobody remembers setting.
+ *
+ * The passphrase is bcrypt-hashed and only the hash is stored; the plaintext is returned in THIS response and never again, which is the contract `reset-password` already has. An empty passphrase turns the gate off and forgets the hash — turning it off while keeping the hash would leave a credential nobody can see and nobody can rotate.
+ * @summary Set, rotate or clear the preview passphrase (member+)
+ */
+export const setPreviewPassword = async (id: string,
+    setPreviewPasswordRequest: SetPreviewPasswordRequest, options?: RequestInit): Promise<PreviewPasswordResult> => {
+
+  return apiFetch<PreviewPasswordResult>(getSetPreviewPasswordUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(setPreviewPasswordRequest)
+  }
+);}
+
+
+
+
+
+export const getSetPreviewPasswordMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setPreviewPassword>>, TError,{id: string;data: SetPreviewPasswordRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setPreviewPassword>>, TError,{id: string;data: SetPreviewPasswordRequest}, TContext> => {
+
+const mutationKey = ['setPreviewPassword'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setPreviewPassword>>, {id: string;data: SetPreviewPasswordRequest}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  setPreviewPassword(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetPreviewPasswordMutationResult = NonNullable<Awaited<ReturnType<typeof setPreviewPassword>>>
+    export type SetPreviewPasswordMutationBody = SetPreviewPasswordRequest
+    export type SetPreviewPasswordMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Set, rotate or clear the preview passphrase (member+)
+ */
+export const useSetPreviewPassword = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setPreviewPassword>>, TError,{id: string;data: SetPreviewPasswordRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setPreviewPassword>>,
+        TError,
+        {id: string;data: SetPreviewPasswordRequest},
+        TContext
+      > => {
+      return useMutation(getSetPreviewPasswordMutationOptions(options), queryClient);
+    }
+    export const getRestartApplicationUrl = (id: string,) => {
 
 
 

@@ -87,3 +87,22 @@ UPDATE applications
 SET restart_token = $2, updated_at = now()
 WHERE id = $1
 RETURNING *;
+
+-- Access control is set on its own, never as part of the config update: it is
+-- current state rather than a revision snapshot (app-access-control.md §3), and
+-- folding it into UpdateApplicationConfig would let a config PATCH silently
+-- clear an allowlist.
+-- name: SetApplicationAllowlist :one
+UPDATE applications
+SET ip_allowlist_enabled = $2, ip_allowlist = $3, updated_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: SetApplicationPreviewPassword :one
+UPDATE applications
+SET preview_password_enabled = $2,
+    preview_password_hash    = $3,
+    preview_password_set_at  = CASE WHEN $3 = '' THEN NULL ELSE now() END,
+    updated_at = now()
+WHERE id = $1
+RETURNING *;

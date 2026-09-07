@@ -432,3 +432,85 @@ func TestRouteConvergenceIsIdempotent(t *testing.T) {
 		})
 	}
 }
+
+// The access middlewares, and the ORDER, which is the part that matters.
+// Middlewares wrap in list order, so the mark must stay first: a visitor the
+// allowlist rejects still gets X-Served-By on their 403, and an operator locked
+// out from a cafe learns the panel is refusing them rather than guessing at a
+// DNS problem (app-access-control.md §4).
+func TestAccessMiddlewaresAreAppendedAfterTheMark(t *testing.T) {
+	dir := t.TempDir()
+	w := proxy.New(proxy.Config{Dir: dir})
+	ctx := context.Background()
+
+	spec := &agentv1.RouteSpec{
+		Domain: "admin.example.com",
+		Access: &agentv1.AccessSpec{
+			AllowCidrs:     []string{"203.0.113.0/24", "198.51.100.7/32"},
+			BasicAuthUsers: []string{"preview:$2a$10$abcdefghijklmnopqrstuv"},
+		},
+	}
+	if err := w.SetRoute(ctx, "app1", spec, "10.0.0.1:8080"); err != nil {
+		t.Fatalf("SetRoute: %v", err)
+	}
+	content := string(mustRead(t, filepath.Join(dir, "apps", "app1.yml")))
+
+	for _, want := range []string{"ipAllowList", "203.0.113.0/24", "basicAuth", "removeHeader: true"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("fragment missing %q:\n%s", want, content)
+		}
+	}
+	// The order, read off the router's own chain.
+	mark := strings.Index(content, "app1-mark")
+	allow := strings.Index(content, "app1-allow")
+	auth := strings.Index(content, "app1-auth")
+	if mark < 0 || allow < 0 || auth < 0 {
+		t.Fatalf("fragment does not name all three middlewares:\n%s", content)
+	}
+	if !(mark < allow && allow < auth) {
+		t.Errorf("middleware order is mark=%d allow=%d auth=%d; the mark must come first so a rejected visitor still gets X-Served-By", mark, allow, auth)
+	}
+}
+
+// A route with no access policy carries no access middlewares at all — an empty
+// allowlist must never mean "allow nothing".
+func TestNoAccessSpecMeansNoRestriction(t *testing.T) {
+	dir := t.TempDir()
+	w := proxy.New(proxy.Config{Dir: dir})
+	spec := &agentv1.RouteSpec{Domain: "open.example.com"}
+	if err := w.SetRoute(context.Background(), "app2", spec, "10.0.0.2:8080"); err != nil {
+		t.Fatalf("SetRoute: %v", err)
+	}
+	content := string(mustRead(t, filepath.Join(dir, "apps", "app2.yml")))
+	for _, unwanted := range []string{"ipAllowList", "basicAuth", "app2-allow", "app2-auth"} {
+		if strings.Contains(content, unwanted) {
+			t.Errorf("an unrestricted route emitted %q:\n%s", unwanted, content)
+		}
+	}
+}
+
+// A fragment can carry a bcrypt hash, so every fragment is 0600 — a mode that
+// varied with content would be a mode nobody could reason about.
+func TestFragmentsAreNotWorldReadable(t *testing.T) {
+	dir := t.TempDir()
+	w := proxy.New(proxy.Config{Dir: dir})
+	if err := w.SetRoute(context.Background(), "app3", &agentv1.RouteSpec{Domain: "x.example.com"}, "10.0.0.3:80"); err != nil {
+		t.Fatalf("SetRoute: %v", err)
+	}
+	fi, err := os.Stat(filepath.Join(dir, "apps", "app3.yml"))
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if mode := fi.Mode().Perm(); mode != 0o600 {
+		t.Errorf("fragment mode = %o, want 600 — fragments can carry a credential hash", mode)
+	}
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile %s: %v", path, err)
+	}
+	return b
+}

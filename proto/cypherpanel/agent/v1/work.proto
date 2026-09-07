@@ -173,6 +173,23 @@ message RouteSpec {
   string domain = 1;
   bool https = 2;
   string path_prefix = 3;
+  // Who may reach this route at all (app-access-control.md §4). Absent means
+  // no restriction, which is what every route was before this existed.
+  AccessSpec access = 4;
+}
+
+// AccessSpec is the front-door policy the Proxy enforces. It carries no
+// passphrase — only the bcrypt htpasswd line Traefik needs — because the
+// plaintext exists in the operator's clipboard and nowhere else (§3).
+message AccessSpec {
+  // Empty means no allowlist middleware at all, rather than an allowlist that
+  // matches nothing: a spec field that silently locks everyone out when a
+  // writer forgets to set it is the wrong default.
+  repeated string allow_cidrs = 1;
+  // "user:<bcrypt>" htpasswd lines. Repeated although exactly one is emitted
+  // today: it is Traefik's own shape, and widening a singular string later is
+  // the kind of change `buf breaking` refuses.
+  repeated string basic_auth_users = 2;
 }
 
 // RolloutWork commands one server's reconciler to converge an Application

@@ -1580,6 +1580,79 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /api/v1/applications/{id}/access:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Application ID. }
+    get:
+      operationId: getApplicationAccess
+      tags: [applications]
+      summary: Who may reach this application through the Proxy (member+)
+      responses:
+        "200": { description: The policy., content: { application/json: { schema: { $ref: "#/components/schemas/AppAccess" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: setApplicationAccess
+      tags: [applications]
+      summary: Replace the IP allowlist (member+)
+      description: >-
+        Wholesale, because the list IS the policy: adding and removing one CIDR
+        at a time through two routes would make "what does this allow right now"
+        a question with two answers mid-edit.
+
+
+        Entries are normalized — a bare address becomes a single-host prefix, and
+        a prefix is masked — so what is stored is the network the operator
+        described rather than a host address that looks like one. An enabled
+        allowlist with no entries is refused: empty meaning "allow nothing" is a
+        lockout nobody typed, and empty meaning "allow everything" is a control
+        that silently does not apply.
+
+
+        This is CURRENT application state, not part of a revision snapshot. A
+        rollback must never lift a lockout or restore a deleted entry.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetAppAccessRequest" } } }
+      responses:
+        "200": { description: Saved., content: { application/json: { schema: { $ref: "#/components/schemas/AppAccess" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/applications/{id}/access/preview-password:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Application ID. }
+    post:
+      operationId: setPreviewPassword
+      tags: [applications]
+      summary: Set, rotate or clear the preview passphrase (member+)
+      description: >-
+        Gates PREVIEW environments only — every `pr-*` environment asks for it
+        before serving, so clients see staging and the internet does not. It is
+        deliberately not applied to standing environments: a flag left on must
+        not lock production behind a passphrase nobody remembers setting.
+
+
+        The passphrase is bcrypt-hashed and only the hash is stored; the
+        plaintext is returned in THIS response and never again, which is the
+        contract `reset-password` already has. An empty passphrase turns the
+        gate off and forgets the hash — turning it off while keeping the hash
+        would leave a credential nobody can see and nobody can rotate.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetPreviewPasswordRequest" } } }
+      responses:
+        "200":
+          description: Set. `passphrase` appears here and nowhere else, ever.
+          content: { application/json: { schema: { $ref: "#/components/schemas/PreviewPasswordResult" } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /api/v1/applications/{id}/restart:
     post:
       operationId: restartApplication
@@ -5056,6 +5129,51 @@ components:
             properties:
               id: { type: string }
               name: { type: string }
+
+    AppAccess:
+      type: object
+      required: [ip_allowlist_enabled, ip_allowlist, preview_password_enabled]
+      properties:
+        ip_allowlist_enabled: { type: boolean }
+        ip_allowlist:
+          type: array
+          items: { type: string }
+          description: Normalized CIDRs. Only these reach the app — for admin panels and internal tools.
+        preview_password_enabled: { type: boolean }
+        preview_password_set_at:
+          type: [string, "null"]
+          format: date-time
+          description: >-
+            When the passphrase was last set. The passphrase itself is never
+            returned; this is what answers "is this still the one I gave the
+            client in March?".
+
+    SetAppAccessRequest:
+      type: object
+      required: [ip_allowlist_enabled, ip_allowlist]
+      properties:
+        ip_allowlist_enabled: { type: boolean }
+        ip_allowlist:
+          type: array
+          items: { type: string }
+          description: CIDRs or bare addresses; a bare address is read as a single host.
+
+    SetPreviewPasswordRequest:
+      type: object
+      required: [passphrase]
+      properties:
+        passphrase:
+          type: string
+          description: At least 8 characters. Empty turns the gate off and forgets the hash.
+
+    PreviewPasswordResult:
+      allOf:
+        - $ref: "#/components/schemas/AppAccess"
+        - type: object
+          properties:
+            passphrase:
+              type: string
+              description: Readable exactly once, in this response. Absent when the gate was cleared.
 
     PanelVersion:
       type: object

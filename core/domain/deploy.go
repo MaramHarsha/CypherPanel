@@ -176,6 +176,11 @@ type Application struct {
 	PreviewEnabled    bool
 	PreviewBaseDomain string
 	PreviewTTLHours   int
+	// Access is the front-door policy (app-access-control.md). It is CURRENT
+	// state rather than part of a revision's snapshot: a rollback must never
+	// lift a lockout or restore a deleted allowlist entry, because a control
+	// that changes when someone re-points a revision is not a control.
+	Access AppAccess
 	// RestartToken is a restart expressed as desired state
 	// (deployment-control.md §3): it rides on the spec, is part of the
 	// container's config hash, and a new value is a difference the reconciler
@@ -387,4 +392,21 @@ func (a Application) ConfigView() ApplicationConfig {
 		PreviewBaseDomain:  a.PreviewBaseDomain,
 		PreviewTTLHours:    a.PreviewTTLHours,
 	}
+}
+
+// AppAccess is who may reach an application through the Proxy. Two named
+// capabilities rather than a middleware escape hatch: the panel can validate a
+// CIDR, hash a passphrase, audit the change and describe the result, none of
+// which it could do for a pass-through block (app-access-control.md §2).
+type AppAccess struct {
+	// IPAllowlistEnabled and IPAllowlist are separate so turning the allowlist
+	// off does not lose the CIDRs an operator spent time assembling.
+	IPAllowlistEnabled bool
+	IPAllowlist        []string
+	// PreviewPasswordEnabled gates preview environments only. PreviewPasswordHash
+	// is bcrypt; the plaintext is never stored and is returned exactly once by
+	// the call that set it.
+	PreviewPasswordEnabled bool
+	PreviewPasswordHash    string
+	PreviewPasswordSetAt   *time.Time
 }

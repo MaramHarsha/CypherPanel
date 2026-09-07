@@ -1097,6 +1097,18 @@ func (s *Scheduler) buildSpec(ctx context.Context, app domain.Application, rev d
 	if err != nil {
 		return nil, err
 	}
+	// The preview password gates PREVIEW environments only, which is what the
+	// design promises ("every pr-* environment asks for this passphrase").
+	// Reading the environment costs a query, so it is read only when a password
+	// is actually set — the rare case — rather than on every spec build.
+	access := accessSpec(app, false)
+	if app.Access.PreviewPasswordEnabled && app.Access.PreviewPasswordHash != "" {
+		environment, err := s.store.GetEnvironment(ctx, app.EnvironmentID)
+		if err != nil {
+			return nil, fmt.Errorf("scheduler: getting environment of %s: %w", app.ID, err)
+		}
+		access = accessSpec(app, environment.Kind == "preview")
+	}
 	image := rev.Image
 	if image == "" {
 		image = imageTag(app.ID, rev.ID)
@@ -1132,10 +1144,17 @@ func (s *Scheduler) buildSpec(ctx context.Context, app domain.Application, rev d
 			TimeoutSeconds:  uint32(cs.Health.TimeoutSeconds),
 			Retries:         uint32(cs.Health.Retries),
 		},
+		// Mixed provenance, deliberately (app-access-control.md §3): the domain,
+		// https and path prefix come from the REVISION's config snapshot, while
+		// access control comes from the application ROW. Snapshotting access
+		// would mean a rollback silently lifted a lockout or restored a deleted
+		// allowlist entry, and a control that changes when someone re-points a
+		// revision is not a control.
 		Route: &agentv1.RouteSpec{
 			Domain:     s.routableDomain(ctx, cs.Route.Domain),
 			Https:      cs.Route.HTTPS,
 			PathPrefix: cs.Route.PathPrefix,
+			Access:     access,
 		},
 		ScheduledTasks: tasks,
 		Pull:           cs.Pull,
@@ -2073,4 +2092,31 @@ func pushRepository(app domain.Application) string {
 		return app.ID
 	}
 	return name
+}
+
+// accessSpec renders the front-door policy for the wire. It carries the bcrypt
+// hash, never a passphrase — the plaintext exists in the operator's clipboard
+// and nowhere else (app-access-control.md §3).
+//
+// The preview password gates PREVIEW environments only, which is what the
+// design card promises ("every pr-* environment asks for this passphrase").
+// Applying it to production because a flag was left on would be a lockout
+// nobody asked for, so the environment kind decides.
+func accessSpec(app domain.Application, isPreview bool) *agentv1.AccessSpec {
+	var out agentv1.AccessSpec
+	if app.Access.IPAllowlistEnabled && len(app.Access.IPAllowlist) > 0 {
+		out.AllowCidrs = append([]string(nil), app.Access.IPAllowlist...)
+	}
+	if isPreview && app.Access.PreviewPasswordEnabled && app.Access.PreviewPasswordHash != "" {
+		// Traefik's htpasswd shape. One line today; the field is repeated
+		// because that is Traefik's own shape and widening later is the change
+		// `buf breaking` refuses.
+		out.BasicAuthUsers = []string{"preview:" + app.Access.PreviewPasswordHash}
+	}
+	if len(out.AllowCidrs) == 0 && len(out.BasicAuthUsers) == 0 {
+		// Absent rather than empty: an empty AccessSpec and no AccessSpec mean
+		// the same thing, and sending the smaller one keeps the diff quiet.
+		return nil
+	}
+	return &out
 }

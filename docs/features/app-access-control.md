@@ -379,3 +379,20 @@ ships (ui-principles §8).
 - **Protecting published host ports.** §5. The allowlist is a property of the
   route; a raw port is not routed. Filtering the host's own ports is a firewall,
   and CypherPanel does not manage the firewall.
+
+## Implementation note (shipped slice)
+
+The **IP allowlist** and the **preview password** are built: migration `0040`,
+`AccessSpec` on `RouteSpec` (additive, `buf breaking` clean), the two Traefik
+middlewares appended after `<app>-mark`, fragments tightened to 0600, three API
+operations, and the Access card on the application's Settings tab.
+
+**Maintenance mode is not built.** §7's responder is a second managed container
+plus a dedicated network, and it is the part of this spec with the largest
+surface and the least in common with the other two — which are pure fragment
+fields. Shipping it as a toggle before the responder exists would draw a control
+that does nothing. The card names it and says why rather than omitting it, so a
+reader who knows the design has three toggles does not conclude one was
+forgotten. The proto field is deliberately NOT reserved for it either: adding
+`maintenance` to `AccessSpec` later is additive, and a declared field nothing
+sets is a lie in the contract (ENGINEERING rule 10).
