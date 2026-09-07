@@ -73,6 +73,18 @@ function SettingsForm({
   const [buildKind, setBuildKind] = useState(initial.build.kind ?? "dockerfile");
   const [dockerfile, setDockerfile] = useState(initial.build.dockerfile_path);
   const [context, setContext] = useState(initial.build.context);
+  // Runtime and health were readable on the overview and editable NOWHERE. The
+  // API has always accepted both blocks, so the only way to change the port an
+  // application listens on was to call the API by hand — and the port is the
+  // single most common thing that needs changing, because a framework picks its
+  // own (Next.js 3000, Rails 3000, Vite 5173) and the panel defaults to 8080.
+  const [port, setPort] = useState(String(initial.runtime.port));
+  const [cpuLimit, setCPULimit] = useState(initial.runtime.cpu_limit == null ? "" : String(initial.runtime.cpu_limit));
+  const [memLimit, setMemLimit] = useState(
+    initial.runtime.memory_limit_mb == null ? "" : String(initial.runtime.memory_limit_mb),
+  );
+  const [healthPath, setHealthPath] = useState(initial.health.path);
+  const [healthRetries, setHealthRetries] = useState(String(initial.health.retries));
   const [previewEnabled, setPreviewEnabled] = useState(initial.preview_enabled ?? false);
   const [previewDomain, setPreviewDomain] = useState(initial.preview_base_domain ?? "");
   const [previewTTL, setPreviewTTL] = useState(String(initial.preview_ttl_hours ?? 72));
@@ -82,6 +94,11 @@ function SettingsForm({
     repo !== initial.source.repo ||
     branch !== initial.source.branch ||
     deployKeyID !== (initial.source.deploy_key_id ?? "") ||
+    port !== String(initial.runtime.port) ||
+    cpuLimit !== (initial.runtime.cpu_limit == null ? "" : String(initial.runtime.cpu_limit)) ||
+    memLimit !== (initial.runtime.memory_limit_mb == null ? "" : String(initial.runtime.memory_limit_mb)) ||
+    healthPath !== initial.health.path ||
+    healthRetries !== String(initial.health.retries) ||
     image !== (initial.source.image ?? "") ||
     domain !== (initial.route.domain ?? "") ||
     normalizePrefix(pathPrefix) !== normalizePrefix(initial.route.path_prefix) ||
@@ -184,6 +201,14 @@ function SettingsForm({
             // reads null as exactly that.
             { ...initial.source, repo, branch, deploy_key_id: deployKeyID || null },
         build: { ...initial.build, kind: buildKind, dockerfile_path: dockerfile, context },
+        runtime: {
+          port: Number(port) || initial.runtime.port,
+          // Blank means "no limit", which the API reads as null — not zero,
+          // which would be a limit of nothing.
+          cpu_limit: cpuLimit.trim() === "" ? null : Number(cpuLimit),
+          memory_limit_mb: memLimit.trim() === "" ? null : Number(memLimit),
+        },
+        health: { ...initial.health, path: healthPath, retries: Number(healthRetries) || initial.health.retries },
         route: { ...initial.route, domain: domain || undefined, path_prefix: prefix },
         preview_enabled: previewEnabled,
         preview_base_domain: previewDomain.trim(),
@@ -275,6 +300,83 @@ function SettingsForm({
             </div>
           </>
         )}
+        <Eyebrow className="pt-4">Runtime</Eyebrow>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Field
+            label="Port"
+            hint="The port your app listens on inside its container — not a host port. A framework usually picks its own: Next.js and Rails use 3000, Vite 5173."
+          >
+            {(id, describedBy) => (
+              <Input
+                id={id}
+                aria-describedby={describedBy}
+                required
+                inputMode="numeric"
+                value={port}
+                onChange={(e) => setPort(e.target.value)}
+                className="mono"
+              />
+            )}
+          </Field>
+          <Field label="CPU limit" qualifier="· cores" hint="Blank means no limit.">
+            {(id, describedBy) => (
+              <Input
+                id={id}
+                aria-describedby={describedBy}
+                inputMode="decimal"
+                value={cpuLimit}
+                onChange={(e) => setCPULimit(e.target.value)}
+                placeholder="0.5"
+                className="mono"
+              />
+            )}
+          </Field>
+          <Field label="Memory limit" qualifier="· MiB" hint="Blank means no limit.">
+            {(id, describedBy) => (
+              <Input
+                id={id}
+                aria-describedby={describedBy}
+                inputMode="numeric"
+                value={memLimit}
+                onChange={(e) => setMemLimit(e.target.value)}
+                placeholder="512"
+                className="mono"
+              />
+            )}
+          </Field>
+        </div>
+
+        <Eyebrow className="pt-4">Health check</Eyebrow>
+        <div className="grid gap-3 sm:grid-cols-[1fr_130px]">
+          <Field
+            label="Path"
+            hint="Probed on the port above before a new container takes the route. A rollout that never passes this is discarded, and the old container keeps serving."
+          >
+            {(id, describedBy) => (
+              <Input
+                id={id}
+                aria-describedby={describedBy}
+                value={healthPath}
+                onChange={(e) => setHealthPath(e.target.value)}
+                placeholder="/"
+                className="mono"
+              />
+            )}
+          </Field>
+          <Field label="Retries" hint="Before the rollout is given up.">
+            {(id, describedBy) => (
+              <Input
+                id={id}
+                aria-describedby={describedBy}
+                inputMode="numeric"
+                value={healthRetries}
+                onChange={(e) => setHealthRetries(e.target.value)}
+                className="mono"
+              />
+            )}
+          </Field>
+        </div>
+
         {/* Canvas 13c: the route is its own section — the domain, the path it
             answers on, and one row per hostname saying how it is served. The
             row reports the SAVED route (everything on it is fetched by id),
