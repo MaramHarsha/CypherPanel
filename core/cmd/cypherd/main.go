@@ -865,6 +865,7 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		PlaneDR:          planeDR,
 		MailHost:         mailHostSvc,
 		AgentUpdates:     agentUpdateSvc,
+		OnboardingCounts: st,
 		Quotas:           quotaSvc,
 		Promotion:        sched,
 		PlaneDRFetch:     planeObjects.Get,

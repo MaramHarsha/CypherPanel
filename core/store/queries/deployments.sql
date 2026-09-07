@@ -51,3 +51,9 @@ ORDER BY created_at;
 -- (app-scaling.md §8).
 -- name: SetApplicationReplicaStatus :exec
 UPDATE applications SET replica_status = $2, updated_at = now() WHERE id = $1;
+
+-- CountSucceededDeployments proves the golden path worked at least once, which
+-- is what onboarding's last step actually asks (guided-onboarding.md §2). A
+-- deployment that failed proves the opposite, so only `succeeded` counts.
+-- name: CountSucceededDeployments :one
+SELECT count(*) FROM deployments WHERE status = 'succeeded';

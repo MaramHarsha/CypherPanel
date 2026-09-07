@@ -59,6 +59,7 @@ import type {
   Mailbox,
   MetricsSettings,
   NotFoundResponse,
+  Onboarding,
   PanelLogs,
   PanelMailSettings,
   PanelSnapshot,
@@ -1649,7 +1650,112 @@ export const usePromoteAgentChannel = <TError = UnauthorizedResponse | Forbidden
       > => {
       return useMutation(getPromoteAgentChannelMutationOptions(options), queryClient);
     }
-    export const getGetPanelUpdatesUrl = () => {
+    export const getGetOnboardingUrl = () => {
+
+
+
+
+  return `/api/v1/onboarding`
+}
+
+/**
+ * Four steps — an owner account, a server, a project, a deployment that SUCCEEDED — each read from what exists rather than from a stored flag.
+ *
+ * Deriving it is the design, not an optimisation. A stored flag has to be written by whoever completes a step, so every creation path would have to remember: the template installer, preview environments, the API, a future CLI. DNS automation shipped with exactly that bug and the first real use hit it. Derived progress also self-heals in the direction that matters — delete every server and the panel says you need one again, which is true, where a flag would have lied.
+ *
+ * `done` is what a client renders on: the guided band appears only while it is false, and because nothing is stored it then stays gone rather than greeting an operator with a beginner's wizard after routine maintenance. There is deliberately no dismiss route — there is no flag to clear.
+ * @summary How far this panel is through the golden path (member+)
+ */
+export const getOnboarding = async ( options?: RequestInit): Promise<Onboarding> => {
+
+  return apiFetch<Onboarding>(getGetOnboardingUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetOnboardingQueryKey = () => {
+    return [
+    `/api/v1/onboarding`
+    ] as const;
+    }
+
+
+export const getGetOnboardingQueryOptions = <TData = Awaited<ReturnType<typeof getOnboarding>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOnboarding>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetOnboardingQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getOnboarding>>> = ({ signal }) => getOnboarding({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getOnboarding>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetOnboardingQueryResult = NonNullable<Awaited<ReturnType<typeof getOnboarding>>>
+export type GetOnboardingQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useGetOnboarding<TData = Awaited<ReturnType<typeof getOnboarding>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOnboarding>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getOnboarding>>,
+          TError,
+          Awaited<ReturnType<typeof getOnboarding>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetOnboarding<TData = Awaited<ReturnType<typeof getOnboarding>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOnboarding>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getOnboarding>>,
+          TError,
+          Awaited<ReturnType<typeof getOnboarding>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetOnboarding<TData = Awaited<ReturnType<typeof getOnboarding>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOnboarding>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary How far this panel is through the golden path (member+)
+ */
+
+export function useGetOnboarding<TData = Awaited<ReturnType<typeof getOnboarding>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOnboarding>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetOnboardingQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getGetPanelUpdatesUrl = () => {
 
 
 

@@ -1814,6 +1814,34 @@ paths:
         "409": { description: The gate refused; the message names the canary servers and what they are running. }
         "503": { description: Agent updates are not enabled on this panel. }
 
+  /api/v1/onboarding:
+    get:
+      operationId: getOnboarding
+      tags: [panel]
+      summary: How far this panel is through the golden path (member+)
+      description: >-
+        Four steps — an owner account, a server, a project, a deployment that
+        SUCCEEDED — each read from what exists rather than from a stored flag.
+
+
+        Deriving it is the design, not an optimisation. A stored flag has to be
+        written by whoever completes a step, so every creation path would have
+        to remember: the template installer, preview environments, the API, a
+        future CLI. DNS automation shipped with exactly that bug and the first
+        real use hit it. Derived progress also self-heals in the direction that
+        matters — delete every server and the panel says you need one again,
+        which is true, where a flag would have lied.
+
+
+        `done` is what a client renders on: the guided band appears only while it
+        is false, and because nothing is stored it then stays gone rather than
+        greeting an operator with a beginner's wizard after routine maintenance.
+        There is deliberately no dismiss route — there is no flag to clear.
+      responses:
+        "200": { description: The four steps., content: { application/json: { schema: { $ref: "#/components/schemas/Onboarding" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /api/v1/servers/local:
     get:
       operationId: getLocalServer
@@ -6729,6 +6757,26 @@ components:
             passphrase:
               type: string
               description: Readable exactly once, in this response. Absent when the gate was cleared.
+
+    Onboarding:
+      type: object
+      required: [steps, done]
+      properties:
+        done:
+          type: boolean
+          description: The last step is complete; clients stop showing the guided band.
+        steps:
+          type: array
+          items:
+            type: object
+            required: [name, complete, count]
+            properties:
+              name: { type: string, enum: [owner, server, project, deploy] }
+              complete: { type: boolean }
+              count:
+                type: integer
+                format: int64
+                description: What the step counts - enrolled servers, projects, succeeded deployments - so "1 server" reads as a fact rather than a tick.
 
     LocalServer:
       type: object

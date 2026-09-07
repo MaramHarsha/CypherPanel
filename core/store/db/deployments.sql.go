@@ -11,6 +11,20 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countSucceededDeployments = `-- name: CountSucceededDeployments :one
+SELECT count(*) FROM deployments WHERE status = 'succeeded'
+`
+
+// CountSucceededDeployments proves the golden path worked at least once, which
+// is what onboarding's last step actually asks (guided-onboarding.md §2). A
+// deployment that failed proves the opposite, so only `succeeded` counts.
+func (q *Queries) CountSucceededDeployments(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countSucceededDeployments)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createDeployment = `-- name: CreateDeployment :one
 INSERT INTO deployments (id, application_id, revision_id, status, trigger)
 VALUES ($1, $2, $3, $4, $5)

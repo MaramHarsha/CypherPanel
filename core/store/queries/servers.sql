@@ -68,6 +68,13 @@ SET desired_version = $2,
 WHERE channel = $1
 RETURNING *;
 
+-- CountEnrolledServers counts servers whose agent actually joined. A row that
+-- was created and never enrolled is a join command someone has not run yet, and
+-- counting it would tell an operator they have a server when they have a token
+-- (guided-onboarding.md §2).
+-- name: CountEnrolledServers :one
+SELECT count(*) FROM servers WHERE enrolled_at IS NOT NULL;
+
 -- name: MarkStaleServersUnknown :many
 UPDATE servers
 SET status = 'unknown',

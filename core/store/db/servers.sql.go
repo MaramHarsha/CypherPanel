@@ -11,6 +11,21 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countEnrolledServers = `-- name: CountEnrolledServers :one
+SELECT count(*) FROM servers WHERE enrolled_at IS NOT NULL
+`
+
+// CountEnrolledServers counts servers whose agent actually joined. A row that
+// was created and never enrolled is a join command someone has not run yet, and
+// counting it would tell an operator they have a server when they have a token
+// (guided-onboarding.md §2).
+func (q *Queries) CountEnrolledServers(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countEnrolledServers)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createServer = `-- name: CreateServer :one
 INSERT INTO servers (id, name)
 VALUES ($1, $2)

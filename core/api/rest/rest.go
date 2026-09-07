@@ -28,6 +28,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/inbox"
 	"github.com/MaramHarsha/cypherpanel/core/notify"
+	"github.com/MaramHarsha/cypherpanel/core/onboarding"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
 	"github.com/MaramHarsha/cypherpanel/core/protection"
 	"github.com/MaramHarsha/cypherpanel/core/scheduledtasks"
@@ -310,6 +311,10 @@ type LogSubscriber interface {
 type OnboardingService interface {
 	NeedsSetup(ctx context.Context) (bool, error)
 	CreateFirstOwner(ctx context.Context, email, password string) (domain.User, error)
+	// Progress is the guided band's four derived steps. Same service, because
+	// "has this panel been set up" and "how far through setting it up is it"
+	// are the same question asked at two resolutions (guided-onboarding.md).
+	Progress(ctx context.Context, ps onboarding.ProgressStore) (onboarding.Progress, error)
 }
 
 // ProjectExporter writes a project's portable archive. Consumer-defined
@@ -435,6 +440,10 @@ type Deps struct {
 	Quotas QuotaService
 	// MailHost is provider-backed email for verified domains (managed-email.md).
 	MailHost MailHostService
+	// OnboardingCounts is what the guided band counts. nil answers "done",
+	// which is the honest degradation: a band that cannot know what is left
+	// must not claim work remains.
+	OnboardingCounts onboarding.ProgressStore
 	// AgentUpdates owns the two release channels and the gate between them
 	// (agent-updates.md, ADR-010). nil answers 503 on every route here, which
 	// is a panel that has not wired the feature rather than one that has no
@@ -795,6 +804,10 @@ func (a *API) Handler() http.Handler {
 	// routes are owner AND session-only: this is the one control that changes
 	// what code runs on every server, and an API token that can move a channel
 	// is an API token that owns the fleet.
+	// Guided onboarding: the thread between the golden path's four steps
+	// (guided-onboarding.md).
+	mux.HandleFunc("GET /api/v1/onboarding", a.authed(a.handleGetOnboarding))
+
 	mux.HandleFunc("GET /api/v1/panel/agent-updates", a.authed(a.handleGetAgentUpdates))
 	mux.HandleFunc("PUT /api/v1/panel/agent-updates/{channel}", a.sessionOnly(a.handleSetAgentChannel))
 	mux.HandleFunc("POST /api/v1/panel/agent-updates/promote", a.sessionOnly(a.handlePromoteAgentChannel))

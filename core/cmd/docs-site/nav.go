@@ -37,6 +37,7 @@ var nav = []group{
 		"dev/deployment.md",
 		"features/first-run-setup.md",
 		"features/local-server.md",
+		"features/guided-onboarding.md",
 	}},
 	{Title: "Concepts", Paths: []string{
 		"architecture.md",

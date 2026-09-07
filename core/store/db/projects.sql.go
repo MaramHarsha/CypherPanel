@@ -11,6 +11,18 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countProjects = `-- name: CountProjects :one
+SELECT count(*) FROM projects
+`
+
+// CountProjects is one of guided onboarding's four derived counts (§2).
+func (q *Queries) CountProjects(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countProjects)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createProject = `-- name: CreateProject :one
 INSERT INTO projects (id, name, team_id, slug) VALUES ($1, $2, $3, $4) RETURNING id, name, created_at, updated_at, team_id, slug, default_environment_id, last_activity_at
 `

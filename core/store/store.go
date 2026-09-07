@@ -156,6 +156,34 @@ func (m *RestoreMigrator) Current() int64 {
 
 // ─── Users ──────────────────────────────────────────────────────────────────
 
+// CountEnrolledServers, CountProjects and CountSucceededDeployments are guided
+// onboarding's derived progress (guided-onboarding.md §2). Counts rather than
+// lists: the band shows how many, and loading every application to learn there
+// is one would be a strange way to ask.
+func (s *Store) CountEnrolledServers(ctx context.Context) (int64, error) {
+	n, err := s.q.CountEnrolledServers(ctx)
+	if err != nil {
+		return 0, wrap("counting enrolled servers", err)
+	}
+	return n, nil
+}
+
+func (s *Store) CountProjects(ctx context.Context) (int64, error) {
+	n, err := s.q.CountProjects(ctx)
+	if err != nil {
+		return 0, wrap("counting projects", err)
+	}
+	return n, nil
+}
+
+func (s *Store) CountSucceededDeployments(ctx context.Context) (int64, error) {
+	n, err := s.q.CountSucceededDeployments(ctx)
+	if err != nil {
+		return 0, wrap("counting succeeded deployments", err)
+	}
+	return n, nil
+}
+
 func (s *Store) CountUsers(ctx context.Context) (int64, error) {
 	n, err := s.q.CountUsers(ctx)
 	if err != nil {
