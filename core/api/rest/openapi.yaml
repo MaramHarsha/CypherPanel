@@ -1822,6 +1822,94 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { description: An upgrade is already running., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
+  /api/v1/log-drains:
+    get:
+      operationId: listLogDrains
+      tags: [panel]
+      summary: Every log drain, with its derived health (panel admin)
+      description: >-
+        A drain ships APPLICATION runtime logs. Managed databases and Compose
+        Stacks carry different labels and are not on the stream this reads — a
+        gap in those features rather than this one, and the copy says so rather
+        than letting somebody discover it later.
+
+
+        Health is derived, never stored, and a FAILING DRAIN IS NEVER
+        AUTO-DISABLED: that would turn a visible failure into a silently
+        stopped pipeline that does not resume when the sink returns, and the
+        operator finds out when they go looking for last week's logs.
+      responses:
+        "200":
+          description: The drains.
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/LogDrain" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: createLogDrain
+      tags: [panel]
+      summary: Add a log drain (panel admin)
+      description: >-
+        Panel admin, because a drain spends the panel's stream, CPU and egress —
+        and a project-scoped drain still ships lines out of the install.
+
+
+        The WHOLE config is sealed under the master key, not just its secret
+        field: which half of a Loki config is a secret changes per deployment,
+        since `X-Scope-OrgID` is a tenant id at one site and an access boundary
+        at another. It is never returned; the API answers with a masked
+        `config_hint` instead.
+
+
+        An S3 drain names an existing Backup Target rather than carrying its own
+        keys. A second sealed S3 credential would mean rotating a key in two
+        places and finding the second one at 02:00 on the night the batch fails.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/LogDrainRequest" } } }
+      responses:
+        "201": { description: Created., content: { application/json: { schema: { $ref: "#/components/schemas/LogDrain" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: A drain with that name already exists., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /api/v1/log-drains/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Log drain ID. }
+    patch:
+      operationId: updateLogDrain
+      tags: [panel]
+      summary: Replace a drain's config, or just pause it (panel admin)
+      description: >-
+        A body carrying `config` replaces it WHOLESALE — a config is one
+        document, and half-changing an endpoint's URL and its headers would
+        leave a drain pointed somewhere with credentials for somewhere else. A
+        body with only `enabled` pauses or resumes without re-sending the
+        credential.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/LogDrainRequest" } } }
+      responses:
+        "200": { description: Saved., content: { application/json: { schema: { $ref: "#/components/schemas/LogDrain" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: deleteLogDrain
+      tags: [panel]
+      summary: Remove a drain and its cursor (panel admin)
+      description: >-
+        The durable consumer goes with it. Leaving it behind would hold the log
+        stream's ack floor at the drain's last position forever — a retention
+        window that stops sliding, which is the disk fill arrived at by a
+        different road.
+      responses:
+        "204": { description: Removed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /api/v1/alert-rules:
     get:
       operationId: listAlertRules
@@ -8265,6 +8353,49 @@ components:
         status: { type: string, enum: [ok, warn, refused] }
         text: { type: string }
         remedy: { type: string, description: "What to do about it. A refusal with no remedy is a dead end." }
+
+    LogDrain:
+      type: object
+      required: [id, name, kind, project_id, target_id, enabled, config_hint, health, last_error, dropped_lines]
+      properties:
+        id: { type: string, description: ldr_… prefixed ID. }
+        name: { type: string }
+        kind: { type: string, enum: [loki, syslog, s3] }
+        project_id: { type: string, description: "Empty means every project. Nothing finer: every line already carries its environment as a label, so a sink filters better than we can." }
+        target_id: { type: string, description: "The Backup Target an s3 drain archives to." }
+        enabled: { type: boolean }
+        config_hint: { type: string, description: "The config, masked. The config itself is never returned." }
+        health:
+          type: string
+          enum: [shipping, idle, retrying, failing, disabled]
+          description: "Derived, never stored. `disabled` is only ever the operator's own choice — a failing drain is never auto-disabled."
+        last_shipped_at: { type: [string, "null"], format: date-time }
+        last_error: { type: string }
+        last_error_at: { type: [string, "null"], format: date-time }
+        dropped_lines:
+          type: integer
+          format: int64
+          description: >-
+            Lines the panel's retention window discarded before this drain could
+            ship them. A drain down a week resumes at the oldest message still
+            held, having lost the rest, and this is where it says so.
+    LogDrainRequest:
+      type: object
+      properties:
+        name: { type: string }
+        kind: { type: string, enum: [loki, syslog, s3], description: "Set on create; the kind is a drain's identity and is not patchable." }
+        project_id: { type: string, description: "Empty means every project." }
+        target_id: { type: string }
+        config:
+          type: object
+          additionalProperties: true
+          description: >-
+            The destination's own config, sealed whole. Loki takes `url`,
+            optional `headers` and optional `labels`; syslog takes `address` and
+            an optional `app_name`; s3 takes an optional `prefix` and gets its
+            credentials from the Backup Target. Omit it entirely and send only
+            `enabled` to pause a drain without re-sending the credential.
+        enabled: { type: boolean }
 
     AlertRule:
       type: object

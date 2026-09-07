@@ -406,6 +406,8 @@ type Deps struct {
 	// Upgrades is the guided panel upgrade (panel-updates.md). nil is a panel
 	// with no helper, and every route here answers 501 rather than pretending.
 	Upgrades UpgradeService
+	// LogDrains is the panel's outbox for log lines (log-drains.md).
+	LogDrains LogDrainService
 	// Updates is the release-feed checker, for what version is available.
 	Updates UpdateChecker
 	// PanelURL is the panel's own advertised base URL, used to tell the
@@ -622,6 +624,14 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/v1/panel/snapshots/{id}", a.sessionOnly(a.handleSetSnapshotRetention))
 	mux.HandleFunc("DELETE /api/v1/panel/snapshots/{id}", a.sessionOnly(a.handleDeleteSnapshot))
 	mux.HandleFunc("POST /api/v1/panel/snapshots/{id}/restore", a.sessionOnly(a.handleRestoreSnapshot))
+
+	// Log drains (log-drains.md §9). Panel admin: a drain spends the panel's
+	// stream, CPU and egress, and a project-scoped one still ships lines out
+	// of the install.
+	mux.HandleFunc("GET /api/v1/log-drains", a.authed(a.handleListLogDrains))
+	mux.HandleFunc("POST /api/v1/log-drains", a.authed(a.handleCreateLogDrain))
+	mux.HandleFunc("PATCH /api/v1/log-drains/{id}", a.authed(a.handleUpdateLogDrain))
+	mux.HandleFunc("DELETE /api/v1/log-drains/{id}", a.authed(a.handleDeleteLogDrain))
 
 	// Threshold alerts (threshold-alerts.md §7).
 	mux.HandleFunc("GET /api/v1/alert-rules", a.authed(a.handleListAlertRules))

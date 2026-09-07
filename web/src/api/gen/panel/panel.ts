@@ -42,6 +42,8 @@ import type {
   ForbiddenResponse,
   GetPanelLogsParams,
   GetUsageParams,
+  LogDrain,
+  LogDrainRequest,
   MetricsSettings,
   NotFoundResponse,
   PanelLogs,
@@ -2142,6 +2144,327 @@ export const useRestorePanelSnapshot = <TError = BadRequestResponse | Unauthoriz
         TContext
       > => {
       return useMutation(getRestorePanelSnapshotMutationOptions(options), queryClient);
+    }
+    export const getListLogDrainsUrl = () => {
+
+
+
+
+  return `/api/v1/log-drains`
+}
+
+/**
+ * A drain ships APPLICATION runtime logs. Managed databases and Compose Stacks carry different labels and are not on the stream this reads — a gap in those features rather than this one, and the copy says so rather than letting somebody discover it later.
+ *
+ * Health is derived, never stored, and a FAILING DRAIN IS NEVER AUTO-DISABLED: that would turn a visible failure into a silently stopped pipeline that does not resume when the sink returns, and the operator finds out when they go looking for last week's logs.
+ * @summary Every log drain, with its derived health (panel admin)
+ */
+export const listLogDrains = async ( options?: RequestInit): Promise<LogDrain[]> => {
+
+  return apiFetch<LogDrain[]>(getListLogDrainsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListLogDrainsQueryKey = () => {
+    return [
+    `/api/v1/log-drains`
+    ] as const;
+    }
+
+
+export const getListLogDrainsQueryOptions = <TData = Awaited<ReturnType<typeof listLogDrains>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLogDrains>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListLogDrainsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listLogDrains>>> = ({ signal }) => listLogDrains({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listLogDrains>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListLogDrainsQueryResult = NonNullable<Awaited<ReturnType<typeof listLogDrains>>>
+export type ListLogDrainsQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useListLogDrains<TData = Awaited<ReturnType<typeof listLogDrains>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLogDrains>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listLogDrains>>,
+          TError,
+          Awaited<ReturnType<typeof listLogDrains>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListLogDrains<TData = Awaited<ReturnType<typeof listLogDrains>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLogDrains>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listLogDrains>>,
+          TError,
+          Awaited<ReturnType<typeof listLogDrains>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListLogDrains<TData = Awaited<ReturnType<typeof listLogDrains>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLogDrains>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Every log drain, with its derived health (panel admin)
+ */
+
+export function useListLogDrains<TData = Awaited<ReturnType<typeof listLogDrains>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLogDrains>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListLogDrainsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getCreateLogDrainUrl = () => {
+
+
+
+
+  return `/api/v1/log-drains`
+}
+
+/**
+ * Panel admin, because a drain spends the panel's stream, CPU and egress — and a project-scoped drain still ships lines out of the install.
+ *
+ * The WHOLE config is sealed under the master key, not just its secret field: which half of a Loki config is a secret changes per deployment, since `X-Scope-OrgID` is a tenant id at one site and an access boundary at another. It is never returned; the API answers with a masked `config_hint` instead.
+ *
+ * An S3 drain names an existing Backup Target rather than carrying its own keys. A second sealed S3 credential would mean rotating a key in two places and finding the second one at 02:00 on the night the batch fails.
+ * @summary Add a log drain (panel admin)
+ */
+export const createLogDrain = async (logDrainRequest: LogDrainRequest, options?: RequestInit): Promise<LogDrain> => {
+
+  return apiFetch<LogDrain>(getCreateLogDrainUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(logDrainRequest)
+  }
+);}
+
+
+
+
+
+export const getCreateLogDrainMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createLogDrain>>, TError,{data: LogDrainRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createLogDrain>>, TError,{data: LogDrainRequest}, TContext> => {
+
+const mutationKey = ['createLogDrain'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createLogDrain>>, {data: LogDrainRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createLogDrain(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateLogDrainMutationResult = NonNullable<Awaited<ReturnType<typeof createLogDrain>>>
+    export type CreateLogDrainMutationBody = LogDrainRequest
+    export type CreateLogDrainMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error
+
+    /**
+ * @summary Add a log drain (panel admin)
+ */
+export const useCreateLogDrain = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createLogDrain>>, TError,{data: LogDrainRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof createLogDrain>>,
+        TError,
+        {data: LogDrainRequest},
+        TContext
+      > => {
+      return useMutation(getCreateLogDrainMutationOptions(options), queryClient);
+    }
+    export const getUpdateLogDrainUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/log-drains/${id}`
+}
+
+/**
+ * A body carrying `config` replaces it WHOLESALE — a config is one document, and half-changing an endpoint's URL and its headers would leave a drain pointed somewhere with credentials for somewhere else. A body with only `enabled` pauses or resumes without re-sending the credential.
+ * @summary Replace a drain's config, or just pause it (panel admin)
+ */
+export const updateLogDrain = async (id: string,
+    logDrainRequest: LogDrainRequest, options?: RequestInit): Promise<LogDrain> => {
+
+  return apiFetch<LogDrain>(getUpdateLogDrainUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(logDrainRequest)
+  }
+);}
+
+
+
+
+
+export const getUpdateLogDrainMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateLogDrain>>, TError,{id: string;data: LogDrainRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateLogDrain>>, TError,{id: string;data: LogDrainRequest}, TContext> => {
+
+const mutationKey = ['updateLogDrain'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateLogDrain>>, {id: string;data: LogDrainRequest}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateLogDrain(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateLogDrainMutationResult = NonNullable<Awaited<ReturnType<typeof updateLogDrain>>>
+    export type UpdateLogDrainMutationBody = LogDrainRequest
+    export type UpdateLogDrainMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Replace a drain's config, or just pause it (panel admin)
+ */
+export const useUpdateLogDrain = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateLogDrain>>, TError,{id: string;data: LogDrainRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof updateLogDrain>>,
+        TError,
+        {id: string;data: LogDrainRequest},
+        TContext
+      > => {
+      return useMutation(getUpdateLogDrainMutationOptions(options), queryClient);
+    }
+    export const getDeleteLogDrainUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/log-drains/${id}`
+}
+
+/**
+ * The durable consumer goes with it. Leaving it behind would hold the log stream's ack floor at the drain's last position forever — a retention window that stops sliding, which is the disk fill arrived at by a different road.
+ * @summary Remove a drain and its cursor (panel admin)
+ */
+export const deleteLogDrain = async (id: string, options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getDeleteLogDrainUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteLogDrainMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteLogDrain>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteLogDrain>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['deleteLogDrain'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteLogDrain>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteLogDrain(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteLogDrainMutationResult = NonNullable<Awaited<ReturnType<typeof deleteLogDrain>>>
+
+    export type DeleteLogDrainMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Remove a drain and its cursor (panel admin)
+ */
+export const useDeleteLogDrain = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteLogDrain>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteLogDrain>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getDeleteLogDrainMutationOptions(options), queryClient);
     }
     export const getListAlertRulesUrl = () => {
 

@@ -109,9 +109,15 @@ const (
 	ActionPanelUpgradeCancelled = "panel.upgrade_cancelled"
 	ActionPanelSnapshotDeleted  = "panel.snapshot_deleted"
 	ActionPanelSnapshotRestored = "panel.snapshot_restored"
-	ActionEnvironmentCreated    = "environment.created"
-	ActionEnvironmentRenamed    = "environment.renamed"
-	ActionEnvironmentDeleted    = "environment.deleted"
+	// Log drains (log-drains.md §9). Where an install's logs go is a
+	// disclosure decision, so the record names the kind and the scope — never
+	// the config, which holds the credential.
+	ActionLogDrainCreated    = "log_drain.created"
+	ActionLogDrainChanged    = "log_drain.changed"
+	ActionLogDrainDeleted    = "log_drain.deleted"
+	ActionEnvironmentCreated = "environment.created"
+	ActionEnvironmentRenamed = "environment.renamed"
+	ActionEnvironmentDeleted = "environment.deleted"
 	// A template install creates several applications and databases in one
 	// action, so it is recorded ONCE against the environment that received
 	// them — six silent creates is not an answer to "where did these come
@@ -315,6 +321,10 @@ var actions = map[string]bool{
 	ActionPanelUpgradeCancelled: true,
 	ActionPanelSnapshotDeleted:  true,
 	ActionPanelSnapshotRestored: true,
+
+	ActionLogDrainCreated: true,
+	ActionLogDrainChanged: true,
+	ActionLogDrainDeleted: true,
 
 	ActionRegistryCreated: true, ActionRegistryUpdated: true,
 	ActionRegistryDeleted: true,

@@ -73,6 +73,13 @@ type VerifiedRelease struct {
 //
 // baseURL is where the release assets live, with a %s for the tag.
 func VerifyRelease(ctx context.Context, f Fetcher, baseURL, version string) (VerifiedRelease, error) {
+	// The version is interpolated into a URL below, and it arrives from an API
+	// query parameter. Bounding its SHAPE here — rather than at the one handler
+	// that happens to be the caller today — is what makes it impossible for any
+	// call path to aim the panel's fetcher somewhere with a "../" or a "?".
+	if !ValidTag(version) {
+		return VerifiedRelease{}, fmt.Errorf("%w: %q is not a release tag", ErrUnverifiable, version)
+	}
 	if ReleasePublicKey == "" {
 		return VerifiedRelease{}, fmt.Errorf("%w: this build carries no release public key, so it cannot check a signature", ErrUnverifiable)
 	}

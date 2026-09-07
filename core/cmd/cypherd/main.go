@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -50,6 +52,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/guard"
 	"github.com/MaramHarsha/cypherpanel/core/identity"
 	"github.com/MaramHarsha/cypherpanel/core/inbox"
+	"github.com/MaramHarsha/cypherpanel/core/logdrain"
 	"github.com/MaramHarsha/cypherpanel/core/logring"
 	"github.com/MaramHarsha/cypherpanel/core/mail"
 	"github.com/MaramHarsha/cypherpanel/core/notify"
@@ -76,6 +79,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/webhooks"
 	"github.com/MaramHarsha/cypherpanel/pkg/pki"
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
+	"github.com/MaramHarsha/cypherpanel/pkg/s3"
 )
 
 // Build stamps, set at link time with -ldflags "-X main.version=... -X
@@ -689,6 +693,46 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		upgradeSvc.RunRetention(ctx, time.Hour)
 	}()
 
+	// Log drains: the panel's outbox for log lines (log-drains.md). It is a
+	// READER of a stream the deploy path writes to — no call site in the
+	// scheduler, nothing awaited — which is what makes "it cannot slow a
+	// deploy" structural rather than a discipline.
+	// The S3 drain writes through the same signer the agent's backups use
+	// (pkg/s3). The keys come from the Backup Target the drain names, unsealed
+	// per batch and never held — there is no second S3 credential anywhere in
+	// this feature, on purpose.
+	logdrain.SetS3Uploader(func(ctx context.Context, target domain.BackupTarget, key string, body []byte) error {
+		access, err := box.Open(target.AccessKeyCT, target.AccessKeyNonce)
+		if err != nil {
+			return fmt.Errorf("unsealing the target's access key: %w", err)
+		}
+		secret, err := box.Open(target.SecretKeyCT, target.SecretKeyNonce)
+		if err != nil {
+			return fmt.Errorf("unsealing the target's secret key: %w", err)
+		}
+		full := key
+		if target.PathPrefix != "" {
+			full = strings.Trim(target.PathPrefix, "/") + "/" + key
+		}
+		return s3.New().Upload(ctx, target.Endpoint, target.Bucket, target.Region, full,
+			string(access), string(secret), bytes.NewReader(body), int64(len(body)))
+	})
+
+	drainSvc := logdrain.NewService(st, box, box)
+	drainMgr := logdrain.New(logdrain.Options{
+		Store: st, Bus: busDrainAdapter{b}, Opener: box,
+		BatchLines:    cfg.DrainBatchLines,
+		BatchInterval: cfg.DrainBatchInterval,
+		MaxBackoff:    cfg.DrainMaxBackoff,
+		Log:           log.With("component", "log-drains"),
+	})
+	drainSvc.WatchManager(drainMgr)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		drainMgr.Run(ctx)
+	}()
+
 	notifySvc.WatchAlertRules(st)
 	alertEval := alerts.New(st,
 		alerts.NewDelivery(st, notifyMgr),
@@ -751,6 +795,7 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		Metrics:          st,
 		Alerts:           st,
 		Upgrades:         upgradeSvc,
+		LogDrains:        drainSvc,
 		Updates:          updateChecker,
 		AlertBacktest:    alertEval,
 		StatusServer:     statusSrv,
@@ -896,4 +941,17 @@ func planeSANs(publicHost string) (dnsNames []string, ips []net.IP) {
 		dnsNames = append(dnsNames, publicHost)
 	}
 	return dnsNames, ips
+}
+
+// busDrainAdapter narrows the Bus to the two methods a log drain needs. The
+// drain must not be able to reach anything else on the bus: it is a reader of
+// one stream, and a wider handle would be a wider blast radius for no gain.
+type busDrainAdapter struct{ b *bus.Bus }
+
+func (a busDrainAdapter) ConsumeRuntimeLogs(ctx context.Context, durable string, handle func(subject string, data []byte, ack func())) (logdrain.ConsumeContext, error) {
+	return a.b.ConsumeRuntimeLogs(ctx, durable, handle)
+}
+
+func (a busDrainAdapter) DeleteRuntimeLogConsumer(ctx context.Context, durable string) error {
+	return a.b.DeleteRuntimeLogConsumer(ctx, durable)
 }

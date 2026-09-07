@@ -6,9 +6,27 @@ package upgrade
 // release either is or is not a tag this project cut.
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 )
+
+// tagShape is what a release tag may be, and nothing else: an optional v, three
+// dotted numbers, and an optional pre-release suffix of letters, digits, dots
+// and dashes.
+//
+// This is a SECURITY boundary, not a tidiness one. A version reaches
+// VerifyRelease from an API query parameter, and VerifyRelease interpolates it
+// into a release URL — so without this a caller could put "../../" in it and
+// aim the panel's own fetcher at an arbitrary path on the release host, or put
+// a "?" in it and change the request's query. Bounding the SHAPE is what stops
+// that, rather than trying to sanitise a string after it has become a URL.
+var tagShape = regexp.MustCompile(`^v?[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}(-[0-9A-Za-z.]{1,32})?$`)
+
+// ValidTag reports whether s is a release tag this panel will build a URL from.
+func ValidTag(s string) bool {
+	return len(s) <= 48 && tagShape.MatchString(s)
+}
 
 // olderThan reports whether a is strictly older than b. An unparseable version
 // on either side answers FALSE — never "older" — so a version string nobody

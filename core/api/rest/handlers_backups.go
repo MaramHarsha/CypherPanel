@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/MaramHarsha/cypherpanel/core/audit"
@@ -180,7 +181,10 @@ func (a *API) handleDeleteBackupTarget(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, store.ErrNotFound):
 			writeError(w, http.StatusNotFound, "backup target not found")
 		case errors.Is(err, store.ErrInUse):
-			writeError(w, http.StatusConflict, "backup target is in use by one or more backup schedules")
+			// NAME what blocks it rather than counting it: "in use by one or
+			// more schedules" leaves the operator to guess which, and a target
+			// can now also be a log drain's destination (log-drains.md §3).
+			writeError(w, http.StatusConflict, a.targetInUseReason(r, r.PathValue("id")))
 		default:
 			a.deps.Log.Error("deleting backup target", "error", err)
 			writeError(w, http.StatusInternalServerError, "could not delete backup target")
@@ -593,4 +597,27 @@ func (a *API) handleGetDatabaseRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toRestoreDTO(rec))
+}
+
+// targetInUseReason names the drains still pointed at a backup target, so the
+// 409 is actionable rather than a constraint's name in a sentence.
+func (a *API) targetInUseReason(r *http.Request, targetID string) string {
+	if a.deps.LogDrains != nil {
+		drains, err := a.deps.LogDrains.List(r.Context())
+		if err == nil {
+			var names []string
+			for _, d := range drains {
+				if d.TargetID == targetID {
+					names = append(names, d.Name)
+				}
+			}
+			if len(names) == 1 {
+				return "the log drain " + names[0] + " still archives here — delete or re-point it first"
+			}
+			if len(names) > 1 {
+				return "these log drains still archive here: " + strings.Join(names, ", ") + " — delete or re-point them first"
+			}
+		}
+	}
+	return "this target is still used by a backup schedule — delete or re-point it first"
 }

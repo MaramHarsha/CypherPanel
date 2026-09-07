@@ -244,6 +244,20 @@ func (c *Checker) Fetch(ctx context.Context, rawURL string) ([]byte, error) {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return nil, fmt.Errorf("updates: %s scheme refused", u.Scheme)
 	}
+	// Credentials in a URL would be sent to whatever host the caller named, and
+	// a fragment is never meaningful to a server. Both are shapes a legitimate
+	// release URL never has, so refusing them costs nothing and removes two
+	// ways to smuggle something past a reader of the configured base URL.
+	if u.User != nil {
+		return nil, fmt.Errorf("updates: a url with credentials is refused")
+	}
+	if u.Fragment != "" {
+		return nil, fmt.Errorf("updates: a url with a fragment is refused")
+	}
+	// The private-address check applies to the FIRST request as well as to
+	// every redirect: a release base URL pointed at 169.254.169.254 would
+	// otherwise reach the metadata service on the first hop, which is the one
+	// hop checkRedirect never sees.
 	if err := c.checkRedirect(ctx, u); err != nil {
 		return nil, err
 	}

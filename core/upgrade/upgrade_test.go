@@ -309,3 +309,55 @@ func textOf(pf Preflight, key string) string {
 	}
 	return ""
 }
+
+// A version reaches VerifyRelease from an API query parameter and is
+// interpolated into a release URL, so its SHAPE is a security boundary
+// (code scanning go/request-forgery).
+//
+// Without the bound, "../../" aims the panel's own fetcher at an arbitrary path
+// on the release host and "?" changes the request's query. Sanitising after the
+// string has become a URL is the approach that keeps being wrong; refusing
+// anything that is not a release tag is the one that holds.
+func TestOnlyAReleaseTagCanReachAURL(t *testing.T) {
+	valid := []string{"v1.2.3", "1.2.3", "v0.0.1", "v1.2.3-rc1", "v10.20.30-beta.2"}
+	for _, v := range valid {
+		if !ValidTag(v) {
+			t.Errorf("ValidTag(%q) = false, want true", v)
+		}
+	}
+	hostile := []string{
+		"../../etc/passwd",
+		"v1.0.0/../../../secrets",
+		"v1.0.0?x=1",
+		"v1.0.0#frag",
+		"v1.0.0 v2.0.0",
+		"https://evil.example/x",
+		"v1.0.0%2f..%2f",
+		"v1.0.0\nHost: evil",
+		"",
+		"latest",
+		"v1.0.0" + strings.Repeat("0", 60),
+	}
+	for _, v := range hostile {
+		if ValidTag(v) {
+			t.Errorf("ValidTag(%q) = true — this string would be interpolated into a URL", v)
+		}
+	}
+}
+
+// The bound is enforced INSIDE VerifyRelease, not only at the handler, so no
+// call path can skip it.
+func TestVerifyReleaseRefusesANonTagBeforeItFetchesAnything(t *testing.T) {
+	f, key := release(t, Manifest{Version: "v1.1.0"})
+	withKey(t, key)
+	// A fetcher that would answer anything at all: if the check happened after
+	// the fetch, this test would pass for the wrong reason, so the assertion is
+	// that the ERROR names the tag rather than a signature.
+	_, err := VerifyRelease(context.Background(), f, baseURL, "../../v1.1.0")
+	if !errors.Is(err, ErrUnverifiable) {
+		t.Fatalf("a traversal version was accepted: %v", err)
+	}
+	if !strings.Contains(err.Error(), "not a release tag") {
+		t.Errorf("error = %q; the refusal should name the shape, which means it happened before any fetch", err)
+	}
+}

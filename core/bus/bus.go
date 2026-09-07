@@ -342,6 +342,47 @@ func (b *Bus) SubscribeRuntimeLogs(ctx context.Context, subject string, since ti
 	return b.subscribeStream(ctx, streamRuntimeLogs, subject, since, handle)
 }
 
+// ConsumeRuntimeLogs delivers runtime log lines to a DURABLE consumer named for
+// its drain, with MANUAL acks (log-drains.md §5).
+//
+// Durable, unlike every other log subscription here, and that is the most
+// important property in the feature: a durable consumer's ack floor survives a
+// plane restart, so a drain resumes where it stopped instead of re-shipping a
+// day or skipping one.
+//
+// Manual acks are where the whole backpressure design lives. A batch is acked
+// only after the sink accepts it, so a failing far end simply stops the cursor
+// advancing and the backlog stays in RUNTIME_LOGS — already file-backed,
+// already capped at 24h and 512 MiB, already DiscardOld. The buffer exists, is
+// bounded, and is already paid for; a deliveries table with a row per log line
+// would be the disk fill this project exists to not repeat.
+func (b *Bus) ConsumeRuntimeLogs(ctx context.Context, durable string, handle func(subject string, data []byte, ack func())) (jetstream.ConsumeContext, error) {
+	cons, err := b.js.CreateOrUpdateConsumer(ctx, streamRuntimeLogs, jetstream.ConsumerConfig{
+		Durable:       durable,
+		FilterSubject: subjects.RuntimeLogAll,
+		AckPolicy:     jetstream.AckExplicitPolicy,
+		// Generous: a batch is held until its sink accepts it, and a sink that
+		// takes thirty seconds is slow rather than broken.
+		AckWait: 5 * time.Minute,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bus: creating the log drain consumer: %w", err)
+	}
+	return cons.Consume(func(msg jetstream.Msg) {
+		handle(msg.Subject(), msg.Data(), func() { _ = msg.Ack() })
+	})
+}
+
+// DeleteRuntimeLogConsumer removes a drain's cursor when the drain is gone. The
+// plane owns consumer lifecycle here exactly as it does for work items; the
+// agent has no part in it and no grant to it.
+func (b *Bus) DeleteRuntimeLogConsumer(ctx context.Context, durable string) error {
+	if err := b.js.DeleteConsumer(ctx, streamRuntimeLogs, durable); err != nil {
+		return fmt.Errorf("bus: deleting the log drain consumer: %w", err)
+	}
+	return nil
+}
+
 // SubscribeStatus delivers new application/database status observations (the
 // state.*.app.> and state.*.db.> subjects) to handle, with the subject so the
 // caller can extract the resource identity. Backed by an ephemeral ordered

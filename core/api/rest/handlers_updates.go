@@ -141,6 +141,13 @@ func (a *API) handlePreflight(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name the version to check")
 		return
 	}
+	// Refused here as well as inside VerifyRelease, so the operator gets "that
+	// is not a version" rather than a refusal that reads like a signature
+	// failure. The check inside is the one that is load-bearing.
+	if !upgrade.ValidTag(version) {
+		writeError(w, http.StatusBadRequest, "that is not a release version — they look like v1.2.3")
+		return
+	}
 	pf, err := a.deps.Upgrades.Preflight(r.Context(), version)
 	if err != nil {
 		a.deps.Log.Error("upgrade preflight", "version", version, "error", err)
@@ -178,6 +185,10 @@ func (a *API) handleStartUpgrade(w http.ResponseWriter, r *http.Request) {
 	req.Version = strings.TrimSpace(req.Version)
 	if req.Version == "" {
 		writeError(w, http.StatusBadRequest, "name the version to install")
+		return
+	}
+	if !upgrade.ValidTag(req.Version) {
+		writeError(w, http.StatusBadRequest, "that is not a release version — they look like v1.2.3")
 		return
 	}
 

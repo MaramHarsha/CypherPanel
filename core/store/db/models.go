@@ -417,6 +417,23 @@ type JoinToken struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+type LogDrain struct {
+	ID            string
+	Name          string
+	Kind          string
+	ProjectID     pgtype.Text
+	TargetID      pgtype.Text
+	ConfigCt      []byte
+	ConfigNonce   []byte
+	Enabled       bool
+	LastShippedAt pgtype.Timestamptz
+	LastError     string
+	LastErrorAt   pgtype.Timestamptz
+	DroppedLines  int64
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
 type MetricsSetting struct {
 	ID               int32
 	Enabled          bool

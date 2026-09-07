@@ -120,6 +120,14 @@ type Config struct {
 	// picks per upgrade and 0 keeps forever.
 	SnapshotRetention time.Duration
 
+	// Log drains (log-drains.md §5). A batch ships at whichever of these comes
+	// first, and the backoff cap is short — far shorter than the outbound
+	// webhooks' horizon — because there sleeping is free and here every second
+	// asleep spends the retention window that is acting as the buffer.
+	DrainBatchLines    int
+	DrainBatchInterval time.Duration
+	DrainMaxBackoff    time.Duration
+
 	// RevisionRetain is how many of an application's images the plane wants
 	// kept on a node, newest first and including the deployed one
 	// (disk-management.md §7). It is the whole garbage-collection policy: the
@@ -143,35 +151,38 @@ type Config struct {
 // Load reads and validates configuration from the process environment.
 func Load() (Config, error) {
 	c := Config{
-		DatabaseURL:       os.Getenv("CYPHERD_DATABASE_URL"),
-		PublicHost:        envOr("CYPHERD_PUBLIC_HOST", "localhost"),
-		PublicURL:         strings.TrimRight(envOr("CYPHERD_PUBLIC_URL", ""), "/"),
-		HTTPAddr:          envOr("CYPHERD_HTTP_ADDR", ":8080"),
-		EnrollAddr:        envOr("CYPHERD_ENROLL_ADDR", ":8443"),
-		NATSAddr:          envOr("CYPHERD_NATS_ADDR", ":4222"),
-		AdminEmail:        os.Getenv("CYPHERD_ADMIN_EMAIL"),
-		AdminPassword:     os.Getenv("CYPHERD_ADMIN_PASSWORD"),
-		JoinTokenTTL:      envDuration("CYPHERD_JOIN_TOKEN_TTL", 15*time.Minute),
-		AgentCertTTL:      envDuration("CYPHERD_AGENT_CERT_TTL", 90*24*time.Hour),
-		SessionTTL:        envDuration("CYPHERD_SESSION_TTL", 24*time.Hour),
-		HeartbeatStale:    envDuration("CYPHERD_HEARTBEAT_STALE", 90*time.Second),
-		SweepInterval:     envDuration("CYPHERD_SWEEP_INTERVAL", 30*time.Second),
-		ShutdownGrace:     envDuration("CYPHERD_SHUTDOWN_GRACE", 20*time.Second),
-		DataDir:           envOr("CYPHERD_DATA_DIR", "/var/lib/cypherd"),
-		RuntimeLogsMaxAge: envDuration("CYPHERD_RUNTIME_LOGS_MAX_AGE", 24*time.Hour),
-		AuditRetention:    envDuration("CYPHERD_AUDIT_RETENTION", 90*24*time.Hour),
-		StatusDwell:       envDuration("CYPHERD_STATUS_DWELL", time.Minute),
-		StatusCacheTTL:    envDuration("CYPHERD_STATUS_CACHE_TTL", 15*time.Second),
-		StatusRetention:   envDuration("CYPHERD_STATUS_RETENTION", 90*24*time.Hour),
-		MetricsRetention:  envDuration("CYPHERD_METRICS_RETENTION", 14*24*time.Hour),
-		UsageRetention:    envDuration("CYPHERD_USAGE_RETENTION", 400*24*time.Hour),
-		UpgradeDir:        envOr("CYPHERD_UPGRADE_DIR", ""),
-		UpgradeBinaryPath: envOr("CYPHERD_UPGRADE_BINARY", "/usr/local/bin/cypherd"),
-		UpgradeUnit:       envOr("CYPHERD_UPGRADE_UNIT", "cypherd.service"),
-		UpgradeReadyURL:   envOr("CYPHERD_UPGRADE_READY_URL", "http://127.0.0.1:8080/readyz"),
-		UpgradeProbation:  envDuration("CYPHERD_UPGRADE_PROBATION", 120*time.Second),
-		ReleaseBaseURL:    envOr("CYPHERD_RELEASE_BASE_URL", "https://github.com/MaramHarsha/CypherPanel/releases/download/%s"),
-		SnapshotRetention: envDuration("CYPHERD_SNAPSHOT_RETENTION", 7*24*time.Hour),
+		DatabaseURL:        os.Getenv("CYPHERD_DATABASE_URL"),
+		PublicHost:         envOr("CYPHERD_PUBLIC_HOST", "localhost"),
+		PublicURL:          strings.TrimRight(envOr("CYPHERD_PUBLIC_URL", ""), "/"),
+		HTTPAddr:           envOr("CYPHERD_HTTP_ADDR", ":8080"),
+		EnrollAddr:         envOr("CYPHERD_ENROLL_ADDR", ":8443"),
+		NATSAddr:           envOr("CYPHERD_NATS_ADDR", ":4222"),
+		AdminEmail:         os.Getenv("CYPHERD_ADMIN_EMAIL"),
+		AdminPassword:      os.Getenv("CYPHERD_ADMIN_PASSWORD"),
+		JoinTokenTTL:       envDuration("CYPHERD_JOIN_TOKEN_TTL", 15*time.Minute),
+		AgentCertTTL:       envDuration("CYPHERD_AGENT_CERT_TTL", 90*24*time.Hour),
+		SessionTTL:         envDuration("CYPHERD_SESSION_TTL", 24*time.Hour),
+		HeartbeatStale:     envDuration("CYPHERD_HEARTBEAT_STALE", 90*time.Second),
+		SweepInterval:      envDuration("CYPHERD_SWEEP_INTERVAL", 30*time.Second),
+		ShutdownGrace:      envDuration("CYPHERD_SHUTDOWN_GRACE", 20*time.Second),
+		DataDir:            envOr("CYPHERD_DATA_DIR", "/var/lib/cypherd"),
+		RuntimeLogsMaxAge:  envDuration("CYPHERD_RUNTIME_LOGS_MAX_AGE", 24*time.Hour),
+		AuditRetention:     envDuration("CYPHERD_AUDIT_RETENTION", 90*24*time.Hour),
+		StatusDwell:        envDuration("CYPHERD_STATUS_DWELL", time.Minute),
+		StatusCacheTTL:     envDuration("CYPHERD_STATUS_CACHE_TTL", 15*time.Second),
+		StatusRetention:    envDuration("CYPHERD_STATUS_RETENTION", 90*24*time.Hour),
+		MetricsRetention:   envDuration("CYPHERD_METRICS_RETENTION", 14*24*time.Hour),
+		UsageRetention:     envDuration("CYPHERD_USAGE_RETENTION", 400*24*time.Hour),
+		UpgradeDir:         envOr("CYPHERD_UPGRADE_DIR", ""),
+		UpgradeBinaryPath:  envOr("CYPHERD_UPGRADE_BINARY", "/usr/local/bin/cypherd"),
+		UpgradeUnit:        envOr("CYPHERD_UPGRADE_UNIT", "cypherd.service"),
+		UpgradeReadyURL:    envOr("CYPHERD_UPGRADE_READY_URL", "http://127.0.0.1:8080/readyz"),
+		UpgradeProbation:   envDuration("CYPHERD_UPGRADE_PROBATION", 120*time.Second),
+		ReleaseBaseURL:     envOr("CYPHERD_RELEASE_BASE_URL", "https://github.com/MaramHarsha/CypherPanel/releases/download/%s"),
+		SnapshotRetention:  envDuration("CYPHERD_SNAPSHOT_RETENTION", 7*24*time.Hour),
+		DrainBatchLines:    envInt("CYPHERD_DRAIN_BATCH_LINES", 500),
+		DrainBatchInterval: envDuration("CYPHERD_DRAIN_BATCH_INTERVAL", 5*time.Second),
+		DrainMaxBackoff:    envDuration("CYPHERD_DRAIN_MAX_BACKOFF", time.Minute),
 		// Minimum 1 enforced below: the deployed revision is never reclaimable,
 		// so a zero here would be a request to delete what is running.
 		RevisionRetain:  envInt("CYPHERD_REVISION_RETAIN", 3),
@@ -224,10 +235,22 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("config: CYPHERD_MIN_DISK_FREE invalid: %w", err)
 	}
+	// Bounded here rather than at every reader. It is parsed as a uint64 and
+	// read as a signed count in places that compare it against free bytes, and
+	// a value past the signed range would wrap to a NEGATIVE floor — a headroom
+	// check that passes on a full disk. No filesystem is an exabyte, so a value
+	// above the ceiling is a typo and is refused with the number named.
+	if minFree > maxMinDiskFree {
+		return Config{}, fmt.Errorf("config: CYPHERD_MIN_DISK_FREE is %d bytes, which is larger than any filesystem — the maximum is %d", minFree, maxMinDiskFree)
+	}
 	c.MinDiskFree = minFree
 
 	return c, nil
 }
+
+// maxMinDiskFree is one exbibyte: past any real filesystem, and comfortably
+// inside the signed range every reader of this value converts to.
+const maxMinDiskFree = uint64(1) << 60
 
 // AdvertisedNATSURL is the URL agents are told to dial for the data plane. It
 // combines the public host with the embedded NATS listener's port.
