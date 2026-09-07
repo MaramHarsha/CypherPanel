@@ -9308,6 +9308,19 @@ components:
       type: object
       required: [schema, slug, name, description, category, version, resources]
       properties:
+        needs_domain:
+          type: boolean
+          description: >-
+            Whether installing this template REQUIRES a domain — it routes, or
+            it interpolates `{{domain}}` somewhere.
+
+
+            Computed by the server and served, rather than re-derived by each
+            client. The panel used to mirror the predicate in TypeScript, and
+            the mirror went stale the day compose templates landed: it read
+            applications only, so a compose template never rendered its domain
+            field and the install came back refused for a control the form did
+            not have.
         schema: { type: string, enum: [v1] }
         slug: { type: string }
         name: { type: string }
@@ -9326,6 +9339,35 @@ components:
         applications:
           type: array
           items: { $ref: "#/components/schemas/TemplateApplication" }
+        stacks:
+          type: array
+          items: { $ref: "#/components/schemas/TemplateStack" }
+          description: >-
+            Compose Stacks this template installs (compose-templates.md).
+            Optional: nearly every entry installs applications instead, and a
+            client written before compose templates existed must keep working.
+    TemplateStack:
+      type: object
+      required: [name, compose]
+      properties:
+        name: { type: string }
+        compose:
+          type: string
+          description: The compose file, with this catalog's placeholders unresolved.
+        route:
+          type: object
+          description: Which service answers, and on which port. Absent means the stack publishes nothing.
+          required: [service, port]
+          properties:
+            service: { type: string }
+            port: { type: integer }
+        env:
+          type: object
+          additionalProperties: { type: string }
+          description: >-
+            Values sealed on install and delivered through the stack's env file.
+            Generated ones are `{{secret.N}}` here; the compose file references
+            them as `${VAR}` and never contains the value.
     TemplateDatabase:
       type: object
       required: [name, engine, version]

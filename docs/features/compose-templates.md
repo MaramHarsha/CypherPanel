@@ -129,3 +129,45 @@ resource kind.
   offered.
 - A failed install rolls the stack back with everything else.
 - OpenClaw installs and serves.
+
+## Implementation note — shipped broken, and how *(2026-09-07)*
+
+The first version of this landed with the catalog entry, the schema, the
+installer, four passing Go tests and both parity audits clean. **It could not be
+installed from the panel at all.**
+
+`TemplateResources` in `core/api/rest/openapi.yaml` declared `databases` and
+`applications` and nothing else. The Go handler serialises the domain struct
+directly, so `resources.stacks` was on the wire — but the contract did not
+declare it, so the generated client had no such field. From there:
+
+- the screen's own copy of `Template.needsDomain` read applications only, so
+  OpenClaw reported "no domain needed";
+- the domain field therefore never rendered;
+- submitting sent `domain: undefined`, and the server refused with *"this
+  template needs a domain: it publishes a public URL"* — beside a form with no
+  domain control on it;
+- the card printed `0 apps · 0 databases` for a template that runs two
+  containers, and the "The template brings" box was an empty heading.
+
+**This is §1's own failure class, committed while fixing it.** Every layer was
+individually correct — the migration, the schema, the installer, the tests. The
+contract was the layer nobody looked at, which is exactly what
+`github_installation_id` did and exactly what `scripts/schema-contract-parity.py`
+was written for. That script did not catch this either: it audits database
+columns, and a template is embedded YAML.
+
+Two changes, and the second is the one that matters:
+
+**`stacks` is in the contract**, with a `TemplateStack` schema, so a client can
+see what a template installs.
+
+**`needs_domain` is computed by the server and served.** The screen asks instead
+of re-deriving. The mirrored predicate carried a comment claiming it *"mirrors
+the server's Template.needsDomain"*, and it had stopped doing so — a copy of a
+rule is a rule that will disagree with the original eventually. The old shape
+survives only as a fallback for a panel older than the field.
+
+`web/e2e/compose-template.spec.ts` asserts the card describes what arrives and
+the dialog asks for the domain. A browser test is the only check here that could
+have failed: every layer below it was passing.

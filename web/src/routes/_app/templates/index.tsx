@@ -32,15 +32,39 @@ function count(n: number, singular: string, plural = `${singular}s`) {
 const ALL = "all";
 
 /**
- * Mirrors the server's Template.needsDomain: a routed app, or any value that
- * interpolates {{domain}}, makes the domain mandatory. Both the form and the
- * "what you get" summary answer to it, so it lives outside them.
+ * Whether this template needs a domain — ASKED, not re-derived.
+ *
+ * This used to mirror the server's predicate in TypeScript, reading the routed
+ * flag and any {{domain}} in an application's env. The mirror went stale the
+ * day compose templates landed: it knew nothing of stacks, so OpenClaw reported
+ * "no domain needed", the form never rendered its domain field, and the install
+ * came back refused for a control that was not on screen. A copy of a rule is a
+ * rule that will disagree with the original eventually.
+ *
+ * The fallback is the old shape, for a panel older than `needs_domain`.
  */
+/** The service names in a compose file, for the "what you get" summary. */
+function composeServices(file: string): string[] {
+  const out: string[] = [];
+  let inServices = false;
+  for (const raw of file.split("\n")) {
+    if (/^services:\s*$/.test(raw)) {
+      inServices = true;
+      continue;
+    }
+    if (inServices && /^\S/.test(raw)) break;
+    const m = inServices ? raw.match(/^ {2}([A-Za-z0-9_.-]+):\s*$/) : null;
+    if (m?.[1]) out.push(m[1]);
+  }
+  return out;
+}
+
 function needsDomain(template: Template) {
-  return template.resources.applications.some(
-    // Whitespace is legal inside a placeholder ({{ domain }}), so match the
-    // grammar rather than a literal — the server does the same.
-    (app) => app.route || Object.values(app.env ?? {}).some((v) => /\{\{\s*domain\s*\}\}/.test(v)),
+  if (template.needs_domain !== undefined) return template.needs_domain;
+  return (
+    template.resources.applications.some(
+      (app) => app.route || Object.values(app.env ?? {}).some((v) => /\{\{\s*domain\s*\}\}/.test(v)),
+    ) || (template.resources.stacks ?? []).some((st) => st.route != null)
   );
 }
 
@@ -219,7 +243,12 @@ function TemplateCard({ template }: { template: Template }) {
       </div>
       <p className="mt-3 flex-1 text-[13px] leading-relaxed text-text-mid">{template.description}</p>
       <p className="mt-4 flex items-center gap-1.5 font-mono text-[11px] text-text-faint">
-        <Package className="h-3 w-3" /> {count(template.resources.applications.length, "app")}
+        <Package className="h-3 w-3" />{" "}
+        {/* A compose template installs no application, and saying "0 apps"
+            about something that runs two containers is a card that lies. */}
+        {(template.resources.stacks ?? []).length > 0
+          ? count((template.resources.stacks ?? []).length, "stack")
+          : count(template.resources.applications.length, "app")}
         <span className="mx-1">·</span>
         <Database className="h-3 w-3" /> {count(template.resources.databases.length, "database", "databases")}
       </p>
@@ -246,8 +275,12 @@ function TemplateContents({ template }: { template: Template }) {
   ].filter(Boolean) as string[];
 
   // "app container (n8n) + postgresql 16 sidecar"
+  const stacks = template.resources.stacks ?? [];
   const brings = [
     apps.length > 0 && `app container (${apps.map((app) => app.name).join(", ")})`,
+    // Named by their services, because that is what the operator will see
+    // running — "compose stack" alone says nothing about what arrives.
+    ...stacks.map((st) => `compose stack (${composeServices(st.compose).join(" + ") || st.name})`),
     ...dbs.map((db) => `${db.engine}${db.version ? ` ${db.version}` : ""} sidecar`),
   ].filter(Boolean) as string[];
   const lines = [

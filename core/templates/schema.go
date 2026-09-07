@@ -26,6 +26,14 @@ type Template struct {
 	Category    string       `yaml:"category" json:"category"`
 	Version     string       `yaml:"version" json:"version"`
 	Resources   TplResources `yaml:"resources" json:"resources"`
+	// NeedsDomain is COMPUTED and serialized, never authored.
+	//
+	// The screen used to mirror this predicate in TypeScript, and the mirror
+	// drifted the moment stacks were added: it read applications only, so a
+	// compose template never rendered its domain field and the install came
+	// back refused for a field the form did not have. A predicate the server
+	// owns cannot drift from the server.
+	NeedsDomain bool `yaml:"-" json:"needs_domain"`
 	// FirstLogin is what a person needs to know the moment the template
 	// finishes installing: the credentials to sign in with, or that there are
 	// none to have because the app runs its own setup on first visit. Without

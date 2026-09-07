@@ -96,6 +96,11 @@ func New(apps AppService, dbs DbService, deployer Deployer, log *slog.Logger) (*
 		if _, dup := s.bySlug[t.Slug]; dup {
 			return nil, fmt.Errorf("templates: duplicate slug %q", t.Slug)
 		}
+		// Computed once, at load, and served. The screen asks rather than
+		// re-deriving: its own copy of this predicate went stale the day stacks
+		// were added, and the symptom was an install refused for a domain the
+		// form never asked for.
+		t.NeedsDomain = t.needsDomain()
 		s.bySlug[t.Slug] = t
 		s.catalog = append(s.catalog, t)
 	}
