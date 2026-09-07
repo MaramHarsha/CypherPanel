@@ -8263,6 +8263,16 @@ components:
         agent_update_detail:
           type: string
           description: Operator-facing prose about the phase; never a secret.
+        subsystem_health:
+          type: array
+          description: >-
+            Which parts of the agent are unhealthy as of the last heartbeat.
+            Empty means nothing is — or, beside `status: degraded`, that the
+            agent predates the field and cannot say which. A client should state
+            that difference rather than show amber with no reason: the agent has
+            no SSH to go and look through (ADR-002).
+          items:
+            $ref: '#/components/schemas/SubsystemHealth'
         enrolled:
           type: boolean
           description: Whether an agent has completed enrollment.
@@ -8276,6 +8286,22 @@ components:
         created_at:
           type: string
           format: date-time
+
+    SubsystemHealth:
+      type: object
+      required: [subsystem, message]
+      properties:
+        subsystem:
+          type: string
+          description: >-
+            The agent's own stable name for the failing part — `proxy`,
+            `updater`. These are subsystems that fail in a LOOP rather than
+            crashing, which is exactly why they need reporting.
+        message:
+          type: string
+          description: >-
+            What the subsystem said went wrong. A diagnosis, never a value —
+            nothing that unseals a secret reports through here.
 
     CreateServerRequest:
       type: object

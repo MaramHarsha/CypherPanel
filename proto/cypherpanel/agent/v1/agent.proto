@@ -134,6 +134,29 @@ message Heartbeat {
   // Observed state like everything else in a heartbeat — the plane asserts a
   // version was adopted from `agent_version` above, never from a phase.
   AgentUpdateStatus agent_update = 9;
+  // V1: WHICH subsystem is unhealthy when `status` is DEGRADED. The agent has
+  // keyed its health by subsystem since ADR-010, but the wire carried only the
+  // collapsed status word, so a degraded server could say nothing about what
+  // was wrong with it — an operator saw amber and had to go read the agent's
+  // log on the host to find out that the Proxy could not bind :80.
+  //
+  // Additive, so an agent older than this field keeps working: `repeated` has
+  // no presence, so an empty list is BOTH "healthy" and "old agent". The plane
+  // resolves that with `status` — a READY agent has nothing wrong with it
+  // either way, and a DEGRADED agent sending no entries is one too old to say.
+  repeated SubsystemHealth subsystem_health = 10;
+}
+
+// SubsystemHealth names one failing part of an agent and what it said.
+//
+// The message is an error string from a subsystem that fails in a LOOP rather
+// than crashing — the Proxy and the self-updater — so it is the agent's own
+// diagnosis, never a secret: nothing that unseals a value reports through here
+// (ENGINEERING rule 20).
+message SubsystemHealth {
+  // Stable identifier the agent chose: "proxy", "updater".
+  string subsystem = 1;
+  string message = 2;
 }
 
 // AgentUpdateStatus is the observed half of ADR-010: which phase the updater is

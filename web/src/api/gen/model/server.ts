@@ -10,6 +10,7 @@
 import type { ServerAgentChannel } from './serverAgentChannel.ts';
 import type { ServerRole } from './serverRole.ts';
 import type { ServerStatus } from './serverStatus.ts';
+import type { SubsystemHealth } from './subsystemHealth.ts';
 
 export interface Server {
   /** srv_… prefixed ID; also the CN of the agent's certificate. */
@@ -37,6 +38,8 @@ export interface Server {
   agent_update_target?: string;
   /** Operator-facing prose about the phase; never a secret. */
   agent_update_detail?: string;
+  /** Which parts of the agent are unhealthy as of the last heartbeat. Empty means nothing is — or, beside `status: degraded`, that the agent predates the field and cannot say which. A client should state that difference rather than show amber with no reason: the agent has no SSH to go and look through (ADR-002). */
+  subsystem_health?: SubsystemHealth[];
   /** Whether an agent has completed enrollment. */
   enrolled: boolean;
   /** @nullable */

@@ -33,6 +33,7 @@ type fakeStore struct {
 	diskErr  error
 	lastDisk [2]uint64
 	updates  []agentUpdateCall
+	health   [][]domain.SubsystemHealth
 }
 
 type agentUpdateCall struct{ phase, target, detail string }
@@ -56,6 +57,11 @@ func (f *fakeStore) SetServerDiskLow(_ context.Context, _ string, low bool) erro
 
 func (f *fakeStore) SetServerAgentUpdate(_ context.Context, _, phase, target, detail string) error {
 	f.updates = append(f.updates, agentUpdateCall{phase: phase, target: target, detail: detail})
+	return nil
+}
+
+func (f *fakeStore) SetServerSubsystemHealth(_ context.Context, _ string, health []domain.SubsystemHealth) error {
+	f.health = append(f.health, health)
 	return nil
 }
 
@@ -355,5 +361,83 @@ func TestAnAgentWithNoUpdateStatusLeavesTheStoredPhaseAlone(t *testing.T) {
 	r.Record(context.Background(), marshalHeartbeat(t, &agentv1.Heartbeat{ServerId: "srv_1"}))
 	if len(fs.updates) != 0 {
 		t.Fatalf("an old agent's heartbeat wrote the update phase: %+v", fs.updates)
+	}
+}
+
+// A degraded server must be able to SAY which part of it failed. Before this
+// the heartbeat carried one status word, so the panel showed amber and an
+// operator's only next step was to read the agent's log on the host — in an
+// architecture whose first decision is that there is no way in (ADR-002).
+func TestDegradedHeartbeatRecordsWhichSubsystemFailed(t *testing.T) {
+	fs := &fakeStore{}
+	r := NewRecorder(fs, quietLog())
+
+	data, err := proto.Marshal(&agentv1.Heartbeat{
+		ServerId: "srv_1",
+		Driver:   "docker",
+		Status:   agentv1.AgentStatus_AGENT_STATUS_DEGRADED,
+		SubsystemHealth: []*agentv1.SubsystemHealth{
+			{Subsystem: "proxy", Message: "binding :80: address already in use"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	r.Record(context.Background(), data)
+
+	if len(fs.health) != 1 || len(fs.health[0]) != 1 {
+		t.Fatalf("SetServerSubsystemHealth calls = %v, want one call with one entry", fs.health)
+	}
+	got := fs.health[0][0]
+	if got.Subsystem != "proxy" || !strings.Contains(got.Message, "address already in use") {
+		t.Fatalf("stored health = %+v, want the proxy's own message", got)
+	}
+}
+
+// The write happens on CHANGE, not on arrival: heartbeats come every few
+// seconds and an unchanged finding must not be a write per beat.
+func TestUnchangedSubsystemHealthIsNotRewritten(t *testing.T) {
+	fs := &fakeStore{server: domain.Server{
+		SubsystemHealth: []domain.SubsystemHealth{{Subsystem: "proxy", Message: "binding :80"}},
+	}}
+	r := NewRecorder(fs, quietLog())
+
+	data, err := proto.Marshal(&agentv1.Heartbeat{
+		ServerId: "srv_1",
+		Status:   agentv1.AgentStatus_AGENT_STATUS_DEGRADED,
+		SubsystemHealth: []*agentv1.SubsystemHealth{
+			{Subsystem: "proxy", Message: "binding :80"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	r.Record(context.Background(), data)
+
+	if len(fs.health) != 0 {
+		t.Fatalf("wrote %v for an unchanged finding; want no write", fs.health)
+	}
+}
+
+// Recovery clears it. A READY agent has nothing wrong with it whether or not it
+// knows about this field, so a finding from ten minutes ago must not stay on
+// screen beside a green status.
+func TestReadyHeartbeatClearsSubsystemHealth(t *testing.T) {
+	fs := &fakeStore{server: domain.Server{
+		SubsystemHealth: []domain.SubsystemHealth{{Subsystem: "proxy", Message: "binding :80"}},
+	}}
+	r := NewRecorder(fs, quietLog())
+
+	data, err := proto.Marshal(&agentv1.Heartbeat{
+		ServerId: "srv_1",
+		Status:   agentv1.AgentStatus_AGENT_STATUS_READY,
+	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	r.Record(context.Background(), data)
+
+	if len(fs.health) != 1 || len(fs.health[0]) != 0 {
+		t.Fatalf("SetServerSubsystemHealth calls = %v, want one call clearing it", fs.health)
 	}
 }

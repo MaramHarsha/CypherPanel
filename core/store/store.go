@@ -7,6 +7,7 @@ package store
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -329,6 +330,39 @@ func (s *Store) RecordHeartbeat(ctx context.Context, id string, status domain.Se
 		return domain.Server{}, wrap("recording heartbeat", err)
 	}
 	return serverFromRow(row), nil
+}
+
+// SetServerSubsystemHealth records which subsystems the agent last reported
+// unhealthy. Empty clears the column, which is what a healthy heartbeat means.
+func (s *Store) SetServerSubsystemHealth(ctx context.Context, id string, health []domain.SubsystemHealth) error {
+	if health == nil {
+		health = []domain.SubsystemHealth{}
+	}
+	encoded, err := json.Marshal(health)
+	if err != nil {
+		return fmt.Errorf("store: encoding subsystem health: %w", err)
+	}
+	if err := s.q.SetServerSubsystemHealth(ctx, db.SetServerSubsystemHealthParams{
+		ID: id, SubsystemHealth: encoded,
+	}); err != nil {
+		return wrapUpdate("recording subsystem health", err)
+	}
+	return nil
+}
+
+// decodeSubsystemHealth reads the stored column back. A row written before the
+// column existed, or one somehow holding something else, reads as nothing
+// rather than failing the whole server load: this is diagnostic detail beside
+// a status word that stands on its own.
+func decodeSubsystemHealth(raw []byte) []domain.SubsystemHealth {
+	if len(raw) == 0 {
+		return nil
+	}
+	var out []domain.SubsystemHealth
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
+	return out
 }
 
 // SetServerAgentUpdate records what the agent last said about its own binary.
@@ -1042,6 +1076,7 @@ func serverFromRow(r db.Server) domain.Server {
 		AgentUpdatePhase:  r.AgentUpdatePhase,
 		AgentUpdateTarget: r.AgentUpdateTarget,
 		AgentUpdateDetail: r.AgentUpdateDetail,
+		SubsystemHealth:   decodeSubsystemHealth(r.SubsystemHealth),
 		EnrolledAt:        ptrTime(r.EnrolledAt),
 		LastSeenAt:        ptrTime(r.LastSeenAt),
 		CreatedAt:         r.CreatedAt.Time,

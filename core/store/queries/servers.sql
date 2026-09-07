@@ -37,6 +37,13 @@ RETURNING *;
 -- name: SetServerDiskLow :exec
 UPDATE servers SET disk_low = $2, updated_at = now() WHERE id = $1;
 
+-- SetServerSubsystemHealth records WHICH subsystems the agent reported unhealthy.
+-- Separate from the heartbeat write for the same reason the agent-update
+-- columns are: it changes rarely while a heartbeat arrives every few seconds,
+-- and the plane compares the previous value to decide whether to write at all.
+-- name: SetServerSubsystemHealth :exec
+UPDATE servers SET subsystem_health = $2, updated_at = now() WHERE id = $1;
+
 -- SetServerAgentUpdate records the observed half of ADR-010. Separate from the
 -- heartbeat write because it changes rarely while a heartbeat arrives every few
 -- seconds, and because the plane compares the PREVIOUS phase to decide whether

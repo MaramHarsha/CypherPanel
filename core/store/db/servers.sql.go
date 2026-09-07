@@ -29,7 +29,7 @@ func (q *Queries) CountEnrolledServers(ctx context.Context) (int64, error) {
 const createServer = `-- name: CreateServer :one
 INSERT INTO servers (id, name)
 VALUES ($1, $2)
-RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low, agent_channel, agent_update_phase, agent_update_target, agent_update_detail
+RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low, agent_channel, agent_update_phase, agent_update_target, agent_update_detail, subsystem_health
 `
 
 type CreateServerParams struct {
@@ -60,6 +60,7 @@ func (q *Queries) CreateServer(ctx context.Context, arg CreateServerParams) (Ser
 		&i.AgentUpdatePhase,
 		&i.AgentUpdateTarget,
 		&i.AgentUpdateDetail,
+		&i.SubsystemHealth,
 	)
 	return i, err
 }
@@ -92,7 +93,7 @@ func (q *Queries) GetAgentChannel(ctx context.Context, channel string) (AgentCha
 }
 
 const getServer = `-- name: GetServer :one
-SELECT id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low, agent_channel, agent_update_phase, agent_update_target, agent_update_detail FROM servers WHERE id = $1
+SELECT id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low, agent_channel, agent_update_phase, agent_update_target, agent_update_detail, subsystem_health FROM servers WHERE id = $1
 `
 
 func (q *Queries) GetServer(ctx context.Context, id string) (Server, error) {
@@ -118,6 +119,7 @@ func (q *Queries) GetServer(ctx context.Context, id string) (Server, error) {
 		&i.AgentUpdatePhase,
 		&i.AgentUpdateTarget,
 		&i.AgentUpdateDetail,
+		&i.SubsystemHealth,
 	)
 	return i, err
 }
@@ -154,7 +156,7 @@ func (q *Queries) ListAgentChannels(ctx context.Context) ([]AgentChannel, error)
 }
 
 const listServers = `-- name: ListServers :many
-SELECT id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low, agent_channel, agent_update_phase, agent_update_target, agent_update_detail FROM servers ORDER BY created_at DESC
+SELECT id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low, agent_channel, agent_update_phase, agent_update_target, agent_update_detail, subsystem_health FROM servers ORDER BY created_at DESC
 `
 
 func (q *Queries) ListServers(ctx context.Context) ([]Server, error) {
@@ -186,6 +188,7 @@ func (q *Queries) ListServers(ctx context.Context) ([]Server, error) {
 			&i.AgentUpdatePhase,
 			&i.AgentUpdateTarget,
 			&i.AgentUpdateDetail,
+			&i.SubsystemHealth,
 		); err != nil {
 			return nil, err
 		}
@@ -204,7 +207,7 @@ SET enrolled_at = now(),
     agent_version = $3,
     updated_at = now()
 WHERE id = $1
-RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low, agent_channel, agent_update_phase, agent_update_target, agent_update_detail
+RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low, agent_channel, agent_update_phase, agent_update_target, agent_update_detail, subsystem_health
 `
 
 type MarkServerEnrolledParams struct {
@@ -236,6 +239,7 @@ func (q *Queries) MarkServerEnrolled(ctx context.Context, arg MarkServerEnrolled
 		&i.AgentUpdatePhase,
 		&i.AgentUpdateTarget,
 		&i.AgentUpdateDetail,
+		&i.SubsystemHealth,
 	)
 	return i, err
 }
@@ -281,7 +285,7 @@ SET status = $2,
     last_seen_at = now(),
     updated_at = now()
 WHERE id = $1
-RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low, agent_channel, agent_update_phase, agent_update_target, agent_update_detail
+RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low, agent_channel, agent_update_phase, agent_update_target, agent_update_detail, subsystem_health
 `
 
 type RecordHeartbeatParams struct {
@@ -325,6 +329,7 @@ func (q *Queries) RecordHeartbeat(ctx context.Context, arg RecordHeartbeatParams
 		&i.AgentUpdatePhase,
 		&i.AgentUpdateTarget,
 		&i.AgentUpdateDetail,
+		&i.SubsystemHealth,
 	)
 	return i, err
 }
@@ -385,7 +390,7 @@ func (q *Queries) SetAgentChannel(ctx context.Context, arg SetAgentChannelParams
 }
 
 const setServerAgentChannel = `-- name: SetServerAgentChannel :one
-UPDATE servers SET agent_channel = $2, updated_at = now() WHERE id = $1 RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low, agent_channel, agent_update_phase, agent_update_target, agent_update_detail
+UPDATE servers SET agent_channel = $2, updated_at = now() WHERE id = $1 RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low, agent_channel, agent_update_phase, agent_update_target, agent_update_detail, subsystem_health
 `
 
 type SetServerAgentChannelParams struct {
@@ -416,6 +421,7 @@ func (q *Queries) SetServerAgentChannel(ctx context.Context, arg SetServerAgentC
 		&i.AgentUpdatePhase,
 		&i.AgentUpdateTarget,
 		&i.AgentUpdateDetail,
+		&i.SubsystemHealth,
 	)
 	return i, err
 }
@@ -464,5 +470,23 @@ type SetServerDiskLowParams struct {
 // plane decides, not a measurement the agent reports (disk-management.md §5).
 func (q *Queries) SetServerDiskLow(ctx context.Context, arg SetServerDiskLowParams) error {
 	_, err := q.db.Exec(ctx, setServerDiskLow, arg.ID, arg.DiskLow)
+	return err
+}
+
+const setServerSubsystemHealth = `-- name: SetServerSubsystemHealth :exec
+UPDATE servers SET subsystem_health = $2, updated_at = now() WHERE id = $1
+`
+
+type SetServerSubsystemHealthParams struct {
+	ID              string
+	SubsystemHealth []byte
+}
+
+// SetServerSubsystemHealth records WHICH subsystems the agent reported unhealthy.
+// Separate from the heartbeat write for the same reason the agent-update
+// columns are: it changes rarely while a heartbeat arrives every few seconds,
+// and the plane compares the previous value to decide whether to write at all.
+func (q *Queries) SetServerSubsystemHealth(ctx context.Context, arg SetServerSubsystemHealthParams) error {
+	_, err := q.db.Exec(ctx, setServerSubsystemHealth, arg.ID, arg.SubsystemHealth)
 	return err
 }

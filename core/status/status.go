@@ -28,6 +28,11 @@ type Store interface {
 	// plane compares the PREVIOUS phase to decide whether a rollback is a
 	// transition worth announcing.
 	SetServerAgentUpdate(ctx context.Context, id, phase, target, detail string) error
+	// SetServerSubsystemHealth records WHICH subsystems the agent reported
+	// unhealthy. Separate from RecordHeartbeat for the same reason: it changes
+	// rarely, and the plane compares the previous value to avoid a write per
+	// heartbeat.
+	SetServerSubsystemHealth(ctx context.Context, id string, health []domain.SubsystemHealth) error
 }
 
 // DiskSink receives a server's disk-pressure transitions (disk-management.md
@@ -97,6 +102,49 @@ func (r *Recorder) Record(ctx context.Context, data []byte) {
 	}
 	r.checkDisk(ctx, server)
 	r.checkAgentUpdate(ctx, server, hb.GetAgentUpdate())
+	r.recordSubsystemHealth(ctx, server, st, hb.GetSubsystemHealth())
+}
+
+// recordSubsystemHealth stores which parts of the agent are unhealthy, so a
+// degraded server can say what is wrong with it instead of only that something
+// is (ADR-002 leaves no SSH to go and look).
+//
+// `repeated` has NO presence on the wire, so an empty list means both "healthy"
+// and "an agent older than this field". The status word resolves it, and both
+// readings land on the same write: a READY agent has nothing wrong with it
+// either way, and a DEGRADED agent that names nothing is one that cannot — the
+// stored detail is cleared and the screen says so, rather than keeping a
+// finding from ten minutes ago beside a status that has since changed.
+func (r *Recorder) recordSubsystemHealth(ctx context.Context, server domain.Server, st domain.ServerStatus, reported []*agentv1.SubsystemHealth) {
+	health := make([]domain.SubsystemHealth, 0, len(reported))
+	if st == domain.StatusDegraded {
+		for _, h := range reported {
+			if h.GetSubsystem() == "" {
+				continue
+			}
+			health = append(health, domain.SubsystemHealth{Subsystem: h.GetSubsystem(), Message: h.GetMessage()})
+		}
+	}
+	if sameHealth(server.SubsystemHealth, health) {
+		return // no change: a heartbeat every few seconds must not be a write
+	}
+	if err := r.store.SetServerSubsystemHealth(ctx, server.ID, health); err != nil {
+		r.log.Error("recording subsystem health", "server_id", server.ID, "error", err)
+	}
+}
+
+func sameHealth(a, b []domain.SubsystemHealth) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	// Both sides are ordered: the agent sorts by subsystem before publishing,
+	// so equal findings compare equal without a set on either end.
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // agentPhases maps the wire enum onto the stored vocabulary. An agent NEWER

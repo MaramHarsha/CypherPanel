@@ -88,6 +88,8 @@ function ServerDetail() {
         <PageState query={server} isEmpty={() => false}>
           {(srv) => (
             <div className="max-w-2xl space-y-3.5">
+              <DegradedCard status={srv.status} health={srv.subsystem_health ?? []} />
+
               <FactCard title="Host">
                 <Fact label="Hostname">{srv.hostname || "—"}</Fact>
                 <Fact label="Public address">
@@ -114,10 +116,6 @@ function ServerDetail() {
                 low={srv.disk_low}
                 enrolled={srv.enrolled}
               />
-
-              {/* "Workloads placed here" needs a per-server list endpoint the
-                  API doesn't expose yet — API-first (CLAUDE.md rule 4), so it
-                  arrives with that route, not as a client-side scan. */}
 
               <section className="rounded-lg border border-danger/35 p-4.5">
                 <h2 className="eyebrow text-danger">Danger zone</h2>
@@ -198,6 +196,54 @@ function ServerMetrics({ serverId }: { serverId: string }) {
   const [win, setWin] = useMetricsWindow();
   const metrics = useGetServerMetrics(serverId, { window: win });
   return <MetricsCard query={metrics} title="Load" window={win} onWindow={setWin} />;
+}
+
+/**
+ * WHY A DEGRADED SERVER IS AMBER, in the agent's own words.
+ *
+ * The agent has keyed its health by subsystem since ADR-010 — the Proxy and the
+ * self-updater each report their own — but only the collapsed status word
+ * crossed the wire, so this page showed amber and stopped there. The one thing
+ * an operator needs at that moment is which part failed, and the architecture
+ * (ADR-002, no SSH) gives them no other way to find out.
+ *
+ * It renders only while the server IS degraded: keeping the last finding on
+ * screen beside a status that has since gone green would be a stale accusation.
+ */
+function DegradedCard({
+  status,
+  health,
+}: {
+  status?: string;
+  health: { subsystem: string; message: string }[];
+}) {
+  if (status !== "degraded") return null;
+  return (
+    <section className="rounded-lg border border-status-degraded/40 bg-status-degraded/5 p-4.5">
+      <h2 className="eyebrow text-status-degraded">Degraded</h2>
+      {health.length === 0 ? (
+        // An empty list beside "degraded" is an agent too old to say which part
+        // failed — `repeated` has no presence on the wire, so silence and
+        // health look the same and only the status word separates them. Say
+        // that, rather than showing amber with no reason at all.
+        <p className="mt-3 text-[12.5px] leading-relaxed text-text-mid">
+          The agent reports itself degraded but does not say which part — it predates per-subsystem health. Update it,
+          or read its log on the host.
+        </p>
+      ) : (
+        <ul className="mt-3 space-y-2.5">
+          {health.map((h) => (
+            <li key={h.subsystem}>
+              <p className="text-[13px] font-semibold text-text">{h.subsystem}</p>
+              <p className="mono mt-0.5 break-words text-[11.5px] leading-relaxed text-text-mid">
+                {h.message || "reported unhealthy, with no message"}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
 }
 
 /**

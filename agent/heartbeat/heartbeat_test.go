@@ -75,3 +75,68 @@ func TestOneSubsystemClearingItselfDoesNotClearAnother(t *testing.T) {
 		t.Fatalf("still failing with nothing recorded: %v", h.Err())
 	}
 }
+
+// All reports every failing subsystem, sorted, so the plane can say WHICH part
+// of an agent is broken rather than only that something is.
+func TestAllReportsEverySubsystemSorted(t *testing.T) {
+	var h Health
+	h.Set("proxy", errors.New("binding :80: address already in use"))
+	h.Set("updater", errors.New("no trusted key"))
+	h.Set("relay", nil)
+
+	got := h.All()
+	if len(got) != 2 {
+		t.Fatalf("All() = %+v, want two entries", got)
+	}
+	if got[0].Name != "proxy" || got[1].Name != "updater" {
+		t.Fatalf("All() = %+v, want sorted by subsystem", got)
+	}
+	if got[0].Err == nil || got[1].Err == nil {
+		t.Fatalf("All() dropped an error: %+v", got)
+	}
+}
+
+// A healthy agent reports nothing, which is what lets the plane clear the row.
+func TestAllIsEmptyWhenHealthy(t *testing.T) {
+	var h Health
+	h.Set("proxy", errors.New("boom"))
+	h.Set("proxy", nil)
+	if got := h.All(); len(got) != 0 {
+		t.Fatalf("All() = %+v, want empty", got)
+	}
+	if got := (*Health)(nil).All(); got != nil {
+		t.Fatalf("nil Health All() = %+v, want nil", got)
+	}
+}
+
+// The wire is the layer that goes unchecked. The status word alone left an
+// operator with amber and nowhere to look, so the heartbeat must actually
+// CARRY the names — not merely be able to.
+func TestHeartbeatCarriesEverySubsystemFailure(t *testing.T) {
+	h := &Health{}
+	h.Set("updater", errors.New("no trusted key"))
+	h.Set("proxy", errors.New("binding :80"))
+	p := &Publisher{health: h, serverID: "srv_1"}
+
+	hb := p.heartbeat()
+	if hb.GetStatus() != agentv1.AgentStatus_AGENT_STATUS_DEGRADED {
+		t.Fatalf("status = %v, want DEGRADED", hb.GetStatus())
+	}
+	got := hb.GetSubsystemHealth()
+	if len(got) != 2 {
+		t.Fatalf("subsystem_health = %v, want two entries", got)
+	}
+	if got[0].GetSubsystem() != "proxy" || got[1].GetSubsystem() != "updater" {
+		t.Fatalf("subsystem_health = %v, want sorted proxy then updater", got)
+	}
+	if got[0].GetMessage() != "binding :80" {
+		t.Fatalf("message = %q, want the proxy's own", got[0].GetMessage())
+	}
+
+	// Healthy carries nothing, which is what lets the plane clear the row.
+	h.Set("proxy", nil)
+	h.Set("updater", nil)
+	if got := p.heartbeat().GetSubsystemHealth(); len(got) != 0 {
+		t.Fatalf("healthy heartbeat carried %v", got)
+	}
+}

@@ -356,6 +356,7 @@ export * from './statusPageComponentResourceKind.ts';
 export * from './streamApplicationLogsParams.ts';
 export * from './streamComposeStackLogsParams.ts';
 export * from './streamDeploymentLogsParams.ts';
+export * from './subsystemHealth.ts';
 export * from './team.ts';
 export * from './teamInvite.ts';
 export * from './teamInviteRole.ts';

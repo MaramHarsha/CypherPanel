@@ -142,7 +142,7 @@ func (x AgentUpdateStatus_Phase) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use AgentUpdateStatus_Phase.Descriptor instead.
 func (AgentUpdateStatus_Phase) EnumDescriptor() ([]byte, []int) {
-	return file_cypherpanel_agent_v1_agent_proto_rawDescGZIP(), []int{5, 0}
+	return file_cypherpanel_agent_v1_agent_proto_rawDescGZIP(), []int{6, 0}
 }
 
 type EnrollRequest struct {
@@ -461,9 +461,20 @@ type Heartbeat struct {
 	// V1: what this agent is doing about its own binary (agent-updates.md §7).
 	// Observed state like everything else in a heartbeat — the plane asserts a
 	// version was adopted from `agent_version` above, never from a phase.
-	AgentUpdate   *AgentUpdateStatus `protobuf:"bytes,9,opt,name=agent_update,json=agentUpdate,proto3" json:"agent_update,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	AgentUpdate *AgentUpdateStatus `protobuf:"bytes,9,opt,name=agent_update,json=agentUpdate,proto3" json:"agent_update,omitempty"`
+	// V1: WHICH subsystem is unhealthy when `status` is DEGRADED. The agent has
+	// keyed its health by subsystem since ADR-010, but the wire carried only the
+	// collapsed status word, so a degraded server could say nothing about what
+	// was wrong with it — an operator saw amber and had to go read the agent's
+	// log on the host to find out that the Proxy could not bind :80.
+	//
+	// Additive, so an agent older than this field keeps working: `repeated` has
+	// no presence, so an empty list is BOTH "healthy" and "old agent". The plane
+	// resolves that with `status` — a READY agent has nothing wrong with it
+	// either way, and a DEGRADED agent sending no entries is one too old to say.
+	SubsystemHealth []*SubsystemHealth `protobuf:"bytes,10,rep,name=subsystem_health,json=subsystemHealth,proto3" json:"subsystem_health,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *Heartbeat) Reset() {
@@ -559,6 +570,72 @@ func (x *Heartbeat) GetAgentUpdate() *AgentUpdateStatus {
 	return nil
 }
 
+func (x *Heartbeat) GetSubsystemHealth() []*SubsystemHealth {
+	if x != nil {
+		return x.SubsystemHealth
+	}
+	return nil
+}
+
+// SubsystemHealth names one failing part of an agent and what it said.
+//
+// The message is an error string from a subsystem that fails in a LOOP rather
+// than crashing — the Proxy and the self-updater — so it is the agent's own
+// diagnosis, never a secret: nothing that unseals a value reports through here
+// (ENGINEERING rule 20).
+type SubsystemHealth struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Stable identifier the agent chose: "proxy", "updater".
+	Subsystem     string `protobuf:"bytes,1,opt,name=subsystem,proto3" json:"subsystem,omitempty"`
+	Message       string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SubsystemHealth) Reset() {
+	*x = SubsystemHealth{}
+	mi := &file_cypherpanel_agent_v1_agent_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubsystemHealth) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubsystemHealth) ProtoMessage() {}
+
+func (x *SubsystemHealth) ProtoReflect() protoreflect.Message {
+	mi := &file_cypherpanel_agent_v1_agent_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubsystemHealth.ProtoReflect.Descriptor instead.
+func (*SubsystemHealth) Descriptor() ([]byte, []int) {
+	return file_cypherpanel_agent_v1_agent_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *SubsystemHealth) GetSubsystem() string {
+	if x != nil {
+		return x.Subsystem
+	}
+	return ""
+}
+
+func (x *SubsystemHealth) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
 // AgentUpdateStatus is the observed half of ADR-010: which phase the updater is
 // in, what it is moving to, and what went wrong if anything did.
 //
@@ -578,7 +655,7 @@ type AgentUpdateStatus struct {
 
 func (x *AgentUpdateStatus) Reset() {
 	*x = AgentUpdateStatus{}
-	mi := &file_cypherpanel_agent_v1_agent_proto_msgTypes[5]
+	mi := &file_cypherpanel_agent_v1_agent_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -590,7 +667,7 @@ func (x *AgentUpdateStatus) String() string {
 func (*AgentUpdateStatus) ProtoMessage() {}
 
 func (x *AgentUpdateStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_cypherpanel_agent_v1_agent_proto_msgTypes[5]
+	mi := &file_cypherpanel_agent_v1_agent_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -603,7 +680,7 @@ func (x *AgentUpdateStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentUpdateStatus.ProtoReflect.Descriptor instead.
 func (*AgentUpdateStatus) Descriptor() ([]byte, []int) {
-	return file_cypherpanel_agent_v1_agent_proto_rawDescGZIP(), []int{5}
+	return file_cypherpanel_agent_v1_agent_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *AgentUpdateStatus) GetPhase() AgentUpdateStatus_Phase {
@@ -657,7 +734,7 @@ const file_cypherpanel_agent_v1_agent_proto_rawDesc = "" +
 	"\rRenewResponse\x12'\n" +
 	"\x0fcertificate_pem\x18\x01 \x01(\fR\x0ecertificatePem\x12\x15\n" +
 	"\x06ca_pem\x18\x02 \x01(\fR\x05caPem\x127\n" +
-	"\tnot_after\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\bnotAfter\"\x8d\x03\n" +
+	"\tnot_after\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\bnotAfter\"\xdf\x03\n" +
 	"\tHeartbeat\x12\x1b\n" +
 	"\tserver_id\x18\x01 \x01(\tR\bserverId\x129\n" +
 	"\n" +
@@ -668,7 +745,12 @@ const file_cypherpanel_agent_v1_agent_proto_rawDesc = "" +
 	"\x04role\x18\x06 \x01(\tR\x04role\x12(\n" +
 	"\x10disk_total_bytes\x18\a \x01(\x04R\x0ediskTotalBytes\x12&\n" +
 	"\x0fdisk_free_bytes\x18\b \x01(\x04R\rdiskFreeBytes\x12J\n" +
-	"\fagent_update\x18\t \x01(\v2'.cypherpanel.agent.v1.AgentUpdateStatusR\vagentUpdate\"\x83\x03\n" +
+	"\fagent_update\x18\t \x01(\v2'.cypherpanel.agent.v1.AgentUpdateStatusR\vagentUpdate\x12P\n" +
+	"\x10subsystem_health\x18\n" +
+	" \x03(\v2%.cypherpanel.agent.v1.SubsystemHealthR\x0fsubsystemHealth\"I\n" +
+	"\x0fSubsystemHealth\x12\x1c\n" +
+	"\tsubsystem\x18\x01 \x01(\tR\tsubsystem\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\x83\x03\n" +
 	"\x11AgentUpdateStatus\x12C\n" +
 	"\x05phase\x18\x01 \x01(\x0e2-.cypherpanel.agent.v1.AgentUpdateStatus.PhaseR\x05phase\x12%\n" +
 	"\x0etarget_version\x18\x02 \x01(\tR\rtargetVersion\x12)\n" +
@@ -706,7 +788,7 @@ func file_cypherpanel_agent_v1_agent_proto_rawDescGZIP() []byte {
 }
 
 var file_cypherpanel_agent_v1_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_cypherpanel_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_cypherpanel_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_cypherpanel_agent_v1_agent_proto_goTypes = []any{
 	(AgentStatus)(0),              // 0: cypherpanel.agent.v1.AgentStatus
 	(AgentUpdateStatus_Phase)(0),  // 1: cypherpanel.agent.v1.AgentUpdateStatus.Phase
@@ -715,24 +797,26 @@ var file_cypherpanel_agent_v1_agent_proto_goTypes = []any{
 	(*RenewRequest)(nil),          // 4: cypherpanel.agent.v1.RenewRequest
 	(*RenewResponse)(nil),         // 5: cypherpanel.agent.v1.RenewResponse
 	(*Heartbeat)(nil),             // 6: cypherpanel.agent.v1.Heartbeat
-	(*AgentUpdateStatus)(nil),     // 7: cypherpanel.agent.v1.AgentUpdateStatus
-	(*timestamppb.Timestamp)(nil), // 8: google.protobuf.Timestamp
+	(*SubsystemHealth)(nil),       // 7: cypherpanel.agent.v1.SubsystemHealth
+	(*AgentUpdateStatus)(nil),     // 8: cypherpanel.agent.v1.AgentUpdateStatus
+	(*timestamppb.Timestamp)(nil), // 9: google.protobuf.Timestamp
 }
 var file_cypherpanel_agent_v1_agent_proto_depIdxs = []int32{
-	8, // 0: cypherpanel.agent.v1.RenewResponse.not_after:type_name -> google.protobuf.Timestamp
-	8, // 1: cypherpanel.agent.v1.Heartbeat.emitted_at:type_name -> google.protobuf.Timestamp
+	9, // 0: cypherpanel.agent.v1.RenewResponse.not_after:type_name -> google.protobuf.Timestamp
+	9, // 1: cypherpanel.agent.v1.Heartbeat.emitted_at:type_name -> google.protobuf.Timestamp
 	0, // 2: cypherpanel.agent.v1.Heartbeat.status:type_name -> cypherpanel.agent.v1.AgentStatus
-	7, // 3: cypherpanel.agent.v1.Heartbeat.agent_update:type_name -> cypherpanel.agent.v1.AgentUpdateStatus
-	1, // 4: cypherpanel.agent.v1.AgentUpdateStatus.phase:type_name -> cypherpanel.agent.v1.AgentUpdateStatus.Phase
-	2, // 5: cypherpanel.agent.v1.EnrollmentService.Enroll:input_type -> cypherpanel.agent.v1.EnrollRequest
-	4, // 6: cypherpanel.agent.v1.EnrollmentService.Renew:input_type -> cypherpanel.agent.v1.RenewRequest
-	3, // 7: cypherpanel.agent.v1.EnrollmentService.Enroll:output_type -> cypherpanel.agent.v1.EnrollResponse
-	5, // 8: cypherpanel.agent.v1.EnrollmentService.Renew:output_type -> cypherpanel.agent.v1.RenewResponse
-	7, // [7:9] is the sub-list for method output_type
-	5, // [5:7] is the sub-list for method input_type
-	5, // [5:5] is the sub-list for extension type_name
-	5, // [5:5] is the sub-list for extension extendee
-	0, // [0:5] is the sub-list for field type_name
+	8, // 3: cypherpanel.agent.v1.Heartbeat.agent_update:type_name -> cypherpanel.agent.v1.AgentUpdateStatus
+	7, // 4: cypherpanel.agent.v1.Heartbeat.subsystem_health:type_name -> cypherpanel.agent.v1.SubsystemHealth
+	1, // 5: cypherpanel.agent.v1.AgentUpdateStatus.phase:type_name -> cypherpanel.agent.v1.AgentUpdateStatus.Phase
+	2, // 6: cypherpanel.agent.v1.EnrollmentService.Enroll:input_type -> cypherpanel.agent.v1.EnrollRequest
+	4, // 7: cypherpanel.agent.v1.EnrollmentService.Renew:input_type -> cypherpanel.agent.v1.RenewRequest
+	3, // 8: cypherpanel.agent.v1.EnrollmentService.Enroll:output_type -> cypherpanel.agent.v1.EnrollResponse
+	5, // 9: cypherpanel.agent.v1.EnrollmentService.Renew:output_type -> cypherpanel.agent.v1.RenewResponse
+	8, // [8:10] is the sub-list for method output_type
+	6, // [6:8] is the sub-list for method input_type
+	6, // [6:6] is the sub-list for extension type_name
+	6, // [6:6] is the sub-list for extension extendee
+	0, // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_cypherpanel_agent_v1_agent_proto_init() }
@@ -746,7 +830,7 @@ func file_cypherpanel_agent_v1_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cypherpanel_agent_v1_agent_proto_rawDesc), len(file_cypherpanel_agent_v1_agent_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   6,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
