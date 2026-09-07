@@ -44,15 +44,57 @@ trap cleanup EXIT
 
 mkdir -p "$WORK"
 
+# wait_for polls a command until it succeeds, then reports honestly if it never
+# does. Written as `if ... then ... fi` rather than `cmd && break` on purpose:
+# under `set -e` a failing `&&` list inside a loop body aborts the whole script,
+# which is how the first version of this managed to die in under two seconds
+# while claiming it had waited forty.
+# STREAK is how many consecutive successes count as "up". One is not enough for
+# anything that restarts while starting: the postgres image runs initdb against
+# a TEMPORARY server, which answers, and then shuts it down for the real one. A
+# probe that breaks on the first yes can therefore return during a window that
+# closes a moment later — which is how this job died in CI 1.4 seconds into a
+# wait meant to last forty, on a runner slow enough to land inside it. The race
+# does not reproduce on a fast machine, so requiring a streak is the fix that
+# does not depend on being able to reproduce it.
+wait_for() {
+    label=$1 tries=$2
+    shift 2
+    i=0 streak=0
+    while [ "$i" -lt "$tries" ]; do
+        if "$@" >/dev/null 2>&1; then
+            streak=$((streak + 1))
+            [ "$streak" -ge "${STREAK:-3}" ] && return 0
+        else
+            streak=0
+        fi
+        i=$((i + 1))
+        sleep 1
+    done
+    printf '\033[31merror:\033[0m %s did not come up within %ss\n' "$label" "$tries" >&2
+    return 1
+}
+
 say "starting PostgreSQL"
 docker rm -f "$PG_NAME" >/dev/null 2>&1 || true
-docker run -d --name "$PG_NAME" -e POSTGRES_PASSWORD=e2e -e POSTGRES_DB=cypher \
-    -p "$PG_PORT:5432" postgres:16-alpine >/dev/null
-for _ in $(seq 1 40); do
-    docker exec "$PG_NAME" pg_isready -U postgres >/dev/null 2>&1 && break
-    sleep 1
-done
-docker exec "$PG_NAME" pg_isready -U postgres >/dev/null 2>&1 || fail "PostgreSQL never became ready"
+if ! docker run -d --name "$PG_NAME" -e POSTGRES_PASSWORD=e2e -e POSTGRES_DB=cypher \
+    -p "$PG_PORT:5432" postgres:16-alpine >/dev/null; then
+    fail "could not start PostgreSQL — is port $PG_PORT already taken? (E2E_PG_PORT overrides it)"
+fi
+# A real query, not pg_isready. The postgres image runs initdb against a
+# TEMPORARY server first, and pg_isready answers yes to that one — so a probe
+# that trusts it breaks out during initialisation and the very next command
+# fails against a server that is restarting. That is exactly how this job died
+# in CI, 1.4 seconds into a wait that was supposed to last forty. `select 1`
+# against the named database is only true once the real server is serving it.
+pg_ready() { docker exec "$PG_NAME" psql -U postgres -d cypher -c 'select 1'; }
+if ! wait_for PostgreSQL 60 pg_ready; then
+    # A container that started and then died leaves nothing in pg_isready's
+    # output, so say what the container itself said.
+    docker ps -a --filter "name=$PG_NAME" --format 'container: {{.Status}}' >&2 || true
+    docker logs --tail 30 "$PG_NAME" >&2 2>&1 || true
+    fail "PostgreSQL never became ready"
+fi
 
 # The UI has to be BUILT and embedded, or the panel serves a stale bundle and
 # the suite tests whatever was there last time — which is the one failure mode
@@ -86,11 +128,10 @@ export CYPHERD_NATS_ADDR=":$NATS_PORT"
 mkdir -p "$CYPHERD_DATA_DIR"
 "$WORK/cypherd" > "$WORK/cypherd.log" 2>&1 &
 echo $! > "$WORK/cypherd.pid"
-for _ in $(seq 1 60); do
-    curl -sf "$API/readyz" >/dev/null 2>&1 && break
-    sleep 1
-done
-curl -sf "$API/readyz" >/dev/null 2>&1 || { tail -30 "$WORK/cypherd.log"; fail "the panel never became ready"; }
+if ! STREAK=1 wait_for "the panel" 60 curl -sf "$API/readyz"; then
+    tail -30 "$WORK/cypherd.log" >&2
+    fail "the panel never became ready"
+fi
 
 # An enrolled agent, because the create-application dialog offers only servers
 # that are actually enrolled — so without one the screens under test cannot be
@@ -107,10 +148,13 @@ curl -sf "$API/api/v1/ca.pem" -o "$WORK/ca.pem"
     --ca-file "$WORK/ca.pem" --state-dir "$WORK/agent" --hostname e2e-host >/dev/null
 "$WORK/cypher-agent" run --state-dir "$WORK/agent" --heartbeat 2s > "$WORK/agent.log" 2>&1 &
 echo $! > "$WORK/agent.pid"
-for _ in $(seq 1 30); do
-    curl -sf "$API/api/v1/servers" -H "Authorization: Bearer $TOKEN" | grep -q '"status":"running"' && break
-    sleep 1
-done
+agent_running() {
+    curl -sf "$API/api/v1/servers" -H "Authorization: Bearer $TOKEN" | grep -q '"status":"running"'
+}
+if ! STREAK=1 wait_for "the agent" 30 agent_running; then
+    tail -20 "$WORK/agent.log" >&2
+    fail "the agent never reported running — the screens under test need an enrolled server"
+fi
 
 say "running the browser suite"
 docker run --rm --network host \
