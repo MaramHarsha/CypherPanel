@@ -198,6 +198,13 @@ func ComposeState(serverID, stackID string) string {
 	return StatePrefix + serverID + ".compose." + stackID
 }
 
+// Metrics is one server's aggregated bucket (metrics-and-usage.md §4.6). It
+// rides the memory-backed STATE stream alongside heartbeats: a durable stream
+// would put this write volume on the plane's disk to protect data whose entire
+// purpose is to be approximately right. A plane down for more than an hour has
+// a GAP in its charts, drawn as a gap and never interpolated across.
+func Metrics(serverID string) string { return StatePrefix + serverID + ".metrics" }
+
 // Plane-side consumption wildcards.
 const (
 	ComposeStateAll       = "state.*.compose.>"
@@ -207,4 +214,5 @@ const (
 	DbBackupPruneStateAll = "state.*.dbbackupprune"
 	VolumeBackupStateAll  = "state.*.volumebackup"
 	TaskStateAll          = "state.*.task"
+	MetricsStateAll       = "state.*.metrics"
 )

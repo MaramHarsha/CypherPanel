@@ -70,6 +70,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/teams"
 	"github.com/MaramHarsha/cypherpanel/core/templates"
 	"github.com/MaramHarsha/cypherpanel/core/updates"
+	"github.com/MaramHarsha/cypherpanel/core/usage"
 	"github.com/MaramHarsha/cypherpanel/core/webhooks"
 	"github.com/MaramHarsha/cypherpanel/pkg/pki"
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
@@ -538,6 +539,32 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 	}
 	defer volumeBackupConsume.Stop()
 
+	// Metrics ingest (metrics-and-usage.md §4.6). One message per server per
+	// bucket, carrying every resource on it — not one per resource, and
+	// emphatically not one per sample.
+	usageRec := usage.New(st, usage.Config{
+		MetricsRetention: cfg.MetricsRetention,
+		UsageRetention:   cfg.UsageRetention,
+	}, log.With("component", "usage"))
+	metricsConsume, err := b.ConsumeMetrics(ctx, func(serverID string, data []byte) {
+		c, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		usageRec.Record(c, serverID, data)
+	})
+	if err != nil {
+		return err
+	}
+	defer metricsConsume.Stop()
+
+	// The rollup catches up every UTC day that has bucket rows and no complete
+	// daily row, so a plane that was down for three days fills the gap on boot
+	// instead of leaving it forever.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		usageRec.RunRollup(ctx, time.Hour)
+	}()
+
 	dbRestoreConsume, err := b.ConsumeDbRestoreEvents(ctx, func(serverID string, data []byte) {
 		var ev agentv1.DbRestoreEvent
 		if err := proto.Unmarshal(data, &ev); err != nil {
@@ -654,6 +681,7 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		PanelLogs:        panelLogs,
 		DataDir:          cfg.DataDir,
 		StatusPages:      st,
+		Metrics:          st,
 		StatusServer:     statusSrv,
 		StatusRoutes:     statusSrv,
 		PanelURL:         cfg.AdvertisedConsoleURL(),

@@ -32,8 +32,10 @@ import type {
   CreateServerResponse,
   Error,
   ForbiddenResponse,
+  GetServerMetricsParams,
   NotFoundResponse,
   PatchServerRequest,
+  ResourceMetrics,
   Server,
   UnauthorizedResponse
 } from '../model';
@@ -674,3 +676,119 @@ export const useDeleteServer = <TError = UnauthorizedResponse | ForbiddenRespons
       > => {
       return useMutation(getDeleteServerMutationOptions(options), queryClient);
     }
+    export const getGetServerMetricsUrl = (id: string,
+    params?: GetServerMetricsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/servers/${id}/metrics?${stringifiedParams}` : `/api/v1/servers/${id}/metrics`
+}
+
+/**
+ * A node's figure IS its resources' figures, so there is no separate server-level sampler — a second source would be a second answer to the same question. Containers the panel does not manage are never sampled, so an operator's own workloads on a shared box do not appear here.
+ * @summary The node's managed containers, summed (panel admin)
+ */
+export const getServerMetrics = async (id: string,
+    params?: GetServerMetricsParams, options?: RequestInit): Promise<ResourceMetrics> => {
+
+  return apiFetch<ResourceMetrics>(getGetServerMetricsUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetServerMetricsQueryKey = (id: string,
+    params?: GetServerMetricsParams,) => {
+    return [
+    `/api/v1/servers/${id}/metrics`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetServerMetricsQueryOptions = <TData = Awaited<ReturnType<typeof getServerMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(id: string,
+    params?: GetServerMetricsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getServerMetrics>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetServerMetricsQueryKey(id,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getServerMetrics>>> = ({ signal }) => getServerMetrics(id,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getServerMetrics>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetServerMetricsQueryResult = NonNullable<Awaited<ReturnType<typeof getServerMetrics>>>
+export type GetServerMetricsQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+
+
+export function useGetServerMetrics<TData = Awaited<ReturnType<typeof getServerMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ id: string,
+    params: undefined |  GetServerMetricsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getServerMetrics>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getServerMetrics>>,
+          TError,
+          Awaited<ReturnType<typeof getServerMetrics>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetServerMetrics<TData = Awaited<ReturnType<typeof getServerMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ id: string,
+    params?: GetServerMetricsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getServerMetrics>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getServerMetrics>>,
+          TError,
+          Awaited<ReturnType<typeof getServerMetrics>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetServerMetrics<TData = Awaited<ReturnType<typeof getServerMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ id: string,
+    params?: GetServerMetricsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getServerMetrics>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary The node's managed containers, summed (panel admin)
+ */
+
+export function useGetServerMetrics<TData = Awaited<ReturnType<typeof getServerMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ id: string,
+    params?: GetServerMetricsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getServerMetrics>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetServerMetricsQueryOptions(id,params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+

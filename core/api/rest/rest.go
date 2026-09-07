@@ -388,6 +388,8 @@ type Deps struct {
 	// StatusRoutes registers the two PUBLIC routes. Separate from
 	// StatusServer so a panel can hold the cache without opening the routes.
 	StatusRoutes StatusPageRoutes
+	// Metrics is the metrics, traffic and usage surface (metrics-and-usage.md).
+	Metrics MetricsStore
 	// PanelURL is the panel's own advertised base URL, used to tell the
 	// operator where their status page is reachable without any DNS.
 	PanelURL string
@@ -590,6 +592,19 @@ func (a *API) Handler() http.Handler {
 	// operator who may deploy the app may decide who reaches it.
 	// Volume backups (volume-backups.md §3): one schedule per application,
 	// covering every volume it marks as backed up.
+	// Metrics, traffic and usage (metrics-and-usage.md §10). Fixed endpoints,
+	// not a query language: they answer the questions the screens ask.
+	mux.HandleFunc("GET /api/v1/applications/{id}/metrics", a.authed(a.handleApplicationMetrics))
+	mux.HandleFunc("GET /api/v1/compose-stacks/{id}/metrics", a.authed(a.handleComposeStackMetrics))
+	mux.HandleFunc("GET /api/v1/databases/{id}/metrics", a.authed(a.handleDatabaseMetrics))
+	mux.HandleFunc("GET /api/v1/servers/{id}/metrics", a.authed(a.handleServerMetrics))
+	mux.HandleFunc("GET /api/v1/applications/{id}/traffic", a.authed(a.handleApplicationTraffic))
+	mux.HandleFunc("GET /api/v1/compose-stacks/{id}/traffic", a.authed(a.handleComposeStackTraffic))
+	mux.HandleFunc("GET /api/v1/usage", a.authed(a.handleUsage))
+	mux.HandleFunc("GET /api/v1/usage/export", a.authed(a.handleUsageExport))
+	mux.HandleFunc("GET /api/v1/settings/metrics", a.authed(a.handleGetMetricsSettings))
+	mux.HandleFunc("PUT /api/v1/settings/metrics", a.authed(a.handleSetMetricsSettings))
+
 	// Status pages (status-pages.md §8). Enabling one is TEAM ADMIN;
 	// annotating a live incident is a member, on purpose.
 	mux.HandleFunc("GET /api/v1/projects/{id}/status-page", a.authed(a.handleGetStatusPage))

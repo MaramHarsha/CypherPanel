@@ -23,6 +23,7 @@ import (
 
 	"github.com/MaramHarsha/cypherpanel/agent/builder"
 	"github.com/MaramHarsha/cypherpanel/agent/driver"
+	"github.com/MaramHarsha/cypherpanel/agent/metrics"
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
 	"github.com/MaramHarsha/cypherpanel/pkg/subjects"
 )
@@ -106,19 +107,21 @@ const defaultDriftInterval = 60 * time.Second
 // Worker consumes work items, manages the local desired state, and invokes the
 // orchestrator driver to converge reality.
 type Worker struct {
-	bus           Bus
-	serverID      string
-	driver        driver.Reconciler
-	dbReconciler  driver.DbReconciler
-	composeRec    driver.ComposeReconciler
-	backup        BackupRunner
-	builder       *builder.Builder
-	relay         ImageRelay
-	log           *slog.Logger
-	driftInterval time.Duration
-	cron          CronRunner
-	proxyTLS      ProxyTLS
-	staticRouter  StaticRouter
+	bus            Bus
+	serverID       string
+	driver         driver.Reconciler
+	dbReconciler   driver.DbReconciler
+	composeRec     driver.ComposeReconciler
+	backup         BackupRunner
+	builder        *builder.Builder
+	relay          ImageRelay
+	log            *slog.Logger
+	driftInterval  time.Duration
+	cron           CronRunner
+	proxyTLS       ProxyTLS
+	staticRouter   StaticRouter
+	metrics        MetricsSink
+	proxyAccessLog AccessLogSink
 
 	mu           sync.Mutex
 	state        map[string]*agentv1.AppSpec     // map[app_id]spec
@@ -132,6 +135,19 @@ type Worker struct {
 	// (status-pages.md §4). Replaced wholesale on every sync like the specs,
 	// with the same absence-means-remove contract.
 	staticRoutes map[string]*agentv1.StaticRouteSpec
+}
+
+// MetricsSink receives the panel-wide collection policy. Consumer-defined and
+// optional: a node without a collector simply reports nothing, and the panel
+// shows "no data yet" with the reason rather than a flat line at 0%.
+type MetricsSink interface {
+	Apply(s metrics.Settings)
+}
+
+// AccessLogSink is the Proxy's own access-log switch, which is part of its
+// static config and therefore of its container identity.
+type AccessLogSink interface {
+	SetAccessLog(on bool)
 }
 
 // StaticRouter writes and removes proxy fragments whose upstream is not a
@@ -200,6 +216,12 @@ func (w *Worker) SetProxyTLS(p ProxyTLS) { w.proxyTLS = p }
 // SetStaticRouter attaches the writer for non-container proxy fragments,
 // wired only on nodes that run a Proxy (status-pages.md §4).
 func (w *Worker) SetStaticRouter(r StaticRouter) { w.staticRouter = r }
+
+// SetMetrics attaches the metrics collector (metrics-and-usage.md §5).
+func (w *Worker) SetMetrics(m MetricsSink) { w.metrics = m }
+
+// SetProxyAccessLog attaches the Proxy's access-log switch.
+func (w *Worker) SetProxyAccessLog(a AccessLogSink) { w.proxyAccessLog = a }
 
 // Run performs an initial desired-state sync, converges once on boot, then
 // processes work items until the context is canceled. Between work items it
@@ -340,11 +362,32 @@ func (w *Worker) syncState(ctx context.Context) error {
 		w.proxyTLS.SetACME(ds.GetTls().GetAcmeEmail(), ds.GetTls().GetAcmeCaServer())
 	}
 
+	// Metrics settings ride along the same way. An ABSENT metrics block means
+	// the defaults rather than "off": an old plane that does not send one must
+	// not silently stop a node collecting, and a nil message's getters give
+	// exactly the zero values, so the absence is read explicitly.
+	ms := metrics.Settings{Enabled: true, BucketSeconds: metrics.DefaultBucketSeconds}
+	if m := ds.GetMetrics(); m != nil {
+		ms = metrics.Settings{
+			Enabled:          m.GetEnabled(),
+			RequestAnalytics: m.GetRequestAnalytics(),
+			BucketSeconds:    int(m.GetBucketSeconds()),
+		}
+	}
+	if w.metrics != nil {
+		w.metrics.Apply(ms)
+	}
+	if w.proxyAccessLog != nil {
+		w.proxyAccessLog.SetAccessLog(ms.Enabled && ms.RequestAnalytics)
+	}
+
 	w.log.Info("worker: desired-state sync complete",
 		"apps", len(ds.Specs),
 		"databases", len(ds.DbSpecs),
 		"compose_stacks", len(ds.ComposeSpecs),
 		"tls_configured", ds.GetTls().GetAcmeEmail() != "",
+		"metrics", ms.Enabled,
+		"request_analytics", ms.RequestAnalytics,
 	)
 	return nil
 }

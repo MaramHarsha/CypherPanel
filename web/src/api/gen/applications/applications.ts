@@ -37,9 +37,13 @@ import type {
   EnvVarKeys,
   Error,
   ForbiddenResponse,
+  GetApplicationMetricsParams,
+  GetApplicationTrafficParams,
   NotFoundResponse,
   PatchApplicationRequest,
   PreviewPasswordResult,
+  ResourceMetrics,
+  ResourceTraffic,
   SetAppAccessRequest,
   SetEnvVarRequest,
   SetPreviewPasswordRequest,
@@ -1050,7 +1054,249 @@ export const useSetPreviewPassword = <TError = BadRequestResponse | Unauthorized
       > => {
       return useMutation(getSetPreviewPasswordMutationOptions(options), queryClient);
     }
-    export const getGetVolumeBackupUrl = (id: string,) => {
+    export const getGetApplicationMetricsUrl = (id: string,
+    params?: GetApplicationMetricsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/applications/${id}/metrics?${stringifiedParams}` : `/api/v1/applications/${id}/metrics`
+}
+
+/**
+ * The series carries no averages and no percentiles, because neither merges. `cpu_percent` and `memory_bytes` on each point are DERIVED from accumulators over that point's `covered_seconds`, so a window of any length is exact rather than an average-of-averages.
+ *
+ * `covered_seconds` is why an agent restart reads as a partial bucket instead of a dip in traffic, and `collecting: false` is why a resource with no data reads "collection is off" rather than as an idle application at 0%.
+ *
+ * Per-resource disk figures DO NOT SUM to the host's usage: image layers are shared, and a base layer used by four applications is counted for each of them. The number an operator should trust for capacity is the one on the Server.
+ * @summary CPU, memory and disk over a window (member+)
+ */
+export const getApplicationMetrics = async (id: string,
+    params?: GetApplicationMetricsParams, options?: RequestInit): Promise<ResourceMetrics> => {
+
+  return apiFetch<ResourceMetrics>(getGetApplicationMetricsUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetApplicationMetricsQueryKey = (id: string,
+    params?: GetApplicationMetricsParams,) => {
+    return [
+    `/api/v1/applications/${id}/metrics`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetApplicationMetricsQueryOptions = <TData = Awaited<ReturnType<typeof getApplicationMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string,
+    params?: GetApplicationMetricsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationMetrics>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetApplicationMetricsQueryKey(id,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getApplicationMetrics>>> = ({ signal }) => getApplicationMetrics(id,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getApplicationMetrics>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetApplicationMetricsQueryResult = NonNullable<Awaited<ReturnType<typeof getApplicationMetrics>>>
+export type GetApplicationMetricsQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useGetApplicationMetrics<TData = Awaited<ReturnType<typeof getApplicationMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params: undefined |  GetApplicationMetricsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationMetrics>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getApplicationMetrics>>,
+          TError,
+          Awaited<ReturnType<typeof getApplicationMetrics>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetApplicationMetrics<TData = Awaited<ReturnType<typeof getApplicationMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params?: GetApplicationMetricsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationMetrics>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getApplicationMetrics>>,
+          TError,
+          Awaited<ReturnType<typeof getApplicationMetrics>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetApplicationMetrics<TData = Awaited<ReturnType<typeof getApplicationMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params?: GetApplicationMetricsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationMetrics>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary CPU, memory and disk over a window (member+)
+ */
+
+export function useGetApplicationMetrics<TData = Awaited<ReturnType<typeof getApplicationMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params?: GetApplicationMetricsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationMetrics>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetApplicationMetricsQueryOptions(id,params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getGetApplicationTrafficUrl = (id: string,
+    params?: GetApplicationTrafficParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/applications/${id}/traffic?${stringifiedParams}` : `/api/v1/applications/${id}/traffic`
+}
+
+/**
+ * The whole screen in one response — summary, series and top paths — because it is one screen, and three round trips for one card is how a panel starts feeling slow.
+ *
+ * Percentiles are computed once from ONE summed histogram, never averaged from the buckets' own percentiles: two 5-minute buckets with p95 = 100 ms and p95 = 2000 ms have an hour-p95 that is neither the mean nor the max of them.
+ *
+ * Paths are normalised on the node — no query string, at most three segments, id-shaped segments replaced with `:id` — and capped, with everything past the cap folded into `(other)` so the rows always reconcile with the request count. That is a heuristic, not an inventory: an application whose real route is `/v1/2024/report` sees it rewritten.
+ *
+ * `sampled: true` means the node exceeded its line-rate ceiling and fell back to 1-in-N, so the counters are estimates scaled back up. It is labelled rather than quietly presented as exact.
+ * @summary Requests, statuses, latency and top paths (member+)
+ */
+export const getApplicationTraffic = async (id: string,
+    params?: GetApplicationTrafficParams, options?: RequestInit): Promise<ResourceTraffic> => {
+
+  return apiFetch<ResourceTraffic>(getGetApplicationTrafficUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetApplicationTrafficQueryKey = (id: string,
+    params?: GetApplicationTrafficParams,) => {
+    return [
+    `/api/v1/applications/${id}/traffic`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetApplicationTrafficQueryOptions = <TData = Awaited<ReturnType<typeof getApplicationTraffic>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string,
+    params?: GetApplicationTrafficParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationTraffic>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetApplicationTrafficQueryKey(id,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getApplicationTraffic>>> = ({ signal }) => getApplicationTraffic(id,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getApplicationTraffic>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetApplicationTrafficQueryResult = NonNullable<Awaited<ReturnType<typeof getApplicationTraffic>>>
+export type GetApplicationTrafficQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useGetApplicationTraffic<TData = Awaited<ReturnType<typeof getApplicationTraffic>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params: undefined |  GetApplicationTrafficParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationTraffic>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getApplicationTraffic>>,
+          TError,
+          Awaited<ReturnType<typeof getApplicationTraffic>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetApplicationTraffic<TData = Awaited<ReturnType<typeof getApplicationTraffic>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params?: GetApplicationTrafficParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationTraffic>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getApplicationTraffic>>,
+          TError,
+          Awaited<ReturnType<typeof getApplicationTraffic>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetApplicationTraffic<TData = Awaited<ReturnType<typeof getApplicationTraffic>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params?: GetApplicationTrafficParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationTraffic>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Requests, statuses, latency and top paths (member+)
+ */
+
+export function useGetApplicationTraffic<TData = Awaited<ReturnType<typeof getApplicationTraffic>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params?: GetApplicationTrafficParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationTraffic>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetApplicationTrafficQueryOptions(id,params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getGetVolumeBackupUrl = (id: string,) => {
 
 
 

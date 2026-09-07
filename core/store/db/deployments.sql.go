@@ -14,7 +14,7 @@ import (
 const createDeployment = `-- name: CreateDeployment :one
 INSERT INTO deployments (id, application_id, revision_id, status, trigger)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at, builder_server_id, env_resolved_at
+RETURNING id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at, builder_server_id, env_resolved_at, started_at
 `
 
 type CreateDeploymentParams struct {
@@ -46,12 +46,13 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		&i.FinishedAt,
 		&i.BuilderServerID,
 		&i.EnvResolvedAt,
+		&i.StartedAt,
 	)
 	return i, err
 }
 
 const getDeployment = `-- name: GetDeployment :one
-SELECT id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at, builder_server_id, env_resolved_at FROM deployments WHERE id = $1
+SELECT id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at, builder_server_id, env_resolved_at, started_at FROM deployments WHERE id = $1
 `
 
 func (q *Queries) GetDeployment(ctx context.Context, id string) (Deployment, error) {
@@ -69,13 +70,14 @@ func (q *Queries) GetDeployment(ctx context.Context, id string) (Deployment, err
 		&i.FinishedAt,
 		&i.BuilderServerID,
 		&i.EnvResolvedAt,
+		&i.StartedAt,
 	)
 	return i, err
 }
 
 const listActiveDeployments = `-- name: ListActiveDeployments :many
 
-SELECT id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at, builder_server_id, env_resolved_at FROM deployments
+SELECT id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at, builder_server_id, env_resolved_at, started_at FROM deployments
 WHERE status NOT IN ('succeeded', 'failed', 'awaiting_approval')
 ORDER BY created_at
 `
@@ -108,6 +110,7 @@ func (q *Queries) ListActiveDeployments(ctx context.Context) ([]Deployment, erro
 			&i.FinishedAt,
 			&i.BuilderServerID,
 			&i.EnvResolvedAt,
+			&i.StartedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -120,7 +123,7 @@ func (q *Queries) ListActiveDeployments(ctx context.Context) ([]Deployment, erro
 }
 
 const listActiveDeploymentsByApplication = `-- name: ListActiveDeploymentsByApplication :many
-SELECT id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at, builder_server_id, env_resolved_at FROM deployments
+SELECT id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at, builder_server_id, env_resolved_at, started_at FROM deployments
 WHERE application_id = $1 AND status NOT IN ('succeeded', 'failed', 'awaiting_approval')
 ORDER BY created_at
 `
@@ -146,6 +149,7 @@ func (q *Queries) ListActiveDeploymentsByApplication(ctx context.Context, applic
 			&i.FinishedAt,
 			&i.BuilderServerID,
 			&i.EnvResolvedAt,
+			&i.StartedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -158,7 +162,7 @@ func (q *Queries) ListActiveDeploymentsByApplication(ctx context.Context, applic
 }
 
 const listDeploymentsByApplication = `-- name: ListDeploymentsByApplication :many
-SELECT id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at, builder_server_id, env_resolved_at FROM deployments WHERE application_id = $1 ORDER BY created_at DESC LIMIT $2
+SELECT id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at, builder_server_id, env_resolved_at, started_at FROM deployments WHERE application_id = $1 ORDER BY created_at DESC LIMIT $2
 `
 
 type ListDeploymentsByApplicationParams struct {
@@ -187,6 +191,7 @@ func (q *Queries) ListDeploymentsByApplication(ctx context.Context, arg ListDepl
 			&i.FinishedAt,
 			&i.BuilderServerID,
 			&i.EnvResolvedAt,
+			&i.StartedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -201,7 +206,7 @@ func (q *Queries) ListDeploymentsByApplication(ctx context.Context, arg ListDepl
 const setDeploymentBuilder = `-- name: SetDeploymentBuilder :one
 UPDATE deployments SET builder_server_id = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at, builder_server_id, env_resolved_at
+RETURNING id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at, builder_server_id, env_resolved_at, started_at
 `
 
 type SetDeploymentBuilderParams struct {
@@ -224,6 +229,7 @@ func (q *Queries) SetDeploymentBuilder(ctx context.Context, arg SetDeploymentBui
 		&i.FinishedAt,
 		&i.BuilderServerID,
 		&i.EnvResolvedAt,
+		&i.StartedAt,
 	)
 	return i, err
 }
@@ -231,9 +237,12 @@ func (q *Queries) SetDeploymentBuilder(ctx context.Context, arg SetDeploymentBui
 const updateDeploymentStatus = `-- name: UpdateDeploymentStatus :one
 UPDATE deployments
 SET status = $2, detail = $3, updated_at = now(),
+    started_at = CASE
+        WHEN started_at IS NULL AND $2 NOT IN ('queued', 'awaiting_approval') THEN now()
+        ELSE started_at END,
     finished_at = CASE WHEN $2 IN ('succeeded', 'failed') THEN now() ELSE finished_at END
 WHERE id = $1
-RETURNING id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at, builder_server_id, env_resolved_at
+RETURNING id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at, builder_server_id, env_resolved_at, started_at
 `
 
 type UpdateDeploymentStatusParams struct {
@@ -242,6 +251,11 @@ type UpdateDeploymentStatusParams struct {
 	Detail string
 }
 
+// started_at is stamped the first time a deploy leaves the queue, so deploy
+// minutes mean BUILD-AND-ROLLOUT time rather than wall time since somebody
+// clicked deploy. Without it the figure would include queue time and, worse,
+// the hours a deploy sat awaiting approval — a project would be measured on its
+// own change-management policy (metrics-and-usage.md §6).
 func (q *Queries) UpdateDeploymentStatus(ctx context.Context, arg UpdateDeploymentStatusParams) (Deployment, error) {
 	row := q.db.QueryRow(ctx, updateDeploymentStatus, arg.ID, arg.Status, arg.Detail)
 	var i Deployment
@@ -257,6 +271,7 @@ func (q *Queries) UpdateDeploymentStatus(ctx context.Context, arg UpdateDeployme
 		&i.FinishedAt,
 		&i.BuilderServerID,
 		&i.EnvResolvedAt,
+		&i.StartedAt,
 	)
 	return i, err
 }

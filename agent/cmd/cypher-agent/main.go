@@ -25,9 +25,11 @@ import (
 	"github.com/MaramHarsha/cypherpanel/agent/driver"
 	"github.com/MaramHarsha/cypherpanel/agent/driver/docker"
 	"github.com/MaramHarsha/cypherpanel/agent/driver/docker/engine"
+	"github.com/MaramHarsha/cypherpanel/agent/driver/docker/metricsource"
 	"github.com/MaramHarsha/cypherpanel/agent/driver/docker/prober"
 	"github.com/MaramHarsha/cypherpanel/agent/heartbeat"
 	"github.com/MaramHarsha/cypherpanel/agent/identity"
+	"github.com/MaramHarsha/cypherpanel/agent/metrics"
 	"github.com/MaramHarsha/cypherpanel/agent/proxy"
 	"github.com/MaramHarsha/cypherpanel/agent/relay"
 	"github.com/MaramHarsha/cypherpanel/agent/stream"
@@ -213,9 +215,10 @@ func runAgent(args []string, log *slog.Logger) error {
 		// everything except builder-role agents, which run nothing and must
 		// not bind :80/:443 (builder-role-and-relay.md §1).
 		var drv driver.Reconciler
-		var dockerDrv *docker.Driver         // concrete handle for the cron executor
-		var proxyTLS worker.ProxyTLS         // the Proxy's ACME sink, on app-role nodes
-		var staticRouter worker.StaticRouter // non-container fragments (status pages)
+		var dockerDrv *docker.Driver            // concrete handle for the cron executor
+		var proxyTLS worker.ProxyTLS            // the Proxy's ACME sink, on app-role nodes
+		var staticRouter worker.StaticRouter    // non-container fragments (status pages)
+		var proxyAccessLog worker.AccessLogSink // the Proxy's own access log
 		var composeRec driver.ComposeReconciler
 		if *role != "builder" {
 			// The Proxy owns this host directory (routing-and-tls.md §5):
@@ -239,6 +242,7 @@ func runAgent(args []string, log *slog.Logger) error {
 			})
 			proxyTLS = prx
 			staticRouter = prx
+			proxyAccessLog = prx
 			prb := prober.New()
 			strm := stream.NewStreamer(nc, eng, id.ServerID)
 			go strm.Start(ctx, 10*time.Second)
@@ -282,6 +286,18 @@ func runAgent(args []string, log *slog.Logger) error {
 		}
 		if staticRouter != nil {
 			w.SetStaticRouter(staticRouter)
+		}
+		// Metrics: one collector per node, sampling containers, folding the
+		// Proxy's access log and publishing one report per bucket. Only on
+		// nodes that run containers — a builder-role agent has nothing to
+		// measure (metrics-and-usage.md §4).
+		if dockerDrv != nil {
+			mc := metrics.New(metricsource.New(eng), wbus, id.ServerID, log.With("component", "metrics"))
+			w.SetMetrics(mc)
+			if proxyAccessLog != nil {
+				w.SetProxyAccessLog(proxyAccessLog)
+			}
+			go mc.Run(ctx)
 		}
 		if dockerDrv != nil {
 			// Scheduled tasks run only on app-role nodes (they need a container

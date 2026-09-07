@@ -643,3 +643,184 @@ func (c *Client) BuildImage(ctx context.Context, buildContext io.Reader, tag, do
 		}
 	}
 }
+
+// ─── metrics collection (metrics-and-usage.md §4) ───────────────────────────
+
+// ContainerStat is one container's cumulative CPU and current memory, as the
+// daemon reports them right now. Cumulative on purpose: the collector keeps the
+// previous counter itself and folds the DELTA into the open bucket, so a slow
+// or retried read shifts nothing. Trusting the daemon's own precpu window would
+// make a late read silently misattribute CPU to the wrong bucket.
+type ContainerStat struct {
+	ID               string
+	Labels           map[string]string
+	CPUTotalNanos    uint64
+	SystemTotalNanos uint64
+	OnlineCPUs       int
+	MemoryBytes      uint64
+	MemoryLimitBytes uint64
+}
+
+// SampleContainers reads one stats snapshot per running container.
+//
+// It lists every RUNNING container rather than only labelled ones, and leaves
+// attribution to the caller — a container carrying none of our labels is not
+// ours and is not sampled, the same rule disk management follows. An operator's
+// own containers on a shared box therefore never appear in a project's figures.
+func (c *Client) SampleContainers(ctx context.Context) ([]ContainerStat, error) {
+	q := url.Values{}
+	q.Set("all", "false")
+	var list []containerSummary
+	if err := c.doJSON(ctx, http.MethodGet, "/containers/json", q, nil, &list); err != nil {
+		return nil, err
+	}
+	out := make([]ContainerStat, 0, len(list))
+	for _, s := range list {
+		st, err := c.containerStat(ctx, s.ID)
+		if err != nil {
+			// One unreadable container is not a reason to lose the node's
+			// whole bucket: it is skipped and the rest are reported.
+			continue
+		}
+		st.Labels = s.Labels
+		out = append(out, st)
+	}
+	return out, nil
+}
+
+func (c *Client) containerStat(ctx context.Context, id string) (ContainerStat, error) {
+	q := url.Values{}
+	q.Set("stream", "false")
+	q.Set("one-shot", "true")
+	var raw struct {
+		CPUStats struct {
+			CPUUsage struct {
+				TotalUsage uint64 `json:"total_usage"`
+			} `json:"cpu_usage"`
+			SystemCPUUsage uint64 `json:"system_cpu_usage"`
+			OnlineCPUs     int    `json:"online_cpus"`
+		} `json:"cpu_stats"`
+		MemoryStats struct {
+			Usage uint64            `json:"usage"`
+			Limit uint64            `json:"limit"`
+			Stats map[string]uint64 `json:"stats"`
+		} `json:"memory_stats"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/containers/"+id+"/stats", q, nil, &raw); err != nil {
+		return ContainerStat{}, err
+	}
+	// The daemon's `usage` includes the page cache, which makes an idle
+	// container that once read a large file look permanently near its limit.
+	// Subtracting inactive_file is what `docker stats` itself does.
+	mem := raw.MemoryStats.Usage
+	if inactive, ok := raw.MemoryStats.Stats["inactive_file"]; ok && inactive < mem {
+		mem -= inactive
+	}
+	return ContainerStat{
+		ID:               id,
+		CPUTotalNanos:    raw.CPUStats.CPUUsage.TotalUsage,
+		SystemTotalNanos: raw.CPUStats.SystemCPUUsage,
+		OnlineCPUs:       raw.CPUStats.OnlineCPUs,
+		MemoryBytes:      mem,
+		MemoryLimitBytes: raw.MemoryStats.Limit,
+	}, nil
+}
+
+// DiskUsage is the daemon's own accounting, in the verbose form that reports
+// volume sizes. It is the expensive call in this whole feature — it walks the
+// graph driver and can take seconds on a host with many layers — which is why
+// it runs hourly, is disableable, and is never on the sampling path.
+type DiskUsage struct {
+	Images     []DiskImage
+	Containers []DiskContainer
+	Volumes    []DiskVolume
+}
+
+type DiskImage struct {
+	ID       string
+	Labels   map[string]string
+	RepoTags []string
+	Size     int64
+}
+
+type DiskContainer struct {
+	ID     string
+	Labels map[string]string
+	Image  string
+	SizeRw int64
+	Mounts []string
+}
+
+type DiskVolume struct {
+	Name string
+	Size int64
+}
+
+func (c *Client) DiskUsage(ctx context.Context) (DiskUsage, error) {
+	var raw struct {
+		Images []struct {
+			ID       string            `json:"Id"`
+			Labels   map[string]string `json:"Labels"`
+			RepoTags []string          `json:"RepoTags"`
+			Size     int64             `json:"Size"`
+		} `json:"Images"`
+		Containers []struct {
+			ID     string            `json:"Id"`
+			Labels map[string]string `json:"Labels"`
+			Image  string            `json:"Image"`
+			SizeRw int64             `json:"SizeRw"`
+			Mounts []struct {
+				Name string `json:"Name"`
+			} `json:"Mounts"`
+		} `json:"Containers"`
+		Volumes []struct {
+			Name      string `json:"Name"`
+			UsageData struct {
+				Size int64 `json:"Size"`
+			} `json:"UsageData"`
+		} `json:"Volumes"`
+	}
+	q := url.Values{}
+	q.Set("verbose", "1")
+	if err := c.doJSON(ctx, http.MethodGet, "/system/df", q, nil, &raw); err != nil {
+		return DiskUsage{}, err
+	}
+	out := DiskUsage{}
+	for _, i := range raw.Images {
+		out.Images = append(out.Images, DiskImage{ID: i.ID, Labels: i.Labels, RepoTags: i.RepoTags, Size: i.Size})
+	}
+	for _, ct := range raw.Containers {
+		dc := DiskContainer{ID: ct.ID, Labels: ct.Labels, Image: ct.Image, SizeRw: ct.SizeRw}
+		for _, m := range ct.Mounts {
+			if m.Name != "" {
+				dc.Mounts = append(dc.Mounts, m.Name)
+			}
+		}
+		out.Containers = append(out.Containers, dc)
+	}
+	for _, v := range raw.Volumes {
+		out.Volumes = append(out.Volumes, DiskVolume{Name: v.Name, Size: v.UsageData.Size})
+	}
+	return out, nil
+}
+
+// StreamLogsFrom follows a container's stdout WITHOUT the historical tail, for
+// a consumer that counts lines rather than showing them. `tail=0` matters: the
+// access-log reader must not re-count a hundred requests every time it
+// reconnects.
+func (c *Client) StreamLogsFrom(ctx context.Context, id string, out io.Writer) error {
+	q := url.Values{}
+	q.Set("stdout", "1")
+	q.Set("stderr", "0")
+	q.Set("follow", "1")
+	q.Set("tail", "0")
+
+	resp, err := c.do(ctx, http.MethodGet, "/containers/"+id+"/logs", q, nil, "")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	_, err = io.Copy(out, resp.Body)
+	return err
+}

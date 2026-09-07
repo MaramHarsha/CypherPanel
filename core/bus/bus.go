@@ -249,7 +249,7 @@ func Start(ctx context.Context, opts Options) (*Bus, error) {
 	// step with the state.* subjects in pkg/subjects.
 	if _, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
 		Name:      streamState,
-		Subjects:  []string{subjects.HeartbeatAll, subjects.DeployStateAll, subjects.AppStateAll, subjects.DbStateAll, subjects.ComposeStateAll, subjects.DbBackupStateAll, subjects.DbRestoreStateAll, subjects.DbBackupPruneStateAll, subjects.VolumeBackupStateAll, subjects.TaskStateAll},
+		Subjects:  []string{subjects.HeartbeatAll, subjects.DeployStateAll, subjects.AppStateAll, subjects.DbStateAll, subjects.ComposeStateAll, subjects.DbBackupStateAll, subjects.DbRestoreStateAll, subjects.DbBackupPruneStateAll, subjects.VolumeBackupStateAll, subjects.TaskStateAll, subjects.MetricsStateAll},
 		Storage:   jetstream.MemoryStorage,
 		Retention: jetstream.LimitsPolicy,
 		Discard:   jetstream.DiscardOld,
@@ -472,6 +472,15 @@ func (b *Bus) ConsumeDbRestoreEvents(ctx context.Context, handle func(serverID s
 // ConsumeDbBackupPruneEvents delivers each DbBackupPruneEvent payload to handle.
 func (b *Bus) ConsumeDbBackupPruneEvents(ctx context.Context, handle func(serverID string, data []byte)) (jetstream.ConsumeContext, error) {
 	return b.consumeState(ctx, "plane-db-backup-prune", subjects.DbBackupPruneStateAll, handle)
+}
+
+// ConsumeMetrics delivers each MetricsReport payload to handle
+// (metrics-and-usage.md §4.6). It rides the memory-backed STATE stream
+// alongside heartbeats deliberately: a durable stream for metrics would put
+// this write volume on the plane's own disk to protect data whose entire
+// purpose is to be approximately right.
+func (b *Bus) ConsumeMetrics(ctx context.Context, handle func(serverID string, data []byte)) (jetstream.ConsumeContext, error) {
+	return b.consumeState(ctx, "plane-metrics", subjects.MetricsStateAll, handle)
 }
 
 // ConsumeTaskRuns delivers each ScheduledTaskRun payload to handle

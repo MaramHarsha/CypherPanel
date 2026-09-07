@@ -11,9 +11,17 @@ RETURNING *;
 -- name: GetDeployment :one
 SELECT * FROM deployments WHERE id = $1;
 
+-- started_at is stamped the first time a deploy leaves the queue, so deploy
+-- minutes mean BUILD-AND-ROLLOUT time rather than wall time since somebody
+-- clicked deploy. Without it the figure would include queue time and, worse,
+-- the hours a deploy sat awaiting approval — a project would be measured on its
+-- own change-management policy (metrics-and-usage.md §6).
 -- name: UpdateDeploymentStatus :one
 UPDATE deployments
 SET status = $2, detail = $3, updated_at = now(),
+    started_at = CASE
+        WHEN started_at IS NULL AND $2 NOT IN ('queued', 'awaiting_approval') THEN now()
+        ELSE started_at END,
     finished_at = CASE WHEN $2 IN ('succeeded', 'failed') THEN now() ELSE finished_at END
 WHERE id = $1
 RETURNING *;

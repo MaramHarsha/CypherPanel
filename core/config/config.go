@@ -96,6 +96,14 @@ type Config struct {
 	StatusCacheTTL  time.Duration
 	StatusRetention time.Duration
 
+	// Metrics and usage (metrics-and-usage.md §7). MetricsRetention bounds the
+	// 5-minute and hourly buckets; 0 keeps them forever, which — said plainly —
+	// is how a busy fleet fills a disk. UsageRetention bounds the daily rows at
+	// 400 days rather than 365, so "the same month last year" is always still
+	// there.
+	MetricsRetention time.Duration
+	UsageRetention   time.Duration
+
 	// RevisionRetain is how many of an application's images the plane wants
 	// kept on a node, newest first and including the deployed one
 	// (disk-management.md §7). It is the whole garbage-collection policy: the
@@ -139,6 +147,8 @@ func Load() (Config, error) {
 		StatusDwell:       envDuration("CYPHERD_STATUS_DWELL", time.Minute),
 		StatusCacheTTL:    envDuration("CYPHERD_STATUS_CACHE_TTL", 15*time.Second),
 		StatusRetention:   envDuration("CYPHERD_STATUS_RETENTION", 90*24*time.Hour),
+		MetricsRetention:  envDuration("CYPHERD_METRICS_RETENTION", 14*24*time.Hour),
+		UsageRetention:    envDuration("CYPHERD_USAGE_RETENTION", 400*24*time.Hour),
 		// Minimum 1 enforced below: the deployed revision is never reclaimable,
 		// so a zero here would be a request to delete what is running.
 		RevisionRetain:  envInt("CYPHERD_REVISION_RETAIN", 3),

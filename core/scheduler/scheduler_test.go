@@ -550,6 +550,10 @@ func (f *fakeStore) ListServers(context.Context) ([]domain.Server, error) {
 	return f.servers, nil
 }
 
+func (f *fakeStore) GetMetricsSettings(context.Context) (domain.MetricsSettings, error) {
+	return domain.DefaultMetricsSettings(), nil
+}
+
 func (f *fakeStore) ListRoutableStatusPages(context.Context) ([]domain.StatusPage, error) {
 	return nil, nil
 }

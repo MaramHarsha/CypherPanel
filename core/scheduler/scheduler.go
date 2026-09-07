@@ -125,6 +125,8 @@ type Store interface {
 	GetPanelTLS(ctx context.Context) (domain.PanelTLS, error)
 	// Status page routes for the desired-state build (status-pages.md §4).
 	ListRoutableStatusPages(ctx context.Context) ([]domain.StatusPage, error)
+	// Panel-wide metrics policy, carried to every node (metrics-and-usage.md §5).
+	GetMetricsSettings(ctx context.Context) (domain.MetricsSettings, error)
 
 	GetDeployKey(ctx context.Context, id string) (domain.DeployKey, error)
 
@@ -1831,6 +1833,26 @@ func (s *Scheduler) DesiredStateFor(ctx context.Context, serverID string) ([]byt
 		return nil, err
 	}
 	ds.StaticRoutes = staticRoutes
+
+	// V1: metrics settings (metrics-and-usage.md §5). A read failure sends the
+	// DEFAULTS rather than nothing, for the same reason the TLS block does the
+	// safe thing: absent means "collect with the defaults", and a node that
+	// silently stopped collecting because one read failed would leave a hole
+	// in a chart nobody could explain.
+	if ms, merr := s.store.GetMetricsSettings(ctx); merr == nil {
+		ds.Metrics = &agentv1.MetricsSettings{
+			Enabled:          ms.Enabled,
+			RequestAnalytics: ms.RequestAnalytics,
+			BucketSeconds:    uint32(ms.BucketSeconds),
+		}
+	} else {
+		s.log.Error("desired state: reading metrics settings", "server_id", serverID, "error", merr)
+		d := domain.DefaultMetricsSettings()
+		ds.Metrics = &agentv1.MetricsSettings{
+			Enabled: d.Enabled, RequestAnalytics: d.RequestAnalytics,
+			BucketSeconds: uint32(d.BucketSeconds),
+		}
+	}
 
 	return proto.Marshal(ds)
 }

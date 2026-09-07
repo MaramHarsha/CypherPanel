@@ -33,8 +33,11 @@ import type {
   DNSSettings,
   DNSZone,
   Error,
+  ExportUsageParams,
   ForbiddenResponse,
   GetPanelLogsParams,
+  GetUsageParams,
+  MetricsSettings,
   PanelLogs,
   PanelMailSettings,
   PanelTLSSettings,
@@ -43,7 +46,8 @@ import type {
   SetPanelMailRequest,
   SetPanelTLSRequest,
   UnauthorizedResponse,
-  UnavailableResponse
+  UnavailableResponse,
+  Usage
 } from '../model';
 
 import { apiFetch } from '../../client.ts';
@@ -1349,4 +1353,395 @@ export const useTestPanelMail = <TError = BadRequestResponse | UnauthorizedRespo
         TContext
       > => {
       return useMutation(getTestPanelMailMutationOptions(options), queryClient);
+    }
+    export const getGetUsageUrl = (params?: GetUsageParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/usage?${stringifiedParams}` : `/api/v1/usage`
+}
+
+/**
+ * The capacity question — which project forces the next server — not a billing one. There is no price, no rate and no currency anywhere in this feature, and NOTHING IN IT EVER REFUSES AN ACTION: usage is reported, and it never gates a deploy.
+ *
+ * `cpu_share` needs a stated denominator or it is a tenancy leak: showing "38% of fleet CPU" to a member of one team would silently disclose the size of every other team's load. So the denominator is the total of what the CALLER can see, `denominator` says which in words, and a project the caller cannot see contributes to neither numerator nor denominator.
+ * @summary Per-project attribution for a month (member+)
+ */
+export const getUsage = async (params?: GetUsageParams, options?: RequestInit): Promise<Usage> => {
+
+  return apiFetch<Usage>(getGetUsageUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetUsageQueryKey = (params?: GetUsageParams,) => {
+    return [
+    `/api/v1/usage`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetUsageQueryOptions = <TData = Awaited<ReturnType<typeof getUsage>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(params?: GetUsageParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getUsage>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetUsageQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getUsage>>> = ({ signal }) => getUsage(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getUsage>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetUsageQueryResult = NonNullable<Awaited<ReturnType<typeof getUsage>>>
+export type GetUsageQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+
+
+export function useGetUsage<TData = Awaited<ReturnType<typeof getUsage>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ params: undefined |  GetUsageParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getUsage>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getUsage>>,
+          TError,
+          Awaited<ReturnType<typeof getUsage>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetUsage<TData = Awaited<ReturnType<typeof getUsage>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ params?: GetUsageParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getUsage>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getUsage>>,
+          TError,
+          Awaited<ReturnType<typeof getUsage>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetUsage<TData = Awaited<ReturnType<typeof getUsage>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ params?: GetUsageParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getUsage>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Per-project attribution for a month (member+)
+ */
+
+export function useGetUsage<TData = Awaited<ReturnType<typeof getUsage>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ params?: GetUsageParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getUsage>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetUsageQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getExportUsageUrl = (params?: ExportUsageParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/usage/export?${stringifiedParams}` : `/api/v1/usage/export`
+}
+
+/**
+ * Same scope as the page: the export can never contain a row the caller could not already read. It carries the ownership chain and the measures and stops there — the CSV ends where a spreadsheet begins.
+ * @summary One CSV row per resource (member+)
+ */
+export const exportUsage = async (params?: ExportUsageParams, options?: RequestInit): Promise<Blob> => {
+
+  return apiFetch<Blob>(getExportUsageUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getExportUsageQueryKey = (params?: ExportUsageParams,) => {
+    return [
+    `/api/v1/usage/export`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getExportUsageQueryOptions = <TData = Awaited<ReturnType<typeof exportUsage>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(params?: ExportUsageParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportUsage>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getExportUsageQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof exportUsage>>> = ({ signal }) => exportUsage(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof exportUsage>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ExportUsageQueryResult = NonNullable<Awaited<ReturnType<typeof exportUsage>>>
+export type ExportUsageQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+
+
+export function useExportUsage<TData = Awaited<ReturnType<typeof exportUsage>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ params: undefined |  ExportUsageParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportUsage>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof exportUsage>>,
+          TError,
+          Awaited<ReturnType<typeof exportUsage>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useExportUsage<TData = Awaited<ReturnType<typeof exportUsage>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ params?: ExportUsageParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportUsage>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof exportUsage>>,
+          TError,
+          Awaited<ReturnType<typeof exportUsage>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useExportUsage<TData = Awaited<ReturnType<typeof exportUsage>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ params?: ExportUsageParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportUsage>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary One CSV row per resource (member+)
+ */
+
+export function useExportUsage<TData = Awaited<ReturnType<typeof exportUsage>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ params?: ExportUsageParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportUsage>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getExportUsageQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getGetMetricsSettingsUrl = () => {
+
+
+
+
+  return `/api/v1/settings/metrics`
+}
+
+/**
+ * @summary Panel-wide metrics collection policy (panel admin)
+ */
+export const getMetricsSettings = async ( options?: RequestInit): Promise<MetricsSettings> => {
+
+  return apiFetch<MetricsSettings>(getGetMetricsSettingsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetMetricsSettingsQueryKey = () => {
+    return [
+    `/api/v1/settings/metrics`
+    ] as const;
+    }
+
+
+export const getGetMetricsSettingsQueryOptions = <TData = Awaited<ReturnType<typeof getMetricsSettings>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMetricsSettings>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMetricsSettingsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMetricsSettings>>> = ({ signal }) => getMetricsSettings({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMetricsSettings>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetMetricsSettingsQueryResult = NonNullable<Awaited<ReturnType<typeof getMetricsSettings>>>
+export type GetMetricsSettingsQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useGetMetricsSettings<TData = Awaited<ReturnType<typeof getMetricsSettings>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMetricsSettings>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getMetricsSettings>>,
+          TError,
+          Awaited<ReturnType<typeof getMetricsSettings>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMetricsSettings<TData = Awaited<ReturnType<typeof getMetricsSettings>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMetricsSettings>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getMetricsSettings>>,
+          TError,
+          Awaited<ReturnType<typeof getMetricsSettings>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMetricsSettings<TData = Awaited<ReturnType<typeof getMetricsSettings>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMetricsSettings>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Panel-wide metrics collection policy (panel admin)
+ */
+
+export function useGetMetricsSettings<TData = Awaited<ReturnType<typeof getMetricsSettings>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMetricsSettings>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetMetricsSettingsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getSetMetricsSettingsUrl = () => {
+
+
+
+
+  return `/api/v1/settings/metrics`
+}
+
+/**
+ * Three knobs, not one per dimension. `enabled` and `request_analytics` are the two an operator has a real reason to change — cost, and privacy about paths — and `bucket_seconds` is load-bearing for the write budget: an operator with 500 containers raises it to 900 and cuts the stored row count by a factor of three.
+ *
+ * Turning `request_analytics` on changes the Proxy's static configuration, which RECREATES the Proxy container on each node once — a few seconds with no routing there.
+ * @summary Change the collection policy (panel admin)
+ */
+export const setMetricsSettings = async (metricsSettings: MetricsSettings, options?: RequestInit): Promise<MetricsSettings> => {
+
+  return apiFetch<MetricsSettings>(getSetMetricsSettingsUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(metricsSettings)
+  }
+);}
+
+
+
+
+
+export const getSetMetricsSettingsMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setMetricsSettings>>, TError,{data: MetricsSettings}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setMetricsSettings>>, TError,{data: MetricsSettings}, TContext> => {
+
+const mutationKey = ['setMetricsSettings'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setMetricsSettings>>, {data: MetricsSettings}> = (props) => {
+          const {data} = props ?? {};
+
+          return  setMetricsSettings(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetMetricsSettingsMutationResult = NonNullable<Awaited<ReturnType<typeof setMetricsSettings>>>
+    export type SetMetricsSettingsMutationBody = MetricsSettings
+    export type SetMetricsSettingsMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary Change the collection policy (panel admin)
+ */
+export const useSetMetricsSettings = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setMetricsSettings>>, TError,{data: MetricsSettings}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setMetricsSettings>>,
+        TError,
+        {data: MetricsSettings},
+        TContext
+      > => {
+      return useMutation(getSetMetricsSettingsMutationOptions(options), queryClient);
     }

@@ -26,10 +26,12 @@ import { Route as AppSettingsDeployKeysRouteImport } from './routes/_app/setting
 import { Route as AppSettingsDiagnosticsRouteImport } from './routes/_app/settings/diagnostics'
 import { Route as AppSettingsDnsRouteImport } from './routes/_app/settings/dns'
 import { Route as AppSettingsMailRouteImport } from './routes/_app/settings/mail'
+import { Route as AppSettingsMetricsRouteImport } from './routes/_app/settings/metrics'
 import { Route as AppSettingsProfileRouteImport } from './routes/_app/settings/profile'
 import { Route as AppSettingsRegistriesRouteImport } from './routes/_app/settings/registries'
 import { Route as AppSettingsTeamsRouteImport } from './routes/_app/settings/teams'
 import { Route as AppSettingsTlsRouteImport } from './routes/_app/settings/tls'
+import { Route as AppSettingsUsageRouteImport } from './routes/_app/settings/usage'
 import { Route as AppSettingsUsersRouteImport } from './routes/_app/settings/users'
 import { Route as AppTemplatesIndexRouteImport } from './routes/_app/templates/index'
 import { Route as AppProjectsProjectIdIndexRouteImport } from './routes/_app/projects/$projectId/index'
@@ -146,6 +148,11 @@ const AppSettingsMailRoute = AppSettingsMailRouteImport.update({
   path: '/mail',
   getParentRoute: () => AppSettingsRoute,
 } as any)
+const AppSettingsMetricsRoute = AppSettingsMetricsRouteImport.update({
+  id: '/metrics',
+  path: '/metrics',
+  getParentRoute: () => AppSettingsRoute,
+} as any)
 const AppSettingsProfileRoute = AppSettingsProfileRouteImport.update({
   id: '/profile',
   path: '/profile',
@@ -164,6 +171,11 @@ const AppSettingsTeamsRoute = AppSettingsTeamsRouteImport.update({
 const AppSettingsTlsRoute = AppSettingsTlsRouteImport.update({
   id: '/tls',
   path: '/tls',
+  getParentRoute: () => AppSettingsRoute,
+} as any)
+const AppSettingsUsageRoute = AppSettingsUsageRouteImport.update({
+  id: '/usage',
+  path: '/usage',
   getParentRoute: () => AppSettingsRoute,
 } as any)
 const AppSettingsUsersRoute = AppSettingsUsersRouteImport.update({
@@ -359,10 +371,12 @@ export interface FileRoutesByFullPath {
   '/settings/diagnostics': typeof AppSettingsDiagnosticsRoute
   '/settings/dns': typeof AppSettingsDnsRoute
   '/settings/mail': typeof AppSettingsMailRoute
+  '/settings/metrics': typeof AppSettingsMetricsRoute
   '/settings/profile': typeof AppSettingsProfileRoute
   '/settings/registries': typeof AppSettingsRegistriesRoute
   '/settings/teams': typeof AppSettingsTeamsRoute
   '/settings/tls': typeof AppSettingsTlsRoute
+  '/settings/usage': typeof AppSettingsUsageRoute
   '/settings/users': typeof AppSettingsUsersRoute
   '/projects/': typeof AppProjectsIndexRoute
   '/servers/': typeof AppServersIndexRoute
@@ -410,10 +424,12 @@ export interface FileRoutesByTo {
   '/settings/diagnostics': typeof AppSettingsDiagnosticsRoute
   '/settings/dns': typeof AppSettingsDnsRoute
   '/settings/mail': typeof AppSettingsMailRoute
+  '/settings/metrics': typeof AppSettingsMetricsRoute
   '/settings/profile': typeof AppSettingsProfileRoute
   '/settings/registries': typeof AppSettingsRegistriesRoute
   '/settings/teams': typeof AppSettingsTeamsRoute
   '/settings/tls': typeof AppSettingsTlsRoute
+  '/settings/usage': typeof AppSettingsUsageRoute
   '/settings/users': typeof AppSettingsUsersRoute
   '/projects': typeof AppProjectsIndexRoute
   '/servers': typeof AppServersIndexRoute
@@ -460,10 +476,12 @@ export interface FileRoutesById {
   '/_app/settings/diagnostics': typeof AppSettingsDiagnosticsRoute
   '/_app/settings/dns': typeof AppSettingsDnsRoute
   '/_app/settings/mail': typeof AppSettingsMailRoute
+  '/_app/settings/metrics': typeof AppSettingsMetricsRoute
   '/_app/settings/profile': typeof AppSettingsProfileRoute
   '/_app/settings/registries': typeof AppSettingsRegistriesRoute
   '/_app/settings/teams': typeof AppSettingsTeamsRoute
   '/_app/settings/tls': typeof AppSettingsTlsRoute
+  '/_app/settings/usage': typeof AppSettingsUsageRoute
   '/_app/settings/users': typeof AppSettingsUsersRoute
   '/_app/projects/': typeof AppProjectsIndexRoute
   '/_app/servers/': typeof AppServersIndexRoute
@@ -514,10 +532,12 @@ export interface FileRouteTypes {
     | '/settings/diagnostics'
     | '/settings/dns'
     | '/settings/mail'
+    | '/settings/metrics'
     | '/settings/profile'
     | '/settings/registries'
     | '/settings/teams'
     | '/settings/tls'
+    | '/settings/usage'
     | '/settings/users'
     | '/projects/'
     | '/servers/'
@@ -565,10 +585,12 @@ export interface FileRouteTypes {
     | '/settings/diagnostics'
     | '/settings/dns'
     | '/settings/mail'
+    | '/settings/metrics'
     | '/settings/profile'
     | '/settings/registries'
     | '/settings/teams'
     | '/settings/tls'
+    | '/settings/usage'
     | '/settings/users'
     | '/projects'
     | '/servers'
@@ -614,10 +636,12 @@ export interface FileRouteTypes {
     | '/_app/settings/diagnostics'
     | '/_app/settings/dns'
     | '/_app/settings/mail'
+    | '/_app/settings/metrics'
     | '/_app/settings/profile'
     | '/_app/settings/registries'
     | '/_app/settings/teams'
     | '/_app/settings/tls'
+    | '/_app/settings/usage'
     | '/_app/settings/users'
     | '/_app/projects/'
     | '/_app/servers/'
@@ -780,6 +804,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSettingsMailRouteImport
       parentRoute: typeof AppSettingsRoute
     }
+    '/_app/settings/metrics': {
+      id: '/_app/settings/metrics'
+      path: '/metrics'
+      fullPath: '/settings/metrics'
+      preLoaderRoute: typeof AppSettingsMetricsRouteImport
+      parentRoute: typeof AppSettingsRoute
+    }
     '/_app/settings/profile': {
       id: '/_app/settings/profile'
       path: '/profile'
@@ -806,6 +837,13 @@ declare module '@tanstack/react-router' {
       path: '/tls'
       fullPath: '/settings/tls'
       preLoaderRoute: typeof AppSettingsTlsRouteImport
+      parentRoute: typeof AppSettingsRoute
+    }
+    '/_app/settings/usage': {
+      id: '/_app/settings/usage'
+      path: '/usage'
+      fullPath: '/settings/usage'
+      preLoaderRoute: typeof AppSettingsUsageRouteImport
       parentRoute: typeof AppSettingsRoute
     }
     '/_app/settings/users': {
@@ -1029,10 +1067,12 @@ interface AppSettingsRouteChildren {
   AppSettingsDiagnosticsRoute: typeof AppSettingsDiagnosticsRoute
   AppSettingsDnsRoute: typeof AppSettingsDnsRoute
   AppSettingsMailRoute: typeof AppSettingsMailRoute
+  AppSettingsMetricsRoute: typeof AppSettingsMetricsRoute
   AppSettingsProfileRoute: typeof AppSettingsProfileRoute
   AppSettingsRegistriesRoute: typeof AppSettingsRegistriesRoute
   AppSettingsTeamsRoute: typeof AppSettingsTeamsRoute
   AppSettingsTlsRoute: typeof AppSettingsTlsRoute
+  AppSettingsUsageRoute: typeof AppSettingsUsageRoute
   AppSettingsUsersRoute: typeof AppSettingsUsersRoute
   AppSettingsIndexRoute: typeof AppSettingsIndexRoute
 }
@@ -1045,10 +1085,12 @@ const AppSettingsRouteChildren: AppSettingsRouteChildren = {
   AppSettingsDiagnosticsRoute: AppSettingsDiagnosticsRoute,
   AppSettingsDnsRoute: AppSettingsDnsRoute,
   AppSettingsMailRoute: AppSettingsMailRoute,
+  AppSettingsMetricsRoute: AppSettingsMetricsRoute,
   AppSettingsProfileRoute: AppSettingsProfileRoute,
   AppSettingsRegistriesRoute: AppSettingsRegistriesRoute,
   AppSettingsTeamsRoute: AppSettingsTeamsRoute,
   AppSettingsTlsRoute: AppSettingsTlsRoute,
+  AppSettingsUsageRoute: AppSettingsUsageRoute,
   AppSettingsUsersRoute: AppSettingsUsersRoute,
   AppSettingsIndexRoute: AppSettingsIndexRoute,
 }

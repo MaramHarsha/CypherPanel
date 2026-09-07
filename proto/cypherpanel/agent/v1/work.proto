@@ -311,6 +311,116 @@ message DesiredState {
   // Today that is exactly one thing — a Status Page served by the control
   // plane. Absence means remove, the same contract apps and databases follow.
   repeated StaticRouteSpec static_routes = 6;
+  // V1: metrics collection settings (metrics-and-usage.md §5). Panel-wide,
+  // carried to every node the way TLSSettings is. Absent means the defaults,
+  // which is collection on and request analytics off.
+  MetricsSettings metrics = 7;
+}
+
+// MetricsSettings is what the operator can change about collection. Three
+// fields, not a knob per dimension: `enabled` and `request_analytics` are the
+// two an operator has a real reason to change (cost, and privacy about paths),
+// and `bucket_seconds` is load-bearing for the write budget — an operator with
+// 500 containers raises it to 900 and cuts the row count by a factor of three.
+//
+// Sample interval, path cap and the rate ceiling stay agent-side, because they
+// protect the NODE's memory and CPU and the node is where that is known.
+message MetricsSettings {
+  bool enabled = 1;            // container CPU / memory / disk collection
+  bool request_analytics = 2;  // Proxy access-log aggregation
+  uint32 bucket_seconds = 3;   // 0 = the default, 300; must divide an hour
+}
+
+// MetricsReport is ONE message per server per bucket, carrying every resource
+// on the node (metrics-and-usage.md §4.6). Not one message per resource, and
+// emphatically not one per sample: the whole write budget rests on the agent
+// aggregating into a fixed bucket and publishing the bucket.
+//
+// The bucket identity (resource_kind, resource_id, bucket_start) IS the
+// idempotency key, so JetStream redelivery and the agent's own replay are both
+// no-ops and no separate key needs inventing (ENGINEERING rule 12).
+message MetricsReport {
+  string server_id = 1;
+  google.protobuf.Timestamp bucket_start = 2;
+  uint32 bucket_seconds = 3;
+  repeated ResourceMetricBucket resources = 4;
+  repeated RequestBucket requests = 5;
+  repeated RequestPathBucket paths = 6;  // hourly only
+  repeated ResourceDiskBucket disk = 7;  // hourly only
+}
+
+// EVERY STORED FIELD MERGES. Counters merge by sum, peaks by max, histograms
+// element-wise — so the answer for any window is exact and does not depend on
+// the bucket size we happened to pick. That is why there are no averages here:
+// cpu_core_ms and memory_byte_seconds are accumulators, and a mean is derived
+// by dividing by covered_seconds. Storing a mean would make a longer window's
+// mean an average-of-averages, which is wrong whenever the buckets are not
+// equally covered — and after an agent restart they are not.
+message ResourceMetricBucket {
+  string resource_kind = 1;  // application | compose_stack | database
+  string resource_id = 2;
+  uint64 cpu_core_ms = 3;
+  double cpu_percent_peak = 4;
+  uint64 memory_byte_seconds = 5;
+  uint64 memory_bytes_peak = 6;
+  uint64 memory_limit_bytes = 7;
+  uint32 sample_count = 8;
+  // Coverage is STORED, not assumed: an agent that restarted at 12:03
+  // publishes a 12:00 bucket covering 120 seconds, and the chart draws it as
+  // partial rather than as a dip. Without this every agent restart, every
+  // proxy recreate and every deploy reads as an outage on the graph.
+  uint32 covered_seconds = 9;
+}
+
+// RequestBucket carries a 16-slot latency histogram rather than a percentile,
+// because PERCENTILES DO NOT AVERAGE: two 5-minute buckets with p95 = 100 ms
+// and p95 = 2000 ms have an hour-p95 that is neither the mean nor the max of
+// them, and no arithmetic on the two numbers recovers it. Histograms add, so
+// p50/p95/p99 over any window are computed once from the summed histogram.
+message RequestBucket {
+  string resource_kind = 1;  // application | compose_stack | server
+  string resource_id = 2;
+  uint64 requests = 3;
+  // A routed application with HTTPS gets two routers, and a visitor arriving
+  // over HTTP produces a 308 before the real request. Counting both would
+  // double every visit and drag p95 toward the 1 ms redirect, so redirects are
+  // counted here and excluded from the histogram and the path table.
+  uint64 redirect_count = 4;
+  uint64 status_2xx = 5;
+  uint64 status_3xx = 6;
+  uint64 status_4xx = 7;
+  uint64 status_5xx = 8;
+  uint64 response_bytes = 9;
+  repeated uint64 latency_buckets = 10;
+  // The boundary set, so the constants can change later without silently
+  // reinterpreting old rows.
+  uint32 histogram_version = 11;
+  // 1 normally; N when the node fell back to deterministic 1-in-N sampling
+  // past its line-rate ceiling. The plane scales counters back up on read and
+  // the UI SAYS the number is an estimate rather than presenting it as exact.
+  uint32 sample_rate = 12;
+}
+
+message RequestPathBucket {
+  string resource_kind = 1;
+  string resource_id = 2;
+  string path = 3;  // normalised: no query string, ≤3 segments, ids as :id
+  uint64 requests = 4;
+  uint64 status_5xx = 5;
+  repeated uint64 latency_buckets = 6;
+  uint32 histogram_version = 7;
+}
+
+// Per-resource disk figures DO NOT SUM to the host's usage: image layers are
+// shared, and a base layer used by four applications is counted for each of
+// them, because the question the number answers is "what is this resource
+// responsible for", not "how would the host shrink if I deleted it".
+message ResourceDiskBucket {
+  string resource_kind = 1;
+  string resource_id = 2;
+  uint64 image_bytes = 3;
+  uint64 volume_bytes = 4;
+  uint64 container_bytes = 5;
 }
 
 // StaticRouteSpec routes a domain to an upstream that is not a container.

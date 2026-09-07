@@ -7,10 +7,10 @@ import { TabStrip, type Tab } from "@/components/tab-strip";
 
 export const Route = createFileRoute("/_app/settings")({ component: SettingsLayout });
 
-// Twelve destinations is more than a phone can hold, so the strip folds like
+// Fifteen destinations is more than a phone can hold, so the strip folds like
 // every other one (canvas 14c): the four an operator opens daily stay, the
 // rest are one tap into "More". None of the four needs a short label at
-// 360px, and the eight that fold are named in full in the menu.
+// 360px, and the rest are named in full in the menu.
 const TABS: readonly Tab[] = [
   { to: "", label: "Account" },
   { to: "profile", label: "Profile" },
@@ -23,6 +23,9 @@ const TABS: readonly Tab[] = [
   { to: "mail", label: "Mail" },
   { to: "dns", label: "DNS" },
   { to: "tls", label: "TLS" },
+  { to: "metrics", label: "Metrics" },
+  { to: "usage", label: "Usage" },
+  { to: "api", label: "API" },
   { to: "diagnostics", label: "Diagnostics" },
 ];
 

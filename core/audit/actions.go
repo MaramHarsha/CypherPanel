@@ -94,9 +94,13 @@ const (
 	ActionStatusPagePublished         = "status_page.published"
 	ActionStatusPageUnpublished       = "status_page.unpublished"
 	ActionStatusPageIncidentAnnotated = "status_page.incident_annotated"
-	ActionEnvironmentCreated          = "environment.created"
-	ActionEnvironmentRenamed          = "environment.renamed"
-	ActionEnvironmentDeleted          = "environment.deleted"
+	// Metrics collection policy. Turning request analytics on changes what is
+	// aggregated about an operator's visitors, so it is a recorded decision
+	// rather than a preference (metrics-and-usage.md §9).
+	ActionMetricsSettingsChanged = "panel.metrics_settings_changed"
+	ActionEnvironmentCreated     = "environment.created"
+	ActionEnvironmentRenamed     = "environment.renamed"
+	ActionEnvironmentDeleted     = "environment.deleted"
 	// A template install creates several applications and databases in one
 	// action, so it is recorded ONCE against the environment that received
 	// them — six silent creates is not an answer to "where did these come
@@ -289,6 +293,8 @@ var actions = map[string]bool{
 	ActionStatusPageDeleted:   true,
 	ActionStatusPagePublished: true, ActionStatusPageUnpublished: true,
 	ActionStatusPageIncidentAnnotated: true,
+
+	ActionMetricsSettingsChanged: true,
 
 	ActionRegistryCreated: true, ActionRegistryUpdated: true,
 	ActionRegistryDeleted: true,

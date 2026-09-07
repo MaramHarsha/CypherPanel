@@ -31,6 +31,12 @@ type Traefik struct {
 	mu              sync.RWMutex
 	desiredEmail    string
 	desiredCAServer string
+	// desiredAccessLog is request analytics, from the panel's metrics
+	// settings. Changing it changes the static config, which is part of the
+	// Proxy container's identity — so a change recreates cypher-proxy once.
+	// That is a few seconds with no routing on the node, and the release note
+	// must say so.
+	desiredAccessLog bool
 }
 
 // New constructs the Traefik proxy driver. A nil Config.Engine selects
@@ -51,6 +57,21 @@ func (t *Traefik) SetACME(email, caServer string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.desiredEmail, t.desiredCAServer = email, caServer
+}
+
+// SetAccessLog turns the Proxy's JSON access log on or off. It is desired
+// state like the ACME account, applied the same way and for the same reason:
+// one panel, one policy, every node.
+func (t *Traefik) SetAccessLog(on bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.desiredAccessLog = on
+}
+
+func (t *Traefik) accessLogEnabled() bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.desiredAccessLog
 }
 
 // acme resolves the effective ACME account: the host-local override if set,

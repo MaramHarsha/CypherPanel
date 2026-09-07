@@ -35,6 +35,11 @@ import type {
   EnvVarKeys,
   Error,
   ForbiddenResponse,
+  GetComposeStackMetricsParams,
+  GetComposeStackTrafficParams,
+  NotFoundResponse,
+  ResourceMetrics,
+  ResourceTraffic,
   RollbackComposeStackBody,
   SetComposeEnvVarBody,
   StreamComposeStackLogsParams,
@@ -63,6 +68,237 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   }
   return result;
 };
+
+export const getGetComposeStackMetricsUrl = (id: string,
+    params?: GetComposeStackMetricsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/compose-stacks/${id}/metrics?${stringifiedParams}` : `/api/v1/compose-stacks/${id}/metrics`
+}
+
+/**
+ * A stack's containers are summed into one figure — the operator asked about the stack, not its sidecars.
+ * @summary CPU, memory and disk over a window (member+)
+ */
+export const getComposeStackMetrics = async (id: string,
+    params?: GetComposeStackMetricsParams, options?: RequestInit): Promise<ResourceMetrics> => {
+
+  return apiFetch<ResourceMetrics>(getGetComposeStackMetricsUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetComposeStackMetricsQueryKey = (id: string,
+    params?: GetComposeStackMetricsParams,) => {
+    return [
+    `/api/v1/compose-stacks/${id}/metrics`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetComposeStackMetricsQueryOptions = <TData = Awaited<ReturnType<typeof getComposeStackMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string,
+    params?: GetComposeStackMetricsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getComposeStackMetrics>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetComposeStackMetricsQueryKey(id,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getComposeStackMetrics>>> = ({ signal }) => getComposeStackMetrics(id,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getComposeStackMetrics>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetComposeStackMetricsQueryResult = NonNullable<Awaited<ReturnType<typeof getComposeStackMetrics>>>
+export type GetComposeStackMetricsQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useGetComposeStackMetrics<TData = Awaited<ReturnType<typeof getComposeStackMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params: undefined |  GetComposeStackMetricsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getComposeStackMetrics>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getComposeStackMetrics>>,
+          TError,
+          Awaited<ReturnType<typeof getComposeStackMetrics>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetComposeStackMetrics<TData = Awaited<ReturnType<typeof getComposeStackMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params?: GetComposeStackMetricsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getComposeStackMetrics>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getComposeStackMetrics>>,
+          TError,
+          Awaited<ReturnType<typeof getComposeStackMetrics>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetComposeStackMetrics<TData = Awaited<ReturnType<typeof getComposeStackMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params?: GetComposeStackMetricsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getComposeStackMetrics>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary CPU, memory and disk over a window (member+)
+ */
+
+export function useGetComposeStackMetrics<TData = Awaited<ReturnType<typeof getComposeStackMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params?: GetComposeStackMetricsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getComposeStackMetrics>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetComposeStackMetricsQueryOptions(id,params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getGetComposeStackTrafficUrl = (id: string,
+    params?: GetComposeStackTrafficParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/compose-stacks/${id}/traffic?${stringifiedParams}` : `/api/v1/compose-stacks/${id}/traffic`
+}
+
+/**
+ * @summary Requests, statuses, latency and top paths (member+)
+ */
+export const getComposeStackTraffic = async (id: string,
+    params?: GetComposeStackTrafficParams, options?: RequestInit): Promise<ResourceTraffic> => {
+
+  return apiFetch<ResourceTraffic>(getGetComposeStackTrafficUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetComposeStackTrafficQueryKey = (id: string,
+    params?: GetComposeStackTrafficParams,) => {
+    return [
+    `/api/v1/compose-stacks/${id}/traffic`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetComposeStackTrafficQueryOptions = <TData = Awaited<ReturnType<typeof getComposeStackTraffic>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string,
+    params?: GetComposeStackTrafficParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getComposeStackTraffic>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetComposeStackTrafficQueryKey(id,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getComposeStackTraffic>>> = ({ signal }) => getComposeStackTraffic(id,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getComposeStackTraffic>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetComposeStackTrafficQueryResult = NonNullable<Awaited<ReturnType<typeof getComposeStackTraffic>>>
+export type GetComposeStackTrafficQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useGetComposeStackTraffic<TData = Awaited<ReturnType<typeof getComposeStackTraffic>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params: undefined |  GetComposeStackTrafficParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getComposeStackTraffic>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getComposeStackTraffic>>,
+          TError,
+          Awaited<ReturnType<typeof getComposeStackTraffic>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetComposeStackTraffic<TData = Awaited<ReturnType<typeof getComposeStackTraffic>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params?: GetComposeStackTrafficParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getComposeStackTraffic>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getComposeStackTraffic>>,
+          TError,
+          Awaited<ReturnType<typeof getComposeStackTraffic>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetComposeStackTraffic<TData = Awaited<ReturnType<typeof getComposeStackTraffic>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params?: GetComposeStackTrafficParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getComposeStackTraffic>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Requests, statuses, latency and top paths (member+)
+ */
+
+export function useGetComposeStackTraffic<TData = Awaited<ReturnType<typeof getComposeStackTraffic>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params?: GetComposeStackTrafficParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getComposeStackTraffic>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetComposeStackTrafficQueryOptions(id,params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
 
 export const getListComposeStacksUrl = (id: string,) => {
 

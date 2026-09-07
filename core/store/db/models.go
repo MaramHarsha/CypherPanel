@@ -279,6 +279,7 @@ type Deployment struct {
 	FinishedAt      pgtype.Timestamptz
 	BuilderServerID pgtype.Text
 	EnvResolvedAt   pgtype.Timestamptz
+	StartedAt       pgtype.Timestamptz
 }
 
 type DnsProvider struct {
@@ -388,6 +389,14 @@ type JoinToken struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+type MetricsSetting struct {
+	ID               int32
+	Enabled          bool
+	RequestAnalytics bool
+	BucketSeconds    int32
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type Notifier struct {
 	ID          string
 	ProjectID   string
@@ -463,6 +472,78 @@ type Registry struct {
 	LastTestDetail string
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
+}
+
+type RequestMetric struct {
+	ResourceKind     string
+	ResourceID       string
+	BucketStart      pgtype.Timestamptz
+	ServerID         string
+	Requests         int64
+	RedirectCount    int64
+	Status2xx        int64
+	Status3xx        int64
+	Status4xx        int64
+	Status5xx        int64
+	ResponseBytes    int64
+	LatencyBuckets   []int64
+	HistogramVersion int32
+	SampleRate       int32
+}
+
+type RequestPath struct {
+	ResourceKind     string
+	ResourceID       string
+	BucketStart      pgtype.Timestamptz
+	Path             string
+	Requests         int64
+	Status5xx        int64
+	LatencyBuckets   []int64
+	HistogramVersion int32
+}
+
+type ResourceDiskUsage struct {
+	ResourceKind   string
+	ResourceID     string
+	BucketStart    pgtype.Timestamptz
+	ServerID       string
+	ImageBytes     int64
+	VolumeBytes    int64
+	ContainerBytes int64
+}
+
+type ResourceMetric struct {
+	ResourceKind      string
+	ResourceID        string
+	BucketStart       pgtype.Timestamptz
+	ServerID          string
+	CpuCoreMs         int64
+	CpuPercentPeak    float64
+	MemoryByteSeconds int64
+	MemoryBytesPeak   int64
+	MemoryLimitBytes  int64
+	SampleCount       int32
+	CoveredSeconds    int32
+}
+
+type ResourceUsageDaily struct {
+	ResourceKind      string
+	ResourceID        string
+	Day               pgtype.Date
+	TeamID            string
+	ProjectID         string
+	ProjectName       string
+	EnvironmentID     string
+	EnvironmentName   string
+	ResourceName      string
+	CpuCoreSeconds    int64
+	MemoryByteSeconds int64
+	MemoryBytesPeak   int64
+	DiskBytes         int64
+	Requests          int64
+	Status5xx         int64
+	DeployCount       int32
+	DeploySeconds     int64
 }
 
 type Revision struct {

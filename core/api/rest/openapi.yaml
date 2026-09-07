@@ -1653,6 +1653,228 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/v1/applications/{id}/metrics:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Application ID. }
+    get:
+      operationId: getApplicationMetrics
+      tags: [applications]
+      summary: CPU, memory and disk over a window (member+)
+      parameters:
+        - { name: window, in: query, required: false, schema: { type: string }, description: "A Go duration (6h) or an RFC 3339 instant; anything else is a 400 naming both. Defaults to 6h, maximum 720h." }
+      description: >-
+        The series carries no averages and no percentiles, because neither
+        merges. `cpu_percent` and `memory_bytes` on each point are DERIVED from
+        accumulators over that point's `covered_seconds`, so a window of any
+        length is exact rather than an average-of-averages.
+
+
+        `covered_seconds` is why an agent restart reads as a partial bucket
+        instead of a dip in traffic, and `collecting: false` is why a resource
+        with no data reads "collection is off" rather than as an idle
+        application at 0%.
+
+
+        Per-resource disk figures DO NOT SUM to the host's usage: image layers
+        are shared, and a base layer used by four applications is counted for
+        each of them. The number an operator should trust for capacity is the
+        one on the Server.
+      responses:
+        "200": { description: The series and its summary., content: { application/json: { schema: { $ref: "#/components/schemas/ResourceMetrics" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/compose-stacks/{id}/metrics:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Compose Stack ID. }
+    get:
+      operationId: getComposeStackMetrics
+      tags: [compose-stacks]
+      summary: CPU, memory and disk over a window (member+)
+      parameters:
+        - { name: window, in: query, required: false, schema: { type: string }, description: "A Go duration (6h) or an RFC 3339 instant; anything else is a 400 naming both. Defaults to 6h, maximum 720h." }
+      description: A stack's containers are summed into one figure — the operator asked about the stack, not its sidecars.
+      responses:
+        "200": { description: The series and its summary., content: { application/json: { schema: { $ref: "#/components/schemas/ResourceMetrics" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/databases/{id}/metrics:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Database ID. }
+    get:
+      operationId: getDatabaseMetrics
+      tags: [databases]
+      summary: CPU, memory and disk over a window (member+)
+      parameters:
+        - { name: window, in: query, required: false, schema: { type: string }, description: "A Go duration (6h) or an RFC 3339 instant; anything else is a 400 naming both. Defaults to 6h, maximum 720h." }
+      responses:
+        "200": { description: The series and its summary., content: { application/json: { schema: { $ref: "#/components/schemas/ResourceMetrics" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/servers/{id}/metrics:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Server ID. }
+    get:
+      operationId: getServerMetrics
+      tags: [servers]
+      summary: The node's managed containers, summed (panel admin)
+      parameters:
+        - { name: window, in: query, required: false, schema: { type: string }, description: "A Go duration (6h) or an RFC 3339 instant; anything else is a 400 naming both. Defaults to 6h, maximum 720h." }
+      description: >-
+        A node's figure IS its resources' figures, so there is no separate
+        server-level sampler — a second source would be a second answer to the
+        same question. Containers the panel does not manage are never sampled,
+        so an operator's own workloads on a shared box do not appear here.
+      responses:
+        "200": { description: The series and its summary., content: { application/json: { schema: { $ref: "#/components/schemas/ResourceMetrics" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/applications/{id}/traffic:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Application ID. }
+    get:
+      operationId: getApplicationTraffic
+      tags: [applications]
+      summary: Requests, statuses, latency and top paths (member+)
+      parameters:
+        - { name: window, in: query, required: false, schema: { type: string }, description: "A Go duration (6h) or an RFC 3339 instant; anything else is a 400 naming both. Defaults to 6h, maximum 720h." }
+      description: >-
+        The whole screen in one response — summary, series and top paths —
+        because it is one screen, and three round trips for one card is how a
+        panel starts feeling slow.
+
+
+        Percentiles are computed once from ONE summed histogram, never averaged
+        from the buckets' own percentiles: two 5-minute buckets with p95 = 100
+        ms and p95 = 2000 ms have an hour-p95 that is neither the mean nor the
+        max of them.
+
+
+        Paths are normalised on the node — no query string, at most three
+        segments, id-shaped segments replaced with `:id` — and capped, with
+        everything past the cap folded into `(other)` so the rows always
+        reconcile with the request count. That is a heuristic, not an
+        inventory: an application whose real route is `/v1/2024/report` sees it
+        rewritten.
+
+
+        `sampled: true` means the node exceeded its line-rate ceiling and fell
+        back to 1-in-N, so the counters are estimates scaled back up. It is
+        labelled rather than quietly presented as exact.
+      responses:
+        "200": { description: The traffic., content: { application/json: { schema: { $ref: "#/components/schemas/ResourceTraffic" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/compose-stacks/{id}/traffic:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Compose Stack ID. }
+    get:
+      operationId: getComposeStackTraffic
+      tags: [compose-stacks]
+      summary: Requests, statuses, latency and top paths (member+)
+      parameters:
+        - { name: window, in: query, required: false, schema: { type: string }, description: "A Go duration (6h) or an RFC 3339 instant; anything else is a 400 naming both. Defaults to 6h, maximum 720h." }
+      responses:
+        "200": { description: The traffic., content: { application/json: { schema: { $ref: "#/components/schemas/ResourceTraffic" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/usage:
+    get:
+      operationId: getUsage
+      tags: [panel]
+      summary: Per-project attribution for a month (member+)
+      parameters:
+        - { name: month, in: query, required: false, schema: { type: string }, description: "YYYY-MM. Defaults to the current UTC month." }
+        - { name: team_id, in: query, required: false, schema: { type: string } }
+      description: >-
+        The capacity question — which project forces the next server — not a
+        billing one. There is no price, no rate and no currency anywhere in this
+        feature, and NOTHING IN IT EVER REFUSES AN ACTION: usage is reported, and
+        it never gates a deploy.
+
+
+        `cpu_share` needs a stated denominator or it is a tenancy leak: showing
+        "38% of fleet CPU" to a member of one team would silently disclose the
+        size of every other team's load. So the denominator is the total of what
+        the CALLER can see, `denominator` says which in words, and a project the
+        caller cannot see contributes to neither numerator nor denominator.
+      responses:
+        "200": { description: The month., content: { application/json: { schema: { $ref: "#/components/schemas/Usage" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/usage/export:
+    get:
+      operationId: exportUsage
+      tags: [panel]
+      summary: One CSV row per resource (member+)
+      parameters:
+        - { name: month, in: query, required: false, schema: { type: string }, description: "YYYY-MM. Defaults to the current UTC month." }
+        - { name: team_id, in: query, required: false, schema: { type: string } }
+      description: >-
+        Same scope as the page: the export can never contain a row the caller
+        could not already read. It carries the ownership chain and the measures
+        and stops there — the CSV ends where a spreadsheet begins.
+      responses:
+        "200":
+          description: The CSV.
+          content:
+            text/csv:
+              schema: { type: string, format: binary }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/settings/metrics:
+    get:
+      operationId: getMetricsSettings
+      tags: [panel]
+      summary: Panel-wide metrics collection policy (panel admin)
+      responses:
+        "200": { description: The policy., content: { application/json: { schema: { $ref: "#/components/schemas/MetricsSettings" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: setMetricsSettings
+      tags: [panel]
+      summary: Change the collection policy (panel admin)
+      description: >-
+        Three knobs, not one per dimension. `enabled` and `request_analytics`
+        are the two an operator has a real reason to change — cost, and privacy
+        about paths — and `bucket_seconds` is load-bearing for the write budget:
+        an operator with 500 containers raises it to 900 and cuts the stored row
+        count by a factor of three.
+
+
+        Turning `request_analytics` on changes the Proxy's static configuration,
+        which RECREATES the Proxy container on each node once — a few seconds
+        with no routing there.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/MetricsSettings" } } }
+      responses:
+        "200": { description: Saved., content: { application/json: { schema: { $ref: "#/components/schemas/MetricsSettings" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /api/v1/projects/{id}/status-page:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Project ID. }
@@ -7593,6 +7815,141 @@ components:
       properties:
         backup_record_id: { type: string }
         confirm: { type: boolean, description: Must be true — restore overwrites the database. }
+
+    ResourceMetrics:
+      type: object
+      required: [resolution, points, summary, collecting]
+      properties:
+        resolution: { type: string }
+        as_of: { type: [string, "null"], format: date-time, description: "The newest bucket, so a chart four minutes stale can say so." }
+        collecting: { type: boolean, description: 'False when the panel has collection off. A resource with no data then reads collection is off, not idle.' }
+        points:
+          type: array
+          items: { $ref: "#/components/schemas/ResourceMetricPoint" }
+        summary: { $ref: "#/components/schemas/ResourceMetricSummary" }
+        disk:
+          oneOf:
+            - $ref: "#/components/schemas/ResourceDisk"
+            - type: "null"
+    ResourceMetricPoint:
+      type: object
+      required: [at, cpu_percent, cpu_percent_peak, memory_bytes, memory_bytes_peak, covered_seconds, bucket_seconds]
+      properties:
+        at: { type: string, format: date-time }
+        cpu_percent: { type: number, description: "Derived from the bucket's accumulator over its covered time — never a stored mean." }
+        cpu_percent_peak: { type: number, description: "The highest single sample. Without it a 5-minute mean hides exactly the spike you opened the page to find." }
+        memory_bytes: { type: integer, format: int64 }
+        memory_bytes_peak: { type: integer, format: int64 }
+        covered_seconds: { type: integer, description: "How much of the bucket was observed. Draw a partial bucket as partial, not as a dip." }
+        bucket_seconds: { type: integer }
+    ResourceMetricSummary:
+      type: object
+      required: [cpu_percent_mean, cpu_percent_peak, memory_bytes_mean, memory_bytes_peak, memory_limit_bytes, covered_seconds]
+      properties:
+        cpu_percent_mean: { type: number }
+        cpu_percent_peak: { type: number }
+        memory_bytes_mean: { type: integer, format: int64 }
+        memory_bytes_peak: { type: integer, format: int64 }
+        memory_limit_bytes: { type: integer, format: int64, description: "Zero when the container has no limit." }
+        covered_seconds: { type: integer, format: int64 }
+    ResourceDisk:
+      type: object
+      required: [image_bytes, volume_bytes, container_bytes, measured_at]
+      properties:
+        image_bytes: { type: integer, format: int64 }
+        volume_bytes: { type: integer, format: int64 }
+        container_bytes: { type: integer, format: int64 }
+        measured_at: { type: string, format: date-time, description: "Hourly. The daemon's verbose disk call walks the graph driver and can take seconds." }
+    ResourceTraffic:
+      type: object
+      required: [resolution, points, paths, summary, collecting]
+      properties:
+        resolution: { type: string }
+        as_of: { type: [string, "null"], format: date-time }
+        collecting: { type: boolean, description: False when request analytics is off, which is the default. }
+        points:
+          type: array
+          items: { $ref: "#/components/schemas/TrafficPoint" }
+        paths:
+          type: array
+          items: { $ref: "#/components/schemas/TrafficPath" }
+        summary: { $ref: "#/components/schemas/TrafficSummary" }
+    TrafficPoint:
+      type: object
+      required: [at, requests, status_2xx, status_3xx, status_4xx, status_5xx, response_bytes, bucket_seconds]
+      properties:
+        at: { type: string, format: date-time }
+        requests: { type: integer, format: int64 }
+        status_2xx: { type: integer, format: int64 }
+        status_3xx: { type: integer, format: int64 }
+        status_4xx: { type: integer, format: int64 }
+        status_5xx: { type: integer, format: int64 }
+        response_bytes: { type: integer, format: int64 }
+        bucket_seconds: { type: integer }
+    TrafficPath:
+      type: object
+      required: [path, requests, status_5xx]
+      properties:
+        path: { type: string, description: "Normalised on the node. `(other)` is everything past the cardinality cap." }
+        requests: { type: integer, format: int64 }
+        status_5xx: { type: integer, format: int64 }
+    TrafficSummary:
+      type: object
+      required: [requests, redirects, status_2xx, status_3xx, status_4xx, status_5xx, response_bytes, p50_ms, p95_ms, p99_ms, sampled, sample_rate]
+      properties:
+        requests: { type: integer, format: int64 }
+        redirects: { type: integer, format: int64, description: "HTTP→HTTPS redirects, counted apart so they do not double every visit or drag p95 toward the 1 ms redirect." }
+        status_2xx: { type: integer, format: int64 }
+        status_3xx: { type: integer, format: int64 }
+        status_4xx: { type: integer, format: int64 }
+        status_5xx: { type: integer, format: int64 }
+        response_bytes: { type: integer, format: int64 }
+        p50_ms: { type: number, description: "From one summed histogram, accurate to the bucket boundary." }
+        p95_ms: { type: number }
+        p99_ms: { type: number }
+        sampled: { type: boolean, description: "True when the node fell back to 1-in-N past its line-rate ceiling, so these counters are estimates." }
+        sample_rate: { type: integer }
+    Usage:
+      type: object
+      required: [month, projects, denominator, collecting]
+      properties:
+        month: { type: string }
+        denominator: { type: string, description: "What cpu_share is a share OF, in words. Never the fleet for a caller who cannot see the fleet." }
+        collecting: { type: boolean }
+        projects:
+          type: array
+          items: { $ref: "#/components/schemas/UsageProject" }
+    UsageProject:
+      type: object
+      required: [project_id, project_name, team_id, cpu_core_seconds, cpu_share, memory_bytes_mean, memory_bytes_peak, disk_bytes, requests, status_5xx, deploy_count, deploy_seconds, memory_byte_seconds]
+      properties:
+        project_id: { type: string }
+        project_name: { type: string }
+        team_id: { type: string }
+        cpu_core_seconds: { type: integer, format: int64 }
+        cpu_share: { type: number, description: "Of the denominator above, 0-1." }
+        memory_bytes_mean: { type: integer, format: int64 }
+        memory_bytes_peak: { type: integer, format: int64 }
+        memory_byte_seconds: { type: integer, format: int64 }
+        disk_bytes: { type: integer, format: int64 }
+        requests: { type: integer, format: int64 }
+        status_5xx: { type: integer, format: int64 }
+        deploy_count: { type: integer }
+        deploy_seconds: { type: integer, format: int64, description: "Build-and-rollout time, not wall time since somebody clicked deploy; queue and approval time are excluded." }
+    MetricsSettings:
+      type: object
+      required: [enabled, request_analytics, bucket_seconds]
+      properties:
+        enabled: { type: boolean, description: "Container CPU, memory and disk collection." }
+        request_analytics:
+          type: boolean
+          description: >-
+            Proxy access-log aggregation. OFF by default because paths are
+            application-authored data: normalisation removes id-shaped segments
+            and truncation removes depth, which covers the common
+            /reset/<token> shape but not every shape. Turning it on recreates
+            the Proxy container on each node once.
+        bucket_seconds: { type: integer, description: "Must divide an hour: 60, 300, 900 or 1800. Larger buckets cut the stored row count proportionally." }
 
     StatusPage:
       type: object
