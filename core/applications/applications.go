@@ -171,6 +171,12 @@ type Store interface {
 	// the boundary a credential may not cross.
 	GetRegistry(ctx context.Context, id string) (domain.Registry, error)
 	GetProject(ctx context.Context, id string) (domain.Project, error)
+	// ListGitHubInstallations is the OBSERVED cache of where the panel's App is
+	// installed (github-app.md §3). Attaching one is checked against it for the
+	// reason a registry is: a credential that cannot mint a token fails at the
+	// first deploy, and a dead end discovered five minutes into a build is a
+	// bug (ui-principles §11).
+	ListGitHubInstallations(ctx context.Context) ([]domain.GitHubInstallation, error)
 }
 
 // Sealer seals plaintext for storage at rest. *secret.Box satisfies it.
@@ -219,6 +225,9 @@ func (s *Service) Create(ctx context.Context, envID string, in CreateInput) (app
 	}
 	in, err = validateAndDefault(in)
 	if err != nil {
+		return domain.Application{}, "", err
+	}
+	if err := s.checkGitHubInstallation(ctx, in.Source); err != nil {
 		return domain.Application{}, "", err
 	}
 	if err := s.checkRegistries(ctx, env, in.Source, in.Build); err != nil {
@@ -412,6 +421,9 @@ func (s *Service) Update(ctx context.Context, appID string, in UpdateInput) (dom
 	if err != nil {
 		return domain.Application{}, fmt.Errorf("applications: getting environment: %w", err)
 	}
+	if err := s.checkGitHubInstallation(ctx, merged.Source); err != nil {
+		return domain.Application{}, err
+	}
 	if err := s.checkRegistries(ctx, env, merged.Source, merged.Build); err != nil {
 		return domain.Application{}, err
 	}
@@ -590,6 +602,34 @@ func (s *Service) checkRegistries(ctx context.Context, env domain.Environment, s
 	return nil
 }
 
+// checkGitHubInstallation refuses an installation the panel does not have.
+//
+// The cache is OBSERVED from GitHub and never authored (github-app.md §3), so
+// "not in it" means the App is not installed there — which is a thing the
+// operator fixes on GitHub, and the refusal says so. Unlike a registry there is
+// no team scoping to apply: the App is one panel-level credential, and which
+// repositories it can see is GitHub's answer, not ours.
+func (s *Service) checkGitHubInstallation(ctx context.Context, src domain.AppSource) error {
+	if src.GitHubInstallationID == nil {
+		return nil // the overwhelming majority: no lookup, no cost
+	}
+	installs, err := s.store.ListGitHubInstallations(ctx)
+	if err != nil {
+		return fmt.Errorf("applications: listing github installations: %w", err)
+	}
+	for _, in := range installs {
+		if in.InstallationID == *src.GitHubInstallationID {
+			return nil
+		}
+	}
+	if len(installs) == 0 {
+		return invalid("source.github_installation_id: this panel has no GitHub App installations — " +
+			"connect an App in Settings → GitHub and install it on the account that owns this repository")
+	}
+	return invalid("source.github_installation_id: the panel's GitHub App is not installed there — " +
+		"install it on that account, then refresh the installations in Settings → GitHub")
+}
+
 func (s *Service) checkRegistry(ctx context.Context, teamID, id, field string, allows func(domain.Registry) bool, refusal string) error {
 	reg, err := s.store.GetRegistry(ctx, id)
 	if err != nil {
@@ -727,6 +767,16 @@ func validateAndDefault(in CreateInput) (CreateInput, error) {
 			return in, err
 		}
 		in.Source.Repo = repo
+		// Both credentials at once is LEGAL and is not refused here.
+		// github-app.md §5: "both remain legal". The builder already has a
+		// precedence — the App credential, else the deploy key
+		// (agent/builder/builder.go) — and refusing the combination would also
+		// 400 a PATCH on an application that already carries both, because
+		// Update re-validates the MERGED result. The screen names which one
+		// wins instead, which is the honest treatment of a legal combination.
+		if in.Source.GitHubInstallationID != nil && *in.Source.GitHubInstallationID <= 0 {
+			return in, invalid("source.github_installation_id must be a GitHub installation id")
+		}
 		if in.Source.Branch == "" {
 			in.Source.Branch = "main"
 		}
@@ -739,6 +789,9 @@ func validateAndDefault(in CreateInput) (CreateInput, error) {
 		if in.Source.Image == "" {
 			return in, invalid(`source.image is required when source.kind is "image"`)
 		}
+		// Nothing is cloned, so a clone credential is meaningless here. Cleared
+		// rather than refused, exactly as repo and branch are below.
+		in.Source.GitHubInstallationID = nil
 		if len(in.Source.Image) > 512 || !validImageRef(in.Source.Image) {
 			return in, invalid("source.image must be a single OCI image reference")
 		}

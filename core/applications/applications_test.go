@@ -31,6 +31,8 @@ type fakeStore struct {
 	sharedKeys []string
 	// registries the panel knows about, by id (registries.md §5).
 	registries map[string]domain.Registry
+	// installations is the panel's GitHub App cache; empty means none connected.
+	installations []domain.GitHubInstallation
 	// registryLookups counts GetRegistry calls, so "an application that names
 	// no registry pays no lookup" is provable rather than assumed.
 	registryLookups int
@@ -156,6 +158,13 @@ func (f *fakeStore) GetRegistry(_ context.Context, id string) (domain.Registry, 
 		return domain.Registry{}, store.ErrNotFound
 	}
 	return reg, nil
+}
+
+// ListGitHubInstallations backs the check that an attached App installation is
+// one the panel actually has (github-app.md §3). Seeded per test via
+// fakeStore.installations; empty means the panel has no App connected.
+func (f *fakeStore) ListGitHubInstallations(_ context.Context) ([]domain.GitHubInstallation, error) {
+	return f.installations, nil
 }
 
 func (f *fakeStore) ListSharedVariableKeysInScope(_ context.Context, _, _ string) ([]string, error) {

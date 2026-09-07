@@ -71,7 +71,12 @@ type appSourceDTO struct {
 	Repo        string  `json:"repo"`
 	Branch      string  `json:"branch"`
 	DeployKeyID *string `json:"deploy_key_id"`
-	Image       string  `json:"image"` // OCI reference; set iff kind == "image"
+	// GitHubInstallationID is the App installation the clone token is minted
+	// from (github-app.md §5). Returned so a configured application can SHOW
+	// which credential it uses — a field that can be set and not read back is a
+	// field nobody can verify.
+	GitHubInstallationID *int64 `json:"github_installation_id"`
+	Image                string `json:"image"` // OCI reference; set iff kind == "image"
 	// RegistryID authenticates where this app's bits come from: the image for
 	// an image source, the private base image for a build (registries.md).
 	RegistryID *string `json:"registry_id"`
@@ -193,10 +198,14 @@ func toVolumeDTOs(vs []domain.VolumeMount) []appVolumeDTO {
 
 func toApplicationDTO(a domain.Application) applicationDTO {
 	return applicationDTO{
-		ID:                 a.ID,
-		EnvironmentID:      a.EnvironmentID,
-		Name:               a.Name,
-		Source:             appSourceDTO{Kind: a.Source.Kind, Repo: a.Source.Repo, Branch: a.Source.Branch, DeployKeyID: a.Source.DeployKeyID, Image: a.Source.Image, RegistryID: a.Source.RegistryID},
+		ID:            a.ID,
+		EnvironmentID: a.EnvironmentID,
+		Name:          a.Name,
+		Source: appSourceDTO{
+			Kind: a.Source.Kind, Repo: a.Source.Repo, Branch: a.Source.Branch,
+			DeployKeyID: a.Source.DeployKeyID, GitHubInstallationID: a.Source.GitHubInstallationID,
+			Image: a.Source.Image, RegistryID: a.Source.RegistryID,
+		},
 		Build:              appBuildDTO{Kind: a.Build.Kind, DockerfilePath: a.Build.DockerfilePath, Context: a.Build.Context, PushRegistryID: a.Build.PushRegistryID, PushRepository: a.Build.PushRepository},
 		Runtime:            appRuntimeDTO{ServerID: a.Runtime.ServerID, Port: a.Runtime.Port, Replicas: a.Runtime.Replicas, CPULimit: a.Runtime.CPULimit, MemoryLimitMB: a.Runtime.MemoryLimitMB},
 		Route:              appRouteDTO{Domain: a.Route.Domain, HTTPS: a.Route.HTTPS, PathPrefix: a.Route.PathPrefix},
@@ -223,12 +232,13 @@ func toApplicationDTO(a domain.Application) applicationDTO {
 type createApplicationRequest struct {
 	Name   string `json:"name"`
 	Source struct {
-		Kind        string  `json:"kind"`
-		Repo        string  `json:"repo"`
-		Branch      string  `json:"branch"`
-		DeployKeyID *string `json:"deploy_key_id"`
-		Image       string  `json:"image"`
-		RegistryID  *string `json:"registry_id"`
+		Kind                 string  `json:"kind"`
+		Repo                 string  `json:"repo"`
+		Branch               string  `json:"branch"`
+		DeployKeyID          *string `json:"deploy_key_id"`
+		GitHubInstallationID *int64  `json:"github_installation_id"`
+		Image                string  `json:"image"`
+		RegistryID           *string `json:"registry_id"`
 	} `json:"source"`
 	Build struct {
 		// AppBuild.kind is required by the OpenAPI schema, so every generated
@@ -287,8 +297,12 @@ func (r createApplicationRequest) toInput() applications.CreateInput {
 		https = *r.Route.HTTPS
 	}
 	return applications.CreateInput{
-		Name:    r.Name,
-		Source:  domain.AppSource{Kind: r.Source.Kind, Repo: r.Source.Repo, Branch: r.Source.Branch, DeployKeyID: r.Source.DeployKeyID, Image: r.Source.Image, RegistryID: r.Source.RegistryID},
+		Name: r.Name,
+		Source: domain.AppSource{
+			Kind: r.Source.Kind, Repo: r.Source.Repo, Branch: r.Source.Branch,
+			DeployKeyID: r.Source.DeployKeyID, GitHubInstallationID: r.Source.GitHubInstallationID,
+			Image: r.Source.Image, RegistryID: r.Source.RegistryID,
+		},
 		Build:   domain.AppBuild{Kind: r.Build.Kind, DockerfilePath: r.Build.DockerfilePath, Context: r.Build.Context, PushRegistryID: r.Build.PushRegistryID, PushRepository: r.Build.PushRepository},
 		Runtime: domain.AppRuntime{ServerID: r.Runtime.ServerID, Port: r.Runtime.Port, Replicas: r.Runtime.Replicas, CPULimit: r.Runtime.CPULimit, MemoryLimitMB: r.Runtime.MemoryLimitMB},
 		Route:   domain.AppRoute{Domain: r.Route.Domain, HTTPS: https, PathPrefix: r.Route.PathPrefix},
@@ -423,12 +437,13 @@ func (a *API) handleGetApplicationLogs(w http.ResponseWriter, r *http.Request) {
 type patchApplicationRequest struct {
 	Name   *string `json:"name"`
 	Source *struct {
-		Kind        string  `json:"kind"`
-		Repo        string  `json:"repo"`
-		Branch      string  `json:"branch"`
-		DeployKeyID *string `json:"deploy_key_id"`
-		Image       string  `json:"image"`
-		RegistryID  *string `json:"registry_id"`
+		Kind                 string  `json:"kind"`
+		Repo                 string  `json:"repo"`
+		Branch               string  `json:"branch"`
+		DeployKeyID          *string `json:"deploy_key_id"`
+		GitHubInstallationID *int64  `json:"github_installation_id"`
+		Image                string  `json:"image"`
+		RegistryID           *string `json:"registry_id"`
 	} `json:"source"`
 	Build *struct {
 		// Same contract mismatch as createApplicationRequest.Build — a client
@@ -478,7 +493,11 @@ func (a *API) handlePatchApplication(w http.ResponseWriter, r *http.Request) {
 	}
 	in := applications.UpdateInput{Name: req.Name}
 	if req.Source != nil {
-		in.Source = &domain.AppSource{Kind: req.Source.Kind, Repo: req.Source.Repo, Branch: req.Source.Branch, DeployKeyID: req.Source.DeployKeyID, Image: req.Source.Image, RegistryID: req.Source.RegistryID}
+		in.Source = &domain.AppSource{
+			Kind: req.Source.Kind, Repo: req.Source.Repo, Branch: req.Source.Branch,
+			DeployKeyID: req.Source.DeployKeyID, GitHubInstallationID: req.Source.GitHubInstallationID,
+			Image: req.Source.Image, RegistryID: req.Source.RegistryID,
+		}
 	}
 	if req.Build != nil {
 		in.Build = &domain.AppBuild{Kind: req.Build.Kind, DockerfilePath: req.Build.DockerfilePath, Context: req.Build.Context, PushRegistryID: req.Build.PushRegistryID, PushRepository: req.Build.PushRepository}

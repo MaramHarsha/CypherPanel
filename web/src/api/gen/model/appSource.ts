@@ -23,6 +23,15 @@ export interface AppSource {
   /** @nullable */
   deploy_key_id?: string | null;
   /**
+     * Clone this repository through the panel's GitHub App, using the installation with this id — the numbers `GET /github/app` lists, and the same one `GET /github/repositories` reports per repository.
+     *
+     * It is the alternative to `deploy_key_id`, not a companion to it: an installation token is minted per build and never stored, where a deploy key is a long-lived secret sitting in the database. Setting both is a 400 — two credentials for one clone is a configuration whose failure mode is "which one was actually used".
+     *
+     * Null is every application that does not use the App: a public repository, or a private one with a deploy key. Both are unchanged.
+     * @nullable
+     */
+  github_installation_id?: number | null;
+  /**
      * OCI image reference (registry/repository[:tag][@digest]); required for kind `image`, empty otherwise. The target agent pulls it — no build stage runs, and deploys go straight to rollout. A digest is immutable and fetched once; a tag is re-fetched on every deploy, so redeploying a moved tag runs the new image rather than a cached one.
      * @maxLength 512
      */

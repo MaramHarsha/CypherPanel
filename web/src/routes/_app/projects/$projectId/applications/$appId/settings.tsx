@@ -12,6 +12,7 @@ import {
   useUpdateApplication,
 } from "@/api/gen/applications/applications";
 import { useListDeployKeys } from "@/api/gen/deploy-keys/deploy-keys";
+import { useGetGitHubApp, useListGitHubRepositories } from "@/api/gen/panel/panel";
 import { useListRegistries } from "@/api/gen/registries/registries";
 import { useListDeployments } from "@/api/gen/deployments/deployments";
 import type { Application } from "@/api/gen/model";
@@ -56,6 +57,10 @@ function SettingsForm({
   const navigate = useNavigate();
   const qc = useQueryClient();
   const deployKeys = useListDeployKeys().data ?? [];
+  // Both empty on a panel with no App connected — both endpoints answer 200
+  // with [] for that case, which is why neither needs a gate of its own.
+  const repos = useListGitHubRepositories().data ?? [];
+  const installations = useGetGitHubApp().data?.installations ?? [];
   // Registries were creatable in Settings and attachable to NOTHING: an
   // application could not name one to pull its base image through, and a build
   // could not name one to push to — both of which the API has always accepted.
@@ -71,6 +76,11 @@ function SettingsForm({
   // API — which meant a private repository failed to clone with no way to fix
   // it from the screen that owns the source.
   const [deployKeyID, setDeployKeyID] = useState(initial.source.deploy_key_id ?? "");
+  // The App installation this repository is cloned through, as a string so the
+  // Select can hold it; "" means "not through the App".
+  const [installationID, setInstallationID] = useState(
+    initial.source.github_installation_id != null ? String(initial.source.github_installation_id) : "",
+  );
   const [registryID, setRegistryID] = useState(initial.source.registry_id ?? "");
   const [pushRegistryID, setPushRegistryID] = useState(initial.build.push_registry_id ?? "");
   const [pushRepository, setPushRepository] = useState(initial.build.push_repository ?? "");
@@ -107,6 +117,7 @@ function SettingsForm({
     repo !== initial.source.repo ||
     branch !== initial.source.branch ||
     deployKeyID !== (initial.source.deploy_key_id ?? "") ||
+    installationID !== (initial.source.github_installation_id != null ? String(initial.source.github_installation_id) : "") ||
     port !== String(initial.runtime.port) ||
     cpuLimit !== (initial.runtime.cpu_limit == null ? "" : String(initial.runtime.cpu_limit)) ||
     memLimit !== (initial.runtime.memory_limit_mb == null ? "" : String(initial.runtime.memory_limit_mb)) ||
@@ -223,6 +234,7 @@ function SettingsForm({
               repo,
               branch,
               deploy_key_id: deployKeyID || null,
+              github_installation_id: installationID ? Number(installationID) : null,
               registry_id: registryID || null,
             },
         build: {
@@ -302,6 +314,41 @@ function SettingsForm({
                 </Select>
               )}
             </Field>
+            {/* github-app.md §5: an application records `github_installation_id`
+                beside its `repo`, and that is what distinguishes "this GitHub
+                repository, through the App" from "this URL, through a deploy
+                key". Both are legal at once and the builder prefers the App, so
+                when both are set the screen says which one wins rather than
+                refusing a combination the spec allows. */}
+            {repos.length > 0 && (
+              <Field
+                label="GitHub App"
+                qualifier="· optional"
+                hint="Clones with a token minted for each build instead of a stored key. The repository above must be one the App can see."
+              >
+                {(id, describedBy) => (
+                  <Select
+                    id={id}
+                    aria-describedby={describedBy}
+                    value={installationID}
+                    onChange={(e) => setInstallationID(e.target.value)}
+                  >
+                    <option value="">Not through the App</option>
+                    {installations.map((i) => (
+                      <option key={i.installation_id} value={String(i.installation_id)}>
+                        {i.account_login} · {i.repo_selection === "all" ? "all repositories" : "selected repositories"}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+            )}
+            {installationID !== "" && deployKeyID !== "" && (
+              <p className="text-[12px] leading-[1.5] text-status-degraded-text">
+                Both credentials are set. The build uses the GitHub App token and ignores the deploy key — which is
+                fine, but the deploy key here is doing nothing.
+              </p>
+            )}
             <Field
               label="Deploy key"
               qualifier="· for a private repository"

@@ -11,6 +11,7 @@ import { useState, type FormEvent } from "react";
 import { getListApplicationsQueryKey, useCreateApplication } from "@/api/gen/applications/applications";
 import { AppBuildKind } from "@/api/gen/model";
 import { useListDeployKeys } from "@/api/gen/deploy-keys/deploy-keys";
+import { useListGitHubRepositories } from "@/api/gen/panel/panel";
 import { useListServers } from "@/api/gen/servers/servers";
 import { AdvancedSection } from "@/components/advanced-section";
 import { BuildStrategyField } from "@/components/build-strategy-field";
@@ -39,6 +40,10 @@ export function NewAppDialog({
   const qc = useQueryClient();
   const servers = useListServers();
   const deployKeys = useListDeployKeys().data ?? [];
+  // Empty on every panel with no App connected — the API answers 200 with []
+  // rather than an error for exactly that case, so this needs no gate of its
+  // own beyond "is there anything to pick".
+  const repos = useListGitHubRepositories().data ?? [];
   const [name, setName] = useState("");
   const [sourceKind, setSourceKind] = useState<"github" | "image">("github");
   const [repo, setRepo] = useState("");
@@ -49,6 +54,10 @@ export function NewAppDialog({
   // one — so a private repository was a dead end at the first screen, and the
   // application failed its first clone with no way to fix it.
   const [deployKeyID, setDeployKeyID] = useState("");
+  // Which App installation mints this repository's clone token, or null for
+  // "not through the App" — a public repository, or a private one with a deploy
+  // key. Set by picking a repository, cleared by typing a URL by hand.
+  const [installationID, setInstallationID] = useState<number | null>(null);
   const [domain, setDomain] = useState("");
   const [serverId, setServerId] = useState("");
   const [port, setPort] = useState("8080");
@@ -94,7 +103,18 @@ export function NewAppDialog({
         source:
           sourceKind === "image"
             ? { kind: "image", image }
-            : { kind: "github", repo, branch, deploy_key_id: deployKeyID || null },
+            : {
+                kind: "github",
+                repo,
+                branch,
+                // The two credentials are alternatives, and picking a
+                // repository through the App clears the other: whichever the
+                // operator chose last is the one they meant. Sending both would
+                // store a configuration whose behaviour is decided by the
+                // builder's precedence rather than by the person.
+                deploy_key_id: installationID === null ? deployKeyID || null : null,
+                github_installation_id: installationID,
+              },
         build: { kind: buildKind, dockerfile_path: dockerfile, context },
         runtime: { server_id: chosenServer, port: Number(port), replicas: 1 },
         route: { domain: domain || undefined, https: true, path_prefix: "" },
@@ -154,6 +174,48 @@ export function NewAppDialog({
             </Field>
             {sourceKind === "github" ? (
               <>
+                {/* Repository picking, github-app.md §5: "pick one" instead of
+                    "type a URL and hope". It appears only when the App is
+                    connected AND can see something — an empty list is the
+                    ordinary state of every panel that has not set one up, and a
+                    control offering nothing is worse than no control.
+
+                    It sets the CLONE URL, not `full_name`: the API needs a
+                    remote git can reach, and `acme/web` is refused for the same
+                    reason the placeholder below stopped suggesting it. */}
+                {repos.length > 0 && (
+                  <Field
+                    label="Repository from GitHub"
+                    qualifier="· optional"
+                    hint="Cloned with a token minted for each build, not a stored key. Pick one, or type a URL below."
+                  >
+                    {(id, describedBy) => (
+                      <Select
+                        id={id}
+                        aria-describedby={describedBy}
+                        value={installationID === null ? "" : repo}
+                        onChange={(e) => {
+                          const picked = repos.find((r) => r.clone_url === e.target.value);
+                          if (!picked) {
+                            setInstallationID(null);
+                            return;
+                          }
+                          setRepo(picked.clone_url);
+                          setBranch(picked.default_branch || "main");
+                          setInstallationID(picked.installation_id);
+                        }}
+                      >
+                        <option value="">Type a repository URL instead…</option>
+                        {repos.map((r) => (
+                          <option key={r.clone_url} value={r.clone_url}>
+                            {r.full_name}
+                            {r.private ? " · private" : ""}
+                          </option>
+                        ))}
+                      </Select>
+                    )}
+                  </Field>
+                )}
                 {/* The placeholder is a full URL because git needs one: it
                     reads a schemeless string as a LOCAL directory on the
                     builder, so the old `github.com/acme/web` suggestion
@@ -173,7 +235,13 @@ export function NewAppDialog({
                       className="mono"
                       spellCheck={false}
                       value={repo}
-                      onChange={(e) => setRepo(e.target.value)}
+                      onChange={(e) => {
+                        setRepo(e.target.value);
+                        // A hand-typed URL is not the repository that was
+                        // picked, so the installation that went with it no
+                        // longer applies.
+                        setInstallationID(null);
+                      }}
                       placeholder="https://github.com/acme/web"
                     />
                   )}

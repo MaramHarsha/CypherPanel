@@ -196,3 +196,55 @@ eight clone-URL shapes that must match, three that must not, the branch half of
 the match, and case-insensitivity. It is a real-database test because the whole
 question is what a Postgres regexp does, and a fake would only assert someone's
 reading of the documentation.
+
+## Implementation note — the credential was unreachable *(fixed 2026-09-07)*
+
+§5 says an application "records `github_installation_id` beside its existing
+`repo`", and the column, the store, the scheduler and the agent all did. The
+API had no such field, so nothing an operator could reach ever set one, and
+`GetGitCredential()` was `nil` on every build. The App could be connected,
+installed and listed, and no application could use it.
+
+Four things were wrong, and only the first was obvious.
+
+**The field was absent from the contract and both write paths.** `AppSource` in
+`openapi.yaml` listed six fields and not this one, and all three Go mappers in
+`handlers_applications.go` enumerated the same six literally, so create and
+patch both dropped it. It is now on the schema — one edit, because `Application`,
+`CreateApplicationRequest` and `PatchApplicationRequest` all `$ref` it — and on
+all three mappers.
+
+**PATCH actively destroyed it.** `Update` replaces `Source` wholesale and the
+SQL writes `github_installation_id = $31` unconditionally, so a value inserted by
+hand was wiped by the first save on the settings screen — which always sends the
+whole `source` object. Adding the field to the patch DTO is what fixes that; a
+test now asserts a `source`-carrying PATCH preserves it, and that clearing it
+still works, because moving an application *off* the App is the reverse of the
+migration this enables.
+
+**Preview environments dropped it.** `core/previews` built the cloned
+application's source field by field and copied only `kind`, `repo`, `branch` and
+`deploy_key_id`. So a preview of an App-sourced private application cloned
+anonymously and failed its first build. It now carries the installation *and*
+the pull registry, for the same reason: a preview of a private application is a
+build of a private repository.
+
+**Nothing was refused at save time.** An installation the panel does not have is
+now a 400 that names the remedy — install the App on that account — instead of a
+token-minting failure five minutes into a build. The check is against the
+observed installation cache, which is the only honest source: it is GitHub's
+answer, refreshed, never authored.
+
+**What was deliberately NOT done.** An earlier draft refused
+`github_installation_id` and `deploy_key_id` together. §5 says "both remain
+legal", the builder already has a precedence — the App credential, else the
+deploy key — and because `Update` re-validates the *merged* result, refusing the
+combination would have `400`-ed a PATCH on an application that already carried
+both. The settings screen names which one wins instead, which is the honest
+treatment of a legal combination.
+
+**The picker sets the clone URL, not `full_name`.** `GET /github/repositories`
+reports both; `acme/web` is refused by the repository validation for the same
+reason the create dialog stopped suggesting it — git reads a schemeless string
+as a local directory. The picker sets `clone_url` and the repository's default
+branch.

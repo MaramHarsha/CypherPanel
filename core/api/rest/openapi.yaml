@@ -8311,6 +8311,24 @@ components:
           description: Branch to build; defaults to `main` for git kinds, empty for `image`.
         deploy_key_id:
           type: [string, "null"]
+        github_installation_id:
+          type: [integer, "null"]
+          format: int64
+          description: >-
+            Clone this repository through the panel's GitHub App, using the
+            installation with this id — the numbers `GET /github/app` lists, and
+            the same one `GET /github/repositories` reports per repository.
+
+
+            It is the alternative to `deploy_key_id`, not a companion to it: an
+            installation token is minted per build and never stored, where a
+            deploy key is a long-lived secret sitting in the database. Setting
+            both is a 400 — two credentials for one clone is a configuration
+            whose failure mode is "which one was actually used".
+
+
+            Null is every application that does not use the App: a public
+            repository, or a private one with a deploy key. Both are unchanged.
         image:
           type: string
           maxLength: 512

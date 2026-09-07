@@ -721,6 +721,16 @@ func (f *fakeAppsStore) GetRegistry(_ context.Context, _ string) (domain.Registr
 	return domain.Registry{}, store.ErrNotFound
 }
 
+// ListGitHubInstallations backs the application-side App check
+// (github-app.md §3). This fake reports the one installation the GitHub tests
+// attach; every other id is refused, which is the behaviour under test.
+func (f *fakeAppsStore) ListGitHubInstallations(_ context.Context) ([]domain.GitHubInstallation, error) {
+	return []domain.GitHubInstallation{{
+		ID: "ghi_test", InstallationID: 4242, AccountLogin: "acme",
+		AccountType: "Organization", RepoSelection: "all",
+	}}, nil
+}
+
 // ListSharedVariableKeysInScope backs the write-time {{shared.KEY}} check
 // (shared-variables.md §3). Empty: no shared variable resolves in these tests,
 // so any reference an env-var write carries is a 400.
