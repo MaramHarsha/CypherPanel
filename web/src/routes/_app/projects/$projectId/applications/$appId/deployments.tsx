@@ -343,7 +343,21 @@ function DeploymentsTab() {
       {column ? (
         <aside
           aria-label="Deployment detail"
-          className="-my-6 -mr-8 flex min-h-[560px] w-[460px] flex-none flex-col border-l-[1.5px] border-border-strong bg-toast text-toast-text"
+          // Sticky and viewport-bounded, so the LOG scrolls inside its own box
+          // rather than growing the page. It had only a min-height, so a long
+          // build made the whole document taller and taller: reading the tail
+          // of a log meant scrolling the page past the deployment list, and the
+          // list header scrolled away with it.
+          //
+          // top-14 is the 56px top bar, and the height subtracts it so the
+          // panel ends exactly at the viewport edge. min-h-0 is what lets the
+          // LogViewer's own flex-1 resolve against a bounded parent — without
+          // it the child would still size to its content.
+          className={cn(
+            "-my-6 -mr-8 flex w-[460px] flex-none flex-col border-l-[1.5px] border-border-strong bg-toast text-toast-text",
+            "lg:sticky lg:top-14 lg:h-[calc(100vh-3.5rem)] lg:min-h-0",
+            "max-lg:min-h-[560px]",
+          )}
         >
           {dep && (
             <div className="flex items-baseline gap-2.5 px-6 pt-[22px]">
@@ -616,7 +630,11 @@ function DeployPanel({
   });
   const { rollback, state } = useRollbackAction(appId, projectId);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const frame = cn("flex min-h-0 flex-col px-6 pb-[22px]", className);
+  // flex-1 so this fills the now-bounded aside, and min-h-0 so the LogViewer
+  // inside it can shrink below its content — without both, the viewer's own
+  // flex-1 resolves against an unbounded parent and the log grows the page
+  // instead of scrolling in its own box.
+  const frame = cn("flex min-h-0 flex-1 flex-col px-6 pb-[22px]", className);
 
   // The panel is the one surface an operator stares at while something is
   // happening, so it owes them the same four states as any page: an empty

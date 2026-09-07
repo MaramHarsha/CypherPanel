@@ -12,6 +12,7 @@ import {
   useUpdateApplication,
 } from "@/api/gen/applications/applications";
 import { useListDeployKeys } from "@/api/gen/deploy-keys/deploy-keys";
+import { useListRegistries } from "@/api/gen/registries/registries";
 import { useListDeployments } from "@/api/gen/deployments/deployments";
 import type { Application } from "@/api/gen/model";
 import { useListPreviews } from "@/api/gen/previews/previews";
@@ -55,6 +56,12 @@ function SettingsForm({
   const navigate = useNavigate();
   const qc = useQueryClient();
   const deployKeys = useListDeployKeys().data ?? [];
+  // Registries were creatable in Settings and attachable to NOTHING: an
+  // application could not name one to pull its base image through, and a build
+  // could not name one to push to — both of which the API has always accepted.
+  // can_pull / can_push are checked when a registry is ATTACHED, so the two
+  // pickers offer different sets rather than failing after a five-minute build.
+  const registries = useListRegistries().data ?? [];
   const [name, setName] = useState(initial.name);
   const [repo, setRepo] = useState(initial.source.repo);
   const [branch, setBranch] = useState(initial.source.branch);
@@ -64,6 +71,12 @@ function SettingsForm({
   // API — which meant a private repository failed to clone with no way to fix
   // it from the screen that owns the source.
   const [deployKeyID, setDeployKeyID] = useState(initial.source.deploy_key_id ?? "");
+  const [registryID, setRegistryID] = useState(initial.source.registry_id ?? "");
+  const [pushRegistryID, setPushRegistryID] = useState(initial.build.push_registry_id ?? "");
+  const [pushRepository, setPushRepository] = useState(initial.build.push_repository ?? "");
+  const [https, setHTTPS] = useState(initial.route.https);
+  const [healthInterval, setHealthInterval] = useState(String(initial.health.interval_seconds));
+  const [healthTimeout, setHealthTimeout] = useState(String(initial.health.timeout_seconds));
   const [image, setImage] = useState(initial.source.image ?? "");
   // An image-source app has no repository, branch, or build step — showing
   // those fields would invite edits the server rejects.
@@ -99,6 +112,12 @@ function SettingsForm({
     memLimit !== (initial.runtime.memory_limit_mb == null ? "" : String(initial.runtime.memory_limit_mb)) ||
     healthPath !== initial.health.path ||
     healthRetries !== String(initial.health.retries) ||
+    healthInterval !== String(initial.health.interval_seconds) ||
+    healthTimeout !== String(initial.health.timeout_seconds) ||
+    registryID !== (initial.source.registry_id ?? "") ||
+    pushRegistryID !== (initial.build.push_registry_id ?? "") ||
+    pushRepository !== (initial.build.push_repository ?? "") ||
+    https !== initial.route.https ||
     image !== (initial.source.image ?? "") ||
     domain !== (initial.route.domain ?? "") ||
     normalizePrefix(pathPrefix) !== normalizePrefix(initial.route.path_prefix) ||
@@ -199,8 +218,21 @@ function SettingsForm({
           ? { ...initial.source, image }
           : // Empty means "no key": a public repository needs none, and the API
             // reads null as exactly that.
-            { ...initial.source, repo, branch, deploy_key_id: deployKeyID || null },
-        build: { ...initial.build, kind: buildKind, dockerfile_path: dockerfile, context },
+            {
+              ...initial.source,
+              repo,
+              branch,
+              deploy_key_id: deployKeyID || null,
+              registry_id: registryID || null,
+            },
+        build: {
+          ...initial.build,
+          kind: buildKind,
+          dockerfile_path: dockerfile,
+          context,
+          push_registry_id: pushRegistryID || null,
+          push_repository: pushRepository.trim(),
+        },
         runtime: {
           port: Number(port) || initial.runtime.port,
           // Blank means "no limit", which the API reads as null — not zero,
@@ -208,8 +240,14 @@ function SettingsForm({
           cpu_limit: cpuLimit.trim() === "" ? null : Number(cpuLimit),
           memory_limit_mb: memLimit.trim() === "" ? null : Number(memLimit),
         },
-        health: { ...initial.health, path: healthPath, retries: Number(healthRetries) || initial.health.retries },
-        route: { ...initial.route, domain: domain || undefined, path_prefix: prefix },
+        health: {
+          ...initial.health,
+          path: healthPath,
+          retries: Number(healthRetries) || initial.health.retries,
+          interval_seconds: Number(healthInterval) || initial.health.interval_seconds,
+          timeout_seconds: Number(healthTimeout) || initial.health.timeout_seconds,
+        },
+        route: { ...initial.route, domain: domain || undefined, path_prefix: prefix, https },
         preview_enabled: previewEnabled,
         preview_base_domain: previewDomain.trim(),
         preview_ttl_hours: Number(previewTTL) || 72,
@@ -238,6 +276,22 @@ function SettingsForm({
                 {(id) => <Input id={id} value={branch} onChange={(e) => setBranch(e.target.value)} className="mono" />}
               </Field>
             </div>
+            <Field
+              label="Pull registry"
+              qualifier="· optional"
+              hint="For a private base image in your Dockerfile. Only registries marked as allowing pulls are listed."
+            >
+              {(id, describedBy) => (
+                <Select id={id} aria-describedby={describedBy} value={registryID} onChange={(e) => setRegistryID(e.target.value)}>
+                  <option value="">None</option>
+                  {registries.filter((r) => r.can_pull).map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name} · {r.url}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
             <Field
               label="Deploy key"
               qualifier="· for a private repository"
@@ -300,6 +354,44 @@ function SettingsForm({
             </div>
           </>
         )}
+        {!isImageSource && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field
+              label="Push the built image to"
+              qualifier="· optional"
+              hint="Registries that allow pushes. Leave as None to keep the image on the builder — no registry is ever required."
+            >
+              {(id, describedBy) => (
+                <Select
+                  id={id}
+                  aria-describedby={describedBy}
+                  value={pushRegistryID}
+                  onChange={(e) => setPushRegistryID(e.target.value)}
+                >
+                  <option value="">None — keep it local</option>
+                  {registries.filter((r) => r.can_push).map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name} · {r.url}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+            <Field label="Push repository" qualifier="· optional" hint="Defaults to the application's own name.">
+              {(id, describedBy) => (
+                <Input
+                  id={id}
+                  aria-describedby={describedBy}
+                  value={pushRepository}
+                  onChange={(e) => setPushRepository(e.target.value)}
+                  placeholder="acme/web"
+                  className="mono"
+                />
+              )}
+            </Field>
+          </div>
+        )}
+
         <Eyebrow className="pt-4">Runtime</Eyebrow>
         <div className="grid gap-3 sm:grid-cols-3">
           <Field
@@ -376,6 +468,32 @@ function SettingsForm({
             )}
           </Field>
         </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Interval" qualifier="· seconds" hint="Between probes while waiting for the new container.">
+            {(id, describedBy) => (
+              <Input
+                id={id}
+                aria-describedby={describedBy}
+                inputMode="numeric"
+                value={healthInterval}
+                onChange={(e) => setHealthInterval(e.target.value)}
+                className="mono"
+              />
+            )}
+          </Field>
+          <Field label="Timeout" qualifier="· seconds" hint="How long one probe waits before it counts as failed.">
+            {(id, describedBy) => (
+              <Input
+                id={id}
+                aria-describedby={describedBy}
+                inputMode="numeric"
+                value={healthTimeout}
+                onChange={(e) => setHealthTimeout(e.target.value)}
+                className="mono"
+              />
+            )}
+          </Field>
+        </div>
 
         {/* Canvas 13c: the route is its own section — the domain, the path it
             answers on, and one row per hostname saying how it is served. The
@@ -399,6 +517,21 @@ function SettingsForm({
             )}
           </Field>
         </div>
+        <label className="flex items-start gap-2.5">
+          <input
+            type="checkbox"
+            checked={https}
+            onChange={(e) => setHTTPS(e.currentTarget.checked)}
+            className="mt-0.5 size-3.5 accent-accent"
+          />
+          <span className="min-w-0">
+            <span className="block text-[13px] font-medium text-text">Serve this domain over HTTPS</span>
+            <span className="block text-[12.5px] leading-[1.5] text-text-mid">
+              A certificate is requested automatically once a certificate issuer is configured. Without one the route
+              is served over plain HTTP and the panel says so, rather than promising a certificate it cannot get.
+            </span>
+          </span>
+        </label>
         <RouteStatus app={initial} />
         <p className="text-[12px] leading-relaxed text-text-faint">
           HTTP→HTTPS is automatic once issued. Wildcards, BYO certificates, and custom redirects are deliberately
