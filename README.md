@@ -23,15 +23,15 @@ The tagline is a measurement, not a boast:
 
 | | Coolify | Dokploy | CypherPanel |
 |---|---|---|---|
-| **Platform RAM, idle** | ~2 GB stack | **~1 GiB, measured on a fresh VPS** | **34 MB** control plane · **17 MB** per agent |
-| **Platform disk before your first app** | — | **3.84 GB** of images and volumes | One binary + Postgres |
+| **Platform RAM, idle** | ~2 GB stack | **~1 GiB, measured on a fresh VPS** | **~422 MiB**, measured the same way&nbsp;<sup>[1]</sup> |
+| **Platform disk before your first app** | — | **3.84 GB** of images and volumes | **~0.92 GB** — two binaries, Postgres, Traefik |
 | **On a 1 GB VPS** | No | **Cannot run at all** — the baseline exceeds total RAM | The target this was designed against&nbsp;<sup>[1]</sup> |
 | What you install | Laravel, Redis, Horizon, Soketi | Node SSR, Redis, BullMQ, Postgres | One Go binary + Postgres |
 | Orchestration | SSH from the panel — keys stored, fleet-wide liability | Docker Swarm lock-in | Outbound-only mTLS agents, no stored credentials |
 | Where builds run | Ad hoc over SSH | On the panel's own node | On worker agents — **never** on the control plane |
 | Deploys | Imperative scripts | Imperative scripts | Desired-state reconciliation — drift repair and crash recovery by construction |
 
-<sup>[1]</sup> Where each number comes from, because a table like this is worthless if you cannot check it. **CypherPanel:** measured RSS for the `cypherd` and `cypher-agent` processes at idle, against budgets of 300 MB and 50 MB ([vision.md](docs/vision.md)). **Dokploy:** a whole-box measurement on a fresh Ubuntu VPS, recorded with its method in [research/dokploy.md](research/dokploy.md) — the "cannot run at all" is that document's own conclusion. **Coolify:** derived from the components its stack runs, not measured whole-box. The last row is the design goal stated in [vision.md](docs/vision.md) ("a $5 VPS runs the control plane *and* two deployed apps comfortably"); a like-for-like whole-box benchmark of CypherPanel is still owed, so read it as the target it is rather than as a number we have published.
+<sup>[1]</sup> Where each number comes from, because a table like this is worthless if you cannot check it. **CypherPanel:** the whole platform — `cypherd`, the agent, Postgres, Traefik, *and Docker itself* — measured process by process and container by container, with the method and the raw figures in [research/footprint.md](research/footprint.md). This table used to compare our two processes' RSS (34 MB + 17 MB) against Dokploy's whole-stack number, which made us look about 30× lighter; measured the same way it is **about 2.4×**, and that is the number here. Two thirds of ours is Docker, which every platform in this table requires: CypherPanel's own share is 146 MiB. **Dokploy:** a whole-box measurement on a fresh Ubuntu VPS of the same class, recorded with its method in [research/dokploy.md](research/dokploy.md) — the "cannot run at all" is that document's own conclusion. **Coolify:** derived from the components its stack runs, not measured whole-box, and it stays an estimate until someone measures it. Our own figure is from the project's live install rather than a fresh VPS, which biases it *upward*; a clean-room run belongs to the release rehearsal.
 
 > **Status.** Phases 1–3 are complete and Phase 4 is nearly closed. The deploy pipeline is proven end to end in CI against real Docker and real Traefik; the state model, the security model, the template catalog and the web UI are all in. See [What works today](#what-works-today) for the honest checklist — including what is CI-proven versus verified by hand — and [docs/roadmap.md](docs/roadmap.md) for the phase gates.
 >
@@ -93,7 +93,7 @@ Full vocabulary in [docs/glossary.md](docs/glossary.md).
 - **Live and replayed logs** — build and runtime output streams over SSE, and a client joining mid-build replays what it missed from a bounded retention window.
 - **Crash recovery** — plane killed for 45 s and agents reconverge; agent killed with a deploy pending and the durable queue delivers it on restart, unaided.
 - **Revocation** — deleting a server severs its live connection and refuses its still-valid certificate.
-- **Footprints inside budget** — 34 MB plane / 17 MB agent RSS at idle, against budgets of 300 and 50.
+- **Footprints inside budget** — 47 MB plane / 21 MB agent RSS on a live install, against budgets of 300 and 50; ~422 MiB for the whole platform including Docker, Postgres and Traefik ([research/footprint.md](research/footprint.md)).
 
 **The state model** (Phase 3) — plane services and agent reconcilers with unit coverage and real-Postgres store tests in CI, each additionally verified end to end by hand:
 
