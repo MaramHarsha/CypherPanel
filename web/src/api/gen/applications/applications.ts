@@ -27,6 +27,7 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AppAccess,
   Application,
   ApplicationDNS,
   BadRequestResponse,
@@ -36,11 +37,21 @@ import type {
   EnvVarKeys,
   Error,
   ForbiddenResponse,
+  GetApplicationMetricsParams,
+  GetApplicationTrafficParams,
   NotFoundResponse,
   PatchApplicationRequest,
+  PreviewPasswordResult,
+  ResourceMetrics,
+  ResourceTraffic,
+  SetAppAccessRequest,
   SetEnvVarRequest,
+  SetPreviewPasswordRequest,
+  SetVolumeBackupRequest,
   StreamApplicationLogsParams,
-  UnauthorizedResponse
+  UnauthorizedResponse,
+  VolumeBackup,
+  VolumeBackupRecord
 } from '../model';
 
 import { apiFetch } from '../../client.ts';
@@ -782,6 +793,1061 @@ export function useStreamApplicationLogs<TData = Awaited<ReturnType<typeof strea
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getStreamApplicationLogsQueryOptions(id,params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getGetApplicationAccessUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/applications/${id}/access`
+}
+
+/**
+ * @summary Who may reach this application through the Proxy (member+)
+ */
+export const getApplicationAccess = async (id: string, options?: RequestInit): Promise<AppAccess> => {
+
+  return apiFetch<AppAccess>(getGetApplicationAccessUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetApplicationAccessQueryKey = (id: string,) => {
+    return [
+    `/api/v1/applications/${id}/access`
+    ] as const;
+    }
+
+
+export const getGetApplicationAccessQueryOptions = <TData = Awaited<ReturnType<typeof getApplicationAccess>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationAccess>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetApplicationAccessQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getApplicationAccess>>> = ({ signal }) => getApplicationAccess(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getApplicationAccess>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetApplicationAccessQueryResult = NonNullable<Awaited<ReturnType<typeof getApplicationAccess>>>
+export type GetApplicationAccessQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useGetApplicationAccess<TData = Awaited<ReturnType<typeof getApplicationAccess>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationAccess>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getApplicationAccess>>,
+          TError,
+          Awaited<ReturnType<typeof getApplicationAccess>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetApplicationAccess<TData = Awaited<ReturnType<typeof getApplicationAccess>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationAccess>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getApplicationAccess>>,
+          TError,
+          Awaited<ReturnType<typeof getApplicationAccess>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetApplicationAccess<TData = Awaited<ReturnType<typeof getApplicationAccess>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationAccess>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Who may reach this application through the Proxy (member+)
+ */
+
+export function useGetApplicationAccess<TData = Awaited<ReturnType<typeof getApplicationAccess>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationAccess>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetApplicationAccessQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getSetApplicationAccessUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/applications/${id}/access`
+}
+
+/**
+ * Wholesale, because the list IS the policy: adding and removing one CIDR at a time through two routes would make "what does this allow right now" a question with two answers mid-edit.
+ *
+ * Entries are normalized — a bare address becomes a single-host prefix, and a prefix is masked — so what is stored is the network the operator described rather than a host address that looks like one. An enabled allowlist with no entries is refused: empty meaning "allow nothing" is a lockout nobody typed, and empty meaning "allow everything" is a control that silently does not apply.
+ *
+ * This is CURRENT application state, not part of a revision snapshot. A rollback must never lift a lockout or restore a deleted entry.
+ * @summary Replace the IP allowlist (member+)
+ */
+export const setApplicationAccess = async (id: string,
+    setAppAccessRequest: SetAppAccessRequest, options?: RequestInit): Promise<AppAccess> => {
+
+  return apiFetch<AppAccess>(getSetApplicationAccessUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(setAppAccessRequest)
+  }
+);}
+
+
+
+
+
+export const getSetApplicationAccessMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setApplicationAccess>>, TError,{id: string;data: SetAppAccessRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setApplicationAccess>>, TError,{id: string;data: SetAppAccessRequest}, TContext> => {
+
+const mutationKey = ['setApplicationAccess'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setApplicationAccess>>, {id: string;data: SetAppAccessRequest}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  setApplicationAccess(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetApplicationAccessMutationResult = NonNullable<Awaited<ReturnType<typeof setApplicationAccess>>>
+    export type SetApplicationAccessMutationBody = SetAppAccessRequest
+    export type SetApplicationAccessMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Replace the IP allowlist (member+)
+ */
+export const useSetApplicationAccess = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setApplicationAccess>>, TError,{id: string;data: SetAppAccessRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setApplicationAccess>>,
+        TError,
+        {id: string;data: SetAppAccessRequest},
+        TContext
+      > => {
+      return useMutation(getSetApplicationAccessMutationOptions(options), queryClient);
+    }
+    export const getSetPreviewPasswordUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/applications/${id}/access/preview-password`
+}
+
+/**
+ * Gates PREVIEW environments only — every `pr-*` environment asks for it before serving, so clients see staging and the internet does not. It is deliberately not applied to standing environments: a flag left on must not lock production behind a passphrase nobody remembers setting.
+ *
+ * The passphrase is bcrypt-hashed and only the hash is stored; the plaintext is returned in THIS response and never again, which is the contract `reset-password` already has. An empty passphrase turns the gate off and forgets the hash — turning it off while keeping the hash would leave a credential nobody can see and nobody can rotate.
+ * @summary Set, rotate or clear the preview passphrase (member+)
+ */
+export const setPreviewPassword = async (id: string,
+    setPreviewPasswordRequest: SetPreviewPasswordRequest, options?: RequestInit): Promise<PreviewPasswordResult> => {
+
+  return apiFetch<PreviewPasswordResult>(getSetPreviewPasswordUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(setPreviewPasswordRequest)
+  }
+);}
+
+
+
+
+
+export const getSetPreviewPasswordMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setPreviewPassword>>, TError,{id: string;data: SetPreviewPasswordRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setPreviewPassword>>, TError,{id: string;data: SetPreviewPasswordRequest}, TContext> => {
+
+const mutationKey = ['setPreviewPassword'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setPreviewPassword>>, {id: string;data: SetPreviewPasswordRequest}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  setPreviewPassword(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetPreviewPasswordMutationResult = NonNullable<Awaited<ReturnType<typeof setPreviewPassword>>>
+    export type SetPreviewPasswordMutationBody = SetPreviewPasswordRequest
+    export type SetPreviewPasswordMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Set, rotate or clear the preview passphrase (member+)
+ */
+export const useSetPreviewPassword = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setPreviewPassword>>, TError,{id: string;data: SetPreviewPasswordRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setPreviewPassword>>,
+        TError,
+        {id: string;data: SetPreviewPasswordRequest},
+        TContext
+      > => {
+      return useMutation(getSetPreviewPasswordMutationOptions(options), queryClient);
+    }
+    export const getStartMaintenanceUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/applications/${id}/maintenance`
+}
+
+/**
+ * A SERVICE SWAP, not a middleware. Traefik cannot return a body of ours, so the node runs a small responder container and the route's rule, TLS, allowlist and basic auth all stay exactly as they were while the load balancer's server moves. The application keeps running, keeps passing its health gate and can still be deployed underneath — a deploy simply flips a route that currently points elsewhere.
+ *
+ * While maintenance is on, NOBODY reaches the app through the front door, including an allowlisted operator. An allowlist bypass was considered and rejected: it would make maintenance mean different things depending on a second toggle's contents, and an operator who allowlisted the office would never see the page they are showing the world.
+ *
+ * Idempotent, and its own sub-resource rather than a field on `PUT /access` — the caller that most wants it is a migration script, and a script that had to read-modify-write the allowlist to raise a page would be one lost race away from deleting it. There is no auto-expiry: a window that lifts itself while the migration is still running publishes a half-migrated application to the internet.
+ * @summary Serve the maintenance page instead of the app (member+)
+ */
+export const startMaintenance = async (id: string, options?: RequestInit): Promise<AppAccess> => {
+
+  return apiFetch<AppAccess>(getStartMaintenanceUrl(id),
+  {
+    ...options,
+    method: 'PUT'
+
+
+  }
+);}
+
+
+
+
+
+export const getStartMaintenanceMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startMaintenance>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof startMaintenance>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['startMaintenance'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startMaintenance>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  startMaintenance(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StartMaintenanceMutationResult = NonNullable<Awaited<ReturnType<typeof startMaintenance>>>
+
+    export type StartMaintenanceMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Serve the maintenance page instead of the app (member+)
+ */
+export const useStartMaintenance = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startMaintenance>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof startMaintenance>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getStartMaintenanceMutationOptions(options), queryClient);
+    }
+    export const getEndMaintenanceUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/applications/${id}/maintenance`
+}
+
+/**
+ * Points the route back at whatever revision is current by then, and the responder is removed from the node once no resource there is still in maintenance. Idempotent.
+ * @summary Take the maintenance page down (member+)
+ */
+export const endMaintenance = async (id: string, options?: RequestInit): Promise<AppAccess> => {
+
+  return apiFetch<AppAccess>(getEndMaintenanceUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getEndMaintenanceMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof endMaintenance>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof endMaintenance>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['endMaintenance'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof endMaintenance>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  endMaintenance(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type EndMaintenanceMutationResult = NonNullable<Awaited<ReturnType<typeof endMaintenance>>>
+
+    export type EndMaintenanceMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Take the maintenance page down (member+)
+ */
+export const useEndMaintenance = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof endMaintenance>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof endMaintenance>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getEndMaintenanceMutationOptions(options), queryClient);
+    }
+    export const getGetApplicationMetricsUrl = (id: string,
+    params?: GetApplicationMetricsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/applications/${id}/metrics?${stringifiedParams}` : `/api/v1/applications/${id}/metrics`
+}
+
+/**
+ * The series carries no averages and no percentiles, because neither merges. `cpu_percent` and `memory_bytes` on each point are DERIVED from accumulators over that point's `covered_seconds`, so a window of any length is exact rather than an average-of-averages.
+ *
+ * `covered_seconds` is why an agent restart reads as a partial bucket instead of a dip in traffic, and `collecting: false` is why a resource with no data reads "collection is off" rather than as an idle application at 0%.
+ *
+ * Per-resource disk figures DO NOT SUM to the host's usage: image layers are shared, and a base layer used by four applications is counted for each of them. The number an operator should trust for capacity is the one on the Server.
+ * @summary CPU, memory and disk over a window (member+)
+ */
+export const getApplicationMetrics = async (id: string,
+    params?: GetApplicationMetricsParams, options?: RequestInit): Promise<ResourceMetrics> => {
+
+  return apiFetch<ResourceMetrics>(getGetApplicationMetricsUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetApplicationMetricsQueryKey = (id: string,
+    params?: GetApplicationMetricsParams,) => {
+    return [
+    `/api/v1/applications/${id}/metrics`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetApplicationMetricsQueryOptions = <TData = Awaited<ReturnType<typeof getApplicationMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string,
+    params?: GetApplicationMetricsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationMetrics>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetApplicationMetricsQueryKey(id,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getApplicationMetrics>>> = ({ signal }) => getApplicationMetrics(id,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getApplicationMetrics>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetApplicationMetricsQueryResult = NonNullable<Awaited<ReturnType<typeof getApplicationMetrics>>>
+export type GetApplicationMetricsQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useGetApplicationMetrics<TData = Awaited<ReturnType<typeof getApplicationMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params: undefined |  GetApplicationMetricsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationMetrics>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getApplicationMetrics>>,
+          TError,
+          Awaited<ReturnType<typeof getApplicationMetrics>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetApplicationMetrics<TData = Awaited<ReturnType<typeof getApplicationMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params?: GetApplicationMetricsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationMetrics>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getApplicationMetrics>>,
+          TError,
+          Awaited<ReturnType<typeof getApplicationMetrics>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetApplicationMetrics<TData = Awaited<ReturnType<typeof getApplicationMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params?: GetApplicationMetricsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationMetrics>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary CPU, memory and disk over a window (member+)
+ */
+
+export function useGetApplicationMetrics<TData = Awaited<ReturnType<typeof getApplicationMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params?: GetApplicationMetricsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationMetrics>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetApplicationMetricsQueryOptions(id,params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getGetApplicationTrafficUrl = (id: string,
+    params?: GetApplicationTrafficParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/applications/${id}/traffic?${stringifiedParams}` : `/api/v1/applications/${id}/traffic`
+}
+
+/**
+ * The whole screen in one response — summary, series and top paths — because it is one screen, and three round trips for one card is how a panel starts feeling slow.
+ *
+ * Percentiles are computed once from ONE summed histogram, never averaged from the buckets' own percentiles: two 5-minute buckets with p95 = 100 ms and p95 = 2000 ms have an hour-p95 that is neither the mean nor the max of them.
+ *
+ * Paths are normalised on the node — no query string, at most three segments, id-shaped segments replaced with `:id` — and capped, with everything past the cap folded into `(other)` so the rows always reconcile with the request count. That is a heuristic, not an inventory: an application whose real route is `/v1/2024/report` sees it rewritten.
+ *
+ * `sampled: true` means the node exceeded its line-rate ceiling and fell back to 1-in-N, so the counters are estimates scaled back up. It is labelled rather than quietly presented as exact.
+ * @summary Requests, statuses, latency and top paths (member+)
+ */
+export const getApplicationTraffic = async (id: string,
+    params?: GetApplicationTrafficParams, options?: RequestInit): Promise<ResourceTraffic> => {
+
+  return apiFetch<ResourceTraffic>(getGetApplicationTrafficUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetApplicationTrafficQueryKey = (id: string,
+    params?: GetApplicationTrafficParams,) => {
+    return [
+    `/api/v1/applications/${id}/traffic`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetApplicationTrafficQueryOptions = <TData = Awaited<ReturnType<typeof getApplicationTraffic>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string,
+    params?: GetApplicationTrafficParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationTraffic>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetApplicationTrafficQueryKey(id,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getApplicationTraffic>>> = ({ signal }) => getApplicationTraffic(id,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getApplicationTraffic>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetApplicationTrafficQueryResult = NonNullable<Awaited<ReturnType<typeof getApplicationTraffic>>>
+export type GetApplicationTrafficQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useGetApplicationTraffic<TData = Awaited<ReturnType<typeof getApplicationTraffic>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params: undefined |  GetApplicationTrafficParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationTraffic>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getApplicationTraffic>>,
+          TError,
+          Awaited<ReturnType<typeof getApplicationTraffic>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetApplicationTraffic<TData = Awaited<ReturnType<typeof getApplicationTraffic>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params?: GetApplicationTrafficParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationTraffic>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getApplicationTraffic>>,
+          TError,
+          Awaited<ReturnType<typeof getApplicationTraffic>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetApplicationTraffic<TData = Awaited<ReturnType<typeof getApplicationTraffic>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params?: GetApplicationTrafficParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationTraffic>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Requests, statuses, latency and top paths (member+)
+ */
+
+export function useGetApplicationTraffic<TData = Awaited<ReturnType<typeof getApplicationTraffic>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params?: GetApplicationTrafficParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApplicationTraffic>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetApplicationTrafficQueryOptions(id,params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getGetVolumeBackupUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/applications/${id}/volume-backup`
+}
+
+/**
+ * Answers `null` when the application has no schedule. That is a normal state — most applications never need one — so it is not a 404: a 404 here would be indistinguishable from "no such application".
+ * @summary The application's volume backup schedule (member+)
+ */
+export const getVolumeBackup = async (id: string, options?: RequestInit): Promise<VolumeBackup | null> => {
+
+  return apiFetch<VolumeBackup | null>(getGetVolumeBackupUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetVolumeBackupQueryKey = (id: string,) => {
+    return [
+    `/api/v1/applications/${id}/volume-backup`
+    ] as const;
+    }
+
+
+export const getGetVolumeBackupQueryOptions = <TData = Awaited<ReturnType<typeof getVolumeBackup>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getVolumeBackup>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetVolumeBackupQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getVolumeBackup>>> = ({ signal }) => getVolumeBackup(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getVolumeBackup>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetVolumeBackupQueryResult = NonNullable<Awaited<ReturnType<typeof getVolumeBackup>>>
+export type GetVolumeBackupQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useGetVolumeBackup<TData = Awaited<ReturnType<typeof getVolumeBackup>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getVolumeBackup>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getVolumeBackup>>,
+          TError,
+          Awaited<ReturnType<typeof getVolumeBackup>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetVolumeBackup<TData = Awaited<ReturnType<typeof getVolumeBackup>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getVolumeBackup>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getVolumeBackup>>,
+          TError,
+          Awaited<ReturnType<typeof getVolumeBackup>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetVolumeBackup<TData = Awaited<ReturnType<typeof getVolumeBackup>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getVolumeBackup>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary The application's volume backup schedule (member+)
+ */
+
+export function useGetVolumeBackup<TData = Awaited<ReturnType<typeof getVolumeBackup>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getVolumeBackup>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetVolumeBackupQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getSetVolumeBackupUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/applications/${id}/volume-backup`
+}
+
+/**
+ * One schedule per application, covering every volume the application marks `backed_up`. An operator who wants two cadences for two directories of the same application is describing two applications.
+ *
+ * A volume archive is a tar of a live directory, not a consistent snapshot: a database writing during the copy produces an archive of a half-written file. That is why databases keep their own engine-level dumps and this covers uploads, caches and generated assets instead.
+ * @summary Create or replace the volume backup schedule (member+)
+ */
+export const setVolumeBackup = async (id: string,
+    setVolumeBackupRequest: SetVolumeBackupRequest, options?: RequestInit): Promise<VolumeBackup> => {
+
+  return apiFetch<VolumeBackup>(getSetVolumeBackupUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(setVolumeBackupRequest)
+  }
+);}
+
+
+
+
+
+export const getSetVolumeBackupMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setVolumeBackup>>, TError,{id: string;data: SetVolumeBackupRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setVolumeBackup>>, TError,{id: string;data: SetVolumeBackupRequest}, TContext> => {
+
+const mutationKey = ['setVolumeBackup'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setVolumeBackup>>, {id: string;data: SetVolumeBackupRequest}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  setVolumeBackup(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetVolumeBackupMutationResult = NonNullable<Awaited<ReturnType<typeof setVolumeBackup>>>
+    export type SetVolumeBackupMutationBody = SetVolumeBackupRequest
+    export type SetVolumeBackupMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Create or replace the volume backup schedule (member+)
+ */
+export const useSetVolumeBackup = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setVolumeBackup>>, TError,{id: string;data: SetVolumeBackupRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setVolumeBackup>>,
+        TError,
+        {id: string;data: SetVolumeBackupRequest},
+        TContext
+      > => {
+      return useMutation(getSetVolumeBackupMutationOptions(options), queryClient);
+    }
+    export const getDeleteVolumeBackupUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/applications/${id}/volume-backup`
+}
+
+/**
+ * Stops future runs and forgets the cadence. Archives already in the bucket are left alone — deleting an operator's off-site copies from a panel action is the one mistake with no undo.
+ * @summary Remove the schedule (member+)
+ */
+export const deleteVolumeBackup = async (id: string, options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getDeleteVolumeBackupUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteVolumeBackupMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteVolumeBackup>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteVolumeBackup>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['deleteVolumeBackup'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteVolumeBackup>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteVolumeBackup(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteVolumeBackupMutationResult = NonNullable<Awaited<ReturnType<typeof deleteVolumeBackup>>>
+
+    export type DeleteVolumeBackupMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Remove the schedule (member+)
+ */
+export const useDeleteVolumeBackup = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteVolumeBackup>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteVolumeBackup>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getDeleteVolumeBackupMutationOptions(options), queryClient);
+    }
+    export const getRunVolumeBackupUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/applications/${id}/volume-backup/run`
+}
+
+/**
+ * Dispatches to the agent and answers 202 with one running record per flagged volume — a record per volume rather than per run, because a failure belongs to the volume that failed. An application with a schedule and nothing flagged answers 202 with an empty list.
+ * @summary Archive every flagged volume now (member+)
+ */
+export const runVolumeBackup = async (id: string, options?: RequestInit): Promise<VolumeBackupRecord[]> => {
+
+  return apiFetch<VolumeBackupRecord[]>(getRunVolumeBackupUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRunVolumeBackupMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runVolumeBackup>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof runVolumeBackup>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['runVolumeBackup'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof runVolumeBackup>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  runVolumeBackup(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RunVolumeBackupMutationResult = NonNullable<Awaited<ReturnType<typeof runVolumeBackup>>>
+
+    export type RunVolumeBackupMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error
+
+    /**
+ * @summary Archive every flagged volume now (member+)
+ */
+export const useRunVolumeBackup = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runVolumeBackup>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof runVolumeBackup>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getRunVolumeBackupMutationOptions(options), queryClient);
+    }
+    export const getListVolumeBackupRecordsUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/applications/${id}/volume-backup/history`
+}
+
+/**
+ * @summary Recent volume archives, newest first (member+)
+ */
+export const listVolumeBackupRecords = async (id: string, options?: RequestInit): Promise<VolumeBackupRecord[]> => {
+
+  return apiFetch<VolumeBackupRecord[]>(getListVolumeBackupRecordsUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListVolumeBackupRecordsQueryKey = (id: string,) => {
+    return [
+    `/api/v1/applications/${id}/volume-backup/history`
+    ] as const;
+    }
+
+
+export const getListVolumeBackupRecordsQueryOptions = <TData = Awaited<ReturnType<typeof listVolumeBackupRecords>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listVolumeBackupRecords>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListVolumeBackupRecordsQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listVolumeBackupRecords>>> = ({ signal }) => listVolumeBackupRecords(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listVolumeBackupRecords>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListVolumeBackupRecordsQueryResult = NonNullable<Awaited<ReturnType<typeof listVolumeBackupRecords>>>
+export type ListVolumeBackupRecordsQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useListVolumeBackupRecords<TData = Awaited<ReturnType<typeof listVolumeBackupRecords>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listVolumeBackupRecords>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listVolumeBackupRecords>>,
+          TError,
+          Awaited<ReturnType<typeof listVolumeBackupRecords>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListVolumeBackupRecords<TData = Awaited<ReturnType<typeof listVolumeBackupRecords>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listVolumeBackupRecords>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listVolumeBackupRecords>>,
+          TError,
+          Awaited<ReturnType<typeof listVolumeBackupRecords>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListVolumeBackupRecords<TData = Awaited<ReturnType<typeof listVolumeBackupRecords>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listVolumeBackupRecords>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Recent volume archives, newest first (member+)
+ */
+
+export function useListVolumeBackupRecords<TData = Awaited<ReturnType<typeof listVolumeBackupRecords>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listVolumeBackupRecords>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListVolumeBackupRecordsQueryOptions(id,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

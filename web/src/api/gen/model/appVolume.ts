@@ -13,4 +13,6 @@ export interface AppVolume {
   name: string;
   /** Absolute mount path inside the container. */
   path: string;
+  /** Whether the application's volume backup schedule archives this mount. Per-volume rather than per-application: a cache directory and an uploads directory have opposite answers, and backing up the cache costs storage for data whose whole point is being disposable. */
+  backed_up?: boolean;
 }

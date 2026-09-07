@@ -95,6 +95,65 @@ func Migrate(ctx context.Context, databaseURL string) error {
 	return nil
 }
 
+// RestoreMigrator replays the embedded migrations for a plane restore
+// (plane-disaster-recovery.md §6).
+//
+// The schema is rebuilt from THIS BINARY's migrations rather than carried in
+// the archive: the binary already replays them on every boot, so a restore uses
+// the mechanism exercised daily instead of a second one exercised on the worst
+// day of the year. UpTo lands the schema at the snapshot's own version, and Up
+// carries it forward afterwards.
+type RestoreMigrator struct {
+	provider *goose.Provider
+	closeDB  func() error
+}
+
+// NewRestoreMigrator opens its own handle, because goose operates on
+// database/sql and a restore runs with no Store around it.
+func NewRestoreMigrator(databaseURL string) (*RestoreMigrator, error) {
+	sqldb, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("store: opening sql handle for migrations: %w", err)
+	}
+	sub, err := fs.Sub(migrationsFS, "migrations")
+	if err != nil {
+		_ = sqldb.Close()
+		return nil, fmt.Errorf("store: locating migrations: %w", err)
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, sqldb, sub)
+	if err != nil {
+		_ = sqldb.Close()
+		return nil, fmt.Errorf("store: building migration provider: %w", err)
+	}
+	return &RestoreMigrator{provider: provider, closeDB: sqldb.Close}, nil
+}
+
+func (m *RestoreMigrator) Close() error { return m.closeDB() }
+
+func (m *RestoreMigrator) UpTo(ctx context.Context, version int64) error {
+	_, err := m.provider.UpTo(ctx, version)
+	return err
+}
+
+func (m *RestoreMigrator) Up(ctx context.Context) error {
+	_, err := m.provider.Up(ctx)
+	return err
+}
+
+// Current is the newest migration this binary carries. A snapshot needing more
+// than this cannot be restored by this build, and saying so by number is the
+// honest one-line answer.
+func (m *RestoreMigrator) Current() int64 {
+	sources := m.provider.ListSources()
+	var newest int64
+	for _, src := range sources {
+		if src.Version > newest {
+			newest = src.Version
+		}
+	}
+	return newest
+}
+
 // ─── Users ──────────────────────────────────────────────────────────────────
 
 func (s *Store) CountUsers(ctx context.Context) (int64, error) {
@@ -242,6 +301,75 @@ func (s *Store) RecordHeartbeat(ctx context.Context, id string, status domain.Se
 		return domain.Server{}, wrap("recording heartbeat", err)
 	}
 	return serverFromRow(row), nil
+}
+
+// SetServerAgentUpdate records what the agent last said about its own binary.
+func (s *Store) SetServerAgentUpdate(ctx context.Context, id, phase, target, detail string) error {
+	if err := s.q.SetServerAgentUpdate(ctx, db.SetServerAgentUpdateParams{
+		ID: id, AgentUpdatePhase: phase, AgentUpdateTarget: target, AgentUpdateDetail: detail,
+	}); err != nil {
+		return wrapUpdate("recording the agent update phase", err)
+	}
+	return nil
+}
+
+// SetServerAgentChannel moves one server onto a release channel.
+func (s *Store) SetServerAgentChannel(ctx context.Context, id, channel string) (domain.Server, error) {
+	row, err := s.q.SetServerAgentChannel(ctx, db.SetServerAgentChannelParams{ID: id, AgentChannel: channel})
+	if err != nil {
+		return domain.Server{}, wrapUpdate("setting the agent channel", err)
+	}
+	return serverFromRow(row), nil
+}
+
+// ListAgentChannels returns both channels, always — the rows are seeded by the
+// migration, so a missing one is a corrupt database rather than a first run.
+func (s *Store) ListAgentChannels(ctx context.Context) ([]domain.AgentChannelRow, error) {
+	rows, err := s.q.ListAgentChannels(ctx)
+	if err != nil {
+		return nil, wrap("listing agent channels", err)
+	}
+	out := make([]domain.AgentChannelRow, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, agentChannelFromRow(r))
+	}
+	return out, nil
+}
+
+// GetAgentChannel reads one channel.
+func (s *Store) GetAgentChannel(ctx context.Context, channel string) (domain.AgentChannelRow, error) {
+	row, err := s.q.GetAgentChannel(ctx, channel)
+	if err != nil {
+		return domain.AgentChannelRow{}, wrap("reading an agent channel", err)
+	}
+	return agentChannelFromRow(row), nil
+}
+
+// SetAgentChannel writes one channel's desired version wholesale.
+func (s *Store) SetAgentChannel(ctx context.Context, channel, version, artifactBase string, rollback bool, by string) (domain.AgentChannelRow, error) {
+	row, err := s.q.SetAgentChannel(ctx, db.SetAgentChannelParams{
+		Channel: channel, DesiredVersion: version, ArtifactBase: artifactBase,
+		Rollback: rollback, UpdatedBy: textOrNull(by),
+	})
+	if err != nil {
+		return domain.AgentChannelRow{}, wrapUpdate("setting an agent channel", err)
+	}
+	return agentChannelFromRow(row), nil
+}
+
+func agentChannelFromRow(r db.AgentChannel) domain.AgentChannelRow {
+	out := domain.AgentChannelRow{
+		Channel:        r.Channel,
+		DesiredVersion: r.DesiredVersion,
+		ArtifactBase:   r.ArtifactBase,
+		Rollback:       r.Rollback,
+		UpdatedAt:      r.UpdatedAt.Time,
+	}
+	if r.UpdatedBy.Valid {
+		v := r.UpdatedBy.String
+		out.UpdatedBy = &v
+	}
+	return out
 }
 
 // SetServerDiskLow records whether a server is currently below the disk
@@ -880,12 +1008,16 @@ func serverFromRow(r db.Server) domain.Server {
 		//nolint:gosec // stored from a uint64 that no real filesystem overflows
 		DiskTotalBytes: uint64(r.DiskTotalBytes),
 		//nolint:gosec // ditto
-		DiskFreeBytes: uint64(r.DiskFreeBytes),
-		DiskLow:       r.DiskLow,
-		EnrolledAt:    ptrTime(r.EnrolledAt),
-		LastSeenAt:    ptrTime(r.LastSeenAt),
-		CreatedAt:     r.CreatedAt.Time,
-		UpdatedAt:     r.UpdatedAt.Time,
+		DiskFreeBytes:     uint64(r.DiskFreeBytes),
+		DiskLow:           r.DiskLow,
+		AgentChannel:      r.AgentChannel,
+		AgentUpdatePhase:  r.AgentUpdatePhase,
+		AgentUpdateTarget: r.AgentUpdateTarget,
+		AgentUpdateDetail: r.AgentUpdateDetail,
+		EnrolledAt:        ptrTime(r.EnrolledAt),
+		LastSeenAt:        ptrTime(r.LastSeenAt),
+		CreatedAt:         r.CreatedAt.Time,
+		UpdatedAt:         r.UpdatedAt.Time,
 	}
 }
 

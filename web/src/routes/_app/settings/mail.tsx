@@ -22,9 +22,9 @@ import {
 } from "@/api/gen/panel/panel";
 import { useGetMe } from "@/api/gen/auth/auth";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
-import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import { PageState } from "@/components/page-state";
+import { PanelRoleRefusal } from "@/components/role-refusal";
 import { ActionButton, useMutationActionState } from "@/components/ui/action-button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -50,14 +50,10 @@ function MailTab() {
   const canManage = atLeast(me.data?.role as Role | undefined, "admin");
   const mail = useGetPanelMail({ query: { enabled: canManage } });
 
-  if (!canManage) {
-    return (
-      <EmptyState
-        glyph="✉"
-        title="Mail settings need an admin"
-        hint="The panel's outbound email is shared infrastructure, so it is managed by panel admins and owners. Ask one if the panel needs to be able to send."
-      />
-    );
+  // Gated on the answer, not on its absence: a refusal painted while /auth/me
+  // is still in flight would flash a 403 at the admin who is allowed here.
+  if (me.isSuccess && !canManage) {
+    return <PanelRoleRefusal action="Managing the panel's mail transport" needs="admin" />;
   }
 
   return (

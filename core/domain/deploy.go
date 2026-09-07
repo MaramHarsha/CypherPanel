@@ -101,6 +101,10 @@ type AppBuild struct {
 type VolumeMount struct {
 	Name string `json:"name"`
 	Path string `json:"path"`
+	// BackedUp rides the application's volume backup schedule
+	// (volume-backups.md). Stored inside the volumes JSONB, so a row written
+	// before this feature decodes as false — which is the behaviour it had.
+	BackedUp bool `json:"backed_up,omitempty"`
 }
 
 type AppRuntime struct {
@@ -176,14 +180,34 @@ type Application struct {
 	PreviewEnabled    bool
 	PreviewBaseDomain string
 	PreviewTTLHours   int
+	// Access is the front-door policy (app-access-control.md). It is CURRENT
+	// state rather than part of a revision's snapshot: a rollback must never
+	// lift a lockout or restore a deleted allowlist entry, because a control
+	// that changes when someone re-points a revision is not a control.
+	Access AppAccess
 	// RestartToken is a restart expressed as desired state
 	// (deployment-control.md §3): it rides on the spec, is part of the
 	// container's config hash, and a new value is a difference the reconciler
 	// closes by recreating the container. Empty means no restart has been
 	// asked for, which is every application's birth value.
 	RestartToken string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// Replicas is what the agent last SAW, one entry per running container
+	// (app-scaling.md §8). Runtime.Replicas is what should run; these two are
+	// allowed to differ, and the gap is what the panel draws as
+	// "desired 3, running 2".
+	Replicas  []ReplicaObservation
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// ReplicaObservation is one container of a multi-replica Application, as
+// reported by the node that runs it.
+type ReplicaObservation struct {
+	Index       int    `json:"index"`
+	ContainerID string `json:"container_id,omitempty"`
+	RevisionID  string `json:"revision_id,omitempty"`
+	State       string `json:"state"`
+	Detail      string `json:"detail,omitempty"`
 }
 
 // Preview status vocabulary (preview-environments.md §3). Orchestration state,
@@ -240,6 +264,14 @@ const (
 )
 
 // EnvVar is one sealed environment variable belonging to an Application.
+// EnvVarKey is an env var's name and its shared-variable references, without
+// the sealed value. It is what a caller gets when it must be structurally
+// unable to reach a secret (project-export.md §4).
+type EnvVarKey struct {
+	Key        string
+	SharedRefs []string
+}
+
 type EnvVar struct {
 	Key        string
 	ValueCT    []byte
@@ -262,7 +294,15 @@ type Revision struct {
 	Image          string
 	SourceCommit   string
 	ConfigSnapshot []byte // JSON snapshot of the spec at creation
-	CreatedAt      time.Time
+	// PromotedFromRevisionID names the revision whose ARTIFACT this one runs,
+	// when the revision was promoted rather than built (revision-promotion.md
+	// §5). Empty for every ordinary revision.
+	//
+	// The image is still the TARGET application's own canonical tag: the agent
+	// parses ownership out of a tag, and one carrying the source application's
+	// name would be reclaimed on the target's first reconcile.
+	PromotedFromRevisionID string
+	CreatedAt              time.Time
 }
 
 // DeploymentStatus is the lifecycle of a Deployment. Distinct from the
@@ -343,4 +383,63 @@ type DeployKey struct {
 type ApplicationRef struct {
 	ID   string
 	Name string
+}
+
+// ApplicationConfig is an Application with every sealed field removed: how it
+// is built, where it runs, how it is routed and probed — and nothing that could
+// leak. It exists so a caller that must be unable to hold a ciphertext can be
+// given an interface that structurally cannot hand it one (project-export.md
+// §4). Application itself carries WebhookSecretCT, so passing it would defeat
+// that whatever the caller intended.
+type ApplicationConfig struct {
+	ID                 string
+	EnvironmentID      string
+	Name               string
+	Source             AppSource
+	Build              AppBuild
+	Runtime            AppRuntime
+	Route              AppRoute
+	Health             AppHealth
+	Volumes            []VolumeMount
+	Ports              []PortMapping
+	ObservedRevisionID string
+	PreviewEnabled     bool
+	PreviewBaseDomain  string
+	PreviewTTLHours    int
+}
+
+// ConfigView narrows an Application to the fields that carry no secret.
+func (a Application) ConfigView() ApplicationConfig {
+	return ApplicationConfig{
+		ID: a.ID, EnvironmentID: a.EnvironmentID, Name: a.Name,
+		Source: a.Source, Build: a.Build, Runtime: a.Runtime,
+		Route: a.Route, Health: a.Health, Volumes: a.Volumes, Ports: a.Ports,
+		ObservedRevisionID: a.ObservedRevisionID,
+		PreviewEnabled:     a.PreviewEnabled,
+		PreviewBaseDomain:  a.PreviewBaseDomain,
+		PreviewTTLHours:    a.PreviewTTLHours,
+	}
+}
+
+// AppAccess is who may reach an application through the Proxy. Two named
+// capabilities rather than a middleware escape hatch: the panel can validate a
+// CIDR, hash a passphrase, audit the change and describe the result, none of
+// which it could do for a pass-through block (app-access-control.md §2).
+type AppAccess struct {
+	// IPAllowlistEnabled and IPAllowlist are separate so turning the allowlist
+	// off does not lose the CIDRs an operator spent time assembling.
+	IPAllowlistEnabled bool
+	IPAllowlist        []string
+	// PreviewPasswordEnabled gates preview environments only. PreviewPasswordHash
+	// is bcrypt; the plaintext is never stored and is returned exactly once by
+	// the call that set it.
+	PreviewPasswordEnabled bool
+	PreviewPasswordHash    string
+	PreviewPasswordSetAt   *time.Time
+	// MaintenanceMode swaps the route's upstream for the node's maintenance
+	// responder (app-access-control.md §7). MaintenanceSince is what the panel
+	// shows to keep "left on since Friday" from being a silent outage; it is nil
+	// exactly when the mode is off.
+	MaintenanceMode  bool
+	MaintenanceSince *time.Time
 }

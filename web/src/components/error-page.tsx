@@ -100,7 +100,8 @@ export function NotFoundPage({
   resource,
   backTo = "/projects",
   backLabel = "← Projects",
-  auditLogHref,
+  auditLogHref = "/settings/audit",
+  searchable = true,
   embedded,
 }: {
   /** The id or name that was asked for — the thing that "may have been deleted". */
@@ -108,8 +109,16 @@ export function NotFoundPage({
   /** The way back. Defaults to the projects list; a resource layout passes its parent. */
   backTo?: string;
   backLabel?: string;
-  /** Set once the audit log page lands; omitted, the third action is hidden. */
+  /** Where "The audit log remembers" leads; a scoped view may override it. */
   auditLogHref?: string;
+  /**
+   * ⌘K asks for the palette by event, and <CommandPalette /> listens for it
+   * from the `_app` layout — so every 404 rendered inside the shell can offer
+   * it. The root route's unknown-URL 404 renders outside that layout, where
+   * nothing is listening, and turns the action off rather than drawing a pill
+   * that does nothing.
+   */
+  searchable?: boolean;
   embedded?: boolean;
 }) {
   return (
@@ -126,13 +135,15 @@ export function NotFoundPage({
         </Link>
         {/* ⌘K is the palette the panel already ships; this is the same door,
             opened by asking for it rather than by faking the keystroke. */}
-        <button type="button" className={outline} onClick={openCommandPalette}>
-          ⌘K Search
-        </button>
-        {/* The third action the canvas draws. It is what makes "deleted by a
-            teammate" actionable rather than a shrug — but it is only offered
-            once the audit log exists (canvas 3g, V1.x): a 404 whose way out is
-            another 404 is the dead end this page exists to avoid. */}
+        {searchable && (
+          <button type="button" className={outline} onClick={openCommandPalette}>
+            ⌘K Search
+          </button>
+        )}
+        {/* The third action the canvas draws — what makes "deleted by a
+            teammate" actionable rather than a shrug. It waited for the audit
+            log to exist, because a 404 whose way out is another 404 is the
+            dead end this page exists to avoid; canvas 3g ships now. */}
         {auditLogHref && (
           <Link to={auditLogHref} className={outline}>
             Audit log
@@ -185,10 +196,19 @@ export function ForbiddenPage({
         )}
       </Explain>
       <Actions>
-        {owners[0] && (
+        {owners[0] ? (
           <button type="button" className={solid} onClick={onRequestAccess}>
             Request access from {owners[0].split("@")[0]}@
           </button>
+        ) : (
+          // No owner to name: a panel refusal whose user list a member may not
+          // read, or a team that would not resolve. Back is the browser's
+          // history, and a pasted or bookmarked URL has none — so the forward
+          // verb the canvas always pairs with it becomes the way out that
+          // works from anywhere.
+          <Link to="/projects" className={solid}>
+            ← Projects
+          </Link>
         )}
         <button type="button" className={outline} onClick={() => window.history.back()}>
           Back
@@ -398,17 +418,18 @@ export function PlaneOfflinePage({
   embedded?: boolean;
 }) {
   const retry = onRetry ?? (() => location.reload());
+  const auto = retryEverySeconds > 0;
   // The deadline is remembered, not the count, so a re-render cannot stretch
   // a second. It is re-armed at every zero crossing — after the retry it
   // triggers, or past one that is still in flight — which is what
   // "retrying in 4s" promises.
   const [until, setUntil] = useState<number | null>(null);
   useEffect(() => {
-    setUntil(retryEverySeconds > 0 ? Date.now() + retryEverySeconds * 1000 : null);
+    setUntil(auto ? Date.now() + retryEverySeconds * 1000 : null);
   }, [retryEverySeconds]);
   const left = useSecondsLeft(until);
   useEffect(() => {
-    if (left !== 0 || retryEverySeconds <= 0) return;
+    if (left !== 0 || !auto) return;
     if (!retrying) retry();
     setUntil(Date.now() + retryEverySeconds * 1000);
     // Runs once per zero crossing: `retry` and `retrying` are read, not watched,
@@ -428,15 +449,28 @@ export function PlaneOfflinePage({
         <b className="text-text">Your apps are still serving.</b> Routing and containers live on the servers,
         not here — the panel is only the steering wheel.
       </Explain>
-      <div
-        role="status"
-        aria-live="polite"
-        className="mono mt-5 flex items-center gap-[9px] text-[12px] text-text-faint"
-      >
+      <div className="mono mt-5 flex items-center gap-[9px] text-[12px] text-text-faint">
         <span className="size-[7px] flex-none rounded-full bg-status-degraded" aria-hidden />
-        {retrying ? "retrying" : left !== undefined ? `retrying in ${left}s` : "retrying"}
+        {/* With the clock off there is nothing counting down, and claiming
+            otherwise would be the one lie this page cannot afford — so it says
+            so and names the pill below as the way back. */}
+        {retrying
+          ? "retrying"
+          : auto
+            ? `retrying in ${left ?? retryEverySeconds}s`
+            : "auto-retry off — use Retry now"}
         {` · last sync ${lastSyncLabel ?? "never"}`}
       </div>
+      {/* The countdown is drawn, not spoken: a polite region on a per-second
+          tick would never stop talking (canvas 14g). What gets announced is
+          the state either side of it — a retry starting, the wait resuming. */}
+      <span role="status" aria-live="polite" className="sr-only">
+        {retrying
+          ? "Retrying now"
+          : auto
+            ? `Offline — retrying every ${retryEverySeconds} seconds`
+            : "Offline — not retrying automatically"}
+      </span>
       <ActionButton
         variant="secondary"
         className={cn(outline, "mt-3.5")}
@@ -529,6 +563,16 @@ export function ThrottledPage({
   const mm = known ? Math.floor(secondsLeft / 60) : 0;
   const ss = known ? String(secondsLeft % 60).padStart(2, "0") : "00";
   const total = totalSeconds && totalSeconds > 0 ? totalSeconds : undefined;
+  // Spoken once when the pause starts and once when it lifts. A polite region
+  // that re-read the clock every second would never stop talking (canvas 14g);
+  // the numerals and the draining bar carry the passing time instead.
+  const announced = !known
+    ? "Sign-in paused"
+    : secondsLeft === 0
+      ? "Sign-in available again"
+      : total
+        ? `Sign-in paused for ${total} seconds`
+        : "Sign-in paused";
   return (
     <Frame embedded={embedded}>
       <Numeral code="429" />
@@ -556,7 +600,7 @@ export function ThrottledPage({
         </div>
       )}
       <span role="status" aria-live="polite" className="sr-only">
-        {known ? `Sign-in paused, ${secondsLeft} seconds left` : "Sign-in paused"}
+        {announced}
       </span>
       {!known && onTryAgain && (
         <Actions>
@@ -565,6 +609,10 @@ export function ThrottledPage({
           </button>
         </Actions>
       )}
+      {/* 13t closes on the mono footer 13q uses for its owners line: the
+          lockout is on the record, which is what makes it a rule rather than
+          the panel deciding it doesn't like you. */}
+      <p className="mono mt-4 text-[11px] text-text-faint">every failure is in the audit log</p>
     </Frame>
   );
 }

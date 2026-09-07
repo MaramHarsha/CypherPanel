@@ -114,7 +114,7 @@ function UsedBy({ r }: { r: Registry }) {
     <p className="mono mt-1.5 text-[11px] text-text-faint">
       {n === 0 ? "unused" : `used by ${n} app${n === 1 ? "" : "s"}`}
       {n > 0 && (
-        <span className="text-text-disabled">
+        <span className="text-text-faint">
           {" · "}
           {uses.data?.map((u) => u.application_name).join(", ")}
         </span>

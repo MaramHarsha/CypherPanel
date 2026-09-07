@@ -6,30 +6,23 @@
 // explain: `degraded` here means SOME of the services compose was asked for,
 // so an empty-looking pane may simply belong to the half that never started.
 //
-// `?since=` is the stream's own parameter (deployment-control.md). It is a
-// picker rather than a free field because the three windows an operator
-// actually reaches for are the last few minutes, the last hour, and everything
-// retained — and anything the API cannot parse is a 400 rather than a silent
-// fall back to the whole window, which is not a failure worth exposing a text
-// box to earn.
-import { createFileRoute } from "@tanstack/react-router";
+// The phone layout is the application log page's, because it is the same
+// screen for a different resource (canvas 14d): the pane bleeds to the
+// gutters, loses its frame and runs to the bottom bar, with a crumb back to
+// the stack and the replay window on the line above it.
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { getStreamComposeStackLogsUrl, useGetComposeStack } from "@/api/gen/compose-stacks/compose-stacks";
 import { Eyebrow } from "@/components/eyebrow";
 import { LogViewer } from "@/components/log-viewer";
 import { PageState } from "@/components/page-state";
+import { ReplayWindowChips, ReplayWindowMenu } from "@/components/replay-window";
+import { useFillToBottom } from "@/lib/fill-to-bottom";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_app/projects/$projectId/compose/$stackId/logs")({
   component: ComposeLogsTab,
 });
-
-const WINDOWS = [
-  { value: "15m", label: "15m" },
-  { value: "1h", label: "1h" },
-  { value: "24h", label: "24h" },
-  { value: "", label: "all" },
-] as const;
 
 /** Whether the stack can still write. The stream stays open either way —
  *  cypherd parks on the request rather than closing it — so this is what
@@ -55,8 +48,9 @@ function tailNote(status: string | undefined, detail: string | undefined): strin
 }
 
 function ComposeLogsTab() {
-  const { stackId } = Route.useParams();
+  const { projectId, stackId } = Route.useParams();
   const stack = useGetComposeStack(stackId);
+  const fill = useFillToBottom();
   const [since, setSince] = useState<string>("");
 
   return (
@@ -65,38 +59,44 @@ function ComposeLogsTab() {
         const note = tailNote(s.status, s.status_detail);
         return (
           <div className="space-y-2.5">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            {/* The eyebrow and the chip row are the desktop's: a phone shows
+                the pane first (14d), and carries the window on the pane. */}
+            <div className="hidden flex-wrap items-center justify-between gap-3 sm:flex">
               <Eyebrow>Logs — every service, interleaved</Eyebrow>
-              <div className="flex items-center gap-1" role="group" aria-label="Replay window">
-                <span className="mono mr-1 text-[11px] text-text-faint">from</span>
-                {WINDOWS.map((w) => (
-                  <button
-                    key={w.value}
-                    type="button"
-                    aria-pressed={since === w.value}
-                    onClick={() => setSince(w.value)}
-                    className={cn(
-                      "mono rounded border px-2 py-[3px] text-[11px] transition-colors",
-                      since === w.value
-                        ? "border-border-strong bg-raised font-medium text-text"
-                        : "border-border text-text-mid hover:text-text",
-                    )}
-                  >
-                    {w.label}
-                  </button>
-                ))}
-              </div>
+              <ReplayWindowChips value={since} onChange={setSince} />
             </div>
             {note && <p className="max-w-2xl text-[12.5px] leading-[1.5] text-text-mid">{note}</p>}
-            <LogViewer
-              // The key restarts the stream when the window changes: the
-              // replay is chosen at connect time, so a new `since` is a new
-              // stream rather than a filter over the one already open.
-              key={since}
-              url={getStreamComposeStackLogsUrl(stackId, since ? { since } : undefined)}
-              live={canEmit(s.status)}
-              className="h-[min(60vh,560px)]"
-            />
+            {/* Ink to the gutters and down to the bar (14d). The negative
+                margins undo the layout's PageBody padding on a phone only;
+                with no note above it the pane also takes back the body's top
+                padding so it hangs straight off the tab strip. */}
+            <div
+              ref={fill}
+              className={cn("flex flex-col max-sm:-mx-4 max-sm:-mb-6 max-sm:bg-pane", !note && "max-sm:-mt-6")}
+            >
+              <div className="flex items-center justify-between gap-3 px-4 pb-1.5 pt-3.5 sm:hidden">
+                <Link
+                  to="/projects/$projectId/compose/$stackId"
+                  params={{ projectId, stackId }}
+                  aria-label={`Back to ${s.name}`}
+                  className="eyebrow min-w-0 truncate text-pane-faint hover:text-pane-text"
+                >
+                  ← {s.name} / logs
+                </Link>
+                <ReplayWindowMenu value={since} onChange={setSince} />
+              </div>
+              <LogViewer
+                // The key restarts the stream when the window changes: the
+                // replay is chosen at connect time, so a new `since` is a new
+                // stream rather than a filter over the one already open.
+                key={since}
+                url={getStreamComposeStackLogsUrl(stackId, since ? { since } : undefined)}
+                live={canEmit(s.status)}
+                // On a phone the wrapper's measured height is the size and the
+                // pane's own frame goes — the screen is the frame.
+                className="min-h-0 flex-1 max-sm:rounded-none max-sm:border-x-0 max-sm:border-b-0 sm:h-[min(60vh,560px)]"
+              />
+            </div>
           </div>
         );
       }}

@@ -10,12 +10,17 @@ import {
   getGetApplicationQueryKey,
   useCheckApplicationDomain,
   useGetApplication,
+  useGetApplicationMetrics,
+  useGetApplicationTraffic,
   useRestartApplication,
 } from "@/api/gen/applications/applications";
 import { getHandleGithubWebhookUrl } from "@/api/gen/deployments/deployments";
 import { useGetServer } from "@/api/gen/servers/servers";
 import type { Application } from "@/api/gen/model";
 import { CopyField } from "@/components/copy-field";
+import { MetricsCard, useMetricsWindow } from "@/components/metrics-card";
+import { ReplicaCard } from "@/components/replica-card";
+import { TrafficCard } from "@/components/traffic-card";
 import { DomainLink } from "@/components/domain-link";
 import { Fact, FactCard } from "@/components/fact-card";
 import { PageState } from "@/components/page-state";
@@ -166,6 +171,13 @@ function OverviewTab() {
               </FactCard>
             </div>
 
+            {/* Resources and traffic sit under the facts, not above them: the
+                question "is it running and what is it serving" is answered by
+                the cards above, and this is the follow-up. */}
+            <ReplicaCard app={a} />
+
+            <AppMetrics appId={appId} routed={Boolean(a.route.domain)} />
+
             {a.route.domain && <DomainCheck appId={appId} domain={a.route.domain} serverId={a.runtime.server_id} />}
 
             {/* An image-source app has no repository to hang a webhook on, and
@@ -196,6 +208,26 @@ function OverviewTab() {
         );
       }}
     </PageState>
+  );
+}
+
+/**
+ * CPU, memory and disk, plus traffic when the application actually has a public
+ * route. An application with no route has no traffic to show and is not offered
+ * an empty card that implies it should — the Proxy never sees it at all.
+ *
+ * One window control drives both, because "the last six hours" is one question
+ * and two pickers that can disagree is two answers to it.
+ */
+function AppMetrics({ appId, routed }: { appId: string; routed: boolean }) {
+  const [win, setWin] = useMetricsWindow();
+  const metrics = useGetApplicationMetrics(appId, { window: win });
+  const traffic = useGetApplicationTraffic(appId, { window: win }, { query: { enabled: routed } });
+  return (
+    <div className="space-y-3.5">
+      <MetricsCard query={metrics} window={win} onWindow={setWin} />
+      {routed && <TrafficCard query={traffic} window={win} onWindow={setWin} />}
+    </div>
   );
 }
 

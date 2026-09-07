@@ -75,7 +75,7 @@ type Endpoints interface {
 // (ADR-004 keeps the docker provider off; spec §5).
 type Router interface {
 	AttachNetwork(ctx context.Context, network string) error
-	SetRoute(ctx context.Context, key string, route *agentv1.RouteSpec, upstream string) error
+	SetRoute(ctx context.Context, key string, route *agentv1.RouteSpec, upstreams []string) error
 	RemoveRoute(ctx context.Context, key string) error
 }
 
@@ -259,7 +259,7 @@ func (r *Reconciler) applyRoute(ctx context.Context, spec *agentv1.ComposeSpec, 
 		Domain:     route.GetDomain(),
 		Https:      route.GetHttps(),
 		PathPrefix: route.GetPathPrefix(),
-	}, upstream); err != nil {
+	}, []string{upstream}); err != nil {
 		r.log.Warn("applying compose route", "stack_id", key, "error", err)
 	}
 }

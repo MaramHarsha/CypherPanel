@@ -34,9 +34,11 @@ import type {
   Database,
   Error,
   ForbiddenResponse,
+  GetDatabaseMetricsParams,
   NotFoundResponse,
   PatchDatabaseRequest,
   ResetPasswordResponse,
+  ResourceMetrics,
   UnauthorizedResponse
 } from '../model';
 
@@ -61,6 +63,121 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   }
   return result;
 };
+
+export const getGetDatabaseMetricsUrl = (id: string,
+    params?: GetDatabaseMetricsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/databases/${id}/metrics?${stringifiedParams}` : `/api/v1/databases/${id}/metrics`
+}
+
+/**
+ * @summary CPU, memory and disk over a window (member+)
+ */
+export const getDatabaseMetrics = async (id: string,
+    params?: GetDatabaseMetricsParams, options?: RequestInit): Promise<ResourceMetrics> => {
+
+  return apiFetch<ResourceMetrics>(getGetDatabaseMetricsUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetDatabaseMetricsQueryKey = (id: string,
+    params?: GetDatabaseMetricsParams,) => {
+    return [
+    `/api/v1/databases/${id}/metrics`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetDatabaseMetricsQueryOptions = <TData = Awaited<ReturnType<typeof getDatabaseMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string,
+    params?: GetDatabaseMetricsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDatabaseMetrics>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetDatabaseMetricsQueryKey(id,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDatabaseMetrics>>> = ({ signal }) => getDatabaseMetrics(id,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDatabaseMetrics>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetDatabaseMetricsQueryResult = NonNullable<Awaited<ReturnType<typeof getDatabaseMetrics>>>
+export type GetDatabaseMetricsQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useGetDatabaseMetrics<TData = Awaited<ReturnType<typeof getDatabaseMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params: undefined |  GetDatabaseMetricsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDatabaseMetrics>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getDatabaseMetrics>>,
+          TError,
+          Awaited<ReturnType<typeof getDatabaseMetrics>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDatabaseMetrics<TData = Awaited<ReturnType<typeof getDatabaseMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params?: GetDatabaseMetricsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDatabaseMetrics>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getDatabaseMetrics>>,
+          TError,
+          Awaited<ReturnType<typeof getDatabaseMetrics>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetDatabaseMetrics<TData = Awaited<ReturnType<typeof getDatabaseMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params?: GetDatabaseMetricsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDatabaseMetrics>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary CPU, memory and disk over a window (member+)
+ */
+
+export function useGetDatabaseMetrics<TData = Awaited<ReturnType<typeof getDatabaseMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params?: GetDatabaseMetricsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDatabaseMetrics>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetDatabaseMetricsQueryOptions(id,params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
 
 export const getListDatabasesUrl = (id: string,) => {
 

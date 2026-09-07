@@ -54,8 +54,16 @@ Then:
 1. **Do not** put the private key in GitHub Actions secrets, or anywhere else CI
    can read. It lives on the signing machine and is exported into the
    environment only for the length of a signing run.
-2. Record the public key below, and bake it into the agent when ADR-010's
-   update mechanism is implemented.
+2. Record the public key below, and bake it into the agent at build time:
+
+```sh
+go build -ldflags "-X github.com/MaramHarsha/cypherpanel/agent/updater.publicKeys=$RELEASE_PUBKEY" ./cmd/cypher-agent
+```
+
+   The variable takes one or two comma-separated base64 keys. Two is what
+   rotation needs and the ceiling the parser enforces: release N is signed with
+   A and bakes in `A,B`; N+1 is signed with B; N+2 bakes in `B` alone. A list
+   that only grows is a trust surface that only grows.
 
 ```
 RELEASE_PUBKEY = <not yet generated — see "Status" below>
@@ -107,9 +115,21 @@ intact; only the signature says the release is ours.
 ## Status
 
 The release pipeline builds and drafts; signing is offline and manual, so an
-unsigned release cannot reach anyone. **Agent-side
-verification is not implemented yet** — the two-slot swap, the baked-in public
-key, and the self-rollback described in ADR-010 §4–5 land with the auto-update
-mechanism. Until then the signature protects operators who verify by hand, and
-the key must exist before the first release regardless: a release published
+unsigned release cannot reach anyone.
+
+**Agent-side verification is implemented** (`agent/updater`): the manifest's
+signature is checked against the baked-in key list before any artifact is
+fetched, the downloaded binary is checked against the signed digest before it is
+ever renamed, and ADR-010 §4–5's pre-flight, two-slot swap and self-rollback are
+in place with tests that assert each refusal leaves the running binary alone.
+
+**What is missing is the key, not the check.** `RELEASE_PUBKEY` above has not
+been generated, so a build made without the `-ldflags` line above trusts no key
+— and an updater with nothing to verify against does not run: it reports
+`disabled` in the panel's fleet table, naming the reason, and never renames a
+file. That is the opposite of a stubbed check, and it is what ADR-010 §3
+requires; there is deliberately **no flag that skips verification**, because a
+skip flag is the hole everything else leaks through.
+
+The key must exist before the first release regardless: a release published
 unsigned can never be retroactively covered by one.

@@ -17,10 +17,14 @@ import {
   useDeployComposeStack,
   useGetComposeFile,
   useGetComposeStack,
+  useGetComposeStackMetrics,
+  useGetComposeStackTraffic,
 } from "@/api/gen/compose-stacks/compose-stacks";
 import { useListServers } from "@/api/gen/servers/servers";
 import { Fact, FactCard } from "@/components/fact-card";
+import { MetricsCard, useMetricsWindow } from "@/components/metrics-card";
 import { PageState } from "@/components/page-state";
+import { TrafficCard } from "@/components/traffic-card";
 import { ActionButton, useMutationActionState } from "@/components/ui/action-button";
 import { relativeTime } from "@/lib/time";
 import { toastFailed, toastSuccess } from "@/lib/toast";
@@ -161,6 +165,22 @@ function ComposeOverview() {
           )}
         </PageState>
       </section>
+
+      {/* A stack's containers are summed into one figure: the operator asked
+          about the stack, not about its sidecars. */}
+      <StackMetrics stackId={stackId} />
+    </div>
+  );
+}
+
+function StackMetrics({ stackId }: { stackId: string }) {
+  const [win, setWin] = useMetricsWindow();
+  const metrics = useGetComposeStackMetrics(stackId, { window: win });
+  const traffic = useGetComposeStackTraffic(stackId, { window: win });
+  return (
+    <div className="space-y-3.5">
+      <MetricsCard query={metrics} window={win} onWindow={setWin} />
+      <TrafficCard query={traffic} window={win} onWindow={setWin} />
     </div>
   );
 }

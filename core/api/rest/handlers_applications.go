@@ -17,18 +17,22 @@ import (
 // ─── DTOs (secrets always masked — ENGINEERING rule 20) ─────────────────────
 
 type applicationDTO struct {
-	ID                string         `json:"id"`
-	EnvironmentID     string         `json:"environment_id"`
-	Name              string         `json:"name"`
-	Source            appSourceDTO   `json:"source"`
-	Build             appBuildDTO    `json:"build"`
-	Runtime           appRuntimeDTO  `json:"runtime"`
-	Route             appRouteDTO    `json:"route"`
-	Health            appHealthDTO   `json:"health"`
-	Volumes           []appVolumeDTO `json:"volumes"`
-	Ports             []appPortDTO   `json:"ports"`
-	WebhookID         string         `json:"webhook_id"`
-	DesiredRevisionID *string        `json:"desired_revision_id"`
+	ID            string         `json:"id"`
+	EnvironmentID string         `json:"environment_id"`
+	Name          string         `json:"name"`
+	Source        appSourceDTO   `json:"source"`
+	Build         appBuildDTO    `json:"build"`
+	Runtime       appRuntimeDTO  `json:"runtime"`
+	Route         appRouteDTO    `json:"route"`
+	Health        appHealthDTO   `json:"health"`
+	Volumes       []appVolumeDTO `json:"volumes"`
+	Ports         []appPortDTO   `json:"ports"`
+	// Replicas is what the node last SAW, one entry per container. Empty for a
+	// single-replica application, which is every application until someone
+	// scales one — the aggregate status above already says everything there.
+	Replicas          []appReplicaDTO `json:"replicas"`
+	WebhookID         string          `json:"webhook_id"`
+	DesiredRevisionID *string         `json:"desired_revision_id"`
 	// Status is observed state (ADR-005): what the agent last reported, with
 	// the revision actually serving.
 	Status             string `json:"status"`
@@ -50,8 +54,16 @@ type applicationDTO struct {
 	// so the UI can say "serving over HTTP meanwhile" instead of printing
 	// "HTTPS · auto-renews" off the https flag alone, which asserted a
 	// certificate the panel had never seen issued (ui-principles §10).
-	TLSState  string `json:"tls_state,omitempty"`
-	CreatedAt string `json:"created_at"`
+	TLSState string `json:"tls_state,omitempty"`
+	// Maintenance travels with the application itself, not only with its access
+	// policy, because the failure mode this feature actually has is a holding
+	// page LEFT ON — and a badge only prevents that where the application is
+	// already on screen (app-access-control.md §10). Like redeploy_pending it is
+	// a fact beside the status, never a status word: the vocabulary in
+	// ui-principles §5 is closed.
+	MaintenanceMode  bool    `json:"maintenance_mode"`
+	MaintenanceSince *string `json:"maintenance_since"`
+	CreatedAt        string  `json:"created_at"`
 }
 
 type appSourceDTO struct {
@@ -77,18 +89,23 @@ type appBuildDTO struct {
 type appVolumeDTO struct {
 	Name string `json:"name"`
 	Path string `json:"path"`
+	// BackedUp marks this mount for the application's volume backup schedule
+	// (volume-backups.md §3). Per-volume rather than per-application because a
+	// cache directory and an uploads directory have opposite answers.
+	BackedUp bool `json:"backed_up"`
 }
 
 // appVolumeReq is the request shape for a volume mount (create and patch).
 type appVolumeReq struct {
-	Name string `json:"name"`
-	Path string `json:"path"`
+	Name     string `json:"name"`
+	Path     string `json:"path"`
+	BackedUp bool   `json:"backed_up"`
 }
 
 func reqVolumes(vs []appVolumeReq) []domain.VolumeMount {
 	out := make([]domain.VolumeMount, 0, len(vs))
 	for _, v := range vs {
-		out = append(out, domain.VolumeMount{Name: v.Name, Path: v.Path})
+		out = append(out, domain.VolumeMount{Name: v.Name, Path: v.Path, BackedUp: v.BackedUp})
 	}
 	return out
 }
@@ -123,6 +140,27 @@ func toPortDTOs(ps []domain.PortMapping) []appPortDTO {
 	return out
 }
 
+// appReplicaDTO is one container of a multi-replica application, as the node
+// running it last reported.
+type appReplicaDTO struct {
+	Index       int    `json:"index"`
+	ContainerID string `json:"container_id,omitempty"`
+	RevisionID  string `json:"revision_id,omitempty"`
+	State       string `json:"state"`
+	Detail      string `json:"detail,omitempty"`
+}
+
+func toReplicaDTOs(rs []domain.ReplicaObservation) []appReplicaDTO {
+	out := make([]appReplicaDTO, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, appReplicaDTO{
+			Index: r.Index, ContainerID: r.ContainerID,
+			RevisionID: r.RevisionID, State: r.State, Detail: r.Detail,
+		})
+	}
+	return out
+}
+
 type appRuntimeDTO struct {
 	ServerID      string   `json:"server_id"`
 	Port          int      `json:"port"`
@@ -148,7 +186,7 @@ type appHealthDTO struct {
 func toVolumeDTOs(vs []domain.VolumeMount) []appVolumeDTO {
 	out := make([]appVolumeDTO, 0, len(vs))
 	for _, v := range vs {
-		out = append(out, appVolumeDTO{Name: v.Name, Path: v.Path})
+		out = append(out, appVolumeDTO{Name: v.Name, Path: v.Path, BackedUp: v.BackedUp})
 	}
 	return out
 }
@@ -164,6 +202,7 @@ func toApplicationDTO(a domain.Application) applicationDTO {
 		Route:              appRouteDTO{Domain: a.Route.Domain, HTTPS: a.Route.HTTPS, PathPrefix: a.Route.PathPrefix},
 		Health:             appHealthDTO{Kind: a.Health.Kind, Path: a.Health.Path, IntervalSeconds: a.Health.IntervalSeconds, TimeoutSeconds: a.Health.TimeoutSeconds, Retries: a.Health.Retries},
 		Volumes:            toVolumeDTOs(a.Volumes),
+		Replicas:           toReplicaDTOs(a.Replicas),
 		Ports:              toPortDTOs(a.Ports),
 		WebhookID:          a.WebhookID,
 		DesiredRevisionID:  a.DesiredRevisionID,
@@ -173,6 +212,8 @@ func toApplicationDTO(a domain.Application) applicationDTO {
 		PreviewEnabled:     a.PreviewEnabled,
 		PreviewBaseDomain:  a.PreviewBaseDomain,
 		PreviewTTLHours:    a.PreviewTTLHours,
+		MaintenanceMode:    a.Access.MaintenanceMode,
+		MaintenanceSince:   formatTime(a.Access.MaintenanceSince),
 		CreatedAt:          a.CreatedAt.UTC().Format(time.RFC3339),
 	}
 }
@@ -400,6 +441,7 @@ type patchApplicationRequest struct {
 	} `json:"build"`
 	Runtime *struct {
 		Port          *int     `json:"port"`
+		Replicas      *int     `json:"replicas"`
 		CPULimit      *float64 `json:"cpu_limit"`
 		MemoryLimitMB *int     `json:"memory_limit_mb"`
 	} `json:"runtime"`
@@ -443,6 +485,7 @@ func (a *API) handlePatchApplication(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Runtime != nil {
 		in.Port = req.Runtime.Port // nil = unchanged; explicit 0 is rejected by validation
+		in.Replicas = req.Runtime.Replicas
 		in.CPULimit = req.Runtime.CPULimit
 		in.MemoryLimitMB = req.Runtime.MemoryLimitMB
 	}

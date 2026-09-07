@@ -15,6 +15,7 @@ import { useListDeployments } from "@/api/gen/deployments/deployments";
 import type { Application } from "@/api/gen/model";
 import { useListPreviews } from "@/api/gen/previews/previews";
 import { useListScheduledTasks } from "@/api/gen/scheduled-tasks/scheduled-tasks";
+import { AppAccessCard } from "@/components/app-access-card";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
 import { Eyebrow } from "@/components/eyebrow";
 import { PageState } from "@/components/page-state";
@@ -323,6 +324,8 @@ function SettingsForm({
           {dirty && <span className="text-xs text-text-faint">Unsaved changes</span>}
         </div>
       </form>
+
+      <AppAccessCard appId={appId} />
 
       <section className="space-y-2">
         <Eyebrow className="text-danger">Danger zone</Eyebrow>

@@ -81,6 +81,75 @@ const (
 	ActionProjectUpdated     = "project.updated"
 	ActionProjectTransferred = "project.transferred"
 	ActionProjectDeleted     = "project.deleted"
+	// A bulk read of a project's whole configuration, recorded before the
+	// stream starts so an abandoned download is still on the record.
+	ActionProjectExported = "project.exported"
+	// Status pages (status-pages.md §8). Publishing and unpublishing are their
+	// own actions rather than details on `.updated`, because "we made this
+	// project's health public, on this date, and this person did it" is
+	// precisely the fact an audit read exists to find.
+	ActionStatusPageCreated           = "status_page.created"
+	ActionStatusPageUpdated           = "status_page.updated"
+	ActionStatusPageDeleted           = "status_page.deleted"
+	ActionStatusPagePublished         = "status_page.published"
+	ActionStatusPageUnpublished       = "status_page.unpublished"
+	ActionStatusPageIncidentAnnotated = "status_page.incident_annotated"
+	// Metrics collection policy. Turning request analytics on changes what is
+	// aggregated about an operator's visitors, so it is a recorded decision
+	// rather than a preference (metrics-and-usage.md §9).
+	ActionMetricsSettingsChanged = "panel.metrics_settings_changed"
+	// Threshold alert rules. Who is told what, and when, is configuration
+	// worth a record: a rule quietly deleted is an alarm quietly disabled.
+	ActionAlertRuleCreated = "alert_rule.created"
+	ActionAlertRuleChanged = "alert_rule.changed"
+	ActionAlertRuleDeleted = "alert_rule.deleted"
+	// Guided panel upgrades. What code the control plane runs, and who decided
+	// it should — the single most consequential change in the install.
+	ActionPanelUpgradeStarted   = "panel.upgrade_started"
+	ActionPanelUpgradeCancelled = "panel.upgrade_cancelled"
+	// The two agent-update decisions (agent-updates.md §7). A channel's version
+	// is the one control in the panel that changes what CODE runs on every
+	// server, so both edges are recorded: who named the version, and who
+	// promoted it to the fleet. The per-server channel move rides the existing
+	// server.updated.
+	ActionAgentVersionSet       = "agent.version_set"
+	ActionAgentPromoted         = "agent.promoted"
+	ActionPanelSnapshotDeleted  = "panel.snapshot_deleted"
+	ActionPanelSnapshotRestored = "panel.snapshot_restored"
+	// Log drains (log-drains.md §9). Where an install's logs go is a
+	// disclosure decision, so the record names the kind and the scope — never
+	// the config, which holds the credential.
+	ActionLogDrainCreated = "log_drain.created"
+	ActionLogDrainChanged = "log_drain.changed"
+	ActionLogDrainDeleted = "log_drain.deleted"
+	// The plane's own disaster recovery. Where a complete copy of the panel —
+	// master key included — is written is the most consequential destination
+	// in the install, so the record names the destination and the mode. Never
+	// the key: the public half is harmless and the private half is not ours.
+	ActionPlaneDRArmed       = "panel.dr_armed"
+	ActionPlaneDRDisarmed    = "panel.dr_disarmed"
+	ActionPlaneDRVerified    = "panel.dr_verified"
+	ActionPlaneSnapshotTaken = "panel.snapshot_taken"
+	// Provider-backed mail (managed-email.md). Where a domain's mail is
+	// delivered is decided by records this panel writes, so the decision is on
+	// the record. Never the credential, and never a mailbox password — the
+	// panel does not have the second one at all.
+	ActionMailProviderConnected    = "mail.provider_connected"
+	ActionMailProviderDisconnected = "mail.provider_disconnected"
+	ActionMailDomainEnabled        = "mail.domain_enabled"
+	ActionMailDomainDisabled       = "mail.domain_disabled"
+	ActionMailboxCreated           = "mail.mailbox_created"
+	ActionMailboxDeleted           = "mail.mailbox_deleted"
+	ActionMailboxPasswordReset     = "mail.mailbox_password_reset"
+	// Resource quotas (ADR-012). The quota row cascades with its project or
+	// team; the audit row is what survives that, and is therefore the evidence
+	// that a cap existed at all.
+	ActionQuotaSet     = "quota.set"
+	ActionQuotaRemoved = "quota.removed"
+	// A revision's ARTIFACT shipped to another environment without a rebuild
+	// (revision-promotion.md). Recorded against the target, which is where the
+	// change landed, naming the revision it came from.
+	ActionRevisionPromoted   = "application.revision_promoted"
 	ActionEnvironmentCreated = "environment.created"
 	ActionEnvironmentRenamed = "environment.renamed"
 	ActionEnvironmentDeleted = "environment.deleted"
@@ -99,8 +168,22 @@ const (
 	// A restart is not a deploy — no revision, no build — but it is a
 	// production action with a visible effect (deployment-control.md §3).
 	ActionApplicationRestarted = "application.restarted"
-	ActionEnvVarSet            = "application.env_var_set"
-	ActionEnvVarRemoved        = "application.env_var_removed"
+	// Who may reach an application through the Proxy changed. Recorded by the
+	// FACT of the change and never by content: a list of the networks that
+	// reach a private admin panel is not something to copy into a second table
+	// (threat-model §5.15).
+	ActionApplicationAccessChanged = "application.access_changed"
+	// Maintenance mode is downtime ON PURPOSE (app-access-control.md §10), which
+	// is exactly why both edges are recorded: the question an incident review
+	// asks is who raised the holding page and who was left to notice it was
+	// still up.
+	ActionApplicationMaintenanceStarted = "application.maintenance_started"
+	ActionApplicationMaintenanceEnded   = "application.maintenance_ended"
+	// Volume backup schedule changed, and a run started.
+	ActionVolumeBackupChanged = "application.volume_backup_changed"
+	ActionVolumeBackupRan     = "application.volume_backup_ran"
+	ActionEnvVarSet           = "application.env_var_set"
+	ActionEnvVarRemoved       = "application.env_var_removed"
 
 	// Compose Stacks (compose-stacks.md §7). The detail records THAT the file
 	// changed, never its content: a compose file can carry an inline secret an
@@ -257,6 +340,54 @@ var actions = map[string]bool{
 	ActionNotifierDeleted: true, ActionWebhookCreated: true,
 	ActionWebhookUpdated: true, ActionWebhookDeleted: true,
 	ActionWebhookSecretRotated: true,
+
+	ActionApplicationAccessChanged:      true,
+	ActionApplicationMaintenanceStarted: true,
+	ActionApplicationMaintenanceEnded:   true,
+	ActionVolumeBackupChanged:           true, ActionVolumeBackupRan: true,
+
+	ActionProjectExported: true,
+
+	ActionStatusPageCreated:   true,
+	ActionStatusPageUpdated:   true,
+	ActionStatusPageDeleted:   true,
+	ActionStatusPagePublished: true, ActionStatusPageUnpublished: true,
+	ActionStatusPageIncidentAnnotated: true,
+
+	ActionMetricsSettingsChanged: true,
+
+	ActionAlertRuleCreated: true,
+	ActionAlertRuleChanged: true,
+	ActionAlertRuleDeleted: true,
+
+	ActionPanelUpgradeStarted:   true,
+	ActionPanelUpgradeCancelled: true,
+	ActionAgentVersionSet:       true,
+	ActionAgentPromoted:         true,
+	ActionPanelSnapshotDeleted:  true,
+	ActionPanelSnapshotRestored: true,
+
+	ActionLogDrainCreated: true,
+	ActionLogDrainChanged: true,
+	ActionLogDrainDeleted: true,
+
+	ActionPlaneDRArmed:       true,
+	ActionPlaneDRDisarmed:    true,
+	ActionPlaneDRVerified:    true,
+	ActionPlaneSnapshotTaken: true,
+
+	ActionMailProviderConnected:    true,
+	ActionMailProviderDisconnected: true,
+	ActionMailDomainEnabled:        true,
+	ActionMailDomainDisabled:       true,
+	ActionMailboxCreated:           true,
+	ActionMailboxDeleted:           true,
+	ActionMailboxPasswordReset:     true,
+
+	ActionQuotaSet:     true,
+	ActionQuotaRemoved: true,
+
+	ActionRevisionPromoted: true,
 
 	ActionRegistryCreated: true, ActionRegistryUpdated: true,
 	ActionRegistryDeleted: true,

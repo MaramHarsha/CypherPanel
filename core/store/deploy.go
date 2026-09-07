@@ -25,6 +25,20 @@ func volumesJSON(v []domain.VolumeMount) []byte {
 	return b
 }
 
+// replicasFromJSON parses the observation document. A row written before this
+// feature decodes to nil, which reads as "one replica, unobserved" rather than
+// as an empty set — the same distinction ADR-010 draws between unknown and zero.
+func replicasFromJSON(b []byte) []domain.ReplicaObservation {
+	if len(b) == 0 {
+		return nil
+	}
+	var out []domain.ReplicaObservation
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
 // volumesFromJSON parses the JSONB column back to volume mounts.
 func volumesFromJSON(b []byte) []domain.VolumeMount {
 	if len(b) == 0 {
@@ -305,6 +319,21 @@ func (s *Store) ListApplicationsByEnvironment(ctx context.Context, envID string)
 	return out, nil
 }
 
+// ListApplicationConfigsByEnvironment returns applications with every sealed
+// field stripped, for callers that must be unable to hold one (see
+// domain.ApplicationConfig).
+func (s *Store) ListApplicationConfigsByEnvironment(ctx context.Context, envID string) ([]domain.ApplicationConfig, error) {
+	apps, err := s.ListApplicationsByEnvironment(ctx, envID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.ApplicationConfig, 0, len(apps))
+	for _, a := range apps {
+		out = append(out, a.ConfigView())
+	}
+	return out, nil
+}
+
 func (s *Store) ListApplicationsByServer(ctx context.Context, serverID string) ([]domain.Application, error) {
 	rows, err := s.q.ListApplicationsByServer(ctx, serverID)
 	if err != nil {
@@ -452,6 +481,23 @@ func (s *Store) ListEnvVars(ctx context.Context, appID string) ([]domain.EnvVar,
 	return out, nil
 }
 
+// ListEnvVarKeys returns the keys and their shared-variable references and
+// nothing else. It exists so a caller that must never hold a ciphertext — the
+// project exporter (project-export.md §4) — can be given an interface with no
+// method capable of returning one, rather than being trusted to ignore the
+// fields on domain.EnvVar.
+func (s *Store) ListEnvVarKeys(ctx context.Context, appID string) ([]domain.EnvVarKey, error) {
+	rows, err := s.q.ListEnvVarKeys(ctx, appID)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing env var keys: %w", err)
+	}
+	out := make([]domain.EnvVarKey, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, domain.EnvVarKey{Key: r.Key, SharedRefs: r.SharedRefs})
+	}
+	return out, nil
+}
+
 func (s *Store) DeleteEnvVar(ctx context.Context, appID, key string) error {
 	if err := s.q.DeleteEnvVar(ctx, db.DeleteEnvVarParams{ApplicationID: appID, Key: key}); err != nil {
 		return fmt.Errorf("store: deleting env var: %w", err)
@@ -470,6 +516,22 @@ func (s *Store) CreateRevision(ctx context.Context, id, appID, sourceCommit stri
 	})
 	if err != nil {
 		return domain.Revision{}, wrapCreate("creating revision", err)
+	}
+	return revisionFromRow(row), nil
+}
+
+// CreatePromotedRevision writes a revision whose artifact already exists. The
+// image is the TARGET's canonical tag — what a build would have produced — so
+// nothing downstream has to know this revision was promoted in order to be
+// correct about ownership.
+func (s *Store) CreatePromotedRevision(ctx context.Context, id, appID, sourceCommit string, configSnapshot []byte, image, fromRevisionID string) (domain.Revision, error) {
+	row, err := s.q.CreatePromotedRevision(ctx, db.CreatePromotedRevisionParams{
+		ID: id, ApplicationID: appID, SourceCommit: sourceCommit,
+		ConfigSnapshot: configSnapshot, Image: image,
+		PromotedFromRevisionID: pgText(fromRevisionID),
+	})
+	if err != nil {
+		return domain.Revision{}, wrapCreate("creating the promoted revision", err)
 	}
 	return revisionFromRow(row), nil
 }
@@ -820,8 +882,9 @@ func applicationFromRow(r db.Application) domain.Application {
 			HTTPS:      r.RouteHttps,
 			PathPrefix: r.RoutePathPrefix,
 		},
-		Volumes: volumesFromJSON(r.Volumes),
-		Ports:   portsFromJSON(r.Ports),
+		Volumes:  volumesFromJSON(r.Volumes),
+		Replicas: replicasFromJSON(r.ReplicaStatus),
+		Ports:    portsFromJSON(r.Ports),
 		Health: domain.AppHealth{
 			Kind:            r.HealthKind,
 			Path:            r.HealthPath,
@@ -836,6 +899,7 @@ func applicationFromRow(r db.Application) domain.Application {
 		PreviewBaseDomain:  r.PreviewBaseDomain,
 		PreviewTTLHours:    int(r.PreviewTtlHours),
 		RestartToken:       r.RestartToken,
+		Access:             accessFromRow(r),
 		DesiredRevisionID:  ptrFromText(r.DesiredRevisionID),
 		Status:             r.Status,
 		StatusDetail:       r.StatusDetail,
@@ -848,12 +912,13 @@ func applicationFromRow(r db.Application) domain.Application {
 
 func revisionFromRow(r db.Revision) domain.Revision {
 	return domain.Revision{
-		ID:             r.ID,
-		ApplicationID:  r.ApplicationID,
-		Image:          r.Image,
-		SourceCommit:   r.SourceCommit,
-		ConfigSnapshot: r.ConfigSnapshot,
-		CreatedAt:      r.CreatedAt.Time,
+		ID:                     r.ID,
+		PromotedFromRevisionID: r.PromotedFromRevisionID.String,
+		ApplicationID:          r.ApplicationID,
+		Image:                  r.Image,
+		SourceCommit:           r.SourceCommit,
+		ConfigSnapshot:         r.ConfigSnapshot,
+		CreatedAt:              r.CreatedAt.Time,
 	}
 }
 
@@ -894,4 +959,80 @@ func ptrFromText(t pgtype.Text) *string {
 // operand rather than a nullable column.
 func pgText(s string) pgtype.Text {
 	return pgtype.Text{String: s, Valid: true}
+}
+
+// accessFromRow reads the front-door policy off the application row. The CIDR
+// list is stored as JSONB; a row written before this feature decodes to an
+// empty list, which is "no allowlist" rather than "allow nothing".
+func accessFromRow(r db.Application) domain.AppAccess {
+	a := domain.AppAccess{
+		IPAllowlistEnabled:     r.IpAllowlistEnabled,
+		PreviewPasswordEnabled: r.PreviewPasswordEnabled,
+		PreviewPasswordHash:    r.PreviewPasswordHash,
+		PreviewPasswordSetAt:   ptrTime(r.PreviewPasswordSetAt),
+		MaintenanceMode:        r.MaintenanceMode,
+		MaintenanceSince:       ptrTime(r.MaintenanceSince),
+	}
+	if len(r.IpAllowlist) > 0 {
+		_ = json.Unmarshal(r.IpAllowlist, &a.IPAllowlist)
+	}
+	return a
+}
+
+// SetApplicationAllowlist replaces the allowlist wholesale. The CIDRs are
+// validated by the service before they reach here.
+func (s *Store) SetApplicationAllowlist(ctx context.Context, id string, enabled bool, cidrs []string) (domain.Application, error) {
+	if cidrs == nil {
+		cidrs = []string{}
+	}
+	raw, err := json.Marshal(cidrs)
+	if err != nil {
+		return domain.Application{}, fmt.Errorf("store: encoding allowlist: %w", err)
+	}
+	row, err := s.q.SetApplicationAllowlist(ctx, db.SetApplicationAllowlistParams{
+		ID: id, IpAllowlistEnabled: enabled, IpAllowlist: raw,
+	})
+	if err != nil {
+		return domain.Application{}, fmt.Errorf("store: setting allowlist: %w", err)
+	}
+	return applicationFromRow(row), nil
+}
+
+// SetApplicationMaintenance turns the holding page on or off. The stamp is set
+// by the query, not here, so that turning it on twice keeps the original.
+func (s *Store) SetApplicationMaintenance(ctx context.Context, id string, on bool) (domain.Application, error) {
+	row, err := s.q.SetApplicationMaintenance(ctx, db.SetApplicationMaintenanceParams{
+		ID: id, MaintenanceMode: on,
+	})
+	if err != nil {
+		return domain.Application{}, fmt.Errorf("store: setting maintenance mode: %w", err)
+	}
+	return applicationFromRow(row), nil
+}
+
+// SetApplicationPreviewPassword stores the bcrypt hash, never the passphrase.
+// An empty hash clears it, which also clears the set-at stamp.
+func (s *Store) SetApplicationPreviewPassword(ctx context.Context, id string, enabled bool, hash string) (domain.Application, error) {
+	row, err := s.q.SetApplicationPreviewPassword(ctx, db.SetApplicationPreviewPasswordParams{
+		ID: id, PreviewPasswordEnabled: enabled, PreviewPasswordHash: hash,
+	})
+	if err != nil {
+		return domain.Application{}, fmt.Errorf("store: setting preview password: %w", err)
+	}
+	return applicationFromRow(row), nil
+}
+
+// SetApplicationReplicaStatus replaces the observation document wholesale. That
+// IS the scale-down sweep: an index no longer reported is no longer present.
+func (s *Store) SetApplicationReplicaStatus(ctx context.Context, appID string, replicas []domain.ReplicaObservation) error {
+	body, err := json.Marshal(replicas)
+	if err != nil {
+		return fmt.Errorf("store: marshaling replica status: %w", err)
+	}
+	if err := s.q.SetApplicationReplicaStatus(ctx, db.SetApplicationReplicaStatusParams{
+		ID: appID, ReplicaStatus: body,
+	}); err != nil {
+		return wrap("recording replica status", err)
+	}
+	return nil
 }

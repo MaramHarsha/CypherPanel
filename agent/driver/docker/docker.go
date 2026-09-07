@@ -53,6 +53,12 @@ type Container struct {
 	// whose token differs from the spec's is not the desired container, even at
 	// the desired revision (deployment-control.md §3).
 	RestartToken string
+	// ReplicaIndex is 1-based and stable; 1 for every container created before
+	// replicas existed (app-scaling.md §2). uint32 rather than int on purpose:
+	// it is read from a container label and used as a map key and a wire field,
+	// so the narrowing has to happen at the bounded parse rather than at every
+	// use.
+	ReplicaIndex uint32
 	Running      bool
 }
 
@@ -181,12 +187,20 @@ type Router interface {
 	// AttachNetwork connects the Proxy to an environment network so it can
 	// reach that environment's upstreams. Idempotent.
 	AttachNetwork(ctx context.Context, network string) error
-	SetRoute(ctx context.Context, appID string, route *agentv1.RouteSpec, upstream string) error
+	SetRoute(ctx context.Context, appID string, route *agentv1.RouteSpec, upstreams []string) error
 	RemoveRoute(ctx context.Context, appID string) error
 	// Route returns the upstream the app's route currently points at, or
 	// ok=false when no route is applied. Used by the converged fast path to
 	// re-assert a route lost to a crash between start and flip.
-	Route(ctx context.Context, appID string) (upstream string, ok bool, err error)
+	Route(ctx context.Context, appID string) (upstreams []string, ok bool, err error)
+	// EnsureMaintenance makes the node's maintenance responder serve and
+	// reports the upstream a route in maintenance points at
+	// (app-access-control.md §7). An error means it is NOT serving, and the
+	// caller leaves the route alone.
+	EnsureMaintenance(ctx context.Context) (upstream string, err error)
+	// RemoveMaintenance takes the responder down once nothing on this node is
+	// in maintenance. Idempotent.
+	RemoveMaintenance(ctx context.Context) error
 }
 
 // HealthProber checks that an upstream is serving before the route flips. The
@@ -261,9 +275,23 @@ func (d *Driver) Reconcile(ctx context.Context, desired []*agentv1.AppSpec, reta
 	desiredApps := make(map[string]struct{}, len(desired))
 
 	statuses := make([]*agentv1.AppStatus, 0, len(desired))
+	inMaintenance := false
 	for _, spec := range desired {
 		desiredApps[spec.GetAppId()] = struct{}{}
+		if underMaintenance(spec) {
+			inMaintenance = true
+		}
 		statuses = append(statuses, d.convergeApp(ctx, spec, byApp[spec.GetAppId()]))
+	}
+
+	// The responder is shared, so it goes away only when the LAST resource on
+	// this node leaves maintenance — a node that never uses the feature pays
+	// nothing for it. Best-effort like the rest of proxy convergence: a
+	// responder left running routes no traffic, and the next cycle retries.
+	if !inMaintenance {
+		if err := d.router.RemoveMaintenance(ctx); err != nil {
+			d.log.Warn("removing the maintenance responder", "error", err)
+		}
 	}
 
 	// Attach the Proxy to every desired environment network — after
@@ -310,24 +338,177 @@ func (d *Driver) Reconcile(ctx context.Context, desired []*agentv1.AppSpec, reta
 // undrained, or leave a created-but-never-started container squatting on the
 // deterministic name. Each of those must converge with no manual step.
 func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existing []Container) *agentv1.AppStatus {
-	var current *Container    // desired revision, running
-	var leftovers []Container // everything else: old revisions, dead duplicates
+	indexes := desiredIndexes(spec)
+
+	// Partition what is here into "the desired container for index N" and
+	// everything else. A restart changes only the token, which is exactly what
+	// makes it a difference the ordinary rollout path closes.
+	current := make(map[uint32]*Container, len(indexes))
+	wanted := make(map[uint32]bool, len(indexes))
+	for _, idx := range indexes {
+		wanted[idx] = true
+	}
+	var leftovers []Container
 	for i := range existing {
 		c := existing[i]
-		// The desired container is the one at the desired revision AND under the
-		// desired restart token. A restart changes only the second, which is
-		// exactly what makes it a difference the ordinary rollout path closes.
-		if c.RevisionID == spec.GetRevisionId() && c.RestartToken == spec.GetRestartToken() && c.Running && current == nil {
-			current = &existing[i]
+		idx := c.ReplicaIndex
+		if idx == 0 {
+			idx = 1
+		}
+		if wanted[idx] && current[idx] == nil &&
+			c.RevisionID == spec.GetRevisionId() && c.RestartToken == spec.GetRestartToken() && c.Running {
+			current[idx] = &existing[i]
 			continue
 		}
 		leftovers = append(leftovers, c)
 	}
 
-	if current != nil {
-		return d.convergedApp(ctx, spec, current, leftovers)
+	missing := make([]uint32, 0, len(indexes))
+	for _, idx := range indexes {
+		if current[idx] == nil {
+			missing = append(missing, idx)
+		}
 	}
 
+	// Everything below this point is skipped entirely when nothing is missing,
+	// which is what keeps converge-twice a zero-mutation operation.
+	if len(missing) > 0 {
+		st := d.startMissingReplicas(ctx, spec, existing, missing, current, &leftovers)
+		if st != nil {
+			return st
+		}
+	}
+
+	// Health-gate every replica before the old revision stops serving, then
+	// point the route at all of them at once. Per node a rollout is
+	// surge-then-flip: every new replica starts alongside the old ones, all of
+	// them pass their gate, the fragment is rewritten ONCE, and only then are
+	// the old containers drained. Replacing replicas one at a time and letting
+	// the fragment carry a mix would make two revisions serve one node's
+	// traffic for the whole roll, so a client could see an old and a new API
+	// response in the same session.
+	newly := make(map[uint32]bool, len(missing))
+	for _, idx := range missing {
+		newly[idx] = true
+	}
+	// Under maintenance the APPLIED upstream is the responder's, so it can
+	// never equal an app container's address. Without this the comparison below
+	// reads as "the fragment disagrees" and the agent health-probes every
+	// replica once per cycle for the whole outage window
+	// (app-access-control.md §8).
+	maintenance := underMaintenance(spec)
+	applied, routed, err := d.router.Route(ctx, spec.GetAppId())
+	if err != nil {
+		return status(spec.GetAppId(), spec.GetRevisionId(), stateError, "route: "+err.Error())
+	}
+
+	upstreams := make([]string, 0, len(indexes))
+	for _, idx := range indexes {
+		c := current[idx]
+		up, err := d.upstreamOf(ctx, c.ID, spec)
+		if err != nil {
+			d.discardNew(ctx, current, newly)
+			return status(spec.GetAppId(), currentRevision(existing), stateError, "address: "+err.Error())
+		}
+		// Probing is what must stay gated — it costs a network round trip per
+		// cycle. A newly started replica is always probed; a running one is
+		// re-probed only when the fragment disagrees with it, so a container
+		// that has since died can never capture the route.
+		if newly[idx] || (!maintenance && (!routed || !slices.Contains(applied, up))) {
+			if err := d.prober.Probe(ctx, up, spec.GetHealth()); err != nil {
+				d.discardNew(ctx, current, newly)
+				return status(spec.GetAppId(), currentRevision(existing), stateError, "health check failed: "+err.Error())
+			}
+		}
+		upstreams = append(upstreams, up)
+	}
+
+	// A raw (routeless) app's desired state is NO fragment. Removing one that
+	// was never written would be a mutation on a converged app, so the removal
+	// is conditional on a fragment actually being there — that is what keeps
+	// converge-twice at zero mutations.
+	if spec.GetRoute().GetDomain() == "" && !routed {
+		return d.finishConverge(ctx, spec, indexes, current, leftovers)
+	}
+	// Maintenance is a SERVICE SWAP, not a middleware: the rule, the TLS, the
+	// allowlist and the basic auth are all unchanged and only the load
+	// balancer's server moves (app-access-control.md §7). The app containers
+	// keep running and keep passing their gate above — this flips a route that
+	// currently points elsewhere.
+	if maintenance {
+		up, mErr := d.router.EnsureMaintenance(ctx)
+		if mErr != nil {
+			// Never take an application down as a side effect of failing to
+			// take it down politely: the route is untouched, so the app keeps
+			// serving, and the leftovers are deliberately NOT drained — they
+			// may still be the ones holding the traffic. Degraded is precisely
+			// "serving, with something wrong", and app.crashed fires only on
+			// running → error, so nobody is paged for a page that did not
+			// appear (§8).
+			return status(spec.GetAppId(), currentRevision(existing), stateDegraded, "maintenance page: "+mErr.Error())
+		}
+		upstreams = []string{up}
+	}
+	if err := d.applyDesiredRoute(ctx, spec, upstreams); err != nil {
+		d.discardNew(ctx, current, newly)
+		return status(spec.GetAppId(), currentRevision(existing), stateError, "route: "+err.Error())
+	}
+	return d.finishConverge(ctx, spec, indexes, current, leftovers)
+}
+
+// underMaintenance reports whether this spec wants the responder in front of it.
+// A routeless app is never in maintenance: there is no front door to hold shut,
+// and a holding page for a raw port would be a fragment nothing reads.
+func underMaintenance(spec *agentv1.AppSpec) bool {
+	return spec.GetRoute().GetDomain() != "" && spec.GetRoute().GetAccess().GetMaintenance()
+}
+
+// desiredIndexes is the replica set this node runs. Empty means [1], which is
+// every application that exists today.
+func desiredIndexes(spec *agentv1.AppSpec) []uint32 {
+	raw := spec.GetReplicaIndexes()
+	if len(raw) == 0 {
+		return []uint32{1}
+	}
+	out := make([]uint32, 0, len(raw))
+	seen := make(map[uint32]bool, len(raw))
+	for _, i := range raw {
+		if i == 0 || seen[i] {
+			continue
+		}
+		seen[i] = true
+		out = append(out, i)
+	}
+	if len(out) == 0 {
+		return []uint32{1}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// discardNew removes only the containers THIS pass created. A replica that was
+// already serving when the pass began is untouched by a failure — that is the
+// anti-stale-container property, kept intact for N replicas.
+func (d *Driver) discardNew(ctx context.Context, current map[uint32]*Container, newly map[uint32]bool) {
+	for idx := range newly {
+		if c := current[idx]; c != nil {
+			d.discard(ctx, c.ID)
+			delete(current, idx)
+		}
+	}
+}
+
+// startMissingReplicas prepares the node (network, volumes, image) and starts
+// every replica that is not already running the desired revision. It returns a
+// non-nil status only on failure.
+func (d *Driver) startMissingReplicas(
+	ctx context.Context,
+	spec *agentv1.AppSpec,
+	existing []Container,
+	missing []uint32,
+	current map[uint32]*Container,
+	leftovers *[]Container,
+) *agentv1.AppStatus {
 	if err := d.client.EnsureNetwork(ctx, spec.GetNetwork(), networkLabels()); err != nil {
 		return status(spec.GetAppId(), currentRevision(existing), stateError, "network: "+err.Error())
 	}
@@ -410,133 +591,135 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 	// A dead container of the desired revision (crash between create and
 	// start) holds the deterministic name; clear it so create cannot collide.
 	//
-	// Matched on the restart token too, because that is what the name now
-	// carries: a leftover at the same revision under a DIFFERENT token is the
-	// container a restart is replacing, it is very likely still serving, and
-	// discarding it here would turn a zero-downtime restart into an outage. It
-	// stays a leftover and is drained after the replacement is healthy and
+	// Matched on the restart token AND the index, because that is what the name
+	// now carries: a leftover at the same revision under a DIFFERENT token is
+	// the container a restart is replacing, it is very likely still serving,
+	// and discarding it here would turn a zero-downtime restart into an outage.
+	// It stays a leftover and is drained after the replacement is healthy and
 	// routed.
-	remaining := leftovers[:0]
-	for _, c := range leftovers {
-		if c.RevisionID == spec.GetRevisionId() && c.RestartToken == spec.GetRestartToken() {
+	starting := make(map[uint32]bool, len(missing))
+	for _, idx := range missing {
+		starting[idx] = true
+	}
+	remaining := (*leftovers)[:0]
+	for _, c := range *leftovers {
+		idx := c.ReplicaIndex
+		if idx == 0 {
+			idx = 1
+		}
+		if starting[idx] && c.RevisionID == spec.GetRevisionId() && c.RestartToken == spec.GetRestartToken() {
 			d.discard(ctx, c.ID)
 			continue
 		}
 		remaining = append(remaining, c)
 	}
-	leftovers = remaining
+	*leftovers = remaining
 
-	// Start the new revision alongside the old one.
-	newID, err := d.client.CreateContainer(ctx, ContainerSpec{
-		Name:          containerName(spec.GetAppId(), spec.GetRevisionId(), spec.GetRestartToken()),
-		Image:         image,
-		Env:           spec.GetEnv(),
-		Network:       spec.GetNetwork(),
-		Port:          spec.GetPort(),
-		Labels:        managedLabels(spec),
-		CPULimit:      spec.GetCpuLimit(),
-		MemoryLimitMB: spec.GetMemoryLimitMb(),
-		Binds:         binds,
-		Ports:         portBindings(spec),
-	})
-	if err != nil {
-		return status(spec.GetAppId(), currentRevision(existing), stateError, "create: "+err.Error())
+	// Start the new revision alongside the old one, one container per missing
+	// index.
+	started := map[uint32]bool{}
+	fail := func(detail string) *agentv1.AppStatus {
+		d.discardNew(ctx, current, started)
+		return status(spec.GetAppId(), currentRevision(existing), stateError, detail)
 	}
-	if err := d.client.StartContainer(ctx, newID); err != nil {
-		d.discard(ctx, newID)
-		return status(spec.GetAppId(), currentRevision(existing), stateError, "start: "+err.Error())
+	for _, idx := range missing {
+		newID, err := d.client.CreateContainer(ctx, ContainerSpec{
+			Name:          containerName(spec.GetAppId(), spec.GetRevisionId(), spec.GetRestartToken(), idx),
+			Image:         image,
+			Env:           spec.GetEnv(),
+			Network:       spec.GetNetwork(),
+			Port:          spec.GetPort(),
+			Labels:        managedLabels(spec, idx),
+			CPULimit:      spec.GetCpuLimit(),
+			MemoryLimitMB: spec.GetMemoryLimitMb(),
+			Binds:         binds,
+			Ports:         portBindings(spec),
+		})
+		if err != nil {
+			return fail("create: " + err.Error())
+		}
+		current[idx] = &Container{ID: newID, AppID: spec.GetAppId(), RevisionID: spec.GetRevisionId(), ReplicaIndex: idx, Running: true}
+		started[idx] = true
+		if err := d.client.StartContainer(ctx, newID); err != nil {
+			return fail("start: " + err.Error())
+		}
 	}
-
-	// Health-gate before the old revision stops serving.
-	upstream, err := d.upstreamOf(ctx, newID, spec)
-	if err != nil {
-		d.discard(ctx, newID)
-		return status(spec.GetAppId(), currentRevision(existing), stateError, "address: "+err.Error())
-	}
-	if err := d.prober.Probe(ctx, upstream, spec.GetHealth()); err != nil {
-		// New revision never became healthy: discard it; the old container is
-		// untouched and still serving. This is the anti-stale-container property.
-		d.discard(ctx, newID)
-		return status(spec.GetAppId(), currentRevision(existing), stateError, "health check failed: "+err.Error())
-	}
-
-	// New revision healthy: point the route at it (or ensure no route for a raw
-	// app), then drain the old.
-	if err := d.applyDesiredRoute(ctx, spec, upstream); err != nil {
-		d.discard(ctx, newID)
-		return status(spec.GetAppId(), currentRevision(existing), stateError, "route: "+err.Error())
-	}
-	return d.finishConverge(ctx, spec, leftovers)
+	return nil
 }
 
 // applyDesiredRoute reconciles the proxy fragment to the app's desired route:
-// an HTTP app (non-empty domain) gets its fragment pointed at upstream; a raw
-// app (no domain) gets any fragment removed. Both are idempotent.
-func (d *Driver) applyDesiredRoute(ctx context.Context, spec *agentv1.AppSpec, upstream string) error {
-	if spec.GetRoute().GetDomain() == "" {
+// an HTTP app (non-empty domain) gets its fragment pointed at every healthy
+// replica; a raw app (no domain) gets any fragment removed. Both are
+// idempotent.
+func (d *Driver) applyDesiredRoute(ctx context.Context, spec *agentv1.AppSpec, upstreams []string) error {
+	if spec.GetRoute().GetDomain() == "" || len(upstreams) == 0 {
 		return d.router.RemoveRoute(ctx, spec.GetAppId())
 	}
-	return d.router.SetRoute(ctx, spec.GetAppId(), spec.GetRoute(), upstream)
-}
-
-// convergedApp handles the app whose desired revision is already running:
-// verify the route actually points at it (a crash between start and flip
-// leaves it on the old revision) and drain any leftover containers (a crash
-// between flip and drain leaves the old revision running unrouted). When
-// reality fully matches desired, this makes zero mutating calls.
-func (d *Driver) convergedApp(ctx context.Context, spec *agentv1.AppSpec, current *Container, leftovers []Container) *agentv1.AppStatus {
-	upstream, err := d.upstreamOf(ctx, current.ID, spec)
-	if err != nil {
-		return status(spec.GetAppId(), spec.GetRevisionId(), stateError, "address: "+err.Error())
-	}
-	applied, ok, err := d.router.Route(ctx, spec.GetAppId())
-	if err != nil {
-		return status(spec.GetAppId(), spec.GetRevisionId(), stateError, "route: "+err.Error())
-	}
-	if spec.GetRoute().GetDomain() == "" {
-		// Raw (routeless) app: the desired state is no fragment. Remove a stale
-		// one left by a prior HTTP config; if none exists this makes zero calls,
-		// preserving the converge-twice invariant.
-		if ok {
-			if err := d.router.RemoveRoute(ctx, spec.GetAppId()); err != nil {
-				return status(spec.GetAppId(), spec.GetRevisionId(), stateError, "route: "+err.Error())
-			}
-		}
-	} else {
-		// Probing is what must stay gated — it costs a network round trip per
-		// cycle. The route itself is written every time: the fragment on disk is
-		// the observable truth (see the Router doc above), and comparing only
-		// the upstream meant any change to the fragment's *shape* never reached
-		// a stable app. A middleware added to the template stayed invisible
-		// until something unrelated moved the container's IP. SetRoute skips the
-		// write when the bytes already match, so this stays a no-op in the
-		// common case and does not churn the proxy's file watcher.
-		if !ok || applied != upstream {
-			// The running revision passed its health gate when it was started; a
-			// re-observed flip still gates on health so a container that has
-			// since died can never capture the route.
-			if err := d.prober.Probe(ctx, upstream, spec.GetHealth()); err != nil {
-				return status(spec.GetAppId(), spec.GetRevisionId(), stateError, "health check failed: "+err.Error())
-			}
-		}
-		if err := d.router.SetRoute(ctx, spec.GetAppId(), spec.GetRoute(), upstream); err != nil {
-			return status(spec.GetAppId(), spec.GetRevisionId(), stateError, "route: "+err.Error())
-		}
-	}
-	return d.finishConverge(ctx, spec, leftovers)
+	return d.router.SetRoute(ctx, spec.GetAppId(), spec.GetRoute(), upstreams)
 }
 
 // finishConverge drains the leftover containers of an app whose desired
 // revision is serving and routed. A drain failure is not a rollout failure —
 // the desired revision holds the traffic — but it is not convergence either:
 // the app is reported degraded and the next reconcile retries the drain.
-func (d *Driver) finishConverge(ctx context.Context, spec *agentv1.AppSpec, leftovers []Container) *agentv1.AppStatus {
+//
+// Scale-in drains before it stops, and that ordering is the whole point: the
+// departing index has already been left out of the fragment above, so Traefik
+// has stopped sending to it and in-flight requests can finish. Stopping first
+// and rewriting after would drop them.
+func (d *Driver) finishConverge(ctx context.Context, spec *agentv1.AppSpec, indexes []uint32, current map[uint32]*Container, leftovers []Container) *agentv1.AppStatus {
 	for _, c := range leftovers {
 		if err := d.drain(ctx, c.ID); err != nil {
-			return status(spec.GetAppId(), spec.GetRevisionId(), stateDegraded, "draining old revision: "+err.Error())
+			st := d.replicaStatus(spec, indexes, current)
+			st.State, st.Detail = stateDegraded, "draining old revision: "+err.Error()
+			return st
 		}
 	}
-	return d.runningStatus(ctx, spec)
+	st := d.runningStatus(ctx, spec)
+	st.Replicas = replicaObservations(indexes, current)
+	return st
+}
+
+// replicaStatus is the aggregate reading of the replica set (app-scaling.md
+// §8): running iff every desired index is running, degraded if some but not
+// all, error if none. No new vocabulary — this is the same reading a partially
+// up Compose Stack already gets.
+func (d *Driver) replicaStatus(spec *agentv1.AppSpec, indexes []uint32, current map[uint32]*Container) *agentv1.AppStatus {
+	up := 0
+	for _, idx := range indexes {
+		if c := current[idx]; c != nil && c.Running {
+			up++
+		}
+	}
+	state := stateRunning
+	switch {
+	case up == 0:
+		state = stateError
+	case up < len(indexes):
+		state = stateDegraded
+	}
+	st := status(spec.GetAppId(), spec.GetRevisionId(), state, "")
+	st.Replicas = replicaObservations(indexes, current)
+	return st
+}
+
+func replicaObservations(indexes []uint32, current map[uint32]*Container) []*agentv1.ReplicaStatus {
+	out := make([]*agentv1.ReplicaStatus, 0, len(indexes))
+	for _, idx := range indexes {
+		c := current[idx]
+		if c == nil {
+			out = append(out, &agentv1.ReplicaStatus{Index: idx, State: stateError})
+			continue
+		}
+		id := c.ID
+		if len(id) > 12 {
+			id = id[:12]
+		}
+		out = append(out, &agentv1.ReplicaStatus{
+			Index: idx, ContainerId: id, RevisionId: c.RevisionID, State: stateRunning,
+		})
+	}
+	return out
 }
 
 // runningStatus reports a converged app, carrying the immutable digest of what
@@ -731,7 +914,7 @@ func (d *Driver) upstreamOf(ctx context.Context, containerID string, spec *agent
 	return net.JoinHostPort(ip, strconv.Itoa(int(spec.GetPort()))), nil
 }
 
-func managedLabels(spec *agentv1.AppSpec) map[string]string {
+func managedLabels(spec *agentv1.AppSpec, index uint32) map[string]string {
 	labels := map[string]string{
 		driver.LabelManaged:    driverName,
 		driver.LabelAppID:      spec.GetAppId(),
@@ -741,6 +924,11 @@ func managedLabels(spec *agentv1.AppSpec) map[string]string {
 	// restarted keeps exactly the labels it had before this feature existed.
 	if t := spec.GetRestartToken(); t != "" {
 		labels[driver.LabelRestartToken] = t
+	}
+	// Stamped only past index 1, for the same reason the name is: a container
+	// that predates replicas must keep exactly the labels it had.
+	if index > 1 {
+		labels[driver.LabelReplicaIndex] = strconv.FormatUint(uint64(index), 10)
 	}
 	return labels
 }
@@ -770,10 +958,18 @@ func volumeLabels(spec *agentv1.AppSpec) map[string]string {
 // Identity comes from labels, never from this name (see Container), so the
 // extra segment is cosmetic to everything except collision avoidance. An
 // application that has never restarted keeps the exact name it always had.
-func containerName(appID, revisionID, restartToken string) string {
+// containerName is deterministic, and index 1 keeps EXACTLY the name it has
+// always had. That is not cosmetic: without it, upgrading the agent would make
+// every existing container in every fleet read as drift and get recreated on
+// the next reconcile, turning a version bump into a fleet-wide rolling restart
+// (app-scaling.md §2). Identity still comes from labels, never the name.
+func containerName(appID, revisionID, restartToken string, index uint32) string {
 	name := "cypher-" + appID + "-" + revisionID
 	if restartToken != "" {
 		name += "-" + restartToken
+	}
+	if index > 1 {
+		name += "-r" + strconv.FormatUint(uint64(index), 10)
 	}
 	return name
 }

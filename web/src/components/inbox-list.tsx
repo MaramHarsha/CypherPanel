@@ -19,7 +19,7 @@
 //     notification is not "running".
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { type ReactNode, useCallback, useMemo } from "react";
+import { type ReactNode, useCallback, useMemo, useState } from "react";
 import {
   getGetInboxUnreadCountQueryKey,
   getListInboxQueryKey,
@@ -29,11 +29,16 @@ import {
 } from "@/api/gen/inbox/inbox";
 import type { InboxItem } from "@/api/gen/model";
 import { useListProjects } from "@/api/gen/projects/projects";
+import { useApproveDeployment, useRejectDeployment } from "@/api/gen/protection/protection";
 import { EmptyState } from "@/components/empty-state";
 import { PageState } from "@/components/page-state";
 import { ActionButton, useMutationActionState } from "@/components/ui/action-button";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
+import { Field } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 import { absoluteTime, relativeTime } from "@/lib/time";
+import { toastFailed, toastSuccess } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
 /** §6 caps a page at 100 server-side; asking for more is asking for the cap. */
@@ -149,6 +154,19 @@ function whenLabel(it: InboxItem): string {
     }
   }
   return relativeTime(it.created_at);
+}
+
+/**
+ * The deployment a parked-approval row is about. An item carries a link and no
+ * subject (notification-inbox.md: an item links, it never acts), but the plane
+ * builds that link out of the deployment id and validates it at write time — so
+ * the id is there, spelled as a path.
+ */
+function parkedDeploymentId(it: InboxItem): string | undefined {
+  if (it.kind !== "deploy.awaiting_approval") return undefined;
+  const query = it.link.slice(it.link.indexOf("?") + 1);
+  const dep = new URLSearchParams(query).get("dep");
+  return dep?.startsWith("dep_") ? dep : undefined;
 }
 
 /** id → name for the meta line ("atlas-crm · 2 min"); InboxItem carries only the id. */
@@ -307,12 +325,20 @@ function InboxRow({
   const isError = item.severity === "error";
   const wide = layout === "page";
   const linkLabel = item.link_label === "" ? "Open" : item.link_label;
+  const parkedDep = parkedDeploymentId(item);
 
   const follow = () => {
     // Reading is explicit: following the link is the act that marks it,
     // which is why opening the panel marks nothing.
     if (isUnread) markRead.mutate({ id: item.id });
     onNavigate?.();
+  };
+
+  // Deciding is a stronger act than reading, so it marks the row too: a bell
+  // still counting a deploy this person has just approved is counting nothing.
+  const decided = () => {
+    if (isUnread) markRead.mutate({ id: item.id });
+    else onRead();
   };
 
   return (
@@ -373,12 +399,19 @@ function InboxRow({
                 <span>digest</span>
               </>
             )}
-            {!wide && item.link !== "" && (
+            {/* On the page the link is normally the ink pill below. An approval
+                row spends both its pills on the decision, so the link stays
+                here — approving a deployment you cannot open first is exactly
+                the "vouch for a number" the protection screen refuses to ask
+                for — and it keeps Enter on the row opening rather than
+                deciding. */}
+            {(!wide || parkedDep !== undefined) && item.link !== "" && (
               <>
                 <span aria-hidden>·</span>
                 <Link
                   to={item.link}
                   onClick={follow}
+                  data-row-open
                   className="font-sans text-[11.5px] font-medium text-text-mid underline-offset-2 hover:text-text hover:underline"
                 >
                   {linkLabel} →
@@ -403,35 +436,148 @@ function InboxRow({
       </div>
       {/* 14e: the actions are pills indented under the title, the ink one
           first. The API gives an item one link and no verbs (an item links,
-          it never acts — notification-inbox.md), so the ink pill is that
-          link and the outline pill is the only other thing a row can do. A
-          read row with nothing to open, the digest, has no pills at all. */}
+          it never acts — notification-inbox.md), so on most rows the ink pill
+          is that link and the outline pill is the only other thing a row can
+          do. A read row with nothing to open, the digest, has no pills at all.
+          The one row that carries real verbs is the parked deploy, which is
+          14e's own example: approving from a phone must not cost a trip
+          through Projects → Settings → Protection. */}
       {wide && (item.link !== "" || isUnread) && (
         <div className="mt-2.5 flex flex-wrap gap-2 pl-[17px]">
-          {item.link !== "" && (
-            <Link
-              to={item.link}
-              onClick={follow}
-              data-row-open
-              className={cn(PILL, "bg-primary text-primary-fg hover:bg-primary-hover hover:shadow-lift")}
-            >
-              {linkLabel}
-            </Link>
-          )}
-          {isUnread && (
-            <ActionButton
-              size="sm"
-              variant="secondary"
-              state={markRead.isPending ? "busy" : "idle"}
-              busyLabel="Marking…"
-              onClick={() => markRead.mutate({ id: item.id })}
-              className={cn(PILL, "border border-border-input bg-surface hover:bg-raised")}
-            >
-              Mark read
-            </ActionButton>
+          {parkedDep !== undefined ? (
+            <ApprovalActions depId={parkedDep} onDecided={decided} />
+          ) : (
+            <>
+              {item.link !== "" && (
+                <Link
+                  to={item.link}
+                  onClick={follow}
+                  data-row-open
+                  className={cn(PILL, "bg-primary text-primary-fg hover:bg-primary-hover hover:shadow-lift")}
+                >
+                  {linkLabel}
+                </Link>
+              )}
+              {isUnread && (
+                <ActionButton
+                  size="sm"
+                  variant="secondary"
+                  state={markRead.isPending ? "busy" : "idle"}
+                  busyLabel="Marking…"
+                  onClick={() => markRead.mutate({ id: item.id })}
+                  className={cn(PILL, "border border-border-input bg-surface hover:bg-raised")}
+                >
+                  Mark read
+                </ActionButton>
+              )}
+            </>
           )}
         </div>
       )}
     </li>
+  );
+}
+
+/**
+ * 14e's pair on a parked deploy: "Approve & deploy" in ink, "Reject" outlined
+ * in the refusal's own colour. It is safe to put the decision on the row
+ * because only an approver ever receives this kind — the plane resolves the
+ * recipients against the environment's required rank
+ * (deploy-protection.md, `ListApprovalInboxRecipients`) — so these pills are
+ * never an affordance waiting to be refused.
+ *
+ * Neither pill is the row's `data-row-open`: Enter walking the list opens the
+ * deployment, and a keystroke that ships code is not a shortcut anyone asked
+ * for.
+ */
+function ApprovalActions({ depId, onDecided }: { depId: string; onDecided: () => void }) {
+  const approve = useApproveDeployment({
+    mutation: {
+      onSuccess: () => {
+        toastSuccess("Approved — the deploy is on its way");
+        onDecided();
+      },
+      onError: (e: unknown) => toastFailed("Could not approve the deploy", e),
+    },
+  });
+  const reject = useRejectDeployment({
+    mutation: {
+      onSuccess: () => {
+        toastSuccess("Rejected");
+        onDecided();
+      },
+      onError: (e: unknown) => toastFailed("Could not reject the deploy", e),
+    },
+  });
+
+  return (
+    <>
+      <ActionButton
+        size="sm"
+        variant="primary"
+        state={approve.isPending ? "busy" : "idle"}
+        busyLabel="Approving…"
+        successLabel="Approved"
+        failedLabel="Retry"
+        onClick={() => approve.mutate({ id: depId })}
+        className={PILL}
+      >
+        Approve &amp; deploy
+      </ActionButton>
+      <RejectPill
+        depId={depId}
+        busy={reject.isPending}
+        onReject={(reason) => reject.mutate({ id: depId, data: { reason } })}
+      />
+    </>
+  );
+}
+
+/**
+ * A rejection carries a sentence — the requester reads it and it is
+ * audit-logged — and the API requires one, so the pill opens a dialog instead
+ * of acting. The same question the protection screen asks, asked from a row.
+ */
+function RejectPill({ depId, onReject, busy }: { depId: string; onReject: (reason: string) => void; busy: boolean }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          className={cn(PILL, "border border-border-input bg-surface text-danger hover:bg-raised")}
+        >
+          Reject
+        </Button>
+      </DialogTrigger>
+      <DialogContent title="Reject this deploy?" description="Your reason reaches whoever asked for it, and the decision is audit-logged.">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const f = new FormData(e.currentTarget);
+            onReject(String(f.get("reason") ?? "").trim());
+            setOpen(false);
+          }}
+          className="space-y-3"
+        >
+          <Field label="Reason" qualifier="· what the requester will read">
+            {(id) => <Input id={id} name="reason" required maxLength={500} placeholder="Frozen until the incident is closed." autoFocus />}
+          </Field>
+          <p className="font-mono text-[11px] text-text-faint">deployment {depId}</p>
+          <div className="flex justify-end gap-2.5">
+            <DialogClose asChild>
+              <Button type="button" variant="ghost" size="lg">
+                Cancel
+              </Button>
+            </DialogClose>
+            <ActionButton type="submit" variant="danger" size="lg" state={busy ? "busy" : "idle"} busyLabel="Rejecting…">
+              Reject deploy
+            </ActionButton>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -157,6 +157,19 @@ func (a *API) projectIDForDeployment(ctx context.Context, depID string) (string,
 	return a.projectIDForApplication(ctx, dep.ApplicationID)
 }
 
+// projectIDForRevision resolves through the revision's own application, which
+// is what a promotion needs to authorize the SOURCE end.
+func (a *API) projectIDForRevision(ctx context.Context, revisionID string) (string, error) {
+	if a.deps.Deployments == nil {
+		return "", store.ErrNotFound
+	}
+	rev, err := a.deps.Deployments.GetRevision(ctx, revisionID)
+	if err != nil {
+		return "", err
+	}
+	return a.projectIDForApplication(ctx, rev.ApplicationID)
+}
+
 func (a *API) projectIDForDatabase(ctx context.Context, dbID string) (string, error) {
 	if a.deps.Databases == nil {
 		return "", store.ErrNotFound

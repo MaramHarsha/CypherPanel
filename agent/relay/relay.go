@@ -31,6 +31,9 @@ type Engine interface {
 	SaveImage(ctx context.Context, ref string) (io.ReadCloser, error)
 	LoadImage(ctx context.Context, tar io.Reader) error
 	HasImage(ctx context.Context, ref string) (bool, error)
+	// TagImage gives a loaded image the name it must run under. Needed only by
+	// a promotion, which moves an artifact between applications.
+	TagImage(ctx context.Context, source, target string) error
 }
 
 // Client relays images between the local daemon and the plane.
@@ -118,17 +121,34 @@ func (c *Client) PushImage(ctx context.Context, deploymentID, image string) erro
 // loads it into the local daemon. Idempotent: an image already present is
 // immediate success (the redelivery/crash-recovery anchor, spec §6), and a
 // load is only trusted if the daemon then reports the image present.
-func (c *Client) PullImage(ctx context.Context, deploymentID, image string) error {
-	if ok, err := c.engine.HasImage(ctx, image); err == nil && ok {
+// PullImage fetches this deployment's image and, when targetImage is set,
+// gives it the name it must RUN under on this host (revision-promotion.md §5).
+//
+// The rename is what makes a promotion safe rather than a time bomb. The agent
+// parses ownership out of a managed tag, and garbage collection reclaims every
+// managed reference whose application is absent from this server's desired set
+// — so an image left under the SOURCE application's tag would be reclaimed on
+// the first reconcile after the rollout, on the very server that is serving
+// from it. Renaming it is one call and removes that entire class of failure.
+func (c *Client) PullImage(ctx context.Context, deploymentID, image, targetImage string) error {
+	want := image
+	if targetImage != "" {
+		want = targetImage
+	}
+	// Idempotent under redelivery: the run-name being present is the whole
+	// question, and a second delivery of the same work must not re-fetch.
+	if ok, err := c.engine.HasImage(ctx, want); err == nil && ok {
 		return nil
 	}
 
-	stream, err := agentv1.NewImageRelayServiceClient(c.cc).PullImage(ctx, &agentv1.PullImageRequest{DeploymentId: deploymentID})
-	if err != nil {
-		return fmt.Errorf("relay: opening pull stream: %w", err)
-	}
-	if err := c.engine.LoadImage(ctx, &streamReader{stream: stream}); err != nil {
-		return fmt.Errorf("relay: loading %s: %w", deploymentID, err)
+	if ok, err := c.engine.HasImage(ctx, image); err != nil || !ok {
+		stream, serr := agentv1.NewImageRelayServiceClient(c.cc).PullImage(ctx, &agentv1.PullImageRequest{DeploymentId: deploymentID})
+		if serr != nil {
+			return fmt.Errorf("relay: opening pull stream: %w", serr)
+		}
+		if lerr := c.engine.LoadImage(ctx, &streamReader{stream: stream}); lerr != nil {
+			return fmt.Errorf("relay: loading %s: %w", deploymentID, lerr)
+		}
 	}
 	ok, err := c.engine.HasImage(ctx, image)
 	if err != nil {
@@ -136,6 +156,12 @@ func (c *Client) PullImage(ctx context.Context, deploymentID, image string) erro
 	}
 	if !ok {
 		return fmt.Errorf("relay: %s not present after load (relayed tar did not contain it)", image)
+	}
+	if targetImage == "" || targetImage == image {
+		return nil
+	}
+	if err := c.engine.TagImage(ctx, image, targetImage); err != nil {
+		return fmt.Errorf("relay: naming the promoted image %s: %w", targetImage, err)
 	}
 	return nil
 }

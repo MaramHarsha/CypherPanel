@@ -34,6 +34,10 @@ const (
 type Engine interface {
 	EnsureContainer(ctx context.Context, cfg engine.RunConfig) error
 	ConnectNetwork(ctx context.Context, container, network string) error
+	// EnsureNetwork and RemoveContainer exist for the maintenance responder
+	// (maintenance.go), which is the second container this package owns.
+	EnsureNetwork(ctx context.Context, name string, labels map[string]string) error
+	RemoveContainer(ctx context.Context, id string) error
 }
 
 // Config configures the Traefik Proxy driver.
@@ -51,6 +55,11 @@ type Config struct {
 	// or for a hermetic test. Empty is the normal case: the account arrives in
 	// DesiredState (agent-identity-and-tls.md §4) via SetACME.
 	ACMEEmail string
+	// MaintenanceImage is the pinned image of the node's maintenance responder
+	// (app-access-control.md §7). Empty selects DefaultMaintenanceImage. It is
+	// configurable because it is the feature's one external dependency, and an
+	// operator with a mirror should be able to name it.
+	MaintenanceImage string
 	// ACMECAServer is the same kind of host-local override for the ACME
 	// directory URL (CYPHER_ACME_CASERVER, e.g. the Let's Encrypt staging
 	// endpoint). Empty defers to desired state, and if that is empty too, to
@@ -144,6 +153,41 @@ type staticConfig struct {
 	EntryPoints   map[string]entryPoint   `yaml:"entryPoints"`
 	Providers     providers               `yaml:"providers"`
 	CertResolvers map[string]certResolver `yaml:"certificatesResolvers,omitempty"`
+	AccessLog     *accessLog              `yaml:"accessLog,omitempty"`
+}
+
+// accessLog is request analytics' only footprint in the Proxy's own config
+// (metrics-and-usage.md §4.3).
+//
+// It goes to STDOUT, not to a file. A file in the agent's Traefik directory is
+// natural under ADR-004, but nothing rotates it: truncating a file Traefik
+// holds open leaves a sparse file and a stale write offset, and doing it
+// properly means renaming plus signalling the container to reopen — a
+// hand-rolled rotation state machine duplicating what the log driver already
+// does correctly. A named pipe is worse still: when the reader stops the
+// buffer fills and Traefik BLOCKS ON WRITE, so the node stops serving requests
+// because a metrics reader died. Nothing here may ever be able to take a route
+// down.
+//
+// `defaultMode: drop` plus an explicit keep-list is the important half. The
+// client address, the user agent, the referrer, every cookie, every header,
+// TLS details and THE ENTIRE QUERY STRING are never serialised on the node —
+// not merely ignored by our parser. ?token=…, ?api_key=… and ?reset=… are the
+// ordinary way secrets end up in a URL, and ENGINEERING rule 20 has no
+// exception for "it was already in a log".
+type accessLog struct {
+	Format string          `yaml:"format"`
+	Fields accessLogFields `yaml:"fields"`
+}
+
+type accessLogFields struct {
+	DefaultMode string            `yaml:"defaultMode"`
+	Names       map[string]string `yaml:"names"`
+	Headers     accessLogHeaders  `yaml:"headers"`
+}
+
+type accessLogHeaders struct {
+	DefaultMode string `yaml:"defaultMode"`
 }
 
 type entryPoint struct {
@@ -200,6 +244,25 @@ func (t *Traefik) renderStaticConfig() ([]byte, error) {
 			}},
 		}
 	}
+	if t.accessLogEnabled() {
+		c.AccessLog = &accessLog{
+			Format: "json",
+			Fields: accessLogFields{
+				DefaultMode: "drop",
+				Names: map[string]string{
+					"RouterName":            "keep",
+					"RequestMethod":         "keep",
+					"RequestPath":           "keep",
+					"DownstreamStatus":      "keep",
+					"Duration":              "keep",
+					"DownstreamContentSize": "keep",
+					"StartUTC":              "keep",
+				},
+				Headers: accessLogHeaders{DefaultMode: "drop"},
+			},
+		}
+	}
+
 	data, err := yaml.Marshal(c)
 	if err != nil {
 		return nil, fmt.Errorf("proxy: marshaling static config: %w", err)

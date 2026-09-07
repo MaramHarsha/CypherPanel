@@ -75,6 +75,76 @@ func (AgentStatus) EnumDescriptor() ([]byte, []int) {
 	return file_cypherpanel_agent_v1_agent_proto_rawDescGZIP(), []int{0}
 }
 
+type AgentUpdateStatus_Phase int32
+
+const (
+	AgentUpdateStatus_PHASE_UNSPECIFIED AgentUpdateStatus_Phase = 0
+	AgentUpdateStatus_PHASE_IDLE        AgentUpdateStatus_Phase = 1
+	AgentUpdateStatus_PHASE_PENDING     AgentUpdateStatus_Phase = 2
+	AgentUpdateStatus_PHASE_DOWNLOADING AgentUpdateStatus_Phase = 3
+	AgentUpdateStatus_PHASE_VERIFYING   AgentUpdateStatus_Phase = 4
+	AgentUpdateStatus_PHASE_SWAPPING    AgentUpdateStatus_Phase = 5
+	AgentUpdateStatus_PHASE_ROLLED_BACK AgentUpdateStatus_Phase = 6
+	AgentUpdateStatus_PHASE_FAILED      AgentUpdateStatus_Phase = 7
+	// PHASE_DISABLED is a host that is visibly EXCLUDED rather than failing
+	// forever: CYPHER_UPDATE_DISABLE is set, the binary path is not writable,
+	// or this build trusts no release key and so can verify nothing.
+	AgentUpdateStatus_PHASE_DISABLED AgentUpdateStatus_Phase = 8
+)
+
+// Enum value maps for AgentUpdateStatus_Phase.
+var (
+	AgentUpdateStatus_Phase_name = map[int32]string{
+		0: "PHASE_UNSPECIFIED",
+		1: "PHASE_IDLE",
+		2: "PHASE_PENDING",
+		3: "PHASE_DOWNLOADING",
+		4: "PHASE_VERIFYING",
+		5: "PHASE_SWAPPING",
+		6: "PHASE_ROLLED_BACK",
+		7: "PHASE_FAILED",
+		8: "PHASE_DISABLED",
+	}
+	AgentUpdateStatus_Phase_value = map[string]int32{
+		"PHASE_UNSPECIFIED": 0,
+		"PHASE_IDLE":        1,
+		"PHASE_PENDING":     2,
+		"PHASE_DOWNLOADING": 3,
+		"PHASE_VERIFYING":   4,
+		"PHASE_SWAPPING":    5,
+		"PHASE_ROLLED_BACK": 6,
+		"PHASE_FAILED":      7,
+		"PHASE_DISABLED":    8,
+	}
+)
+
+func (x AgentUpdateStatus_Phase) Enum() *AgentUpdateStatus_Phase {
+	p := new(AgentUpdateStatus_Phase)
+	*p = x
+	return p
+}
+
+func (x AgentUpdateStatus_Phase) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (AgentUpdateStatus_Phase) Descriptor() protoreflect.EnumDescriptor {
+	return file_cypherpanel_agent_v1_agent_proto_enumTypes[1].Descriptor()
+}
+
+func (AgentUpdateStatus_Phase) Type() protoreflect.EnumType {
+	return &file_cypherpanel_agent_v1_agent_proto_enumTypes[1]
+}
+
+func (x AgentUpdateStatus_Phase) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use AgentUpdateStatus_Phase.Descriptor instead.
+func (AgentUpdateStatus_Phase) EnumDescriptor() ([]byte, []int) {
+	return file_cypherpanel_agent_v1_agent_proto_rawDescGZIP(), []int{5, 0}
+}
+
 type EnrollRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Single-use join token issued by the control plane operator.
@@ -388,8 +458,12 @@ type Heartbeat struct {
 	// and never as full.
 	DiskTotalBytes uint64 `protobuf:"varint,7,opt,name=disk_total_bytes,json=diskTotalBytes,proto3" json:"disk_total_bytes,omitempty"`
 	DiskFreeBytes  uint64 `protobuf:"varint,8,opt,name=disk_free_bytes,json=diskFreeBytes,proto3" json:"disk_free_bytes,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// V1: what this agent is doing about its own binary (agent-updates.md §7).
+	// Observed state like everything else in a heartbeat — the plane asserts a
+	// version was adopted from `agent_version` above, never from a phase.
+	AgentUpdate   *AgentUpdateStatus `protobuf:"bytes,9,opt,name=agent_update,json=agentUpdate,proto3" json:"agent_update,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Heartbeat) Reset() {
@@ -478,6 +552,88 @@ func (x *Heartbeat) GetDiskFreeBytes() uint64 {
 	return 0
 }
 
+func (x *Heartbeat) GetAgentUpdate() *AgentUpdateStatus {
+	if x != nil {
+		return x.AgentUpdate
+	}
+	return nil
+}
+
+// AgentUpdateStatus is the observed half of ADR-010: which phase the updater is
+// in, what it is moving to, and what went wrong if anything did.
+//
+// PHASE_ROLLED_BACK also raises the agent's own AgentStatus to degraded, so the
+// server goes amber in the ordinary status vocabulary rather than only in this
+// feature's column.
+type AgentUpdateStatus struct {
+	state           protoimpl.MessageState  `protogen:"open.v1"`
+	Phase           AgentUpdateStatus_Phase `protobuf:"varint,1,opt,name=phase,proto3,enum=cypherpanel.agent.v1.AgentUpdateStatus_Phase" json:"phase,omitempty"`
+	TargetVersion   string                  `protobuf:"bytes,2,opt,name=target_version,json=targetVersion,proto3" json:"target_version,omitempty"`
+	PreviousVersion string                  `protobuf:"bytes,3,opt,name=previous_version,json=previousVersion,proto3" json:"previous_version,omitempty"`
+	// detail is operator-facing prose and never a secret (ENGINEERING rule 20).
+	Detail        string `protobuf:"bytes,4,opt,name=detail,proto3" json:"detail,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AgentUpdateStatus) Reset() {
+	*x = AgentUpdateStatus{}
+	mi := &file_cypherpanel_agent_v1_agent_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AgentUpdateStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AgentUpdateStatus) ProtoMessage() {}
+
+func (x *AgentUpdateStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_cypherpanel_agent_v1_agent_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AgentUpdateStatus.ProtoReflect.Descriptor instead.
+func (*AgentUpdateStatus) Descriptor() ([]byte, []int) {
+	return file_cypherpanel_agent_v1_agent_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *AgentUpdateStatus) GetPhase() AgentUpdateStatus_Phase {
+	if x != nil {
+		return x.Phase
+	}
+	return AgentUpdateStatus_PHASE_UNSPECIFIED
+}
+
+func (x *AgentUpdateStatus) GetTargetVersion() string {
+	if x != nil {
+		return x.TargetVersion
+	}
+	return ""
+}
+
+func (x *AgentUpdateStatus) GetPreviousVersion() string {
+	if x != nil {
+		return x.PreviousVersion
+	}
+	return ""
+}
+
+func (x *AgentUpdateStatus) GetDetail() string {
+	if x != nil {
+		return x.Detail
+	}
+	return ""
+}
+
 var File_cypherpanel_agent_v1_agent_proto protoreflect.FileDescriptor
 
 const file_cypherpanel_agent_v1_agent_proto_rawDesc = "" +
@@ -501,7 +657,7 @@ const file_cypherpanel_agent_v1_agent_proto_rawDesc = "" +
 	"\rRenewResponse\x12'\n" +
 	"\x0fcertificate_pem\x18\x01 \x01(\fR\x0ecertificatePem\x12\x15\n" +
 	"\x06ca_pem\x18\x02 \x01(\fR\x05caPem\x127\n" +
-	"\tnot_after\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\bnotAfter\"\xc1\x02\n" +
+	"\tnot_after\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\bnotAfter\"\x8d\x03\n" +
 	"\tHeartbeat\x12\x1b\n" +
 	"\tserver_id\x18\x01 \x01(\tR\bserverId\x129\n" +
 	"\n" +
@@ -511,7 +667,24 @@ const file_cypherpanel_agent_v1_agent_proto_rawDesc = "" +
 	"\x06status\x18\x05 \x01(\x0e2!.cypherpanel.agent.v1.AgentStatusR\x06status\x12\x12\n" +
 	"\x04role\x18\x06 \x01(\tR\x04role\x12(\n" +
 	"\x10disk_total_bytes\x18\a \x01(\x04R\x0ediskTotalBytes\x12&\n" +
-	"\x0fdisk_free_bytes\x18\b \x01(\x04R\rdiskFreeBytes*^\n" +
+	"\x0fdisk_free_bytes\x18\b \x01(\x04R\rdiskFreeBytes\x12J\n" +
+	"\fagent_update\x18\t \x01(\v2'.cypherpanel.agent.v1.AgentUpdateStatusR\vagentUpdate\"\x83\x03\n" +
+	"\x11AgentUpdateStatus\x12C\n" +
+	"\x05phase\x18\x01 \x01(\x0e2-.cypherpanel.agent.v1.AgentUpdateStatus.PhaseR\x05phase\x12%\n" +
+	"\x0etarget_version\x18\x02 \x01(\tR\rtargetVersion\x12)\n" +
+	"\x10previous_version\x18\x03 \x01(\tR\x0fpreviousVersion\x12\x16\n" +
+	"\x06detail\x18\x04 \x01(\tR\x06detail\"\xbe\x01\n" +
+	"\x05Phase\x12\x15\n" +
+	"\x11PHASE_UNSPECIFIED\x10\x00\x12\x0e\n" +
+	"\n" +
+	"PHASE_IDLE\x10\x01\x12\x11\n" +
+	"\rPHASE_PENDING\x10\x02\x12\x15\n" +
+	"\x11PHASE_DOWNLOADING\x10\x03\x12\x13\n" +
+	"\x0fPHASE_VERIFYING\x10\x04\x12\x12\n" +
+	"\x0ePHASE_SWAPPING\x10\x05\x12\x15\n" +
+	"\x11PHASE_ROLLED_BACK\x10\x06\x12\x10\n" +
+	"\fPHASE_FAILED\x10\a\x12\x12\n" +
+	"\x0ePHASE_DISABLED\x10\b*^\n" +
 	"\vAgentStatus\x12\x1c\n" +
 	"\x18AGENT_STATUS_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12AGENT_STATUS_READY\x10\x01\x12\x19\n" +
@@ -532,30 +705,34 @@ func file_cypherpanel_agent_v1_agent_proto_rawDescGZIP() []byte {
 	return file_cypherpanel_agent_v1_agent_proto_rawDescData
 }
 
-var file_cypherpanel_agent_v1_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_cypherpanel_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_cypherpanel_agent_v1_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_cypherpanel_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_cypherpanel_agent_v1_agent_proto_goTypes = []any{
 	(AgentStatus)(0),              // 0: cypherpanel.agent.v1.AgentStatus
-	(*EnrollRequest)(nil),         // 1: cypherpanel.agent.v1.EnrollRequest
-	(*EnrollResponse)(nil),        // 2: cypherpanel.agent.v1.EnrollResponse
-	(*RenewRequest)(nil),          // 3: cypherpanel.agent.v1.RenewRequest
-	(*RenewResponse)(nil),         // 4: cypherpanel.agent.v1.RenewResponse
-	(*Heartbeat)(nil),             // 5: cypherpanel.agent.v1.Heartbeat
-	(*timestamppb.Timestamp)(nil), // 6: google.protobuf.Timestamp
+	(AgentUpdateStatus_Phase)(0),  // 1: cypherpanel.agent.v1.AgentUpdateStatus.Phase
+	(*EnrollRequest)(nil),         // 2: cypherpanel.agent.v1.EnrollRequest
+	(*EnrollResponse)(nil),        // 3: cypherpanel.agent.v1.EnrollResponse
+	(*RenewRequest)(nil),          // 4: cypherpanel.agent.v1.RenewRequest
+	(*RenewResponse)(nil),         // 5: cypherpanel.agent.v1.RenewResponse
+	(*Heartbeat)(nil),             // 6: cypherpanel.agent.v1.Heartbeat
+	(*AgentUpdateStatus)(nil),     // 7: cypherpanel.agent.v1.AgentUpdateStatus
+	(*timestamppb.Timestamp)(nil), // 8: google.protobuf.Timestamp
 }
 var file_cypherpanel_agent_v1_agent_proto_depIdxs = []int32{
-	6, // 0: cypherpanel.agent.v1.RenewResponse.not_after:type_name -> google.protobuf.Timestamp
-	6, // 1: cypherpanel.agent.v1.Heartbeat.emitted_at:type_name -> google.protobuf.Timestamp
+	8, // 0: cypherpanel.agent.v1.RenewResponse.not_after:type_name -> google.protobuf.Timestamp
+	8, // 1: cypherpanel.agent.v1.Heartbeat.emitted_at:type_name -> google.protobuf.Timestamp
 	0, // 2: cypherpanel.agent.v1.Heartbeat.status:type_name -> cypherpanel.agent.v1.AgentStatus
-	1, // 3: cypherpanel.agent.v1.EnrollmentService.Enroll:input_type -> cypherpanel.agent.v1.EnrollRequest
-	3, // 4: cypherpanel.agent.v1.EnrollmentService.Renew:input_type -> cypherpanel.agent.v1.RenewRequest
-	2, // 5: cypherpanel.agent.v1.EnrollmentService.Enroll:output_type -> cypherpanel.agent.v1.EnrollResponse
-	4, // 6: cypherpanel.agent.v1.EnrollmentService.Renew:output_type -> cypherpanel.agent.v1.RenewResponse
-	5, // [5:7] is the sub-list for method output_type
-	3, // [3:5] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	7, // 3: cypherpanel.agent.v1.Heartbeat.agent_update:type_name -> cypherpanel.agent.v1.AgentUpdateStatus
+	1, // 4: cypherpanel.agent.v1.AgentUpdateStatus.phase:type_name -> cypherpanel.agent.v1.AgentUpdateStatus.Phase
+	2, // 5: cypherpanel.agent.v1.EnrollmentService.Enroll:input_type -> cypherpanel.agent.v1.EnrollRequest
+	4, // 6: cypherpanel.agent.v1.EnrollmentService.Renew:input_type -> cypherpanel.agent.v1.RenewRequest
+	3, // 7: cypherpanel.agent.v1.EnrollmentService.Enroll:output_type -> cypherpanel.agent.v1.EnrollResponse
+	5, // 8: cypherpanel.agent.v1.EnrollmentService.Renew:output_type -> cypherpanel.agent.v1.RenewResponse
+	7, // [7:9] is the sub-list for method output_type
+	5, // [5:7] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_cypherpanel_agent_v1_agent_proto_init() }
@@ -568,8 +745,8 @@ func file_cypherpanel_agent_v1_agent_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cypherpanel_agent_v1_agent_proto_rawDesc), len(file_cypherpanel_agent_v1_agent_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   5,
+			NumEnums:      2,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

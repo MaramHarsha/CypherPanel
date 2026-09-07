@@ -301,3 +301,29 @@ type BackupRecord struct {
 	FinishedAt       *time.Time
 	CreatedAt        time.Time
 }
+
+// DatabaseConfig is a Database without its sealed root password, for the reason
+// ApplicationConfig exists (project-export.md §4).
+type DatabaseConfig struct {
+	ID              string
+	EnvironmentID   string
+	Name            string
+	Engine          DbEngine
+	Version         string
+	ServerID        string
+	InitialDatabase string
+	VolumeName      string
+	DataPath        string
+	RootUser        string
+	ExposePort      *int
+}
+
+// ConfigView narrows a Database to the fields that carry no secret.
+func (d Database) ConfigView() DatabaseConfig {
+	return DatabaseConfig{
+		ID: d.ID, EnvironmentID: d.EnvironmentID, Name: d.Name,
+		Engine: d.Engine, Version: d.Version, ServerID: d.ServerID,
+		InitialDatabase: d.InitialDatabase, VolumeName: d.VolumeName,
+		DataPath: d.DataPath, RootUser: d.RootUser, ExposePort: d.ExposePort,
+	}
+}

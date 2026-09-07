@@ -37,31 +37,52 @@ type serverDTO struct {
 	DiskTotalBytes uint64 `json:"disk_total_bytes"`
 	DiskFreeBytes  uint64 `json:"disk_free_bytes"`
 	// DiskLow is whether the server is currently past the panel's threshold.
-	DiskLow    bool    `json:"disk_low"`
-	Enrolled   bool    `json:"enrolled"`
-	EnrolledAt *string `json:"enrolled_at"`
-	LastSeenAt *string `json:"last_seen_at"`
-	CreatedAt  string  `json:"created_at"`
+	DiskLow bool `json:"disk_low"`
+	// AgentChannel is which release channel this agent follows
+	// (agent-updates.md §2). It is changed through its own owner-and-session-only
+	// route, never through PATCH: an API token that can move a channel is an API
+	// token that owns the fleet.
+	AgentChannel      string  `json:"agent_channel"`
+	AgentUpdatePhase  string  `json:"agent_update_phase"`
+	AgentUpdateTarget string  `json:"agent_update_target"`
+	AgentUpdateDetail string  `json:"agent_update_detail"`
+	Enrolled          bool    `json:"enrolled"`
+	EnrolledAt        *string `json:"enrolled_at"`
+	LastSeenAt        *string `json:"last_seen_at"`
+	CreatedAt         string  `json:"created_at"`
 }
 
 func toServerDTO(s domain.Server) serverDTO {
 	return serverDTO{
-		ID:             s.ID,
-		Name:           s.Name,
-		Status:         string(s.Status),
-		Driver:         s.Driver,
-		DiskTotalBytes: s.DiskTotalBytes,
-		DiskFreeBytes:  s.DiskFreeBytes,
-		DiskLow:        s.DiskLow,
-		Role:           s.Role,
-		AgentVersion:   s.AgentVersion,
-		Hostname:       s.Hostname,
-		PublicAddress:  s.PublicAddress,
-		Enrolled:       s.Enrolled(),
-		EnrolledAt:     formatTime(s.EnrolledAt),
-		LastSeenAt:     formatTime(s.LastSeenAt),
-		CreatedAt:      s.CreatedAt.UTC().Format(time.RFC3339),
+		ID:                s.ID,
+		Name:              s.Name,
+		Status:            string(s.Status),
+		Driver:            s.Driver,
+		DiskTotalBytes:    s.DiskTotalBytes,
+		DiskFreeBytes:     s.DiskFreeBytes,
+		DiskLow:           s.DiskLow,
+		Role:              s.Role,
+		AgentVersion:      s.AgentVersion,
+		Hostname:          s.Hostname,
+		PublicAddress:     s.PublicAddress,
+		AgentChannel:      channelOrDefault(s.AgentChannel),
+		AgentUpdatePhase:  s.AgentUpdatePhase,
+		AgentUpdateTarget: s.AgentUpdateTarget,
+		AgentUpdateDetail: s.AgentUpdateDetail,
+		Enrolled:          s.Enrolled(),
+		EnrolledAt:        formatTime(s.EnrolledAt),
+		LastSeenAt:        formatTime(s.LastSeenAt),
+		CreatedAt:         s.CreatedAt.UTC().Format(time.RFC3339),
 	}
+}
+
+// channelOrDefault reads a blank channel as stable, which is what a server
+// enrolled before release channels existed actually follows.
+func channelOrDefault(c string) string {
+	if domain.ValidChannel(c) {
+		return c
+	}
+	return domain.ChannelStable
 }
 
 func formatTime(t *time.Time) *string {

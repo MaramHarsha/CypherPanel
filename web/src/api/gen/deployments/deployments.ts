@@ -32,6 +32,10 @@ import type {
   Deployment,
   Error,
   ForbiddenResponse,
+  NotFoundResponse,
+  PlanPromotionParams,
+  PromoteRevisionBody,
+  PromotionPlan,
   StreamDeploymentLogsParams,
   UnauthorizedResponse
 } from '../model';
@@ -58,7 +62,203 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   return result;
 };
 
-export const getDeployApplicationUrl = (id: string,) => {
+export const getPlanPromotionUrl = (id: string,
+    params: PlanPromotionParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/revisions/${id}/promotion-plan?${stringifiedParams}` : `/api/v1/revisions/${id}/promotion-plan`
+}
+
+/**
+ * Ship the artifact that was TESTED, rather than rebuilding one that should be the same. The plan writes nothing, which is why it is a GET, and it IS the screen: an operator decides from what would change rather than from a confirmation dialog.
+ *
+ * NOTHING ABOUT ENVIRONMENT VARIABLES IS EVER COPIED by a promotion — not optionally, not behind a checkbox. Copying variables across environments is the most effective way there is to point production at a staging database, and a panel that offers it will eventually do it. The disagreement is made VISIBLE instead: `only_in_source` and `only_in_target` are computed from KEY NAMES ONLY, because a key present in both with a different value is not drift, it is the normal, intended difference between environments.
+ *
+ * `note` carries the one cost that has no fix inside the panel: the image is byte-for-byte the one that ran in staging, including anything baked in at build time.
+ * @summary Exactly what promoting this revision would change (member+)
+ */
+export const planPromotion = async (id: string,
+    params: PlanPromotionParams, options?: RequestInit): Promise<PromotionPlan> => {
+
+  return apiFetch<PromotionPlan>(getPlanPromotionUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getPlanPromotionQueryKey = (id: string,
+    params?: PlanPromotionParams,) => {
+    return [
+    `/api/v1/revisions/${id}/promotion-plan`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getPlanPromotionQueryOptions = <TData = Awaited<ReturnType<typeof planPromotion>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string,
+    params: PlanPromotionParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof planPromotion>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getPlanPromotionQueryKey(id,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof planPromotion>>> = ({ signal }) => planPromotion(id,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof planPromotion>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type PlanPromotionQueryResult = NonNullable<Awaited<ReturnType<typeof planPromotion>>>
+export type PlanPromotionQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function usePlanPromotion<TData = Awaited<ReturnType<typeof planPromotion>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params: PlanPromotionParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof planPromotion>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof planPromotion>>,
+          TError,
+          Awaited<ReturnType<typeof planPromotion>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function usePlanPromotion<TData = Awaited<ReturnType<typeof planPromotion>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params: PlanPromotionParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof planPromotion>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof planPromotion>>,
+          TError,
+          Awaited<ReturnType<typeof planPromotion>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function usePlanPromotion<TData = Awaited<ReturnType<typeof planPromotion>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params: PlanPromotionParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof planPromotion>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Exactly what promoting this revision would change (member+)
+ */
+
+export function usePlanPromotion<TData = Awaited<ReturnType<typeof planPromotion>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string,
+    params: PlanPromotionParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof planPromotion>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getPlanPromotionQueryOptions(id,params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getPromoteRevisionUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/revisions/${id}/promote`
+}
+
+/**
+ * No build runs and no source is fetched. The promoted revision carries the TARGET application's own canonical image tag — not the source's — because the agent parses ownership out of a tag and would otherwise reclaim, on the target server, the image that server is running from.
+ *
+ * The target's own configuration applies: port, health check, route, limits and environment are the target's. Only the artifact moves.
+ *
+ * Deploy protection and quotas both apply, exactly as they do to an ordinary deploy to the target.
+ * @summary Ship this revision's artifact to another environment (member+)
+ */
+export const promoteRevision = async (id: string,
+    promoteRevisionBody: PromoteRevisionBody, options?: RequestInit): Promise<Deployment> => {
+
+  return apiFetch<Deployment>(getPromoteRevisionUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(promoteRevisionBody)
+  }
+);}
+
+
+
+
+
+export const getPromoteRevisionMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof promoteRevision>>, TError,{id: string;data: PromoteRevisionBody}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof promoteRevision>>, TError,{id: string;data: PromoteRevisionBody}, TContext> => {
+
+const mutationKey = ['promoteRevision'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof promoteRevision>>, {id: string;data: PromoteRevisionBody}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  promoteRevision(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PromoteRevisionMutationResult = NonNullable<Awaited<ReturnType<typeof promoteRevision>>>
+    export type PromoteRevisionMutationBody = PromoteRevisionBody
+    export type PromoteRevisionMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error
+
+    /**
+ * @summary Ship this revision's artifact to another environment (member+)
+ */
+export const usePromoteRevision = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof promoteRevision>>, TError,{id: string;data: PromoteRevisionBody}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof promoteRevision>>,
+        TError,
+        {id: string;data: PromoteRevisionBody},
+        TContext
+      > => {
+      return useMutation(getPromoteRevisionMutationOptions(options), queryClient);
+    }
+    export const getDeployApplicationUrl = (id: string,) => {
 
 
 

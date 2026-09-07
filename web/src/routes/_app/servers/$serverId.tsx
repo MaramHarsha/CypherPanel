@@ -2,12 +2,19 @@
 // revoking a server is a typed-name delete (ui-principles §2).
 import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { getGetServerQueryKey, getListServersQueryKey, useDeleteServer, useGetServer } from "@/api/gen/servers/servers";
+import {
+  getGetServerQueryKey,
+  getListServersQueryKey,
+  useDeleteServer,
+  useGetServer,
+  useGetServerMetrics,
+} from "@/api/gen/servers/servers";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
 import { Fact, FactCard } from "@/components/fact-card";
 import { ServerPublicAddress } from "@/components/server-public-address";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { ResourceGone } from "@/components/resource-gone";
+import { MetricsCard, useMetricsWindow } from "@/components/metrics-card";
 import { PageState } from "@/components/page-state";
 import { StatusBadge, StatusDot } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
@@ -65,7 +72,7 @@ function ServerDetail() {
             <StatusBadge status={s.status} />
           ) : (
             <span className="flex items-center gap-2">
-              <StatusDot status="unknown" />
+              <StatusDot status="unknown" decorative />
               <span className="font-mono text-[11px] font-medium uppercase tracking-wide text-status-unknown">
                 not joined
               </span>
@@ -140,12 +147,23 @@ function ServerDetail() {
                   />
                 </div>
               </section>
+
+              {/* The node's own load is the sum of what it runs. There is no
+                  separate server sampler: a second source would be a second
+                  answer to the same question, and the two would drift. */}
+              <ServerMetrics serverId={srv.id} />
             </div>
           )}
         </PageState>
       </PageBody>
     </>
   );
+}
+
+function ServerMetrics({ serverId }: { serverId: string }) {
+  const [win, setWin] = useMetricsWindow();
+  const metrics = useGetServerMetrics(serverId, { window: win });
+  return <MetricsCard query={metrics} title="Load" window={win} onWindow={setWin} />;
 }
 
 /**

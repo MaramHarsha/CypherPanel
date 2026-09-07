@@ -32,9 +32,12 @@ import type {
   CreateServerResponse,
   Error,
   ForbiddenResponse,
+  GetServerMetricsParams,
   NotFoundResponse,
   PatchServerRequest,
+  ResourceMetrics,
   Server,
+  SetServerChannelRequest,
   UnauthorizedResponse
 } from '../model';
 
@@ -674,3 +677,193 @@ export const useDeleteServer = <TError = UnauthorizedResponse | ForbiddenRespons
       > => {
       return useMutation(getDeleteServerMutationOptions(options), queryClient);
     }
+    export const getSetServerAgentChannelUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/servers/${id}/agent-channel`
+}
+
+/**
+ * Its own route rather than a field on `PATCH /servers/{id}`. That PATCH is panel-admin and deliberately reachable by a provisioning token, so re-ranking it would take `public_address` away from every admin that sets it today — while a field-level rank check would be the first in this API, and a new authorization precedent is a bad thing to introduce incidentally inside a feature.
+ *
+ * Only this server is nudged to re-read desired state: a channel change is one host's business.
+ * @summary Move one server between release channels (owner, session only)
+ */
+export const setServerAgentChannel = async (id: string,
+    setServerChannelRequest: SetServerChannelRequest, options?: RequestInit): Promise<Server> => {
+
+  return apiFetch<Server>(getSetServerAgentChannelUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(setServerChannelRequest)
+  }
+);}
+
+
+
+
+
+export const getSetServerAgentChannelMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setServerAgentChannel>>, TError,{id: string;data: SetServerChannelRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setServerAgentChannel>>, TError,{id: string;data: SetServerChannelRequest}, TContext> => {
+
+const mutationKey = ['setServerAgentChannel'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setServerAgentChannel>>, {id: string;data: SetServerChannelRequest}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  setServerAgentChannel(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetServerAgentChannelMutationResult = NonNullable<Awaited<ReturnType<typeof setServerAgentChannel>>>
+    export type SetServerAgentChannelMutationBody = SetServerChannelRequest
+    export type SetServerAgentChannelMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | void
+
+    /**
+ * @summary Move one server between release channels (owner, session only)
+ */
+export const useSetServerAgentChannel = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setServerAgentChannel>>, TError,{id: string;data: SetServerChannelRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setServerAgentChannel>>,
+        TError,
+        {id: string;data: SetServerChannelRequest},
+        TContext
+      > => {
+      return useMutation(getSetServerAgentChannelMutationOptions(options), queryClient);
+    }
+    export const getGetServerMetricsUrl = (id: string,
+    params?: GetServerMetricsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/servers/${id}/metrics?${stringifiedParams}` : `/api/v1/servers/${id}/metrics`
+}
+
+/**
+ * A node's figure IS its resources' figures, so there is no separate server-level sampler — a second source would be a second answer to the same question. Containers the panel does not manage are never sampled, so an operator's own workloads on a shared box do not appear here.
+ * @summary The node's managed containers, summed (panel admin)
+ */
+export const getServerMetrics = async (id: string,
+    params?: GetServerMetricsParams, options?: RequestInit): Promise<ResourceMetrics> => {
+
+  return apiFetch<ResourceMetrics>(getGetServerMetricsUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetServerMetricsQueryKey = (id: string,
+    params?: GetServerMetricsParams,) => {
+    return [
+    `/api/v1/servers/${id}/metrics`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetServerMetricsQueryOptions = <TData = Awaited<ReturnType<typeof getServerMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(id: string,
+    params?: GetServerMetricsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getServerMetrics>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetServerMetricsQueryKey(id,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getServerMetrics>>> = ({ signal }) => getServerMetrics(id,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getServerMetrics>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetServerMetricsQueryResult = NonNullable<Awaited<ReturnType<typeof getServerMetrics>>>
+export type GetServerMetricsQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+
+
+export function useGetServerMetrics<TData = Awaited<ReturnType<typeof getServerMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ id: string,
+    params: undefined |  GetServerMetricsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getServerMetrics>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getServerMetrics>>,
+          TError,
+          Awaited<ReturnType<typeof getServerMetrics>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetServerMetrics<TData = Awaited<ReturnType<typeof getServerMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ id: string,
+    params?: GetServerMetricsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getServerMetrics>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getServerMetrics>>,
+          TError,
+          Awaited<ReturnType<typeof getServerMetrics>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetServerMetrics<TData = Awaited<ReturnType<typeof getServerMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ id: string,
+    params?: GetServerMetricsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getServerMetrics>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary The node's managed containers, summed (panel admin)
+ */
+
+export function useGetServerMetrics<TData = Awaited<ReturnType<typeof getServerMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ id: string,
+    params?: GetServerMetricsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getServerMetrics>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetServerMetricsQueryOptions(id,params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+

@@ -5,15 +5,18 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -31,7 +34,11 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/protobuf/proto"
 
+	robfig "github.com/robfig/cron/v3"
+
 	"github.com/MaramHarsha/cypherpanel/core/access"
+	"github.com/MaramHarsha/cypherpanel/core/agentupdates"
+	"github.com/MaramHarsha/cypherpanel/core/alerts"
 	grpcapi "github.com/MaramHarsha/cypherpanel/core/api/grpc"
 	"github.com/MaramHarsha/cypherpanel/core/api/rest"
 	"github.com/MaramHarsha/cypherpanel/core/applications"
@@ -45,17 +52,22 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/dns"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/enroll"
+	"github.com/MaramHarsha/cypherpanel/core/export"
 	"github.com/MaramHarsha/cypherpanel/core/guard"
 	"github.com/MaramHarsha/cypherpanel/core/identity"
 	"github.com/MaramHarsha/cypherpanel/core/inbox"
+	"github.com/MaramHarsha/cypherpanel/core/logdrain"
 	"github.com/MaramHarsha/cypherpanel/core/logring"
 	"github.com/MaramHarsha/cypherpanel/core/mail"
+	"github.com/MaramHarsha/cypherpanel/core/mailhost"
 	"github.com/MaramHarsha/cypherpanel/core/notify"
 	"github.com/MaramHarsha/cypherpanel/core/onboarding"
 	"github.com/MaramHarsha/cypherpanel/core/paneltls"
+	"github.com/MaramHarsha/cypherpanel/core/planebackup"
 	"github.com/MaramHarsha/cypherpanel/core/previews"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
 	"github.com/MaramHarsha/cypherpanel/core/protection"
+	"github.com/MaramHarsha/cypherpanel/core/quota"
 	"github.com/MaramHarsha/cypherpanel/core/registries"
 	"github.com/MaramHarsha/cypherpanel/core/relay"
 	"github.com/MaramHarsha/cypherpanel/core/scheduledtasks"
@@ -64,13 +76,17 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/servers"
 	"github.com/MaramHarsha/cypherpanel/core/sharedvars"
 	"github.com/MaramHarsha/cypherpanel/core/status"
+	"github.com/MaramHarsha/cypherpanel/core/statuspage"
 	"github.com/MaramHarsha/cypherpanel/core/store"
 	"github.com/MaramHarsha/cypherpanel/core/teams"
 	"github.com/MaramHarsha/cypherpanel/core/templates"
 	"github.com/MaramHarsha/cypherpanel/core/updates"
+	"github.com/MaramHarsha/cypherpanel/core/upgrade"
+	"github.com/MaramHarsha/cypherpanel/core/usage"
 	"github.com/MaramHarsha/cypherpanel/core/webhooks"
 	"github.com/MaramHarsha/cypherpanel/pkg/pki"
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
+	"github.com/MaramHarsha/cypherpanel/pkg/s3"
 )
 
 // Build stamps, set at link time with -ldflags "-X main.version=... -X
@@ -113,6 +129,39 @@ func main() {
 	))
 	if len(os.Args) > 1 && os.Args[1] == "version" {
 		printVersion()
+		return
+	}
+	// `cypherd upgrade` is the ROOT, one-shot helper started by
+	// cypherd-upgrade.path when the plane leaves a request file
+	// (panel-updates.md §3). Same binary, different entry point, so there stays
+	// one artifact to sign and ship — and the plane's own process never gains
+	// the power to write its own binary.
+	if len(os.Args) > 1 && os.Args[1] == "upgrade" {
+		if err := runUpgradeHelper(log); err != nil {
+			log.Error("upgrade helper failed", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
+	// `cypherd migrate` applies migrations and exits. The helper runs it with
+	// the NEW binary before starting the service, so a migration failure is
+	// attributable ("migration 42 failed") rather than "the panel did not come
+	// back". Boot-time migration then finds nothing to do.
+	// `cypherd restore` recovers a control plane on a host that has never seen
+	// this panel before (plane-disaster-recovery.md §6). It runs with the plane
+	// stopped, and there is deliberately no equivalent button in the panel.
+	if len(os.Args) > 1 && os.Args[1] == "restore" {
+		if err := runRestore(log, os.Args[2:]); err != nil {
+			log.Error("restore failed", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "migrate" {
+		if err := runMigrate(log); err != nil {
+			log.Error("migrate failed", "error", err)
+			os.Exit(1)
+		}
 		return
 	}
 	if err := run(log, ring); err != nil {
@@ -268,6 +317,8 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 	// garbage-collection policy, converged to rather than swept for
 	// (disk-management.md §2).
 	sched.SetRevisionRetain(cfg.RevisionRetain)
+	// The only address a status page's Proxy fragment can point at.
+	sched.SetPanelURL(cfg.AdvertisedConsoleURL())
 
 	// The panel's ACME account (agent-identity-and-tls.md §4): one setting,
 	// carried to every node in its desired state. The scheduler is the fleet
@@ -519,6 +570,47 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 	}
 	defer dbBackupConsume.Stop()
 
+	volumeBackupConsume, err := b.ConsumeVolumeBackupEvents(ctx, func(serverID string, data []byte) {
+		var ev agentv1.VolumeBackupEvent
+		if err := proto.Unmarshal(data, &ev); err != nil {
+			log.Error("unmarshaling volume backup event", "server_id", serverID, "error", err)
+			return
+		}
+		c, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		sched.HandleVolumeBackupEvent(c, &ev)
+	})
+	if err != nil {
+		return err
+	}
+	defer volumeBackupConsume.Stop()
+
+	// Metrics ingest (metrics-and-usage.md §4.6). One message per server per
+	// bucket, carrying every resource on it — not one per resource, and
+	// emphatically not one per sample.
+	usageRec := usage.New(st, usage.Config{
+		MetricsRetention: cfg.MetricsRetention,
+		UsageRetention:   cfg.UsageRetention,
+	}, log.With("component", "usage"))
+	metricsConsume, err := b.ConsumeMetrics(ctx, func(serverID string, data []byte) {
+		c, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		usageRec.Record(c, serverID, data)
+	})
+	if err != nil {
+		return err
+	}
+	defer metricsConsume.Stop()
+
+	// The rollup catches up every UTC day that has bucket rows and no complete
+	// daily row, so a plane that was down for three days fills the gap on boot
+	// instead of leaving it forever.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		usageRec.RunRollup(ctx, time.Hour)
+	}()
+
 	dbRestoreConsume, err := b.ConsumeDbRestoreEvents(ctx, func(serverID string, data []byte) {
 		var ev agentv1.DbRestoreEvent
 		if err := proto.Unmarshal(data, &ev); err != nil {
@@ -574,6 +666,138 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 	}
 
 	// REST API + console.
+	// Status pages: the evaluator writes the interval time series, and the
+	// server renders and caches the public documents (status-pages.md §§3, 6).
+	statusEval := statuspage.New(st, statuspage.Config{
+		Dwell:     cfg.StatusDwell,
+		Retention: cfg.StatusRetention,
+	}, log.With("component", "status-pages"))
+	statusSrv := statuspage.NewServer(st, st, cfg.StatusCacheTTL)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		statusEval.Run(ctx)
+	}()
+
+	// Threshold alerts: one owned goroutine over the stored series
+	// (threshold-alerts.md). It delivers through the notifier each RULE names,
+	// and writes the two states that deliver nothing — no_data and flapping —
+	// to the inbox instead.
+	// Guided panel upgrades (panel-updates.md). The plane never performs a
+	// swap: this service writes a request file and reads what the root helper
+	// wrote back.
+	upgradeSvc := upgrade.NewService(upgrade.Options{
+		Store: st, Dir: upgrade.Dir(cfg.UpgradeDir), SnapshotDir: cfg.SnapshotDir(),
+		BaseURL: cfg.ReleaseBaseURL, Fetcher: updateChecker,
+		CurrentVersion: version, MinFreeBytes: int64(cfg.MinDiskFree),
+		Log: log.With("component", "upgrade"),
+		// The same stat the boot-time guard uses, so "enough room" means one
+		// thing in both places.
+		FreeBytes: func(path string) (int64, error) {
+			n, err := guard.FreeBytes(path)
+			return int64(n), err
+		},
+	})
+	// The restart an upgrade causes happens in the MIDDLE of it, so the plane
+	// that started one is not the plane that records its outcome. Boot mirrors
+	// the helper's file before anything else reads it, and a version that
+	// changed without us is recorded as `external`.
+	upgradeSvc.Sync(ctx)
+	upgradeSvc.RecordExternalUpgrade(ctx)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		upgradeSvc.RunRetention(ctx, time.Hour)
+	}()
+
+	// Log drains: the panel's outbox for log lines (log-drains.md). It is a
+	// READER of a stream the deploy path writes to — no call site in the
+	// scheduler, nothing awaited — which is what makes "it cannot slow a
+	// deploy" structural rather than a discipline.
+	// The S3 drain writes through the same signer the agent's backups use
+	// (pkg/s3). The keys come from the Backup Target the drain names, unsealed
+	// per batch and never held — there is no second S3 credential anywhere in
+	// this feature, on purpose.
+	logdrain.SetS3Uploader(func(ctx context.Context, target domain.BackupTarget, key string, body []byte) error {
+		access, err := box.Open(target.AccessKeyCT, target.AccessKeyNonce)
+		if err != nil {
+			return fmt.Errorf("unsealing the target's access key: %w", err)
+		}
+		secret, err := box.Open(target.SecretKeyCT, target.SecretKeyNonce)
+		if err != nil {
+			return fmt.Errorf("unsealing the target's secret key: %w", err)
+		}
+		full := key
+		if target.PathPrefix != "" {
+			full = strings.Trim(target.PathPrefix, "/") + "/" + key
+		}
+		return s3.New().Upload(ctx, target.Endpoint, target.Bucket, target.Region, full,
+			string(access), string(secret), bytes.NewReader(body), int64(len(body)))
+	})
+
+	// The control plane backing itself up (plane-disaster-recovery.md). The
+	// archive is written to an existing Backup Target and encrypted to a public
+	// key the operator holds the private half of — the plane can only ever
+	// write, which is why the master key can travel inside it.
+	store.SetTableSorter(planebackup.SortTables)
+	planeObjects := planeObjectStore{box: box}
+	planeDR := planebackup.New(planebackup.Options{
+		Store: st, DB: st.BackupSurface(), Enc: planebackup.AgeCrypto{},
+		Objects: planeObjects, PanelVersion: version,
+		MasterKey: os.Getenv("CYPHERD_MASTER_KEY"),
+		Log:       log.With("component", "plane-backup"),
+	})
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		planeDR.Run(ctx, time.Minute, planeSnapshotDue)
+	}()
+
+	// Provider-backed mail (managed-email.md). The panel writes the DNS through
+	// the automation it already has and manages mailboxes through the
+	// provider's API; it runs no MTA and holds no DKIM private key.
+	// Resource quotas: admission control on aggregate consumption, permitted by
+	// ADR-012. Nothing new runs on a node, nothing new rides the wire, and no
+	// agent learns that quotas exist.
+	quotaSvc := quota.New(st, quotaAnnouncer{inbox: inboxSvc}, log.With("component", "quota"))
+	sched.SetQuotaGate(quotaGate{svc: quotaSvc})
+
+	// Agent version channels (ADR-010). Both rows ship empty and empty means no
+	// instruction, so upgrading a panel does not start replacing binaries
+	// across a fleet nobody asked it to touch.
+	agentUpdateSvc := agentupdates.New(st, sched, version, cfg.AgentUpdatePrecheck,
+		log.With("component", "agent-updates"))
+	sched.SetAgentUpdates(agentUpdateSvc)
+
+	mailHostSvc := mailhost.NewService(st, box, mailDNSWriter{dns: dnsSvc})
+	mailHostSvc.SetLogger(log.With("component", "mailhost"))
+
+	drainSvc := logdrain.NewService(st, box, box)
+	drainMgr := logdrain.New(logdrain.Options{
+		Store: st, Bus: busDrainAdapter{b}, Opener: box,
+		BatchLines:    cfg.DrainBatchLines,
+		BatchInterval: cfg.DrainBatchInterval,
+		MaxBackoff:    cfg.DrainMaxBackoff,
+		Log:           log.With("component", "log-drains"),
+	})
+	drainSvc.WatchManager(drainMgr)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		drainMgr.Run(ctx)
+	}()
+
+	notifySvc.WatchAlertRules(st)
+	alertEval := alerts.New(st,
+		alerts.NewDelivery(st, notifyMgr),
+		alerts.NewQuiet(inboxSvc),
+		log.With("component", "alerts"))
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		alertEval.Run(ctx, time.Minute)
+	}()
+
 	api := rest.New(rest.Deps{
 		Auth:             authr,
 		Onboarding:       onboardSvc,
@@ -583,6 +807,8 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		DeployKeys:       deployKeySvc,
 		Registries:       registrySvc,
 		Compose:          composeSvc,
+		Export:           export.New(st, version),
+		VolumeBackups:    st,
 		Databases:        dbSvc,
 		BackupTargets:    backupTargetSvc,
 		BackupSchedules:  backupScheduleSvc,
@@ -619,6 +845,22 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		Panel:            updateChecker,
 		PanelLogs:        panelLogs,
 		DataDir:          cfg.DataDir,
+		StatusPages:      st,
+		Metrics:          st,
+		Alerts:           st,
+		Upgrades:         upgradeSvc,
+		LogDrains:        drainSvc,
+		PlaneDR:          planeDR,
+		MailHost:         mailHostSvc,
+		AgentUpdates:     agentUpdateSvc,
+		Quotas:           quotaSvc,
+		Promotion:        sched,
+		PlaneDRFetch:     planeObjects.Get,
+		Updates:          updateChecker,
+		AlertBacktest:    alertEval,
+		StatusServer:     statusSrv,
+		StatusRoutes:     statusSrv,
+		PanelURL:         cfg.AdvertisedConsoleURL(),
 		Log:              log,
 	})
 	httpSrv := &http.Server{
@@ -759,4 +1001,141 @@ func planeSANs(publicHost string) (dnsNames []string, ips []net.IP) {
 		dnsNames = append(dnsNames, publicHost)
 	}
 	return dnsNames, ips
+}
+
+// busDrainAdapter narrows the Bus to the two methods a log drain needs. The
+// drain must not be able to reach anything else on the bus: it is a reader of
+// one stream, and a wider handle would be a wider blast radius for no gain.
+type busDrainAdapter struct{ b *bus.Bus }
+
+func (a busDrainAdapter) ConsumeRuntimeLogs(ctx context.Context, durable string, handle func(subject string, data []byte, ack func())) (logdrain.ConsumeContext, error) {
+	return a.b.ConsumeRuntimeLogs(ctx, durable, handle)
+}
+
+func (a busDrainAdapter) DeleteRuntimeLogConsumer(ctx context.Context, durable string) error {
+	return a.b.DeleteRuntimeLogConsumer(ctx, durable)
+}
+
+// planeObjectStore writes and reads the plane's own snapshots, through the same
+// signer the agent's backups use. The target's keys are unsealed per call and
+// never held: a long-lived credential in memory is a credential in a core dump.
+type planeObjectStore struct{ box *secret.Box }
+
+func (p planeObjectStore) creds(t domain.BackupTarget) (access, secretKey string, err error) {
+	a, err := p.box.Open(t.AccessKeyCT, t.AccessKeyNonce)
+	if err != nil {
+		return "", "", fmt.Errorf("unsealing the target's access key: %w", err)
+	}
+	s, err := p.box.Open(t.SecretKeyCT, t.SecretKeyNonce)
+	if err != nil {
+		return "", "", fmt.Errorf("unsealing the target's secret key: %w", err)
+	}
+	return string(a), string(s), nil
+}
+
+func (p planeObjectStore) Put(ctx context.Context, t domain.BackupTarget, key string, body []byte) error {
+	access, secretKey, err := p.creds(t)
+	if err != nil {
+		return err
+	}
+	return s3.New().Upload(ctx, t.Endpoint, t.Bucket, t.Region, p.key(t, key),
+		access, secretKey, bytes.NewReader(body), int64(len(body)))
+}
+
+func (p planeObjectStore) Delete(ctx context.Context, t domain.BackupTarget, key string) error {
+	access, secretKey, err := p.creds(t)
+	if err != nil {
+		return err
+	}
+	return s3.New().Delete(ctx, t.Endpoint, t.Bucket, t.Region, p.key(t, key), access, secretKey)
+}
+
+func (p planeObjectStore) Get(ctx context.Context, t domain.BackupTarget, key string) ([]byte, error) {
+	access, secretKey, err := p.creds(t)
+	if err != nil {
+		return nil, err
+	}
+	rc, err := s3.New().Download(ctx, t.Endpoint, t.Bucket, t.Region, p.key(t, key), access, secretKey)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rc.Close() }()
+	return io.ReadAll(rc)
+}
+
+func (p planeObjectStore) key(t domain.BackupTarget, key string) string {
+	if t.PathPrefix == "" {
+		return key
+	}
+	return strings.Trim(t.PathPrefix, "/") + "/" + key
+}
+
+// planeSnapshotDue answers "is the nightly run due" the same way every other
+// scheduled thing in this panel does: parse the cron, anchor on the last run,
+// and ask whether the next fire is in the past. One rule, one place to change
+// it if it ever changes.
+//
+// An UNPARSEABLE schedule never fires rather than firing constantly: a
+// schedule is validated when it is set, so a bad one here is defensive, and the
+// safe direction for a defensive branch is to do nothing.
+func planeSnapshotDue(schedule string, last *time.Time, now time.Time) bool {
+	parsed, err := robfig.ParseStandard(schedule)
+	if err != nil {
+		return false
+	}
+	anchor := now.Add(-24 * time.Hour)
+	if last != nil {
+		anchor = *last
+	}
+	return !parsed.Next(anchor).After(now)
+}
+
+// mailDNSWriter adapts the DNS service to the mail package's narrow seam: two
+// methods, one of which only asks a question. The mail package must not be able
+// to reach the rest of DNS automation — it has one job with records and no
+// reason to touch an application's.
+type mailDNSWriter struct{ dns *dns.Service }
+
+func (m mailDNSWriter) EnsureRecord(ctx context.Context, zoneDomain string, r mailhost.Record) error {
+	return m.dns.EnsureStaticRecord(ctx, mailhost.RecordName(r, zoneDomain), r.Type, r.Content, r.TTL, r.Priority)
+}
+
+func (m mailDNSWriter) Verified(ctx context.Context, domainName string) (bool, error) {
+	return m.dns.CanManage(ctx, domainName)
+}
+
+// quotaGate adapts the quota service to the scheduler's own seam, so the
+// scheduler depends on an interface it declares rather than on the package.
+type quotaGate struct{ svc *quota.Service }
+
+func (g quotaGate) Admit(ctx context.Context, projectID string, delta scheduler.QuotaDelta) (domain.QuotaAdmission, error) {
+	return g.svc.Admit(ctx, projectID, quota.Delta{MemoryBytes: delta.MemoryBytes, Previews: delta.Previews})
+}
+
+// quotaAnnouncer writes a crossing into the inbox. Panel-level, like the disk
+// warning it most resembles: a quota is set by an administrator and crossing
+// one is news for the people who can act on it, not an event on a project's
+// timeline.
+type quotaAnnouncer struct{ inbox *inbox.Service }
+
+func (q quotaAnnouncer) AnnounceQuota(ctx context.Context, scopeKind, scopeID, dimension, state string, usage domain.QuotaUsage) error {
+	if q.inbox == nil || state == domain.QuotaOK {
+		return nil
+	}
+	kind := domain.InboxQuotaWarn
+	title := "Quota warning: " + dimension
+	body := fmt.Sprintf("This %s is at %d%% of its %s cap. Nothing is refused yet.", scopeKind, percentOf(usage), dimension)
+	if state == domain.QuotaExceeded {
+		kind = domain.InboxQuotaExceeded
+		title = "Quota reached: " + dimension
+		body = fmt.Sprintf("This %s has reached its %s cap. New deploys here are refused until something is freed or the cap is raised. Rollbacks are never refused — recovery always works.", scopeKind, dimension)
+	}
+	return q.inbox.RecordQuota(ctx, kind, scopeKind+":"+scopeID+":"+dimension, title, body)
+}
+
+func percentOf(u domain.QuotaUsage) int {
+	if u.Limit == nil || *u.Limit <= 0 {
+		return 0
+	}
+	return int(float64(u.Used) / float64(*u.Limit) * 100)
 }

@@ -648,6 +648,46 @@ func (f *fakeAppsStore) UpdateApplicationConfig(_ context.Context, a domain.Appl
 	return a, nil
 }
 
+func (f *fakeAppsStore) SetApplicationAllowlist(_ context.Context, id string, enabled bool, cidrs []string) (domain.Application, error) {
+	a, ok := f.apps[id]
+	if !ok {
+		return domain.Application{}, store.ErrNotFound
+	}
+	a.Access.IPAllowlistEnabled = enabled
+	a.Access.IPAllowlist = cidrs
+	f.apps[id] = a
+	return a, nil
+}
+
+func (f *fakeAppsStore) SetApplicationMaintenance(_ context.Context, id string, on bool) (domain.Application, error) {
+	a, ok := f.apps[id]
+	if !ok {
+		return domain.Application{}, store.ErrNotFound
+	}
+	a.Access.MaintenanceMode = on
+	if on {
+		if a.Access.MaintenanceSince == nil {
+			now := time.Now()
+			a.Access.MaintenanceSince = &now
+		}
+	} else {
+		a.Access.MaintenanceSince = nil
+	}
+	f.apps[id] = a
+	return a, nil
+}
+
+func (f *fakeAppsStore) SetApplicationPreviewPassword(_ context.Context, id string, enabled bool, hash string) (domain.Application, error) {
+	a, ok := f.apps[id]
+	if !ok {
+		return domain.Application{}, store.ErrNotFound
+	}
+	a.Access.PreviewPasswordEnabled = enabled
+	a.Access.PreviewPasswordHash = hash
+	f.apps[id] = a
+	return a, nil
+}
+
 func (f *fakeAppsStore) ListApplicationsByEnvironment(_ context.Context, envID string) ([]domain.Application, error) {
 	var out []domain.Application
 	for _, a := range f.apps {
@@ -716,6 +756,7 @@ func (f *fakeAppsStore) DeleteEnvVar(_ context.Context, appID, key string) error
 }
 
 type fakeDeployer struct {
+	resyncs   []string
 	deploys   []string // "appID/trigger/ref"
 	removed   []string // "serverID/appID"
 	rollbacks []string
@@ -802,6 +843,13 @@ func (f *fakeDeployer) Cancel(_ context.Context, deploymentID, by string) (domai
 	return domain.Deployment{ID: deploymentID, ApplicationID: "app_test", Status: status, Detail: "cancelled by " + by}, f.cancelErr
 }
 
+// resyncs records the nudges an access change asks for, so a test can assert
+// the fleet was told rather than only that the row changed.
+func (f *fakeDeployer) RequestResync(_ context.Context, reason string) error {
+	f.resyncs = append(f.resyncs, reason)
+	return nil
+}
+
 func (f *fakeDeployer) Restart(_ context.Context, appID string) (domain.Application, error) {
 	f.restarted = append(f.restarted, appID)
 	if f.restartErr != nil {
@@ -811,6 +859,10 @@ func (f *fakeDeployer) Restart(_ context.Context, appID string) (domain.Applicat
 }
 
 type fakeDeploymentReader struct{}
+
+func (fakeDeploymentReader) GetRevision(context.Context, string) (domain.Revision, error) {
+	return domain.Revision{}, store.ErrNotFound
+}
 
 func (fakeDeploymentReader) GetDeployment(_ context.Context, id string) (domain.Deployment, error) {
 	// dep_unbuilt exists (so authz resolution succeeds) but its revision was
@@ -1129,6 +1181,8 @@ func TestProtectedRoutesRequireAuth(t *testing.T) {
 		{"GET", "/api/v1/applications/app_x/env"},
 		{"PUT", "/api/v1/applications/app_x/env/KEY"},
 		{"DELETE", "/api/v1/applications/app_x/env/KEY"},
+		{"PUT", "/api/v1/applications/app_x/maintenance"},
+		{"DELETE", "/api/v1/applications/app_x/maintenance"},
 		// Invitations and access requests: every route EXCEPT the two public
 		// ones (invitations-and-access-requests.md §3).
 		{"POST", "/api/v1/teams/tm_x/invites"},
@@ -2262,5 +2316,59 @@ func TestSessionListAndRevokeOthers(t *testing.T) {
 	}
 	if status, _, _ = doJSON(t, "GET", ts.URL+"/api/v1/auth/me", other, ""); status != http.StatusUnauthorized {
 		t.Fatalf("other session survived revoke-others: status %d", status)
+	}
+}
+
+// Maintenance mode is idempotent in the one way that matters: raising a page
+// that is already up must not reset the clock the panel counts from. A
+// migration script that retries its PUT would otherwise hide the age of an
+// outage — and the age is the whole mechanism keeping a Friday page from
+// becoming a Monday of silence (app-access-control.md §10).
+func TestRaisingAMaintenancePageTwiceDoesNotResetItsClock(t *testing.T) {
+	ts := newTestServer(t)
+	token := login(t, ts)
+
+	var first struct {
+		MaintenanceMode  bool    `json:"maintenance_mode"`
+		MaintenanceSince *string `json:"maintenance_since"`
+	}
+	status, _, body := doJSON(t, "PUT", ts.URL+"/api/v1/applications/app_x/maintenance", token, "")
+	if status != http.StatusOK {
+		t.Fatalf("raising the page: status %d, body %s", status, body)
+	}
+	if err := json.Unmarshal(body, &first); err != nil {
+		t.Fatalf("decoding: %v", err)
+	}
+	if !first.MaintenanceMode || first.MaintenanceSince == nil {
+		t.Fatalf("after PUT: mode=%v since=%v", first.MaintenanceMode, first.MaintenanceSince)
+	}
+
+	var again struct {
+		MaintenanceSince *string `json:"maintenance_since"`
+	}
+	status, _, body = doJSON(t, "PUT", ts.URL+"/api/v1/applications/app_x/maintenance", token, "")
+	if status != http.StatusOK {
+		t.Fatalf("second PUT: status %d, body %s", status, body)
+	}
+	if err := json.Unmarshal(body, &again); err != nil {
+		t.Fatalf("decoding: %v", err)
+	}
+	if again.MaintenanceSince == nil || *again.MaintenanceSince != *first.MaintenanceSince {
+		t.Fatalf("second PUT moved the stamp: %v → %v", first.MaintenanceSince, again.MaintenanceSince)
+	}
+
+	var down struct {
+		MaintenanceMode  bool    `json:"maintenance_mode"`
+		MaintenanceSince *string `json:"maintenance_since"`
+	}
+	status, _, body = doJSON(t, "DELETE", ts.URL+"/api/v1/applications/app_x/maintenance", token, "")
+	if status != http.StatusOK {
+		t.Fatalf("lowering the page: status %d, body %s", status, body)
+	}
+	if err := json.Unmarshal(body, &down); err != nil {
+		t.Fatalf("decoding: %v", err)
+	}
+	if down.MaintenanceMode || down.MaintenanceSince != nil {
+		t.Fatalf("after DELETE: mode=%v since=%v", down.MaintenanceMode, down.MaintenanceSince)
 	}
 }

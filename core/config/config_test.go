@@ -241,3 +241,25 @@ func TestAuditRetention(t *testing.T) {
 		})
 	}
 }
+
+// CYPHERD_MIN_DISK_FREE is parsed as a uint64 and read as a signed count where
+// it is compared against free bytes. A value past the signed range wraps to a
+// NEGATIVE floor — a headroom check that passes on a full disk, which is
+// exactly the failure the guard exists to prevent (code scanning
+// go/incorrect-integer-conversion).
+func TestAnAbsurdDiskFloorIsRefusedRatherThanWrapped(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("CYPHERD_MIN_DISK_FREE", "18446744073709551615")
+	if _, err := Load(); err == nil {
+		t.Fatal("a disk floor larger than any filesystem was accepted; converted to a signed count it is negative, and every headroom check would pass")
+	}
+
+	// The ordinary values still work. envBytes takes a plain byte count, so
+	// these are what an operator actually writes.
+	for _, v := range []string{"1073741824", "536870912", "2147483648"} {
+		t.Setenv("CYPHERD_MIN_DISK_FREE", v)
+		if _, err := Load(); err != nil {
+			t.Errorf("CYPHERD_MIN_DISK_FREE=%s was refused: %v", v, err)
+		}
+	}
+}

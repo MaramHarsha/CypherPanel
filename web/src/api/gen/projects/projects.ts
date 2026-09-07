@@ -27,10 +27,12 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AnnotateIncidentRequest,
   BadRequestResponse,
   CreateEnvironmentRequest,
   CreateProjectRequest,
   CreateProjectResponse,
+  DomainCheck,
   Environment,
   Error,
   ForbiddenResponse,
@@ -39,6 +41,14 @@ import type {
   PatchProjectRequest,
   Project,
   ProjectDetail,
+  PublicStatusPage,
+  QuotaReport,
+  ResourceQuota,
+  SetQuotaRequest,
+  SetStatusPageComponentsRequest,
+  SetStatusPageRequest,
+  StatusPage,
+  StatusPageComponent,
   UnauthorizedResponse
 } from '../model';
 
@@ -477,7 +487,114 @@ export const useDeleteProject = <TError = UnauthorizedResponse | ForbiddenRespon
       > => {
       return useMutation(getDeleteProjectMutationOptions(options), queryClient);
     }
-    export const getListEnvironmentsUrl = (id: string,) => {
+    export const getExportProjectUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/projects/${id}/export`
+}
+
+/**
+ * A gzipped tar containing a compose-style definition of every application, managed database and Compose Stack, one directory per standing environment, plus a generated README and a machine-readable manifest. It runs anywhere Docker runs — leaving is deliberately easy.
+ *
+ * **Secret values are never included**, in any form, including a masked hint: each resource gets an `env/<name>.env.example` carrying the KEYS only. That is structural rather than a promise — `core/export` is given an interface with no method that returns a ciphertext and no dependency on the unsealer, so it could not export a value if it tried.
+ *
+ * Also absent, and stated in the archive's own README: volume and database DATA, TLS certificates, and images. Preview environments are excluded because a preview belongs to its pull request and is destroyed with it.
+ *
+ * The response is streamed rather than buffered, so it carries no `Content-Length`. Everything that can fail is checked before the first byte; a write that fails afterwards truncates the archive, and a truncated gzip fails its own CRC rather than opening as a smaller, plausible-looking, wrong one.
+ * @summary Download the project as a portable archive (team admin)
+ */
+export const exportProject = async (id: string, options?: RequestInit): Promise<Blob> => {
+
+  return apiFetch<Blob>(getExportProjectUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getExportProjectQueryKey = (id: string,) => {
+    return [
+    `/api/v1/projects/${id}/export`
+    ] as const;
+    }
+
+
+export const getExportProjectQueryOptions = <TData = Awaited<ReturnType<typeof exportProject>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportProject>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getExportProjectQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof exportProject>>> = ({ signal }) => exportProject(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof exportProject>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ExportProjectQueryResult = NonNullable<Awaited<ReturnType<typeof exportProject>>>
+export type ExportProjectQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error
+
+
+export function useExportProject<TData = Awaited<ReturnType<typeof exportProject>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportProject>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof exportProject>>,
+          TError,
+          Awaited<ReturnType<typeof exportProject>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useExportProject<TData = Awaited<ReturnType<typeof exportProject>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportProject>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof exportProject>>,
+          TError,
+          Awaited<ReturnType<typeof exportProject>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useExportProject<TData = Awaited<ReturnType<typeof exportProject>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportProject>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Download the project as a portable archive (team admin)
+ */
+
+export function useExportProject<TData = Awaited<ReturnType<typeof exportProject>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportProject>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getExportProjectQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getListEnvironmentsUrl = (id: string,) => {
 
 
 
@@ -790,4 +907,950 @@ export const useDeleteEnvironment = <TError = UnauthorizedResponse | ForbiddenRe
         TContext
       > => {
       return useMutation(getDeleteEnvironmentMutationOptions(options), queryClient);
+    }
+    export const getGetProjectQuotaUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/projects/${id}/quota`
+}
+
+/**
+ * The meter is computed, never stored. Memory is DECLARED — the sum of each resource's memory limit times its replicas — not observed, because a workload that has not started uses nothing, so an observed meter could never refuse a new application before it exists.
+ *
+ * `uncounted_compose_stacks` is a real hole stated rather than hidden: a stack's memory is declared inside its own file, and reading it out would meter a six-service stack as two services' worth and look complete.
+ * @summary This project's caps and what it is using (member+)
+ */
+export const getProjectQuota = async (id: string, options?: RequestInit): Promise<QuotaReport> => {
+
+  return apiFetch<QuotaReport>(getGetProjectQuotaUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetProjectQuotaQueryKey = (id: string,) => {
+    return [
+    `/api/v1/projects/${id}/quota`
+    ] as const;
+    }
+
+
+export const getGetProjectQuotaQueryOptions = <TData = Awaited<ReturnType<typeof getProjectQuota>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProjectQuota>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetProjectQuotaQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getProjectQuota>>> = ({ signal }) => getProjectQuota(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getProjectQuota>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetProjectQuotaQueryResult = NonNullable<Awaited<ReturnType<typeof getProjectQuota>>>
+export type GetProjectQuotaQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useGetProjectQuota<TData = Awaited<ReturnType<typeof getProjectQuota>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProjectQuota>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getProjectQuota>>,
+          TError,
+          Awaited<ReturnType<typeof getProjectQuota>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetProjectQuota<TData = Awaited<ReturnType<typeof getProjectQuota>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProjectQuota>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getProjectQuota>>,
+          TError,
+          Awaited<ReturnType<typeof getProjectQuota>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetProjectQuota<TData = Awaited<ReturnType<typeof getProjectQuota>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProjectQuota>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary This project's caps and what it is using (member+)
+ */
+
+export function useGetProjectQuota<TData = Awaited<ReturnType<typeof getProjectQuota>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getProjectQuota>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetProjectQuotaQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getSetProjectQuotaUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/projects/${id}/quota`
+}
+
+/**
+ * A GUARDRAIL, not a meter. It is denominated in bytes and counts, there is no monetary concept anywhere in it, and it is set by an operator on infrastructure they own (ADR-012).
+ *
+ * A null limit means that dimension is uncapped. A limit of ZERO is refused: removing a quota is DELETE, and zero means "nothing may be deployed here", which is deploy protection's job and says so more clearly.
+ *
+ * A memory cap over a scope containing a resource with NO declared limit is refused with a 409 that names them, because such a cap would be a fiction — and the runaway project this exists to stop is precisely the one that never set a limit.
+ * @summary Cap what this project may consume (team admin)
+ */
+export const setProjectQuota = async (id: string,
+    setQuotaRequest: SetQuotaRequest, options?: RequestInit): Promise<ResourceQuota> => {
+
+  return apiFetch<ResourceQuota>(getSetProjectQuotaUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(setQuotaRequest)
+  }
+);}
+
+
+
+
+
+export const getSetProjectQuotaMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setProjectQuota>>, TError,{id: string;data: SetQuotaRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setProjectQuota>>, TError,{id: string;data: SetQuotaRequest}, TContext> => {
+
+const mutationKey = ['setProjectQuota'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setProjectQuota>>, {id: string;data: SetQuotaRequest}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  setProjectQuota(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetProjectQuotaMutationResult = NonNullable<Awaited<ReturnType<typeof setProjectQuota>>>
+    export type SetProjectQuotaMutationBody = SetQuotaRequest
+    export type SetProjectQuotaMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error
+
+    /**
+ * @summary Cap what this project may consume (team admin)
+ */
+export const useSetProjectQuota = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setProjectQuota>>, TError,{id: string;data: SetQuotaRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setProjectQuota>>,
+        TError,
+        {id: string;data: SetQuotaRequest},
+        TContext
+      > => {
+      return useMutation(getSetProjectQuotaMutationOptions(options), queryClient);
+    }
+    export const getDeleteProjectQuotaUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/projects/${id}/quota`
+}
+
+/**
+ * @summary Remove the cap (team admin)
+ */
+export const deleteProjectQuota = async (id: string, options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getDeleteProjectQuotaUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteProjectQuotaMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteProjectQuota>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteProjectQuota>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['deleteProjectQuota'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteProjectQuota>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteProjectQuota(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteProjectQuotaMutationResult = NonNullable<Awaited<ReturnType<typeof deleteProjectQuota>>>
+
+    export type DeleteProjectQuotaMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Remove the cap (team admin)
+ */
+export const useDeleteProjectQuota = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteProjectQuota>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteProjectQuota>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getDeleteProjectQuotaMutationOptions(options), queryClient);
+    }
+    export const getGetStatusPageUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/projects/${id}/status-page`
+}
+
+/**
+ * @summary The project's public status page (member+)
+ */
+export const getStatusPage = async (id: string, options?: RequestInit): Promise<StatusPage> => {
+
+  return apiFetch<StatusPage>(getGetStatusPageUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetStatusPageQueryKey = (id: string,) => {
+    return [
+    `/api/v1/projects/${id}/status-page`
+    ] as const;
+    }
+
+
+export const getGetStatusPageQueryOptions = <TData = Awaited<ReturnType<typeof getStatusPage>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getStatusPage>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetStatusPageQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getStatusPage>>> = ({ signal }) => getStatusPage(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getStatusPage>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetStatusPageQueryResult = NonNullable<Awaited<ReturnType<typeof getStatusPage>>>
+export type GetStatusPageQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useGetStatusPage<TData = Awaited<ReturnType<typeof getStatusPage>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getStatusPage>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getStatusPage>>,
+          TError,
+          Awaited<ReturnType<typeof getStatusPage>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetStatusPage<TData = Awaited<ReturnType<typeof getStatusPage>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getStatusPage>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getStatusPage>>,
+          TError,
+          Awaited<ReturnType<typeof getStatusPage>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetStatusPage<TData = Awaited<ReturnType<typeof getStatusPage>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getStatusPage>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary The project's public status page (member+)
+ */
+
+export function useGetStatusPage<TData = Awaited<ReturnType<typeof getStatusPage>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getStatusPage>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetStatusPageQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getSetStatusPageUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/projects/${id}/status-page`
+}
+
+/**
+ * One page per project — "which of our four status pages is the real one" is not a question this product can be asked.
+ *
+ * This is TEAM ADMIN, not member, and the reason is the whole feature: publishing a project's health, under names of somebody's choosing, at a hostname customers will read, is a disclosure decision. It sits at the rank that already decides who joins the team, not at the rank that ships code.
+ *
+ * Nothing about a resource becomes public except the label an operator types for it. Not its name, not its server, not its route domain, not its revision, and never the agent's own status detail.
+ * @summary Create or replace the status page (TEAM ADMIN)
+ */
+export const setStatusPage = async (id: string,
+    setStatusPageRequest: SetStatusPageRequest, options?: RequestInit): Promise<StatusPage> => {
+
+  return apiFetch<StatusPage>(getSetStatusPageUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(setStatusPageRequest)
+  }
+);}
+
+
+
+
+
+export const getSetStatusPageMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setStatusPage>>, TError,{id: string;data: SetStatusPageRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setStatusPage>>, TError,{id: string;data: SetStatusPageRequest}, TContext> => {
+
+const mutationKey = ['setStatusPage'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setStatusPage>>, {id: string;data: SetStatusPageRequest}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  setStatusPage(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetStatusPageMutationResult = NonNullable<Awaited<ReturnType<typeof setStatusPage>>>
+    export type SetStatusPageMutationBody = SetStatusPageRequest
+    export type SetStatusPageMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error
+
+    /**
+ * @summary Create or replace the status page (TEAM ADMIN)
+ */
+export const useSetStatusPage = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setStatusPage>>, TError,{id: string;data: SetStatusPageRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setStatusPage>>,
+        TError,
+        {id: string;data: SetStatusPageRequest},
+        TContext
+      > => {
+      return useMutation(getSetStatusPageMutationOptions(options), queryClient);
+    }
+    export const getDeleteStatusPageUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/projects/${id}/status-page`
+}
+
+/**
+ * @summary Remove the status page and its history (TEAM ADMIN)
+ */
+export const deleteStatusPage = async (id: string, options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getDeleteStatusPageUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteStatusPageMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteStatusPage>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteStatusPage>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['deleteStatusPage'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteStatusPage>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteStatusPage(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteStatusPageMutationResult = NonNullable<Awaited<ReturnType<typeof deleteStatusPage>>>
+
+    export type DeleteStatusPageMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Remove the status page and its history (TEAM ADMIN)
+ */
+export const useDeleteStatusPage = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteStatusPage>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteStatusPage>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getDeleteStatusPageMutationOptions(options), queryClient);
+    }
+    export const getListStatusPageComponentsUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/status-pages/${id}/components`
+}
+
+/**
+ * @summary The ordered component list (member+)
+ */
+export const listStatusPageComponents = async (id: string, options?: RequestInit): Promise<StatusPageComponent[]> => {
+
+  return apiFetch<StatusPageComponent[]>(getListStatusPageComponentsUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListStatusPageComponentsQueryKey = (id: string,) => {
+    return [
+    `/api/v1/status-pages/${id}/components`
+    ] as const;
+    }
+
+
+export const getListStatusPageComponentsQueryOptions = <TData = Awaited<ReturnType<typeof listStatusPageComponents>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listStatusPageComponents>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListStatusPageComponentsQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listStatusPageComponents>>> = ({ signal }) => listStatusPageComponents(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listStatusPageComponents>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListStatusPageComponentsQueryResult = NonNullable<Awaited<ReturnType<typeof listStatusPageComponents>>>
+export type ListStatusPageComponentsQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useListStatusPageComponents<TData = Awaited<ReturnType<typeof listStatusPageComponents>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listStatusPageComponents>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listStatusPageComponents>>,
+          TError,
+          Awaited<ReturnType<typeof listStatusPageComponents>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListStatusPageComponents<TData = Awaited<ReturnType<typeof listStatusPageComponents>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listStatusPageComponents>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listStatusPageComponents>>,
+          TError,
+          Awaited<ReturnType<typeof listStatusPageComponents>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListStatusPageComponents<TData = Awaited<ReturnType<typeof listStatusPageComponents>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listStatusPageComponents>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary The ordered component list (member+)
+ */
+
+export function useListStatusPageComponents<TData = Awaited<ReturnType<typeof listStatusPageComponents>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listStatusPageComponents>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListStatusPageComponentsQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getSetStatusPageComponentsUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/status-pages/${id}/components`
+}
+
+/**
+ * Wholesale, because the list IS the page: adding and removing one row at a time through two routes would make "what does this page publish right now" a question with two answers mid-edit. A row that survives a save keeps its id, and with it the history its bars are drawn from — so fixing a typo in a label does not reset thirty days of uptime.
+ *
+ * A component naming a resource in a PREVIEW environment is refused with a reason. A preview is created by a machine from an outsider's pull request, so a page that could include one would publish branch names and pull request titles written by people outside the team. That is a rejection, not a default.
+ * @summary Replace the whole ordered component list (TEAM ADMIN)
+ */
+export const setStatusPageComponents = async (id: string,
+    setStatusPageComponentsRequest: SetStatusPageComponentsRequest, options?: RequestInit): Promise<StatusPageComponent[]> => {
+
+  return apiFetch<StatusPageComponent[]>(getSetStatusPageComponentsUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(setStatusPageComponentsRequest)
+  }
+);}
+
+
+
+
+
+export const getSetStatusPageComponentsMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setStatusPageComponents>>, TError,{id: string;data: SetStatusPageComponentsRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setStatusPageComponents>>, TError,{id: string;data: SetStatusPageComponentsRequest}, TContext> => {
+
+const mutationKey = ['setStatusPageComponents'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setStatusPageComponents>>, {id: string;data: SetStatusPageComponentsRequest}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  setStatusPageComponents(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetStatusPageComponentsMutationResult = NonNullable<Awaited<ReturnType<typeof setStatusPageComponents>>>
+    export type SetStatusPageComponentsMutationBody = SetStatusPageComponentsRequest
+    export type SetStatusPageComponentsMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Replace the whole ordered component list (TEAM ADMIN)
+ */
+export const useSetStatusPageComponents = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setStatusPageComponents>>, TError,{id: string;data: SetStatusPageComponentsRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setStatusPageComponents>>,
+        TError,
+        {id: string;data: SetStatusPageComponentsRequest},
+        TContext
+      > => {
+      return useMutation(getSetStatusPageComponentsMutationOptions(options), queryClient);
+    }
+    export const getPreviewStatusPageUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/status-pages/${id}/preview`
+}
+
+/**
+ * The preview IS the disclosure control, and it is a better one than a warning. A confirmation dialog that says "this will be public" is read by nobody; a rendered page with the customer's name on it is read by everybody, because it looks like the thing it is.
+ *
+ * It is built by the same code that serves the public page — two renderers would be two chances to disclose different things.
+ * @summary The real public payload, for a page that is not enabled yet (member+)
+ */
+export const previewStatusPage = async (id: string, options?: RequestInit): Promise<PublicStatusPage> => {
+
+  return apiFetch<PublicStatusPage>(getPreviewStatusPageUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getPreviewStatusPageQueryKey = (id: string,) => {
+    return [
+    `/api/v1/status-pages/${id}/preview`
+    ] as const;
+    }
+
+
+export const getPreviewStatusPageQueryOptions = <TData = Awaited<ReturnType<typeof previewStatusPage>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof previewStatusPage>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getPreviewStatusPageQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof previewStatusPage>>> = ({ signal }) => previewStatusPage(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof previewStatusPage>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type PreviewStatusPageQueryResult = NonNullable<Awaited<ReturnType<typeof previewStatusPage>>>
+export type PreviewStatusPageQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function usePreviewStatusPage<TData = Awaited<ReturnType<typeof previewStatusPage>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof previewStatusPage>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof previewStatusPage>>,
+          TError,
+          Awaited<ReturnType<typeof previewStatusPage>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function usePreviewStatusPage<TData = Awaited<ReturnType<typeof previewStatusPage>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof previewStatusPage>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof previewStatusPage>>,
+          TError,
+          Awaited<ReturnType<typeof previewStatusPage>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function usePreviewStatusPage<TData = Awaited<ReturnType<typeof previewStatusPage>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof previewStatusPage>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary The real public payload, for a page that is not enabled yet (member+)
+ */
+
+export function usePreviewStatusPage<TData = Awaited<ReturnType<typeof previewStatusPage>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof previewStatusPage>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getPreviewStatusPageQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getCheckStatusPageDomainUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/status-pages/${id}/domain-check`
+}
+
+/**
+ * @summary What the public internet gets back for the status domain (member+)
+ */
+export const checkStatusPageDomain = async (id: string, options?: RequestInit): Promise<DomainCheck> => {
+
+  return apiFetch<DomainCheck>(getCheckStatusPageDomainUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getCheckStatusPageDomainQueryKey = (id: string,) => {
+    return [
+    `/api/v1/status-pages/${id}/domain-check`
+    ] as const;
+    }
+
+
+export const getCheckStatusPageDomainQueryOptions = <TData = Awaited<ReturnType<typeof checkStatusPageDomain>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof checkStatusPageDomain>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getCheckStatusPageDomainQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof checkStatusPageDomain>>> = ({ signal }) => checkStatusPageDomain(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof checkStatusPageDomain>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type CheckStatusPageDomainQueryResult = NonNullable<Awaited<ReturnType<typeof checkStatusPageDomain>>>
+export type CheckStatusPageDomainQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useCheckStatusPageDomain<TData = Awaited<ReturnType<typeof checkStatusPageDomain>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof checkStatusPageDomain>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof checkStatusPageDomain>>,
+          TError,
+          Awaited<ReturnType<typeof checkStatusPageDomain>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useCheckStatusPageDomain<TData = Awaited<ReturnType<typeof checkStatusPageDomain>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof checkStatusPageDomain>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof checkStatusPageDomain>>,
+          TError,
+          Awaited<ReturnType<typeof checkStatusPageDomain>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useCheckStatusPageDomain<TData = Awaited<ReturnType<typeof checkStatusPageDomain>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof checkStatusPageDomain>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary What the public internet gets back for the status domain (member+)
+ */
+
+export function useCheckStatusPageDomain<TData = Awaited<ReturnType<typeof checkStatusPageDomain>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof checkStatusPageDomain>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getCheckStatusPageDomainQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getAnnotateStatusIncidentUrl = (id: string,
+    iid: string,) => {
+
+
+
+
+  return `/api/v1/status-pages/${id}/incidents/${iid}`
+}
+
+/**
+ * A member, deliberately. The person who notices at 02:00 is on call, not an admin, and making them find one before they can write "we are aware and investigating" is how a status page stops being used. The blast radius is bounded to 280 characters of plain text on a page that is already public, it is audited with the author's name, and it is never linkified — the text is escaped and rendered as text, so the page cannot become a redirect on a hostname the customer trusts.
+ * @summary One line of public text on a live incident (member+)
+ */
+export const annotateStatusIncident = async (id: string,
+    iid: string,
+    annotateIncidentRequest: AnnotateIncidentRequest, options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getAnnotateStatusIncidentUrl(id,iid),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(annotateIncidentRequest)
+  }
+);}
+
+
+
+
+
+export const getAnnotateStatusIncidentMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof annotateStatusIncident>>, TError,{id: string;iid: string;data: AnnotateIncidentRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof annotateStatusIncident>>, TError,{id: string;iid: string;data: AnnotateIncidentRequest}, TContext> => {
+
+const mutationKey = ['annotateStatusIncident'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof annotateStatusIncident>>, {id: string;iid: string;data: AnnotateIncidentRequest}> = (props) => {
+          const {id,iid,data} = props ?? {};
+
+          return  annotateStatusIncident(id,iid,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AnnotateStatusIncidentMutationResult = NonNullable<Awaited<ReturnType<typeof annotateStatusIncident>>>
+    export type AnnotateStatusIncidentMutationBody = AnnotateIncidentRequest
+    export type AnnotateStatusIncidentMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary One line of public text on a live incident (member+)
+ */
+export const useAnnotateStatusIncident = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof annotateStatusIncident>>, TError,{id: string;iid: string;data: AnnotateIncidentRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof annotateStatusIncident>>,
+        TError,
+        {id: string;iid: string;data: AnnotateIncidentRequest},
+        TContext
+      > => {
+      return useMutation(getAnnotateStatusIncidentMutationOptions(options), queryClient);
     }

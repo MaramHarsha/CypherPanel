@@ -15,6 +15,7 @@ import {
 import { useGetProject, useListEnvironments } from "@/api/gen/projects/projects";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { HeaderDomain } from "@/components/domain-link";
+import { MaintenanceBadge } from "@/components/maintenance-badge";
 import { RedeployPending } from "@/components/redeploy-pending";
 import { ResourceGone } from "@/components/resource-gone";
 import { StatusBadge } from "@/components/status-badge";
@@ -121,6 +122,10 @@ function ApplicationLayout() {
                 §8). "Deploy now" is already the masthead's primary action, so
                 the badge needs no affordance of its own. */}
             {app.data?.redeploy_pending && <RedeployPending />}
+            {/* Downtime on purpose is still downtime: the toggle is the opt-in
+                and this is what keeps it from becoming a surprise
+                (app-access-control.md §10). */}
+            {app.data?.maintenance_mode && <MaintenanceBadge since={app.data.maintenance_since} />}
             {/* The canvas title row is name · dot · state word and nothing
                 else, so the one-click route to the running app stays but drops
                 out of the accent: orange is the Deploy pill's here. */}

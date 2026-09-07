@@ -197,7 +197,7 @@ function ProjectRow({
       >
         <span className="flex min-w-0 items-center gap-[9px] sm:gap-3.5">
           {statuses.length > 0 ? (
-            <StatusDot status={worst} className="max-sm:size-[9px]" />
+            <StatusDot status={worst} decorative className="max-sm:size-[9px]" />
           ) : (
             <span className="w-2.5" aria-hidden />
           )}

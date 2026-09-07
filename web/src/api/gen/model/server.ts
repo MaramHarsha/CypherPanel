@@ -7,6 +7,7 @@
  * Every response — success, error and SSE stream alike — carries an `X-Request-Id` header (`components/headers/RequestId`), and every JSON error body repeats it as `trace_id`. It is the value to quote in a bug report and the key to search for in `GET /api/v1/panel/logs`. Individual responses reference the header only where a generated client benefits; it is present on all of them.
  * OpenAPI spec version: 0.3.0
  */
+import type { ServerAgentChannel } from './serverAgentChannel.ts';
 import type { ServerRole } from './serverRole.ts';
 import type { ServerStatus } from './serverStatus.ts';
 
@@ -29,6 +30,13 @@ export interface Server {
   disk_free_bytes?: number;
   /** Whether the server is past the panel's disk threshold (`CYPHERD_DISK_WARN_PERCENT`, default 85). Crossing it, and crossing back, writes one notification-inbox item for the panel's owners and admins — on the transition, never on every heartbeat. */
   disk_low?: boolean;
+  /** Which release channel this server's agent follows (agent-updates.md §2). Its desired version is that channel's; there is no per-server version, so promotion is one write rather than a bulk edit. Changed through `PUT /servers/{id}/agent-channel`, which is owner and session-only — never through `PATCH /servers/{id}`. */
+  agent_channel?: ServerAgentChannel;
+  /** What the agent last said about its own binary: idle, pending, downloading, verifying, swapping, rolled_back, failed or disabled; empty for an agent that has never reported one. */
+  agent_update_phase?: string;
+  agent_update_target?: string;
+  /** Operator-facing prose about the phase; never a secret. */
+  agent_update_detail?: string;
   /** Whether an agent has completed enrollment. */
   enrolled: boolean;
   /** @nullable */

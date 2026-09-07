@@ -3,6 +3,7 @@ module github.com/MaramHarsha/cypherpanel/core
 go 1.25.12
 
 require (
+	filippo.io/age v1.3.2
 	github.com/MaramHarsha/cypherpanel/pkg v0.0.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/nats-io/nats-server/v2 v2.14.5
@@ -16,6 +17,7 @@ require (
 )
 
 require (
+	filippo.io/hpke v0.4.0 // indirect
 	github.com/antithesishq/antithesis-sdk-go v0.7.2-default-no-op // indirect
 	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect

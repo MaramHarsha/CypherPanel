@@ -1220,6 +1220,52 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /api/v1/projects/{id}/export:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Project ID. }
+    get:
+      operationId: exportProject
+      tags: [projects]
+      summary: Download the project as a portable archive (team admin)
+      description: >-
+        A gzipped tar containing a compose-style definition of every application,
+        managed database and Compose Stack, one directory per standing
+        environment, plus a generated README and a machine-readable manifest.
+        It runs anywhere Docker runs — leaving is deliberately easy.
+
+
+        **Secret values are never included**, in any form, including a masked
+        hint: each resource gets an `env/<name>.env.example` carrying the KEYS
+        only. That is structural rather than a promise — `core/export` is given
+        an interface with no method that returns a ciphertext and no dependency
+        on the unsealer, so it could not export a value if it tried.
+
+
+        Also absent, and stated in the archive's own README: volume and database
+        DATA, TLS certificates, and images. Preview environments are excluded
+        because a preview belongs to its pull request and is destroyed with it.
+
+
+        The response is streamed rather than buffered, so it carries no
+        `Content-Length`. Everything that can fail is checked before the first
+        byte; a write that fails afterwards truncates the archive, and a
+        truncated gzip fails its own CRC rather than opening as a smaller,
+        plausible-looking, wrong one.
+      responses:
+        "200":
+          description: The archive.
+          headers:
+            Content-Disposition:
+              description: 'attachment, named `<project-slug>-<YYYY-MM-DD>.tar.gz` — the slug is immutable, so a rename does not change it.'
+              schema: { type: string }
+          content:
+            application/gzip:
+              schema: { type: string, format: binary }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "501": { description: Export is not enabled on this panel., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
   /api/v1/projects/{id}/environments:
     parameters:
       - name: id
@@ -1533,6 +1579,1568 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+
+  /api/v1/applications/{id}/access:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Application ID. }
+    get:
+      operationId: getApplicationAccess
+      tags: [applications]
+      summary: Who may reach this application through the Proxy (member+)
+      responses:
+        "200": { description: The policy., content: { application/json: { schema: { $ref: "#/components/schemas/AppAccess" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: setApplicationAccess
+      tags: [applications]
+      summary: Replace the IP allowlist (member+)
+      description: >-
+        Wholesale, because the list IS the policy: adding and removing one CIDR
+        at a time through two routes would make "what does this allow right now"
+        a question with two answers mid-edit.
+
+
+        Entries are normalized — a bare address becomes a single-host prefix, and
+        a prefix is masked — so what is stored is the network the operator
+        described rather than a host address that looks like one. An enabled
+        allowlist with no entries is refused: empty meaning "allow nothing" is a
+        lockout nobody typed, and empty meaning "allow everything" is a control
+        that silently does not apply.
+
+
+        This is CURRENT application state, not part of a revision snapshot. A
+        rollback must never lift a lockout or restore a deleted entry.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetAppAccessRequest" } } }
+      responses:
+        "200": { description: Saved., content: { application/json: { schema: { $ref: "#/components/schemas/AppAccess" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/applications/{id}/access/preview-password:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Application ID. }
+    post:
+      operationId: setPreviewPassword
+      tags: [applications]
+      summary: Set, rotate or clear the preview passphrase (member+)
+      description: >-
+        Gates PREVIEW environments only — every `pr-*` environment asks for it
+        before serving, so clients see staging and the internet does not. It is
+        deliberately not applied to standing environments: a flag left on must
+        not lock production behind a passphrase nobody remembers setting.
+
+
+        The passphrase is bcrypt-hashed and only the hash is stored; the
+        plaintext is returned in THIS response and never again, which is the
+        contract `reset-password` already has. An empty passphrase turns the
+        gate off and forgets the hash — turning it off while keeping the hash
+        would leave a credential nobody can see and nobody can rotate.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetPreviewPasswordRequest" } } }
+      responses:
+        "200":
+          description: Set. `passphrase` appears here and nowhere else, ever.
+          content: { application/json: { schema: { $ref: "#/components/schemas/PreviewPasswordResult" } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/applications/{id}/maintenance:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Application ID. }
+    put:
+      operationId: startMaintenance
+      tags: [applications]
+      summary: Serve the maintenance page instead of the app (member+)
+      description: >-
+        A SERVICE SWAP, not a middleware. Traefik cannot return a body of ours,
+        so the node runs a small responder container and the route's rule, TLS,
+        allowlist and basic auth all stay exactly as they were while the load
+        balancer's server moves. The application keeps running, keeps passing
+        its health gate and can still be deployed underneath — a deploy simply
+        flips a route that currently points elsewhere.
+
+
+        While maintenance is on, NOBODY reaches the app through the front door,
+        including an allowlisted operator. An allowlist bypass was considered
+        and rejected: it would make maintenance mean different things depending
+        on a second toggle's contents, and an operator who allowlisted the
+        office would never see the page they are showing the world.
+
+
+        Idempotent, and its own sub-resource rather than a field on
+        `PUT /access` — the caller that most wants it is a migration script, and
+        a script that had to read-modify-write the allowlist to raise a page
+        would be one lost race away from deleting it. There is no auto-expiry: a
+        window that lifts itself while the migration is still running publishes
+        a half-migrated application to the internet.
+      responses:
+        "200":
+          description: The page is up. `maintenance_since` is when it went up.
+          content: { application/json: { schema: { $ref: "#/components/schemas/AppAccess" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: endMaintenance
+      tags: [applications]
+      summary: Take the maintenance page down (member+)
+      description: >-
+        Points the route back at whatever revision is current by then, and the
+        responder is removed from the node once no resource there is still in
+        maintenance. Idempotent.
+      responses:
+        "200":
+          description: The page is down.
+          content: { application/json: { schema: { $ref: "#/components/schemas/AppAccess" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/panel/agent-updates:
+    get:
+      operationId: getAgentUpdates
+      tags: [panel]
+      summary: Release channels and the fleet's agent versions (member+)
+      description: >-
+        Two channels and a selector per server, rather than a desired version
+        per host: a forty-host fleet would otherwise be forty decisions that
+        must agree, and "promote" would be a bulk edit.
+
+
+        Both channels ship EMPTY, and empty means no instruction — upgrading a
+        panel must not start replacing binaries across a fleet nobody asked it
+        to touch. The cost is a fleet whose operator never opens this screen
+        stays stale, which is paid for by making the empty state the action.
+      responses:
+        "200": { description: The channels and the fleet., content: { application/json: { schema: { $ref: "#/components/schemas/AgentUpdates" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { description: Agent updates are not enabled on this panel. }
+
+  /api/v1/panel/agent-updates/{channel}:
+    parameters:
+      - { name: channel, in: path, required: true, schema: { type: string, enum: [stable, canary] }, description: Release channel. }
+    put:
+      operationId: setAgentChannel
+      tags: [panel]
+      summary: Set a channel's desired agent version (owner, session only)
+      description: >-
+        Owner AND session-only: this is the one control in the panel that
+        changes what code runs on every server, and an API token that can move a
+        channel is an API token that owns the fleet — API tokens live in CI.
+
+
+        An empty version clears the instruction, which is how a rollout an
+        operator no longer wants is stopped. A version NEWER than the panel's
+        own build is refused naming the remedy: additive-only proto guarantees
+        the old-agent direction, not the new-agent one. A development panel
+        cannot make that comparison and so does not.
+
+
+        Setting an older version than the channel already names permits the
+        agents to move backwards; moving forward clears that permission. It is
+        derived rather than a second checkbox, because an operator who has to
+        remember one is an operator whose rollback does not happen. It stops an
+        ACCIDENT — a stale desired set, a mistyped tag, a restored snapshot
+        walking the fleet backwards — and not a compromised plane, whose bound
+        is the signature the agent checks.
+
+
+        The version must be tag-shaped (`v1.2.3`, optionally with a
+        pre-release suffix). It is bounded because it is concatenated into a URL
+        by this pre-flight and by every agent's download, and `../` in a tag
+        would aim a fetcher at a path the panel never named.
+
+
+        Unless `CYPHERD_AGENT_UPDATE_PRECHECK=off`, the plane HEADs the release
+        manifest first so a mistyped tag is refused where it is cheap. That
+        probe goes to ONE host — the constant this project publishes releases
+        from — and never to an `artifact_base` from this request body: the plane
+        connecting to a host a caller named is a request-forgery primitive
+        whatever guards sit in front of it, since a public host can redirect
+        inward and a name can resolve differently the second time it is looked
+        up (threat-model §5.14). A mirror is validated for SHAPE — absolute
+        http(s), no credentials, query or fragment — and is otherwise the
+        agents' business, which is what the off switch already meant.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetAgentChannelRequest" } } }
+      responses:
+        "200": { description: Set., content: { application/json: { schema: { $ref: "#/components/schemas/AgentChannel" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { description: Agent updates are not enabled on this panel. }
+
+  /api/v1/panel/agent-updates/promote:
+    post:
+      operationId: promoteAgentChannel
+      tags: [panel]
+      summary: Promote canary to stable (owner, session only)
+      description: >-
+        Refused with 409 when no canary server has CONVERGED on the candidate —
+        promoting a version no host has run defeats a gate whose whole purpose
+        is that a host ran it — or when any canary server reports it rolled
+        back. Both refusals name what they refused on. There is no override
+        flag: an operator who believes a rollback was spurious sets stable's
+        version directly and owns that explicitly.
+
+
+        A canary server that is merely OFFLINE neither blocks nor counts:
+        blocking would make one powered-down host a permanent hold on every
+        fleet update.
+
+
+        Promotion moves every stable host at once. No waves and no percentages —
+        ADR-010 §6 names staged rollout as a later refinement on this same
+        primitive, and there is no automatic promotion on a health timer,
+        because the only available health signal is "it reached the bus" and a
+        timer that promotes on it converts one bad release into a fleet-wide
+        outage while nobody is watching.
+      responses:
+        "200": { description: Promoted., content: { application/json: { schema: { $ref: "#/components/schemas/AgentChannel" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: The gate refused; the message names the canary servers and what they are running. }
+        "503": { description: Agent updates are not enabled on this panel. }
+
+  /api/v1/servers/{id}/agent-channel:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Server ID. }
+    put:
+      operationId: setServerAgentChannel
+      tags: [servers]
+      summary: Move one server between release channels (owner, session only)
+      description: >-
+        Its own route rather than a field on `PATCH /servers/{id}`. That PATCH
+        is panel-admin and deliberately reachable by a provisioning token, so
+        re-ranking it would take `public_address` away from every admin that
+        sets it today — while a field-level rank check would be the first in
+        this API, and a new authorization precedent is a bad thing to introduce
+        incidentally inside a feature.
+
+
+        Only this server is nudged to re-read desired state: a channel change is
+        one host's business.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetServerChannelRequest" } } }
+      responses:
+        "200": { description: Moved., content: { application/json: { schema: { $ref: "#/components/schemas/Server" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { description: Agent updates are not enabled on this panel. }
+
+  /api/v1/panel/updates:
+    get:
+      operationId: getPanelUpdates
+      tags: [panel]
+      summary: What is running, what is available, and any upgrade in flight (member+)
+      description: >-
+        `mode` is `assisted` on a systemd install and `manual` in a container,
+        where the panel CANNOT upgrade itself and says so rather than drawing a
+        button that would not work.
+      responses:
+        "200": { description: The state., content: { application/json: { schema: { $ref: "#/components/schemas/PanelUpdates" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/panel/changelog:
+    get:
+      operationId: getChangelog
+      tags: [panel]
+      summary: What changed in each release (any authenticated caller)
+      description: >-
+        Embedded in the binary rather than fetched: a fetched changelog is a
+        second outbound call with its own rate limit, and it renders prose from
+        a network source inside an operator-facing surface. The AVAILABLE
+        release contributes only its version, its kind and a link pointing out —
+        no untrusted prose is ever rendered here.
+      responses:
+        "200": { description: The entries., content: { application/json: { schema: { $ref: "#/components/schemas/Changelog" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/panel/updates/preflight:
+    get:
+      operationId: preflightPanelUpdate
+      tags: [panel]
+      summary: The five checks, before anything changes (panel OWNER, session only)
+      description: >-
+        Changes nothing, which is why it is a GET. Signature, disk headroom,
+        agent compatibility, snapshot readiness and quiescence.
+
+
+        A signature failure is a REFUSAL, never a warning: an unverifiable
+        artifact is the one thing this feature exists to not install. A disk
+        refusal names BOTH numbers, because a disk that fills during an upgrade
+        is how you end up with a panel that is neither the old version nor the
+        new one. Agents below the release's floor are NAMED, and proceeding
+        anyway needs the target version typed back.
+      parameters:
+        - { name: version, in: query, required: true, schema: { type: string } }
+      responses:
+        "200": { description: The checks., content: { application/json: { schema: { $ref: "#/components/schemas/UpdatePreflight" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/panel/updates/upgrade:
+    post:
+      operationId: startPanelUpgrade
+      tags: [panel]
+      summary: Run the guided upgrade (panel OWNER, session only)
+      description: >-
+        Owner, and session-only. This is the control that decides what code the
+        control plane runs, and an API token may live in a CI runner.
+
+
+        The plane does NOT perform the swap: it writes a request file that a
+        separate root one-shot consumes. That helper has no dependency on the
+        session that asked, so closing the tab, losing the network or signing
+        out changes nothing.
+
+
+        The panel goes read-only for about a minute and is unreachable for the
+        few seconds of restart inside that. YOUR APPLICATIONS KEEP SERVING —
+        they do not depend on the control plane.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/StartUpgradeRequest" } } }
+      responses:
+        "202": { description: Started., content: { application/json: { schema: { $ref: "#/components/schemas/PanelUpgrade" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: An upgrade is already running., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /api/v1/panel/updates/cancel:
+    post:
+      operationId: cancelPanelUpgrade
+      tags: [panel]
+      summary: Cancel before the swap (panel OWNER, session only)
+      description: >-
+        Only before the swap. After it the helper owns the host and the panel
+        has nothing to cancel with — it answers 409 and says the upgrade will
+        roll itself back if the new version does not come up.
+      responses:
+        "204": { description: Cancelled. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: The swap has already started., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /api/v1/panel/updates/history:
+    get:
+      operationId: listPanelUpgrades
+      tags: [panel]
+      summary: Version history and the snapshots it kept (panel OWNER, session only)
+      description: >-
+        Records what RAN, not only what this panel performed: a boot whose
+        version differs from the last recorded one writes a row with an
+        `external` actor, which is what a container install's upgrades look
+        like from in here.
+      responses:
+        "200": { description: The history., content: { application/json: { schema: { $ref: "#/components/schemas/PanelUpgradeHistory" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/panel/snapshots/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Snapshot ID. }
+    patch:
+      operationId: setSnapshotRetention
+      tags: [panel]
+      summary: Extend, pin or expire a snapshot (panel OWNER, session only)
+      description: >-
+        Retention is the one decision this feature leaves to the operator, and
+        it must not be made for them: the snapshot is the only thing standing
+        between a bad release and a lost panel. A PINNED snapshot is never
+        swept whatever its expiry says.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SnapshotRetentionRequest" } } }
+      responses:
+        "200": { description: Saved., content: { application/json: { schema: { $ref: "#/components/schemas/PanelSnapshot" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: deletePanelSnapshot
+      tags: [panel]
+      summary: Delete a snapshot and its file (panel OWNER, session only)
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/panel/snapshots/{id}/restore:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Snapshot ID. }
+    post:
+      operationId: restorePanelSnapshot
+      tags: [panel]
+      summary: Put the panel's database back (panel OWNER, session only)
+      description: >-
+        THE LAST RESORT. It rewinds the panel's own database to the moment the
+        snapshot was taken, and everything written since is gone. The automatic
+        rollback does not reach for this — it renames the previous binary back
+        first, and only restores when the old build cannot start on the new
+        schema.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [confirm], properties: { confirm: { type: string, description: "Must be the word restore." } } } } }
+      responses:
+        "202": { description: Started. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: An upgrade is already running., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /api/v1/panel/disaster-recovery:
+    get:
+      operationId: getPlaneDisasterRecovery
+      tags: [panel]
+      summary: Whether this panel backs itself up (panel OWNER, session only)
+      description: >-
+        `armed` is whether a configuration exists at all — disarming deletes it
+        rather than flipping a flag, so there is never a stale configuration
+        beside a boolean.
+
+
+        `recipient_verified_at` being null means ARMED BUT NOT PROVEN: the panel
+        has never watched anyone decrypt with the matching key, so it must not
+        imply the operator still has it. "Armed" and "recoverable" are different
+        claims.
+      responses:
+        "200": { description: The configuration., content: { application/json: { schema: { $ref: "#/components/schemas/PlaneDisasterRecovery" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: armPlaneDisasterRecovery
+      tags: [panel]
+      summary: Arm nightly plane snapshots (panel OWNER, session only)
+      description: >-
+        A snapshot of this panel's database is WORTHLESS without the master key
+        — the CA that signs every agent certificate is sealed with it — and
+        CATASTROPHIC with it. So the master key travels inside the archive, and
+        the ARCHIVE is what is protected: encrypted to a public key whose
+        private half the panel never holds.
+
+
+        `generate: true` mints the pair and returns the private half in THIS
+        response and never again. There is no endpoint that can return it later
+        and no column that holds it. Alternatively pass a `recipient` you
+        already have the key for.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ArmPlaneDRRequest" } } }
+      responses:
+        "200":
+          description: Armed. `recovery_key` appears here and nowhere else, ever.
+          content: { application/json: { schema: { $ref: "#/components/schemas/ArmPlaneDRResponse" } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    delete:
+      operationId: disarmPlaneDisasterRecovery
+      tags: [panel]
+      summary: Stop backing the panel up (panel OWNER, session only)
+      description: >-
+        Archives already in the bucket are left alone. Disarming is not the same
+        decision as discarding, and deleting an operator's off-site copies from
+        a panel action is the one mistake with no undo.
+      responses:
+        "204": { description: Disarmed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/panel/disaster-recovery/run:
+    post:
+      operationId: runPlaneSnapshot
+      tags: [panel]
+      summary: Take a snapshot now (panel OWNER, session only)
+      responses:
+        "202": { description: Taken., content: { application/json: { schema: { $ref: "#/components/schemas/PlaneSnapshot" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Disaster recovery is not armed., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /api/v1/panel/disaster-recovery/verify:
+    post:
+      operationId: verifyRecoveryKey
+      tags: [panel]
+      summary: Prove the Recovery Key still opens a snapshot (panel OWNER, session only)
+      description: >-
+        Because a backup nobody can open is worse than no backup: it is a year
+        of green checkmarks ending in a discovery. The key is used to decrypt one
+        manifest and discarded — never stored, never logged, never returned.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [recovery_key], properties: { recovery_key: { type: string } } } } }
+      responses:
+        "204": { description: It opens. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/panel/disaster-recovery/snapshots:
+    get:
+      operationId: listPlaneSnapshots
+      tags: [panel]
+      summary: The snapshot index (panel OWNER, session only)
+      description: >-
+        An INDEX of what is in the bucket, not the truth about it. The bucket is
+        the truth, and a row here whose object was deleted out of band describes
+        something gone.
+      responses:
+        "200":
+          description: Recent snapshots.
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/PlaneSnapshot" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/revisions/{id}/promotion-plan:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: The source revision. }
+    get:
+      operationId: planPromotion
+      tags: [deployments]
+      summary: Exactly what promoting this revision would change (member+)
+      description: >-
+        Ship the artifact that was TESTED, rather than rebuilding one that
+        should be the same. The plan writes nothing, which is why it is a GET,
+        and it IS the screen: an operator decides from what would change rather
+        than from a confirmation dialog.
+
+
+        NOTHING ABOUT ENVIRONMENT VARIABLES IS EVER COPIED by a promotion — not
+        optionally, not behind a checkbox. Copying variables across environments
+        is the most effective way there is to point production at a staging
+        database, and a panel that offers it will eventually do it. The
+        disagreement is made VISIBLE instead: `only_in_source` and
+        `only_in_target` are computed from KEY NAMES ONLY, because a key present
+        in both with a different value is not drift, it is the normal, intended
+        difference between environments.
+
+
+        `note` carries the one cost that has no fix inside the panel: the image
+        is byte-for-byte the one that ran in staging, including anything baked
+        in at build time.
+      parameters:
+        - { name: target_application_id, in: query, required: true, schema: { type: string } }
+      responses:
+        "200": { description: The plan., content: { application/json: { schema: { $ref: "#/components/schemas/PromotionPlan" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/revisions/{id}/promote:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: The source revision. }
+    post:
+      operationId: promoteRevision
+      tags: [deployments]
+      summary: Ship this revision's artifact to another environment (member+)
+      description: >-
+        No build runs and no source is fetched. The promoted revision carries the
+        TARGET application's own canonical image tag — not the source's — because
+        the agent parses ownership out of a tag and would otherwise reclaim, on
+        the target server, the image that server is running from.
+
+
+        The target's own configuration applies: port, health check, route,
+        limits and environment are the target's. Only the artifact moves.
+
+
+        Deploy protection and quotas both apply, exactly as they do to an
+        ordinary deploy to the target.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [target_application_id], properties: { target_application_id: { type: string } } } } }
+      responses:
+        "202": { description: Started., content: { application/json: { schema: { $ref: "#/components/schemas/Deployment" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: "A freeze window or a resource quota refused it; the body says which." , content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /api/v1/projects/{id}/quota:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Project ID. }
+    get:
+      operationId: getProjectQuota
+      tags: [projects]
+      summary: This project's caps and what it is using (member+)
+      description: >-
+        The meter is computed, never stored. Memory is DECLARED — the sum of
+        each resource's memory limit times its replicas — not observed, because
+        a workload that has not started uses nothing, so an observed meter could
+        never refuse a new application before it exists.
+
+
+        `uncounted_compose_stacks` is a real hole stated rather than hidden: a
+        stack's memory is declared inside its own file, and reading it out would
+        meter a six-service stack as two services' worth and look complete.
+      responses:
+        "200": { description: The report., content: { application/json: { schema: { $ref: "#/components/schemas/QuotaReport" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: setProjectQuota
+      tags: [projects]
+      summary: Cap what this project may consume (team admin)
+      description: >-
+        A GUARDRAIL, not a meter. It is denominated in bytes and counts, there
+        is no monetary concept anywhere in it, and it is set by an operator on
+        infrastructure they own (ADR-012).
+
+
+        A null limit means that dimension is uncapped. A limit of ZERO is
+        refused: removing a quota is DELETE, and zero means "nothing may be
+        deployed here", which is deploy protection's job and says so more
+        clearly.
+
+
+        A memory cap over a scope containing a resource with NO declared limit
+        is refused with a 409 that names them, because such a cap would be a
+        fiction — and the runaway project this exists to stop is precisely the
+        one that never set a limit.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetQuotaRequest" } } }
+      responses:
+        "200": { description: Saved., content: { application/json: { schema: { $ref: "#/components/schemas/ResourceQuota" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: "A resource in this scope has no memory limit, so the cap could not be enforced; the body names them.", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      operationId: deleteProjectQuota
+      tags: [projects]
+      summary: Remove the cap (team admin)
+      responses:
+        "204": { description: Removed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/teams/{id}/quota:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Team ID. }
+    get:
+      operationId: getTeamQuota
+      tags: [teams]
+      summary: This team's caps and what it is using (member+)
+      description: A team's meter is the sum of its projects'. A refusal by either scope is a refusal — a team cap a project could exceed by having its own is not a cap.
+      responses:
+        "200": { description: The report., content: { application/json: { schema: { $ref: "#/components/schemas/QuotaReport" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: setTeamQuota
+      tags: [teams]
+      summary: Cap what this team may consume (team admin)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetQuotaRequest" } } }
+      responses:
+        "200": { description: Saved., content: { application/json: { schema: { $ref: "#/components/schemas/ResourceQuota" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: "A resource in this scope has no memory limit." , content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      operationId: deleteTeamQuota
+      tags: [teams]
+      summary: Remove the cap (team admin)
+      responses:
+        "204": { description: Removed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/mail/provider:
+    get:
+      operationId: getMailProvider
+      tags: [panel]
+      summary: Whether a mail provider is connected (panel admin)
+      responses:
+        "200": { description: The status., content: { application/json: { schema: { $ref: "#/components/schemas/MailProviderStatus" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: connectMailProvider
+      tags: [panel]
+      summary: Connect a mail provider (panel admin)
+      description: >-
+        THE PANEL IS NOT BECOMING A MAIL SERVER. It writes MX, SPF, DKIM and
+        DMARC through the DNS provider already connected, and creates mailboxes
+        through this provider's API. It runs no MTA, stores no message, and
+        never holds a DKIM private key — the provider generates that pair and
+        publishes only the public half.
+
+
+        The credential is tested before it is stored, then sealed under the
+        master key and never returned. A credential saved and later found broken
+        is one an operator discovers when a mailbox creation fails, which is the
+        wrong moment.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/MailProviderConfig" } } }
+      responses:
+        "200": { description: Connected., content: { application/json: { schema: { $ref: "#/components/schemas/MailProviderStatus" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    delete:
+      operationId: disconnectMailProvider
+      tags: [panel]
+      summary: Forget the provider credential (panel admin)
+      description: Domains and mailboxes at the provider are untouched — disconnecting the panel is not the same decision as deleting somebody's mail.
+      responses:
+        "204": { description: Disconnected. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/mail/domains:
+    get:
+      operationId: listMailDomains
+      tags: [panel]
+      summary: Domains with mail enabled (panel admin)
+      responses:
+        "200":
+          description: The domains.
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/MailDomain" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: enableMailDomain
+      tags: [panel]
+      summary: Enable mail on a verified domain (panel admin)
+      description: >-
+        Refused for a domain the panel cannot write DNS for. That is not
+        gatekeeping: on such a domain this feature can do nothing but print
+        instructions, and enabling it would be claiming to have done something.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [domain], properties: { domain: { type: string } } } } }
+      responses:
+        "201": { description: Enabled., content: { application/json: { schema: { $ref: "#/components/schemas/MailDomainRecords" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/mail/domains/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Mail domain ID. }
+    delete:
+      operationId: disableMailDomain
+      tags: [panel]
+      summary: Stop managing this domain's mail (panel admin)
+      description: The domain and its mailboxes stay at the provider. Deleting somebody's mail because a panel switch was turned off is not a trade this feature makes.
+      responses:
+        "204": { description: Disabled. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/mail/domains/{id}/records:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Mail domain ID. }
+    get:
+      operationId: getMailDomainRecords
+      tags: [panel]
+      summary: The records this domain's mail requires (panel admin)
+      responses:
+        "200": { description: The records., content: { application/json: { schema: { $ref: "#/components/schemas/MailDomainRecords" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: rewriteMailDomainRecords
+      tags: [panel]
+      summary: Write the records again (panel admin)
+      description: For a domain whose last attempt left something unwritten. Idempotent — a record that is already correct is left alone.
+      responses:
+        "200": { description: Written., content: { application/json: { schema: { $ref: "#/components/schemas/MailDomain" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/mail/domains/{id}/mailboxes:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Mail domain ID. }
+    get:
+      operationId: listMailboxes
+      tags: [panel]
+      summary: The domain's mailboxes (panel admin)
+      description: >-
+        Read from the PROVIDER, which owns them. The panel caches nothing that
+        would go stale; the only thing it stores is the link to a panel account,
+        because that is a fact the provider knows nothing about.
+      responses:
+        "200":
+          description: The mailboxes.
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Mailbox" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: createMailbox
+      tags: [panel]
+      summary: Create a mailbox (panel admin)
+      description: >-
+        The password appears in THIS response and never again. The panel cannot
+        read it back because it does not have it — the provider stores the hash
+        and the panel forwarded it once, which is the contract an invitation
+        link already has.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateMailboxRequest" } } }
+      responses:
+        "201":
+          description: Created. `password` appears here and nowhere else, ever.
+          content: { application/json: { schema: { $ref: "#/components/schemas/CreateMailboxResponse" } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: deleteMailbox
+      tags: [panel]
+      summary: Delete a mailbox (panel admin)
+      parameters:
+        - { name: address, in: query, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Deleted. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/mail/domains/{id}/mailboxes/password:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Mail domain ID. }
+    post:
+      operationId: resetMailboxPassword
+      tags: [panel]
+      summary: Mint a new mailbox password (panel admin)
+      description: Shown once, like the create response, and for the same reason.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [address], properties: { address: { type: string } } } } }
+      responses:
+        "200":
+          description: Reset. The password appears here and nowhere else.
+          content: { application/json: { schema: { type: object, required: [password], properties: { password: { type: string } } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/log-drains:
+    get:
+      operationId: listLogDrains
+      tags: [panel]
+      summary: Every log drain, with its derived health (panel admin)
+      description: >-
+        A drain ships APPLICATION runtime logs. Managed databases and Compose
+        Stacks carry different labels and are not on the stream this reads — a
+        gap in those features rather than this one, and the copy says so rather
+        than letting somebody discover it later.
+
+
+        Health is derived, never stored, and a FAILING DRAIN IS NEVER
+        AUTO-DISABLED: that would turn a visible failure into a silently
+        stopped pipeline that does not resume when the sink returns, and the
+        operator finds out when they go looking for last week's logs.
+      responses:
+        "200":
+          description: The drains.
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/LogDrain" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: createLogDrain
+      tags: [panel]
+      summary: Add a log drain (panel admin)
+      description: >-
+        Panel admin, because a drain spends the panel's stream, CPU and egress —
+        and a project-scoped drain still ships lines out of the install.
+
+
+        The WHOLE config is sealed under the master key, not just its secret
+        field: which half of a Loki config is a secret changes per deployment,
+        since `X-Scope-OrgID` is a tenant id at one site and an access boundary
+        at another. It is never returned; the API answers with a masked
+        `config_hint` instead.
+
+
+        An S3 drain names an existing Backup Target rather than carrying its own
+        keys. A second sealed S3 credential would mean rotating a key in two
+        places and finding the second one at 02:00 on the night the batch fails.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/LogDrainRequest" } } }
+      responses:
+        "201": { description: Created., content: { application/json: { schema: { $ref: "#/components/schemas/LogDrain" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: A drain with that name already exists., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /api/v1/log-drains/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Log drain ID. }
+    patch:
+      operationId: updateLogDrain
+      tags: [panel]
+      summary: Replace a drain's config, or just pause it (panel admin)
+      description: >-
+        A body carrying `config` replaces it WHOLESALE — a config is one
+        document, and half-changing an endpoint's URL and its headers would
+        leave a drain pointed somewhere with credentials for somewhere else. A
+        body with only `enabled` pauses or resumes without re-sending the
+        credential.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/LogDrainRequest" } } }
+      responses:
+        "200": { description: Saved., content: { application/json: { schema: { $ref: "#/components/schemas/LogDrain" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: deleteLogDrain
+      tags: [panel]
+      summary: Remove a drain and its cursor (panel admin)
+      description: >-
+        The durable consumer goes with it. Leaving it behind would hold the log
+        stream's ack floor at the drain's last position forever — a retention
+        window that stops sliding, which is the disk fill arrived at by a
+        different road.
+      responses:
+        "204": { description: Removed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/alert-rules:
+    get:
+      operationId: listAlertRules
+      tags: [panel]
+      summary: Every threshold rule, with its current state (member+)
+      description: >-
+        A rule has no name: the SENTENCE names it, rendered from the row, so
+        this list, the modal, the Discord message and this response all say the
+        same words and no label typed in March can drift from what the rule now
+        does.
+
+
+        All four states appear, including the two that deliver nothing —
+        `no_data` and `flapping`. A rule quiet for a bad reason must not look
+        like one quiet for a good reason.
+      responses:
+        "200":
+          description: The rules.
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/AlertRule" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: createAlertRule
+      tags: [panel]
+      summary: Add a threshold rule (panel admin)
+      description: >-
+        The condition is not "the value is above the threshold". It is: every
+        bucket covering the last `window_seconds` breached, with no gaps in that
+        span. A four-second spike moves a five-minute mean by about a percent
+        and does not fire, and a bucket the agent barely covered is `unknown` —
+        neither high nor low — so an agent restart never reads as a breach.
+
+
+        `p95_latency_ms` and `requests_per_second` are refused on a SERVER, and
+        the refusal is substantive: a server's request buckets are the traffic
+        that matched no route, so "p95 on this node" would silently mean "p95 of
+        what hit nothing".
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateAlertRuleRequest" } } }
+      responses:
+        "201": { description: Created., content: { application/json: { schema: { $ref: "#/components/schemas/AlertRule" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: An identical rule already exists., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /api/v1/alert-rules/backtest:
+    post:
+      operationId: backtestAlertRule
+      tags: [panel]
+      summary: What this rule would have done over the last week (panel admin)
+      description: >-
+        Every alerting product treats "what number should I type" as the
+        operator's problem and hands them nothing to solve it with. This panel
+        already keeps a fortnight of exactly the series the rule reads, so the
+        answer is one range scan over data already on disk — and it runs before
+        Create does anything.
+
+
+        It counts EPISODES, not evaluations: an hour above the line is one
+        alert, and counting ticks would make every rule look catastrophic. It
+        uses the same evaluator the loop uses, because two implementations would
+        be two answers to one question. `had_data: false` means the series has
+        too many gaps to say anything, which is more useful than a confident 0.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateAlertRuleRequest" } } }
+      responses:
+        "200": { description: The verdict., content: { application/json: { schema: { $ref: "#/components/schemas/AlertBacktest" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/alert-rules/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Alert rule ID. }
+    patch:
+      operationId: setAlertRuleEnabled
+      tags: [panel]
+      summary: Pause or resume a rule (panel admin)
+      description: >-
+        Pausing keeps the rule, its history and its notifier and stops it
+        delivering — which is what an operator wants during a migration, and is
+        not what deleting does.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [enabled], properties: { enabled: { type: boolean } } } } }
+      responses:
+        "200": { description: Saved., content: { application/json: { schema: { $ref: "#/components/schemas/AlertRule" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: deleteAlertRule
+      tags: [panel]
+      summary: Remove a rule and its history (panel admin)
+      responses:
+        "204": { description: Removed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/alert-rules/{id}/events:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Alert rule ID. }
+    get:
+      operationId: listAlertEvents
+      tags: [panel]
+      summary: This rule's episodes, newest first (member+)
+      description: >-
+        One row per EPISODE, not per evaluation — an hour above the line is one
+        row. `delivered: false` marks an episode the flap guard held: it still
+        happened and is still counted, it just was not sent.
+      responses:
+        "200":
+          description: Up to 50 episodes.
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/AlertEvent" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/applications/{id}/metrics:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Application ID. }
+    get:
+      operationId: getApplicationMetrics
+      tags: [applications]
+      summary: CPU, memory and disk over a window (member+)
+      parameters:
+        - { name: window, in: query, required: false, schema: { type: string }, description: "A Go duration (6h) or an RFC 3339 instant; anything else is a 400 naming both. Defaults to 6h, maximum 720h." }
+      description: >-
+        The series carries no averages and no percentiles, because neither
+        merges. `cpu_percent` and `memory_bytes` on each point are DERIVED from
+        accumulators over that point's `covered_seconds`, so a window of any
+        length is exact rather than an average-of-averages.
+
+
+        `covered_seconds` is why an agent restart reads as a partial bucket
+        instead of a dip in traffic, and `collecting: false` is why a resource
+        with no data reads "collection is off" rather than as an idle
+        application at 0%.
+
+
+        Per-resource disk figures DO NOT SUM to the host's usage: image layers
+        are shared, and a base layer used by four applications is counted for
+        each of them. The number an operator should trust for capacity is the
+        one on the Server.
+      responses:
+        "200": { description: The series and its summary., content: { application/json: { schema: { $ref: "#/components/schemas/ResourceMetrics" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/compose-stacks/{id}/metrics:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Compose Stack ID. }
+    get:
+      operationId: getComposeStackMetrics
+      tags: [compose-stacks]
+      summary: CPU, memory and disk over a window (member+)
+      parameters:
+        - { name: window, in: query, required: false, schema: { type: string }, description: "A Go duration (6h) or an RFC 3339 instant; anything else is a 400 naming both. Defaults to 6h, maximum 720h." }
+      description: A stack's containers are summed into one figure — the operator asked about the stack, not its sidecars.
+      responses:
+        "200": { description: The series and its summary., content: { application/json: { schema: { $ref: "#/components/schemas/ResourceMetrics" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/databases/{id}/metrics:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Database ID. }
+    get:
+      operationId: getDatabaseMetrics
+      tags: [databases]
+      summary: CPU, memory and disk over a window (member+)
+      parameters:
+        - { name: window, in: query, required: false, schema: { type: string }, description: "A Go duration (6h) or an RFC 3339 instant; anything else is a 400 naming both. Defaults to 6h, maximum 720h." }
+      responses:
+        "200": { description: The series and its summary., content: { application/json: { schema: { $ref: "#/components/schemas/ResourceMetrics" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/servers/{id}/metrics:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Server ID. }
+    get:
+      operationId: getServerMetrics
+      tags: [servers]
+      summary: The node's managed containers, summed (panel admin)
+      parameters:
+        - { name: window, in: query, required: false, schema: { type: string }, description: "A Go duration (6h) or an RFC 3339 instant; anything else is a 400 naming both. Defaults to 6h, maximum 720h." }
+      description: >-
+        A node's figure IS its resources' figures, so there is no separate
+        server-level sampler — a second source would be a second answer to the
+        same question. Containers the panel does not manage are never sampled,
+        so an operator's own workloads on a shared box do not appear here.
+      responses:
+        "200": { description: The series and its summary., content: { application/json: { schema: { $ref: "#/components/schemas/ResourceMetrics" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/applications/{id}/traffic:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Application ID. }
+    get:
+      operationId: getApplicationTraffic
+      tags: [applications]
+      summary: Requests, statuses, latency and top paths (member+)
+      parameters:
+        - { name: window, in: query, required: false, schema: { type: string }, description: "A Go duration (6h) or an RFC 3339 instant; anything else is a 400 naming both. Defaults to 6h, maximum 720h." }
+      description: >-
+        The whole screen in one response — summary, series and top paths —
+        because it is one screen, and three round trips for one card is how a
+        panel starts feeling slow.
+
+
+        Percentiles are computed once from ONE summed histogram, never averaged
+        from the buckets' own percentiles: two 5-minute buckets with p95 = 100
+        ms and p95 = 2000 ms have an hour-p95 that is neither the mean nor the
+        max of them.
+
+
+        Paths are normalised on the node — no query string, at most three
+        segments, id-shaped segments replaced with `:id` — and capped, with
+        everything past the cap folded into `(other)` so the rows always
+        reconcile with the request count. That is a heuristic, not an
+        inventory: an application whose real route is `/v1/2024/report` sees it
+        rewritten.
+
+
+        `sampled: true` means the node exceeded its line-rate ceiling and fell
+        back to 1-in-N, so the counters are estimates scaled back up. It is
+        labelled rather than quietly presented as exact.
+      responses:
+        "200": { description: The traffic., content: { application/json: { schema: { $ref: "#/components/schemas/ResourceTraffic" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/compose-stacks/{id}/traffic:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Compose Stack ID. }
+    get:
+      operationId: getComposeStackTraffic
+      tags: [compose-stacks]
+      summary: Requests, statuses, latency and top paths (member+)
+      parameters:
+        - { name: window, in: query, required: false, schema: { type: string }, description: "A Go duration (6h) or an RFC 3339 instant; anything else is a 400 naming both. Defaults to 6h, maximum 720h." }
+      responses:
+        "200": { description: The traffic., content: { application/json: { schema: { $ref: "#/components/schemas/ResourceTraffic" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/usage:
+    get:
+      operationId: getUsage
+      tags: [panel]
+      summary: Per-project attribution for a month (member+)
+      parameters:
+        - { name: month, in: query, required: false, schema: { type: string }, description: "YYYY-MM. Defaults to the current UTC month." }
+        - { name: team_id, in: query, required: false, schema: { type: string } }
+      description: >-
+        The capacity question — which project forces the next server — not a
+        billing one. There is no price, no rate and no currency anywhere in this
+        feature, and NOTHING IN IT EVER REFUSES AN ACTION: usage is reported, and
+        it never gates a deploy.
+
+
+        `cpu_share` needs a stated denominator or it is a tenancy leak: showing
+        "38% of fleet CPU" to a member of one team would silently disclose the
+        size of every other team's load. So the denominator is the total of what
+        the CALLER can see, `denominator` says which in words, and a project the
+        caller cannot see contributes to neither numerator nor denominator.
+      responses:
+        "200": { description: The month., content: { application/json: { schema: { $ref: "#/components/schemas/Usage" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/usage/export:
+    get:
+      operationId: exportUsage
+      tags: [panel]
+      summary: One CSV row per resource (member+)
+      parameters:
+        - { name: month, in: query, required: false, schema: { type: string }, description: "YYYY-MM. Defaults to the current UTC month." }
+        - { name: team_id, in: query, required: false, schema: { type: string } }
+      description: >-
+        Same scope as the page: the export can never contain a row the caller
+        could not already read. It carries the ownership chain and the measures
+        and stops there — the CSV ends where a spreadsheet begins.
+      responses:
+        "200":
+          description: The CSV.
+          content:
+            text/csv:
+              schema: { type: string, format: binary }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/settings/metrics:
+    get:
+      operationId: getMetricsSettings
+      tags: [panel]
+      summary: Panel-wide metrics collection policy (panel admin)
+      responses:
+        "200": { description: The policy., content: { application/json: { schema: { $ref: "#/components/schemas/MetricsSettings" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: setMetricsSettings
+      tags: [panel]
+      summary: Change the collection policy (panel admin)
+      description: >-
+        Three knobs, not one per dimension. `enabled` and `request_analytics`
+        are the two an operator has a real reason to change — cost, and privacy
+        about paths — and `bucket_seconds` is load-bearing for the write budget:
+        an operator with 500 containers raises it to 900 and cuts the stored row
+        count by a factor of three.
+
+
+        Turning `request_analytics` on changes the Proxy's static configuration,
+        which RECREATES the Proxy container on each node once — a few seconds
+        with no routing there.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/MetricsSettings" } } }
+      responses:
+        "200": { description: Saved., content: { application/json: { schema: { $ref: "#/components/schemas/MetricsSettings" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/projects/{id}/status-page:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Project ID. }
+    get:
+      operationId: getStatusPage
+      tags: [projects]
+      summary: The project's public status page (member+)
+      responses:
+        "200": { description: The page., content: { application/json: { schema: { $ref: "#/components/schemas/StatusPage" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: setStatusPage
+      tags: [projects]
+      summary: Create or replace the status page (TEAM ADMIN)
+      description: >-
+        One page per project — "which of our four status pages is the real one"
+        is not a question this product can be asked.
+
+
+        This is TEAM ADMIN, not member, and the reason is the whole feature:
+        publishing a project's health, under names of somebody's choosing, at a
+        hostname customers will read, is a disclosure decision. It sits at the
+        rank that already decides who joins the team, not at the rank that
+        ships code.
+
+
+        Nothing about a resource becomes public except the label an operator
+        types for it. Not its name, not its server, not its route domain, not
+        its revision, and never the agent's own status detail.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetStatusPageRequest" } } }
+      responses:
+        "200": { description: Saved., content: { application/json: { schema: { $ref: "#/components/schemas/StatusPage" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: That slug is already taken by another status page., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      operationId: deleteStatusPage
+      tags: [projects]
+      summary: Remove the status page and its history (TEAM ADMIN)
+      responses:
+        "204": { description: Removed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/status-pages/{id}/components:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Status page ID. }
+    get:
+      operationId: listStatusPageComponents
+      tags: [projects]
+      summary: The ordered component list (member+)
+      responses:
+        "200":
+          description: The components.
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/StatusPageComponent" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: setStatusPageComponents
+      tags: [projects]
+      summary: Replace the whole ordered component list (TEAM ADMIN)
+      description: >-
+        Wholesale, because the list IS the page: adding and removing one row at
+        a time through two routes would make "what does this page publish right
+        now" a question with two answers mid-edit. A row that survives a save
+        keeps its id, and with it the history its bars are drawn from — so
+        fixing a typo in a label does not reset thirty days of uptime.
+
+
+        A component naming a resource in a PREVIEW environment is refused with
+        a reason. A preview is created by a machine from an outsider's pull
+        request, so a page that could include one would publish branch names
+        and pull request titles written by people outside the team. That is a
+        rejection, not a default.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetStatusPageComponentsRequest" } } }
+      responses:
+        "200":
+          description: Saved.
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/StatusPageComponent" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/status-pages/{id}/preview:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Status page ID. }
+    get:
+      operationId: previewStatusPage
+      tags: [projects]
+      summary: The real public payload, for a page that is not enabled yet (member+)
+      description: >-
+        The preview IS the disclosure control, and it is a better one than a
+        warning. A confirmation dialog that says "this will be public" is read
+        by nobody; a rendered page with the customer's name on it is read by
+        everybody, because it looks like the thing it is.
+
+
+        It is built by the same code that serves the public page — two
+        renderers would be two chances to disclose different things.
+      responses:
+        "200": { description: The payload., content: { application/json: { schema: { $ref: "#/components/schemas/PublicStatusPage" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/status-pages/{id}/domain-check:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Status page ID. }
+    get:
+      operationId: checkStatusPageDomain
+      tags: [projects]
+      summary: What the public internet gets back for the status domain (member+)
+      responses:
+        "200": { description: The verdict., content: { application/json: { schema: { $ref: "#/components/schemas/DomainCheck" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/status-pages/{id}/incidents/{iid}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Status page ID. }
+      - { name: iid, in: path, required: true, schema: { type: string }, description: Incident (interval) ID. }
+    patch:
+      operationId: annotateStatusIncident
+      tags: [projects]
+      summary: One line of public text on a live incident (member+)
+      description: >-
+        A member, deliberately. The person who notices at 02:00 is on call, not
+        an admin, and making them find one before they can write "we are aware
+        and investigating" is how a status page stops being used. The blast
+        radius is bounded to 280 characters of plain text on a page that is
+        already public, it is audited with the author's name, and it is never
+        linkified — the text is escaped and rendered as text, so the page
+        cannot become a redirect on a hostname the customer trusts.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/AnnotateIncidentRequest" } } }
+      responses:
+        "204": { description: Saved. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/applications/{id}/volume-backup:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Application ID. }
+    get:
+      operationId: getVolumeBackup
+      tags: [applications]
+      summary: The application's volume backup schedule (member+)
+      description: >-
+        Answers `null` when the application has no schedule. That is a normal
+        state — most applications never need one — so it is not a 404: a 404
+        here would be indistinguishable from "no such application".
+      responses:
+        "200":
+          description: The schedule, or null.
+          content: { application/json: { schema: { oneOf: [ { $ref: "#/components/schemas/VolumeBackup" }, { type: "null" } ] } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: setVolumeBackup
+      tags: [applications]
+      summary: Create or replace the volume backup schedule (member+)
+      description: >-
+        One schedule per application, covering every volume the application
+        marks `backed_up`. An operator who wants two cadences for two
+        directories of the same application is describing two applications.
+
+
+        A volume archive is a tar of a live directory, not a consistent
+        snapshot: a database writing during the copy produces an archive of a
+        half-written file. That is why databases keep their own engine-level
+        dumps and this covers uploads, caches and generated assets instead.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetVolumeBackupRequest" } } }
+      responses:
+        "200": { description: Saved., content: { application/json: { schema: { $ref: "#/components/schemas/VolumeBackup" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: deleteVolumeBackup
+      tags: [applications]
+      summary: Remove the schedule (member+)
+      description: >-
+        Stops future runs and forgets the cadence. Archives already in the
+        bucket are left alone — deleting an operator's off-site copies from a
+        panel action is the one mistake with no undo.
+      responses:
+        "204": { description: Removed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/applications/{id}/volume-backup/run:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Application ID. }
+    post:
+      operationId: runVolumeBackup
+      tags: [applications]
+      summary: Archive every flagged volume now (member+)
+      description: >-
+        Dispatches to the agent and answers 202 with one running record per
+        flagged volume — a record per volume rather than per run, because a
+        failure belongs to the volume that failed. An application with a
+        schedule and nothing flagged answers 202 with an empty list.
+      responses:
+        "202":
+          description: Dispatched.
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/VolumeBackupRecord" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: The application has no volume backup schedule., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /api/v1/applications/{id}/volume-backup/history:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Application ID. }
+    get:
+      operationId: listVolumeBackupRecords
+      tags: [applications]
+      summary: Recent volume archives, newest first (member+)
+      responses:
+        "200":
+          description: Up to 50 records.
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/VolumeBackupRecord" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /api/v1/applications/{id}/restart:
     post:
@@ -5011,6 +6619,151 @@ components:
               id: { type: string }
               name: { type: string }
 
+    AppAccess:
+      type: object
+      required: [ip_allowlist_enabled, ip_allowlist, preview_password_enabled, maintenance_mode]
+      properties:
+        ip_allowlist_enabled: { type: boolean }
+        ip_allowlist:
+          type: array
+          items: { type: string }
+          description: Normalized CIDRs. Only these reach the app — for admin panels and internal tools.
+        preview_password_enabled: { type: boolean }
+        preview_password_set_at:
+          type: [string, "null"]
+          format: date-time
+          description: >-
+            When the passphrase was last set. The passphrase itself is never
+            returned; this is what answers "is this still the one I gave the
+            client in March?".
+        maintenance_mode: { type: boolean }
+        maintenance_since:
+          type: [string, "null"]
+          format: date-time
+          description: >-
+            When the holding page went up; null when it is down. The failure
+            mode of this feature is maintenance LEFT ON — a Friday migration and
+            a Monday of silence — so the panel counts from this stamp. Turning
+            maintenance on again while it is already on deliberately does not
+            reset it.
+
+    SetAppAccessRequest:
+      type: object
+      required: [ip_allowlist_enabled, ip_allowlist]
+      properties:
+        ip_allowlist_enabled: { type: boolean }
+        ip_allowlist:
+          type: array
+          items: { type: string }
+          description: CIDRs or bare addresses; a bare address is read as a single host.
+
+    SetPreviewPasswordRequest:
+      type: object
+      required: [passphrase]
+      properties:
+        passphrase:
+          type: string
+          description: At least 8 characters. Empty turns the gate off and forgets the hash.
+
+    PreviewPasswordResult:
+      allOf:
+        - $ref: "#/components/schemas/AppAccess"
+        - type: object
+          properties:
+            passphrase:
+              type: string
+              description: Readable exactly once, in this response. Absent when the gate was cleared.
+
+    AgentChannel:
+      type: object
+      required: [channel, desired_version, artifact_base, resolved_artifact_base, rollback, updated_at]
+      properties:
+        channel: { type: string, enum: [stable, canary] }
+        desired_version:
+          type: string
+          description: Empty means NO INSTRUCTION, never "downgrade to nothing".
+        artifact_base:
+          type: string
+          description: >-
+            Prefix holding `cypher-agent-linux-<arch>`, `SHA256SUMS` and
+            `SHA256SUMS.sig`. One prefix rather than three URLs, because the
+            three file names are fixed by the release layout: a mirror mirrors
+            the prefix. Empty derives it from the version.
+        resolved_artifact_base:
+          type: string
+          description: What an empty artifact_base actually resolves to, so the screen shows where binaries come from rather than a blank field.
+        rollback:
+          type: boolean
+          description: Whether agents may move BELOW their running version. Derived from the direction of the change, not asked for.
+        updated_at: { type: string, format: date-time }
+        updated_by: { type: [string, "null"] }
+
+    AgentServer:
+      type: object
+      required: [id, name, status, channel, running_version, desired_version, converged, phase, target_version, detail]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        status: { type: string }
+        channel: { type: string, enum: [stable, canary] }
+        running_version:
+          type: string
+          description: What the agent last reported. This — never a phase — is what the plane asserts a version from.
+        desired_version: { type: string }
+        converged:
+          type: boolean
+          description: >-
+            Running equals desired. An empty desired version is converged by
+            definition: no instruction is not a pending update.
+        phase:
+          type: string
+          description: >-
+            The updater's observed phase - one of idle, pending, downloading,
+            verifying, swapping, rolled_back, failed, disabled - or empty for an
+            agent that has never reported one. `disabled` is a host visibly
+            EXCLUDED rather than failing forever - CYPHER_UPDATE_DISABLE, a
+            binary path that is not writable, or a build trusting no release
+            key. `rolled_back` also raises the server's own status to degraded.
+        target_version: { type: string }
+        detail:
+          type: string
+          description: Operator-facing prose about the phase; never a secret.
+
+    AgentUpdates:
+      type: object
+      required: [panel_version, channels, servers, running_versions]
+      properties:
+        panel_version:
+          type: string
+          description: The plane's own build, which is the ceiling on what may be asked of an agent.
+        channels:
+          type: array
+          items: { $ref: "#/components/schemas/AgentChannel" }
+        servers:
+          type: array
+          items: { $ref: "#/components/schemas/AgentServer" }
+        running_versions:
+          type: object
+          additionalProperties: { type: integer }
+          description: Running version to host count - the fleet histogram the empty state shows.
+
+    SetAgentChannelRequest:
+      type: object
+      required: [version]
+      properties:
+        version:
+          type: string
+          description: Empty clears the instruction.
+        artifact_base:
+          type: string
+          description: Empty derives the prefix from the version, which is every fleet using the project's own releases.
+
+    SetServerChannelRequest:
+      type: object
+      required: [channel]
+      properties:
+        channel: { type: string, enum: [stable, canary] }
+
     PanelVersion:
       type: object
       required: [version, commit, built_at, go_version, latest]
@@ -5998,6 +7751,26 @@ components:
             (`CYPHERD_DISK_WARN_PERCENT`, default 85). Crossing it, and crossing
             back, writes one notification-inbox item for the panel's owners and
             admins — on the transition, never on every heartbeat.
+        agent_channel:
+          type: string
+          enum: [stable, canary]
+          description: >-
+            Which release channel this server's agent follows
+            (agent-updates.md §2). Its desired version is that channel's; there
+            is no per-server version, so promotion is one write rather than a
+            bulk edit. Changed through `PUT /servers/{id}/agent-channel`, which
+            is owner and session-only — never through `PATCH /servers/{id}`.
+        agent_update_phase:
+          type: string
+          description: >-
+            What the agent last said about its own binary: idle, pending,
+            downloading, verifying, swapping, rolled_back, failed or disabled;
+            empty for an agent that has never reported one.
+        agent_update_target:
+          type: string
+        agent_update_detail:
+          type: string
+          description: Operator-facing prose about the phase; never a secret.
         enrolled:
           type: boolean
           description: Whether an agent has completed enrollment.
@@ -6286,6 +8059,23 @@ components:
         path:
           type: string
           description: Absolute mount path inside the container.
+        backed_up:
+          type: boolean
+          description: >-
+            Whether the application's volume backup schedule archives this
+            mount. Per-volume rather than per-application: a cache directory and
+            an uploads directory have opposite answers, and backing up the cache
+            costs storage for data whose whole point is being disposable.
+
+    AppReplica:
+      type: object
+      required: [index, state]
+      properties:
+        index: { type: integer, description: "1-based and stable: index 1 is the application's first replica, wherever it lives." }
+        container_id: { type: string }
+        revision_id: { type: string }
+        state: { type: string }
+        detail: { type: string }
 
     AppRuntime:
       type: object
@@ -6299,7 +8089,14 @@ components:
           maximum: 65535
         replicas:
           type: integer
-          description: Fixed at 1 for v1 (multiple replicas are post-v1).
+          minimum: 1
+          maximum: 20
+          description: >-
+            How many containers of this application run, load-balanced by the
+            Proxy on its node. More than one is refused for an application that
+            mounts a volume (two writers on one filesystem is how data gets
+            corrupted) or publishes a raw host port (two containers cannot bind
+            one port).
         cpu_limit:
           type: [number, "null"]
           description: Fractional cores; null/omitted/0 = no limit (noisy-neighbor control).
@@ -6387,6 +8184,14 @@ components:
           type: array
           items: { $ref: "#/components/schemas/AppPort" }
           description: Raw host-port publishes (tcp/udp), independent of the HTTP route.
+        replicas:
+          type: array
+          items: { $ref: "#/components/schemas/AppReplica" }
+          description: >-
+            What the node last SAW, one entry per container. Empty for a
+            single-replica application. `runtime.replicas` is what should run
+            and this is what is running; the two are allowed to differ, and the
+            gap is what the panel draws.
         webhook_id:
           type: string
           description: Public webhook identifier used in the webhook URL.
@@ -6449,6 +8254,21 @@ components:
             running was frozen onto the wire. It is NOT a status word — the
             status vocabulary is closed — so render it as a badge beside the
             status, never in place of one.
+        maintenance_mode:
+          type: boolean
+          description: >-
+            The maintenance page is serving in place of this application
+            (`PUT /applications/{id}/maintenance`). Like `redeploy_pending` it is
+            a fact beside the status, not a status word.
+        maintenance_since:
+          type: [string, "null"]
+          format: date-time
+          description: >-
+            When the page went up; null when it is down. It travels on the
+            application itself so a badge can say "Maintenance mode · 3h"
+            wherever the application appears — a page left up is this feature's
+            real failure mode, and a badge only prevents it where someone is
+            already looking.
         created_at:
           type: string
           format: date-time
@@ -6547,7 +8367,7 @@ components:
 
     PatchApplicationRequest:
       type: object
-      description: Absent sections stay unchanged; a present section replaces that section wholesale. The runtime server and replicas are not patchable.
+      description: Absent sections stay unchanged; a present section replaces that section wholesale. The runtime server is not patchable.
       properties:
         name:
           type: string
@@ -6560,6 +8380,17 @@ components:
           properties:
             port:
               type: integer
+            replicas:
+              type: integer
+              minimum: 1
+              maximum: 20
+              description: >-
+                Desired state, not an action: the reconciler converges to it.
+                Scaling out surges — the new replicas start alongside the old
+                ones before the route flips — so a node needs headroom for
+                twice the count during a rollout. Scaling in drains first: the
+                departing replica leaves the route, in-flight requests finish,
+                and only then is the container stopped.
             cpu_limit:
               type: [number, "null"]
               description: Fractional cores; a non-positive value clears the limit.
@@ -7176,6 +9007,695 @@ components:
       properties:
         backup_record_id: { type: string }
         confirm: { type: boolean, description: Must be true — restore overwrites the database. }
+
+    Changelog:
+      type: object
+      required: [current, entries]
+      properties:
+        current: { type: string }
+        entries:
+          type: array
+          items: { $ref: "#/components/schemas/ChangelogEntry" }
+        available:
+          oneOf:
+            - $ref: "#/components/schemas/AvailableRelease"
+            - type: "null"
+    ChangelogEntry:
+      type: object
+      required: [version]
+      properties:
+        version: { type: string }
+        date: { type: string }
+        notes:
+          type: array
+          items: { type: string }
+    AvailableRelease:
+      type: object
+      required: [version]
+      properties:
+        version: { type: string }
+        kind: { type: string }
+        notes_url: { type: string }
+
+    PanelUpdates:
+      type: object
+      required: [current, mode]
+      properties:
+        current: { type: string }
+        latest: { type: string }
+        kind: { type: string, enum: [patch, minor, major] }
+        notes_url: { type: string }
+        mode:
+          type: string
+          enum: [assisted, manual]
+          description: "`manual` is a container install, which cannot upgrade itself and hands over the two commands instead."
+        active:
+          oneOf:
+            - $ref: "#/components/schemas/PanelUpgrade"
+            - type: "null"
+    PanelUpgrade:
+      type: object
+      required: [id, from_version, to_version, phase, detail, actor, rollback, started_at]
+      properties:
+        id: { type: string, description: pup_… prefixed ID. }
+        from_version: { type: string }
+        to_version: { type: string }
+        phase:
+          type: string
+          enum: [preflight, waiting_for_quiesce, snapshotting, downloading, verifying, migrating, restarting, health_gate, succeeded, rolled_back, failed]
+        detail: { type: string }
+        actor: { type: string, description: "Who asked. `external` marks a version change the panel observed rather than performed." }
+        rollback: { type: boolean }
+        snapshot_id: { type: string }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
+    PanelSnapshot:
+      type: object
+      required: [id, version, size_bytes, created_at, pinned]
+      properties:
+        id: { type: string, description: psn_… prefixed ID. }
+        version: { type: string }
+        size_bytes: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: [string, "null"], format: date-time, description: Null means keep forever. }
+        pinned: { type: boolean, description: A pinned snapshot is never swept, whatever its expiry says. }
+    PanelUpgradeHistory:
+      type: object
+      required: [upgrades, snapshots]
+      properties:
+        upgrades:
+          type: array
+          items: { $ref: "#/components/schemas/PanelUpgrade" }
+        snapshots:
+          type: array
+          items: { $ref: "#/components/schemas/PanelSnapshot" }
+    StartUpgradeRequest:
+      type: object
+      required: [version]
+      properties:
+        version: { type: string }
+        snapshot_retention_days: { type: integer, description: "0 keeps the fallback forever. You decide when, if ever, it is pruned." }
+        acknowledge_incompatible_agents:
+          type: string
+          description: >-
+            The typed confirm, required only when the pre-flight found agents
+            below the release's floor. It must equal the target version.
+    SnapshotRetentionRequest:
+      type: object
+      properties:
+        retention_days: { type: integer, description: "0 keeps it forever." }
+        pinned: { type: boolean }
+    UpdatePreflight:
+      type: object
+      required: [version, mode, checks, can_proceed, needs_typed_confirm, incompatible_agents, running_work, checked_at]
+      properties:
+        version: { type: string }
+        mode: { type: string, enum: [assisted, manual] }
+        can_proceed: { type: boolean, description: False when any check refused. A warning never blocks. }
+        needs_typed_confirm: { type: boolean }
+        incompatible_agents:
+          type: array
+          items: { type: string }
+        running_work: { type: integer }
+        checked_at: { type: string, format: date-time }
+        checks:
+          type: array
+          items: { $ref: "#/components/schemas/UpdateCheck" }
+    UpdateCheck:
+      type: object
+      required: [key, status, text]
+      properties:
+        key: { type: string, enum: [signature, disk, agents, snapshot, quiescence, mode] }
+        status: { type: string, enum: [ok, warn, refused] }
+        text: { type: string }
+        remedy: { type: string, description: "What to do about it. A refusal with no remedy is a dead end." }
+
+    PlaneDisasterRecovery:
+      type: object
+      required: [armed]
+      properties:
+        armed: { type: boolean, description: "Whether a configuration exists at all. Disarming deletes it rather than flipping a flag." }
+        target_id: { type: string }
+        path_prefix: { type: string }
+        schedule: { type: string, description: Five-field cron. }
+        retention_count: { type: integer, description: "A COUNT, not an age: nightly and keep fourteen is two weeks; hourly and keep fourteen is fourteen hours." }
+        recipient: { type: string, description: "The PUBLIC half, safe to return. The private half is not here because the panel does not have it." }
+        recipient_mode: { type: string, enum: [generated, provided] }
+        recipient_verified_at:
+          type: [string, "null"]
+          format: date-time
+          description: "Null means armed but NOT PROVEN — the panel has never seen anyone decrypt with the matching key."
+        last_run_at: { type: [string, "null"], format: date-time }
+        last_status: { type: string }
+        last_detail: { type: string }
+    ArmPlaneDRRequest:
+      type: object
+      required: [target_id]
+      properties:
+        target_id: { type: string }
+        path_prefix: { type: string }
+        schedule: { type: string }
+        retention_count: { type: integer }
+        generate: { type: boolean, description: "Mint the pair here. The private half comes back once and never again." }
+        recipient: { type: string, description: "An age public key you already hold the private half of." }
+    ArmPlaneDRResponse:
+      type: object
+      required: [config]
+      properties:
+        config: { $ref: "#/components/schemas/PlaneDisasterRecovery" }
+        recovery_key:
+          type: string
+          description: >-
+            Present exactly once, in the response to the request that generated
+            it. It is the only thing that can open a snapshot, and it is exactly
+            as powerful as the panel's master key — because the master key is
+            inside.
+    PlaneSnapshot:
+      type: object
+      required: [id, object_key, panel_version, schema_version, size_bytes, sha256, row_count, status, detail, started_at]
+      properties:
+        id: { type: string, description: snap_… prefixed ID. }
+        object_key: { type: string }
+        panel_version: { type: string }
+        schema_version: { type: integer, format: int64 }
+        size_bytes: { type: integer, format: int64 }
+        sha256: { type: string }
+        row_count: { type: integer, format: int64 }
+        status: { type: string, enum: [running, succeeded, failed] }
+        detail: { type: string }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
+
+    PromotionPlan:
+      type: object
+      required: [source_application, target_application, source_revision_id, source_commit, image, same_server, only_in_source, only_in_target, unresolved_in_target, blockers, note]
+      properties:
+        source_application: { type: string }
+        target_application: { type: string }
+        source_revision_id: { type: string }
+        target_revision_id: { type: string, description: What the target is serving now, so the card can say what is being replaced. }
+        source_commit: { type: string }
+        image: { type: string }
+        same_server: { type: boolean, description: "A same-server promotion is instant; a cross-server one relays the artifact." }
+        only_in_source:
+          type: array
+          items: { type: string }
+          description: "Environment-variable KEYS the source has and the target does not. Advisory — nothing is ever copied."
+        only_in_target:
+          type: array
+          items: { type: string }
+        unresolved_in_target:
+          type: array
+          items: { type: string }
+          description: "A shared-variable reference the target's scope cannot resolve. A blocker, surfaced here so it is fixed before the deploy rather than by a failed one."
+        blockers:
+          type: array
+          items: { type: string }
+          description: Empty means this can proceed.
+        note: { type: string, description: "The build-time configuration caveat, which the panel cannot detect and does not pretend to." }
+
+    ResourceQuota:
+      type: object
+      required: [id, scope_kind, scope_id, updated_by]
+      properties:
+        id: { type: string, description: quo_… prefixed ID. }
+        scope_kind: { type: string, enum: [project, team] }
+        scope_id: { type: string }
+        memory_limit_bytes: { type: [integer, "null"], format: int64, description: "Null means uncapped. Metered against DECLARED memory, not observed." }
+        disk_limit_bytes: { type: [integer, "null"], format: int64 }
+        preview_limit: { type: [integer, "null"] }
+        updated_by: { type: string }
+    SetQuotaRequest:
+      type: object
+      properties:
+        memory_limit_bytes: { type: [integer, "null"], format: int64, description: "Null clears this dimension. Zero is refused — use DELETE." }
+        disk_limit_bytes: { type: [integer, "null"], format: int64 }
+        preview_limit: { type: [integer, "null"] }
+    QuotaReport:
+      type: object
+      required: [scope_kind, scope_id, usage, uncounted_compose_stacks, unlimited]
+      properties:
+        scope_kind: { type: string, enum: [project, team] }
+        scope_id: { type: string }
+        usage:
+          type: array
+          items: { $ref: "#/components/schemas/QuotaUsage" }
+        uncounted_compose_stacks:
+          type: integer
+          description: >-
+            Compose stacks are NOT in the memory meter: their memory is declared
+            inside their own file, and reading it out would meter a six-service
+            stack as two services' worth and look complete. Stated rather than
+            hidden.
+        unlimited:
+          type: array
+          items: { type: string }
+          description: "Resources with no declared memory limit. They make a memory cap a fiction, so they are named."
+    QuotaUsage:
+      type: object
+      required: [dimension, used, state]
+      properties:
+        dimension: { type: string, enum: [memory, disk, previews] }
+        used: { type: integer, format: int64 }
+        limit: { type: [integer, "null"], format: int64, description: "Null means uncapped, which reads as no cap rather than as zero." }
+        state: { type: string, enum: [ok, warn, exceeded], description: "warn at 90%, exceeded at 100%. Uncapped is always ok." }
+
+    MailProviderStatus:
+      type: object
+      required: [connected, config_hint]
+      properties:
+        connected: { type: boolean }
+        config_hint: { type: string, description: "The credential, masked. It is never returned." }
+    MailProviderConfig:
+      type: object
+      required: [account, api_key]
+      properties:
+        account: { type: string, description: The admin address the API key belongs to. }
+        api_key: { type: string, description: "Sealed under the master key and never returned." }
+        base_url: { type: string, description: "Overrides the endpoint, for a test double or a self-hosted proxy." }
+    MailDomain:
+      type: object
+      required: [id, domain, last_error]
+      properties:
+        id: { type: string, description: mdm_… prefixed ID. }
+        domain: { type: string }
+        records_written_at:
+          type: [string, "null"]
+          format: date-time
+          description: "Null means asked but not confirmed — pending, not done."
+        last_error: { type: string, description: "Which record did not land, so the operator can fix that one rather than starting over." }
+    MailDomainRecords:
+      type: object
+      required: [domain, records]
+      properties:
+        domain: { $ref: "#/components/schemas/MailDomain" }
+        records:
+          type: array
+          items: { $ref: "#/components/schemas/MailRecord" }
+    MailRecord:
+      type: object
+      required: [type, name, content, ttl, purpose]
+      properties:
+        type: { type: string }
+        name: { type: string, description: Fully qualified. }
+        content: { type: string }
+        ttl: { type: integer }
+        priority: { type: integer }
+        purpose: { type: string, description: "What the record is FOR, in words. Four TXT records are indistinguishable without it." }
+    Mailbox:
+      type: object
+      required: [address, name]
+      properties:
+        address: { type: string }
+        name: { type: string }
+        quota_bytes: { type: integer, format: int64 }
+        storage_bytes: { type: integer, format: int64 }
+        user_id: { type: string, description: "The panel account this mailbox belongs to, if one was linked. Deleting that account never deletes the mailbox." }
+    CreateMailboxRequest:
+      type: object
+      required: [local_part]
+      properties:
+        local_part: { type: string, description: "The part before the @. Lowercase letters, digits, and . - _ + — deliberately narrower than the RFC allows." }
+        name: { type: string }
+        user_id: { type: string, description: "Optional: link it to a panel account." }
+    CreateMailboxResponse:
+      type: object
+      required: [mailbox, password]
+      properties:
+        mailbox: { $ref: "#/components/schemas/Mailbox" }
+        password: { type: string, description: "Appears here and nowhere else, ever." }
+
+    LogDrain:
+      type: object
+      required: [id, name, kind, project_id, target_id, enabled, config_hint, health, last_error, dropped_lines]
+      properties:
+        id: { type: string, description: ldr_… prefixed ID. }
+        name: { type: string }
+        kind: { type: string, enum: [loki, syslog, s3] }
+        project_id: { type: string, description: "Empty means every project. Nothing finer: every line already carries its environment as a label, so a sink filters better than we can." }
+        target_id: { type: string, description: "The Backup Target an s3 drain archives to." }
+        enabled: { type: boolean }
+        config_hint: { type: string, description: "The config, masked. The config itself is never returned." }
+        health:
+          type: string
+          enum: [shipping, idle, retrying, failing, disabled]
+          description: "Derived, never stored. `disabled` is only ever the operator's own choice — a failing drain is never auto-disabled."
+        last_shipped_at: { type: [string, "null"], format: date-time }
+        last_error: { type: string }
+        last_error_at: { type: [string, "null"], format: date-time }
+        dropped_lines:
+          type: integer
+          format: int64
+          description: >-
+            Lines the panel's retention window discarded before this drain could
+            ship them. A drain down a week resumes at the oldest message still
+            held, having lost the rest, and this is where it says so.
+    LogDrainRequest:
+      type: object
+      properties:
+        name: { type: string }
+        kind: { type: string, enum: [loki, syslog, s3], description: "Set on create; the kind is a drain's identity and is not patchable." }
+        project_id: { type: string, description: "Empty means every project." }
+        target_id: { type: string }
+        config:
+          type: object
+          additionalProperties: true
+          description: >-
+            The destination's own config, sealed whole. Loki takes `url`,
+            optional `headers` and optional `labels`; syslog takes `address` and
+            an optional `app_name`; s3 takes an optional `prefix` and gets its
+            credentials from the Backup Target. Omit it entirely and send only
+            `enabled` to pause a drain without re-sending the credential.
+        enabled: { type: boolean }
+
+    AlertRule:
+      type: object
+      required: [id, target_kind, target_id, target_name, signal, threshold, threshold_unit, window_seconds, notifier_id, notifier_name, enabled, state, state_since, sentence]
+      properties:
+        id: { type: string, description: alr_… prefixed ID. }
+        target_kind: { type: string, enum: [server, application] }
+        target_id: { type: string }
+        target_name: { type: string }
+        signal: { type: string, enum: [cpu, memory, disk, p95_latency_ms, requests_per_second] }
+        threshold: { type: number }
+        threshold_unit:
+          type: string
+          enum: [percent, bytes, milliseconds, per_second]
+          description: "Stored, not derived: 90 is percent for a server's memory and bytes for an application's disk, and a rule must never be reinterpreted in a unit it was not written in."
+        window_seconds: { type: integer, description: "The `for`. One metrics bucket is the floor: sample-level data does not exist on the plane, which is what makes even the cheapest rule immune to a single spike." }
+        notifier_id: { type: string }
+        notifier_name: { type: string }
+        enabled: { type: boolean }
+        state:
+          type: string
+          enum: [ok, firing, no_data, flapping]
+          description: "All four are shown, including the two that deliver nothing: a rule quiet for a bad reason must not look like one quiet for a good reason."
+        state_since: { type: string, format: date-time }
+        sentence: { type: string, description: "The rule's name, rendered from the row. Everything that displays a rule shows this." }
+    CreateAlertRuleRequest:
+      type: object
+      required: [target_kind, target_id, signal, threshold, notifier_id]
+      properties:
+        target_kind: { type: string, enum: [server, application] }
+        target_id: { type: string }
+        signal: { type: string, enum: [cpu, memory, disk, p95_latency_ms, requests_per_second] }
+        threshold: { type: number }
+        threshold_unit: { type: string, enum: [percent, bytes, milliseconds, per_second], description: "Omitted takes the signal's natural unit." }
+        window_seconds: { type: integer, description: "Rounded up to one bucket; at most 24 hours." }
+        notifier_id: { type: string, description: "The rule delivers HERE, not through a project subscription: page on-call and post to a status channel are two rules over one signal." }
+    AlertEvent:
+      type: object
+      required: [id, started_at, peak_value, delivered]
+      properties:
+        id: { type: string, description: ale_… prefixed ID. }
+        started_at: { type: string, format: date-time }
+        resolved_at: { type: [string, "null"], format: date-time }
+        peak_value: { type: number, description: "The worst bucket of the episode — the number an operator wants once they know the alert is real." }
+        delivered: { type: boolean, description: "False when the flap guard held it. The episode still happened and is still counted." }
+    AlertBacktest:
+      type: object
+      required: [would_have_fired, days, summary, had_data]
+      properties:
+        would_have_fired: { type: integer, description: Episodes, not evaluations. }
+        days: { type: integer }
+        summary: { type: string }
+        had_data: { type: boolean, description: "False when the series has too many gaps to say anything — more useful than a confident zero." }
+
+    ResourceMetrics:
+      type: object
+      required: [resolution, points, summary, collecting]
+      properties:
+        resolution: { type: string }
+        as_of: { type: [string, "null"], format: date-time, description: "The newest bucket, so a chart four minutes stale can say so." }
+        collecting: { type: boolean, description: 'False when the panel has collection off. A resource with no data then reads collection is off, not idle.' }
+        points:
+          type: array
+          items: { $ref: "#/components/schemas/ResourceMetricPoint" }
+        summary: { $ref: "#/components/schemas/ResourceMetricSummary" }
+        disk:
+          oneOf:
+            - $ref: "#/components/schemas/ResourceDisk"
+            - type: "null"
+    ResourceMetricPoint:
+      type: object
+      required: [at, cpu_percent, cpu_percent_peak, memory_bytes, memory_bytes_peak, covered_seconds, bucket_seconds]
+      properties:
+        at: { type: string, format: date-time }
+        cpu_percent: { type: number, description: "Derived from the bucket's accumulator over its covered time — never a stored mean." }
+        cpu_percent_peak: { type: number, description: "The highest single sample. Without it a 5-minute mean hides exactly the spike you opened the page to find." }
+        memory_bytes: { type: integer, format: int64 }
+        memory_bytes_peak: { type: integer, format: int64 }
+        covered_seconds: { type: integer, description: "How much of the bucket was observed. Draw a partial bucket as partial, not as a dip." }
+        bucket_seconds: { type: integer }
+    ResourceMetricSummary:
+      type: object
+      required: [cpu_percent_mean, cpu_percent_peak, memory_bytes_mean, memory_bytes_peak, memory_limit_bytes, covered_seconds]
+      properties:
+        cpu_percent_mean: { type: number }
+        cpu_percent_peak: { type: number }
+        memory_bytes_mean: { type: integer, format: int64 }
+        memory_bytes_peak: { type: integer, format: int64 }
+        memory_limit_bytes: { type: integer, format: int64, description: "Zero when the container has no limit." }
+        covered_seconds: { type: integer, format: int64 }
+    ResourceDisk:
+      type: object
+      required: [image_bytes, volume_bytes, container_bytes, measured_at]
+      properties:
+        image_bytes: { type: integer, format: int64 }
+        volume_bytes: { type: integer, format: int64 }
+        container_bytes: { type: integer, format: int64 }
+        measured_at: { type: string, format: date-time, description: "Hourly. The daemon's verbose disk call walks the graph driver and can take seconds." }
+    ResourceTraffic:
+      type: object
+      required: [resolution, points, paths, summary, collecting]
+      properties:
+        resolution: { type: string }
+        as_of: { type: [string, "null"], format: date-time }
+        collecting: { type: boolean, description: False when request analytics is off, which is the default. }
+        points:
+          type: array
+          items: { $ref: "#/components/schemas/TrafficPoint" }
+        paths:
+          type: array
+          items: { $ref: "#/components/schemas/TrafficPath" }
+        summary: { $ref: "#/components/schemas/TrafficSummary" }
+    TrafficPoint:
+      type: object
+      required: [at, requests, status_2xx, status_3xx, status_4xx, status_5xx, response_bytes, bucket_seconds]
+      properties:
+        at: { type: string, format: date-time }
+        requests: { type: integer, format: int64 }
+        status_2xx: { type: integer, format: int64 }
+        status_3xx: { type: integer, format: int64 }
+        status_4xx: { type: integer, format: int64 }
+        status_5xx: { type: integer, format: int64 }
+        response_bytes: { type: integer, format: int64 }
+        bucket_seconds: { type: integer }
+    TrafficPath:
+      type: object
+      required: [path, requests, status_5xx]
+      properties:
+        path: { type: string, description: "Normalised on the node. `(other)` is everything past the cardinality cap." }
+        requests: { type: integer, format: int64 }
+        status_5xx: { type: integer, format: int64 }
+    TrafficSummary:
+      type: object
+      required: [requests, redirects, status_2xx, status_3xx, status_4xx, status_5xx, response_bytes, p50_ms, p95_ms, p99_ms, sampled, sample_rate]
+      properties:
+        requests: { type: integer, format: int64 }
+        redirects: { type: integer, format: int64, description: "HTTP→HTTPS redirects, counted apart so they do not double every visit or drag p95 toward the 1 ms redirect." }
+        status_2xx: { type: integer, format: int64 }
+        status_3xx: { type: integer, format: int64 }
+        status_4xx: { type: integer, format: int64 }
+        status_5xx: { type: integer, format: int64 }
+        response_bytes: { type: integer, format: int64 }
+        p50_ms: { type: number, description: "From one summed histogram, accurate to the bucket boundary." }
+        p95_ms: { type: number }
+        p99_ms: { type: number }
+        sampled: { type: boolean, description: "True when the node fell back to 1-in-N past its line-rate ceiling, so these counters are estimates." }
+        sample_rate: { type: integer }
+    Usage:
+      type: object
+      required: [month, projects, denominator, collecting]
+      properties:
+        month: { type: string }
+        denominator: { type: string, description: "What cpu_share is a share OF, in words. Never the fleet for a caller who cannot see the fleet." }
+        collecting: { type: boolean }
+        projects:
+          type: array
+          items: { $ref: "#/components/schemas/UsageProject" }
+    UsageProject:
+      type: object
+      required: [project_id, project_name, team_id, cpu_core_seconds, cpu_share, memory_bytes_mean, memory_bytes_peak, disk_bytes, requests, status_5xx, deploy_count, deploy_seconds, memory_byte_seconds]
+      properties:
+        project_id: { type: string }
+        project_name: { type: string }
+        team_id: { type: string }
+        cpu_core_seconds: { type: integer, format: int64 }
+        cpu_share: { type: number, description: "Of the denominator above, 0-1." }
+        memory_bytes_mean: { type: integer, format: int64 }
+        memory_bytes_peak: { type: integer, format: int64 }
+        memory_byte_seconds: { type: integer, format: int64 }
+        disk_bytes: { type: integer, format: int64 }
+        requests: { type: integer, format: int64 }
+        status_5xx: { type: integer, format: int64 }
+        deploy_count: { type: integer }
+        deploy_seconds: { type: integer, format: int64, description: "Build-and-rollout time, not wall time since somebody clicked deploy; queue and approval time are excluded." }
+    MetricsSettings:
+      type: object
+      required: [enabled, request_analytics, bucket_seconds]
+      properties:
+        enabled: { type: boolean, description: "Container CPU, memory and disk collection." }
+        request_analytics:
+          type: boolean
+          description: >-
+            Proxy access-log aggregation. OFF by default because paths are
+            application-authored data: normalisation removes id-shaped segments
+            and truncation removes depth, which covers the common
+            /reset/<token> shape but not every shape. Turning it on recreates
+            the Proxy container on each node once.
+        bucket_seconds: { type: integer, description: "Must divide an hour: 60, 300, 900 or 1800. Larger buckets cut the stored row count proportionally." }
+
+    StatusPage:
+      type: object
+      required: [id, project_id, slug, title, enabled, domain, https, route_server_id, panel_url]
+      properties:
+        id: { type: string, description: sp_… prefixed ID. }
+        project_id: { type: string }
+        slug: { type: string, description: The public handle — 3–40 lowercase letters, digits and dashes. Globally unique. }
+        title: { type: string, description: The public display name. It is public whether the page is enabled or not. }
+        enabled: { type: boolean, description: Whether the public routes answer. Disabling makes both 404 within the cache TTL. }
+        domain: { type: string, description: Custom domain, or empty for the panel origin only. }
+        https: { type: boolean }
+        route_server_id: { type: string, description: The server whose Proxy fronts the domain. Required when a domain is set. }
+        panel_url: { type: string, description: Where the page is reachable with no DNS at all — the address to copy before a domain exists. }
+    SetStatusPageRequest:
+      type: object
+      required: [slug, title, enabled]
+      properties:
+        slug: { type: string }
+        title: { type: string }
+        enabled: { type: boolean }
+        domain: { type: string }
+        https: { type: boolean }
+        route_server_id: { type: string, description: Required when domain is set — a domain with no serving node cannot be routed. }
+    StatusPageComponent:
+      type: object
+      required: [id, resource_kind, resource_id, label, position]
+      properties:
+        id: { type: string, description: spc_… prefixed ID. }
+        resource_kind: { type: string, enum: [application, compose_stack, database] }
+        resource_id: { type: string }
+        label: { type: string, description: The ONLY name that becomes public. The resource's own name never leaves the panel. }
+        position: { type: integer }
+    SetStatusPageComponentsRequest:
+      type: object
+      required: [components]
+      properties:
+        components:
+          type: array
+          items:
+            type: object
+            required: [resource_kind, resource_id, label]
+            properties:
+              resource_kind: { type: string, enum: [application, compose_stack, database] }
+              resource_id: { type: string }
+              label: { type: string }
+    AnnotateIncidentRequest:
+      type: object
+      required: [message]
+      properties:
+        message: { type: string, maxLength: 280, description: Plain text. An empty string clears the annotation. }
+    PublicStatusPage:
+      type: object
+      description: >-
+        The payload an anonymous visitor gets, and the only shape they ever
+        get. It is its own type rather than a narrowed internal DTO: there is
+        no resource id in it, no server field, no route domain, no revision and
+        no status detail to forget to omit.
+      required: [title, domain, state, headline, components, incidents, updated_at, window_days]
+      properties:
+        title: { type: string }
+        domain: { type: string }
+        state: { type: string, enum: [operational, degraded, down, unknown] }
+        headline: { type: string }
+        window_days: { type: integer }
+        updated_at: { type: string, format: date-time }
+        components:
+          type: array
+          items: { $ref: "#/components/schemas/PublicStatusComponent" }
+        incidents:
+          type: array
+          items: { $ref: "#/components/schemas/PublicStatusIncident" }
+    PublicStatusComponent:
+      type: object
+      required: [label, state, days]
+      properties:
+        label: { type: string }
+        state: { type: string, enum: [operational, degraded, down, unknown] }
+        uptime:
+          type: [number, "null"]
+          description: >-
+            Percentage over OBSERVED time, or null when nothing was observed.
+            Null renders as "—", never as 100% — printing a perfect score for a
+            service that has measured nothing is the most common dishonesty in
+            this product category.
+        days:
+          type: array
+          items: { $ref: "#/components/schemas/PublicStatusDay" }
+    PublicStatusDay:
+      type: object
+      required: [date, state, down_seconds, degraded_seconds, covered_seconds, title]
+      properties:
+        date: { type: string, description: The UTC day, YYYY-MM-DD. }
+        state: { type: string, enum: [operational, degraded, down, unknown] }
+        down_seconds: { type: integer, format: int64 }
+        degraded_seconds: { type: integer, format: int64 }
+        covered_seconds: { type: integer, format: int64, description: Seconds observed and not unknown. Zero means the day is grey and excluded from the percentage. }
+        title: { type: string, description: The bar's tooltip, pre-rendered so the page explains itself with no script. }
+    PublicStatusIncident:
+      type: object
+      required: [id, component, started_at, duration, message]
+      properties:
+        id: { type: string }
+        component: { type: string }
+        started_at: { type: string, format: date-time }
+        ended_at: { type: [string, "null"], format: date-time }
+        duration: { type: string }
+        message: { type: string, description: The operator's one line, or empty. }
+
+    VolumeBackup:
+      type: object
+      required: [id, application_id, target_id, schedule, retention_count, enabled, last_status]
+      properties:
+        id: { type: string, description: vb_… prefixed ID. }
+        application_id: { type: string }
+        target_id: { type: string, description: The backup target the archives are written to. }
+        schedule: { type: string, description: Five-field cron. Empty means manual runs only. }
+        retention_count: { type: integer, description: Archives kept per volume; older ones are deleted from the bucket after a successful run. }
+        enabled: { type: boolean }
+        last_run_at: { type: [string, "null"], format: date-time }
+        last_status: { type: string, enum: ["", running, succeeded, failed] }
+    SetVolumeBackupRequest:
+      type: object
+      required: [target_id, enabled]
+      properties:
+        target_id: { type: string }
+        schedule: { type: string, description: Five-field cron; empty means manual only. }
+        retention_count: { type: integer, description: Defaults to 7 when below 1. }
+        enabled: { type: boolean }
+    VolumeBackupRecord:
+      type: object
+      required: [id, volume_name, size_bytes, status, started_at]
+      properties:
+        id: { type: string, description: vbr_… prefixed ID. }
+        volume_name: { type: string, description: The operator label of the mount this archive covers. }
+        object_key: { type: string }
+        size_bytes: { type: integer, format: int64 }
+        status: { type: string, enum: [running, succeeded, failed] }
+        detail: { type: string }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
 
     # ─── Previews ───────────────────────────────────────────────────────────────
     Preview:

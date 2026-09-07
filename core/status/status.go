@@ -23,6 +23,11 @@ type Store interface {
 	// SetServerDiskLow records the transition, so the alert fires once
 	// (disk-management.md §5).
 	SetServerDiskLow(ctx context.Context, id string, low bool) error
+	// SetServerAgentUpdate records what the agent last said about its own
+	// binary (agent-updates.md §7). Separate from RecordHeartbeat because the
+	// plane compares the PREVIOUS phase to decide whether a rollback is a
+	// transition worth announcing.
+	SetServerAgentUpdate(ctx context.Context, id, phase, target, detail string) error
 }
 
 // DiskSink receives a server's disk-pressure transitions (disk-management.md
@@ -91,6 +96,60 @@ func (r *Recorder) Record(ctx context.Context, data []byte) {
 		return
 	}
 	r.checkDisk(ctx, server)
+	r.checkAgentUpdate(ctx, server, hb.GetAgentUpdate())
+}
+
+// agentPhases maps the wire enum onto the stored vocabulary. An agent NEWER
+// than this plane can report a phase this plane does not know; it is stored as
+// the empty string rather than dropping the whole heartbeat, because a fleet
+// mid-upgrade is exactly when the plane must keep hearing from its hosts.
+var agentPhases = map[agentv1.AgentUpdateStatus_Phase]string{
+	agentv1.AgentUpdateStatus_PHASE_IDLE:        domain.AgentPhaseIdle,
+	agentv1.AgentUpdateStatus_PHASE_PENDING:     domain.AgentPhasePending,
+	agentv1.AgentUpdateStatus_PHASE_DOWNLOADING: domain.AgentPhaseDownloading,
+	agentv1.AgentUpdateStatus_PHASE_VERIFYING:   domain.AgentPhaseVerifying,
+	agentv1.AgentUpdateStatus_PHASE_SWAPPING:    domain.AgentPhaseSwapping,
+	agentv1.AgentUpdateStatus_PHASE_ROLLED_BACK: domain.AgentPhaseRolledBack,
+	agentv1.AgentUpdateStatus_PHASE_FAILED:      domain.AgentPhaseFailed,
+	agentv1.AgentUpdateStatus_PHASE_DISABLED:    domain.AgentPhaseDisabled,
+}
+
+// checkAgentUpdate records the observed phase and announces a rollback once.
+//
+// An agent that carries NO update status at all — every agent before ADR-010 —
+// leaves the stored columns alone rather than clearing them: absence is silence,
+// not "idle", and overwriting a rolled_back row with a blank because one old
+// agent heartbeat arrived would erase the amber row an operator has to act on.
+func (r *Recorder) checkAgentUpdate(ctx context.Context, server domain.Server, st *agentv1.AgentUpdateStatus) {
+	if st == nil {
+		return
+	}
+	phase := agentPhases[st.GetPhase()]
+	if phase == server.AgentUpdatePhase &&
+		st.GetTargetVersion() == server.AgentUpdateTarget &&
+		st.GetDetail() == server.AgentUpdateDetail {
+		return // no change: a heartbeat every few seconds must not be a write
+	}
+	if err := r.store.SetServerAgentUpdate(ctx, server.ID, phase, st.GetTargetVersion(), st.GetDetail()); err != nil {
+		// Not announced: a transition we could not record would be announced
+		// again on the very next heartbeat, which is the flood this avoids.
+		r.log.Error("recording the agent update phase", "server_id", server.ID, "error", err)
+		return
+	}
+	if phase != domain.AgentPhaseRolledBack || server.AgentUpdatePhase == domain.AgentPhaseRolledBack {
+		return
+	}
+	detail := st.GetDetail()
+	if detail == "" {
+		detail = "The agent rolled its own update back and is running its previous version."
+	}
+	r.log.Warn("agent update rolled back", "server_id", server.ID, "target", st.GetTargetVersion())
+	for _, sink := range r.sinks {
+		if err := sink.AnnounceServerDisk(ctx, server, domain.InboxAgentUpdateFailed,
+			fmt.Sprintf("Update to %s was rolled back. %s", st.GetTargetVersion(), detail)); err != nil {
+			r.log.Error("announcing an agent rollback", "server_id", server.ID, "error", err)
+		}
+	}
 }
 
 // checkDisk announces a server crossing the disk threshold, and crossing back.

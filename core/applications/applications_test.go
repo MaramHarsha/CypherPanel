@@ -7,6 +7,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/store"
@@ -79,6 +80,43 @@ func (f *fakeStore) UpdateApplicationConfig(_ context.Context, a domain.Applicat
 		return domain.Application{}, store.ErrNotFound
 	}
 	f.apps[a.ID] = a
+	return a, nil
+}
+
+func (f *fakeStore) SetApplicationMaintenance(_ context.Context, id string, on bool) (domain.Application, error) {
+	app := f.apps[id]
+	app.Access.MaintenanceMode = on
+	if on {
+		if app.Access.MaintenanceSince == nil {
+			now := time.Now()
+			app.Access.MaintenanceSince = &now
+		}
+	} else {
+		app.Access.MaintenanceSince = nil
+	}
+	f.apps[id] = app
+	return app, nil
+}
+
+func (f *fakeStore) SetApplicationAllowlist(_ context.Context, id string, enabled bool, cidrs []string) (domain.Application, error) {
+	a, ok := f.apps[id]
+	if !ok {
+		return domain.Application{}, store.ErrNotFound
+	}
+	a.Access.IPAllowlistEnabled = enabled
+	a.Access.IPAllowlist = cidrs
+	f.apps[id] = a
+	return a, nil
+}
+
+func (f *fakeStore) SetApplicationPreviewPassword(_ context.Context, id string, enabled bool, hash string) (domain.Application, error) {
+	a, ok := f.apps[id]
+	if !ok {
+		return domain.Application{}, store.ErrNotFound
+	}
+	a.Access.PreviewPasswordEnabled = enabled
+	a.Access.PreviewPasswordHash = hash
+	f.apps[id] = a
 	return a, nil
 }
 
@@ -234,11 +272,22 @@ func TestCreateValidation(t *testing.T) {
 		// A kind outside the closed set. "nixpacks" used to sit here and is
 		// now supported (pack-builds.md), which is exactly why the assertion
 		// has to name something that is not.
-		"bad build":    func(in *CreateInput) { in.Build.Kind = "buildpacks" },
-		"zero port":    func(in *CreateInput) { in.Runtime.Port = 0 },
-		"huge port":    func(in *CreateInput) { in.Runtime.Port = 70000 },
-		"two replicas": func(in *CreateInput) { in.Runtime.Replicas = 2 },
-		"no server":    func(in *CreateInput) { in.Runtime.ServerID = "" },
+		"bad build":         func(in *CreateInput) { in.Build.Kind = "buildpacks" },
+		"zero port":         func(in *CreateInput) { in.Runtime.Port = 0 },
+		"huge port":         func(in *CreateInput) { in.Runtime.Port = 70000 },
+		"too many replicas": func(in *CreateInput) { in.Runtime.Replicas = 21 },
+		// The two refusals of app-scaling.md §3. Both are refusals rather than
+		// warnings because in each case there is no correct behaviour to fall
+		// back to, only two different ways to be wrong.
+		"replicas with a volume": func(in *CreateInput) {
+			in.Runtime.Replicas = 3
+			in.Volumes = []domain.VolumeMount{{Name: "uploads", Path: "/data"}}
+		},
+		"replicas with a raw port": func(in *CreateInput) {
+			in.Runtime.Replicas = 3
+			in.Ports = []domain.PortMapping{{HostPort: 25565, ContainerPort: 25565, Protocol: "tcp"}}
+		},
+		"no server": func(in *CreateInput) { in.Runtime.ServerID = "" },
 		// Health kind must be a known gate (feature-matrix V1: non-HTTP apps).
 		"bad health kind": func(in *CreateInput) { in.Health.Kind = "grpc" },
 		// Raw port publishes (feature-matrix V1): valid ranges, protocol, uniqueness.

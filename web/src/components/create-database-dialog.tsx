@@ -261,7 +261,7 @@ export function NewDatabaseDialog({
                       >
                         {spec.label}
                         {!checked && (
-                          <span className="mt-[3px] block font-mono text-[10.5px] font-normal text-text-disabled">
+                          <span className="mt-[3px] block font-mono text-[10.5px] font-normal text-text-faint">
                             {spec.versions[0]}
                           </span>
                         )}

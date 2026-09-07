@@ -60,11 +60,13 @@ export function StatusBadge({ status, className }: { status: string | undefined 
   const s = normalizeStatus(status);
   return (
     <span className={cn("inline-flex items-center gap-2", className)}>
-      <StatusDot status={s} />
-      <span
-        className={cn("font-mono text-[11px] font-medium uppercase tracking-wide", TEXT[s])}
-        aria-live="polite"
-      >
+      {/* The word is in the very next span, so the dot drops its label here:
+          it carries one only because StatusDot may stand alone. */}
+      <StatusDot status={s} decorative />
+      {/* No aria-live. Canvas 14g gives the announcement to the page's stage
+          summary — a twenty-row table whose every row is its own live region
+          talks over the change the operator is actually waiting for. */}
+      <span className={cn("font-mono text-[11px] font-medium uppercase tracking-wide", TEXT[s])}>
         {s}
       </span>
     </span>
@@ -72,13 +74,24 @@ export function StatusBadge({ status, className }: { status: string | undefined 
 }
 
 /** Marker-only variant for dense rows and rollups. */
-export function StatusDot({ status, className }: { status: string | undefined | null; className?: string }) {
+export function StatusDot({
+  status,
+  decorative,
+  className,
+}: {
+  status: string | undefined | null;
+  /** Set where the word is already next to the dot (StatusBadge, a row that
+      pairs the marker with StatusWord): the label would be read twice. */
+  decorative?: boolean;
+  className?: string;
+}) {
   const s = normalizeStatus(status);
   return (
     <span
       className={cn("inline-block h-2.5 w-2.5 shrink-0", MARKER[s], className)}
-      role="img"
-      aria-label={s}
+      role={decorative ? undefined : "img"}
+      aria-label={decorative ? undefined : s}
+      aria-hidden={decorative || undefined}
     />
   );
 }

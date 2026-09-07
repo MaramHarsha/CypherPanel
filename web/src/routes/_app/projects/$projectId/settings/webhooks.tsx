@@ -177,7 +177,7 @@ function EndpointCard({ projectId, endpoint: e }: { projectId: string; endpoint:
           </span>
           {!e.enabled && <span className="mono shrink-0 text-[11px] text-text-faint">paused</span>}
           <span className="flex shrink-0 items-center gap-1.5">
-            <StatusDot status={health} className="h-2 w-2" />
+            <StatusDot status={health} decorative className="h-2 w-2" />
             <StatusWord status={health} className="text-[10.5px]">
               {e.health}
             </StatusWord>

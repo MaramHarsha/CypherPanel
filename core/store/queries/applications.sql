@@ -87,3 +87,36 @@ UPDATE applications
 SET restart_token = $2, updated_at = now()
 WHERE id = $1
 RETURNING *;
+
+-- Access control is set on its own, never as part of the config update: it is
+-- current state rather than a revision snapshot (app-access-control.md §3), and
+-- folding it into UpdateApplicationConfig would let a config PATCH silently
+-- clear an allowlist.
+-- name: SetApplicationAllowlist :one
+UPDATE applications
+SET ip_allowlist_enabled = $2, ip_allowlist = $3, updated_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: SetApplicationMaintenance :one
+-- Turning maintenance on twice keeps the ORIGINAL stamp: an idempotent PUT from
+-- a migration script that retries must not reset the clock the panel shows.
+UPDATE applications
+SET maintenance_mode  = $2,
+    maintenance_since = CASE
+        WHEN $2 AND maintenance_since IS NOT NULL THEN maintenance_since
+        WHEN $2 THEN now()
+        ELSE NULL
+    END,
+    updated_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: SetApplicationPreviewPassword :one
+UPDATE applications
+SET preview_password_enabled = $2,
+    preview_password_hash    = $3,
+    preview_password_set_at  = CASE WHEN $3 = '' THEN NULL ELSE now() END,
+    updated_at = now()
+WHERE id = $1
+RETURNING *;

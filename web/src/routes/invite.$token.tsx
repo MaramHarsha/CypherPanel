@@ -23,7 +23,7 @@
 // distinguishing them would turn this public route into an oracle. So the page
 // says the one honest thing it can and points at the person who can reissue.
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { ApiError } from "@/api/client";
 import { useAcceptInvite, useGetInvite } from "@/api/gen/invites/invites";
 import { ThrottledPage, useSecondsLeft } from "@/components/error-page";
@@ -121,6 +121,12 @@ function AcceptForm({
   // reason: it is public and it takes a secret.
   const [throttle, setThrottle] = useState<{ until: number | null; total: number | undefined } | null>(null);
   const secondsLeft = useSecondsLeft(throttle?.until);
+  // A pause with a deadline ends by itself, like login's. ThrottledPage only
+  // offers a way out when there is no countdown, so without this the invitee
+  // watches the bar drain and is then left on a page with no form and no pill.
+  useEffect(() => {
+    if (throttle?.until && secondsLeft === 0) setThrottle(null);
+  }, [throttle, secondsLeft]);
 
   const accept = useAcceptInvite({
     mutation: {
