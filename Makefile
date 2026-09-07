@@ -15,11 +15,15 @@ help: ## Show this help
 ## ── Generation ─────────────────────────────────────────────────────────────
 
 .PHONY: generate
-generate: proto sqlc installsh ## Regenerate all generated code (proto + sqlc + embedded installer)
+generate: proto sqlc installsh changelog ## Regenerate all generated code (proto + sqlc + embedded installer + changelog)
 
 .PHONY: installsh
 installsh: ## Copy the canonical installer into core for go:embed (one home: /install)
 	cp install/agent.sh core/api/rest/install-agent.sh
+
+.PHONY: changelog
+changelog: ## Copy the canonical changelog into core for go:embed (one home: the repo root)
+	cp CHANGELOG.md core/changelog/CHANGELOG.md
 
 .PHONY: proto
 proto: ## Generate Go stubs from proto/ (buf)

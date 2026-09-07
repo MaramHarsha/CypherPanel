@@ -614,6 +614,7 @@ func (a *API) Handler() http.Handler {
 	// everything that acts: this is the control that decides what code the
 	// control plane runs, and an API token may live in a CI runner.
 	mux.HandleFunc("GET /api/v1/panel/updates", a.authed(a.handleGetUpdates))
+	mux.HandleFunc("GET /api/v1/panel/changelog", a.authed(a.handleChangelog))
 	mux.HandleFunc("GET /api/v1/panel/updates/preflight", a.sessionOnly(a.handlePreflight))
 	mux.HandleFunc("POST /api/v1/panel/updates/upgrade", a.sessionOnly(a.handleStartUpgrade))
 	mux.HandleFunc("POST /api/v1/panel/updates/cancel", a.sessionOnly(a.handleCancelUpgrade))

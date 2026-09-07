@@ -23,6 +23,7 @@ import { useState } from "react";
 import {
   cancelPanelUpgrade,
   getGetPanelUpdatesQueryKey,
+  useGetChangelog,
   useGetPanelUpdates,
   useListPanelUpgrades,
   usePreflightPanelUpdate,
@@ -82,6 +83,7 @@ function UpdatesTab() {
           <>
             {u.active ? <Progress upgrade={u.active} /> : <Available updates={u} />}
             <History />
+            <WhatsNew />
           </>
         )}
       </PageState>
@@ -338,6 +340,69 @@ function Progress({ upgrade: u }: { upgrade: PanelUpgrade }) {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * What's new. Embedded in the binary rather than fetched, so it works
+ * air-gapped and cannot be written by anyone who compromises a feed — and the
+ * AVAILABLE release shows only its version and a link out, because this build
+ * predates it and cannot honestly have its notes.
+ */
+function WhatsNew() {
+  const log = useGetChangelog({ query: { retry: false } });
+  if (log.isError || !log.data) return null;
+  const { entries, current, available } = log.data;
+
+  return (
+    <section className="space-y-2">
+      <Eyebrow>What's new</Eyebrow>
+      <ul className="divide-y divide-border-subtle overflow-hidden rounded-lg border border-border bg-surface">
+        {available && (
+          <li className="px-4 py-3">
+            <div className="flex flex-wrap items-baseline gap-2">
+              <span className="mono text-[12.5px] font-medium text-text">{available.version}</span>
+              <span className="rounded-full border border-accent/40 bg-accent/10 px-1.5 py-[1px] text-[10px] font-semibold tracking-wide text-accent uppercase">
+                Available
+              </span>
+              {available.notes_url && (
+                <a
+                  href={available.notes_url}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="ml-auto text-[12px] font-medium text-accent hover:underline"
+                >
+                  Release notes ↗
+                </a>
+              )}
+            </div>
+            <p className="mt-0.5 text-[12px] leading-[1.5] text-text-faint">
+              This build predates it, so its notes are on the release page rather than here.
+            </p>
+          </li>
+        )}
+        {entries.map((e) => (
+          <li key={e.version} className="px-4 py-3">
+            <div className="flex flex-wrap items-baseline gap-2">
+              <span className="mono text-[12.5px] font-medium text-text">{e.version}</span>
+              {e.version === current && (
+                <span className="mono text-[10.5px] text-text-faint">you're on this</span>
+              )}
+              {e.date && <span className="mono ml-auto text-[11px] text-text-faint">{e.date}</span>}
+            </div>
+            {e.notes && e.notes.length > 0 && (
+              <ul className="mt-1.5 space-y-1">
+                {e.notes.map((n) => (
+                  <li key={n} className="text-[12.5px] leading-[1.5] text-text-mid">
+                    {n}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

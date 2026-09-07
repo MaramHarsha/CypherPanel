@@ -31,6 +31,7 @@ import type {
   AlertEvent,
   AlertRule,
   BadRequestResponse,
+  Changelog,
   ChooseAccountError,
   CreateAlertRuleRequest,
   DNSDisconnectPreview,
@@ -1459,6 +1460,107 @@ export function useGetPanelUpdates<TData = Awaited<ReturnType<typeof getPanelUpd
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getGetPanelUpdatesQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getGetChangelogUrl = () => {
+
+
+
+
+  return `/api/v1/panel/changelog`
+}
+
+/**
+ * Embedded in the binary rather than fetched: a fetched changelog is a second outbound call with its own rate limit, and it renders prose from a network source inside an operator-facing surface. The AVAILABLE release contributes only its version, its kind and a link pointing out — no untrusted prose is ever rendered here.
+ * @summary What changed in each release (any authenticated caller)
+ */
+export const getChangelog = async ( options?: RequestInit): Promise<Changelog> => {
+
+  return apiFetch<Changelog>(getGetChangelogUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetChangelogQueryKey = () => {
+    return [
+    `/api/v1/panel/changelog`
+    ] as const;
+    }
+
+
+export const getGetChangelogQueryOptions = <TData = Awaited<ReturnType<typeof getChangelog>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getChangelog>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetChangelogQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getChangelog>>> = ({ signal }) => getChangelog({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getChangelog>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetChangelogQueryResult = NonNullable<Awaited<ReturnType<typeof getChangelog>>>
+export type GetChangelogQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useGetChangelog<TData = Awaited<ReturnType<typeof getChangelog>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getChangelog>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getChangelog>>,
+          TError,
+          Awaited<ReturnType<typeof getChangelog>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetChangelog<TData = Awaited<ReturnType<typeof getChangelog>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getChangelog>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getChangelog>>,
+          TError,
+          Awaited<ReturnType<typeof getChangelog>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetChangelog<TData = Awaited<ReturnType<typeof getChangelog>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getChangelog>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary What changed in each release (any authenticated caller)
+ */
+
+export function useGetChangelog<TData = Awaited<ReturnType<typeof getChangelog>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getChangelog>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetChangelogQueryOptions(options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
