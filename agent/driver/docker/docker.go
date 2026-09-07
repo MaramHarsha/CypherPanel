@@ -54,8 +54,11 @@ type Container struct {
 	// the desired revision (deployment-control.md §3).
 	RestartToken string
 	// ReplicaIndex is 1-based and stable; 1 for every container created before
-	// replicas existed (app-scaling.md §2).
-	ReplicaIndex int
+	// replicas existed (app-scaling.md §2). uint32 rather than int on purpose:
+	// it is read from a container label and used as a map key and a wire field,
+	// so the narrowing has to happen at the bounded parse rather than at every
+	// use.
+	ReplicaIndex uint32
 	Running      bool
 }
 
@@ -326,7 +329,7 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 	var leftovers []Container
 	for i := range existing {
 		c := existing[i]
-		idx := uint32(c.ReplicaIndex)
+		idx := c.ReplicaIndex
 		if idx == 0 {
 			idx = 1
 		}
@@ -546,7 +549,7 @@ func (d *Driver) startMissingReplicas(
 	}
 	remaining := (*leftovers)[:0]
 	for _, c := range *leftovers {
-		idx := uint32(c.ReplicaIndex)
+		idx := c.ReplicaIndex
 		if idx == 0 {
 			idx = 1
 		}
@@ -581,7 +584,7 @@ func (d *Driver) startMissingReplicas(
 		if err != nil {
 			return fail("create: " + err.Error())
 		}
-		current[idx] = &Container{ID: newID, AppID: spec.GetAppId(), RevisionID: spec.GetRevisionId(), ReplicaIndex: int(idx), Running: true}
+		current[idx] = &Container{ID: newID, AppID: spec.GetAppId(), RevisionID: spec.GetRevisionId(), ReplicaIndex: idx, Running: true}
 		started[idx] = true
 		if err := d.client.StartContainer(ctx, newID); err != nil {
 			return fail("start: " + err.Error())

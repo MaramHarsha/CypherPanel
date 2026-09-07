@@ -241,16 +241,24 @@ func (c *Client) ListManaged(ctx context.Context) ([]docker.Container, error) {
 // replicaIndex reads the container's replica index. An absent label is index 1
 // — every container that existed before replicas did — which is what stops an
 // agent upgrade from reading a whole fleet as drift.
-func replicaIndex(labels map[string]string) int {
+//
+// The label is DATA ON A CONTAINER, so it is parsed with a bounded parser and a
+// ceiling rather than with Atoi and a nil check. Atoi returns an int, which is
+// 64-bit here, and narrowing that to the uint32 the wire and the maps use is a
+// silent truncation: a label of "4294967297" would read as index 1 and collide
+// with a real replica. ParseUint with a bit size cannot produce a value the
+// destination type will not hold, and anything outside the range is read as
+// index 1 — the same answer an unrecognised label gets.
+func replicaIndex(labels map[string]string) uint32 {
 	raw := labels[driver.LabelReplicaIndex]
 	if raw == "" {
 		return 1
 	}
-	n, err := strconv.Atoi(raw)
-	if err != nil || n < 1 {
+	n, err := strconv.ParseUint(raw, 10, 32)
+	if err != nil || n < 1 || n > driver.MaxReplicaIndex {
 		return 1
 	}
-	return n
+	return uint32(n)
 }
 
 // CreateContainer creates (does not start) a container per the driver's spec:
