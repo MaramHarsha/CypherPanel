@@ -1101,8 +1101,14 @@ type AccessSpec struct {
 	// today: it is Traefik's own shape, and widening a singular string later is
 	// the kind of change `buf breaking` refuses.
 	BasicAuthUsers []string `protobuf:"bytes,2,rep,name=basic_auth_users,json=basicAuthUsers,proto3" json:"basic_auth_users,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Serve the node's maintenance responder instead of this application's own
+	// containers (app-access-control.md §7). It is a SERVICE SWAP, not a
+	// middleware: Traefik cannot return a body of ours, so the route's rule, TLS,
+	// allowlist and basic auth are all unchanged and only the load balancer's
+	// server moves. The app keeps running and keeps passing its health gate.
+	Maintenance   bool `protobuf:"varint,3,opt,name=maintenance,proto3" json:"maintenance,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *AccessSpec) Reset() {
@@ -1147,6 +1153,13 @@ func (x *AccessSpec) GetBasicAuthUsers() []string {
 		return x.BasicAuthUsers
 	}
 	return nil
+}
+
+func (x *AccessSpec) GetMaintenance() bool {
+	if x != nil {
+		return x.Maintenance
+	}
+	return false
 }
 
 // RolloutWork commands one server's reconciler to converge an Application
@@ -4575,12 +4588,13 @@ const file_cypherpanel_agent_v1_work_proto_rawDesc = "" +
 	"\x05https\x18\x02 \x01(\bR\x05https\x12\x1f\n" +
 	"\vpath_prefix\x18\x03 \x01(\tR\n" +
 	"pathPrefix\x128\n" +
-	"\x06access\x18\x04 \x01(\v2 .cypherpanel.agent.v1.AccessSpecR\x06access\"W\n" +
+	"\x06access\x18\x04 \x01(\v2 .cypherpanel.agent.v1.AccessSpecR\x06access\"y\n" +
 	"\n" +
 	"AccessSpec\x12\x1f\n" +
 	"\vallow_cidrs\x18\x01 \x03(\tR\n" +
 	"allowCidrs\x12(\n" +
-	"\x10basic_auth_users\x18\x02 \x03(\tR\x0ebasicAuthUsers\"e\n" +
+	"\x10basic_auth_users\x18\x02 \x03(\tR\x0ebasicAuthUsers\x12 \n" +
+	"\vmaintenance\x18\x03 \x01(\bR\vmaintenance\"e\n" +
 	"\vRolloutWork\x12#\n" +
 	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x121\n" +
 	"\x04spec\x18\x02 \x01(\v2\x1d.cypherpanel.agent.v1.AppSpecR\x04spec\"H\n" +

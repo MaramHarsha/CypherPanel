@@ -7,6 +7,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/store"
@@ -80,6 +81,21 @@ func (f *fakeStore) UpdateApplicationConfig(_ context.Context, a domain.Applicat
 	}
 	f.apps[a.ID] = a
 	return a, nil
+}
+
+func (f *fakeStore) SetApplicationMaintenance(_ context.Context, id string, on bool) (domain.Application, error) {
+	app := f.apps[id]
+	app.Access.MaintenanceMode = on
+	if on {
+		if app.Access.MaintenanceSince == nil {
+			now := time.Now()
+			app.Access.MaintenanceSince = &now
+		}
+	} else {
+		app.Access.MaintenanceSince = nil
+	}
+	f.apps[id] = app
+	return app, nil
 }
 
 func (f *fakeStore) SetApplicationAllowlist(_ context.Context, id string, enabled bool, cidrs []string) (domain.Application, error) {

@@ -970,6 +970,8 @@ func accessFromRow(r db.Application) domain.AppAccess {
 		PreviewPasswordEnabled: r.PreviewPasswordEnabled,
 		PreviewPasswordHash:    r.PreviewPasswordHash,
 		PreviewPasswordSetAt:   ptrTime(r.PreviewPasswordSetAt),
+		MaintenanceMode:        r.MaintenanceMode,
+		MaintenanceSince:       ptrTime(r.MaintenanceSince),
 	}
 	if len(r.IpAllowlist) > 0 {
 		_ = json.Unmarshal(r.IpAllowlist, &a.IPAllowlist)
@@ -992,6 +994,18 @@ func (s *Store) SetApplicationAllowlist(ctx context.Context, id string, enabled 
 	})
 	if err != nil {
 		return domain.Application{}, fmt.Errorf("store: setting allowlist: %w", err)
+	}
+	return applicationFromRow(row), nil
+}
+
+// SetApplicationMaintenance turns the holding page on or off. The stamp is set
+// by the query, not here, so that turning it on twice keeps the original.
+func (s *Store) SetApplicationMaintenance(ctx context.Context, id string, on bool) (domain.Application, error) {
+	row, err := s.q.SetApplicationMaintenance(ctx, db.SetApplicationMaintenanceParams{
+		ID: id, MaintenanceMode: on,
+	})
+	if err != nil {
+		return domain.Application{}, fmt.Errorf("store: setting maintenance mode: %w", err)
 	}
 	return applicationFromRow(row), nil
 }

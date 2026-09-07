@@ -13,6 +13,12 @@ rendered.
 
 ## v0.4.0 — 2026-09-07
 
+- Maintenance mode: serve a holding page while you migrate; the application keeps running and can still be deployed underneath.
+- Revision promotion: ship a revision that is already proven in staging to production without rebuilding it.
+- Resource quotas: a per-team or per-project ceiling on CPU, memory and disk, enforced when a deploy is admitted rather than billed for afterwards.
+- Managed email: mail domains and mailboxes through a provider, with the DNS records written for you and no mail server to run.
+- Plane disaster recovery: encrypted nightly snapshots of the control plane, and a `cypherd restore` that rebuilds it from one.
+- Log drains: ship runtime logs to Loki, syslog or S3, backpressured so a slow sink never drops a line.
 - Panel updates: a guided upgrade with a pre-flight, a fallback snapshot whose retention you pick, a health gate, and automatic rollback when the gate fails.
 - Threshold alerts: tell a notifier when a server or an application crosses a line and stays there, with a backtest that shows what the rule would have done over the last week before you save it.
 - Metrics and usage: CPU, memory, disk and request analytics per resource, and per-project attribution for a month.

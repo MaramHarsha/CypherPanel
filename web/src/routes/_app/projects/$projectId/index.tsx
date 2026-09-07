@@ -17,6 +17,7 @@ import { ProvisioningSteps, provisioningSteps } from "@/components/db-provisioni
 import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
 import { PageBody, PageHeader } from "@/components/page-header";
+import { MaintenanceBadge } from "@/components/maintenance-badge";
 import { PageState } from "@/components/page-state";
 import { normalizeStatus, StatusDot, StatusPill, type Status } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
@@ -372,6 +373,15 @@ function AppRow({ projectId, app }: { projectId: string; app: Application }) {
           {app.route.domain || "internal"}
           {rev && ` · rev ${rev}`}
         </span>
+
+        {/* The board is where a page left up over a weekend is actually seen.
+            The status word still says `running`, because it is — this is the
+            fact beside it (app-access-control.md §10). */}
+        {app.maintenance_mode && (
+          <span className="mt-2 block">
+            <MaintenanceBadge since={app.maintenance_since} />
+          </span>
+        )}
 
         {/* An error card says what broke and offers the remedy inline — a
             screen you can only stare at is a bug (ui-principles §11). */}

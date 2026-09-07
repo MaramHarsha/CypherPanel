@@ -87,6 +87,14 @@ func (s *Service) SetPreviewPassword(ctx context.Context, id, passphrase string)
 	return s.store.SetApplicationPreviewPassword(ctx, id, true, hash)
 }
 
+// SetMaintenance turns the holding page on or off. There is no validation to do
+// and no auto-expiry to offer: a window that lifts itself while the migration is
+// still running publishes a half-migrated application to the internet, which is
+// a worse Monday than the one it prevents (app-access-control.md §10).
+func (s *Service) SetMaintenance(ctx context.Context, id string, on bool) (domain.Application, error) {
+	return s.store.SetApplicationMaintenance(ctx, id, on)
+}
+
 // ClearPreviewPassword turns the gate off and forgets the hash. Turning it off
 // without forgetting would leave a credential nobody can see and nobody can
 // rotate.

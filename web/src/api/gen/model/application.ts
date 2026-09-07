@@ -62,5 +62,12 @@ export interface Application {
   tls_state?: ApplicationTlsState;
   /** Derived, never stored (shared-variables.md §5): a shared variable this application references changed after the environment it is running was frozen onto the wire. It is NOT a status word — the status vocabulary is closed — so render it as a badge beside the status, never in place of one. */
   redeploy_pending?: boolean;
+  /** The maintenance page is serving in place of this application (`PUT /applications/{id}/maintenance`). Like `redeploy_pending` it is a fact beside the status, not a status word. */
+  maintenance_mode?: boolean;
+  /**
+     * When the page went up; null when it is down. It travels on the application itself so a badge can say "Maintenance mode · 3h" wherever the application appears — a page left up is this feature's real failure mode, and a badge only prevents it where someone is already looking.
+     * @nullable
+     */
+  maintenance_since?: string | null;
   created_at: string;
 }

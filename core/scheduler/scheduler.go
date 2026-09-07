@@ -2354,7 +2354,11 @@ func accessSpec(app domain.Application, isPreview bool) *agentv1.AccessSpec {
 		// `buf breaking` refuses.
 		out.BasicAuthUsers = []string{"preview:" + app.Access.PreviewPasswordHash}
 	}
-	if len(out.AllowCidrs) == 0 && len(out.BasicAuthUsers) == 0 {
+	// Maintenance applies to every environment kind, unlike the passphrase: an
+	// operator raising a holding page around a migration means production, and
+	// that is the case the feature exists for.
+	out.Maintenance = app.Access.MaintenanceMode
+	if len(out.AllowCidrs) == 0 && len(out.BasicAuthUsers) == 0 && !out.Maintenance {
 		// Absent rather than empty: an empty AccessSpec and no AccessSpec mean
 		// the same thing, and sending the smaller one keeps the diff quiet.
 		return nil

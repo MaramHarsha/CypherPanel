@@ -1653,6 +1653,58 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/v1/applications/{id}/maintenance:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Application ID. }
+    put:
+      operationId: startMaintenance
+      tags: [applications]
+      summary: Serve the maintenance page instead of the app (member+)
+      description: >-
+        A SERVICE SWAP, not a middleware. Traefik cannot return a body of ours,
+        so the node runs a small responder container and the route's rule, TLS,
+        allowlist and basic auth all stay exactly as they were while the load
+        balancer's server moves. The application keeps running, keeps passing
+        its health gate and can still be deployed underneath — a deploy simply
+        flips a route that currently points elsewhere.
+
+
+        While maintenance is on, NOBODY reaches the app through the front door,
+        including an allowlisted operator. An allowlist bypass was considered
+        and rejected: it would make maintenance mean different things depending
+        on a second toggle's contents, and an operator who allowlisted the
+        office would never see the page they are showing the world.
+
+
+        Idempotent, and its own sub-resource rather than a field on
+        `PUT /access` — the caller that most wants it is a migration script, and
+        a script that had to read-modify-write the allowlist to raise a page
+        would be one lost race away from deleting it. There is no auto-expiry: a
+        window that lifts itself while the migration is still running publishes
+        a half-migrated application to the internet.
+      responses:
+        "200":
+          description: The page is up. `maintenance_since` is when it went up.
+          content: { application/json: { schema: { $ref: "#/components/schemas/AppAccess" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: endMaintenance
+      tags: [applications]
+      summary: Take the maintenance page down (member+)
+      description: >-
+        Points the route back at whatever revision is current by then, and the
+        responder is removed from the node once no resource there is still in
+        maintenance. Idempotent.
+      responses:
+        "200":
+          description: The page is down.
+          content: { application/json: { schema: { $ref: "#/components/schemas/AppAccess" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /api/v1/panel/updates:
     get:
       operationId: getPanelUpdates
@@ -6431,7 +6483,7 @@ components:
 
     AppAccess:
       type: object
-      required: [ip_allowlist_enabled, ip_allowlist, preview_password_enabled]
+      required: [ip_allowlist_enabled, ip_allowlist, preview_password_enabled, maintenance_mode]
       properties:
         ip_allowlist_enabled: { type: boolean }
         ip_allowlist:
@@ -6446,6 +6498,16 @@ components:
             When the passphrase was last set. The passphrase itself is never
             returned; this is what answers "is this still the one I gave the
             client in March?".
+        maintenance_mode: { type: boolean }
+        maintenance_since:
+          type: [string, "null"]
+          format: date-time
+          description: >-
+            When the holding page went up; null when it is down. The failure
+            mode of this feature is maintenance LEFT ON — a Friday migration and
+            a Monday of silence — so the panel counts from this stamp. Turning
+            maintenance on again while it is already on deliberately does not
+            reset it.
 
     SetAppAccessRequest:
       type: object
@@ -7944,6 +8006,21 @@ components:
             running was frozen onto the wire. It is NOT a status word — the
             status vocabulary is closed — so render it as a badge beside the
             status, never in place of one.
+        maintenance_mode:
+          type: boolean
+          description: >-
+            The maintenance page is serving in place of this application
+            (`PUT /applications/{id}/maintenance`). Like `redeploy_pending` it is
+            a fact beside the status, not a status word.
+        maintenance_since:
+          type: [string, "null"]
+          format: date-time
+          description: >-
+            When the page went up; null when it is down. It travels on the
+            application itself so a badge can say "Maintenance mode · 3h"
+            wherever the application appears — a page left up is this feature's
+            real failure mode, and a badge only prevents it where someone is
+            already looking.
         created_at:
           type: string
           format: date-time

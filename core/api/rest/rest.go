@@ -735,6 +735,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/applications/{id}/access", a.authed(a.handleGetApplicationAccess))
 	mux.HandleFunc("PUT /api/v1/applications/{id}/access", a.authed(a.handleSetApplicationAccess))
 	mux.HandleFunc("POST /api/v1/applications/{id}/access/preview-password", a.authed(a.handleSetPreviewPassword))
+	mux.HandleFunc("PUT /api/v1/applications/{id}/maintenance", a.authed(a.handleSetMaintenance))
+	mux.HandleFunc("DELETE /api/v1/applications/{id}/maintenance", a.authed(a.handleClearMaintenance))
 
 	// GitHub webhook: authenticated by per-app HMAC secret, not a session
 	// (spec §4) — the only unauthenticated mutating route.

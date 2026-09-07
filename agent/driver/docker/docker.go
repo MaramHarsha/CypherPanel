@@ -193,6 +193,14 @@ type Router interface {
 	// ok=false when no route is applied. Used by the converged fast path to
 	// re-assert a route lost to a crash between start and flip.
 	Route(ctx context.Context, appID string) (upstreams []string, ok bool, err error)
+	// EnsureMaintenance makes the node's maintenance responder serve and
+	// reports the upstream a route in maintenance points at
+	// (app-access-control.md §7). An error means it is NOT serving, and the
+	// caller leaves the route alone.
+	EnsureMaintenance(ctx context.Context) (upstream string, err error)
+	// RemoveMaintenance takes the responder down once nothing on this node is
+	// in maintenance. Idempotent.
+	RemoveMaintenance(ctx context.Context) error
 }
 
 // HealthProber checks that an upstream is serving before the route flips. The
@@ -267,9 +275,23 @@ func (d *Driver) Reconcile(ctx context.Context, desired []*agentv1.AppSpec, reta
 	desiredApps := make(map[string]struct{}, len(desired))
 
 	statuses := make([]*agentv1.AppStatus, 0, len(desired))
+	inMaintenance := false
 	for _, spec := range desired {
 		desiredApps[spec.GetAppId()] = struct{}{}
+		if underMaintenance(spec) {
+			inMaintenance = true
+		}
 		statuses = append(statuses, d.convergeApp(ctx, spec, byApp[spec.GetAppId()]))
+	}
+
+	// The responder is shared, so it goes away only when the LAST resource on
+	// this node leaves maintenance — a node that never uses the feature pays
+	// nothing for it. Best-effort like the rest of proxy convergence: a
+	// responder left running routes no traffic, and the next cycle retries.
+	if !inMaintenance {
+		if err := d.router.RemoveMaintenance(ctx); err != nil {
+			d.log.Warn("removing the maintenance responder", "error", err)
+		}
 	}
 
 	// Attach the Proxy to every desired environment network — after
@@ -369,6 +391,12 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 	for _, idx := range missing {
 		newly[idx] = true
 	}
+	// Under maintenance the APPLIED upstream is the responder's, so it can
+	// never equal an app container's address. Without this the comparison below
+	// reads as "the fragment disagrees" and the agent health-probes every
+	// replica once per cycle for the whole outage window
+	// (app-access-control.md §8).
+	maintenance := underMaintenance(spec)
 	applied, routed, err := d.router.Route(ctx, spec.GetAppId())
 	if err != nil {
 		return status(spec.GetAppId(), spec.GetRevisionId(), stateError, "route: "+err.Error())
@@ -386,7 +414,7 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 		// cycle. A newly started replica is always probed; a running one is
 		// re-probed only when the fragment disagrees with it, so a container
 		// that has since died can never capture the route.
-		if newly[idx] || !routed || !slices.Contains(applied, up) {
+		if newly[idx] || (!maintenance && (!routed || !slices.Contains(applied, up))) {
 			if err := d.prober.Probe(ctx, up, spec.GetHealth()); err != nil {
 				d.discardNew(ctx, current, newly)
 				return status(spec.GetAppId(), currentRevision(existing), stateError, "health check failed: "+err.Error())
@@ -402,11 +430,37 @@ func (d *Driver) convergeApp(ctx context.Context, spec *agentv1.AppSpec, existin
 	if spec.GetRoute().GetDomain() == "" && !routed {
 		return d.finishConverge(ctx, spec, indexes, current, leftovers)
 	}
+	// Maintenance is a SERVICE SWAP, not a middleware: the rule, the TLS, the
+	// allowlist and the basic auth are all unchanged and only the load
+	// balancer's server moves (app-access-control.md §7). The app containers
+	// keep running and keep passing their gate above — this flips a route that
+	// currently points elsewhere.
+	if maintenance {
+		up, mErr := d.router.EnsureMaintenance(ctx)
+		if mErr != nil {
+			// Never take an application down as a side effect of failing to
+			// take it down politely: the route is untouched, so the app keeps
+			// serving, and the leftovers are deliberately NOT drained — they
+			// may still be the ones holding the traffic. Degraded is precisely
+			// "serving, with something wrong", and app.crashed fires only on
+			// running → error, so nobody is paged for a page that did not
+			// appear (§8).
+			return status(spec.GetAppId(), currentRevision(existing), stateDegraded, "maintenance page: "+mErr.Error())
+		}
+		upstreams = []string{up}
+	}
 	if err := d.applyDesiredRoute(ctx, spec, upstreams); err != nil {
 		d.discardNew(ctx, current, newly)
 		return status(spec.GetAppId(), currentRevision(existing), stateError, "route: "+err.Error())
 	}
 	return d.finishConverge(ctx, spec, indexes, current, leftovers)
+}
+
+// underMaintenance reports whether this spec wants the responder in front of it.
+// A routeless app is never in maintenance: there is no front door to hold shut,
+// and a holding page for a raw port would be a fragment nothing reads.
+func underMaintenance(spec *agentv1.AppSpec) bool {
+	return spec.GetRoute().GetDomain() != "" && spec.GetRoute().GetAccess().GetMaintenance()
 }
 
 // desiredIndexes is the replica set this node runs. Empty means [1], which is

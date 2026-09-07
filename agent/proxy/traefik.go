@@ -37,13 +37,19 @@ type Traefik struct {
 	// That is a few seconds with no routing on the node, and the release note
 	// must say so.
 	desiredAccessLog bool
+	// maintenanceMayExist records whether a maintenance responder could be
+	// running on this node. It starts TRUE so the first reconcile after an
+	// agent start sweeps one left behind by a previous process; after that it
+	// is exact, and a node that never uses maintenance makes no daemon call
+	// for it at all (maintenance.go).
+	maintenanceMayExist bool
 }
 
 // New constructs the Traefik proxy driver. A nil Config.Engine selects
 // fragment-only mode: fragment management still works while the Proxy
 // lifecycle (EnsureProxy / AttachNetwork) is disabled.
 func New(cfg Config) *Traefik {
-	return &Traefik{cfg: cfg, appsDir: fragmentsDir(cfg.Dir)}
+	return &Traefik{cfg: cfg, appsDir: fragmentsDir(cfg.Dir), maintenanceMayExist: true}
 }
 
 // SetACME records the panel's ACME account as carried in desired state. The

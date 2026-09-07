@@ -196,6 +196,12 @@ message AccessSpec {
   // today: it is Traefik's own shape, and widening a singular string later is
   // the kind of change `buf breaking` refuses.
   repeated string basic_auth_users = 2;
+  // Serve the node's maintenance responder instead of this application's own
+  // containers (app-access-control.md §7). It is a SERVICE SWAP, not a
+  // middleware: Traefik cannot return a body of ours, so the route's rule, TLS,
+  // allowlist and basic auth are all unchanged and only the load balancer's
+  // server moves. The app keeps running and keeps passing its health gate.
+  bool maintenance = 3;
 }
 
 // RolloutWork commands one server's reconciler to converge an Application

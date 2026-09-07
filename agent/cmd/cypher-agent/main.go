@@ -234,6 +234,11 @@ func runAgent(args []string, log *slog.Logger) error {
 			prx := proxy.New(proxy.Config{
 				Dir:   proxyDir,
 				Image: envOr("CYPHER_PROXY_IMAGE", "traefik:v3.3"),
+				// The maintenance responder's image (app-access-control.md §7).
+				// Named here rather than assumed because it is this feature's one
+				// external dependency, and an operator with a mirror has to be
+				// able to point at it.
+				MaintenanceImage: envOr("CYPHER_MAINTENANCE_IMAGE", proxy.DefaultMaintenanceImage),
 				// Host-local overrides. Empty is the normal case: the panel's
 				// ACME account arrives in desired state and is applied through
 				// SetACME below (agent-identity-and-tls.md §4).

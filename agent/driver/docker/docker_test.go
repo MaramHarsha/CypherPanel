@@ -275,6 +275,12 @@ type fakeRouter struct {
 	setCalls      int
 	proxyErr      error
 	networksBound []string
+	// The maintenance responder is the Proxy's twin: ensuring it is an
+	// idempotent daemon call, so it is counted separately and kept out of
+	// `mutations` for the same reason EnsureProxy is.
+	maintenanceEnsured int
+	maintenanceRemoved int
+	maintenanceErr     error
 }
 
 func newFakeRouter() *fakeRouter { return &fakeRouter{routes: map[string]string{}} }
@@ -308,6 +314,19 @@ func (r *fakeRouter) SetRoute(_ context.Context, appID string, _ *agentv1.RouteS
 func (r *fakeRouter) RemoveRoute(_ context.Context, appID string) error {
 	r.mutations++
 	delete(r.routes, appID)
+	return nil
+}
+
+func (r *fakeRouter) EnsureMaintenance(context.Context) (string, error) {
+	r.maintenanceEnsured++
+	if r.maintenanceErr != nil {
+		return "", r.maintenanceErr
+	}
+	return "cypher-maintenance:8080", nil
+}
+
+func (r *fakeRouter) RemoveMaintenance(context.Context) error {
+	r.maintenanceRemoved++
 	return nil
 }
 
@@ -1741,5 +1760,145 @@ func TestThreeReplicasProduceThreeContainersBehindOneRoute(t *testing.T) {
 	}
 	if got := strings.Count(r.routes[sp.AppId], ",") + 1; got != 3 {
 		t.Errorf("the fragment carries %d upstreams, want 3 — one per replica behind one route", got)
+	}
+}
+
+// ── maintenance mode (app-access-control.md §7) ──────────────────────────────
+
+func maintenanceSpec(appID, revID, image string) *agentv1.AppSpec {
+	s := spec(appID, revID, image)
+	s.Route.Access = &agentv1.AccessSpec{Maintenance: true}
+	return s
+}
+
+// The property that makes maintenance mode a service swap rather than an
+// outage: the application's containers keep running, and only the route moves.
+// A maintenance page that stopped the app would make lifting it a cold start
+// with a cold cache, at the exact moment traffic returns.
+func TestMaintenanceMovesTheRouteAndLeavesTheApplicationRunning(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "img:rev1")}, nil); err != nil {
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+	served := r.routes["app1"]
+	if served == "" {
+		t.Fatal("no route applied before maintenance")
+	}
+
+	statuses, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{maintenanceSpec("app1", "rev1", "img:rev1")}, nil)
+	if err != nil {
+		t.Fatalf("maintenance Reconcile: %v", err)
+	}
+	if got := r.routes["app1"]; got != "cypher-maintenance:8080" {
+		t.Fatalf("route under maintenance = %q, want the responder", got)
+	}
+	if st := statusOf(statuses, "app1"); st.GetState() != "running" {
+		t.Fatalf("state under maintenance = %q, want running: the app is still up", st.GetState())
+	}
+	running := 0
+	for _, ct := range c.containers {
+		if ct.AppID == "app1" && ct.Running {
+			running++
+		}
+	}
+	if running != 1 {
+		t.Fatalf("running containers under maintenance = %d, want 1", running)
+	}
+
+	// And lifting it puts the app's own upstream back.
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "img:rev1")}, nil); err != nil {
+		t.Fatalf("lifting Reconcile: %v", err)
+	}
+	if got := r.routes["app1"]; got != served {
+		t.Fatalf("route after lifting = %q, want the app's own upstream %q", got, served)
+	}
+}
+
+// Converging twice under maintenance must mutate nothing — including not
+// re-probing the app. Without the maintenance-aware comparison the applied
+// upstream (the responder's) can never equal the app's, so every cycle reads as
+// "the fragment disagrees" and health-probes every replica for the whole
+// outage window (§8).
+func TestConvergeTwiceUnderMaintenanceProbesNothing(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+	specs := []*agentv1.AppSpec{maintenanceSpec("app1", "rev1", "img:rev1")}
+
+	if _, err := d.Reconcile(context.Background(), specs, nil); err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+	mutations, probes := c.mutations+r.mutations, p.calls
+
+	if _, err := d.Reconcile(context.Background(), specs, nil); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	if after := c.mutations + r.mutations; after != mutations {
+		t.Fatalf("second converge mutated state: %d calls (want 0)", after-mutations)
+	}
+	if p.calls != probes {
+		t.Fatalf("second converge probed %d times (want 0)", p.calls-probes)
+	}
+}
+
+// Failing to take an application down politely must never take it down. The
+// route is left exactly where it was, so the app keeps serving, and the state
+// is degraded — "serving, with something wrong" — which is also what keeps
+// app.crashed (running → error only) from paging anyone.
+func TestAResponderThatCannotStartNeverTakesTheApplicationDown(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "img:rev1")}, nil); err != nil {
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+	served := r.routes["app1"]
+
+	r.maintenanceErr = errors.New("pull nginx:1.27-alpine: no such host")
+	statuses, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{maintenanceSpec("app1", "rev1", "img:rev1")}, nil)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got := r.routes["app1"]; got != served {
+		t.Fatalf("route = %q, want it untouched at %q", got, served)
+	}
+	st := statusOf(statuses, "app1")
+	if st.GetState() != "degraded" {
+		t.Fatalf("state = %q, want degraded", st.GetState())
+	}
+	if !strings.Contains(st.GetDetail(), "no such host") {
+		t.Fatalf("detail = %q, want the pull error named", st.GetDetail())
+	}
+}
+
+// The responder is shared, so it survives while ANY resource on the node is in
+// maintenance and goes away when the last one leaves.
+func TestTheResponderGoesAwayWhenTheLastResourceLeavesMaintenance(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+	both := []*agentv1.AppSpec{maintenanceSpec("app1", "rev1", "img:rev1"), maintenanceSpec("app2", "rev1", "img:rev1")}
+
+	if _, err := d.Reconcile(context.Background(), both, nil); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if r.maintenanceRemoved != 0 {
+		t.Fatalf("responder removed while two apps are in maintenance")
+	}
+
+	half := []*agentv1.AppSpec{maintenanceSpec("app1", "rev1", "img:rev1"), spec("app2", "rev1", "img:rev1")}
+	if _, err := d.Reconcile(context.Background(), half, nil); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if r.maintenanceRemoved != 0 {
+		t.Fatalf("responder removed while one app is still in maintenance")
+	}
+
+	none := []*agentv1.AppSpec{spec("app1", "rev1", "img:rev1"), spec("app2", "rev1", "img:rev1")}
+	if _, err := d.Reconcile(context.Background(), none, nil); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if r.maintenanceRemoved != 1 {
+		t.Fatalf("responder removals = %d, want 1 once the last app left", r.maintenanceRemoved)
 	}
 }

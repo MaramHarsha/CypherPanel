@@ -34,6 +34,11 @@ type accessDTO struct {
 	// gave the client in March?".
 	PreviewPasswordEnabled bool    `json:"preview_password_enabled"`
 	PreviewPasswordSetAt   *string `json:"preview_password_set_at"`
+	// The failure mode of this feature is maintenance LEFT ON, so the stamp is
+	// part of the policy the panel reads back — "Maintenance mode · 3h" needs
+	// something to count from (app-access-control.md §10).
+	MaintenanceMode  bool    `json:"maintenance_mode"`
+	MaintenanceSince *string `json:"maintenance_since"`
 }
 
 func toAccessDTO(a domain.Application) accessDTO {
@@ -46,7 +51,53 @@ func toAccessDTO(a domain.Application) accessDTO {
 		IPAllowlist:            list,
 		PreviewPasswordEnabled: a.Access.PreviewPasswordEnabled,
 		PreviewPasswordSetAt:   formatTime(a.Access.PreviewPasswordSetAt),
+		MaintenanceMode:        a.Access.MaintenanceMode,
+		MaintenanceSince:       formatTime(a.Access.MaintenanceSince),
 	}
+}
+
+// handleSetMaintenance raises the holding page; handleClearMaintenance lowers
+// it. Both are idempotent, and maintenance is its own sub-resource rather than
+// a field in the PUT /access body for a concrete reason: the caller that most
+// wants it is a migration script, and a script that had to read-modify-write the
+// allowlist in order to put up a page would be one lost race away from deleting
+// the allowlist (app-access-control.md §9).
+func (a *API) handleSetMaintenance(w http.ResponseWriter, r *http.Request) {
+	a.setMaintenance(w, r, true)
+}
+
+func (a *API) handleClearMaintenance(w http.ResponseWriter, r *http.Request) {
+	a.setMaintenance(w, r, false)
+}
+
+func (a *API) setMaintenance(w http.ResponseWriter, r *http.Request, on bool) {
+	user, _ := userFromContext(r.Context())
+	id := r.PathValue("id")
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForApplication(ctx, id)
+	}) {
+		return
+	}
+	action := audit.ActionApplicationMaintenanceEnded
+	if on {
+		action = audit.ActionApplicationMaintenanceStarted
+	}
+	entry := a.appAuditEntry(r.Context(), action, id, nil)
+
+	app, err := a.deps.Applications.SetMaintenance(r.Context(), id, on)
+	switch {
+	case err == nil:
+	case errors.Is(err, store.ErrNotFound):
+		writeError(w, http.StatusNotFound, "application not found")
+		return
+	default:
+		a.deps.Log.Error("setting maintenance mode", "app_id", id, "on", on, "error", err)
+		writeError(w, http.StatusInternalServerError, "could not change maintenance mode")
+		return
+	}
+	a.audit(r, entry)
+	a.nudgeFleet(r.Context(), "maintenance-mode")
+	writeJSON(w, http.StatusOK, toAccessDTO(app))
 }
 
 func (a *API) handleGetApplicationAccess(w http.ResponseWriter, r *http.Request) {

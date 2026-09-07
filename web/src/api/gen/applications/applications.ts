@@ -1054,6 +1054,152 @@ export const useSetPreviewPassword = <TError = BadRequestResponse | Unauthorized
       > => {
       return useMutation(getSetPreviewPasswordMutationOptions(options), queryClient);
     }
+    export const getStartMaintenanceUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/applications/${id}/maintenance`
+}
+
+/**
+ * A SERVICE SWAP, not a middleware. Traefik cannot return a body of ours, so the node runs a small responder container and the route's rule, TLS, allowlist and basic auth all stay exactly as they were while the load balancer's server moves. The application keeps running, keeps passing its health gate and can still be deployed underneath — a deploy simply flips a route that currently points elsewhere.
+ *
+ * While maintenance is on, NOBODY reaches the app through the front door, including an allowlisted operator. An allowlist bypass was considered and rejected: it would make maintenance mean different things depending on a second toggle's contents, and an operator who allowlisted the office would never see the page they are showing the world.
+ *
+ * Idempotent, and its own sub-resource rather than a field on `PUT /access` — the caller that most wants it is a migration script, and a script that had to read-modify-write the allowlist to raise a page would be one lost race away from deleting it. There is no auto-expiry: a window that lifts itself while the migration is still running publishes a half-migrated application to the internet.
+ * @summary Serve the maintenance page instead of the app (member+)
+ */
+export const startMaintenance = async (id: string, options?: RequestInit): Promise<AppAccess> => {
+
+  return apiFetch<AppAccess>(getStartMaintenanceUrl(id),
+  {
+    ...options,
+    method: 'PUT'
+
+
+  }
+);}
+
+
+
+
+
+export const getStartMaintenanceMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startMaintenance>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof startMaintenance>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['startMaintenance'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startMaintenance>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  startMaintenance(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StartMaintenanceMutationResult = NonNullable<Awaited<ReturnType<typeof startMaintenance>>>
+
+    export type StartMaintenanceMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Serve the maintenance page instead of the app (member+)
+ */
+export const useStartMaintenance = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startMaintenance>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof startMaintenance>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getStartMaintenanceMutationOptions(options), queryClient);
+    }
+    export const getEndMaintenanceUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/applications/${id}/maintenance`
+}
+
+/**
+ * Points the route back at whatever revision is current by then, and the responder is removed from the node once no resource there is still in maintenance. Idempotent.
+ * @summary Take the maintenance page down (member+)
+ */
+export const endMaintenance = async (id: string, options?: RequestInit): Promise<AppAccess> => {
+
+  return apiFetch<AppAccess>(getEndMaintenanceUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getEndMaintenanceMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof endMaintenance>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof endMaintenance>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['endMaintenance'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof endMaintenance>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  endMaintenance(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type EndMaintenanceMutationResult = NonNullable<Awaited<ReturnType<typeof endMaintenance>>>
+
+    export type EndMaintenanceMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Take the maintenance page down (member+)
+ */
+export const useEndMaintenance = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof endMaintenance>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof endMaintenance>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getEndMaintenanceMutationOptions(options), queryClient);
+    }
     export const getGetApplicationMetricsUrl = (id: string,
     params?: GetApplicationMetricsParams,) => {
   const normalizedParams = new URLSearchParams();

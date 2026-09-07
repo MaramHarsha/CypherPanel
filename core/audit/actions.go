@@ -166,6 +166,12 @@ const (
 	// reach a private admin panel is not something to copy into a second table
 	// (threat-model §5.15).
 	ActionApplicationAccessChanged = "application.access_changed"
+	// Maintenance mode is downtime ON PURPOSE (app-access-control.md §10), which
+	// is exactly why both edges are recorded: the question an incident review
+	// asks is who raised the holding page and who was left to notice it was
+	// still up.
+	ActionApplicationMaintenanceStarted = "application.maintenance_started"
+	ActionApplicationMaintenanceEnded   = "application.maintenance_ended"
 	// Volume backup schedule changed, and a run started.
 	ActionVolumeBackupChanged = "application.volume_backup_changed"
 	ActionVolumeBackupRan     = "application.volume_backup_ran"
@@ -328,8 +334,10 @@ var actions = map[string]bool{
 	ActionWebhookUpdated: true, ActionWebhookDeleted: true,
 	ActionWebhookSecretRotated: true,
 
-	ActionApplicationAccessChanged: true,
-	ActionVolumeBackupChanged:      true, ActionVolumeBackupRan: true,
+	ActionApplicationAccessChanged:      true,
+	ActionApplicationMaintenanceStarted: true,
+	ActionApplicationMaintenanceEnded:   true,
+	ActionVolumeBackupChanged:           true, ActionVolumeBackupRan: true,
 
 	ActionProjectExported: true,
 

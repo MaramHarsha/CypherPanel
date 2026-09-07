@@ -120,6 +120,8 @@ type Application struct {
 	PreviewPasswordHash    string
 	PreviewPasswordSetAt   pgtype.Timestamptz
 	ReplicaStatus          []byte
+	MaintenanceMode        bool
+	MaintenanceSince       pgtype.Timestamptz
 }
 
 type AuditEvent struct {

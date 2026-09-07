@@ -54,8 +54,16 @@ type applicationDTO struct {
 	// so the UI can say "serving over HTTP meanwhile" instead of printing
 	// "HTTPS · auto-renews" off the https flag alone, which asserted a
 	// certificate the panel had never seen issued (ui-principles §10).
-	TLSState  string `json:"tls_state,omitempty"`
-	CreatedAt string `json:"created_at"`
+	TLSState string `json:"tls_state,omitempty"`
+	// Maintenance travels with the application itself, not only with its access
+	// policy, because the failure mode this feature actually has is a holding
+	// page LEFT ON — and a badge only prevents that where the application is
+	// already on screen (app-access-control.md §10). Like redeploy_pending it is
+	// a fact beside the status, never a status word: the vocabulary in
+	// ui-principles §5 is closed.
+	MaintenanceMode  bool    `json:"maintenance_mode"`
+	MaintenanceSince *string `json:"maintenance_since"`
+	CreatedAt        string  `json:"created_at"`
 }
 
 type appSourceDTO struct {
@@ -204,6 +212,8 @@ func toApplicationDTO(a domain.Application) applicationDTO {
 		PreviewEnabled:     a.PreviewEnabled,
 		PreviewBaseDomain:  a.PreviewBaseDomain,
 		PreviewTTLHours:    a.PreviewTTLHours,
+		MaintenanceMode:    a.Access.MaintenanceMode,
+		MaintenanceSince:   formatTime(a.Access.MaintenanceSince),
 		CreatedAt:          a.CreatedAt.UTC().Format(time.RFC3339),
 	}
 }

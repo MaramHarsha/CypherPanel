@@ -132,6 +132,8 @@ func TestFragmentWriteObserveRemove(t *testing.T) {
 type fakeEngine struct {
 	ensured   []engine.RunConfig
 	connected []string // "container/network"
+	networks  []string
+	removed   []string
 }
 
 func (f *fakeEngine) EnsureContainer(_ context.Context, cfg engine.RunConfig) error {
@@ -141,6 +143,16 @@ func (f *fakeEngine) EnsureContainer(_ context.Context, cfg engine.RunConfig) er
 
 func (f *fakeEngine) ConnectNetwork(_ context.Context, container, network string) error {
 	f.connected = append(f.connected, container+"/"+network)
+	return nil
+}
+
+func (f *fakeEngine) EnsureNetwork(_ context.Context, name string, _ map[string]string) error {
+	f.networks = append(f.networks, name)
+	return nil
+}
+
+func (f *fakeEngine) RemoveContainer(_ context.Context, id string) error {
+	f.removed = append(f.removed, id)
 	return nil
 }
 

@@ -3,22 +3,24 @@
 // The design card carries three toggles and calls all three "proxy
 // middlewares". Half of that is true and the important half is not: Traefik v3
 // has `ipAllowList` and `basicAuth`, but no middleware that returns a fixed
-// response, so maintenance mode needs a responder service rather than a
-// middleware (app-access-control.md §7). The two that ARE middlewares ship
-// here; maintenance mode is a separate slice and this card says so rather than
-// drawing a dead toggle.
+// response, so maintenance mode is a SERVICE SWAP onto a responder container
+// the node runs (app-access-control.md §7). All three ship here; the third one
+// simply is not the mechanism the design assumed.
 //
-// Both of these are CURRENT application state, not part of a revision's
-// snapshot, and the card says that too — an operator has to know that rolling
-// back will not quietly lift a lockout, because that is exactly the assumption
-// that gets someone hurt.
+// All three are CURRENT application state, not part of a revision's snapshot,
+// and the card says that too — an operator has to know that rolling back will
+// not quietly lift a lockout or a holding page, because that is exactly the
+// assumption that gets someone hurt.
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import {
   getGetApplicationAccessQueryKey,
+  getGetApplicationQueryKey,
+  useEndMaintenance,
   useGetApplicationAccess,
   useSetApplicationAccess,
   useSetPreviewPassword,
+  useStartMaintenance,
 } from "@/api/gen/applications/applications";
 import { CopyButton } from "@/components/copy-field";
 import { Eyebrow } from "@/components/eyebrow";
@@ -28,7 +30,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { relativeTime } from "@/lib/time";
+import { elapsedSince, relativeTime } from "@/lib/time";
 import { toastSuccess } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
@@ -54,10 +56,18 @@ function AccessBody({
     ip_allowlist: string[];
     preview_password_enabled: boolean;
     preview_password_set_at?: string | null;
+    maintenance_mode: boolean;
+    maintenance_since?: string | null;
   };
 }) {
   const qc = useQueryClient();
-  const refresh = () => void qc.invalidateQueries({ queryKey: getGetApplicationAccessQueryKey(appId) });
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: getGetApplicationAccessQueryKey(appId) });
+    // The application itself carries the badge, so it has to hear about this
+    // too — otherwise the toggle flips here and the masthead keeps saying the
+    // opposite until something else happens to refetch.
+    void qc.invalidateQueries({ queryKey: getGetApplicationQueryKey(appId) });
+  };
 
   return (
     <div className="divide-y divide-border-subtle overflow-hidden rounded-lg border border-border bg-surface">
@@ -68,16 +78,103 @@ function AccessBody({
         setAt={policy.preview_password_set_at ?? null}
         onSaved={refresh}
       />
-      {/* Named rather than omitted: the design card has three toggles, and a
-          reader who knows the third exists should learn why it is not here
-          instead of assuming it was forgotten. */}
-      <div className="px-4 py-3">
-        <p className="text-[13px] font-semibold text-text-mid">Maintenance mode</p>
-        <p className="mt-0.5 text-[12px] leading-[1.5] text-text-faint">
-          Not built yet. Serving a branded 503 needs a responder service on the node — Traefik has no middleware that
-          returns a body of ours — so it ships with that responder rather than as a toggle that does nothing.
-        </p>
+      <Maintenance appId={appId} on={policy.maintenance_mode} since={policy.maintenance_since ?? null} onSaved={refresh} />
+    </div>
+  );
+}
+
+// The third capability, and the one with the largest blast radius: while it is
+// on NOBODY reaches the app through the front door, including an allowlisted
+// operator. That is stated here rather than softened, because an "allowlist
+// bypasses maintenance" rule was considered and rejected — an operator who
+// allowlisted the office would never see the page they are showing the world,
+// then lift it believing it had never applied (§7).
+function Maintenance({
+  appId,
+  on,
+  since,
+  onSaved,
+}: {
+  appId: string;
+  on: boolean;
+  since: string | null;
+  onSaved: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+
+  const settled = (title: string) => () => {
+    onSaved();
+    setConfirming(false);
+    toastSuccess({ title, detail: "The Proxy picks it up within a reconcile — no deploy needed." });
+  };
+  const start = useStartMaintenance({ mutation: { onSuccess: settled("Maintenance page is up") } });
+  const end = useEndMaintenance({ mutation: { onSuccess: settled("Maintenance page is down") } });
+
+  return (
+    <div className="px-4 py-3.5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] font-semibold text-text">Maintenance mode</p>
+          <p className="mt-0.5 text-[12.5px] leading-[1.5] text-text-mid">
+            Serve a holding page while you migrate. The app keeps running, keeps passing its health check, and can
+            still be deployed underneath — only the route moves.
+          </p>
+          <p className="mono mt-1 text-[11px] text-text-faint">
+            {on ? `on · ${elapsedSince(since)} · everyone gets a 503` : "off · visitors reach the app normally"}
+          </p>
+        </div>
+        <div className="shrink-0">
+          {on ? (
+            <ActionButton
+              variant="secondary"
+              size="sm"
+              state={end.isPending ? "busy" : "idle"}
+              busyLabel="Lifting…"
+              onClick={() => end.mutate({ id: appId })}
+            >
+              Lift maintenance
+            </ActionButton>
+          ) : (
+            <Button type="button" variant="secondary" size="sm" onClick={() => setConfirming(true)}>
+              Put up the page
+            </Button>
+          )}
+        </div>
       </div>
+
+      {/* Downtime on purpose is still downtime, and vision.md allows opting
+          into it but not GETTING it by surprise. So raising the page is
+          confirmed and lifting it is not — the risk is entirely on one side. */}
+      <Dialog open={confirming} onOpenChange={setConfirming}>
+        <DialogContent
+          title="Put up the maintenance page?"
+          description="Every visitor gets a 503 with a holding page until you lift it — including you, and including anyone on the IP allowlist."
+          size="alert"
+        >
+          <div className="space-y-3">
+            <p className="text-[12.5px] leading-[1.5] text-text-mid">
+              The application keeps running and nothing is redeployed. There is no timer: it stays up until someone
+              takes it down, because a page that lifted itself mid-migration would publish a half-migrated app.
+            </p>
+            <div className="flex justify-end gap-2">
+              <DialogClose asChild>
+                <Button type="button" variant="ghost" size="lg">
+                  Cancel
+                </Button>
+              </DialogClose>
+              <ActionButton
+                variant="danger"
+                size="lg"
+                state={start.isPending ? "busy" : "idle"}
+                busyLabel="Putting it up…"
+                onClick={() => start.mutate({ id: appId })}
+              >
+                Put up the page
+              </ActionButton>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

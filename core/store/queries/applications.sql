@@ -98,6 +98,20 @@ SET ip_allowlist_enabled = $2, ip_allowlist = $3, updated_at = now()
 WHERE id = $1
 RETURNING *;
 
+-- name: SetApplicationMaintenance :one
+-- Turning maintenance on twice keeps the ORIGINAL stamp: an idempotent PUT from
+-- a migration script that retries must not reset the clock the panel shows.
+UPDATE applications
+SET maintenance_mode  = $2,
+    maintenance_since = CASE
+        WHEN $2 AND maintenance_since IS NOT NULL THEN maintenance_since
+        WHEN $2 THEN now()
+        ELSE NULL
+    END,
+    updated_at = now()
+WHERE id = $1
+RETURNING *;
+
 -- name: SetApplicationPreviewPassword :one
 UPDATE applications
 SET preview_password_enabled = $2,

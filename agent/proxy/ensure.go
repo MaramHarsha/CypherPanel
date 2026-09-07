@@ -34,6 +34,10 @@ const (
 type Engine interface {
 	EnsureContainer(ctx context.Context, cfg engine.RunConfig) error
 	ConnectNetwork(ctx context.Context, container, network string) error
+	// EnsureNetwork and RemoveContainer exist for the maintenance responder
+	// (maintenance.go), which is the second container this package owns.
+	EnsureNetwork(ctx context.Context, name string, labels map[string]string) error
+	RemoveContainer(ctx context.Context, id string) error
 }
 
 // Config configures the Traefik Proxy driver.
@@ -51,6 +55,11 @@ type Config struct {
 	// or for a hermetic test. Empty is the normal case: the account arrives in
 	// DesiredState (agent-identity-and-tls.md §4) via SetACME.
 	ACMEEmail string
+	// MaintenanceImage is the pinned image of the node's maintenance responder
+	// (app-access-control.md §7). Empty selects DefaultMaintenanceImage. It is
+	// configurable because it is the feature's one external dependency, and an
+	// operator with a mirror should be able to name it.
+	MaintenanceImage string
 	// ACMECAServer is the same kind of host-local override for the ACME
 	// directory URL (CYPHER_ACME_CASERVER, e.g. the Let's Encrypt staging
 	// endpoint). Empty defers to desired state, and if that is empty too, to

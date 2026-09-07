@@ -153,6 +153,7 @@ type Store interface {
 	// folding it in would let a config PATCH silently clear an allowlist
 	// (app-access-control.md §3).
 	SetApplicationAllowlist(ctx context.Context, id string, enabled bool, cidrs []string) (domain.Application, error)
+	SetApplicationMaintenance(ctx context.Context, id string, on bool) (domain.Application, error)
 	SetApplicationPreviewPassword(ctx context.Context, id string, enabled bool, hash string) (domain.Application, error)
 	DeleteApplication(ctx context.Context, id string) error
 	GetEnvironment(ctx context.Context, id string) (domain.Environment, error)

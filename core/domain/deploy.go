@@ -436,4 +436,10 @@ type AppAccess struct {
 	PreviewPasswordEnabled bool
 	PreviewPasswordHash    string
 	PreviewPasswordSetAt   *time.Time
+	// MaintenanceMode swaps the route's upstream for the node's maintenance
+	// responder (app-access-control.md §7). MaintenanceSince is what the panel
+	// shows to keep "left on since Friday" from being a silent outage; it is nil
+	// exactly when the mode is off.
+	MaintenanceMode  bool
+	MaintenanceSince *time.Time
 }

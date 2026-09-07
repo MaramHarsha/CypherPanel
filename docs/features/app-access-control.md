@@ -380,19 +380,40 @@ ships (ui-principles §8).
   route; a raw port is not routed. Filtering the host's own ports is a firewall,
   and CypherPanel does not manage the firewall.
 
-## Implementation note (shipped slice)
+## Implementation note (shipped)
 
-The **IP allowlist** and the **preview password** are built: migration `0040`,
-`AccessSpec` on `RouteSpec` (additive, `buf breaking` clean), the two Traefik
-middlewares appended after `<app>-mark`, fragments tightened to 0600, three API
-operations, and the Access card on the application's Settings tab.
+All three capabilities are built. The **IP allowlist** and the **preview
+password** are the two Traefik middlewares §4 describes, appended after
+`<app>-mark`, with fragments at 0600 because one of them can carry a bcrypt
+hash.
 
-**Maintenance mode is not built.** §7's responder is a second managed container
-plus a dedicated network, and it is the part of this spec with the largest
-surface and the least in common with the other two — which are pure fragment
-fields. Shipping it as a toggle before the responder exists would draw a control
-that does nothing. The card names it and says why rather than omitting it, so a
-reader who knows the design has three toggles does not conclude one was
-forgotten. The proto field is deliberately NOT reserved for it either: adding
-`maintenance` to `AccessSpec` later is additive, and a declared field nothing
-sets is a lie in the contract (ENGINEERING rule 10).
+**Maintenance mode** ships as §7's responder rather than as a middleware:
+`cypher-maintenance` is a second managed container on a dedicated network the
+Proxy joins, ensured on demand and removed once the last resource on the node
+leaves maintenance. Three things about the built version are worth recording
+against what this spec assumed:
+
+- **There is no reserved fragment.** §8.2 warns that a shared service must be
+  defined once or the file provider reads duplicate definitions — true of the
+  shape where each router names a common service. The built version takes §7
+  literally instead: the application's own service keeps its own name and only
+  its load-balancer server moves, so there is exactly one definition per
+  application and nothing to reserve. §8.1's own instruction confirms this is
+  the intended shape — it says the *applied* upstream under maintenance is the
+  responder's, which is only readable back from the app's own fragment.
+- **The responder's image is `nginx:1.27-alpine` by default**, overridable per
+  node with `CYPHER_MAINTENANCE_IMAGE`. Its whole configuration is
+  `return 503` with `Retry-After: 300`, `Cache-Control: no-store` and a
+  self-contained page that loads nothing and names nothing — asserted by a test
+  that refuses the string `cypher` in it as readily as `<script`.
+- **The sweep is armed at agent start, not per cycle.** A responder left running
+  by a previous agent process is invisible to the next one, so `RemoveMaintenance`
+  does exactly one daemon call after a restart and then nothing at all until a
+  page is actually raised. That is what "a node that never uses this pays
+  nothing" costs in practice: one `DELETE` that answers 404.
+
+The failure path is the one §8 specifies and is covered by a test that names it:
+a responder that cannot start leaves the route untouched, so the application
+keeps serving, and the app is reported `degraded` with the pull error in
+`status_detail`. It never takes an application down as a side effect of failing
+to take it down politely.

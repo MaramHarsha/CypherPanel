@@ -18,4 +18,10 @@ export interface AppAccess {
      * @nullable
      */
   preview_password_set_at?: string | null;
+  maintenance_mode: boolean;
+  /**
+     * When the holding page went up; null when it is down. The failure mode of this feature is maintenance LEFT ON — a Friday migration and a Monday of silence — so the panel counts from this stamp. Turning maintenance on again while it is already on deliberately does not reset it.
+     * @nullable
+     */
+  maintenance_since?: string | null;
 }
