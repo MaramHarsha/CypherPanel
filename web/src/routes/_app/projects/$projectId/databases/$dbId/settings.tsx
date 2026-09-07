@@ -88,7 +88,13 @@ function DatabaseSettings() {
                 confirmName={d.name}
                 actionLabel="Delete database"
                 pending={del.isPending}
-                onConfirm={() => del.mutate({ id: dbId })}
+                // delete_volume=true, because the sentence above and the
+                // blast radius below BOTH promise the data volume goes. They
+                // promised it while the request sent nothing, so the volume
+                // survived on the host after the operator had been told twice
+                // that it was gone — disk nobody could account for, and data
+                // somebody believed was deleted.
+                onConfirm={() => del.mutate({ id: dbId, params: { delete_volume: true } })}
               />
             </div>
           </div>

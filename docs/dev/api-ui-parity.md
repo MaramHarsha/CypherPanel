@@ -117,3 +117,56 @@ that about other people's code.
 `make parity` is the one target that can fail on a machine where everything else
 builds — which is why the missing-dependency message names the install command
 rather than leaving a stack trace.
+
+## The layer below: `schema-contract-parity.py`
+
+`api-ui-parity.py` compares the CONTRACT against the screens, so it cannot see a
+capability the contract never declared. That blind spot is not hypothetical: it
+reported **no gaps** on a branch where `github_installation_id` was present in
+the migration, the sqlc queries, the store, the domain struct, the scheduler and
+the agent, and absent from `openapi.yaml`. Correctly and uselessly.
+
+`scripts/schema-contract-parity.py` asks the question one layer down: **is every
+operator-facing column the database stores expressible through the contract at
+all.** It reads `core/store/db/models.go` — sqlc's own output, so the column list
+cannot drift from the schema — and resolves, per table, the schemas that describe
+it, following `$ref`, `allOf` and array `items`, plus query and path parameters.
+
+Both run from `make parity`.
+
+### Getting it to actually work took three falsification rounds
+
+The check was written because of `github_installation_id`, and the first three
+versions of it **did not catch `github_installation_id`**. Each was found by
+deleting the field from the contract and re-running, which is the only test that
+matters for a tool like this:
+
+1. The filter excluded `.*_id` as structural. That excludes the foreign keys an
+   operator *chooses* — a deploy key, a registry, an App installation — which are
+   exactly the ones that go missing. Now only a specific list of structural
+   parent ids is excluded.
+2. The match was against a flat set of every property name anywhere in the
+   document. Every schema has an `id`, so any column ending in `_id` matched
+   something. Now the check is per table, against the schemas that describe it.
+3. The suffix match still allowed a bare `id` to count as evidence. Now it does
+   not.
+
+A check that cannot catch the bug it was written for is worse than no check: it
+reports a clean run and stops anyone looking.
+
+### What it found
+
+`Database.delete_volume`. The column existed, the handler read it as a query
+parameter, and the OpenAPI document never declared it — so no generated client
+could send it. Meanwhile the panel's own delete dialog told the operator it
+"deletes its data volume", and its confirmation listed "the container and its
+data volume — permanently". The request sent nothing, the volume survived on the
+host, and the operator had been told twice that their data was gone. That is a
+worse shape than a missing control: a screen that promises what the API does not
+do.
+
+### Unmapped tables are reported, never skipped
+
+A table with no entry in `TABLE_SCHEMAS` and none in `INTERNAL_TABLES` is
+printed as *not checked*. Silence about what was not examined is the failure mode
+this whole file exists to prevent.

@@ -96,7 +96,8 @@ e2e: ## Browser regression tests against a real panel (web/e2e/README.md)
 	./scripts/e2e.sh
 
 .PHONY: parity
-parity: ## Audit that every mutating API field is reachable from a screen (docs/dev/api-ui-parity.md)
+parity: ## Audit that every capability is reachable: schema -> contract -> screen (docs/dev/api-ui-parity.md)
+	python3 scripts/schema-contract-parity.py --check
 	python3 scripts/api-ui-parity.py --check
 
 .PHONY: vet

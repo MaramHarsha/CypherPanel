@@ -132,6 +132,7 @@ export * from './databaseRestoreStatus.ts';
 export * from './databaseRestoreStep.ts';
 export * from './databaseStatus.ts';
 export * from './deleteComposeStackParams.ts';
+export * from './deleteDatabaseParams.ts';
 export * from './deleteMailboxParams.ts';
 export * from './denyAccessRequestRequest.ts';
 export * from './deployApproval.ts';

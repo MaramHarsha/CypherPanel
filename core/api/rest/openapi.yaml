@@ -5415,6 +5415,26 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
       operationId: deleteDatabase
+      parameters:
+        - name: delete_volume
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+          description: >-
+            Also destroy the data volume. This is the difference between "the
+            container is gone" and "the data is gone", and it defaults to FALSE
+            so a delete cannot take data with it by accident.
+
+
+            It was undeclared here for its whole life, which meant no generated
+            client could send it — while the panel's own delete dialog told the
+            operator it "deletes its data volume". It did not: the volume
+            survived on the host, holding disk nobody could account for, after
+            the operator had been told twice that it was gone.
+
+
+            Backup files already uploaded to an S3 target are unaffected either
+            way.
       tags: [databases]
       summary: Delete a database
       responses:
