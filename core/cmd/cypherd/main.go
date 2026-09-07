@@ -10,6 +10,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -32,6 +33,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/protobuf/proto"
+
+	robfig "github.com/robfig/cron/v3"
 
 	"github.com/MaramHarsha/cypherpanel/core/access"
 	"github.com/MaramHarsha/cypherpanel/core/alerts"
@@ -58,6 +61,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/notify"
 	"github.com/MaramHarsha/cypherpanel/core/onboarding"
 	"github.com/MaramHarsha/cypherpanel/core/paneltls"
+	"github.com/MaramHarsha/cypherpanel/core/planebackup"
 	"github.com/MaramHarsha/cypherpanel/core/previews"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
 	"github.com/MaramHarsha/cypherpanel/core/protection"
@@ -140,6 +144,16 @@ func main() {
 	// the NEW binary before starting the service, so a migration failure is
 	// attributable ("migration 42 failed") rather than "the panel did not come
 	// back". Boot-time migration then finds nothing to do.
+	// `cypherd restore` recovers a control plane on a host that has never seen
+	// this panel before (plane-disaster-recovery.md §6). It runs with the plane
+	// stopped, and there is deliberately no equivalent button in the panel.
+	if len(os.Args) > 1 && os.Args[1] == "restore" {
+		if err := runRestore(log, os.Args[2:]); err != nil {
+			log.Error("restore failed", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "migrate" {
 		if err := runMigrate(log); err != nil {
 			log.Error("migrate failed", "error", err)
@@ -718,6 +732,24 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 			string(access), string(secret), bytes.NewReader(body), int64(len(body)))
 	})
 
+	// The control plane backing itself up (plane-disaster-recovery.md). The
+	// archive is written to an existing Backup Target and encrypted to a public
+	// key the operator holds the private half of — the plane can only ever
+	// write, which is why the master key can travel inside it.
+	store.SetTableSorter(planebackup.SortTables)
+	planeObjects := planeObjectStore{box: box}
+	planeDR := planebackup.New(planebackup.Options{
+		Store: st, DB: st.BackupSurface(), Enc: planebackup.AgeCrypto{},
+		Objects: planeObjects, PanelVersion: version,
+		MasterKey: os.Getenv("CYPHERD_MASTER_KEY"),
+		Log:       log.With("component", "plane-backup"),
+	})
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		planeDR.Run(ctx, time.Minute, planeSnapshotDue)
+	}()
+
 	drainSvc := logdrain.NewService(st, box, box)
 	drainMgr := logdrain.New(logdrain.Options{
 		Store: st, Bus: busDrainAdapter{b}, Opener: box,
@@ -796,6 +828,8 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		Alerts:           st,
 		Upgrades:         upgradeSvc,
 		LogDrains:        drainSvc,
+		PlaneDR:          planeDR,
+		PlaneDRFetch:     planeObjects.Get,
 		Updates:          updateChecker,
 		AlertBacktest:    alertEval,
 		StatusServer:     statusSrv,
@@ -954,4 +988,78 @@ func (a busDrainAdapter) ConsumeRuntimeLogs(ctx context.Context, durable string,
 
 func (a busDrainAdapter) DeleteRuntimeLogConsumer(ctx context.Context, durable string) error {
 	return a.b.DeleteRuntimeLogConsumer(ctx, durable)
+}
+
+// planeObjectStore writes and reads the plane's own snapshots, through the same
+// signer the agent's backups use. The target's keys are unsealed per call and
+// never held: a long-lived credential in memory is a credential in a core dump.
+type planeObjectStore struct{ box *secret.Box }
+
+func (p planeObjectStore) creds(t domain.BackupTarget) (access, secretKey string, err error) {
+	a, err := p.box.Open(t.AccessKeyCT, t.AccessKeyNonce)
+	if err != nil {
+		return "", "", fmt.Errorf("unsealing the target's access key: %w", err)
+	}
+	s, err := p.box.Open(t.SecretKeyCT, t.SecretKeyNonce)
+	if err != nil {
+		return "", "", fmt.Errorf("unsealing the target's secret key: %w", err)
+	}
+	return string(a), string(s), nil
+}
+
+func (p planeObjectStore) Put(ctx context.Context, t domain.BackupTarget, key string, body []byte) error {
+	access, secretKey, err := p.creds(t)
+	if err != nil {
+		return err
+	}
+	return s3.New().Upload(ctx, t.Endpoint, t.Bucket, t.Region, p.key(t, key),
+		access, secretKey, bytes.NewReader(body), int64(len(body)))
+}
+
+func (p planeObjectStore) Delete(ctx context.Context, t domain.BackupTarget, key string) error {
+	access, secretKey, err := p.creds(t)
+	if err != nil {
+		return err
+	}
+	return s3.New().Delete(ctx, t.Endpoint, t.Bucket, t.Region, p.key(t, key), access, secretKey)
+}
+
+func (p planeObjectStore) Get(ctx context.Context, t domain.BackupTarget, key string) ([]byte, error) {
+	access, secretKey, err := p.creds(t)
+	if err != nil {
+		return nil, err
+	}
+	rc, err := s3.New().Download(ctx, t.Endpoint, t.Bucket, t.Region, p.key(t, key), access, secretKey)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rc.Close() }()
+	return io.ReadAll(rc)
+}
+
+func (p planeObjectStore) key(t domain.BackupTarget, key string) string {
+	if t.PathPrefix == "" {
+		return key
+	}
+	return strings.Trim(t.PathPrefix, "/") + "/" + key
+}
+
+// planeSnapshotDue answers "is the nightly run due" the same way every other
+// scheduled thing in this panel does: parse the cron, anchor on the last run,
+// and ask whether the next fire is in the past. One rule, one place to change
+// it if it ever changes.
+//
+// An UNPARSEABLE schedule never fires rather than firing constantly: a
+// schedule is validated when it is set, so a bad one here is defensive, and the
+// safe direction for a defensive branch is to do nothing.
+func planeSnapshotDue(schedule string, last *time.Time, now time.Time) bool {
+	parsed, err := robfig.ParseStandard(schedule)
+	if err != nil {
+		return false
+	}
+	anchor := now.Add(-24 * time.Hour)
+	if last != nil {
+		anchor = *last
+	}
+	return !parsed.Next(anchor).After(now)
 }

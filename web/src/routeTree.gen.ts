@@ -25,6 +25,7 @@ import { Route as AppSettingsAuditRouteImport } from './routes/_app/settings/aud
 import { Route as AppSettingsBackupTargetsRouteImport } from './routes/_app/settings/backup-targets'
 import { Route as AppSettingsDeployKeysRouteImport } from './routes/_app/settings/deploy-keys'
 import { Route as AppSettingsDiagnosticsRouteImport } from './routes/_app/settings/diagnostics'
+import { Route as AppSettingsDisasterRecoveryRouteImport } from './routes/_app/settings/disaster-recovery'
 import { Route as AppSettingsDnsRouteImport } from './routes/_app/settings/dns'
 import { Route as AppSettingsLogDrainsRouteImport } from './routes/_app/settings/log-drains'
 import { Route as AppSettingsMailRouteImport } from './routes/_app/settings/mail'
@@ -146,6 +147,12 @@ const AppSettingsDiagnosticsRoute = AppSettingsDiagnosticsRouteImport.update({
   path: '/diagnostics',
   getParentRoute: () => AppSettingsRoute,
 } as any)
+const AppSettingsDisasterRecoveryRoute =
+  AppSettingsDisasterRecoveryRouteImport.update({
+    id: '/disaster-recovery',
+    path: '/disaster-recovery',
+    getParentRoute: () => AppSettingsRoute,
+  } as any)
 const AppSettingsDnsRoute = AppSettingsDnsRouteImport.update({
   id: '/dns',
   path: '/dns',
@@ -388,6 +395,7 @@ export interface FileRoutesByFullPath {
   '/settings/backup-targets': typeof AppSettingsBackupTargetsRoute
   '/settings/deploy-keys': typeof AppSettingsDeployKeysRoute
   '/settings/diagnostics': typeof AppSettingsDiagnosticsRoute
+  '/settings/disaster-recovery': typeof AppSettingsDisasterRecoveryRoute
   '/settings/dns': typeof AppSettingsDnsRoute
   '/settings/log-drains': typeof AppSettingsLogDrainsRoute
   '/settings/mail': typeof AppSettingsMailRoute
@@ -444,6 +452,7 @@ export interface FileRoutesByTo {
   '/settings/backup-targets': typeof AppSettingsBackupTargetsRoute
   '/settings/deploy-keys': typeof AppSettingsDeployKeysRoute
   '/settings/diagnostics': typeof AppSettingsDiagnosticsRoute
+  '/settings/disaster-recovery': typeof AppSettingsDisasterRecoveryRoute
   '/settings/dns': typeof AppSettingsDnsRoute
   '/settings/log-drains': typeof AppSettingsLogDrainsRoute
   '/settings/mail': typeof AppSettingsMailRoute
@@ -499,6 +508,7 @@ export interface FileRoutesById {
   '/_app/settings/backup-targets': typeof AppSettingsBackupTargetsRoute
   '/_app/settings/deploy-keys': typeof AppSettingsDeployKeysRoute
   '/_app/settings/diagnostics': typeof AppSettingsDiagnosticsRoute
+  '/_app/settings/disaster-recovery': typeof AppSettingsDisasterRecoveryRoute
   '/_app/settings/dns': typeof AppSettingsDnsRoute
   '/_app/settings/log-drains': typeof AppSettingsLogDrainsRoute
   '/_app/settings/mail': typeof AppSettingsMailRoute
@@ -558,6 +568,7 @@ export interface FileRouteTypes {
     | '/settings/backup-targets'
     | '/settings/deploy-keys'
     | '/settings/diagnostics'
+    | '/settings/disaster-recovery'
     | '/settings/dns'
     | '/settings/log-drains'
     | '/settings/mail'
@@ -614,6 +625,7 @@ export interface FileRouteTypes {
     | '/settings/backup-targets'
     | '/settings/deploy-keys'
     | '/settings/diagnostics'
+    | '/settings/disaster-recovery'
     | '/settings/dns'
     | '/settings/log-drains'
     | '/settings/mail'
@@ -668,6 +680,7 @@ export interface FileRouteTypes {
     | '/_app/settings/backup-targets'
     | '/_app/settings/deploy-keys'
     | '/_app/settings/diagnostics'
+    | '/_app/settings/disaster-recovery'
     | '/_app/settings/dns'
     | '/_app/settings/log-drains'
     | '/_app/settings/mail'
@@ -831,6 +844,13 @@ declare module '@tanstack/react-router' {
       path: '/diagnostics'
       fullPath: '/settings/diagnostics'
       preLoaderRoute: typeof AppSettingsDiagnosticsRouteImport
+      parentRoute: typeof AppSettingsRoute
+    }
+    '/_app/settings/disaster-recovery': {
+      id: '/_app/settings/disaster-recovery'
+      path: '/disaster-recovery'
+      fullPath: '/settings/disaster-recovery'
+      preLoaderRoute: typeof AppSettingsDisasterRecoveryRouteImport
       parentRoute: typeof AppSettingsRoute
     }
     '/_app/settings/dns': {
@@ -1123,6 +1143,7 @@ interface AppSettingsRouteChildren {
   AppSettingsBackupTargetsRoute: typeof AppSettingsBackupTargetsRoute
   AppSettingsDeployKeysRoute: typeof AppSettingsDeployKeysRoute
   AppSettingsDiagnosticsRoute: typeof AppSettingsDiagnosticsRoute
+  AppSettingsDisasterRecoveryRoute: typeof AppSettingsDisasterRecoveryRoute
   AppSettingsDnsRoute: typeof AppSettingsDnsRoute
   AppSettingsLogDrainsRoute: typeof AppSettingsLogDrainsRoute
   AppSettingsMailRoute: typeof AppSettingsMailRoute
@@ -1144,6 +1165,7 @@ const AppSettingsRouteChildren: AppSettingsRouteChildren = {
   AppSettingsBackupTargetsRoute: AppSettingsBackupTargetsRoute,
   AppSettingsDeployKeysRoute: AppSettingsDeployKeysRoute,
   AppSettingsDiagnosticsRoute: AppSettingsDiagnosticsRoute,
+  AppSettingsDisasterRecoveryRoute: AppSettingsDisasterRecoveryRoute,
   AppSettingsDnsRoute: AppSettingsDnsRoute,
   AppSettingsLogDrainsRoute: AppSettingsLogDrainsRoute,
   AppSettingsMailRoute: AppSettingsMailRoute,

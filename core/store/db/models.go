@@ -501,6 +501,38 @@ type PlaneCa struct {
 	CreatedAt    pgtype.Timestamptz
 }
 
+type PlaneDrConfig struct {
+	ID                  int32
+	TargetID            string
+	PathPrefix          string
+	Schedule            string
+	RetentionCount      int32
+	Recipient           string
+	RecipientMode       string
+	RecipientVerifiedAt pgtype.Timestamptz
+	LastRunAt           pgtype.Timestamptz
+	LastStatus          string
+	LastDetail          string
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}
+
+type PlaneSnapshot struct {
+	ID            string
+	ObjectKey     string
+	PanelVersion  string
+	SchemaVersion int64
+	SizeBytes     int64
+	Sha256        string
+	RowCount      int64
+	Recipient     string
+	Status        string
+	Detail        string
+	StartedAt     pgtype.Timestamptz
+	FinishedAt    pgtype.Timestamptz
+	PrunedAt      pgtype.Timestamptz
+}
+
 type Preview struct {
 	ID            string
 	SourceAppID   string

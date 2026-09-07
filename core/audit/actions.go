@@ -112,9 +112,17 @@ const (
 	// Log drains (log-drains.md §9). Where an install's logs go is a
 	// disclosure decision, so the record names the kind and the scope — never
 	// the config, which holds the credential.
-	ActionLogDrainCreated    = "log_drain.created"
-	ActionLogDrainChanged    = "log_drain.changed"
-	ActionLogDrainDeleted    = "log_drain.deleted"
+	ActionLogDrainCreated = "log_drain.created"
+	ActionLogDrainChanged = "log_drain.changed"
+	ActionLogDrainDeleted = "log_drain.deleted"
+	// The plane's own disaster recovery. Where a complete copy of the panel —
+	// master key included — is written is the most consequential destination
+	// in the install, so the record names the destination and the mode. Never
+	// the key: the public half is harmless and the private half is not ours.
+	ActionPlaneDRArmed       = "panel.dr_armed"
+	ActionPlaneDRDisarmed    = "panel.dr_disarmed"
+	ActionPlaneDRVerified    = "panel.dr_verified"
+	ActionPlaneSnapshotTaken = "panel.snapshot_taken"
 	ActionEnvironmentCreated = "environment.created"
 	ActionEnvironmentRenamed = "environment.renamed"
 	ActionEnvironmentDeleted = "environment.deleted"
@@ -325,6 +333,11 @@ var actions = map[string]bool{
 	ActionLogDrainCreated: true,
 	ActionLogDrainChanged: true,
 	ActionLogDrainDeleted: true,
+
+	ActionPlaneDRArmed:       true,
+	ActionPlaneDRDisarmed:    true,
+	ActionPlaneDRVerified:    true,
+	ActionPlaneSnapshotTaken: true,
 
 	ActionRegistryCreated: true, ActionRegistryUpdated: true,
 	ActionRegistryDeleted: true,

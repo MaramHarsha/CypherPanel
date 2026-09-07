@@ -30,6 +30,8 @@ import type {
   AlertBacktest,
   AlertEvent,
   AlertRule,
+  ArmPlaneDRRequest,
+  ArmPlaneDRResponse,
   BadRequestResponse,
   Changelog,
   ChooseAccountError,
@@ -54,6 +56,8 @@ import type {
   PanelUpgrade,
   PanelUpgradeHistory,
   PanelVersion,
+  PlaneDisasterRecovery,
+  PlaneSnapshot,
   PreflightPanelUpdateParams,
   RestorePanelSnapshotBody,
   SetAlertRuleEnabledBody,
@@ -65,7 +69,8 @@ import type {
   UnauthorizedResponse,
   UnavailableResponse,
   UpdatePreflight,
-  Usage
+  Usage,
+  VerifyRecoveryKeyBody
 } from '../model';
 
 import { apiFetch } from '../../client.ts';
@@ -2145,7 +2150,496 @@ export const useRestorePanelSnapshot = <TError = BadRequestResponse | Unauthoriz
       > => {
       return useMutation(getRestorePanelSnapshotMutationOptions(options), queryClient);
     }
-    export const getListLogDrainsUrl = () => {
+    export const getGetPlaneDisasterRecoveryUrl = () => {
+
+
+
+
+  return `/api/v1/panel/disaster-recovery`
+}
+
+/**
+ * `armed` is whether a configuration exists at all — disarming deletes it rather than flipping a flag, so there is never a stale configuration beside a boolean.
+ *
+ * `recipient_verified_at` being null means ARMED BUT NOT PROVEN: the panel has never watched anyone decrypt with the matching key, so it must not imply the operator still has it. "Armed" and "recoverable" are different claims.
+ * @summary Whether this panel backs itself up (panel OWNER, session only)
+ */
+export const getPlaneDisasterRecovery = async ( options?: RequestInit): Promise<PlaneDisasterRecovery> => {
+
+  return apiFetch<PlaneDisasterRecovery>(getGetPlaneDisasterRecoveryUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPlaneDisasterRecoveryQueryKey = () => {
+    return [
+    `/api/v1/panel/disaster-recovery`
+    ] as const;
+    }
+
+
+export const getGetPlaneDisasterRecoveryQueryOptions = <TData = Awaited<ReturnType<typeof getPlaneDisasterRecovery>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPlaneDisasterRecovery>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPlaneDisasterRecoveryQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPlaneDisasterRecovery>>> = ({ signal }) => getPlaneDisasterRecovery({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPlaneDisasterRecovery>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetPlaneDisasterRecoveryQueryResult = NonNullable<Awaited<ReturnType<typeof getPlaneDisasterRecovery>>>
+export type GetPlaneDisasterRecoveryQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useGetPlaneDisasterRecovery<TData = Awaited<ReturnType<typeof getPlaneDisasterRecovery>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPlaneDisasterRecovery>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getPlaneDisasterRecovery>>,
+          TError,
+          Awaited<ReturnType<typeof getPlaneDisasterRecovery>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetPlaneDisasterRecovery<TData = Awaited<ReturnType<typeof getPlaneDisasterRecovery>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPlaneDisasterRecovery>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getPlaneDisasterRecovery>>,
+          TError,
+          Awaited<ReturnType<typeof getPlaneDisasterRecovery>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetPlaneDisasterRecovery<TData = Awaited<ReturnType<typeof getPlaneDisasterRecovery>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPlaneDisasterRecovery>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Whether this panel backs itself up (panel OWNER, session only)
+ */
+
+export function useGetPlaneDisasterRecovery<TData = Awaited<ReturnType<typeof getPlaneDisasterRecovery>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPlaneDisasterRecovery>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetPlaneDisasterRecoveryQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getArmPlaneDisasterRecoveryUrl = () => {
+
+
+
+
+  return `/api/v1/panel/disaster-recovery`
+}
+
+/**
+ * A snapshot of this panel's database is WORTHLESS without the master key — the CA that signs every agent certificate is sealed with it — and CATASTROPHIC with it. So the master key travels inside the archive, and the ARCHIVE is what is protected: encrypted to a public key whose private half the panel never holds.
+ *
+ * `generate: true` mints the pair and returns the private half in THIS response and never again. There is no endpoint that can return it later and no column that holds it. Alternatively pass a `recipient` you already have the key for.
+ * @summary Arm nightly plane snapshots (panel OWNER, session only)
+ */
+export const armPlaneDisasterRecovery = async (armPlaneDRRequest: ArmPlaneDRRequest, options?: RequestInit): Promise<ArmPlaneDRResponse> => {
+
+  return apiFetch<ArmPlaneDRResponse>(getArmPlaneDisasterRecoveryUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(armPlaneDRRequest)
+  }
+);}
+
+
+
+
+
+export const getArmPlaneDisasterRecoveryMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof armPlaneDisasterRecovery>>, TError,{data: ArmPlaneDRRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof armPlaneDisasterRecovery>>, TError,{data: ArmPlaneDRRequest}, TContext> => {
+
+const mutationKey = ['armPlaneDisasterRecovery'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof armPlaneDisasterRecovery>>, {data: ArmPlaneDRRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  armPlaneDisasterRecovery(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ArmPlaneDisasterRecoveryMutationResult = NonNullable<Awaited<ReturnType<typeof armPlaneDisasterRecovery>>>
+    export type ArmPlaneDisasterRecoveryMutationBody = ArmPlaneDRRequest
+    export type ArmPlaneDisasterRecoveryMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary Arm nightly plane snapshots (panel OWNER, session only)
+ */
+export const useArmPlaneDisasterRecovery = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof armPlaneDisasterRecovery>>, TError,{data: ArmPlaneDRRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof armPlaneDisasterRecovery>>,
+        TError,
+        {data: ArmPlaneDRRequest},
+        TContext
+      > => {
+      return useMutation(getArmPlaneDisasterRecoveryMutationOptions(options), queryClient);
+    }
+    export const getDisarmPlaneDisasterRecoveryUrl = () => {
+
+
+
+
+  return `/api/v1/panel/disaster-recovery`
+}
+
+/**
+ * Archives already in the bucket are left alone. Disarming is not the same decision as discarding, and deleting an operator's off-site copies from a panel action is the one mistake with no undo.
+ * @summary Stop backing the panel up (panel OWNER, session only)
+ */
+export const disarmPlaneDisasterRecovery = async ( options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getDisarmPlaneDisasterRecoveryUrl(),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDisarmPlaneDisasterRecoveryMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof disarmPlaneDisasterRecovery>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof disarmPlaneDisasterRecovery>>, TError,void, TContext> => {
+
+const mutationKey = ['disarmPlaneDisasterRecovery'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof disarmPlaneDisasterRecovery>>, void> = () => {
+
+
+          return  disarmPlaneDisasterRecovery(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DisarmPlaneDisasterRecoveryMutationResult = NonNullable<Awaited<ReturnType<typeof disarmPlaneDisasterRecovery>>>
+
+    export type DisarmPlaneDisasterRecoveryMutationError = UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary Stop backing the panel up (panel OWNER, session only)
+ */
+export const useDisarmPlaneDisasterRecovery = <TError = UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof disarmPlaneDisasterRecovery>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof disarmPlaneDisasterRecovery>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getDisarmPlaneDisasterRecoveryMutationOptions(options), queryClient);
+    }
+    export const getRunPlaneSnapshotUrl = () => {
+
+
+
+
+  return `/api/v1/panel/disaster-recovery/run`
+}
+
+/**
+ * @summary Take a snapshot now (panel OWNER, session only)
+ */
+export const runPlaneSnapshot = async ( options?: RequestInit): Promise<PlaneSnapshot> => {
+
+  return apiFetch<PlaneSnapshot>(getRunPlaneSnapshotUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRunPlaneSnapshotMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runPlaneSnapshot>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof runPlaneSnapshot>>, TError,void, TContext> => {
+
+const mutationKey = ['runPlaneSnapshot'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof runPlaneSnapshot>>, void> = () => {
+
+
+          return  runPlaneSnapshot(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RunPlaneSnapshotMutationResult = NonNullable<Awaited<ReturnType<typeof runPlaneSnapshot>>>
+
+    export type RunPlaneSnapshotMutationError = UnauthorizedResponse | ForbiddenResponse | Error
+
+    /**
+ * @summary Take a snapshot now (panel OWNER, session only)
+ */
+export const useRunPlaneSnapshot = <TError = UnauthorizedResponse | ForbiddenResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runPlaneSnapshot>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof runPlaneSnapshot>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getRunPlaneSnapshotMutationOptions(options), queryClient);
+    }
+    export const getVerifyRecoveryKeyUrl = () => {
+
+
+
+
+  return `/api/v1/panel/disaster-recovery/verify`
+}
+
+/**
+ * Because a backup nobody can open is worse than no backup: it is a year of green checkmarks ending in a discovery. The key is used to decrypt one manifest and discarded — never stored, never logged, never returned.
+ * @summary Prove the Recovery Key still opens a snapshot (panel OWNER, session only)
+ */
+export const verifyRecoveryKey = async (verifyRecoveryKeyBody: VerifyRecoveryKeyBody, options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getVerifyRecoveryKeyUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(verifyRecoveryKeyBody)
+  }
+);}
+
+
+
+
+
+export const getVerifyRecoveryKeyMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyRecoveryKey>>, TError,{data: VerifyRecoveryKeyBody}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof verifyRecoveryKey>>, TError,{data: VerifyRecoveryKeyBody}, TContext> => {
+
+const mutationKey = ['verifyRecoveryKey'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof verifyRecoveryKey>>, {data: VerifyRecoveryKeyBody}> = (props) => {
+          const {data} = props ?? {};
+
+          return  verifyRecoveryKey(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type VerifyRecoveryKeyMutationResult = NonNullable<Awaited<ReturnType<typeof verifyRecoveryKey>>>
+    export type VerifyRecoveryKeyMutationBody = VerifyRecoveryKeyBody
+    export type VerifyRecoveryKeyMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary Prove the Recovery Key still opens a snapshot (panel OWNER, session only)
+ */
+export const useVerifyRecoveryKey = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyRecoveryKey>>, TError,{data: VerifyRecoveryKeyBody}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof verifyRecoveryKey>>,
+        TError,
+        {data: VerifyRecoveryKeyBody},
+        TContext
+      > => {
+      return useMutation(getVerifyRecoveryKeyMutationOptions(options), queryClient);
+    }
+    export const getListPlaneSnapshotsUrl = () => {
+
+
+
+
+  return `/api/v1/panel/disaster-recovery/snapshots`
+}
+
+/**
+ * An INDEX of what is in the bucket, not the truth about it. The bucket is the truth, and a row here whose object was deleted out of band describes something gone.
+ * @summary The snapshot index (panel OWNER, session only)
+ */
+export const listPlaneSnapshots = async ( options?: RequestInit): Promise<PlaneSnapshot[]> => {
+
+  return apiFetch<PlaneSnapshot[]>(getListPlaneSnapshotsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListPlaneSnapshotsQueryKey = () => {
+    return [
+    `/api/v1/panel/disaster-recovery/snapshots`
+    ] as const;
+    }
+
+
+export const getListPlaneSnapshotsQueryOptions = <TData = Awaited<ReturnType<typeof listPlaneSnapshots>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPlaneSnapshots>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListPlaneSnapshotsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listPlaneSnapshots>>> = ({ signal }) => listPlaneSnapshots({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listPlaneSnapshots>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListPlaneSnapshotsQueryResult = NonNullable<Awaited<ReturnType<typeof listPlaneSnapshots>>>
+export type ListPlaneSnapshotsQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useListPlaneSnapshots<TData = Awaited<ReturnType<typeof listPlaneSnapshots>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPlaneSnapshots>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listPlaneSnapshots>>,
+          TError,
+          Awaited<ReturnType<typeof listPlaneSnapshots>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListPlaneSnapshots<TData = Awaited<ReturnType<typeof listPlaneSnapshots>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPlaneSnapshots>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listPlaneSnapshots>>,
+          TError,
+          Awaited<ReturnType<typeof listPlaneSnapshots>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListPlaneSnapshots<TData = Awaited<ReturnType<typeof listPlaneSnapshots>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPlaneSnapshots>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary The snapshot index (panel OWNER, session only)
+ */
+
+export function useListPlaneSnapshots<TData = Awaited<ReturnType<typeof listPlaneSnapshots>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPlaneSnapshots>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListPlaneSnapshotsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getListLogDrainsUrl = () => {
 
 
 

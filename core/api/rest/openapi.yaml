@@ -1822,6 +1822,109 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { description: An upgrade is already running., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
+  /api/v1/panel/disaster-recovery:
+    get:
+      operationId: getPlaneDisasterRecovery
+      tags: [panel]
+      summary: Whether this panel backs itself up (panel OWNER, session only)
+      description: >-
+        `armed` is whether a configuration exists at all — disarming deletes it
+        rather than flipping a flag, so there is never a stale configuration
+        beside a boolean.
+
+
+        `recipient_verified_at` being null means ARMED BUT NOT PROVEN: the panel
+        has never watched anyone decrypt with the matching key, so it must not
+        imply the operator still has it. "Armed" and "recoverable" are different
+        claims.
+      responses:
+        "200": { description: The configuration., content: { application/json: { schema: { $ref: "#/components/schemas/PlaneDisasterRecovery" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: armPlaneDisasterRecovery
+      tags: [panel]
+      summary: Arm nightly plane snapshots (panel OWNER, session only)
+      description: >-
+        A snapshot of this panel's database is WORTHLESS without the master key
+        — the CA that signs every agent certificate is sealed with it — and
+        CATASTROPHIC with it. So the master key travels inside the archive, and
+        the ARCHIVE is what is protected: encrypted to a public key whose
+        private half the panel never holds.
+
+
+        `generate: true` mints the pair and returns the private half in THIS
+        response and never again. There is no endpoint that can return it later
+        and no column that holds it. Alternatively pass a `recipient` you
+        already have the key for.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ArmPlaneDRRequest" } } }
+      responses:
+        "200":
+          description: Armed. `recovery_key` appears here and nowhere else, ever.
+          content: { application/json: { schema: { $ref: "#/components/schemas/ArmPlaneDRResponse" } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    delete:
+      operationId: disarmPlaneDisasterRecovery
+      tags: [panel]
+      summary: Stop backing the panel up (panel OWNER, session only)
+      description: >-
+        Archives already in the bucket are left alone. Disarming is not the same
+        decision as discarding, and deleting an operator's off-site copies from
+        a panel action is the one mistake with no undo.
+      responses:
+        "204": { description: Disarmed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/panel/disaster-recovery/run:
+    post:
+      operationId: runPlaneSnapshot
+      tags: [panel]
+      summary: Take a snapshot now (panel OWNER, session only)
+      responses:
+        "202": { description: Taken., content: { application/json: { schema: { $ref: "#/components/schemas/PlaneSnapshot" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Disaster recovery is not armed., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /api/v1/panel/disaster-recovery/verify:
+    post:
+      operationId: verifyRecoveryKey
+      tags: [panel]
+      summary: Prove the Recovery Key still opens a snapshot (panel OWNER, session only)
+      description: >-
+        Because a backup nobody can open is worse than no backup: it is a year
+        of green checkmarks ending in a discovery. The key is used to decrypt one
+        manifest and discarded — never stored, never logged, never returned.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [recovery_key], properties: { recovery_key: { type: string } } } } }
+      responses:
+        "204": { description: It opens. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/panel/disaster-recovery/snapshots:
+    get:
+      operationId: listPlaneSnapshots
+      tags: [panel]
+      summary: The snapshot index (panel OWNER, session only)
+      description: >-
+        An INDEX of what is in the bucket, not the truth about it. The bucket is
+        the truth, and a row here whose object was deleted out of band describes
+        something gone.
+      responses:
+        "200":
+          description: Recent snapshots.
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/PlaneSnapshot" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /api/v1/log-drains:
     get:
       operationId: listLogDrains
@@ -8353,6 +8456,62 @@ components:
         status: { type: string, enum: [ok, warn, refused] }
         text: { type: string }
         remedy: { type: string, description: "What to do about it. A refusal with no remedy is a dead end." }
+
+    PlaneDisasterRecovery:
+      type: object
+      required: [armed]
+      properties:
+        armed: { type: boolean, description: "Whether a configuration exists at all. Disarming deletes it rather than flipping a flag." }
+        target_id: { type: string }
+        path_prefix: { type: string }
+        schedule: { type: string, description: Five-field cron. }
+        retention_count: { type: integer, description: "A COUNT, not an age: nightly and keep fourteen is two weeks; hourly and keep fourteen is fourteen hours." }
+        recipient: { type: string, description: "The PUBLIC half, safe to return. The private half is not here because the panel does not have it." }
+        recipient_mode: { type: string, enum: [generated, provided] }
+        recipient_verified_at:
+          type: [string, "null"]
+          format: date-time
+          description: "Null means armed but NOT PROVEN — the panel has never seen anyone decrypt with the matching key."
+        last_run_at: { type: [string, "null"], format: date-time }
+        last_status: { type: string }
+        last_detail: { type: string }
+    ArmPlaneDRRequest:
+      type: object
+      required: [target_id]
+      properties:
+        target_id: { type: string }
+        path_prefix: { type: string }
+        schedule: { type: string }
+        retention_count: { type: integer }
+        generate: { type: boolean, description: "Mint the pair here. The private half comes back once and never again." }
+        recipient: { type: string, description: "An age public key you already hold the private half of." }
+    ArmPlaneDRResponse:
+      type: object
+      required: [config]
+      properties:
+        config: { $ref: "#/components/schemas/PlaneDisasterRecovery" }
+        recovery_key:
+          type: string
+          description: >-
+            Present exactly once, in the response to the request that generated
+            it. It is the only thing that can open a snapshot, and it is exactly
+            as powerful as the panel's master key — because the master key is
+            inside.
+    PlaneSnapshot:
+      type: object
+      required: [id, object_key, panel_version, schema_version, size_bytes, sha256, row_count, status, detail, started_at]
+      properties:
+        id: { type: string, description: snap_… prefixed ID. }
+        object_key: { type: string }
+        panel_version: { type: string }
+        schema_version: { type: integer, format: int64 }
+        size_bytes: { type: integer, format: int64 }
+        sha256: { type: string }
+        row_count: { type: integer, format: int64 }
+        status: { type: string, enum: [running, succeeded, failed] }
+        detail: { type: string }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
 
     LogDrain:
       type: object

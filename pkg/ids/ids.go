@@ -124,6 +124,9 @@ const (
 	// Log drains (log-drains.md §3).
 	PrefixLogDrain = "ldr"
 
+	// Plane snapshots (plane-disaster-recovery.md §9.2).
+	PrefixPlaneSnapshot = "snap"
+
 	// V1.x: team invitations and access requests
 	// (docs/features/invitations-and-access-requests.md §2). An invite id is
 	// also the PUBLIC half of its wire token (`inv_….<secret>`), which is what

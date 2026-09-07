@@ -95,6 +95,65 @@ func Migrate(ctx context.Context, databaseURL string) error {
 	return nil
 }
 
+// RestoreMigrator replays the embedded migrations for a plane restore
+// (plane-disaster-recovery.md §6).
+//
+// The schema is rebuilt from THIS BINARY's migrations rather than carried in
+// the archive: the binary already replays them on every boot, so a restore uses
+// the mechanism exercised daily instead of a second one exercised on the worst
+// day of the year. UpTo lands the schema at the snapshot's own version, and Up
+// carries it forward afterwards.
+type RestoreMigrator struct {
+	provider *goose.Provider
+	closeDB  func() error
+}
+
+// NewRestoreMigrator opens its own handle, because goose operates on
+// database/sql and a restore runs with no Store around it.
+func NewRestoreMigrator(databaseURL string) (*RestoreMigrator, error) {
+	sqldb, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("store: opening sql handle for migrations: %w", err)
+	}
+	sub, err := fs.Sub(migrationsFS, "migrations")
+	if err != nil {
+		_ = sqldb.Close()
+		return nil, fmt.Errorf("store: locating migrations: %w", err)
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, sqldb, sub)
+	if err != nil {
+		_ = sqldb.Close()
+		return nil, fmt.Errorf("store: building migration provider: %w", err)
+	}
+	return &RestoreMigrator{provider: provider, closeDB: sqldb.Close}, nil
+}
+
+func (m *RestoreMigrator) Close() error { return m.closeDB() }
+
+func (m *RestoreMigrator) UpTo(ctx context.Context, version int64) error {
+	_, err := m.provider.UpTo(ctx, version)
+	return err
+}
+
+func (m *RestoreMigrator) Up(ctx context.Context) error {
+	_, err := m.provider.Up(ctx)
+	return err
+}
+
+// Current is the newest migration this binary carries. A snapshot needing more
+// than this cannot be restored by this build, and saying so by number is the
+// honest one-line answer.
+func (m *RestoreMigrator) Current() int64 {
+	sources := m.provider.ListSources()
+	var newest int64
+	for _, src := range sources {
+		if src.Version > newest {
+			newest = src.Version
+		}
+	}
+	return newest
+}
+
 // ─── Users ──────────────────────────────────────────────────────────────────
 
 func (s *Store) CountUsers(ctx context.Context) (int64, error) {

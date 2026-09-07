@@ -408,6 +408,10 @@ type Deps struct {
 	Upgrades UpgradeService
 	// LogDrains is the panel's outbox for log lines (log-drains.md).
 	LogDrains LogDrainService
+	// PlaneDR is the control plane backing itself up, and PlaneDRFetch reads
+	// one object back so a Recovery Key can be proven to still work.
+	PlaneDR      PlaneDRService
+	PlaneDRFetch func(ctx context.Context, target domain.BackupTarget, key string) ([]byte, error)
 	// Updates is the release-feed checker, for what version is available.
 	Updates UpdateChecker
 	// PanelURL is the panel's own advertised base URL, used to tell the
@@ -624,6 +628,16 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/v1/panel/snapshots/{id}", a.sessionOnly(a.handleSetSnapshotRetention))
 	mux.HandleFunc("DELETE /api/v1/panel/snapshots/{id}", a.sessionOnly(a.handleDeleteSnapshot))
 	mux.HandleFunc("POST /api/v1/panel/snapshots/{id}/restore", a.sessionOnly(a.handleRestoreSnapshot))
+
+	// The plane's own disaster recovery (plane-disaster-recovery.md §9).
+	// Owner and session-only: arming it decides where a complete copy of the
+	// panel, master key included, is written.
+	mux.HandleFunc("GET /api/v1/panel/disaster-recovery", a.sessionOnly(a.handleGetPlaneDR))
+	mux.HandleFunc("PUT /api/v1/panel/disaster-recovery", a.sessionOnly(a.handleArmPlaneDR))
+	mux.HandleFunc("DELETE /api/v1/panel/disaster-recovery", a.sessionOnly(a.handleDisarmPlaneDR))
+	mux.HandleFunc("POST /api/v1/panel/disaster-recovery/run", a.sessionOnly(a.handleRunPlaneDR))
+	mux.HandleFunc("POST /api/v1/panel/disaster-recovery/verify", a.sessionOnly(a.handleVerifyPlaneDR))
+	mux.HandleFunc("GET /api/v1/panel/disaster-recovery/snapshots", a.sessionOnly(a.handleListPlaneSnapshots))
 
 	// Log drains (log-drains.md §9). Panel admin: a drain spends the panel's
 	// stream, CPU and egress, and a project-scoped one still ships lines out
