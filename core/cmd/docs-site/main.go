@@ -141,7 +141,14 @@ func build(docsDir, openapiPath, version string) (*builder, error) {
 	}
 	b.site.APINav = groupEndpoints(endpoints)
 
+	// The site documents the PRODUCT, so its version is the changelog's newest
+	// release rather than the OpenAPI document's own `info.version` — those are
+	// two different numbers and only one of them is what a reader means by
+	// "which version is this". The spec version is the fallback.
 	b.site.Version = version
+	if b.site.Version == "" {
+		b.site.Version = productVersion(filepath.Join(filepath.Dir(docsDir), "CHANGELOG.md"))
+	}
 	if b.site.Version == "" {
 		b.site.Version = "v" + strings.TrimPrefix(specVersion, "v")
 	}
@@ -155,6 +162,28 @@ func build(docsDir, openapiPath, version string) (*builder, error) {
 		return nil, err
 	}
 	return b, nil
+}
+
+// productVersion is the newest release the changelog names — the file the panel
+// already embeds and renders in-panel (panel-updates.md §9), so there is one
+// home for the answer rather than two.
+func productVersion(changelog string) string {
+	raw, err := os.ReadFile(changelog) //nolint:gosec // a path derived from the docs dir
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		rest, ok := strings.CutPrefix(line, "## ")
+		if !ok {
+			continue
+		}
+		version, _, _ := strings.Cut(rest, " ")
+		version = strings.TrimSpace(version)
+		if strings.HasPrefix(version, "v") {
+			return version
+		}
+	}
+	return ""
 }
 
 // discover walks docs/ and returns every markdown file it may publish, keyed by
