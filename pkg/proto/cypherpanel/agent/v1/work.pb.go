@@ -126,6 +126,55 @@ func (DeployEvent_Outcome) EnumDescriptor() ([]byte, []int) {
 	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{20, 1}
 }
 
+type VolumeBackupEvent_Outcome int32
+
+const (
+	VolumeBackupEvent_OUTCOME_UNSPECIFIED VolumeBackupEvent_Outcome = 0
+	VolumeBackupEvent_OUTCOME_SUCCEEDED   VolumeBackupEvent_Outcome = 1
+	VolumeBackupEvent_OUTCOME_FAILED      VolumeBackupEvent_Outcome = 2
+)
+
+// Enum value maps for VolumeBackupEvent_Outcome.
+var (
+	VolumeBackupEvent_Outcome_name = map[int32]string{
+		0: "OUTCOME_UNSPECIFIED",
+		1: "OUTCOME_SUCCEEDED",
+		2: "OUTCOME_FAILED",
+	}
+	VolumeBackupEvent_Outcome_value = map[string]int32{
+		"OUTCOME_UNSPECIFIED": 0,
+		"OUTCOME_SUCCEEDED":   1,
+		"OUTCOME_FAILED":      2,
+	}
+)
+
+func (x VolumeBackupEvent_Outcome) Enum() *VolumeBackupEvent_Outcome {
+	p := new(VolumeBackupEvent_Outcome)
+	*p = x
+	return p
+}
+
+func (x VolumeBackupEvent_Outcome) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (VolumeBackupEvent_Outcome) Descriptor() protoreflect.EnumDescriptor {
+	return file_cypherpanel_agent_v1_work_proto_enumTypes[2].Descriptor()
+}
+
+func (VolumeBackupEvent_Outcome) Type() protoreflect.EnumType {
+	return &file_cypherpanel_agent_v1_work_proto_enumTypes[2]
+}
+
+func (x VolumeBackupEvent_Outcome) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use VolumeBackupEvent_Outcome.Descriptor instead.
+func (VolumeBackupEvent_Outcome) EnumDescriptor() ([]byte, []int) {
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{32, 0}
+}
+
 type DbBackupEvent_Outcome int32
 
 const (
@@ -159,11 +208,11 @@ func (x DbBackupEvent_Outcome) String() string {
 }
 
 func (DbBackupEvent_Outcome) Descriptor() protoreflect.EnumDescriptor {
-	return file_cypherpanel_agent_v1_work_proto_enumTypes[2].Descriptor()
+	return file_cypherpanel_agent_v1_work_proto_enumTypes[3].Descriptor()
 }
 
 func (DbBackupEvent_Outcome) Type() protoreflect.EnumType {
-	return &file_cypherpanel_agent_v1_work_proto_enumTypes[2]
+	return &file_cypherpanel_agent_v1_work_proto_enumTypes[3]
 }
 
 func (x DbBackupEvent_Outcome) Number() protoreflect.EnumNumber {
@@ -172,7 +221,7 @@ func (x DbBackupEvent_Outcome) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use DbBackupEvent_Outcome.Descriptor instead.
 func (DbBackupEvent_Outcome) EnumDescriptor() ([]byte, []int) {
-	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{32, 0}
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{34, 0}
 }
 
 type DbRestoreEvent_Outcome int32
@@ -211,11 +260,11 @@ func (x DbRestoreEvent_Outcome) String() string {
 }
 
 func (DbRestoreEvent_Outcome) Descriptor() protoreflect.EnumDescriptor {
-	return file_cypherpanel_agent_v1_work_proto_enumTypes[3].Descriptor()
+	return file_cypherpanel_agent_v1_work_proto_enumTypes[4].Descriptor()
 }
 
 func (DbRestoreEvent_Outcome) Type() protoreflect.EnumType {
-	return &file_cypherpanel_agent_v1_work_proto_enumTypes[3]
+	return &file_cypherpanel_agent_v1_work_proto_enumTypes[4]
 }
 
 func (x DbRestoreEvent_Outcome) Number() protoreflect.EnumNumber {
@@ -224,7 +273,7 @@ func (x DbRestoreEvent_Outcome) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use DbRestoreEvent_Outcome.Descriptor instead.
 func (DbRestoreEvent_Outcome) EnumDescriptor() ([]byte, []int) {
-	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{33, 0}
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{35, 0}
 }
 
 // Step names where a running restore has got to. Set only with
@@ -269,11 +318,11 @@ func (x DbRestoreEvent_Step) String() string {
 }
 
 func (DbRestoreEvent_Step) Descriptor() protoreflect.EnumDescriptor {
-	return file_cypherpanel_agent_v1_work_proto_enumTypes[4].Descriptor()
+	return file_cypherpanel_agent_v1_work_proto_enumTypes[5].Descriptor()
 }
 
 func (DbRestoreEvent_Step) Type() protoreflect.EnumType {
-	return &file_cypherpanel_agent_v1_work_proto_enumTypes[4]
+	return &file_cypherpanel_agent_v1_work_proto_enumTypes[5]
 }
 
 func (x DbRestoreEvent_Step) Number() protoreflect.EnumNumber {
@@ -282,7 +331,7 @@ func (x DbRestoreEvent_Step) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use DbRestoreEvent_Step.Descriptor instead.
 func (DbRestoreEvent_Step) EnumDescriptor() ([]byte, []int) {
-	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{33, 1}
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{35, 1}
 }
 
 // AppSpec is an Application's desired state as one server's reconciler sees
@@ -2807,6 +2856,241 @@ func (x *DbBackupWork) GetS3SecretKey() string {
 	return ""
 }
 
+// VolumeBackupWork archives one named volume out of a running container and
+// uploads it, exactly the way DbBackupWork does — minus the dump. There is no
+// engine and no command: a volume has nothing to ask for a consistent view, so
+// the agent tars the mount path as it stands (volume-backups.md §2).
+//
+// The artefact is CRASH-CONSISTENT: the same thing you would have if the power
+// had been cut at that instant. That is stated on the wire because it is the
+// property a caller has to reason about, not an implementation detail.
+type VolumeBackupWork struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	BackupRecordId string                 `protobuf:"bytes,1,opt,name=backup_record_id,json=backupRecordId,proto3" json:"backup_record_id,omitempty"` // idempotency key
+	ApplicationId  string                 `protobuf:"bytes,2,opt,name=application_id,json=applicationId,proto3" json:"application_id,omitempty"`
+	ContainerName  string                 `protobuf:"bytes,3,opt,name=container_name,json=containerName,proto3" json:"container_name,omitempty"`
+	VolumeName     string                 `protobuf:"bytes,4,opt,name=volume_name,json=volumeName,proto3" json:"volume_name,omitempty"` // the operator's label, for the event
+	MountPath      string                 `protobuf:"bytes,5,opt,name=mount_path,json=mountPath,proto3" json:"mount_path,omitempty"`    // absolute path inside the container
+	S3Endpoint     string                 `protobuf:"bytes,6,opt,name=s3_endpoint,json=s3Endpoint,proto3" json:"s3_endpoint,omitempty"`
+	S3Bucket       string                 `protobuf:"bytes,7,opt,name=s3_bucket,json=s3Bucket,proto3" json:"s3_bucket,omitempty"`
+	S3Region       string                 `protobuf:"bytes,8,opt,name=s3_region,json=s3Region,proto3" json:"s3_region,omitempty"`
+	S3Key          string                 `protobuf:"bytes,9,opt,name=s3_key,json=s3Key,proto3" json:"s3_key,omitempty"` // <prefix>/<app_id>/<volume>/<ts>.tar.gz
+	S3AccessKey    string                 `protobuf:"bytes,10,opt,name=s3_access_key,json=s3AccessKey,proto3" json:"s3_access_key,omitempty"`
+	S3SecretKey    string                 `protobuf:"bytes,11,opt,name=s3_secret_key,json=s3SecretKey,proto3" json:"s3_secret_key,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *VolumeBackupWork) Reset() {
+	*x = VolumeBackupWork{}
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VolumeBackupWork) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeBackupWork) ProtoMessage() {}
+
+func (x *VolumeBackupWork) ProtoReflect() protoreflect.Message {
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeBackupWork.ProtoReflect.Descriptor instead.
+func (*VolumeBackupWork) Descriptor() ([]byte, []int) {
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *VolumeBackupWork) GetBackupRecordId() string {
+	if x != nil {
+		return x.BackupRecordId
+	}
+	return ""
+}
+
+func (x *VolumeBackupWork) GetApplicationId() string {
+	if x != nil {
+		return x.ApplicationId
+	}
+	return ""
+}
+
+func (x *VolumeBackupWork) GetContainerName() string {
+	if x != nil {
+		return x.ContainerName
+	}
+	return ""
+}
+
+func (x *VolumeBackupWork) GetVolumeName() string {
+	if x != nil {
+		return x.VolumeName
+	}
+	return ""
+}
+
+func (x *VolumeBackupWork) GetMountPath() string {
+	if x != nil {
+		return x.MountPath
+	}
+	return ""
+}
+
+func (x *VolumeBackupWork) GetS3Endpoint() string {
+	if x != nil {
+		return x.S3Endpoint
+	}
+	return ""
+}
+
+func (x *VolumeBackupWork) GetS3Bucket() string {
+	if x != nil {
+		return x.S3Bucket
+	}
+	return ""
+}
+
+func (x *VolumeBackupWork) GetS3Region() string {
+	if x != nil {
+		return x.S3Region
+	}
+	return ""
+}
+
+func (x *VolumeBackupWork) GetS3Key() string {
+	if x != nil {
+		return x.S3Key
+	}
+	return ""
+}
+
+func (x *VolumeBackupWork) GetS3AccessKey() string {
+	if x != nil {
+		return x.S3AccessKey
+	}
+	return ""
+}
+
+func (x *VolumeBackupWork) GetS3SecretKey() string {
+	if x != nil {
+		return x.S3SecretKey
+	}
+	return ""
+}
+
+// VolumeBackupEvent is the observed outcome. Deliberately its own message
+// rather than a reused DbBackupEvent: the ids differ, and a message whose
+// db_id field is empty half the time is a message nobody can read.
+type VolumeBackupEvent struct {
+	state          protoimpl.MessageState    `protogen:"open.v1"`
+	BackupRecordId string                    `protobuf:"bytes,1,opt,name=backup_record_id,json=backupRecordId,proto3" json:"backup_record_id,omitempty"`
+	ApplicationId  string                    `protobuf:"bytes,2,opt,name=application_id,json=applicationId,proto3" json:"application_id,omitempty"`
+	VolumeName     string                    `protobuf:"bytes,3,opt,name=volume_name,json=volumeName,proto3" json:"volume_name,omitempty"`
+	Outcome        VolumeBackupEvent_Outcome `protobuf:"varint,4,opt,name=outcome,proto3,enum=cypherpanel.agent.v1.VolumeBackupEvent_Outcome" json:"outcome,omitempty"`
+	ObjectKey      string                    `protobuf:"bytes,5,opt,name=object_key,json=objectKey,proto3" json:"object_key,omitempty"`
+	SizeBytes      int64                     `protobuf:"varint,6,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
+	Detail         string                    `protobuf:"bytes,7,opt,name=detail,proto3" json:"detail,omitempty"`
+	OccurredAt     *timestamppb.Timestamp    `protobuf:"bytes,8,opt,name=occurred_at,json=occurredAt,proto3" json:"occurred_at,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *VolumeBackupEvent) Reset() {
+	*x = VolumeBackupEvent{}
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VolumeBackupEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeBackupEvent) ProtoMessage() {}
+
+func (x *VolumeBackupEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeBackupEvent.ProtoReflect.Descriptor instead.
+func (*VolumeBackupEvent) Descriptor() ([]byte, []int) {
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *VolumeBackupEvent) GetBackupRecordId() string {
+	if x != nil {
+		return x.BackupRecordId
+	}
+	return ""
+}
+
+func (x *VolumeBackupEvent) GetApplicationId() string {
+	if x != nil {
+		return x.ApplicationId
+	}
+	return ""
+}
+
+func (x *VolumeBackupEvent) GetVolumeName() string {
+	if x != nil {
+		return x.VolumeName
+	}
+	return ""
+}
+
+func (x *VolumeBackupEvent) GetOutcome() VolumeBackupEvent_Outcome {
+	if x != nil {
+		return x.Outcome
+	}
+	return VolumeBackupEvent_OUTCOME_UNSPECIFIED
+}
+
+func (x *VolumeBackupEvent) GetObjectKey() string {
+	if x != nil {
+		return x.ObjectKey
+	}
+	return ""
+}
+
+func (x *VolumeBackupEvent) GetSizeBytes() int64 {
+	if x != nil {
+		return x.SizeBytes
+	}
+	return 0
+}
+
+func (x *VolumeBackupEvent) GetDetail() string {
+	if x != nil {
+		return x.Detail
+	}
+	return ""
+}
+
+func (x *VolumeBackupEvent) GetOccurredAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.OccurredAt
+	}
+	return nil
+}
+
 // DbRestoreWork commands the host agent to download a backup and restore it into
 // the database container. Same wire discipline as DbBackupWork (engine, not a
 // command; S3 creds over mTLS only).
@@ -2829,7 +3113,7 @@ type DbRestoreWork struct {
 
 func (x *DbRestoreWork) Reset() {
 	*x = DbRestoreWork{}
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[31]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2841,7 +3125,7 @@ func (x *DbRestoreWork) String() string {
 func (*DbRestoreWork) ProtoMessage() {}
 
 func (x *DbRestoreWork) ProtoReflect() protoreflect.Message {
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[31]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2854,7 +3138,7 @@ func (x *DbRestoreWork) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DbRestoreWork.ProtoReflect.Descriptor instead.
 func (*DbRestoreWork) Descriptor() ([]byte, []int) {
-	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{31}
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *DbRestoreWork) GetRestoreId() string {
@@ -2951,7 +3235,7 @@ type DbBackupEvent struct {
 
 func (x *DbBackupEvent) Reset() {
 	*x = DbBackupEvent{}
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[32]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2963,7 +3247,7 @@ func (x *DbBackupEvent) String() string {
 func (*DbBackupEvent) ProtoMessage() {}
 
 func (x *DbBackupEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[32]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2976,7 +3260,7 @@ func (x *DbBackupEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DbBackupEvent.ProtoReflect.Descriptor instead.
 func (*DbBackupEvent) Descriptor() ([]byte, []int) {
-	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{32}
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *DbBackupEvent) GetBackupRecordId() string {
@@ -3055,7 +3339,7 @@ type DbRestoreEvent struct {
 
 func (x *DbRestoreEvent) Reset() {
 	*x = DbRestoreEvent{}
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[33]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3067,7 +3351,7 @@ func (x *DbRestoreEvent) String() string {
 func (*DbRestoreEvent) ProtoMessage() {}
 
 func (x *DbRestoreEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[33]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3080,7 +3364,7 @@ func (x *DbRestoreEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DbRestoreEvent.ProtoReflect.Descriptor instead.
 func (*DbRestoreEvent) Descriptor() ([]byte, []int) {
-	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{33}
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *DbRestoreEvent) GetRestoreId() string {
@@ -3159,7 +3443,7 @@ type DbBackupPruneWork struct {
 
 func (x *DbBackupPruneWork) Reset() {
 	*x = DbBackupPruneWork{}
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[34]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3171,7 +3455,7 @@ func (x *DbBackupPruneWork) String() string {
 func (*DbBackupPruneWork) ProtoMessage() {}
 
 func (x *DbBackupPruneWork) ProtoReflect() protoreflect.Message {
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[34]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3184,7 +3468,7 @@ func (x *DbBackupPruneWork) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DbBackupPruneWork.ProtoReflect.Descriptor instead.
 func (*DbBackupPruneWork) Descriptor() ([]byte, []int) {
-	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{34}
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *DbBackupPruneWork) GetDbId() string {
@@ -3252,7 +3536,7 @@ type DbBackupPruneEvent struct {
 
 func (x *DbBackupPruneEvent) Reset() {
 	*x = DbBackupPruneEvent{}
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[35]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3264,7 +3548,7 @@ func (x *DbBackupPruneEvent) String() string {
 func (*DbBackupPruneEvent) ProtoMessage() {}
 
 func (x *DbBackupPruneEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[35]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3277,7 +3561,7 @@ func (x *DbBackupPruneEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DbBackupPruneEvent.ProtoReflect.Descriptor instead.
 func (*DbBackupPruneEvent) Descriptor() ([]byte, []int) {
-	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{35}
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *DbBackupPruneEvent) GetDbId() string {
@@ -3328,7 +3612,7 @@ type ScheduledTaskRun struct {
 
 func (x *ScheduledTaskRun) Reset() {
 	*x = ScheduledTaskRun{}
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[36]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3340,7 +3624,7 @@ func (x *ScheduledTaskRun) String() string {
 func (*ScheduledTaskRun) ProtoMessage() {}
 
 func (x *ScheduledTaskRun) ProtoReflect() protoreflect.Message {
-	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[36]
+	mi := &file_cypherpanel_agent_v1_work_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3353,7 +3637,7 @@ func (x *ScheduledTaskRun) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ScheduledTaskRun.ProtoReflect.Descriptor instead.
 func (*ScheduledTaskRun) Descriptor() ([]byte, []int) {
-	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{36}
+	return file_cypherpanel_agent_v1_work_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *ScheduledTaskRun) GetTaskId() string {
@@ -3632,7 +3916,40 @@ const file_cypherpanel_agent_v1_work_proto_rawDesc = "" +
 	"\x06s3_key\x18\t \x01(\tR\x05s3Key\x12\"\n" +
 	"\rs3_access_key\x18\n" +
 	" \x01(\tR\vs3AccessKey\x12\"\n" +
-	"\rs3_secret_key\x18\v \x01(\tR\vs3SecretKey\"\xd9\x02\n" +
+	"\rs3_secret_key\x18\v \x01(\tR\vs3SecretKey\"\x84\x03\n" +
+	"\x10VolumeBackupWork\x12(\n" +
+	"\x10backup_record_id\x18\x01 \x01(\tR\x0ebackupRecordId\x12%\n" +
+	"\x0eapplication_id\x18\x02 \x01(\tR\rapplicationId\x12%\n" +
+	"\x0econtainer_name\x18\x03 \x01(\tR\rcontainerName\x12\x1f\n" +
+	"\vvolume_name\x18\x04 \x01(\tR\n" +
+	"volumeName\x12\x1d\n" +
+	"\n" +
+	"mount_path\x18\x05 \x01(\tR\tmountPath\x12\x1f\n" +
+	"\vs3_endpoint\x18\x06 \x01(\tR\n" +
+	"s3Endpoint\x12\x1b\n" +
+	"\ts3_bucket\x18\a \x01(\tR\bs3Bucket\x12\x1b\n" +
+	"\ts3_region\x18\b \x01(\tR\bs3Region\x12\x15\n" +
+	"\x06s3_key\x18\t \x01(\tR\x05s3Key\x12\"\n" +
+	"\rs3_access_key\x18\n" +
+	" \x01(\tR\vs3AccessKey\x12\"\n" +
+	"\rs3_secret_key\x18\v \x01(\tR\vs3SecretKey\"\xb2\x03\n" +
+	"\x11VolumeBackupEvent\x12(\n" +
+	"\x10backup_record_id\x18\x01 \x01(\tR\x0ebackupRecordId\x12%\n" +
+	"\x0eapplication_id\x18\x02 \x01(\tR\rapplicationId\x12\x1f\n" +
+	"\vvolume_name\x18\x03 \x01(\tR\n" +
+	"volumeName\x12I\n" +
+	"\aoutcome\x18\x04 \x01(\x0e2/.cypherpanel.agent.v1.VolumeBackupEvent.OutcomeR\aoutcome\x12\x1d\n" +
+	"\n" +
+	"object_key\x18\x05 \x01(\tR\tobjectKey\x12\x1d\n" +
+	"\n" +
+	"size_bytes\x18\x06 \x01(\x03R\tsizeBytes\x12\x16\n" +
+	"\x06detail\x18\a \x01(\tR\x06detail\x12;\n" +
+	"\voccurred_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"occurredAt\"M\n" +
+	"\aOutcome\x12\x17\n" +
+	"\x13OUTCOME_UNSPECIFIED\x10\x00\x12\x15\n" +
+	"\x11OUTCOME_SUCCEEDED\x10\x01\x12\x12\n" +
+	"\x0eOUTCOME_FAILED\x10\x02\"\xd9\x02\n" +
 	"\rDbRestoreWork\x12\x1d\n" +
 	"\n" +
 	"restore_id\x18\x01 \x01(\tR\trestoreId\x12\x13\n" +
@@ -3727,99 +4044,104 @@ func file_cypherpanel_agent_v1_work_proto_rawDescGZIP() []byte {
 	return file_cypherpanel_agent_v1_work_proto_rawDescData
 }
 
-var file_cypherpanel_agent_v1_work_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_cypherpanel_agent_v1_work_proto_msgTypes = make([]protoimpl.MessageInfo, 40)
+var file_cypherpanel_agent_v1_work_proto_enumTypes = make([]protoimpl.EnumInfo, 6)
+var file_cypherpanel_agent_v1_work_proto_msgTypes = make([]protoimpl.MessageInfo, 42)
 var file_cypherpanel_agent_v1_work_proto_goTypes = []any{
-	(DeployEvent_Stage)(0),        // 0: cypherpanel.agent.v1.DeployEvent.Stage
-	(DeployEvent_Outcome)(0),      // 1: cypherpanel.agent.v1.DeployEvent.Outcome
-	(DbBackupEvent_Outcome)(0),    // 2: cypherpanel.agent.v1.DbBackupEvent.Outcome
-	(DbRestoreEvent_Outcome)(0),   // 3: cypherpanel.agent.v1.DbRestoreEvent.Outcome
-	(DbRestoreEvent_Step)(0),      // 4: cypherpanel.agent.v1.DbRestoreEvent.Step
-	(*AppSpec)(nil),               // 5: cypherpanel.agent.v1.AppSpec
-	(*RetainSpec)(nil),            // 6: cypherpanel.agent.v1.RetainSpec
-	(*RegistryAuth)(nil),          // 7: cypherpanel.agent.v1.RegistryAuth
-	(*RegistryPush)(nil),          // 8: cypherpanel.agent.v1.RegistryPush
-	(*PortMapping)(nil),           // 9: cypherpanel.agent.v1.PortMapping
-	(*VolumeMount)(nil),           // 10: cypherpanel.agent.v1.VolumeMount
-	(*ScheduledTask)(nil),         // 11: cypherpanel.agent.v1.ScheduledTask
-	(*HealthCheck)(nil),           // 12: cypherpanel.agent.v1.HealthCheck
-	(*RouteSpec)(nil),             // 13: cypherpanel.agent.v1.RouteSpec
-	(*AccessSpec)(nil),            // 14: cypherpanel.agent.v1.AccessSpec
-	(*RolloutWork)(nil),           // 15: cypherpanel.agent.v1.RolloutWork
-	(*RemoveWork)(nil),            // 16: cypherpanel.agent.v1.RemoveWork
-	(*ConvergeWork)(nil),          // 17: cypherpanel.agent.v1.ConvergeWork
-	(*BuildWork)(nil),             // 18: cypherpanel.agent.v1.BuildWork
-	(*PushImageWork)(nil),         // 19: cypherpanel.agent.v1.PushImageWork
-	(*DistributeWork)(nil),        // 20: cypherpanel.agent.v1.DistributeWork
-	(*DesiredState)(nil),          // 21: cypherpanel.agent.v1.DesiredState
-	(*TLSSettings)(nil),           // 22: cypherpanel.agent.v1.TLSSettings
-	(*ResyncWork)(nil),            // 23: cypherpanel.agent.v1.ResyncWork
-	(*AppStatus)(nil),             // 24: cypherpanel.agent.v1.AppStatus
-	(*DeployEvent)(nil),           // 25: cypherpanel.agent.v1.DeployEvent
-	(*DbSpec)(nil),                // 26: cypherpanel.agent.v1.DbSpec
-	(*DbProvisionWork)(nil),       // 27: cypherpanel.agent.v1.DbProvisionWork
-	(*DbRemoveWork)(nil),          // 28: cypherpanel.agent.v1.DbRemoveWork
-	(*DbStatus)(nil),              // 29: cypherpanel.agent.v1.DbStatus
-	(*ComposeSpec)(nil),           // 30: cypherpanel.agent.v1.ComposeSpec
-	(*ComposeRoute)(nil),          // 31: cypherpanel.agent.v1.ComposeRoute
-	(*ComposeRemoveWork)(nil),     // 32: cypherpanel.agent.v1.ComposeRemoveWork
-	(*ComposeConvergeWork)(nil),   // 33: cypherpanel.agent.v1.ComposeConvergeWork
-	(*ComposeStatus)(nil),         // 34: cypherpanel.agent.v1.ComposeStatus
-	(*DbBackupWork)(nil),          // 35: cypherpanel.agent.v1.DbBackupWork
-	(*DbRestoreWork)(nil),         // 36: cypherpanel.agent.v1.DbRestoreWork
-	(*DbBackupEvent)(nil),         // 37: cypherpanel.agent.v1.DbBackupEvent
-	(*DbRestoreEvent)(nil),        // 38: cypherpanel.agent.v1.DbRestoreEvent
-	(*DbBackupPruneWork)(nil),     // 39: cypherpanel.agent.v1.DbBackupPruneWork
-	(*DbBackupPruneEvent)(nil),    // 40: cypherpanel.agent.v1.DbBackupPruneEvent
-	(*ScheduledTaskRun)(nil),      // 41: cypherpanel.agent.v1.ScheduledTaskRun
-	nil,                           // 42: cypherpanel.agent.v1.AppSpec.EnvEntry
-	nil,                           // 43: cypherpanel.agent.v1.DbSpec.EnvEntry
-	nil,                           // 44: cypherpanel.agent.v1.ComposeSpec.EnvEntry
-	(*timestamppb.Timestamp)(nil), // 45: google.protobuf.Timestamp
+	(DeployEvent_Stage)(0),         // 0: cypherpanel.agent.v1.DeployEvent.Stage
+	(DeployEvent_Outcome)(0),       // 1: cypherpanel.agent.v1.DeployEvent.Outcome
+	(VolumeBackupEvent_Outcome)(0), // 2: cypherpanel.agent.v1.VolumeBackupEvent.Outcome
+	(DbBackupEvent_Outcome)(0),     // 3: cypherpanel.agent.v1.DbBackupEvent.Outcome
+	(DbRestoreEvent_Outcome)(0),    // 4: cypherpanel.agent.v1.DbRestoreEvent.Outcome
+	(DbRestoreEvent_Step)(0),       // 5: cypherpanel.agent.v1.DbRestoreEvent.Step
+	(*AppSpec)(nil),                // 6: cypherpanel.agent.v1.AppSpec
+	(*RetainSpec)(nil),             // 7: cypherpanel.agent.v1.RetainSpec
+	(*RegistryAuth)(nil),           // 8: cypherpanel.agent.v1.RegistryAuth
+	(*RegistryPush)(nil),           // 9: cypherpanel.agent.v1.RegistryPush
+	(*PortMapping)(nil),            // 10: cypherpanel.agent.v1.PortMapping
+	(*VolumeMount)(nil),            // 11: cypherpanel.agent.v1.VolumeMount
+	(*ScheduledTask)(nil),          // 12: cypherpanel.agent.v1.ScheduledTask
+	(*HealthCheck)(nil),            // 13: cypherpanel.agent.v1.HealthCheck
+	(*RouteSpec)(nil),              // 14: cypherpanel.agent.v1.RouteSpec
+	(*AccessSpec)(nil),             // 15: cypherpanel.agent.v1.AccessSpec
+	(*RolloutWork)(nil),            // 16: cypherpanel.agent.v1.RolloutWork
+	(*RemoveWork)(nil),             // 17: cypherpanel.agent.v1.RemoveWork
+	(*ConvergeWork)(nil),           // 18: cypherpanel.agent.v1.ConvergeWork
+	(*BuildWork)(nil),              // 19: cypherpanel.agent.v1.BuildWork
+	(*PushImageWork)(nil),          // 20: cypherpanel.agent.v1.PushImageWork
+	(*DistributeWork)(nil),         // 21: cypherpanel.agent.v1.DistributeWork
+	(*DesiredState)(nil),           // 22: cypherpanel.agent.v1.DesiredState
+	(*TLSSettings)(nil),            // 23: cypherpanel.agent.v1.TLSSettings
+	(*ResyncWork)(nil),             // 24: cypherpanel.agent.v1.ResyncWork
+	(*AppStatus)(nil),              // 25: cypherpanel.agent.v1.AppStatus
+	(*DeployEvent)(nil),            // 26: cypherpanel.agent.v1.DeployEvent
+	(*DbSpec)(nil),                 // 27: cypherpanel.agent.v1.DbSpec
+	(*DbProvisionWork)(nil),        // 28: cypherpanel.agent.v1.DbProvisionWork
+	(*DbRemoveWork)(nil),           // 29: cypherpanel.agent.v1.DbRemoveWork
+	(*DbStatus)(nil),               // 30: cypherpanel.agent.v1.DbStatus
+	(*ComposeSpec)(nil),            // 31: cypherpanel.agent.v1.ComposeSpec
+	(*ComposeRoute)(nil),           // 32: cypherpanel.agent.v1.ComposeRoute
+	(*ComposeRemoveWork)(nil),      // 33: cypherpanel.agent.v1.ComposeRemoveWork
+	(*ComposeConvergeWork)(nil),    // 34: cypherpanel.agent.v1.ComposeConvergeWork
+	(*ComposeStatus)(nil),          // 35: cypherpanel.agent.v1.ComposeStatus
+	(*DbBackupWork)(nil),           // 36: cypherpanel.agent.v1.DbBackupWork
+	(*VolumeBackupWork)(nil),       // 37: cypherpanel.agent.v1.VolumeBackupWork
+	(*VolumeBackupEvent)(nil),      // 38: cypherpanel.agent.v1.VolumeBackupEvent
+	(*DbRestoreWork)(nil),          // 39: cypherpanel.agent.v1.DbRestoreWork
+	(*DbBackupEvent)(nil),          // 40: cypherpanel.agent.v1.DbBackupEvent
+	(*DbRestoreEvent)(nil),         // 41: cypherpanel.agent.v1.DbRestoreEvent
+	(*DbBackupPruneWork)(nil),      // 42: cypherpanel.agent.v1.DbBackupPruneWork
+	(*DbBackupPruneEvent)(nil),     // 43: cypherpanel.agent.v1.DbBackupPruneEvent
+	(*ScheduledTaskRun)(nil),       // 44: cypherpanel.agent.v1.ScheduledTaskRun
+	nil,                            // 45: cypherpanel.agent.v1.AppSpec.EnvEntry
+	nil,                            // 46: cypherpanel.agent.v1.DbSpec.EnvEntry
+	nil,                            // 47: cypherpanel.agent.v1.ComposeSpec.EnvEntry
+	(*timestamppb.Timestamp)(nil),  // 48: google.protobuf.Timestamp
 }
 var file_cypherpanel_agent_v1_work_proto_depIdxs = []int32{
-	42, // 0: cypherpanel.agent.v1.AppSpec.env:type_name -> cypherpanel.agent.v1.AppSpec.EnvEntry
-	12, // 1: cypherpanel.agent.v1.AppSpec.health:type_name -> cypherpanel.agent.v1.HealthCheck
-	13, // 2: cypherpanel.agent.v1.AppSpec.route:type_name -> cypherpanel.agent.v1.RouteSpec
-	11, // 3: cypherpanel.agent.v1.AppSpec.scheduled_tasks:type_name -> cypherpanel.agent.v1.ScheduledTask
-	10, // 4: cypherpanel.agent.v1.AppSpec.volumes:type_name -> cypherpanel.agent.v1.VolumeMount
-	9,  // 5: cypherpanel.agent.v1.AppSpec.ports:type_name -> cypherpanel.agent.v1.PortMapping
-	7,  // 6: cypherpanel.agent.v1.AppSpec.registry_auth:type_name -> cypherpanel.agent.v1.RegistryAuth
-	7,  // 7: cypherpanel.agent.v1.RegistryPush.auth:type_name -> cypherpanel.agent.v1.RegistryAuth
-	14, // 8: cypherpanel.agent.v1.RouteSpec.access:type_name -> cypherpanel.agent.v1.AccessSpec
-	5,  // 9: cypherpanel.agent.v1.RolloutWork.spec:type_name -> cypherpanel.agent.v1.AppSpec
-	5,  // 10: cypherpanel.agent.v1.ConvergeWork.spec:type_name -> cypherpanel.agent.v1.AppSpec
-	7,  // 11: cypherpanel.agent.v1.BuildWork.source_auth:type_name -> cypherpanel.agent.v1.RegistryAuth
-	8,  // 12: cypherpanel.agent.v1.BuildWork.push:type_name -> cypherpanel.agent.v1.RegistryPush
-	5,  // 13: cypherpanel.agent.v1.DesiredState.specs:type_name -> cypherpanel.agent.v1.AppSpec
-	26, // 14: cypherpanel.agent.v1.DesiredState.db_specs:type_name -> cypherpanel.agent.v1.DbSpec
-	30, // 15: cypherpanel.agent.v1.DesiredState.compose_specs:type_name -> cypherpanel.agent.v1.ComposeSpec
-	6,  // 16: cypherpanel.agent.v1.DesiredState.retain:type_name -> cypherpanel.agent.v1.RetainSpec
-	22, // 17: cypherpanel.agent.v1.DesiredState.tls:type_name -> cypherpanel.agent.v1.TLSSettings
-	45, // 18: cypherpanel.agent.v1.AppStatus.observed_at:type_name -> google.protobuf.Timestamp
+	45, // 0: cypherpanel.agent.v1.AppSpec.env:type_name -> cypherpanel.agent.v1.AppSpec.EnvEntry
+	13, // 1: cypherpanel.agent.v1.AppSpec.health:type_name -> cypherpanel.agent.v1.HealthCheck
+	14, // 2: cypherpanel.agent.v1.AppSpec.route:type_name -> cypherpanel.agent.v1.RouteSpec
+	12, // 3: cypherpanel.agent.v1.AppSpec.scheduled_tasks:type_name -> cypherpanel.agent.v1.ScheduledTask
+	11, // 4: cypherpanel.agent.v1.AppSpec.volumes:type_name -> cypherpanel.agent.v1.VolumeMount
+	10, // 5: cypherpanel.agent.v1.AppSpec.ports:type_name -> cypherpanel.agent.v1.PortMapping
+	8,  // 6: cypherpanel.agent.v1.AppSpec.registry_auth:type_name -> cypherpanel.agent.v1.RegistryAuth
+	8,  // 7: cypherpanel.agent.v1.RegistryPush.auth:type_name -> cypherpanel.agent.v1.RegistryAuth
+	15, // 8: cypherpanel.agent.v1.RouteSpec.access:type_name -> cypherpanel.agent.v1.AccessSpec
+	6,  // 9: cypherpanel.agent.v1.RolloutWork.spec:type_name -> cypherpanel.agent.v1.AppSpec
+	6,  // 10: cypherpanel.agent.v1.ConvergeWork.spec:type_name -> cypherpanel.agent.v1.AppSpec
+	8,  // 11: cypherpanel.agent.v1.BuildWork.source_auth:type_name -> cypherpanel.agent.v1.RegistryAuth
+	9,  // 12: cypherpanel.agent.v1.BuildWork.push:type_name -> cypherpanel.agent.v1.RegistryPush
+	6,  // 13: cypherpanel.agent.v1.DesiredState.specs:type_name -> cypherpanel.agent.v1.AppSpec
+	27, // 14: cypherpanel.agent.v1.DesiredState.db_specs:type_name -> cypherpanel.agent.v1.DbSpec
+	31, // 15: cypherpanel.agent.v1.DesiredState.compose_specs:type_name -> cypherpanel.agent.v1.ComposeSpec
+	7,  // 16: cypherpanel.agent.v1.DesiredState.retain:type_name -> cypherpanel.agent.v1.RetainSpec
+	23, // 17: cypherpanel.agent.v1.DesiredState.tls:type_name -> cypherpanel.agent.v1.TLSSettings
+	48, // 18: cypherpanel.agent.v1.AppStatus.observed_at:type_name -> google.protobuf.Timestamp
 	0,  // 19: cypherpanel.agent.v1.DeployEvent.stage:type_name -> cypherpanel.agent.v1.DeployEvent.Stage
 	1,  // 20: cypherpanel.agent.v1.DeployEvent.outcome:type_name -> cypherpanel.agent.v1.DeployEvent.Outcome
-	45, // 21: cypherpanel.agent.v1.DeployEvent.occurred_at:type_name -> google.protobuf.Timestamp
-	43, // 22: cypherpanel.agent.v1.DbSpec.env:type_name -> cypherpanel.agent.v1.DbSpec.EnvEntry
-	26, // 23: cypherpanel.agent.v1.DbProvisionWork.spec:type_name -> cypherpanel.agent.v1.DbSpec
-	45, // 24: cypherpanel.agent.v1.DbStatus.observed_at:type_name -> google.protobuf.Timestamp
-	44, // 25: cypherpanel.agent.v1.ComposeSpec.env:type_name -> cypherpanel.agent.v1.ComposeSpec.EnvEntry
-	31, // 26: cypherpanel.agent.v1.ComposeSpec.route:type_name -> cypherpanel.agent.v1.ComposeRoute
-	30, // 27: cypherpanel.agent.v1.ComposeConvergeWork.spec:type_name -> cypherpanel.agent.v1.ComposeSpec
-	45, // 28: cypherpanel.agent.v1.ComposeStatus.observed_at:type_name -> google.protobuf.Timestamp
-	2,  // 29: cypherpanel.agent.v1.DbBackupEvent.outcome:type_name -> cypherpanel.agent.v1.DbBackupEvent.Outcome
-	45, // 30: cypherpanel.agent.v1.DbBackupEvent.occurred_at:type_name -> google.protobuf.Timestamp
-	3,  // 31: cypherpanel.agent.v1.DbRestoreEvent.outcome:type_name -> cypherpanel.agent.v1.DbRestoreEvent.Outcome
-	45, // 32: cypherpanel.agent.v1.DbRestoreEvent.occurred_at:type_name -> google.protobuf.Timestamp
-	4,  // 33: cypherpanel.agent.v1.DbRestoreEvent.step:type_name -> cypherpanel.agent.v1.DbRestoreEvent.Step
-	45, // 34: cypherpanel.agent.v1.DbBackupPruneEvent.occurred_at:type_name -> google.protobuf.Timestamp
-	45, // 35: cypherpanel.agent.v1.ScheduledTaskRun.started_at:type_name -> google.protobuf.Timestamp
-	45, // 36: cypherpanel.agent.v1.ScheduledTaskRun.finished_at:type_name -> google.protobuf.Timestamp
-	37, // [37:37] is the sub-list for method output_type
-	37, // [37:37] is the sub-list for method input_type
-	37, // [37:37] is the sub-list for extension type_name
-	37, // [37:37] is the sub-list for extension extendee
-	0,  // [0:37] is the sub-list for field type_name
+	48, // 21: cypherpanel.agent.v1.DeployEvent.occurred_at:type_name -> google.protobuf.Timestamp
+	46, // 22: cypherpanel.agent.v1.DbSpec.env:type_name -> cypherpanel.agent.v1.DbSpec.EnvEntry
+	27, // 23: cypherpanel.agent.v1.DbProvisionWork.spec:type_name -> cypherpanel.agent.v1.DbSpec
+	48, // 24: cypherpanel.agent.v1.DbStatus.observed_at:type_name -> google.protobuf.Timestamp
+	47, // 25: cypherpanel.agent.v1.ComposeSpec.env:type_name -> cypherpanel.agent.v1.ComposeSpec.EnvEntry
+	32, // 26: cypherpanel.agent.v1.ComposeSpec.route:type_name -> cypherpanel.agent.v1.ComposeRoute
+	31, // 27: cypherpanel.agent.v1.ComposeConvergeWork.spec:type_name -> cypherpanel.agent.v1.ComposeSpec
+	48, // 28: cypherpanel.agent.v1.ComposeStatus.observed_at:type_name -> google.protobuf.Timestamp
+	2,  // 29: cypherpanel.agent.v1.VolumeBackupEvent.outcome:type_name -> cypherpanel.agent.v1.VolumeBackupEvent.Outcome
+	48, // 30: cypherpanel.agent.v1.VolumeBackupEvent.occurred_at:type_name -> google.protobuf.Timestamp
+	3,  // 31: cypherpanel.agent.v1.DbBackupEvent.outcome:type_name -> cypherpanel.agent.v1.DbBackupEvent.Outcome
+	48, // 32: cypherpanel.agent.v1.DbBackupEvent.occurred_at:type_name -> google.protobuf.Timestamp
+	4,  // 33: cypherpanel.agent.v1.DbRestoreEvent.outcome:type_name -> cypherpanel.agent.v1.DbRestoreEvent.Outcome
+	48, // 34: cypherpanel.agent.v1.DbRestoreEvent.occurred_at:type_name -> google.protobuf.Timestamp
+	5,  // 35: cypherpanel.agent.v1.DbRestoreEvent.step:type_name -> cypherpanel.agent.v1.DbRestoreEvent.Step
+	48, // 36: cypherpanel.agent.v1.DbBackupPruneEvent.occurred_at:type_name -> google.protobuf.Timestamp
+	48, // 37: cypherpanel.agent.v1.ScheduledTaskRun.started_at:type_name -> google.protobuf.Timestamp
+	48, // 38: cypherpanel.agent.v1.ScheduledTaskRun.finished_at:type_name -> google.protobuf.Timestamp
+	39, // [39:39] is the sub-list for method output_type
+	39, // [39:39] is the sub-list for method input_type
+	39, // [39:39] is the sub-list for extension type_name
+	39, // [39:39] is the sub-list for extension extendee
+	0,  // [0:39] is the sub-list for field type_name
 }
 
 func init() { file_cypherpanel_agent_v1_work_proto_init() }
@@ -3832,8 +4154,8 @@ func file_cypherpanel_agent_v1_work_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cypherpanel_agent_v1_work_proto_rawDesc), len(file_cypherpanel_agent_v1_work_proto_rawDesc)),
-			NumEnums:      5,
-			NumMessages:   40,
+			NumEnums:      6,
+			NumMessages:   42,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -22,6 +22,8 @@ import (
 // ─── fakes ──────────────────────────────────────────────────────────────────
 
 type fakeStore struct {
+	volumeBackups map[string]domain.VolumeBackup
+	volumeRecords map[string]domain.VolumeBackupRecord
 	restores       map[string]domain.DatabaseRestore
 	dbStatuses     map[string]string
 	mu             sync.Mutex
@@ -295,6 +297,76 @@ func (f *fakeStore) ListEnvVars(_ context.Context, appID string) ([]domain.EnvVa
 	defer f.mu.Unlock()
 	return f.envVars[appID], nil
 }
+
+// Volume backups: the fake keeps them in memory so a scheduler test can run a
+// sweep without a database.
+func (f *fakeStore) GetVolumeBackupByApplication(_ context.Context, appID string) (domain.VolumeBackup, error) {
+	for _, v := range f.volumeBackups {
+		if v.ApplicationID == appID {
+			return v, nil
+		}
+	}
+	return domain.VolumeBackup{}, store.ErrNotFound
+}
+
+func (f *fakeStore) GetVolumeBackup(_ context.Context, id string) (domain.VolumeBackup, error) {
+	if v, ok := f.volumeBackups[id]; ok {
+		return v, nil
+	}
+	return domain.VolumeBackup{}, store.ErrNotFound
+}
+
+func (f *fakeStore) ListEnabledVolumeBackupSchedules(context.Context) ([]domain.VolumeBackup, error) {
+	var out []domain.VolumeBackup
+	for _, v := range f.volumeBackups {
+		if v.Enabled && v.Schedule != "" {
+			out = append(out, v)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) SetVolumeBackupLastRun(_ context.Context, id string, at *time.Time, status string) error {
+	v, ok := f.volumeBackups[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	v.LastRunAt, v.LastStatus = at, status
+	f.volumeBackups[id] = v
+	return nil
+}
+
+func (f *fakeStore) CreateVolumeBackupRecord(_ context.Context, id, scheduleID, volumeName string) (domain.VolumeBackupRecord, error) {
+	r := domain.VolumeBackupRecord{ID: id, VolumeBackupID: scheduleID, VolumeName: volumeName, Status: domain.BackupRunning}
+	if f.volumeRecords == nil {
+		f.volumeRecords = map[string]domain.VolumeBackupRecord{}
+	}
+	f.volumeRecords[id] = r
+	return r, nil
+}
+
+func (f *fakeStore) GetVolumeBackupRecord(_ context.Context, id string) (domain.VolumeBackupRecord, error) {
+	if r, ok := f.volumeRecords[id]; ok {
+		return r, nil
+	}
+	return domain.VolumeBackupRecord{}, store.ErrNotFound
+}
+
+func (f *fakeStore) UpdateVolumeBackupRecord(_ context.Context, id, objectKey string, size int64, status, detail string) error {
+	r, ok := f.volumeRecords[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	r.ObjectKey, r.SizeBytes, r.Status, r.Detail = objectKey, size, status, detail
+	f.volumeRecords[id] = r
+	return nil
+}
+
+func (f *fakeStore) ListVolumeRecordsBeyondRetention(context.Context, string, string, int) ([]domain.VolumeBackupRecord, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) DeleteVolumeBackupRecords(context.Context, []string) error { return nil }
 
 func (f *fakeStore) GetEnvironment(_ context.Context, id string) (domain.Environment, error) {
 	f.mu.Lock()

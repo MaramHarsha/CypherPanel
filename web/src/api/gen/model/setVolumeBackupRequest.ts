@@ -8,11 +8,11 @@
  * OpenAPI spec version: 0.3.0
  */
 
-export interface AppVolume {
-  /** Operator label (lowercase alphanumeric + dashes); the Docker volume name is derived from it. */
-  name: string;
-  /** Absolute mount path inside the container. */
-  path: string;
-  /** Whether the application's volume backup schedule archives this mount. Per-volume rather than per-application: a cache directory and an uploads directory have opposite answers, and backing up the cache costs storage for data whose whole point is being disposable. */
-  backed_up?: boolean;
+export interface SetVolumeBackupRequest {
+  target_id: string;
+  /** Five-field cron; empty means manual only. */
+  schedule?: string;
+  /** Defaults to 7 when below 1. */
+  retention_count?: number;
+  enabled: boolean;
 }

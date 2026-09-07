@@ -7,12 +7,18 @@
  * Every response — success, error and SSE stream alike — carries an `X-Request-Id` header (`components/headers/RequestId`), and every JSON error body repeats it as `trace_id`. It is the value to quote in a bug report and the key to search for in `GET /api/v1/panel/logs`. Individual responses reference the header only where a generated client benefits; it is present on all of them.
  * OpenAPI spec version: 0.3.0
  */
+import type { VolumeBackupRecordStatus } from './volumeBackupRecordStatus.ts';
 
-export interface AppVolume {
-  /** Operator label (lowercase alphanumeric + dashes); the Docker volume name is derived from it. */
-  name: string;
-  /** Absolute mount path inside the container. */
-  path: string;
-  /** Whether the application's volume backup schedule archives this mount. Per-volume rather than per-application: a cache directory and an uploads directory have opposite answers, and backing up the cache costs storage for data whose whole point is being disposable. */
-  backed_up?: boolean;
+export interface VolumeBackupRecord {
+  /** vbr_… prefixed ID. */
+  id: string;
+  /** The operator label of the mount this archive covers. */
+  volume_name: string;
+  object_key?: string;
+  size_bytes: number;
+  status: VolumeBackupRecordStatus;
+  detail?: string;
+  started_at: string;
+  /** @nullable */
+  finished_at?: string | null;
 }

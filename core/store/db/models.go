@@ -591,6 +591,32 @@ type UserAvatar struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
+type VolumeBackup struct {
+	ID             string
+	ApplicationID  string
+	TargetID       string
+	Schedule       string
+	RetentionCount int32
+	Enabled        bool
+	LastRunAt      pgtype.Timestamptz
+	LastStatus     string
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type VolumeBackupRecord struct {
+	ID             string
+	VolumeBackupID string
+	VolumeName     string
+	ObjectKey      string
+	SizeBytes      int64
+	Status         string
+	Detail         string
+	StartedAt      pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+}
+
 type WebhookDelivery struct {
 	ID            string
 	EndpointID    string

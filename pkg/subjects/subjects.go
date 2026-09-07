@@ -179,6 +179,13 @@ func DbBackupState(serverID string) string      { return StatePrefix + serverID 
 func DbRestoreState(serverID string) string     { return StatePrefix + serverID + ".dbrestore" }
 func DbBackupPruneState(serverID string) string { return StatePrefix + serverID + ".dbbackupprune" }
 
+// Volume backup subjects (volume-backups.md §4). Additive and inside the
+// existing per-server work.<server>.> / state.<server>.> grants, so no new
+// authorization is needed. The ".volume.backup" suffix is disjoint from every
+// ".db.*" one, so the worker routes it independently.
+func VolumeBackup(serverID string) string      { return WorkPrefix + serverID + ".volume.backup" }
+func VolumeBackupState(serverID string) string { return StatePrefix + serverID + ".volumebackup" }
+
 // V1: Compose Stack subjects (docs/features/compose-stacks.md §4). Additive
 // (rule 14), inside the existing work.<server>.> / state.<server>.> scope, so
 // no new per-agent grant is needed.
@@ -198,5 +205,6 @@ const (
 	DbBackupStateAll      = "state.*.dbbackup"
 	DbRestoreStateAll     = "state.*.dbrestore"
 	DbBackupPruneStateAll = "state.*.dbbackupprune"
+	VolumeBackupStateAll  = "state.*.volumebackup"
 	TaskStateAll          = "state.*.task"
 )

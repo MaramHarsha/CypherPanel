@@ -520,6 +520,21 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 	}
 	defer dbBackupConsume.Stop()
 
+	volumeBackupConsume, err := b.ConsumeVolumeBackupEvents(ctx, func(serverID string, data []byte) {
+		var ev agentv1.VolumeBackupEvent
+		if err := proto.Unmarshal(data, &ev); err != nil {
+			log.Error("unmarshaling volume backup event", "server_id", serverID, "error", err)
+			return
+		}
+		c, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		sched.HandleVolumeBackupEvent(c, &ev)
+	})
+	if err != nil {
+		return err
+	}
+	defer volumeBackupConsume.Stop()
+
 	dbRestoreConsume, err := b.ConsumeDbRestoreEvents(ctx, func(serverID string, data []byte) {
 		var ev agentv1.DbRestoreEvent
 		if err := proto.Unmarshal(data, &ev); err != nil {
@@ -585,6 +600,7 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		Registries:       registrySvc,
 		Compose:          composeSvc,
 		Export:           export.New(st, version),
+		VolumeBackups:    st,
 		Databases:        dbSvc,
 		BackupTargets:    backupTargetSvc,
 		BackupSchedules:  backupScheduleSvc,

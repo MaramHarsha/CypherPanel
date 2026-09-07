@@ -77,18 +77,23 @@ type appBuildDTO struct {
 type appVolumeDTO struct {
 	Name string `json:"name"`
 	Path string `json:"path"`
+	// BackedUp marks this mount for the application's volume backup schedule
+	// (volume-backups.md §3). Per-volume rather than per-application because a
+	// cache directory and an uploads directory have opposite answers.
+	BackedUp bool `json:"backed_up"`
 }
 
 // appVolumeReq is the request shape for a volume mount (create and patch).
 type appVolumeReq struct {
-	Name string `json:"name"`
-	Path string `json:"path"`
+	Name     string `json:"name"`
+	Path     string `json:"path"`
+	BackedUp bool   `json:"backed_up"`
 }
 
 func reqVolumes(vs []appVolumeReq) []domain.VolumeMount {
 	out := make([]domain.VolumeMount, 0, len(vs))
 	for _, v := range vs {
-		out = append(out, domain.VolumeMount{Name: v.Name, Path: v.Path})
+		out = append(out, domain.VolumeMount{Name: v.Name, Path: v.Path, BackedUp: v.BackedUp})
 	}
 	return out
 }
@@ -148,7 +153,7 @@ type appHealthDTO struct {
 func toVolumeDTOs(vs []domain.VolumeMount) []appVolumeDTO {
 	out := make([]appVolumeDTO, 0, len(vs))
 	for _, v := range vs {
-		out = append(out, appVolumeDTO{Name: v.Name, Path: v.Path})
+		out = append(out, appVolumeDTO{Name: v.Name, Path: v.Path, BackedUp: v.BackedUp})
 	}
 	return out
 }

@@ -547,6 +547,47 @@ message DbBackupWork {
   string s3_secret_key = 11;
 }
 
+// VolumeBackupWork archives one named volume out of a running container and
+// uploads it, exactly the way DbBackupWork does — minus the dump. There is no
+// engine and no command: a volume has nothing to ask for a consistent view, so
+// the agent tars the mount path as it stands (volume-backups.md §2).
+//
+// The artefact is CRASH-CONSISTENT: the same thing you would have if the power
+// had been cut at that instant. That is stated on the wire because it is the
+// property a caller has to reason about, not an implementation detail.
+message VolumeBackupWork {
+  string backup_record_id = 1;  // idempotency key
+  string application_id = 2;
+  string container_name = 3;
+  string volume_name = 4;       // the operator's label, for the event
+  string mount_path = 5;        // absolute path inside the container
+  string s3_endpoint = 6;
+  string s3_bucket = 7;
+  string s3_region = 8;
+  string s3_key = 9;            // <prefix>/<app_id>/<volume>/<ts>.tar.gz
+  string s3_access_key = 10;
+  string s3_secret_key = 11;
+}
+
+// VolumeBackupEvent is the observed outcome. Deliberately its own message
+// rather than a reused DbBackupEvent: the ids differ, and a message whose
+// db_id field is empty half the time is a message nobody can read.
+message VolumeBackupEvent {
+  string backup_record_id = 1;
+  string application_id = 2;
+  string volume_name = 3;
+  enum Outcome {
+    OUTCOME_UNSPECIFIED = 0;
+    OUTCOME_SUCCEEDED = 1;
+    OUTCOME_FAILED = 2;
+  }
+  Outcome outcome = 4;
+  string object_key = 5;
+  int64 size_bytes = 6;
+  string detail = 7;
+  google.protobuf.Timestamp occurred_at = 8;
+}
+
 // DbRestoreWork commands the host agent to download a backup and restore it into
 // the database container. Same wire discipline as DbBackupWork (engine, not a
 // command; S3 creds over mTLS only).

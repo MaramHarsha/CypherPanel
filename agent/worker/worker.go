@@ -61,6 +61,9 @@ type ImageRelay interface {
 // managed-databases.md §7). Nil on nodes that run no databases.
 type BackupRunner interface {
 	ExecuteBackup(ctx context.Context, work *agentv1.DbBackupWork) *agentv1.DbBackupEvent
+	// ExecuteVolumeBackup archives a named volume rather than dumping an
+	// engine (volume-backups.md). Same transport, same S3 client, no exec.
+	ExecuteVolumeBackup(ctx context.Context, work *agentv1.VolumeBackupWork) *agentv1.VolumeBackupEvent
 	// ExecuteRestore reports each step it reaches through progress before
 	// returning the terminal event. A restore takes the database offline, so
 	// how far along it is is the answer someone is waiting for.
@@ -620,6 +623,30 @@ func (w *Worker) handleMsg(ctx context.Context, msg Message) {
 		})
 		if data, err := proto.Marshal(event); err == nil {
 			_ = w.bus.Publish(subjects.DbBackupPruneState(w.serverID), data)
+		}
+		_ = msg.Ack()
+		return
+
+	case strings.HasSuffix(subject, ".volume.backup"):
+		var work agentv1.VolumeBackupWork
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
+			w.log.Error("worker: unmarshaling volume backup work", "error", err)
+			_ = msg.Term()
+			return
+		}
+		if w.backup == nil {
+			w.log.Error("worker: received volume backup work but no backup runner")
+			_ = msg.Term()
+			return
+		}
+		// Held in-flight across the archive and upload, exactly as a database
+		// backup is. Idempotent by record id: redelivery re-uploads to the same
+		// key, and S3 PUT is last-writer-wins.
+		event := w.runWithHeartbeat(ctx, msg, func(ctx context.Context) proto.Message {
+			return w.backup.ExecuteVolumeBackup(ctx, &work)
+		})
+		if data, err := proto.Marshal(event); err == nil {
+			_ = w.bus.Publish(subjects.VolumeBackupState(w.serverID), data)
 		}
 		_ = msg.Ack()
 		return

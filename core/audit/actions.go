@@ -107,6 +107,9 @@ const (
 	// reach a private admin panel is not something to copy into a second table
 	// (threat-model §5.15).
 	ActionApplicationAccessChanged = "application.access_changed"
+	// Volume backup schedule changed, and a run started.
+	ActionVolumeBackupChanged = "application.volume_backup_changed"
+	ActionVolumeBackupRan     = "application.volume_backup_ran"
 	ActionEnvVarSet            = "application.env_var_set"
 	ActionEnvVarRemoved        = "application.env_var_removed"
 
@@ -267,6 +270,7 @@ var actions = map[string]bool{
 	ActionWebhookSecretRotated: true,
 
 	ActionApplicationAccessChanged: true,
+	ActionVolumeBackupChanged: true, ActionVolumeBackupRan: true,
 
 	ActionProjectExported: true,
 

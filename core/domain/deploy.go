@@ -101,6 +101,10 @@ type AppBuild struct {
 type VolumeMount struct {
 	Name string `json:"name"`
 	Path string `json:"path"`
+	// BackedUp rides the application's volume backup schedule
+	// (volume-backups.md). Stored inside the volumes JSONB, so a row written
+	// before this feature decodes as false — which is the behaviour it had.
+	BackedUp bool `json:"backed_up,omitempty"`
 }
 
 type AppRuntime struct {

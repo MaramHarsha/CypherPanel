@@ -112,6 +112,9 @@ type Opener interface {
 type BackupOps interface {
 	RunBackup(ctx context.Context, scheduleID string) (domain.BackupRecord, error)
 	RunRestore(ctx context.Context, dbID, backupRecordID string, confirm bool) (domain.DatabaseRestore, error)
+	// Volume backups (volume-backups.md). One run fans out across every volume
+	// the application has flagged, so this returns a record per volume.
+	RunVolumeBackup(ctx context.Context, appID string) ([]domain.VolumeBackupRecord, error)
 }
 
 // PreviewManager drives preview environments from PR events and exposes the
@@ -309,6 +312,16 @@ type ProjectExporter interface {
 	WriteTo(ctx context.Context, w io.Writer, projectID string) error
 }
 
+// VolumeBackupStore is the schedule and history surface the volume-backup
+// routes need (consumer-defined, ENGINEERING rule 6). nil answers 501, the
+// shape every optional surface here takes.
+type VolumeBackupStore interface {
+	GetVolumeBackupByApplication(ctx context.Context, appID string) (domain.VolumeBackup, error)
+	UpsertVolumeBackup(ctx context.Context, v domain.VolumeBackup) (domain.VolumeBackup, error)
+	DeleteVolumeBackup(ctx context.Context, appID string) error
+	ListVolumeBackupRecords(ctx context.Context, scheduleID string, limit int) ([]domain.VolumeBackupRecord, error)
+}
+
 type Deps struct {
 	Auth            *auth.Authenticator
 	Onboarding      OnboardingService
@@ -338,6 +351,8 @@ type Deps struct {
 	// nil answers 501, the same shape every optional surface here takes. It is
 	// deliberately given no way to unseal a secret — see core/export.
 	Export ProjectExporter
+	// VolumeBackups is the volume schedule store (volume-backups.md).
+	VolumeBackups VolumeBackupStore
 	Inbox   InboxService
 	// Audit records every sensitive action and serves the log back
 	// (audit-log.md). nil records nothing and serves an empty log.
@@ -525,6 +540,13 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/applications/{id}/restart", a.authed(a.handleRestartApplication))
 	// Front-door access control (app-access-control.md §9). Member rank: an
 	// operator who may deploy the app may decide who reaches it.
+	// Volume backups (volume-backups.md §3): one schedule per application,
+	// covering every volume it marks as backed up.
+	mux.HandleFunc("GET /api/v1/applications/{id}/volume-backup", a.authed(a.handleGetVolumeBackup))
+	mux.HandleFunc("PUT /api/v1/applications/{id}/volume-backup", a.authed(a.handleSetVolumeBackup))
+	mux.HandleFunc("DELETE /api/v1/applications/{id}/volume-backup", a.authed(a.handleDeleteVolumeBackup))
+	mux.HandleFunc("POST /api/v1/applications/{id}/volume-backup/run", a.authed(a.handleRunVolumeBackup))
+	mux.HandleFunc("GET /api/v1/applications/{id}/volume-backup/history", a.authed(a.handleVolumeBackupHistory))
 	mux.HandleFunc("GET /api/v1/applications/{id}/access", a.authed(a.handleGetApplicationAccess))
 	mux.HandleFunc("PUT /api/v1/applications/{id}/access", a.authed(a.handleSetApplicationAccess))
 	mux.HandleFunc("POST /api/v1/applications/{id}/access/preview-password", a.authed(a.handleSetPreviewPassword))

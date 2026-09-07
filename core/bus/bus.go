@@ -249,7 +249,7 @@ func Start(ctx context.Context, opts Options) (*Bus, error) {
 	// step with the state.* subjects in pkg/subjects.
 	if _, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
 		Name:      streamState,
-		Subjects:  []string{subjects.HeartbeatAll, subjects.DeployStateAll, subjects.AppStateAll, subjects.DbStateAll, subjects.ComposeStateAll, subjects.DbBackupStateAll, subjects.DbRestoreStateAll, subjects.DbBackupPruneStateAll, subjects.TaskStateAll},
+		Subjects:  []string{subjects.HeartbeatAll, subjects.DeployStateAll, subjects.AppStateAll, subjects.DbStateAll, subjects.ComposeStateAll, subjects.DbBackupStateAll, subjects.DbRestoreStateAll, subjects.DbBackupPruneStateAll, subjects.VolumeBackupStateAll, subjects.TaskStateAll},
 		Storage:   jetstream.MemoryStorage,
 		Retention: jetstream.LimitsPolicy,
 		Discard:   jetstream.DiscardOld,
@@ -457,6 +457,11 @@ func (b *Bus) ConsumeComposeStatus(ctx context.Context, handle func(serverID str
 // ConsumeDbBackupEvents delivers each DbBackupEvent payload to handle.
 func (b *Bus) ConsumeDbBackupEvents(ctx context.Context, handle func(serverID string, data []byte)) (jetstream.ConsumeContext, error) {
 	return b.consumeState(ctx, "plane-db-backup", subjects.DbBackupStateAll, handle)
+}
+
+// ConsumeVolumeBackupEvents delivers each VolumeBackupEvent payload to handle.
+func (b *Bus) ConsumeVolumeBackupEvents(ctx context.Context, handle func(serverID string, data []byte)) (jetstream.ConsumeContext, error) {
+	return b.consumeState(ctx, "plane-volume-backup", subjects.VolumeBackupStateAll, handle)
 }
 
 // ConsumeDbRestoreEvents delivers each DbRestoreEvent payload to handle.

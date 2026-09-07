@@ -421,4 +421,16 @@ func (s *Scheduler) SweepDueBackups(ctx context.Context) {
 			s.log.Error("backup sweep: running due backup", "schedule_id", sch.ID, "error", err)
 		}
 	}
+
+	// Volumes ride the same tick rather than a second goroutine: they use the
+	// same targets and the same due-window rule, and two sweepers would be two
+	// places to change when that rule changes (volume-backups.md §3).
+	s.RunDueVolumeBackups(ctx, func(schedule string, anchor, now time.Time) bool {
+		cronSched, err := robfig.ParseStandard(schedule)
+		if err != nil {
+			s.log.Error("backup sweep: unparseable volume schedule; skipped", "schedule", schedule, "error", err)
+			return false
+		}
+		return !cronSched.Next(anchor).After(now)
+	})
 }

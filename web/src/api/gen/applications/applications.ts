@@ -43,8 +43,11 @@ import type {
   SetAppAccessRequest,
   SetEnvVarRequest,
   SetPreviewPasswordRequest,
+  SetVolumeBackupRequest,
   StreamApplicationLogsParams,
-  UnauthorizedResponse
+  UnauthorizedResponse,
+  VolumeBackup,
+  VolumeBackupRecord
 } from '../model';
 
 import { apiFetch } from '../../client.ts';
@@ -1047,7 +1050,424 @@ export const useSetPreviewPassword = <TError = BadRequestResponse | Unauthorized
       > => {
       return useMutation(getSetPreviewPasswordMutationOptions(options), queryClient);
     }
-    export const getRestartApplicationUrl = (id: string,) => {
+    export const getGetVolumeBackupUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/applications/${id}/volume-backup`
+}
+
+/**
+ * Answers `null` when the application has no schedule. That is a normal state — most applications never need one — so it is not a 404: a 404 here would be indistinguishable from "no such application".
+ * @summary The application's volume backup schedule (member+)
+ */
+export const getVolumeBackup = async (id: string, options?: RequestInit): Promise<VolumeBackup | null> => {
+
+  return apiFetch<VolumeBackup | null>(getGetVolumeBackupUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetVolumeBackupQueryKey = (id: string,) => {
+    return [
+    `/api/v1/applications/${id}/volume-backup`
+    ] as const;
+    }
+
+
+export const getGetVolumeBackupQueryOptions = <TData = Awaited<ReturnType<typeof getVolumeBackup>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getVolumeBackup>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetVolumeBackupQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getVolumeBackup>>> = ({ signal }) => getVolumeBackup(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getVolumeBackup>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetVolumeBackupQueryResult = NonNullable<Awaited<ReturnType<typeof getVolumeBackup>>>
+export type GetVolumeBackupQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useGetVolumeBackup<TData = Awaited<ReturnType<typeof getVolumeBackup>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getVolumeBackup>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getVolumeBackup>>,
+          TError,
+          Awaited<ReturnType<typeof getVolumeBackup>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetVolumeBackup<TData = Awaited<ReturnType<typeof getVolumeBackup>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getVolumeBackup>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getVolumeBackup>>,
+          TError,
+          Awaited<ReturnType<typeof getVolumeBackup>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetVolumeBackup<TData = Awaited<ReturnType<typeof getVolumeBackup>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getVolumeBackup>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary The application's volume backup schedule (member+)
+ */
+
+export function useGetVolumeBackup<TData = Awaited<ReturnType<typeof getVolumeBackup>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getVolumeBackup>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetVolumeBackupQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getSetVolumeBackupUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/applications/${id}/volume-backup`
+}
+
+/**
+ * One schedule per application, covering every volume the application marks `backed_up`. An operator who wants two cadences for two directories of the same application is describing two applications.
+ *
+ * A volume archive is a tar of a live directory, not a consistent snapshot: a database writing during the copy produces an archive of a half-written file. That is why databases keep their own engine-level dumps and this covers uploads, caches and generated assets instead.
+ * @summary Create or replace the volume backup schedule (member+)
+ */
+export const setVolumeBackup = async (id: string,
+    setVolumeBackupRequest: SetVolumeBackupRequest, options?: RequestInit): Promise<VolumeBackup> => {
+
+  return apiFetch<VolumeBackup>(getSetVolumeBackupUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(setVolumeBackupRequest)
+  }
+);}
+
+
+
+
+
+export const getSetVolumeBackupMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setVolumeBackup>>, TError,{id: string;data: SetVolumeBackupRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setVolumeBackup>>, TError,{id: string;data: SetVolumeBackupRequest}, TContext> => {
+
+const mutationKey = ['setVolumeBackup'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setVolumeBackup>>, {id: string;data: SetVolumeBackupRequest}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  setVolumeBackup(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetVolumeBackupMutationResult = NonNullable<Awaited<ReturnType<typeof setVolumeBackup>>>
+    export type SetVolumeBackupMutationBody = SetVolumeBackupRequest
+    export type SetVolumeBackupMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Create or replace the volume backup schedule (member+)
+ */
+export const useSetVolumeBackup = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setVolumeBackup>>, TError,{id: string;data: SetVolumeBackupRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setVolumeBackup>>,
+        TError,
+        {id: string;data: SetVolumeBackupRequest},
+        TContext
+      > => {
+      return useMutation(getSetVolumeBackupMutationOptions(options), queryClient);
+    }
+    export const getDeleteVolumeBackupUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/applications/${id}/volume-backup`
+}
+
+/**
+ * Stops future runs and forgets the cadence. Archives already in the bucket are left alone — deleting an operator's off-site copies from a panel action is the one mistake with no undo.
+ * @summary Remove the schedule (member+)
+ */
+export const deleteVolumeBackup = async (id: string, options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getDeleteVolumeBackupUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteVolumeBackupMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteVolumeBackup>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteVolumeBackup>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['deleteVolumeBackup'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteVolumeBackup>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteVolumeBackup(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteVolumeBackupMutationResult = NonNullable<Awaited<ReturnType<typeof deleteVolumeBackup>>>
+
+    export type DeleteVolumeBackupMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Remove the schedule (member+)
+ */
+export const useDeleteVolumeBackup = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteVolumeBackup>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteVolumeBackup>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getDeleteVolumeBackupMutationOptions(options), queryClient);
+    }
+    export const getRunVolumeBackupUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/applications/${id}/volume-backup/run`
+}
+
+/**
+ * Dispatches to the agent and answers 202 with one running record per flagged volume — a record per volume rather than per run, because a failure belongs to the volume that failed. An application with a schedule and nothing flagged answers 202 with an empty list.
+ * @summary Archive every flagged volume now (member+)
+ */
+export const runVolumeBackup = async (id: string, options?: RequestInit): Promise<VolumeBackupRecord[]> => {
+
+  return apiFetch<VolumeBackupRecord[]>(getRunVolumeBackupUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRunVolumeBackupMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runVolumeBackup>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof runVolumeBackup>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['runVolumeBackup'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof runVolumeBackup>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  runVolumeBackup(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RunVolumeBackupMutationResult = NonNullable<Awaited<ReturnType<typeof runVolumeBackup>>>
+
+    export type RunVolumeBackupMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error
+
+    /**
+ * @summary Archive every flagged volume now (member+)
+ */
+export const useRunVolumeBackup = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runVolumeBackup>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof runVolumeBackup>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getRunVolumeBackupMutationOptions(options), queryClient);
+    }
+    export const getListVolumeBackupRecordsUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/applications/${id}/volume-backup/history`
+}
+
+/**
+ * @summary Recent volume archives, newest first (member+)
+ */
+export const listVolumeBackupRecords = async (id: string, options?: RequestInit): Promise<VolumeBackupRecord[]> => {
+
+  return apiFetch<VolumeBackupRecord[]>(getListVolumeBackupRecordsUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListVolumeBackupRecordsQueryKey = (id: string,) => {
+    return [
+    `/api/v1/applications/${id}/volume-backup/history`
+    ] as const;
+    }
+
+
+export const getListVolumeBackupRecordsQueryOptions = <TData = Awaited<ReturnType<typeof listVolumeBackupRecords>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listVolumeBackupRecords>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListVolumeBackupRecordsQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listVolumeBackupRecords>>> = ({ signal }) => listVolumeBackupRecords(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listVolumeBackupRecords>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListVolumeBackupRecordsQueryResult = NonNullable<Awaited<ReturnType<typeof listVolumeBackupRecords>>>
+export type ListVolumeBackupRecordsQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useListVolumeBackupRecords<TData = Awaited<ReturnType<typeof listVolumeBackupRecords>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listVolumeBackupRecords>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listVolumeBackupRecords>>,
+          TError,
+          Awaited<ReturnType<typeof listVolumeBackupRecords>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListVolumeBackupRecords<TData = Awaited<ReturnType<typeof listVolumeBackupRecords>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listVolumeBackupRecords>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listVolumeBackupRecords>>,
+          TError,
+          Awaited<ReturnType<typeof listVolumeBackupRecords>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListVolumeBackupRecords<TData = Awaited<ReturnType<typeof listVolumeBackupRecords>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listVolumeBackupRecords>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Recent volume archives, newest first (member+)
+ */
+
+export function useListVolumeBackupRecords<TData = Awaited<ReturnType<typeof listVolumeBackupRecords>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listVolumeBackupRecords>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListVolumeBackupRecordsQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getRestartApplicationUrl = (id: string,) => {
 
 
 

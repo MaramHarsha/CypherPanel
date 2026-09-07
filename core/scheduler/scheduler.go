@@ -136,6 +136,19 @@ type Store interface {
 
 	// Phase 3: database backups (managed-databases.md §7)
 	GetDatabaseBackup(ctx context.Context, id string) (domain.DatabaseBackup, error)
+
+	// Volume backups (volume-backups.md). Sibling tables rather than a widened
+	// backup_records, because that table's key is the SCHEDULE and making it
+	// nullable would turn a clean table into a union type.
+	GetVolumeBackupByApplication(ctx context.Context, appID string) (domain.VolumeBackup, error)
+	GetVolumeBackup(ctx context.Context, id string) (domain.VolumeBackup, error)
+	ListEnabledVolumeBackupSchedules(ctx context.Context) ([]domain.VolumeBackup, error)
+	SetVolumeBackupLastRun(ctx context.Context, id string, at *time.Time, status string) error
+	CreateVolumeBackupRecord(ctx context.Context, id, scheduleID, volumeName string) (domain.VolumeBackupRecord, error)
+	GetVolumeBackupRecord(ctx context.Context, id string) (domain.VolumeBackupRecord, error)
+	UpdateVolumeBackupRecord(ctx context.Context, id, objectKey string, size int64, status, detail string) error
+	ListVolumeRecordsBeyondRetention(ctx context.Context, scheduleID, volumeName string, keep int) ([]domain.VolumeBackupRecord, error)
+	DeleteVolumeBackupRecords(ctx context.Context, ids []string) error
 	ListEnabledBackupSchedules(ctx context.Context) ([]domain.DatabaseBackup, error)
 	GetBackupTarget(ctx context.Context, id string) (domain.BackupTarget, error)
 	CreateBackupRecord(ctx context.Context, r domain.BackupRecord) (domain.BackupRecord, error)
@@ -228,6 +241,10 @@ type RegistryCredentials interface {
 }
 
 type Scheduler struct {
+	// volumePrunes maps an in-flight S3 key to the volume record row it came
+	// from, so the shared prune event can delete the right rows once the
+	// objects are confirmed gone rather than optimistically.
+	volumePrunes map[string]string
 	store  Store
 	bus    Bus
 	opener Opener

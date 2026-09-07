@@ -1653,6 +1653,97 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/v1/applications/{id}/volume-backup:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Application ID. }
+    get:
+      operationId: getVolumeBackup
+      tags: [applications]
+      summary: The application's volume backup schedule (member+)
+      description: >-
+        Answers `null` when the application has no schedule. That is a normal
+        state — most applications never need one — so it is not a 404: a 404
+        here would be indistinguishable from "no such application".
+      responses:
+        "200":
+          description: The schedule, or null.
+          content: { application/json: { schema: { oneOf: [ { $ref: "#/components/schemas/VolumeBackup" }, { type: "null" } ] } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: setVolumeBackup
+      tags: [applications]
+      summary: Create or replace the volume backup schedule (member+)
+      description: >-
+        One schedule per application, covering every volume the application
+        marks `backed_up`. An operator who wants two cadences for two
+        directories of the same application is describing two applications.
+
+
+        A volume archive is a tar of a live directory, not a consistent
+        snapshot: a database writing during the copy produces an archive of a
+        half-written file. That is why databases keep their own engine-level
+        dumps and this covers uploads, caches and generated assets instead.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetVolumeBackupRequest" } } }
+      responses:
+        "200": { description: Saved., content: { application/json: { schema: { $ref: "#/components/schemas/VolumeBackup" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: deleteVolumeBackup
+      tags: [applications]
+      summary: Remove the schedule (member+)
+      description: >-
+        Stops future runs and forgets the cadence. Archives already in the
+        bucket are left alone — deleting an operator's off-site copies from a
+        panel action is the one mistake with no undo.
+      responses:
+        "204": { description: Removed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/applications/{id}/volume-backup/run:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Application ID. }
+    post:
+      operationId: runVolumeBackup
+      tags: [applications]
+      summary: Archive every flagged volume now (member+)
+      description: >-
+        Dispatches to the agent and answers 202 with one running record per
+        flagged volume — a record per volume rather than per run, because a
+        failure belongs to the volume that failed. An application with a
+        schedule and nothing flagged answers 202 with an empty list.
+      responses:
+        "202":
+          description: Dispatched.
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/VolumeBackupRecord" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: The application has no volume backup schedule., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /api/v1/applications/{id}/volume-backup/history:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Application ID. }
+    get:
+      operationId: listVolumeBackupRecords
+      tags: [applications]
+      summary: Recent volume archives, newest first (member+)
+      responses:
+        "200":
+          description: Up to 50 records.
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/VolumeBackupRecord" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /api/v1/applications/{id}/restart:
     post:
       operationId: restartApplication
@@ -6450,6 +6541,13 @@ components:
         path:
           type: string
           description: Absolute mount path inside the container.
+        backed_up:
+          type: boolean
+          description: >-
+            Whether the application's volume backup schedule archives this
+            mount. Per-volume rather than per-application: a cache directory and
+            an uploads directory have opposite answers, and backing up the cache
+            costs storage for data whose whole point is being disposable.
 
     AppRuntime:
       type: object
@@ -7340,6 +7438,39 @@ components:
       properties:
         backup_record_id: { type: string }
         confirm: { type: boolean, description: Must be true — restore overwrites the database. }
+
+    VolumeBackup:
+      type: object
+      required: [id, application_id, target_id, schedule, retention_count, enabled, last_status]
+      properties:
+        id: { type: string, description: vb_… prefixed ID. }
+        application_id: { type: string }
+        target_id: { type: string, description: The backup target the archives are written to. }
+        schedule: { type: string, description: Five-field cron. Empty means manual runs only. }
+        retention_count: { type: integer, description: Archives kept per volume; older ones are deleted from the bucket after a successful run. }
+        enabled: { type: boolean }
+        last_run_at: { type: [string, "null"], format: date-time }
+        last_status: { type: string, enum: ["", running, succeeded, failed] }
+    SetVolumeBackupRequest:
+      type: object
+      required: [target_id, enabled]
+      properties:
+        target_id: { type: string }
+        schedule: { type: string, description: Five-field cron; empty means manual only. }
+        retention_count: { type: integer, description: Defaults to 7 when below 1. }
+        enabled: { type: boolean }
+    VolumeBackupRecord:
+      type: object
+      required: [id, volume_name, size_bytes, status, started_at]
+      properties:
+        id: { type: string, description: vbr_… prefixed ID. }
+        volume_name: { type: string, description: The operator label of the mount this archive covers. }
+        object_key: { type: string }
+        size_bytes: { type: integer, format: int64 }
+        status: { type: string, enum: [running, succeeded, failed] }
+        detail: { type: string }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
 
     # ─── Previews ───────────────────────────────────────────────────────────────
     Preview:
