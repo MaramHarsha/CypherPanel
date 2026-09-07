@@ -258,6 +258,7 @@ func appParams(a domain.Application) db.CreateApplicationParams {
 		Name:                  a.Name,
 		SourceKind:            a.Source.Kind,
 		SourceRepo:            a.Source.Repo,
+		GithubInstallationID:  int8From(a.Source.GitHubInstallationID),
 		SourceBranch:          a.Source.Branch,
 		SourceDeployKeyID:     textFromPtr(a.Source.DeployKeyID),
 		SourceImage:           a.Source.Image,
@@ -392,6 +393,7 @@ func (s *Store) UpdateApplicationConfig(ctx context.Context, a domain.Applicatio
 		Name:                  a.Name,
 		SourceKind:            a.Source.Kind,
 		SourceRepo:            a.Source.Repo,
+		GithubInstallationID:  int8From(a.Source.GitHubInstallationID),
 		SourceBranch:          a.Source.Branch,
 		SourceDeployKeyID:     textFromPtr(a.Source.DeployKeyID),
 		SourceImage:           a.Source.Image,
@@ -850,18 +852,38 @@ func (s *Store) ProjectRollups(ctx context.Context) (map[string]domain.ProjectRo
 	return out, nil
 }
 
+// int64PtrFrom lifts a nullable bigint into the domain's *int64. Kept beside
+// the row mapper rather than inlined so a second nullable column has an obvious
+// home.
+// int8From is the mirror of int64PtrFrom, for writing.
+func int8From(v *int64) pgtype.Int8 {
+	if v == nil {
+		return pgtype.Int8{}
+	}
+	return pgtype.Int8{Int64: *v, Valid: true}
+}
+
+func int64PtrFrom(v pgtype.Int8) *int64 {
+	if !v.Valid {
+		return nil
+	}
+	n := v.Int64
+	return &n
+}
+
 func applicationFromRow(r db.Application) domain.Application {
 	return domain.Application{
 		ID:            r.ID,
 		EnvironmentID: r.EnvironmentID,
 		Name:          r.Name,
 		Source: domain.AppSource{
-			Kind:        r.SourceKind,
-			Repo:        r.SourceRepo,
-			Branch:      r.SourceBranch,
-			DeployKeyID: ptrFromText(r.SourceDeployKeyID),
-			Image:       r.SourceImage,
-			RegistryID:  ptrFromText(r.SourceRegistryID),
+			Kind:                 r.SourceKind,
+			Repo:                 r.SourceRepo,
+			GitHubInstallationID: int64PtrFrom(r.GithubInstallationID),
+			Branch:               r.SourceBranch,
+			DeployKeyID:          ptrFromText(r.SourceDeployKeyID),
+			Image:                r.SourceImage,
+			RegistryID:           ptrFromText(r.SourceRegistryID),
 		},
 		Build: domain.AppBuild{
 			Kind:           r.BuildKind,

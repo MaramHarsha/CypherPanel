@@ -50,6 +50,8 @@ import type {
   ForbiddenResponse,
   GetPanelLogsParams,
   GetUsageParams,
+  GitHubApp,
+  GitHubRepository,
   LogDrain,
   LogDrainRequest,
   MailDomain,
@@ -76,6 +78,7 @@ import type {
   RestorePanelSnapshotBody,
   SetAgentChannelRequest,
   SetAlertRuleEnabledBody,
+  SetGitHubAppRequest,
   SetPanelDNSRequest,
   SetPanelMailRequest,
   SetPanelTLSRequest,
@@ -1650,7 +1653,426 @@ export const usePromoteAgentChannel = <TError = UnauthorizedResponse | Forbidden
       > => {
       return useMutation(getPromoteAgentChannelMutationOptions(options), queryClient);
     }
-    export const getGetOnboardingUrl = () => {
+    export const getGetGitHubAppUrl = () => {
+
+
+
+
+  return `/api/v1/github/app`
+}
+
+/**
+ * NEVER returns the private key, not even redacted: a field that is sometimes a secret is a field that eventually leaks one.
+ * @summary Whether a GitHub App is connected, and where it is installed (admin+)
+ */
+export const getGitHubApp = async ( options?: RequestInit): Promise<GitHubApp> => {
+
+  return apiFetch<GitHubApp>(getGetGitHubAppUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetGitHubAppQueryKey = () => {
+    return [
+    `/api/v1/github/app`
+    ] as const;
+    }
+
+
+export const getGetGitHubAppQueryOptions = <TData = Awaited<ReturnType<typeof getGitHubApp>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGitHubApp>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetGitHubAppQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getGitHubApp>>> = ({ signal }) => getGitHubApp({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getGitHubApp>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetGitHubAppQueryResult = NonNullable<Awaited<ReturnType<typeof getGitHubApp>>>
+export type GetGitHubAppQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useGetGitHubApp<TData = Awaited<ReturnType<typeof getGitHubApp>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGitHubApp>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getGitHubApp>>,
+          TError,
+          Awaited<ReturnType<typeof getGitHubApp>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetGitHubApp<TData = Awaited<ReturnType<typeof getGitHubApp>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGitHubApp>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getGitHubApp>>,
+          TError,
+          Awaited<ReturnType<typeof getGitHubApp>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetGitHubApp<TData = Awaited<ReturnType<typeof getGitHubApp>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGitHubApp>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Whether a GitHub App is connected, and where it is installed (admin+)
+ */
+
+export function useGetGitHubApp<TData = Awaited<ReturnType<typeof getGitHubApp>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGitHubApp>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetGitHubAppQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getSetGitHubAppUrl = () => {
+
+
+
+
+  return `/api/v1/github/app`
+}
+
+/**
+ * Owner AND session-only: the private key can mint a token for every repository the App is installed on, and API tokens live in CI. It is the rule break glass and the agent channel already carry, applied to the credential with the widest reach in the panel.
+ *
+ * The credentials are validated against GitHub BEFORE anything is stored — a credential that fails at first use is a dead end, and a dead end is a bug. On success the installations are cached from GitHub's own answer.
+ *
+ * `private_key_pem` is write-only.
+ * @summary Connect a GitHub App (owner, session only)
+ */
+export const setGitHubApp = async (setGitHubAppRequest: SetGitHubAppRequest, options?: RequestInit): Promise<GitHubApp> => {
+
+  return apiFetch<GitHubApp>(getSetGitHubAppUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(setGitHubAppRequest)
+  }
+);}
+
+
+
+
+
+export const getSetGitHubAppMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setGitHubApp>>, TError,{data: SetGitHubAppRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setGitHubApp>>, TError,{data: SetGitHubAppRequest}, TContext> => {
+
+const mutationKey = ['setGitHubApp'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setGitHubApp>>, {data: SetGitHubAppRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  setGitHubApp(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetGitHubAppMutationResult = NonNullable<Awaited<ReturnType<typeof setGitHubApp>>>
+    export type SetGitHubAppMutationBody = SetGitHubAppRequest
+    export type SetGitHubAppMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary Connect a GitHub App (owner, session only)
+ */
+export const useSetGitHubApp = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setGitHubApp>>, TError,{data: SetGitHubAppRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setGitHubApp>>,
+        TError,
+        {data: SetGitHubAppRequest},
+        TContext
+      > => {
+      return useMutation(getSetGitHubAppMutationOptions(options), queryClient);
+    }
+    export const getDeleteGitHubAppUrl = () => {
+
+
+
+
+  return `/api/v1/github/app`
+}
+
+/**
+ * Applications that reached their repository through it fail their next deploy with a reason, rather than silently falling back to an anonymous clone — which would succeed for a public repository and fail confusingly for a private one.
+ * @summary Disconnect the GitHub App (owner, session only)
+ */
+export const deleteGitHubApp = async ( options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getDeleteGitHubAppUrl(),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteGitHubAppMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteGitHubApp>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteGitHubApp>>, TError,void, TContext> => {
+
+const mutationKey = ['deleteGitHubApp'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteGitHubApp>>, void> = () => {
+
+
+          return  deleteGitHubApp(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteGitHubAppMutationResult = NonNullable<Awaited<ReturnType<typeof deleteGitHubApp>>>
+
+    export type DeleteGitHubAppMutationError = UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary Disconnect the GitHub App (owner, session only)
+ */
+export const useDeleteGitHubApp = <TError = UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteGitHubApp>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteGitHubApp>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getDeleteGitHubAppMutationOptions(options), queryClient);
+    }
+    export const getRefreshGitHubInstallationsUrl = () => {
+
+
+
+
+  return `/api/v1/github/installations/refresh`
+}
+
+/**
+ * Installations are OBSERVED, never authored: the panel does not decide which organisations its App is installed on, GitHub does. This replaces the cache with GitHub's answer, so an installation it no longer reports is gone — the same contract the DNS zone cache follows, for the same reason: an operator-entered list would be a second place to lie about what access exists.
+ * @summary Re-read where the App is installed (admin+)
+ */
+export const refreshGitHubInstallations = async ( options?: RequestInit): Promise<GitHubApp> => {
+
+  return apiFetch<GitHubApp>(getRefreshGitHubInstallationsUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRefreshGitHubInstallationsMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshGitHubInstallations>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof refreshGitHubInstallations>>, TError,void, TContext> => {
+
+const mutationKey = ['refreshGitHubInstallations'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof refreshGitHubInstallations>>, void> = () => {
+
+
+          return  refreshGitHubInstallations(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RefreshGitHubInstallationsMutationResult = NonNullable<Awaited<ReturnType<typeof refreshGitHubInstallations>>>
+
+    export type RefreshGitHubInstallationsMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | void
+
+    /**
+ * @summary Re-read where the App is installed (admin+)
+ */
+export const useRefreshGitHubInstallations = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshGitHubInstallations>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof refreshGitHubInstallations>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getRefreshGitHubInstallationsMutationOptions(options), queryClient);
+    }
+    export const getListGitHubRepositoriesUrl = () => {
+
+
+
+
+  return `/api/v1/github/repositories`
+}
+
+/**
+ * Read live rather than cached: the list changes when someone adds a repository, and a stale list that omits the one you just made is worse than a request. An empty list is what a panel with no App returns, and a client reads that as "type a URL instead".
+ * @summary Repositories the App can deploy (member+)
+ */
+export const listGitHubRepositories = async ( options?: RequestInit): Promise<GitHubRepository[]> => {
+
+  return apiFetch<GitHubRepository[]>(getListGitHubRepositoriesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListGitHubRepositoriesQueryKey = () => {
+    return [
+    `/api/v1/github/repositories`
+    ] as const;
+    }
+
+
+export const getListGitHubRepositoriesQueryOptions = <TData = Awaited<ReturnType<typeof listGitHubRepositories>>, TError = UnauthorizedResponse | ForbiddenResponse | void>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listGitHubRepositories>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListGitHubRepositoriesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listGitHubRepositories>>> = ({ signal }) => listGitHubRepositories({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listGitHubRepositories>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListGitHubRepositoriesQueryResult = NonNullable<Awaited<ReturnType<typeof listGitHubRepositories>>>
+export type ListGitHubRepositoriesQueryError = UnauthorizedResponse | ForbiddenResponse | void
+
+
+export function useListGitHubRepositories<TData = Awaited<ReturnType<typeof listGitHubRepositories>>, TError = UnauthorizedResponse | ForbiddenResponse | void>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listGitHubRepositories>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listGitHubRepositories>>,
+          TError,
+          Awaited<ReturnType<typeof listGitHubRepositories>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListGitHubRepositories<TData = Awaited<ReturnType<typeof listGitHubRepositories>>, TError = UnauthorizedResponse | ForbiddenResponse | void>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listGitHubRepositories>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listGitHubRepositories>>,
+          TError,
+          Awaited<ReturnType<typeof listGitHubRepositories>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListGitHubRepositories<TData = Awaited<ReturnType<typeof listGitHubRepositories>>, TError = UnauthorizedResponse | ForbiddenResponse | void>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listGitHubRepositories>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Repositories the App can deploy (member+)
+ */
+
+export function useListGitHubRepositories<TData = Awaited<ReturnType<typeof listGitHubRepositories>>, TError = UnauthorizedResponse | ForbiddenResponse | void>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listGitHubRepositories>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListGitHubRepositoriesQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getGetOnboardingUrl = () => {
 
 
 

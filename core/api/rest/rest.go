@@ -26,6 +26,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/databases"
 	"github.com/MaramHarsha/cypherpanel/core/deploykeys"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
+	"github.com/MaramHarsha/cypherpanel/core/githubapp"
 	"github.com/MaramHarsha/cypherpanel/core/inbox"
 	"github.com/MaramHarsha/cypherpanel/core/notify"
 	"github.com/MaramHarsha/cypherpanel/core/onboarding"
@@ -317,6 +318,24 @@ type OnboardingService interface {
 	Progress(ctx context.Context, ps onboarding.ProgressStore) (onboarding.Progress, error)
 }
 
+// GitHubAppService owns the App credential and what it can reach
+// (consumer-defined; *githubapp.Service satisfies it).
+type GitHubAppService interface {
+	Get(ctx context.Context) (githubapp.Settings, error)
+	Set(ctx context.Context, c githubapp.Config) (githubapp.Settings, error)
+	Delete(ctx context.Context) error
+	RefreshInstallations(ctx context.Context) ([]domain.GitHubInstallation, error)
+	Repositories(ctx context.Context) ([]githubapp.Repository, error)
+	WebhookSecret(ctx context.Context) (string, error)
+}
+
+// GitHubPushHandler deploys every application a push matches. EVERY one,
+// deliberately: a repository can be deployed by several environments, and
+// picking one would silently skip the rest (github-app.md §6).
+type GitHubPushHandler interface {
+	DeployFromPush(ctx context.Context, payload []byte) (int, error)
+}
+
 // ProjectExporter writes a project's portable archive. Consumer-defined
 // (ENGINEERING rule 6) and deliberately narrow: the handler hands it a writer
 // and a project id, and the package on the other side has no key material.
@@ -440,6 +459,12 @@ type Deps struct {
 	Quotas QuotaService
 	// MailHost is provider-backed email for verified domains (managed-email.md).
 	MailHost MailHostService
+	// GitHubApp is the panel's App: repository discovery and a short-lived
+	// clone credential (github-app.md). nil is a panel that has not enabled it,
+	// and every route answers accordingly rather than pretending.
+	GitHubApp GitHubAppService
+	// GitHubPush turns one App delivery into deployments.
+	GitHubPush GitHubPushHandler
 	// OnboardingCounts is what the guided band counts. nil answers "done",
 	// which is the honest degradation: a band that cannot know what is left
 	// must not claim work remains.
@@ -807,6 +832,17 @@ func (a *API) Handler() http.Handler {
 	// Guided onboarding: the thread between the golden path's four steps
 	// (guided-onboarding.md).
 	mux.HandleFunc("GET /api/v1/onboarding", a.authed(a.handleGetOnboarding))
+
+	// The GitHub App (github-app.md §7). Writing is owner AND session-only: the
+	// private key can mint a token for every repository the App reaches.
+	mux.HandleFunc("GET /api/v1/github/app", a.authed(a.handleGetGitHubApp))
+	mux.HandleFunc("PUT /api/v1/github/app", a.sessionOnly(a.handleSetGitHubApp))
+	mux.HandleFunc("DELETE /api/v1/github/app", a.sessionOnly(a.handleDeleteGitHubApp))
+	mux.HandleFunc("POST /api/v1/github/installations/refresh", a.authed(a.handleRefreshGitHubInstallations))
+	mux.HandleFunc("GET /api/v1/github/repositories", a.authed(a.handleListGitHubRepositories))
+	// Unauthenticated by design, verified by the App's own HMAC — the second
+	// such route, beside the per-application webhook it does not replace.
+	mux.HandleFunc("POST /webhooks/github/app", a.handleGitHubAppWebhook)
 
 	mux.HandleFunc("GET /api/v1/panel/agent-updates", a.authed(a.handleGetAgentUpdates))
 	mux.HandleFunc("PUT /api/v1/panel/agent-updates/{channel}", a.sessionOnly(a.handleSetAgentChannel))

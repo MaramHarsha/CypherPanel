@@ -10,7 +10,8 @@ INSERT INTO applications (
     preview_enabled, preview_base_domain, preview_ttl_hours,
     cpu_limit, memory_limit_mb, volumes,
     ports, health_kind, source_image,
-    source_registry_id, build_push_registry_id, build_push_repository
+    source_registry_id, build_push_registry_id, build_push_repository,
+    github_installation_id
 ) VALUES (
     $1, $2, $3,
     $4, $5, $6, $7,
@@ -22,7 +23,8 @@ INSERT INTO applications (
     $24, $25, $26,
     $27, $28, $29,
     $30, $31, $32,
-    $33, $34, $35
+    $33, $34, $35,
+    $36
 )
 RETURNING *;
 
@@ -74,6 +76,7 @@ SET name = $2,
     cpu_limit = $22, memory_limit_mb = $23, volumes = $24,
     ports = $25, health_kind = $26, source_image = $27,
     source_registry_id = $28, build_push_registry_id = $29, build_push_repository = $30,
+    github_installation_id = $31,
     updated_at = now()
 WHERE id = $1
 RETURNING *;

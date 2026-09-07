@@ -29,6 +29,7 @@ import { Route as AppSettingsDiagnosticsRouteImport } from './routes/_app/settin
 import { Route as AppSettingsDisasterRecoveryRouteImport } from './routes/_app/settings/disaster-recovery'
 import { Route as AppSettingsDnsRouteImport } from './routes/_app/settings/dns'
 import { Route as AppSettingsEmailRouteImport } from './routes/_app/settings/email'
+import { Route as AppSettingsGithubRouteImport } from './routes/_app/settings/github'
 import { Route as AppSettingsLogDrainsRouteImport } from './routes/_app/settings/log-drains'
 import { Route as AppSettingsMailRouteImport } from './routes/_app/settings/mail'
 import { Route as AppSettingsMetricsRouteImport } from './routes/_app/settings/metrics'
@@ -169,6 +170,11 @@ const AppSettingsDnsRoute = AppSettingsDnsRouteImport.update({
 const AppSettingsEmailRoute = AppSettingsEmailRouteImport.update({
   id: '/email',
   path: '/email',
+  getParentRoute: () => AppSettingsRoute,
+} as any)
+const AppSettingsGithubRoute = AppSettingsGithubRouteImport.update({
+  id: '/github',
+  path: '/github',
   getParentRoute: () => AppSettingsRoute,
 } as any)
 const AppSettingsLogDrainsRoute = AppSettingsLogDrainsRouteImport.update({
@@ -418,6 +424,7 @@ export interface FileRoutesByFullPath {
   '/settings/disaster-recovery': typeof AppSettingsDisasterRecoveryRoute
   '/settings/dns': typeof AppSettingsDnsRoute
   '/settings/email': typeof AppSettingsEmailRoute
+  '/settings/github': typeof AppSettingsGithubRoute
   '/settings/log-drains': typeof AppSettingsLogDrainsRoute
   '/settings/mail': typeof AppSettingsMailRoute
   '/settings/metrics': typeof AppSettingsMetricsRoute
@@ -478,6 +485,7 @@ export interface FileRoutesByTo {
   '/settings/disaster-recovery': typeof AppSettingsDisasterRecoveryRoute
   '/settings/dns': typeof AppSettingsDnsRoute
   '/settings/email': typeof AppSettingsEmailRoute
+  '/settings/github': typeof AppSettingsGithubRoute
   '/settings/log-drains': typeof AppSettingsLogDrainsRoute
   '/settings/mail': typeof AppSettingsMailRoute
   '/settings/metrics': typeof AppSettingsMetricsRoute
@@ -537,6 +545,7 @@ export interface FileRoutesById {
   '/_app/settings/disaster-recovery': typeof AppSettingsDisasterRecoveryRoute
   '/_app/settings/dns': typeof AppSettingsDnsRoute
   '/_app/settings/email': typeof AppSettingsEmailRoute
+  '/_app/settings/github': typeof AppSettingsGithubRoute
   '/_app/settings/log-drains': typeof AppSettingsLogDrainsRoute
   '/_app/settings/mail': typeof AppSettingsMailRoute
   '/_app/settings/metrics': typeof AppSettingsMetricsRoute
@@ -600,6 +609,7 @@ export interface FileRouteTypes {
     | '/settings/disaster-recovery'
     | '/settings/dns'
     | '/settings/email'
+    | '/settings/github'
     | '/settings/log-drains'
     | '/settings/mail'
     | '/settings/metrics'
@@ -660,6 +670,7 @@ export interface FileRouteTypes {
     | '/settings/disaster-recovery'
     | '/settings/dns'
     | '/settings/email'
+    | '/settings/github'
     | '/settings/log-drains'
     | '/settings/mail'
     | '/settings/metrics'
@@ -718,6 +729,7 @@ export interface FileRouteTypes {
     | '/_app/settings/disaster-recovery'
     | '/_app/settings/dns'
     | '/_app/settings/email'
+    | '/_app/settings/github'
     | '/_app/settings/log-drains'
     | '/_app/settings/mail'
     | '/_app/settings/metrics'
@@ -909,6 +921,13 @@ declare module '@tanstack/react-router' {
       path: '/email'
       fullPath: '/settings/email'
       preLoaderRoute: typeof AppSettingsEmailRouteImport
+      parentRoute: typeof AppSettingsRoute
+    }
+    '/_app/settings/github': {
+      id: '/_app/settings/github'
+      path: '/github'
+      fullPath: '/settings/github'
+      preLoaderRoute: typeof AppSettingsGithubRouteImport
       parentRoute: typeof AppSettingsRoute
     }
     '/_app/settings/log-drains': {
@@ -1204,6 +1223,7 @@ interface AppSettingsRouteChildren {
   AppSettingsDisasterRecoveryRoute: typeof AppSettingsDisasterRecoveryRoute
   AppSettingsDnsRoute: typeof AppSettingsDnsRoute
   AppSettingsEmailRoute: typeof AppSettingsEmailRoute
+  AppSettingsGithubRoute: typeof AppSettingsGithubRoute
   AppSettingsLogDrainsRoute: typeof AppSettingsLogDrainsRoute
   AppSettingsMailRoute: typeof AppSettingsMailRoute
   AppSettingsMetricsRoute: typeof AppSettingsMetricsRoute
@@ -1227,6 +1247,7 @@ const AppSettingsRouteChildren: AppSettingsRouteChildren = {
   AppSettingsDisasterRecoveryRoute: AppSettingsDisasterRecoveryRoute,
   AppSettingsDnsRoute: AppSettingsDnsRoute,
   AppSettingsEmailRoute: AppSettingsEmailRoute,
+  AppSettingsGithubRoute: AppSettingsGithubRoute,
   AppSettingsLogDrainsRoute: AppSettingsLogDrainsRoute,
   AppSettingsMailRoute: AppSettingsMailRoute,
   AppSettingsMetricsRoute: AppSettingsMetricsRoute,

@@ -53,6 +53,7 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/enroll"
 	"github.com/MaramHarsha/cypherpanel/core/export"
+	"github.com/MaramHarsha/cypherpanel/core/githubapp"
 	"github.com/MaramHarsha/cypherpanel/core/guard"
 	"github.com/MaramHarsha/cypherpanel/core/identity"
 	"github.com/MaramHarsha/cypherpanel/core/inbox"
@@ -779,6 +780,11 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		log.With("component", "agent-updates"))
 	sched.SetAgentUpdates(agentUpdateSvc)
 
+	// The GitHub App: repository discovery and a short-lived clone credential
+	// (github-app.md). One panel-level credential on the DNS provider's shape.
+	githubAppSvc := githubapp.New(st, box, log.With("component", "github-app"))
+	sched.SetGitHubApp(githubAppSvc)
+
 	mailHostSvc := mailhost.NewService(st, box, mailDNSWriter{dns: dnsSvc})
 	mailHostSvc.SetLogger(log.With("component", "mailhost"))
 
@@ -866,6 +872,8 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		MailHost:         mailHostSvc,
 		AgentUpdates:     agentUpdateSvc,
 		OnboardingCounts: st,
+		GitHubApp:        githubAppSvc,
+		GitHubPush:       sched,
 		Quotas:           quotaSvc,
 		Promotion:        sched,
 		PlaneDRFetch:     planeObjects.Get,

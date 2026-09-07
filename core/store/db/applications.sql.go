@@ -15,7 +15,7 @@ const bumpApplicationRestartToken = `-- name: BumpApplicationRestartToken :one
 UPDATE applications
 SET restart_token = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token, ip_allowlist_enabled, ip_allowlist, preview_password_enabled, preview_password_hash, preview_password_set_at, replica_status, maintenance_mode, maintenance_since
+RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token, ip_allowlist_enabled, ip_allowlist, preview_password_enabled, preview_password_hash, preview_password_set_at, replica_status, maintenance_mode, maintenance_since, github_installation_id
 `
 
 type BumpApplicationRestartTokenParams struct {
@@ -83,6 +83,7 @@ func (q *Queries) BumpApplicationRestartToken(ctx context.Context, arg BumpAppli
 		&i.ReplicaStatus,
 		&i.MaintenanceMode,
 		&i.MaintenanceSince,
+		&i.GithubInstallationID,
 	)
 	return i, err
 }
@@ -99,7 +100,8 @@ INSERT INTO applications (
     preview_enabled, preview_base_domain, preview_ttl_hours,
     cpu_limit, memory_limit_mb, volumes,
     ports, health_kind, source_image,
-    source_registry_id, build_push_registry_id, build_push_repository
+    source_registry_id, build_push_registry_id, build_push_repository,
+    github_installation_id
 ) VALUES (
     $1, $2, $3,
     $4, $5, $6, $7,
@@ -111,9 +113,10 @@ INSERT INTO applications (
     $24, $25, $26,
     $27, $28, $29,
     $30, $31, $32,
-    $33, $34, $35
+    $33, $34, $35,
+    $36
 )
-RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token, ip_allowlist_enabled, ip_allowlist, preview_password_enabled, preview_password_hash, preview_password_set_at, replica_status, maintenance_mode, maintenance_since
+RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token, ip_allowlist_enabled, ip_allowlist, preview_password_enabled, preview_password_hash, preview_password_set_at, replica_status, maintenance_mode, maintenance_since, github_installation_id
 `
 
 type CreateApplicationParams struct {
@@ -152,6 +155,7 @@ type CreateApplicationParams struct {
 	SourceRegistryID      pgtype.Text
 	BuildPushRegistryID   pgtype.Text
 	BuildPushRepository   string
+	GithubInstallationID  pgtype.Int8
 }
 
 func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationParams) (Application, error) {
@@ -191,6 +195,7 @@ func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationPa
 		arg.SourceRegistryID,
 		arg.BuildPushRegistryID,
 		arg.BuildPushRepository,
+		arg.GithubInstallationID,
 	)
 	var i Application
 	err := row.Scan(
@@ -246,6 +251,7 @@ func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationPa
 		&i.ReplicaStatus,
 		&i.MaintenanceMode,
 		&i.MaintenanceSince,
+		&i.GithubInstallationID,
 	)
 	return i, err
 }
@@ -260,7 +266,7 @@ func (q *Queries) DeleteApplication(ctx context.Context, id string) error {
 }
 
 const getApplication = `-- name: GetApplication :one
-SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token, ip_allowlist_enabled, ip_allowlist, preview_password_enabled, preview_password_hash, preview_password_set_at, replica_status, maintenance_mode, maintenance_since FROM applications WHERE id = $1
+SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token, ip_allowlist_enabled, ip_allowlist, preview_password_enabled, preview_password_hash, preview_password_set_at, replica_status, maintenance_mode, maintenance_since, github_installation_id FROM applications WHERE id = $1
 `
 
 func (q *Queries) GetApplication(ctx context.Context, id string) (Application, error) {
@@ -319,12 +325,13 @@ func (q *Queries) GetApplication(ctx context.Context, id string) (Application, e
 		&i.ReplicaStatus,
 		&i.MaintenanceMode,
 		&i.MaintenanceSince,
+		&i.GithubInstallationID,
 	)
 	return i, err
 }
 
 const getApplicationByWebhookID = `-- name: GetApplicationByWebhookID :one
-SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token, ip_allowlist_enabled, ip_allowlist, preview_password_enabled, preview_password_hash, preview_password_set_at, replica_status, maintenance_mode, maintenance_since FROM applications WHERE webhook_id = $1
+SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token, ip_allowlist_enabled, ip_allowlist, preview_password_enabled, preview_password_hash, preview_password_set_at, replica_status, maintenance_mode, maintenance_since, github_installation_id FROM applications WHERE webhook_id = $1
 `
 
 func (q *Queries) GetApplicationByWebhookID(ctx context.Context, webhookID string) (Application, error) {
@@ -383,6 +390,7 @@ func (q *Queries) GetApplicationByWebhookID(ctx context.Context, webhookID strin
 		&i.ReplicaStatus,
 		&i.MaintenanceMode,
 		&i.MaintenanceSince,
+		&i.GithubInstallationID,
 	)
 	return i, err
 }
@@ -420,7 +428,7 @@ func (q *Queries) ListApplicationsByDeployKey(ctx context.Context, sourceDeployK
 }
 
 const listApplicationsByEnvironment = `-- name: ListApplicationsByEnvironment :many
-SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token, ip_allowlist_enabled, ip_allowlist, preview_password_enabled, preview_password_hash, preview_password_set_at, replica_status, maintenance_mode, maintenance_since FROM applications WHERE environment_id = $1 ORDER BY created_at DESC
+SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token, ip_allowlist_enabled, ip_allowlist, preview_password_enabled, preview_password_hash, preview_password_set_at, replica_status, maintenance_mode, maintenance_since, github_installation_id FROM applications WHERE environment_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environmentID string) ([]Application, error) {
@@ -485,6 +493,7 @@ func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environment
 			&i.ReplicaStatus,
 			&i.MaintenanceMode,
 			&i.MaintenanceSince,
+			&i.GithubInstallationID,
 		); err != nil {
 			return nil, err
 		}
@@ -497,7 +506,7 @@ func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environment
 }
 
 const listApplicationsByServer = `-- name: ListApplicationsByServer :many
-SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token, ip_allowlist_enabled, ip_allowlist, preview_password_enabled, preview_password_hash, preview_password_set_at, replica_status, maintenance_mode, maintenance_since FROM applications WHERE runtime_server_id = $1 ORDER BY created_at DESC
+SELECT id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token, ip_allowlist_enabled, ip_allowlist, preview_password_enabled, preview_password_hash, preview_password_set_at, replica_status, maintenance_mode, maintenance_since, github_installation_id FROM applications WHERE runtime_server_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListApplicationsByServer(ctx context.Context, runtimeServerID string) ([]Application, error) {
@@ -562,6 +571,7 @@ func (q *Queries) ListApplicationsByServer(ctx context.Context, runtimeServerID 
 			&i.ReplicaStatus,
 			&i.MaintenanceMode,
 			&i.MaintenanceSince,
+			&i.GithubInstallationID,
 		); err != nil {
 			return nil, err
 		}
@@ -577,7 +587,7 @@ const setApplicationAllowlist = `-- name: SetApplicationAllowlist :one
 UPDATE applications
 SET ip_allowlist_enabled = $2, ip_allowlist = $3, updated_at = now()
 WHERE id = $1
-RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token, ip_allowlist_enabled, ip_allowlist, preview_password_enabled, preview_password_hash, preview_password_set_at, replica_status, maintenance_mode, maintenance_since
+RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token, ip_allowlist_enabled, ip_allowlist, preview_password_enabled, preview_password_hash, preview_password_set_at, replica_status, maintenance_mode, maintenance_since, github_installation_id
 `
 
 type SetApplicationAllowlistParams struct {
@@ -646,6 +656,7 @@ func (q *Queries) SetApplicationAllowlist(ctx context.Context, arg SetApplicatio
 		&i.ReplicaStatus,
 		&i.MaintenanceMode,
 		&i.MaintenanceSince,
+		&i.GithubInstallationID,
 	)
 	return i, err
 }
@@ -654,7 +665,7 @@ const setApplicationDesiredRevision = `-- name: SetApplicationDesiredRevision :o
 UPDATE applications
 SET desired_revision_id = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token, ip_allowlist_enabled, ip_allowlist, preview_password_enabled, preview_password_hash, preview_password_set_at, replica_status, maintenance_mode, maintenance_since
+RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token, ip_allowlist_enabled, ip_allowlist, preview_password_enabled, preview_password_hash, preview_password_set_at, replica_status, maintenance_mode, maintenance_since, github_installation_id
 `
 
 type SetApplicationDesiredRevisionParams struct {
@@ -718,6 +729,7 @@ func (q *Queries) SetApplicationDesiredRevision(ctx context.Context, arg SetAppl
 		&i.ReplicaStatus,
 		&i.MaintenanceMode,
 		&i.MaintenanceSince,
+		&i.GithubInstallationID,
 	)
 	return i, err
 }
@@ -732,7 +744,7 @@ SET maintenance_mode  = $2,
     END,
     updated_at = now()
 WHERE id = $1
-RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token, ip_allowlist_enabled, ip_allowlist, preview_password_enabled, preview_password_hash, preview_password_set_at, replica_status, maintenance_mode, maintenance_since
+RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token, ip_allowlist_enabled, ip_allowlist, preview_password_enabled, preview_password_hash, preview_password_set_at, replica_status, maintenance_mode, maintenance_since, github_installation_id
 `
 
 type SetApplicationMaintenanceParams struct {
@@ -798,6 +810,7 @@ func (q *Queries) SetApplicationMaintenance(ctx context.Context, arg SetApplicat
 		&i.ReplicaStatus,
 		&i.MaintenanceMode,
 		&i.MaintenanceSince,
+		&i.GithubInstallationID,
 	)
 	return i, err
 }
@@ -835,7 +848,7 @@ SET preview_password_enabled = $2,
     preview_password_set_at  = CASE WHEN $3 = '' THEN NULL ELSE now() END,
     updated_at = now()
 WHERE id = $1
-RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token, ip_allowlist_enabled, ip_allowlist, preview_password_enabled, preview_password_hash, preview_password_set_at, replica_status, maintenance_mode, maintenance_since
+RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token, ip_allowlist_enabled, ip_allowlist, preview_password_enabled, preview_password_hash, preview_password_set_at, replica_status, maintenance_mode, maintenance_since, github_installation_id
 `
 
 type SetApplicationPreviewPasswordParams struct {
@@ -900,6 +913,7 @@ func (q *Queries) SetApplicationPreviewPassword(ctx context.Context, arg SetAppl
 		&i.ReplicaStatus,
 		&i.MaintenanceMode,
 		&i.MaintenanceSince,
+		&i.GithubInstallationID,
 	)
 	return i, err
 }
@@ -931,9 +945,10 @@ SET name = $2,
     cpu_limit = $22, memory_limit_mb = $23, volumes = $24,
     ports = $25, health_kind = $26, source_image = $27,
     source_registry_id = $28, build_push_registry_id = $29, build_push_repository = $30,
+    github_installation_id = $31,
     updated_at = now()
 WHERE id = $1
-RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token, ip_allowlist_enabled, ip_allowlist, preview_password_enabled, preview_password_hash, preview_password_set_at, replica_status, maintenance_mode, maintenance_since
+RETURNING id, environment_id, name, source_kind, source_repo, source_branch, source_deploy_key_id, build_kind, build_dockerfile_path, build_context, runtime_server_id, runtime_port, runtime_replicas, route_domain, route_https, route_path_prefix, health_path, health_interval_seconds, health_timeout_seconds, health_retries, webhook_id, webhook_secret_ct, webhook_secret_nonce, desired_revision_id, created_at, updated_at, status, status_detail, observed_revision_id, status_observed_at, preview_enabled, preview_base_domain, preview_ttl_hours, cpu_limit, memory_limit_mb, volumes, ports, health_kind, source_image, env_applied_at, source_registry_id, build_push_registry_id, build_push_repository, restart_token, ip_allowlist_enabled, ip_allowlist, preview_password_enabled, preview_password_hash, preview_password_set_at, replica_status, maintenance_mode, maintenance_since, github_installation_id
 `
 
 type UpdateApplicationConfigParams struct {
@@ -967,6 +982,7 @@ type UpdateApplicationConfigParams struct {
 	SourceRegistryID      pgtype.Text
 	BuildPushRegistryID   pgtype.Text
 	BuildPushRepository   string
+	GithubInstallationID  pgtype.Int8
 }
 
 func (q *Queries) UpdateApplicationConfig(ctx context.Context, arg UpdateApplicationConfigParams) (Application, error) {
@@ -1001,6 +1017,7 @@ func (q *Queries) UpdateApplicationConfig(ctx context.Context, arg UpdateApplica
 		arg.SourceRegistryID,
 		arg.BuildPushRegistryID,
 		arg.BuildPushRepository,
+		arg.GithubInstallationID,
 	)
 	var i Application
 	err := row.Scan(
@@ -1056,6 +1073,7 @@ func (q *Queries) UpdateApplicationConfig(ctx context.Context, arg UpdateApplica
 		&i.ReplicaStatus,
 		&i.MaintenanceMode,
 		&i.MaintenanceSince,
+		&i.GithubInstallationID,
 	)
 	return i, err
 }

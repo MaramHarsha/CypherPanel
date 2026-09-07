@@ -1814,6 +1814,126 @@ paths:
         "409": { description: The gate refused; the message names the canary servers and what they are running. }
         "503": { description: Agent updates are not enabled on this panel. }
 
+  /webhooks/github/app:
+    post:
+      operationId: githubAppWebhook
+      tags: [applications]
+      summary: The GitHub App's deliveries (HMAC, no session)
+      description: >-
+        Unauthenticated by design and verified by the App's webhook secret over
+        the RAW body — a signature checked after decoding is a signature over
+        something the sender did not sign.
+
+
+        A push deploys EVERY application whose repository and branch it matches.
+        Every one, deliberately: a repository can legitimately be deployed by
+        several environments, and picking one would silently skip the rest. The
+        per-application webhook cannot have this problem because its URL names
+        the application; this endpoint has to resolve it, so resolving it to a
+        set is the only correct answer.
+
+
+        An unverified signature is a `401` and nothing else — no lookup, no log
+        of the body, no hint about which applications exist. Events other than
+        `push` are acknowledged and dropped, which is what stops GitHub
+        disabling a delivery for something the panel simply does not act on.
+      responses:
+        "202":
+          description: Accepted; the body reports how many deployments started.
+          content: { application/json: { schema: { type: object, properties: { deployments: { type: integer } } } } }
+        "204": { description: An event this panel does not act on. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { description: The signature did not verify. }
+        "503": { description: The GitHub App is not enabled on this panel. }
+
+  /api/v1/github/app:
+    get:
+      operationId: getGitHubApp
+      tags: [panel]
+      summary: Whether a GitHub App is connected, and where it is installed (admin+)
+      description: >-
+        NEVER returns the private key, not even redacted: a field that is
+        sometimes a secret is a field that eventually leaks one.
+      responses:
+        "200": { description: The App., content: { application/json: { schema: { $ref: "#/components/schemas/GitHubApp" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: setGitHubApp
+      tags: [panel]
+      summary: Connect a GitHub App (owner, session only)
+      description: >-
+        Owner AND session-only: the private key can mint a token for every
+        repository the App is installed on, and API tokens live in CI. It is the
+        rule break glass and the agent channel already carry, applied to the
+        credential with the widest reach in the panel.
+
+
+        The credentials are validated against GitHub BEFORE anything is stored —
+        a credential that fails at first use is a dead end, and a dead end is a
+        bug. On success the installations are cached from GitHub's own answer.
+
+
+        `private_key_pem` is write-only.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetGitHubAppRequest" } } }
+      responses:
+        "200": { description: Connected., content: { application/json: { schema: { $ref: "#/components/schemas/GitHubApp" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    delete:
+      operationId: deleteGitHubApp
+      tags: [panel]
+      summary: Disconnect the GitHub App (owner, session only)
+      description: >-
+        Applications that reached their repository through it fail their next
+        deploy with a reason, rather than silently falling back to an anonymous
+        clone — which would succeed for a public repository and fail confusingly
+        for a private one.
+      responses:
+        "204": { description: Disconnected. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/github/installations/refresh:
+    post:
+      operationId: refreshGitHubInstallations
+      tags: [panel]
+      summary: Re-read where the App is installed (admin+)
+      description: >-
+        Installations are OBSERVED, never authored: the panel does not decide
+        which organisations its App is installed on, GitHub does. This replaces
+        the cache with GitHub's answer, so an installation it no longer reports
+        is gone — the same contract the DNS zone cache follows, for the same
+        reason: an operator-entered list would be a second place to lie about
+        what access exists.
+      responses:
+        "200": { description: Refreshed., content: { application/json: { schema: { $ref: "#/components/schemas/GitHubApp" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "502": { description: GitHub could not be reached. }
+
+  /api/v1/github/repositories:
+    get:
+      operationId: listGitHubRepositories
+      tags: [panel]
+      summary: Repositories the App can deploy (member+)
+      description: >-
+        Read live rather than cached: the list changes when someone adds a
+        repository, and a stale list that omits the one you just made is worse
+        than a request. An empty list is what a panel with no App returns, and a
+        client reads that as "type a URL instead".
+      responses:
+        "200":
+          description: What can be deployed.
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/GitHubRepository" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "502": { description: GitHub could not be reached. }
+
   /api/v1/onboarding:
     get:
       operationId: getOnboarding
@@ -6757,6 +6877,61 @@ components:
             passphrase:
               type: string
               description: Readable exactly once, in this response. Absent when the gate was cleared.
+
+    GitHubApp:
+      type: object
+      required: [configured, installations]
+      properties:
+        configured: { type: boolean }
+        app_id: { type: integer, format: int64 }
+        slug: { type: string }
+        install_url:
+          type: string
+          description: Where to send an operator to install the App, built from the slug so nobody is told to "go and find your App".
+        updated_at: { type: string, format: date-time }
+        installations:
+          type: array
+          items: { $ref: "#/components/schemas/GitHubInstallation" }
+
+    GitHubInstallation:
+      type: object
+      required: [installation_id, account_login, account_type, repo_selection]
+      properties:
+        installation_id: { type: integer, format: int64 }
+        account_login: { type: string }
+        account_type: { type: string }
+        repo_selection: { type: string, enum: [all, selected] }
+
+    SetGitHubAppRequest:
+      type: object
+      required: [app_id, private_key_pem]
+      properties:
+        app_id:
+          type: integer
+          format: int64
+          description: The number on the App's settings page.
+        slug:
+          type: string
+          description: The App's URL slug, used to build the install link.
+        private_key_pem:
+          type: string
+          description: The RSA private key GitHub generated. WRITE-ONLY - no route ever returns it.
+        webhook_secret:
+          type: string
+          description: Verifies the App's deliveries to /webhooks/github/app. Write-only.
+
+    GitHubRepository:
+      type: object
+      required: [full_name, private, default_branch, clone_url, installation_id]
+      properties:
+        full_name: { type: string }
+        private: { type: boolean }
+        default_branch: { type: string }
+        clone_url: { type: string }
+        installation_id:
+          type: integer
+          format: int64
+          description: Which installation to mint this repository's clone token from.
 
     Onboarding:
       type: object

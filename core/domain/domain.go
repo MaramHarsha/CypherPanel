@@ -73,6 +73,29 @@ type Server struct {
 // Enrolled reports whether an agent has completed enrollment for this server.
 func (s Server) Enrolled() bool { return s.EnrolledAt != nil }
 
+// GitHubApp is the panel's single GitHub App credential (github-app.md §2).
+// The sealed half never leaves the store layer's hands except through
+// githubapp.Service, which is the one place it is opened.
+type GitHubApp struct {
+	AppID       int64
+	Slug        string
+	ConfigCT    []byte
+	ConfigNonce []byte
+	UpdatedAt   time.Time
+}
+
+// GitHubInstallation is one place the App is installed, as GitHub reports it.
+// Observed, never authored: an operator-entered list would be a second place to
+// lie about what access exists (§3).
+type GitHubInstallation struct {
+	ID             string
+	InstallationID int64
+	AccountLogin   string
+	AccountType    string
+	RepoSelection  string
+	RefreshedAt    time.Time
+}
+
 // Release channel vocabulary (agent-updates.md §2). Two, and closed: `canary`
 // is opt-in per server and `stable` is the default, so a fleet with nothing on
 // canary has one channel and no gate.

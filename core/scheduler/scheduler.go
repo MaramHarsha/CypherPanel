@@ -121,6 +121,9 @@ type Store interface {
 
 	ListServers(ctx context.Context) ([]domain.Server, error)
 	GetServer(ctx context.Context, id string) (domain.Server, error)
+	// ListApplicationsByRepo resolves one GitHub App push to every application
+	// it should deploy (github-app.md §6).
+	ListApplicationsByRepo(ctx context.Context, repo, branch string) ([]domain.Application, error)
 
 	// GetPanelTLS is the panel's ACME account, carried to every node inside
 	// DesiredState (agent-identity-and-tls.md §4). store.ErrNotFound means TLS
@@ -321,6 +324,11 @@ type Scheduler struct {
 	// channel it follows (agent-updates.md §2). Optional: nil sends no
 	// instruction, which is exactly how a panel behaved before ADR-010.
 	agentUpdates AgentUpdates
+
+	// githubApp mints a short-lived clone credential for an application whose
+	// repository is reached through the panel's App. Optional: nil is a panel
+	// with no App, where every application clones as it always did.
+	githubApp GitHubAppTokens
 
 	// mu serializes pipeline transitions: deploy requests and event handlers
 	// race on the per-app queue, and the transitions are read-modify-write.
@@ -964,6 +972,26 @@ func builderFor(dep domain.Deployment, app domain.Application) string {
 	return app.Runtime.ServerID
 }
 
+// gitCredential mints a one-hour clone token for a repository reached through
+// the panel's GitHub App. Nil for every other application, which is every
+// application that exists today: a deploy key and a public repository both
+// clone exactly as they did.
+//
+// A failure here FAILS THE DEPLOY rather than falling through to an anonymous
+// clone. Anonymous would succeed for a public repository and fail confusingly
+// for a private one, and the confusing half is the case that matters — the same
+// stance registries.md takes for a named registry the plane cannot resolve.
+func (s *Scheduler) gitCredential(ctx context.Context, app domain.Application) (*agentv1.GitCredential, error) {
+	if app.Source.GitHubInstallationID == nil || s.githubApp == nil {
+		return nil, nil
+	}
+	user, pass, err := s.githubApp.CloneToken(ctx, *app.Source.GitHubInstallationID)
+	if err != nil {
+		return nil, fmt.Errorf("scheduler: minting a GitHub App clone token: %w", err)
+	}
+	return &agentv1.GitCredential{Username: user, Password: pass}, nil
+}
+
 // buildWork assembles one deployment's build work item. The referenced deploy
 // key is unsealed only here, at work-build time, and travels only inside the
 // mTLS-carried BuildWork (deploy-key-private-repos.md §4; ENGINEERING rule
@@ -994,6 +1022,14 @@ func (s *Scheduler) buildWork(ctx context.Context, dep domain.Deployment, app do
 	if err != nil {
 		return nil, err
 	}
+	// The App's clone credential, minted HERE — the same moment and the same
+	// place the deploy key is unsealed and the registry credential is resolved.
+	// One place a build's credentials come into existence is one place to audit
+	// (github-app.md §4).
+	gitCred, err := s.gitCredential(ctx, app)
+	if err != nil {
+		return nil, err
+	}
 	return &agentv1.BuildWork{
 		DeploymentId:   dep.ID,
 		AppId:          app.ID,
@@ -1006,9 +1042,10 @@ func (s *Scheduler) buildWork(ctx context.Context, dep domain.Deployment, app do
 		BuildKind:      app.Build.Kind,
 		// A synthesized static image must listen where the route and health
 		// check already expect it, not on whatever its base image defaults to.
-		RuntimePort: uint32(app.Runtime.Port), //nolint:gosec // validated 1–65535
-		SourceAuth:  sourceAuth,
-		Push:        push,
+		RuntimePort:   uint32(app.Runtime.Port), //nolint:gosec // validated 1–65535
+		SourceAuth:    sourceAuth,
+		Push:          push,
+		GitCredential: gitCred,
 	}, nil
 }
 
@@ -2304,6 +2341,17 @@ type AgentUpdates interface {
 // no agent_update at all, and an agent that receives none does nothing —
 // which is the behaviour every fleet has until an operator opens the screen.
 func (s *Scheduler) SetAgentUpdates(a AgentUpdates) { s.agentUpdates = a }
+
+// GitHubAppTokens mints a clone credential (consumer-defined;
+// *githubapp.Service satisfies it).
+type GitHubAppTokens interface {
+	CloneToken(ctx context.Context, installationID int64) (username, password string, err error)
+}
+
+// SetGitHubApp wires the App. Without it an application that names an
+// installation fails its deploy with a reason, which is better than cloning
+// anonymously and failing at `git fetch` with GitHub's own words.
+func (s *Scheduler) SetGitHubApp(g GitHubAppTokens) { s.githubApp = g }
 
 // SetRegistries wires private-registry credentials. Optional: an application
 // can only name a registry the panel stored, so a panel without this never has

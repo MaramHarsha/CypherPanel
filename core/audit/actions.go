@@ -117,6 +117,10 @@ const (
 	// server, so both edges are recorded: who named the version, and who
 	// promoted it to the fleet. The per-server channel move rides the existing
 	// server.updated.
+	// The panel's GitHub App was connected or disconnected. Recorded by the
+	// FACT and by the app's public id, never by the key (threat-model §5.15).
+	ActionGitHubAppConnected    = "github_app.connected"
+	ActionGitHubAppDisconnected = "github_app.disconnected"
 	ActionAgentVersionSet       = "agent.version_set"
 	ActionAgentPromoted         = "agent.promoted"
 	ActionPanelSnapshotDeleted  = "panel.snapshot_deleted"
@@ -368,6 +372,8 @@ var actions = map[string]bool{
 
 	ActionPanelUpgradeStarted:   true,
 	ActionPanelUpgradeCancelled: true,
+	ActionGitHubAppConnected:    true,
+	ActionGitHubAppDisconnected: true,
 	ActionAgentVersionSet:       true,
 	ActionAgentPromoted:         true,
 	ActionPanelSnapshotDeleted:  true,

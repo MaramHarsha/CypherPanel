@@ -56,6 +56,7 @@ var nav = []group{
 		"features/pack-builds.md",
 		"features/builder-role-and-relay.md",
 		"features/deploy-key-private-repos.md",
+		"features/github-app.md",
 		"features/application-deploy.md",
 		"features/deployment-control.md",
 		"features/preview-environments.md",

@@ -39,6 +39,7 @@ import type {
   ForbiddenResponse,
   GetApplicationMetricsParams,
   GetApplicationTrafficParams,
+  GithubAppWebhook202,
   NotFoundResponse,
   PatchApplicationRequest,
   PreviewPasswordResult,
@@ -1199,6 +1200,81 @@ export const useEndMaintenance = <TError = UnauthorizedResponse | ForbiddenRespo
         TContext
       > => {
       return useMutation(getEndMaintenanceMutationOptions(options), queryClient);
+    }
+    export const getGithubAppWebhookUrl = () => {
+
+
+
+
+  return `/webhooks/github/app`
+}
+
+/**
+ * Unauthenticated by design and verified by the App's webhook secret over the RAW body — a signature checked after decoding is a signature over something the sender did not sign.
+ *
+ * A push deploys EVERY application whose repository and branch it matches. Every one, deliberately: a repository can legitimately be deployed by several environments, and picking one would silently skip the rest. The per-application webhook cannot have this problem because its URL names the application; this endpoint has to resolve it, so resolving it to a set is the only correct answer.
+ *
+ * An unverified signature is a `401` and nothing else — no lookup, no log of the body, no hint about which applications exist. Events other than `push` are acknowledged and dropped, which is what stops GitHub disabling a delivery for something the panel simply does not act on.
+ * @summary The GitHub App's deliveries (HMAC, no session)
+ */
+export const githubAppWebhook = async ( options?: RequestInit): Promise<GithubAppWebhook202 | void> => {
+
+  return apiFetch<GithubAppWebhook202 | void>(getGithubAppWebhookUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getGithubAppWebhookMutationOptions = <TError = BadRequestResponse | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof githubAppWebhook>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof githubAppWebhook>>, TError,void, TContext> => {
+
+const mutationKey = ['githubAppWebhook'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof githubAppWebhook>>, void> = () => {
+
+
+          return  githubAppWebhook(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type GithubAppWebhookMutationResult = NonNullable<Awaited<ReturnType<typeof githubAppWebhook>>>
+
+    export type GithubAppWebhookMutationError = BadRequestResponse | void
+
+    /**
+ * @summary The GitHub App's deliveries (HMAC, no session)
+ */
+export const useGithubAppWebhook = <TError = BadRequestResponse | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof githubAppWebhook>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof githubAppWebhook>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getGithubAppWebhookMutationOptions(options), queryClient);
     }
     export const getGetApplicationMetricsUrl = (id: string,
     params?: GetApplicationMetricsParams,) => {

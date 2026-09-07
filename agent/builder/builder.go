@@ -113,7 +113,32 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 	}
 
 	cloneEnv := gitEnv
-	if work.DeployKeyPem != "" {
+	if cred := work.GetGitCredential(); cred.GetPassword() != "" {
+		// An HTTPS clone credential — a GitHub App installation token, minted
+		// for this build and valid about an hour (github-app.md §4).
+		//
+		// It goes in an ASKPASS helper, never in the URL. A credential in the
+		// remote URL is written into .git/config inside the build context, and
+		// that directory becomes the Docker build context moments later — so
+		// the token would be baked into an image layer. It would also reach
+		// `ps` and any git error message that echoes the remote.
+		askpass := filepath.Join(b.workDir, ".git-askpass-"+work.DeploymentId)
+		script := "#!/bin/sh\ncase \"$1\" in\n*Username*) printf '%s' \"$GIT_CRED_USER\" ;;\n*) printf '%s' \"$GIT_CRED_PASS\" ;;\nesac\n"
+		if err := os.WriteFile(askpass, []byte(script), 0o700); err != nil {
+			return "", fmt.Errorf("writing the git credential helper: %w", err)
+		}
+		defer func() { _ = os.Remove(askpass) }()
+
+		cloneEnv = append(append([]string(nil), gitEnv...),
+			"GIT_ASKPASS="+askpass,
+			"GIT_CRED_USER="+cred.GetUsername(),
+			"GIT_CRED_PASS="+cred.GetPassword(),
+			// Refuse an interactive prompt: without this a rejected token
+			// hangs the build on a terminal read nobody is watching.
+			"GIT_TERMINAL_PROMPT=0",
+		)
+		onLog(fmt.Sprintf("Cloning %s at %s through the GitHub App...", displayURL, work.CommitSha))
+	} else if work.DeployKeyPem != "" {
 		// The key lives beside (not inside) the clone target — git needs an
 		// empty destination — under 0600, and is removed on every exit path
 		// (deploy-key-private-repos.md §4). The PEM itself is never logged

@@ -550,6 +550,18 @@ func (f *fakeStore) ListServers(context.Context) ([]domain.Server, error) {
 	return f.servers, nil
 }
 
+func (f *fakeStore) ListApplicationsByRepo(_ context.Context, repo, branch string) ([]domain.Application, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []domain.Application
+	for _, a := range f.apps {
+		if a.Source.Repo == repo && a.Source.Branch == branch {
+			out = append(out, a)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeStore) GetServer(_ context.Context, id string) (domain.Server, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

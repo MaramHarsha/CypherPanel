@@ -69,11 +69,15 @@ const (
 // prebuilt OCI image reference directly (feature-matrix V1: deploy from
 // container image) — no build stage; the target agent pulls the image itself.
 type AppSource struct {
-	Kind        string // "github" | "git_url" | "image"
-	Repo        string
-	Branch      string
-	DeployKeyID *string
-	Image       string // OCI reference; set iff Kind == "image"
+	Kind string // "github" | "git_url" | "image"
+	// GitHubInstallationID reaches this repository through the panel's GitHub
+	// App instead of a deploy key (github-app.md §5). nil is every application
+	// that exists today — a deploy key, or a public repository, both unchanged.
+	GitHubInstallationID *int64
+	Repo                 string
+	Branch               string
+	DeployKeyID          *string
+	Image                string // OCI reference; set iff Kind == "image"
 	// RegistryID is the credential the agent authenticates the pull with, when
 	// the image lives in a private registry (registries.md; ADR-008 path 3).
 	// nil is the ordinary case — a public image, or a built one.
