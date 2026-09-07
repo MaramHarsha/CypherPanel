@@ -2427,3 +2427,23 @@ func TestRaisingAMaintenancePageTwiceDoesNotResetItsClock(t *testing.T) {
 		t.Fatalf("after DELETE: mode=%v since=%v", down.MaintenanceMode, down.MaintenanceSince)
 	}
 }
+
+// Every subscribable event is offered in the contract.
+//
+// The taxonomy has eight keys; the notifier and outbound-webhook enums stopped
+// at four, so app.crashed, app.recovered, alert.firing and alert.resolved could
+// be FIRED by the plane and never subscribed to. A channel that cannot carry
+// half of what it exists to carry is a channel nobody trusts, and the gap was
+// invisible to both parity scripts — the field is there, its VALUES were not.
+func TestEveryEventTypeIsSubscribableInTheContract(t *testing.T) {
+	spec, err := os.ReadFile("openapi.yaml")
+	if err != nil {
+		t.Fatalf("reading the spec: %v", err)
+	}
+	for _, key := range domain.EventTypes() {
+		if !bytes.Contains(spec, []byte(key)) {
+			t.Errorf("event %q is subscribable in core/domain and appears nowhere in the contract — "+
+				"the plane fires it and no notifier or webhook can ask for it", key)
+		}
+	}
+}

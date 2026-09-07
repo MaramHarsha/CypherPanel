@@ -10300,7 +10300,7 @@ components:
         channel: { type: string, enum: [email, discord, slack, telegram] }
         events:
           type: array
-          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed] }
+          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed, app.crashed, app.recovered, alert.firing, alert.resolved] }
         enabled: { type: boolean }
         config_hint: { type: string, description: Masked summary of the sealed channel config; never the secret. }
         created_at: { type: string, format: date-time }
@@ -10321,7 +10321,7 @@ components:
         events:
           type: array
           minItems: 1
-          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed] }
+          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed, app.crashed, app.recovered, alert.firing, alert.resolved] }
         enabled: { type: boolean, default: true }
     PatchNotifierRequest:
       type: object
@@ -10329,7 +10329,7 @@ components:
         name: { type: string }
         events:
           type: array
-          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed] }
+          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed, app.crashed, app.recovered, alert.firing, alert.resolved] }
         enabled: { type: boolean }
         config:
           type: object
@@ -10346,7 +10346,7 @@ components:
         url: { type: string, description: "The http(s) receiver. It is the endpoint's identity — there is no name." }
         events:
           type: array
-          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed] }
+          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed, app.crashed, app.recovered, alert.firing, alert.resolved] }
         enabled: { type: boolean }
         health:
           type: string
@@ -10367,7 +10367,7 @@ components:
         events:
           type: array
           minItems: 1
-          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed] }
+          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed, app.crashed, app.recovered, alert.firing, alert.resolved] }
           description: "webhook.ping is not subscribable — an endpoint always receives its own pings."
         enabled: { type: boolean, default: true }
     PatchWebhookEndpointRequest:
@@ -10376,7 +10376,7 @@ components:
         url: { type: string }
         events:
           type: array
-          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed] }
+          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed, app.crashed, app.recovered, alert.firing, alert.resolved] }
         enabled: { type: boolean }
     CreateWebhookEndpointResponse:
       type: object

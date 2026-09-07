@@ -52,12 +52,24 @@ export const Route = createFileRoute("/_app/projects/$projectId/settings/webhook
   component: WebhooksTab,
 });
 
-/** The board's four subscribable events, in the order it lists them. */
+/**
+ * Every subscribable event, in documentation order.
+ *
+ * It listed four while the plane fires eight — app.crashed, app.recovered,
+ * alert.firing and alert.resolved were emitted by the panel and could not be
+ * asked for. Half of what an endpoint exists to carry was unreachable, and both
+ * parity scripts were blind to it: the `events` FIELD was there, its values
+ * were not.
+ */
 const EVENTS = [
   { key: "deploy.succeeded", label: "Deploy succeeded" },
   { key: "deploy.failed", label: "Deploy failed" },
   { key: "backup.succeeded", label: "Backup succeeded" },
   { key: "backup.failed", label: "Backup failed" },
+  { key: "app.crashed", label: "App crashed" },
+  { key: "app.recovered", label: "App recovered" },
+  { key: "alert.firing", label: "Alert firing" },
+  { key: "alert.resolved", label: "Alert resolved" },
 ] as const;
 
 /** Endpoint health maps onto the shared status vocabulary rather than inventing
