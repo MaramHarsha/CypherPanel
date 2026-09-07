@@ -543,3 +543,19 @@ only the error named the application to everybody.
 member rank, no application names. A refusal met only on save is a form filled
 in twice. The endpoint reveals nothing the refusal does not: attempting the
 create already tells you whether a hostname is taken.
+
+## The template install asks the same way *(2026-09-07)*
+
+Installing a template collected its domain with a plain text box and a
+`slug.example.com` placeholder, while the application forms next to it offered
+the zones the panel manages. That is the same defect twice: the operator who
+reported it had just installed n8n by typing a hostname by hand, onto a server
+their own site was already answering on, and nothing said so.
+
+The install form now uses `DomainField`, so it offers the zones and warns when a
+hostname is already served. The refusal was already covered server-side without
+a change: `core/templates` creates its application through
+`applications.Create`, which is where `checkDomainFree` lives. A refused install
+rolls back - `fail()` runs cleanup on a context detached from the request's, and
+reports anything it could not remove, so a template that cannot take its domain
+does not leave its database behind.

@@ -8,6 +8,7 @@ import type { FirstLogin, Template } from "@/api/gen/model";
 import { useListEnvironments, useListProjects } from "@/api/gen/projects/projects";
 import { useListServers } from "@/api/gen/servers/servers";
 import { useInstallTemplate, useListTemplates } from "@/api/gen/templates/templates";
+import { DomainField } from "@/components/domain-field";
 import { AdvancedSection } from "@/components/advanced-section";
 import { EmptyState } from "@/components/empty-state";
 import { FirstLoginNotice } from "@/components/first-login-notice";
@@ -574,18 +575,18 @@ function InstallDialog({ template }: { template: Template }) {
                     https:/// into the container. Ask for it as required rather than
                     letting the form advertise a default that always fails. */}
                 {routed && (
-                  <Field label="Domain" hint="Required — this template publishes a public URL. TLS is automatic.">
-                    {(id, describedBy) => (
-                      <Input
-                        id={id}
-                        required
-                        aria-describedby={describedBy}
-                        value={domain}
-                        onChange={(e) => setDomain(e.target.value)}
-                        placeholder={`${template.slug}.example.com`}
-                      />
-                    )}
-                  </Field>
+                  // The same control the application forms use: the panel knows
+                  // which zones its DNS provider manages, so it offers them
+                  // rather than asking somebody to type a hostname it could
+                  // have listed. It also says when the hostname is ALREADY
+                  // SERVED on the chosen server — which is the failure that
+                  // brought this here, an operator installing a template onto a
+                  // domain their own site was already answering on.
+                  <DomainField
+                    value={domain}
+                    onChange={setDomain}
+                    serverId={chosenServerID}
+                  />
                 )}
                 {/* Both have a working default — production, and the template's
                     own slug — so they fold (ui-principles §6); the note says what
