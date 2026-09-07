@@ -14,10 +14,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
-	"net/netip"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -37,13 +36,16 @@ var (
 	// manifest exists. A typo is refused where it is cheap rather than
 	// discovered by forty hosts.
 	ErrArtifactUnreachable = errors.New("agentupdates: the release manifest could not be reached")
-	// ErrPrivateArtifact: the artifact base resolves inside the panel's own
-	// network. This is the plane connecting to a host named in a request body —
-	// threat-model §5.14's registry probe exactly — so it takes §5.14's
-	// controls. CYPHERD_AGENT_UPDATE_PRECHECK=off is how an operator says "the
-	// agents can reach it and you cannot", rather than the plane relaxing a
-	// control because a request body asked it to.
-	ErrPrivateArtifact = errors.New("agentupdates: refusing to probe an address inside the panel's own network")
+	// ErrBadArtifactBase: the artifact base is not a well-formed absolute
+	// http(s) URL. Shape only — a mirror may live anywhere the AGENTS can reach,
+	// including inside a private network, and the plane never connects to it.
+	ErrBadArtifactBase = errors.New("agentupdates: the artifact base must be an absolute http(s) URL with no credentials, query or fragment")
+	// ErrBadVersion: the version is not tag-shaped. It is bounded because it is
+	// concatenated into a URL — the plane's own pre-flight, and every agent's
+	// download — and `../../` in a tag would aim a fetcher at an arbitrary path
+	// under the release host. The same bound core/upgrade.ValidTag applies to
+	// the panel's own releases, for the same reason.
+	ErrBadVersion = errors.New("agentupdates: that does not look like a release tag")
 	// ErrGateNoConverged / ErrGateRolledBack are the two canary refusals (§5).
 	ErrGateNoConverged = errors.New("agentupdates: no canary server has converged on that version")
 	ErrGateRolledBack  = errors.New("agentupdates: a canary server rolled that version back")
@@ -73,14 +75,12 @@ type Service struct {
 	store    Store
 	resync   Resyncer
 	panelVer string
-	// precheck HEADs the manifest when a version is set. Off for a source only
-	// agents can reach.
+	// precheck HEADs the manifest when a version is set — but ONLY against this
+	// project's own release host, never against an operator-named mirror. See
+	// preflight for why that is structural rather than a setting.
 	precheck bool
 	client   *http.Client
-	resolver interface {
-		LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error)
-	}
-	log *slog.Logger
+	log      *slog.Logger
 }
 
 // New wires the service. panelVersion is the plane's own build, which is the
@@ -90,15 +90,14 @@ func New(s Store, r Resyncer, panelVersion string, precheck bool, log *slog.Logg
 		store: s, resync: r, panelVer: panelVersion, precheck: precheck,
 		client: &http.Client{
 			Timeout: 5 * time.Second,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			CheckRedirect: func(_ *http.Request, via []*http.Request) error {
 				if len(via) >= 3 {
 					return errors.New("agentupdates: too many redirects")
 				}
 				return nil
 			},
 		},
-		resolver: net.DefaultResolver,
-		log:      log,
+		log: log,
 	}
 }
 
@@ -180,6 +179,17 @@ func (s *Service) Set(ctx context.Context, channel, version, artifactBase, by st
 	artifactBase = strings.TrimSpace(artifactBase)
 	if version == "" {
 		return s.store.SetAgentChannel(ctx, channel, "", "", false, by)
+	}
+	// Shape first, and before anything is stored: this string is concatenated
+	// into a URL by the plane's pre-flight and by every agent's download, so a
+	// tag carrying `../` or a scheme would be a path the panel never named.
+	if !ValidTag(version) {
+		return domain.AgentChannelRow{}, fmt.Errorf("%w: %q", ErrBadVersion, version)
+	}
+	if artifactBase != "" {
+		if err := validArtifactBase(artifactBase); err != nil {
+			return domain.AgentChannelRow{}, err
+		}
 	}
 	if newerThanPanel(version, s.panelVer) {
 		return domain.AgentChannelRow{}, fmt.Errorf("%w (%s): update the panel first", ErrNewerThanPanel, s.panelVer)
@@ -289,80 +299,101 @@ func (s *Service) nudge(ctx context.Context, reason string) {
 	}
 }
 
-// preflight HEADs the manifest so a typo is refused where it is cheap.
+// preflight HEADs the release manifest so a typo is refused where it is cheap
+// rather than discovered by forty hosts.
+//
+// It probes ONE host: the compile-time constant this project publishes releases
+// from. An operator-supplied artifact_base is never fetched by the plane, and
+// that is structural rather than a setting — the earlier version of this
+// function took the base from the request body and probed it behind a
+// private-address check, which is a server-side request forgery primitive with
+// a guard on it (CWE-918). Two things were wrong with the guard and one thing
+// was wrong with the shape:
+//
+//   - the redirect hook counted hops but did not re-check the target, so a
+//     public host could 302 the probe onto 169.254.169.254;
+//   - the check resolved the name, and then the transport resolved it AGAIN, so
+//     a name that answers differently the second time walked through;
+//   - and no amount of guarding makes "connect to the host in this request
+//     body" not be that. A 200 against a refusal against a timeout separates a
+//     listening port from a closed one from a filtered one inside the panel's
+//     network, which is exactly what threat-model §5.14 is about.
+//
+// So the input selects a path under a known fixed host instead. A mirror is
+// validated for SHAPE and left alone — which loses nothing real, because a
+// mirror is by definition somewhere only the agents can reach, and probing it
+// was what CYPHERD_AGENT_UPDATE_PRECHECK=off already existed to stop. The
+// typo this catches is a mistyped TAG, which is the mistake operators actually
+// make and which lives on the default path.
 func (s *Service) preflight(ctx context.Context, version, artifactBase string) error {
-	if !s.precheck {
+	if !s.precheck || artifactBase != "" {
 		return nil
 	}
-	base := artifactBase
-	if base == "" {
-		base = DefaultArtifactBase(version)
+	if !ValidTag(version) {
+		return fmt.Errorf("%w: %q", ErrBadVersion, version)
 	}
-	u, err := url.Parse(strings.TrimSuffix(base, "/") + "/SHA256SUMS")
-	if err != nil {
-		return fmt.Errorf("%w: %s is not a URL", ErrArtifactUnreachable, base)
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("%w: %s scheme refused", ErrArtifactUnreachable, u.Scheme)
-	}
-	if err := s.checkPublic(ctx, u.Hostname()); err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, u.String(), nil)
+	// Built from a constant host and a tag that has passed ValidTag, so nothing
+	// an operator typed can move this off releaseHost.
+	target := DefaultArtifactBase(version) + "/SHA256SUMS"
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, target, nil)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrArtifactUnreachable, err)
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("%w: %s", ErrArtifactUnreachable, u.Redacted())
+		return fmt.Errorf("%w: %s", ErrArtifactUnreachable, target)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return fmt.Errorf("%w: %s answered %d", ErrArtifactUnreachable, u.Redacted(), resp.StatusCode)
+		return fmt.Errorf("%w: %s answered %d — is %s a published release?",
+			ErrArtifactUnreachable, target, resp.StatusCode, version)
 	}
 	return nil
 }
 
-// checkPublic refuses a host that resolves inside the panel's own network. A
-// private mirror is precisely what this must refuse, which is what the off
-// switch is for.
-func (s *Service) checkPublic(ctx context.Context, host string) error {
-	if host == "" {
-		return fmt.Errorf("%w: no host", ErrArtifactUnreachable)
-	}
-	if addr, err := netip.ParseAddr(host); err == nil {
-		return refuseInternal(addr)
-	}
-	ips, err := s.resolver.LookupIPAddr(ctx, host)
+// validArtifactBase bounds a mirror's SHAPE, which is all the plane can honestly
+// say about an address it will never connect to. Credentials, a query and a
+// fragment are shapes a release prefix never has, and refusing them removes
+// three ways to smuggle something past whoever reads the field back.
+func validArtifactBase(base string) error {
+	u, err := url.Parse(base)
 	if err != nil {
-		return fmt.Errorf("%w: %s does not resolve", ErrArtifactUnreachable, host)
+		return fmt.Errorf("%w: %q", ErrBadArtifactBase, base)
 	}
-	for _, ip := range ips {
-		addr, ok := netip.AddrFromSlice(ip.IP)
-		if !ok {
-			continue
-		}
-		if err := refuseInternal(addr.Unmap()); err != nil {
-			return err
-		}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
+		u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("%w: %q", ErrBadArtifactBase, base)
+	}
+	if strings.Contains(u.Path, "..") {
+		return fmt.Errorf("%w: %q", ErrBadArtifactBase, base)
 	}
 	return nil
 }
 
-func refuseInternal(addr netip.Addr) error {
-	if addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast() ||
-		addr.IsLinkLocalMulticast() || addr.IsUnspecified() || addr.IsMulticast() {
-		return ErrPrivateArtifact
-	}
-	return nil
-}
+// releaseHost is where this project publishes its releases. It is a constant so
+// that the plane's pre-flight has exactly one destination, chosen at compile
+// time — the "known fixed string" half of the remedy for CWE-918.
+const releaseHost = "https://github.com/MaramHarsha/CypherPanel/releases/download/"
 
 // DefaultArtifactBase is where this project publishes a release's assets. It is
 // exported so the screen can show what an empty artifact base resolves to
 // rather than showing a blank field.
-func DefaultArtifactBase(version string) string {
-	return "https://github.com/MaramHarsha/CypherPanel/releases/download/" + version
-}
+//
+// Callers that build a URL from it must pass a version that has cleared
+// ValidTag; the two are used together everywhere in this package.
+func DefaultArtifactBase(version string) string { return releaseHost + version }
+
+// tagShape is what a release tag may look like. Bounded rather than merely
+// non-empty because this string is concatenated into URLs on both sides of the
+// wire: a tag of "../../evil" would aim a fetcher at an arbitrary path under
+// the release host, which is precisely the defect core/upgrade.ValidTag exists
+// to prevent for the panel's own releases.
+var tagShape = regexp.MustCompile(`^v?[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}(-[0-9A-Za-z.]{1,32})?$`)
+
+// ValidTag reports whether s names a release. Exported because the same
+// judgement is made when a version is SET and again when it is probed, and two
+// copies of it could disagree.
+func ValidTag(s string) bool { return len(s) <= 48 && tagShape.MatchString(s) }
 
 func channelOf(s domain.Server) string {
 	if domain.ValidChannel(s.AgentChannel) {

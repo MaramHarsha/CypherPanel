@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -204,21 +205,82 @@ func TestAnOfflineCanaryNeitherBlocksNorCounts(t *testing.T) {
 	}
 }
 
-// A private mirror is precisely what the plane's pre-flight must refuse: it is
-// the plane connecting to a host named in a request body, where a 200 against a
-// refusal against a timeout separates a listening port from a closed one inside
-// the panel's network (threat-model §5.14).
-func TestThePreflightRefusesAnArtifactBaseInsideThePanelsNetwork(t *testing.T) {
+// The plane must never connect to a host named in a request body. An
+// operator-supplied mirror is validated for SHAPE and left alone: a 200 against
+// a refusal against a timeout separates a listening port from a closed one from
+// a filtered one inside the panel's network (threat-model §5.14), and no
+// private-address guard makes "connect to this" not be that — a public host can
+// redirect, and a name can resolve differently the second time it is looked up.
+//
+// The fake client fails every request, so a mirror that reached the network at
+// all would surface as ErrArtifactUnreachable rather than succeeding.
+func TestAMirrorIsShapeCheckedAndNeverFetchedByThePlane(t *testing.T) {
 	fs := newFakeStore()
 	svc := New(fs, &fakeResync{}, "v1.1.0", true, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc.client = &http.Client{Transport: refusingTransport{}}
 
-	_, err := svc.Set(context.Background(), domain.ChannelStable, "v1.1.0", "http://10.0.0.5/releases", "ops@example.com")
-	if !errors.Is(err, ErrPrivateArtifact) {
-		t.Fatalf("err = %v, want ErrPrivateArtifact", err)
+	row, err := svc.Set(context.Background(), domain.ChannelStable, "v1.1.0", "http://10.0.0.5/releases", "ops@example.com")
+	if err != nil {
+		t.Fatalf("a private mirror was probed or refused: %v", err)
+	}
+	if row.ArtifactBase != "http://10.0.0.5/releases" {
+		t.Fatalf("artifact base = %q", row.ArtifactBase)
+	}
+
+	// Shape is still enforced, because it is the only thing the plane can
+	// honestly say about an address it will never connect to.
+	for _, bad := range []string{
+		"ftp://mirror.example/releases",
+		"https://user:pw@mirror.example/releases",
+		"https://mirror.example/releases#frag",
+		"https://mirror.example/releases?token=abc",
+		"https://mirror.example/../../etc",
+		"not a url at all",
+	} {
+		if _, err := svc.Set(context.Background(), domain.ChannelStable, "v1.1.0", bad, "ops@example.com"); !errors.Is(err, ErrBadArtifactBase) {
+			t.Fatalf("Set(%q) err = %v, want ErrBadArtifactBase", bad, err)
+		}
+	}
+}
+
+// The version is concatenated into a URL by the plane's pre-flight and by every
+// agent's download, so its shape is bounded before anything is stored. A tag of
+// "../../" would aim a fetcher at an arbitrary path under the release host —
+// the defect core/upgrade.ValidTag already exists to prevent for the panel's
+// own releases.
+func TestAVersionThatIsNotTagShapedIsRefusedBeforeItIsStored(t *testing.T) {
+	fs := newFakeStore()
+	svc, _ := newService(t, fs, "v9.9.9")
+
+	for _, bad := range []string{
+		"../../../etc/passwd",
+		"v1.1.0/../../other",
+		"https://evil.example/v1.1.0",
+		"v1.1.0 ; rm -rf /",
+		"latest",
+		"v1.1",
+	} {
+		if _, err := svc.Set(context.Background(), domain.ChannelStable, bad, "", "ops@example.com"); !errors.Is(err, ErrBadVersion) {
+			t.Fatalf("Set(%q) err = %v, want ErrBadVersion", bad, err)
+		}
 	}
 	if len(fs.writes) != 0 {
-		t.Fatalf("wrote %v despite refusing", fs.writes)
+		t.Fatalf("stored %v despite refusing", fs.writes)
 	}
+
+	for _, good := range []string{"v1.1.0", "1.1.0", "v1.1.0-rc.1"} {
+		if _, err := svc.Set(context.Background(), domain.ChannelStable, good, "", "ops@example.com"); err != nil {
+			t.Fatalf("Set(%q): %v", good, err)
+		}
+	}
+}
+
+// refusingTransport answers nothing, so any test that reaches the network fails
+// rather than quietly depending on it.
+type refusingTransport struct{}
+
+func (refusingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("the plane must not make this request")
 }
 
 // Clearing a channel is how a rollout an operator no longer wants is stopped,

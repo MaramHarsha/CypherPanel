@@ -538,7 +538,27 @@ So the release pipeline supplies a KEY, not the code. Everything else is here:
   §5.14-shaped pre-flight probe, and the promotion gate.
 - The screen is `Servers → Updates`, a tab rather than a fifth nav item.
 
-Three things differ from the spec as written, all of them narrowings:
+Four things differ from the spec as written, all of them narrowings:
+
+- **The pre-flight probes the project's release host and never a mirror.** §4a
+  describes the plane HEADing whatever `artifact_base` names, behind §5.14's
+  private-address guard. That guard was shipped and was not enough, which a
+  CodeQL `go/request-forgery` alert on the first commit made concrete: the
+  redirect hook counted hops without re-checking the target, so a public host
+  could 302 the probe onto `169.254.169.254`; the check resolved the name and
+  the transport then resolved it again, so a name answering differently the
+  second time walked through; and underneath both, "connect to the host in this
+  request body" is the primitive itself, with a 200 against a refusal against a
+  timeout separating a listening port from a closed one from a filtered one
+  inside the panel's network. So the input now selects a PATH under a constant
+  host — CWE-918's own recommended remedy — and an operator-supplied base is
+  validated for shape and left alone. Nothing real is lost: a mirror is by
+  definition somewhere only the agents can reach, which is what
+  `CYPHERD_AGENT_UPDATE_PRECHECK=off` already existed to say, and the typo this
+  catches is a mistyped TAG on the default path, which is the mistake operators
+  actually make. The version is bounded by a tag-shape regexp on BOTH sides for
+  the same reason `core/upgrade.ValidTag` exists: the signature bounds what an
+  agent will run and says nothing about where it looks.
 
 - **`rollback` is derived, not asked for.** §6 describes a flag behind a
   confirmation. What ships sets it when the version being written is older than

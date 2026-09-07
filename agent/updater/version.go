@@ -13,9 +13,21 @@ package updater
 // declares agent and core as separate modules, so there is nothing to import.
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 )
+
+// tagShape bounds what a version may LOOK like, which is a separate question
+// from whether it is newer. The version arrives from the plane and is
+// concatenated into a URL, so a tag of "../../evil" would aim this fetcher at
+// an arbitrary path under the release host. The signature bounds what the agent
+// will RUN; it says nothing about where the agent looks, and both bounds have
+// to exist.
+var tagShape = regexp.MustCompile(`^v?[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}(-[0-9A-Za-z.]{1,32})?$`)
+
+// validTag reports whether s is a release tag this agent will build a URL from.
+func validTag(s string) bool { return len(s) <= 48 && tagShape.MatchString(s) }
 
 type version struct {
 	major, minor, patch int

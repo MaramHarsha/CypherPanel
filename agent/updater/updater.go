@@ -419,11 +419,22 @@ func (u *Updater) wait(ctx context.Context) error {
 }
 
 func (u *Updater) update(ctx context.Context, want, artifactBase string) error {
+	// The tag is bounded before it becomes a URL, on this side too. ADR-010's
+	// threat model says a compromised plane can only choose among genuine
+	// releases — the signature is what makes that true of the BYTES, and this is
+	// what makes it true of the destination. Defence in depth on a value that
+	// arrives from somewhere else costs one regexp.
+	if !validTag(want) {
+		return fmt.Errorf("%q does not look like a release tag", want)
+	}
 	base := strings.TrimSpace(artifactBase)
 	if base == "" {
 		base = releaseBase + want
 	}
 	base = strings.TrimSuffix(base, "/")
+	if strings.Contains(base, "..") {
+		return fmt.Errorf("refusing an artifact base containing %q", "..")
+	}
 
 	u.setStatus(agentv1.AgentUpdateStatus_PHASE_VERIFYING, want, "verifying the release manifest")
 	sums, err := u.cfg.Fetch.Get(ctx, base+"/"+manifestName, maxManifestBytes)

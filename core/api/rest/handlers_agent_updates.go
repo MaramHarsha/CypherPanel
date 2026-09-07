@@ -156,7 +156,8 @@ func (a *API) handleSetAgentChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	case errors.Is(err, agentupdates.ErrNewerThanPanel),
 		errors.Is(err, agentupdates.ErrArtifactUnreachable),
-		errors.Is(err, agentupdates.ErrPrivateArtifact):
+		errors.Is(err, agentupdates.ErrBadVersion),
+		errors.Is(err, agentupdates.ErrBadArtifactBase):
 		a.auditFailed(r, entry, err.Error())
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

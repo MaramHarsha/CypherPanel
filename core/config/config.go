@@ -147,10 +147,13 @@ type Config struct {
 	// operator SETS a channel version, so a typo is refused where it is cheap
 	// rather than discovered by forty hosts (agent-updates.md §4a).
 	//
-	// It is the plane connecting to a host named in a request body, so it takes
-	// threat-model §5.14's controls and refuses a private address. `off` is how
-	// an operator says "the agents can reach that mirror and you cannot" —
-	// rather than the plane relaxing a control because a request body asked.
+	// The probe goes to ONE host — the constant this project publishes releases
+	// from — and never to an artifact_base from the request body: the plane
+	// connecting to a host a caller named is a request-forgery primitive
+	// whatever guards sit in front of it (threat-model §5.14). A mirror is
+	// shape-checked and left to the agents, which is what this switch already
+	// meant; `off` now only turns off the probe of our own release host, for a
+	// panel with no outbound internet.
 	AgentUpdatePrecheck bool
 	// UpdateFeedURL is the feed to poll; empty means the package default
 	// (GitHub's releases/latest for this project).

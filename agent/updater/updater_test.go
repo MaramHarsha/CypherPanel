@@ -336,3 +336,39 @@ func assertUnchanged(t *testing.T, path, want string) {
 		t.Fatalf("binary is not %s: %q", want, string(b))
 	}
 }
+
+// The tag is bounded on THIS side too, not only at the plane. ADR-010's threat
+// model says a compromised plane can choose only among genuine releases — the
+// signature makes that true of the bytes, and this makes it true of the
+// destination, which the signature says nothing about.
+func TestATagThatIsNotTagShapedNeverBecomesAURL(t *testing.T) {
+	f, pub := releaseFixture(t, "v1.1.0")
+	trust(t, pub)
+	u, binary, exits := newUpdater(t, "v1.0.0", f)
+
+	for _, bad := range []string{
+		"../../../etc/passwd",
+		"v1.1.0/../../other",
+		"https://evil.example/v1.1.0",
+		"latest",
+	} {
+		u.Apply(context.Background(), &agentv1.AgentUpdateSpec{Version: bad, ArtifactBase: testBase})
+		if got := u.Status().GetPhase(); got != agentv1.AgentUpdateStatus_PHASE_FAILED {
+			t.Fatalf("Apply(%q) phase = %v, want FAILED", bad, got)
+		}
+	}
+	if len(f.asked) != 0 {
+		t.Fatalf("fetched %v for a version that is not a tag", f.asked)
+	}
+	if len(*exits) != 0 {
+		t.Fatalf("exited %v", *exits)
+	}
+	assertUnchanged(t, binary, "v1.0.0")
+
+	// And an artifact base that could climb out of its own prefix is refused
+	// before the first fetch, whatever the tag says.
+	u.Apply(context.Background(), &agentv1.AgentUpdateSpec{Version: "v1.1.0", ArtifactBase: "https://mirror.example/a/../../b"})
+	if len(f.asked) != 0 {
+		t.Fatalf("fetched %v through a traversing artifact base", f.asked)
+	}
+}
