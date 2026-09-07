@@ -148,3 +148,51 @@ reach, and API tokens live in CI.
   deploy means for a merge. Outbound webhooks already carry the event.
 - **Replacing deploy keys.** §1. They stay, and a repository outside GitHub has
   no other option.
+
+## Implementation note — the push match was literal, and matched nothing *(fixed 2026-09-07)*
+
+§6 says the App's single webhook deploys **every** application a push matches,
+because one repository can legitimately be deployed by several environments and
+picking one would silently skip the rest. That was implemented, and it never
+fired, because the two sides of the comparison were never the same string.
+
+GitHub sends `repository.full_name` — `acme/web`. An application stores what git
+clones — `https://github.com/acme/web.git`. `ListApplicationsByRepo` compared
+them with `=`:
+
+```sql
+WHERE a.source_repo = $1 AND a.source_branch = $2;
+```
+
+So a verified delivery returned `202 {"deployments": 0}`, GitHub drew a green
+tick in Recent Deliveries, and nothing deployed. **A silent zero is the worst
+shape a failure can take** — there is no error anywhere to read, on either side.
+The one log line in the path fires *per application inside the loop*, so an
+empty result logged nothing at all.
+
+Worse, the only rows that could ever have matched were rows storing the bare
+`acme/web` form — and those cannot clone, because the builder passes
+`source_repo` to git verbatim and git reads a schemeless string as a local
+directory. The matching set was therefore not "some applications are missed" but
+"the only applications that could match are already broken".
+
+**The fix canonicalises the column, not the payload.** GitHub's `full_name` is
+already canonical; the stored clone URL is reduced to the same shape — trailing
+slash, trailing `.git`, then scheme, `user@` and host removed — and both sides
+are lowercased, because GitHub treats owner and repository names
+case-insensitively. Stored URLs keep working unchanged and no migration is
+needed.
+
+The host is identified by **containing a dot**, and that detail is load-bearing
+twice. It stops a bare legacy `acme/web` from having `acme/` mistaken for a host
+and stripped to `web`. And it is why the expression anchors on the host rather
+than taking "the last two path segments", which is the obvious version and is
+wrong: it matches a nested GitLab path `grp/sub/acme/web` against a GitHub push
+for `acme/web`, and **deploying an application nobody pushed to is worse than
+missing one.**
+
+`core/store/githubapp_test.go` asserts all of it against a real PostgreSQL —
+eight clone-URL shapes that must match, three that must not, the branch half of
+the match, and case-insensitivity. It is a real-database test because the whole
+question is what a Postgres regexp does, and a fake would only assert someone's
+reading of the documentation.

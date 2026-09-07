@@ -52,19 +52,41 @@ func (q *Queries) GetGitHubApp(ctx context.Context) (GithubApp, error) {
 
 const listApplicationsByRepo = `-- name: ListApplicationsByRepo :many
 SELECT a.id, a.environment_id, a.name, a.source_kind, a.source_repo, a.source_branch, a.source_deploy_key_id, a.build_kind, a.build_dockerfile_path, a.build_context, a.runtime_server_id, a.runtime_port, a.runtime_replicas, a.route_domain, a.route_https, a.route_path_prefix, a.health_path, a.health_interval_seconds, a.health_timeout_seconds, a.health_retries, a.webhook_id, a.webhook_secret_ct, a.webhook_secret_nonce, a.desired_revision_id, a.created_at, a.updated_at, a.status, a.status_detail, a.observed_revision_id, a.status_observed_at, a.preview_enabled, a.preview_base_domain, a.preview_ttl_hours, a.cpu_limit, a.memory_limit_mb, a.volumes, a.ports, a.health_kind, a.source_image, a.env_applied_at, a.source_registry_id, a.build_push_registry_id, a.build_push_repository, a.restart_token, a.ip_allowlist_enabled, a.ip_allowlist, a.preview_password_enabled, a.preview_password_hash, a.preview_password_set_at, a.replica_status, a.maintenance_mode, a.maintenance_since, a.github_installation_id FROM applications a
-WHERE a.source_repo = $1 AND a.source_branch = $2
+WHERE lower(regexp_replace(regexp_replace(regexp_replace(btrim(a.source_repo), '/+$', ''), '\.git$', ''),
+                        '^([a-z][a-z0-9+.-]*://)?([^/@]+@)?[^/:]*\.[^/:]*[:/]', '')) = lower($1)
+  AND a.source_branch = $2
 `
 
 type ListApplicationsByRepoParams struct {
-	SourceRepo   string
-	SourceBranch string
+	FullName string
+	Branch   string
 }
 
 // ListApplicationsByRepo finds every application a push should deploy. EVERY
 // one, deliberately: a repository can legitimately be deployed by several
 // environments, and picking one would silently skip the rest (§6).
+//
+// THE COMPARISON IS CANONICAL, NOT LITERAL, and that is the whole point of this
+// query. GitHub sends `full_name` — `acme/web` — while `source_repo` holds what
+// git clones, which is `https://github.com/acme/web.git`. Comparing those two
+// with `=` matched nothing, so a verified push answered `202 {"deployments":0}`,
+// GitHub drew a green tick in Recent Deliveries, and nothing deployed. A silent
+// zero is the worst shape a failure can take: there is no error to read.
+//
+// The expression strips a trailing slash, a trailing `.git`, and then the
+// scheme, any `user@`, and the HOST — identified by containing a dot, which is
+// what keeps a bare legacy `acme/web` from having `acme/` mistaken for a host
+// and stripped. Anchoring on the host rather than taking "the last two
+// segments" is deliberate: the lazy version matches a nested GitLab path
+// `grp/sub/acme/web` against a GitHub push for `acme/web`, and deploying an
+// application nobody pushed to is worse than missing one. It therefore matches
+// `https://github.com/acme/web`, `...web.git`, `ssh://git@github.com/acme/web`
+// and `git@github.com:acme/web.git` alike, and leaves a bare legacy `acme/web`
+// untouched so rows written before repository shapes were validated still
+// match. Both sides are lowercased because GitHub treats owner and repository
+// names case-insensitively.
 func (q *Queries) ListApplicationsByRepo(ctx context.Context, arg ListApplicationsByRepoParams) ([]Application, error) {
-	rows, err := q.db.Query(ctx, listApplicationsByRepo, arg.SourceRepo, arg.SourceBranch)
+	rows, err := q.db.Query(ctx, listApplicationsByRepo, arg.FullName, arg.Branch)
 	if err != nil {
 		return nil, err
 	}

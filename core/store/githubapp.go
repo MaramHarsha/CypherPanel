@@ -12,9 +12,14 @@ import (
 // ListApplicationsByRepo finds every application a push should deploy. EVERY
 // one: a repository can legitimately be deployed by several environments, and
 // picking one would silently skip the rest (github-app.md §6).
-func (s *Store) ListApplicationsByRepo(ctx context.Context, repo, branch string) ([]domain.Application, error) {
+//
+// fullName is GitHub's canonical `owner/repo`. The query canonicalises the
+// stored clone URL down to the same shape rather than comparing the two
+// literally — see the SQL, and github-app.md's implementation note, for why a
+// literal comparison made every App push a silent no-op.
+func (s *Store) ListApplicationsByRepo(ctx context.Context, fullName, branch string) ([]domain.Application, error) {
 	rows, err := s.q.ListApplicationsByRepo(ctx, db.ListApplicationsByRepoParams{
-		SourceRepo: repo, SourceBranch: branch,
+		FullName: fullName, Branch: branch,
 	})
 	if err != nil {
 		return nil, wrap("listing applications by repo", err)
