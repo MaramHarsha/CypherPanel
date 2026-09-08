@@ -14,8 +14,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ConfirmRollback } from "@/components/confirm-rollback";
 import { toastDeployment } from "@/components/deploy-toast";
 import {
+  getGetDeploymentQueryKey,
   getListDeploymentsQueryKey,
   getStreamDeploymentLogsUrl,
+  useCancelDeployment,
   useDeployApplication,
   useGetDeployment,
   useListDeployments,
@@ -32,7 +34,7 @@ import { ActionButton, useMutationActionState } from "@/components/ui/action-but
 import { Drawer } from "@/components/ui/drawer";
 import { useRowNavigation } from "@/lib/keys";
 import { relativeTime, absoluteTime } from "@/lib/time";
-import { toastFailed } from "@/lib/toast";
+import { toastFailed, toastSuccess } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
 interface DeploymentsSearch {
@@ -52,10 +54,40 @@ function isTerminal(status: string): boolean {
   return status === "succeeded" || status === "failed";
 }
 
+/**
+ * A deploy is LIVE while the plane is working on it. `awaiting_approval` is
+ * neither live nor terminal: it is parked, waiting for a person
+ * (deploy-protection.md §3). Treating it as live would pulse the deploying dot
+ * for something doing nothing, disable the Deploy button for as long as it sat
+ * there, and poll for a change that only a human can make.
+ */
+function isLive(status: string): boolean {
+  return !isTerminal(status) && status !== "awaiting_approval";
+}
+
+/**
+ * Whether cancelling is still honest (deployment-control.md). Cancel is the
+ * PANEL stopping waiting, not a remote kill — ADR-002 gives the plane no way to
+ * stop a running build — and once the deploy is `rolling_out` the desired
+ * revision has already moved, so cancelling would leave the panel claiming it
+ * abandoned what every agent is busy converging on. The API answers 409 there
+ * and names the rollback as the recovery; the button is simply absent rather
+ * than offered and refused.
+ */
+function isCancellable(status: string): boolean {
+  return (
+    status === "queued" ||
+    status === "awaiting_approval" ||
+    status === "building" ||
+    status === "distributing"
+  );
+}
+
 /** Deployment status → the shared status vocabulary (ui-principles §5). */
 function toStatus(d: Deployment, isNewest: boolean): string {
   if (d.status === "failed") return "error";
-  if (!isTerminal(d.status)) return "deploying";
+  if (d.status === "awaiting_approval") return "stopped";
+  if (isLive(d.status)) return "deploying";
   return isNewest ? "running" : "stopped";
 }
 
@@ -67,7 +99,8 @@ function toStatus(d: Deployment, isNewest: boolean): string {
  */
 function outcome(d: Deployment, isNewest: boolean): string {
   if (d.status === "failed") return "failed";
-  if (!isTerminal(d.status)) return "deploying";
+  if (d.status === "awaiting_approval") return "awaiting approval";
+  if (isLive(d.status)) return "deploying";
   return isNewest ? "serving" : "superseded";
 }
 
@@ -205,7 +238,7 @@ function DeploymentsTab() {
   const served = useMemo(() => servedDurations(list), [list]);
   // A rollback while a rollout is in flight would race it for the same slot;
   // the row pills say so instead of letting the plane refuse it.
-  const deployBusy = list.some((d) => !isTerminal(d.status));
+  const deployBusy = list.some((d) => isLive(d.status));
   const selectedAt = list.findIndex((d) => d.id === dep);
   const selected = selectedAt >= 0 ? list[selectedAt] : undefined;
   // Deploys are numbered from the first one, and the list arrives newest-first.
@@ -368,7 +401,7 @@ function DeploymentRow({
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   const status = toStatus(d, isNewest);
-  const live = !isTerminal(d.status);
+  const live = isLive(d.status);
   const took = elapsed(d.created_at, d.finished_at);
   const rev = shortRev(d.revision_id);
   // The phone row folds the outcome into its second line (canvas 14c: "6 days ·
@@ -494,7 +527,7 @@ function PanelHead({
 }) {
   const dep = useGetDeployment(depId);
   const revision = rev ?? (dep.data ? shortRev(dep.data.revision_id) : undefined);
-  const live = dep.data ? !isTerminal(dep.data.status) : false;
+  const live = dep.data ? isLive(dep.data.status) : false;
   const clock = useElapsedClock(dep.data?.created_at, live);
   const meta = [ordinal !== undefined ? `deploy #${ordinal}` : null, clock ?? null].filter(Boolean).join(" · ");
   return (
@@ -554,7 +587,9 @@ function DeployPanel({
       // The events stream invalidates the application and its lists, not this
       // deployment's own key — so while the deploy runs, the rail is polled.
       // Off again the moment it is terminal.
-      refetchInterval: (q) => (q.state.data && isTerminal(q.state.data.status) ? false : 3_000),
+      // A parked deploy is not polled either: only a person can move it, and
+      // they do that from a route that invalidates this key.
+      refetchInterval: (q) => (q.state.data && !isLive(q.state.data.status) ? false : 3_000),
     },
   });
   const { rollback, state } = useRollbackAction(appId, projectId);
@@ -606,17 +641,31 @@ function DeployPanel({
       {/* The caret means "more is coming". cypherd parks on the replay stream
           after a deploy ends, so the transport still reports open — only the
           deployment's own status can answer the question. */}
-      <LogViewer url={getStreamDeploymentLogsUrl(d.id)} live={!isTerminal(d.status)} className="min-h-0 flex-1" />
+      <LogViewer url={getStreamDeploymentLogsUrl(d.id)} live={isLive(d.status)} className="min-h-0 flex-1" />
       <p className="mt-3 font-mono text-[11.5px] text-toast-faint">
         {d.trigger} · started <span title={absoluteTime(d.created_at)}>{relativeTime(d.created_at)}</span>
         {took ? ` · ${took}` : ""}
       </p>
       {/* Only true while a rollout is in flight — and it is the sentence the
           whole pipeline exists to be able to say. */}
-      {!isTerminal(d.status) && serving && (
+      {isLive(d.status) && serving && (
         <p className="mt-1 font-mono text-[11.5px] text-toast-faint">
           zero-downtime: {shortRev(serving.revision_id)} serves until {rev} is healthy
         </p>
+      )}
+      {/* Stopping waiting. What it does and does not do is stated on the
+          button's own line, because "cancel" reads as "make it stop" and a
+          build already in flight finishes regardless — its image is reclaimed
+          by desired-state GC afterwards, because nothing desires its revision. */}
+      {isCancellable(d.status) && (
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <span className="font-mono text-[11.5px] text-toast-faint">
+            {d.status === "awaiting_approval"
+              ? "parked for approval — cancelling withdraws it"
+              : "a build already running finishes; its image is reclaimed"}
+          </span>
+          <CancelAction depId={d.id} appId={appId} />
+        </div>
       )}
       {/* The phone list has no right-hand column (14c), so on a phone the way
           back to a superseded revision is from its own sheet — the slot the
@@ -649,5 +698,42 @@ function DeployPanel({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Cancel. It announces nothing to notifiers or outbound webhooks — a
+ * cancellation is a person's decision, not an infrastructure failure — so the
+ * only feedback is here, and it says what it actually did.
+ */
+function CancelAction({ depId, appId }: { depId: string; appId: string }) {
+  const qc = useQueryClient();
+  const cancel = useCancelDeployment({
+    mutation: {
+      onSuccess: () => {
+        void qc.invalidateQueries({ queryKey: getGetDeploymentQueryKey(depId) });
+        void qc.invalidateQueries({ queryKey: getListDeploymentsQueryKey(appId) });
+        toastSuccess({
+          title: "Deploy cancelled",
+          detail: "Nothing was shipped. What is serving now keeps serving.",
+        });
+      },
+      onError: (e: unknown, vars) => toastFailed("Could not cancel the deploy", e, { retry: () => cancel.mutate(vars) }),
+    },
+  });
+  const state = useMutationActionState(cancel);
+  return (
+    <ActionButton
+      size="sm"
+      variant="ghost"
+      state={state}
+      busyLabel="Cancelling…"
+      successLabel="Cancelled"
+      failedLabel="Retry"
+      onClick={() => cancel.mutate({ id: depId })}
+      className="text-toast-text hover:bg-white/10 hover:text-toast-text"
+    >
+      <X className="h-3 w-3" aria-hidden /> Cancel
+    </ActionButton>
   );
 }

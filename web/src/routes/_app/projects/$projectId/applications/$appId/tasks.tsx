@@ -12,6 +12,7 @@ import {
   useDeleteScheduledTask,
   useListScheduledTaskRuns,
   useListScheduledTasks,
+  useUpdateScheduledTask,
 } from "@/api/gen/scheduled-tasks/scheduled-tasks";
 import type { ScheduledTask, ScheduledTaskRun } from "@/api/gen/model";
 import { ArgvInput } from "@/components/argv-input";
@@ -41,7 +42,7 @@ function TasksTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <Eyebrow>Scheduled tasks</Eyebrow>
-        <NewTaskDialog appId={appId} />
+        <TaskDialog appId={appId} />
       </div>
       <PageState
         query={tasks}
@@ -49,7 +50,7 @@ function TasksTab() {
           <EmptyState
             title="No scheduled tasks"
             hint="Run a command inside this app on a schedule — migrations, cleanups, reports. It runs in the app's own container, on cron."
-            action={<NewTaskDialog appId={appId} primary />}
+            action={<TaskDialog appId={appId} primary />}
           />
         }
       >
@@ -94,6 +95,11 @@ function TaskCard({ appId, task }: { appId: string; task: ScheduledTask }) {
           <Button size="sm" variant="ghost" aria-pressed={showRuns} onClick={() => setShowRuns((v) => !v)}>
             <History className="h-3.5 w-3.5" /> Runs
           </Button>
+          {/* Pausing is the reversible half of deleting, and the card already
+              says "paused" — so the way back from that word is on the card
+              rather than three clicks into an edit form. */}
+          <PauseToggle appId={appId} task={task} />
+          <TaskDialog appId={appId} task={task} />
           <ConfirmDestructive
             trigger={
               <Button size="sm" variant="ghost" aria-label={`Delete ${task.name}`}>
@@ -166,45 +172,100 @@ function RunRow({ run: r }: { run: ScheduledTaskRun }) {
 
 const DEFAULT_SCHEDULE = "0 * * * *";
 
-function NewTaskDialog({ appId, primary }: { appId: string; primary?: boolean }) {
+/**
+ * Pause and resume, as an update that changes exactly one field. It is not a
+ * separate route and does not need to be: a paused task keeps its schedule, its
+ * command and its run history, and the only thing that changes is whether the
+ * next tick fires. That is the difference between silencing a job for an
+ * afternoon and losing how it was set up.
+ */
+function PauseToggle({ appId, task }: { appId: string; task: ScheduledTask }) {
+  const qc = useQueryClient();
+  const update = useUpdateScheduledTask({
+    mutation: {
+      onSuccess: () => {
+        void qc.invalidateQueries({ queryKey: getListScheduledTasksQueryKey(appId) });
+        toastSuccess(task.enabled ? `${task.name} paused` : `${task.name} resumed`);
+      },
+      onError: (e: unknown) => toastFailed(task.enabled ? "Could not pause the task" : "Could not resume the task", e),
+    },
+  });
+  return (
+    <ActionButton
+      size="sm"
+      variant="ghost"
+      state={update.isPending ? "busy" : "idle"}
+      busyLabel={task.enabled ? "Pausing…" : "Resuming…"}
+      onClick={() =>
+        update.mutate({
+          id: task.id,
+          data: { name: task.name, schedule: task.schedule, command: task.command, enabled: !task.enabled },
+        })
+      }
+    >
+      {task.enabled ? "Pause" : "Resume"}
+    </ActionButton>
+  );
+}
+
+/**
+ * New task, or edit one. `PUT /scheduled-tasks/{id}` replaces the task
+ * wholesale, so the edit form is the create form seeded from what is there —
+ * there is no partial update to model and no field that means "leave this
+ * alone". Nothing here is sealed, so nothing starts empty.
+ */
+function TaskDialog({ appId, task, primary }: { appId: string; task?: ScheduledTask; primary?: boolean }) {
+  const editing = task !== undefined;
   const qc = useQueryClient();
   // Already in the cache from the shell — this only reads the zone the operator
   // chose to read timestamps in, so the cron preview can speak it too.
   const me = useGetMe();
   const [open, setOpen] = useState(false);
-  const [name, setName] = useState("");
-  const [schedule, setSchedule] = useState(DEFAULT_SCHEDULE);
-  const [command, setCommand] = useState<string[]>([""]);
+  const [name, setName] = useState(task?.name ?? "");
+  const [schedule, setSchedule] = useState(task?.schedule ?? DEFAULT_SCHEDULE);
+  const [command, setCommand] = useState<string[]>(task?.command ?? [""]);
   const commandLabelId = useId();
+
+  const done = (verb: string) => {
+    void qc.invalidateQueries({ queryKey: getListScheduledTasksQueryKey(appId) });
+    toastSuccess(verb);
+    setOpen(false);
+    resetForm();
+  };
 
   const create = useCreateScheduledTask({
     mutation: {
       // The modal's job ends when the task exists: it closes onto the list,
       // which the invalidation refreshes, and the toast names what happened.
-      onSuccess: () => {
-        void qc.invalidateQueries({ queryKey: getListScheduledTasksQueryKey(appId) });
-        toastSuccess("Scheduled task created");
-        setOpen(false);
-        resetForm();
-      },
+      onSuccess: () => done("Scheduled task created"),
       // The pill turns to "✕ Retry"; the toast carries the why and the next step (10c).
       onError: (e: unknown, vars) => toastFailed("Could not create the task", e, { retry: () => create.mutate(vars) }),
     },
   });
-  const submitState = useMutationActionState(create);
+  const update = useUpdateScheduledTask({
+    mutation: {
+      onSuccess: () => done("Scheduled task saved"),
+      onError: (e: unknown, vars) => toastFailed("Could not save the task", e, { retry: () => update.mutate(vars) }),
+    },
+  });
+  const submitState = useMutationActionState(editing ? update : create);
 
   function resetForm() {
-    setName("");
-    setSchedule(DEFAULT_SCHEDULE);
-    setCommand([""]);
+    setName(task?.name ?? "");
+    setSchedule(task?.schedule ?? DEFAULT_SCHEDULE);
+    setCommand(task?.command ?? [""]);
   }
 
   // Opening resets the mutation as well as the fields, so a reopened modal
   // never inherits the last attempt's "✓ Created" or "✕ Retry" pill.
   const onOpenChange = (next: boolean) => {
     setOpen(next);
-    if (next) create.reset();
-    else resetForm();
+    if (next) {
+      create.reset();
+      update.reset();
+      return;
+    }
+    resetForm();
   };
 
   const argv = command.map((a) => a.trim()).filter((a) => a !== "");
@@ -223,20 +284,38 @@ function NewTaskDialog({ appId, primary }: { appId: string; primary?: boolean })
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (disabledReason) return;
-    create.mutate({ id: appId, data: { name: name.trim(), schedule: schedule.trim(), command: argv, enabled: true } });
+    const data = {
+      name: name.trim(),
+      schedule: schedule.trim(),
+      command: argv,
+      // An edit must not silently resume a paused task: the pause lives on the
+      // card, and this form does not touch it.
+      enabled: task?.enabled ?? true,
+    };
+    if (editing) {
+      update.mutate({ id: task.id, data });
+      return;
+    }
+    create.mutate({ id: appId, data });
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
-        <Button variant="primary" size={primary ? "lg" : "md"}>
-          <Plus className="h-3.5 w-3.5" /> New task
-        </Button>
+        {editing ? (
+          <Button size="sm" variant="ghost">
+            Edit
+          </Button>
+        ) : (
+          <Button variant="primary" size={primary ? "lg" : "md"}>
+            <Plus className="h-3.5 w-3.5" /> New task
+          </Button>
+        )}
       </DialogTrigger>
       {/* No description under the title: canvas 9c puts the one thing that
           needs saying — where the command runs — in the footer note, next to
           the button that commits to it. */}
-      <DialogContent title="New scheduled task">
+      <DialogContent title={editing ? `Edit ${task.name}` : "New scheduled task"}>
         <form onSubmit={submit} className="space-y-3">
           <Field label="Name">
             {(id) => (
@@ -283,12 +362,12 @@ function NewTaskDialog({ appId, primary }: { appId: string; primary?: boolean })
               type="submit"
               variant="primary"
               state={submitState}
-              busyLabel="Creating…"
-              successLabel="Created"
+              busyLabel={editing ? "Saving…" : "Creating…"}
+              successLabel={editing ? "Saved" : "Created"}
               failedLabel="Retry"
               disabledReason={disabledReason}
             >
-              Create task
+              {editing ? "Save task" : "Create task"}
             </ActionButton>
           </div>
         </form>

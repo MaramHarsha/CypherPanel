@@ -45,6 +45,7 @@ type fakeAuthStore struct {
 	avatars           map[string]domain.Avatar      // userID → profile photo
 	emailChanges      map[string]domain.EmailChange // pending address moves
 	emailChangeHashes map[string][]byte             // change id → token hash
+	emailChangeSeq    int                           // orders creations, as created_at does
 }
 
 // fakeBox is an identity SecretBox for handler tests.
@@ -98,6 +99,12 @@ func (f *fakeAuthStore) DeleteRecoveryCodes(_ context.Context, _ string) error {
 	return nil
 }
 
+// DeleteExpiredSessions is the session purge (control-plane-hardening.md §7);
+// handler tests never run it, so the fake reports that nothing was expired.
+func (f *fakeAuthStore) DeleteExpiredSessions(context.Context, time.Time) (int64, error) {
+	return 0, nil
+}
+
 func (f *fakeAuthStore) GetUserByEmail(_ context.Context, email string) (domain.User, error) {
 	if email != f.user.Email {
 		return domain.User{}, store.ErrNotFound
@@ -141,7 +148,14 @@ func (f *fakeAuthStore) CreateEmailChange(_ context.Context, id, userID, newEmai
 	if f.emailChangeHashes == nil {
 		f.emailChangeHashes = map[string][]byte{}
 	}
-	ec := domain.EmailChange{ID: id, UserID: userID, NewEmail: newEmail, ExpiresAt: expiresAt}
+	// The real column carries a default now(), and the pending-change lookup
+	// orders by it. A fake that leaves it zero makes "newest wins" depend on Go
+	// map iteration order, which is exactly the bug this models away.
+	f.emailChangeSeq++
+	ec := domain.EmailChange{
+		ID: id, UserID: userID, NewEmail: newEmail, ExpiresAt: expiresAt,
+		CreatedAt: time.Now().Add(time.Duration(f.emailChangeSeq) * time.Millisecond),
+	}
 	f.emailChanges[id] = ec
 	f.emailChangeHashes[id] = tokenHash
 	return ec, nil
@@ -164,6 +178,40 @@ func (f *fakeAuthStore) ConsumeEmailChange(_ context.Context, id string) (domain
 	ec.ConsumedAt = &now
 	f.emailChanges[id] = ec
 	return ec, nil
+}
+
+// PendingEmailChange implements the pending-change lookup the profile screen uses: newest
+// live row wins, matching the SQL's ORDER BY created_at DESC.
+func (f *fakeAuthStore) PendingEmailChange(_ context.Context, userID string) (domain.EmailChange, error) {
+	var newest domain.EmailChange
+	found := false
+	for _, ec := range f.emailChanges {
+		if ec.UserID != userID || ec.ConsumedAt != nil || !ec.ExpiresAt.After(time.Now()) {
+			continue
+		}
+		if !found || ec.CreatedAt.After(newest.CreatedAt) {
+			newest, found = ec, true
+		}
+	}
+	if !found {
+		return domain.EmailChange{}, store.ErrNotFound
+	}
+	return newest, nil
+}
+
+// CancelPendingEmailChanges spends every live change for the user, as the UPDATE does.
+func (f *fakeAuthStore) CancelPendingEmailChanges(_ context.Context, userID string) (int64, error) {
+	var n int64
+	now := time.Now()
+	for id, ec := range f.emailChanges {
+		if ec.UserID != userID || ec.ConsumedAt != nil || !ec.ExpiresAt.After(now) {
+			continue
+		}
+		ec.ConsumedAt = &now
+		f.emailChanges[id] = ec
+		n++
+	}
+	return n, nil
 }
 
 func (f *fakeAuthStore) GetUserByID(_ context.Context, id string) (domain.User, error) {
@@ -207,29 +255,29 @@ func (f *fakeAuthStore) DeleteSession(_ context.Context, tokenHash []byte) error
 	return nil
 }
 
-func (f *fakeAuthStore) CreateAPIToken(_ context.Context, id, userID, name string, abilities []domain.Ability, tokenHash []byte, expiresAt *time.Time) (domain.APIToken, error) {
+func (f *fakeAuthStore) CreateAPIToken(_ context.Context, id, userID, name string, abilities []domain.Ability, tokenHash []byte, expiresAt *time.Time, projectID string) (domain.APIToken, error) {
 	if f.tokens == nil {
 		f.tokens, f.byHash = map[string]domain.APIToken{}, map[string]string{}
 	}
-	tok := domain.APIToken{ID: id, UserID: userID, Name: name, Abilities: abilities, ExpiresAt: expiresAt, CreatedAt: time.Now()}
+	tok := domain.APIToken{ID: id, UserID: userID, Name: name, Abilities: abilities, ProjectID: projectID, ExpiresAt: expiresAt, CreatedAt: time.Now()}
 	f.tokens[id] = tok
 	f.byHash[string(tokenHash)] = id
 	return tok, nil
 }
 
-func (f *fakeAuthStore) APITokenByHash(_ context.Context, tokenHash []byte) (domain.User, string, []domain.Ability, error) {
+func (f *fakeAuthStore) APITokenByHash(_ context.Context, tokenHash []byte) (domain.User, string, []domain.Ability, string, error) {
 	id, ok := f.byHash[string(tokenHash)]
 	if !ok {
-		return domain.User{}, "", nil, store.ErrNotFound
+		return domain.User{}, "", nil, "", store.ErrNotFound
 	}
 	tok := f.tokens[id]
 	if tok.ExpiresAt != nil && !tok.ExpiresAt.After(time.Now()) {
-		return domain.User{}, "", nil, store.ErrNotFound
+		return domain.User{}, "", nil, "", store.ErrNotFound
 	}
 	if tok.UserID != f.user.ID {
-		return domain.User{}, "", nil, store.ErrNotFound
+		return domain.User{}, "", nil, "", store.ErrNotFound
 	}
-	return f.user, tok.ID, tok.Abilities, nil
+	return f.user, tok.ID, tok.Abilities, tok.ProjectID, nil
 }
 
 func (f *fakeAuthStore) SessionForToken(_ context.Context, tokenHash []byte) (domain.User, string, error) {
@@ -404,23 +452,91 @@ func newFakeProjectsStore() *fakeProjectsStore {
 	// Seed the project/environment the resource fixtures reference, so the
 	// authz layer's env -> project resolution works for the seeded env_test
 	// (the harness user is a panel owner, so role checks then pass).
+	// prj_other exists so a test can tell "you cannot see this project" apart
+	// from "this project does not exist": both answer 404, and a scope test
+	// that only ever sees the second one would pass with the scope removed.
 	return &fakeProjectsStore{
 		projects: map[string]domain.Project{
-			"prj_test": {ID: "prj_test", Name: "test", TeamID: "tm_default"},
+			"prj_test":  {ID: "prj_test", Name: "test", TeamID: "tm_default", Slug: "test"},
+			"prj_other": {ID: "prj_other", Name: "other", TeamID: "tm_default", Slug: "other"},
 		},
 		envs: map[string][]domain.Environment{
-			"prj_test": {{ID: "env_test", ProjectID: "prj_test", Name: "production"}},
+			"prj_test":  {{ID: "env_test", ProjectID: "prj_test", Name: "production"}},
+			"prj_other": {{ID: "env_other", ProjectID: "prj_other", Name: "production"}},
 		},
 	}
 }
 
-func (f *fakeProjectsStore) CreateProjectWithEnvironment(_ context.Context, pid, name, teamID, eid, ename string) (domain.Project, domain.Environment, error) {
-	_ = teamID
-	p := domain.Project{ID: pid, Name: name, CreatedAt: time.Now()}
-	e := domain.Environment{ID: eid, ProjectID: pid, Name: ename, CreatedAt: time.Now()}
+func (f *fakeProjectsStore) CreateProjectWithEnvironment(_ context.Context, pid, name, teamID, slug, eid, ename string) (domain.Project, domain.Environment, error) {
+	p := domain.Project{
+		ID: pid, Name: name, TeamID: teamID, Slug: slug,
+		DefaultEnvironmentID: eid, LastActivityAt: time.Now(), CreatedAt: time.Now(),
+	}
+	e := domain.Environment{ID: eid, ProjectID: pid, Name: ename, Kind: domain.EnvProduction, CreatedAt: time.Now()}
 	f.projects[pid] = p
 	f.envs[pid] = append(f.envs[pid], e)
 	return p, e, nil
+}
+
+func (f *fakeProjectsStore) UpdateProject(_ context.Context, id string, fields store.UpdateProjectFields) (domain.Project, error) {
+	p, ok := f.projects[id]
+	if !ok {
+		return domain.Project{}, store.ErrNotFound
+	}
+	if fields.Name != nil {
+		p.Name = *fields.Name
+	}
+	if fields.TeamID != nil {
+		p.TeamID = *fields.TeamID
+	}
+	if fields.Slug != nil {
+		p.Slug = *fields.Slug
+	}
+	switch {
+	case fields.ClearDefaultEnvironment:
+		p.DefaultEnvironmentID = ""
+	case fields.DefaultEnvironmentID != nil:
+		p.DefaultEnvironmentID = *fields.DefaultEnvironmentID
+	}
+	f.projects[id] = p
+	return p, nil
+}
+
+func (f *fakeProjectsStore) SlugTakenInTeam(_ context.Context, teamID, slug string) (bool, error) {
+	for _, p := range f.projects {
+		if p.TeamID == teamID && p.Slug == slug {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (f *fakeProjectsStore) ProjectRollups(context.Context) (map[string]domain.ProjectRollup, error) {
+	return map[string]domain.ProjectRollup{}, nil
+}
+
+func (f *fakeProjectsStore) RenameEnvironment(_ context.Context, id, name string) (domain.Environment, error) {
+	for pid, list := range f.envs {
+		for i, e := range list {
+			if e.ID == id {
+				f.envs[pid][i].Name = name
+				return f.envs[pid][i], nil
+			}
+		}
+	}
+	return domain.Environment{}, store.ErrNotFound
+}
+
+func (f *fakeProjectsStore) DeleteEnvironment(_ context.Context, id string) error {
+	for pid, list := range f.envs {
+		for i, e := range list {
+			if e.ID == id {
+				f.envs[pid] = append(list[:i], list[i+1:]...)
+				return nil
+			}
+		}
+	}
+	return store.ErrNotFound
 }
 
 func (f *fakeProjectsStore) GetProject(_ context.Context, id string) (domain.Project, error) {
@@ -554,6 +670,17 @@ func (f *fakeAppsStore) GetEnvironment(_ context.Context, id string) (domain.Env
 	return domain.Environment{ID: id, ProjectID: "prj_test", Name: "production"}, nil
 }
 
+func (f *fakeAppsStore) GetProject(_ context.Context, id string) (domain.Project, error) {
+	return domain.Project{ID: id, TeamID: "team_test", Name: "acme"}, nil
+}
+
+// GetRegistry backs the application-side registry check (registries.md §5).
+// This fake knows of none, so any attached registry is a 400 — the tests that
+// care about a real one seed it themselves.
+func (f *fakeAppsStore) GetRegistry(_ context.Context, _ string) (domain.Registry, error) {
+	return domain.Registry{}, store.ErrNotFound
+}
+
 // ListSharedVariableKeysInScope backs the write-time {{shared.KEY}} check
 // (shared-variables.md §3). Empty: no shared variable resolves in these tests,
 // so any reference an env-var write carries is a 400.
@@ -592,27 +719,95 @@ type fakeDeployer struct {
 	deploys   []string // "appID/trigger/ref"
 	removed   []string // "serverID/appID"
 	rollbacks []string
+	// requesters records who each attributed deploy/rollback was made for.
+	requesters []string
+	// frozen, when set, makes every attributed start refuse with that detail —
+	// the freeze-window answer (deploy-protection.md §6).
+	frozen string
+	// parked makes an attributed deploy come back awaiting_approval.
+	parked bool
+	// cancelled / restarted record deployment-control calls, and cancelStatus
+	// is the status the fake pretends the deployment was in — the two answers
+	// the handler must tell apart (deployment-control.md §2).
+	cancelled    []string
+	cancelledBy  []string
+	cancelStatus domain.DeploymentStatus
+	cancelErr    error
+	restarted    []string
+	restartErr   error
 }
 
-func (f *fakeDeployer) Deploy(_ context.Context, appID, trigger, ref string) (domain.Deployment, error) {
+// Deploy delegates to DeployAs with no requester, exactly as the real
+// scheduler does — so the machine-triggered callers (a template install, a
+// preview) pass the same gate a person's deploy does, and a fake cannot let
+// one of them through a freeze the real plane would refuse.
+func (f *fakeDeployer) Deploy(ctx context.Context, appID, trigger, ref string) (domain.Deployment, error) {
+	return f.DeployAs(ctx, appID, trigger, ref, "")
+}
+
+// DeployAs records the requester alongside the request, so a test can assert
+// that the handler attributed the deploy to the caller (deploy-protection.md
+// §2). frozen and parked model the two answers the gate produces.
+func (f *fakeDeployer) DeployAs(_ context.Context, appID, trigger, ref, requestedBy string) (domain.Deployment, error) {
+	if f.frozen != "" {
+		return domain.Deployment{}, &scheduler.FrozenError{Detail: f.frozen}
+	}
 	f.deploys = append(f.deploys, appID+"/"+trigger+"/"+ref)
-	return domain.Deployment{ID: "dep_test", ApplicationID: appID, RevisionID: "rev_test", Status: domain.DeployBuilding, Trigger: trigger, CreatedAt: time.Now()}, nil
+	f.requesters = append(f.requesters, requestedBy)
+	dep := domain.Deployment{
+		ID: "dep_test", ApplicationID: appID, RevisionID: "rev_test",
+		Status: domain.DeployBuilding, Trigger: trigger, CreatedAt: time.Now(),
+	}
+	if f.parked {
+		dep.Status = domain.DeployAwaitingApproval
+		dep.Detail = "waiting for approval from an owner"
+	}
+	return dep, nil
 }
 
-func (f *fakeDeployer) Rollback(_ context.Context, deploymentID string) (domain.Deployment, error) {
+func (f *fakeDeployer) Rollback(ctx context.Context, deploymentID string) (domain.Deployment, error) {
+	return f.RollbackAs(ctx, deploymentID, "")
+}
+
+func (f *fakeDeployer) RollbackAs(_ context.Context, deploymentID, requestedBy string) (domain.Deployment, error) {
 	if deploymentID == "dep_unbuilt" {
 		return domain.Deployment{}, scheduler.ErrRevisionNotBuilt
 	}
 	if deploymentID != "dep_test" {
 		return domain.Deployment{}, store.ErrNotFound
 	}
+	if f.frozen != "" {
+		return domain.Deployment{}, &scheduler.FrozenError{Detail: f.frozen}
+	}
 	f.rollbacks = append(f.rollbacks, deploymentID)
+	f.requesters = append(f.requesters, requestedBy)
 	return domain.Deployment{ID: "dep_rb", ApplicationID: "app_x", RevisionID: "rev_test", Status: domain.DeployRollingOut, Trigger: "rollback", CreatedAt: time.Now()}, nil
 }
 
 func (f *fakeDeployer) RemoveApp(_ context.Context, serverID, appID string) error {
 	f.removed = append(f.removed, serverID+"/"+appID)
 	return nil
+}
+
+// Cancel records the call and returns whatever the test asked it to. The
+// returned deployment carries cancelStatus even on the refusal path, because
+// that is what the handler branches its 409 wording on.
+func (f *fakeDeployer) Cancel(_ context.Context, deploymentID, by string) (domain.Deployment, error) {
+	f.cancelled = append(f.cancelled, deploymentID)
+	f.cancelledBy = append(f.cancelledBy, by)
+	status := f.cancelStatus
+	if f.cancelErr == nil {
+		status = domain.DeployFailed
+	}
+	return domain.Deployment{ID: deploymentID, ApplicationID: "app_test", Status: status, Detail: "cancelled by " + by}, f.cancelErr
+}
+
+func (f *fakeDeployer) Restart(_ context.Context, appID string) (domain.Application, error) {
+	f.restarted = append(f.restarted, appID)
+	if f.restartErr != nil {
+		return domain.Application{}, f.restartErr
+	}
+	return domain.Application{ID: appID, Name: "web", RestartToken: "rst_test"}, nil
 }
 
 type fakeDeploymentReader struct{}
@@ -637,6 +832,8 @@ type fakeLogs struct {
 	stopped int
 	// status pushes test status observations to the /events subscriber.
 	status func(subject string, data []byte)
+	// lastSince is the replay window the last subscription asked for.
+	lastSince time.Time
 }
 
 func newFakeLogs() *fakeLogs { return &fakeLogs{lines: map[string][]string{}} }
@@ -658,12 +855,22 @@ func (f *fakeLogs) emitStatus(subject string) {
 	}
 }
 
-func (f *fakeLogs) SubscribeLogs(_ context.Context, subject string, handle func(data []byte)) (func(), error) {
+func (f *fakeLogs) SubscribeLogs(_ context.Context, subject string, since time.Time, handle func(data []byte)) (func(), error) {
+	f.recordSince(since)
 	return f.subscribe(subject, handle)
 }
 
-func (f *fakeLogs) SubscribeRuntimeLogs(_ context.Context, subject string, handle func(data []byte)) (func(), error) {
+func (f *fakeLogs) SubscribeRuntimeLogs(_ context.Context, subject string, since time.Time, handle func(data []byte)) (func(), error) {
+	f.recordSince(since)
 	return f.subscribe(subject, handle)
+}
+
+// recordSince keeps the window the handler resolved, so a test can prove a
+// `since` query parameter actually reached the stream (deployment-control.md §4).
+func (f *fakeLogs) recordSince(since time.Time) {
+	f.mu.Lock()
+	f.lastSince = since
+	f.mu.Unlock()
 }
 
 func (f *fakeLogs) subscribe(subject string, handle func(data []byte)) (func(), error) {
@@ -702,13 +909,21 @@ func (okPinger) Ping(context.Context) error { return nil }
 // fakeDeployKeysStore is an in-memory deploykeys.Store; marking an id in
 // inUse simulates the applications FK RESTRICT on delete.
 type fakeDeployKeysStore struct {
-	mu    sync.Mutex
-	keys  map[string]domain.DeployKey
-	inUse map[string]bool
+	mu   sync.Mutex
+	keys map[string]domain.DeployKey
+	// inUse maps a key id to the applications referencing it — what the 409
+	// names (deploy-key-private-repos.md §3).
+	inUse map[string][]domain.ApplicationRef
 }
 
 func newFakeDeployKeysStore() *fakeDeployKeysStore {
-	return &fakeDeployKeysStore{keys: map[string]domain.DeployKey{}, inUse: map[string]bool{}}
+	return &fakeDeployKeysStore{keys: map[string]domain.DeployKey{}, inUse: map[string][]domain.ApplicationRef{}}
+}
+
+func (f *fakeDeployKeysStore) ListApplicationsByDeployKey(_ context.Context, keyID string) ([]domain.ApplicationRef, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.inUse[keyID], nil
 }
 
 func (f *fakeDeployKeysStore) CreateDeployKey(_ context.Context, dk domain.DeployKey) (domain.DeployKey, error) {
@@ -741,17 +956,29 @@ func (f *fakeDeployKeysStore) ListDeployKeys(context.Context) ([]domain.DeployKe
 func (f *fakeDeployKeysStore) DeleteDeployKey(_ context.Context, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.inUse[id] {
+	if len(f.inUse[id]) > 0 {
 		return store.ErrInUse
 	}
 	delete(f.keys, id)
 	return nil
 }
 
-func (f *fakeDeployKeysStore) markInUse(id string) {
+// sealedPrivateKey returns the ciphertext the store holds for a key, so a test
+// can assert that value never reaches a log or a response.
+func (f *fakeDeployKeysStore) sealedPrivateKey(id string) ([]byte, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.inUse[id] = true
+	dk, ok := f.keys[id]
+	return dk.PrivateKeyCT, ok
+}
+
+func (f *fakeDeployKeysStore) markInUse(id string, apps ...domain.ApplicationRef) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(apps) == 0 {
+		apps = []domain.ApplicationRef{{ID: "app_blocker", Name: "blocker"}}
+	}
+	f.inUse[id] = apps
 }
 
 // ─── harness ────────────────────────────────────────────────────────────────
@@ -773,6 +1000,18 @@ func newTestServerWithStores(t *testing.T) (*httptest.Server, *fakeServersStore)
 }
 
 func newTestServerFull(t *testing.T) (*httptest.Server, *fakeServersStore, *fakeLogs, *fakeDeployKeysStore) {
+	ts, srvStore, logs, dkStore, _ := newTestServerParts(t)
+	return ts, srvStore, logs, dkStore
+}
+
+// newTestServerControl is newTestServerFull with the deployer handed back, for
+// the tests that drive its answers (deployment-control.md).
+func newTestServerControl(t *testing.T) (*httptest.Server, *fakeDeployer, *fakeLogs) {
+	ts, _, logs, _, deployer := newTestServerParts(t)
+	return ts, deployer, logs
+}
+
+func newTestServerParts(t *testing.T) (*httptest.Server, *fakeServersStore, *fakeLogs, *fakeDeployKeysStore, *fakeDeployer) {
 	t.Helper()
 	hash, err := auth.HashPassword(testPassword)
 	if err != nil {
@@ -820,7 +1059,7 @@ func newTestServerFull(t *testing.T) (*httptest.Server, *fakeServersStore, *fake
 	})
 	ts := httptest.NewServer(api.Handler())
 	t.Cleanup(ts.Close)
-	return ts, srvStore, logs, dkStore
+	return ts, srvStore, logs, dkStore, deployer
 }
 
 func doJSON(t *testing.T, method, url, token, body string) (int, http.Header, []byte) {
@@ -890,10 +1129,37 @@ func TestProtectedRoutesRequireAuth(t *testing.T) {
 		{"GET", "/api/v1/applications/app_x/env"},
 		{"PUT", "/api/v1/applications/app_x/env/KEY"},
 		{"DELETE", "/api/v1/applications/app_x/env/KEY"},
+		// Invitations and access requests: every route EXCEPT the two public
+		// ones (invitations-and-access-requests.md §3).
+		{"POST", "/api/v1/teams/tm_x/invites"},
+		{"GET", "/api/v1/teams/tm_x/invites"},
+		{"DELETE", "/api/v1/teams/tm_x/invites/inv_x"},
+		{"GET", "/api/v1/teams/tm_x/access-requests"},
+		{"POST", "/api/v1/teams/tm_x/access-requests"},
+		{"POST", "/api/v1/access-requests/acr_x/grant"},
+		{"POST", "/api/v1/access-requests/acr_x/deny"},
 	} {
 		status, _, _ := doJSON(t, route.method, ts.URL+route.path, "", "")
 		if status != http.StatusUnauthorized {
 			t.Errorf("%s %s without token: status %d, want 401", route.method, route.path, status)
+		}
+	}
+}
+
+// The invitation landing routes are the panel's only unauthenticated read and
+// its second unauthenticated mutation (after the GitHub webhook). They must
+// answer WITHOUT a bearer token — the whole point is a link someone opens
+// before they have an account — so a 401 here would be the feature failing
+// closed in the wrong direction.
+func TestPublicInviteRoutesDoNotDemandASession(t *testing.T) {
+	ts := newTestServer(t)
+	for _, route := range []struct{ method, path, body string }{
+		{"GET", "/api/v1/invites/inv_x.SECRET", ""},
+		{"POST", "/api/v1/invites/inv_x.SECRET/accept", `{"password":"correct-horse"}`},
+	} {
+		status, _, body := doJSON(t, route.method, ts.URL+route.path, "", route.body)
+		if status == http.StatusUnauthorized {
+			t.Errorf("%s %s without a token = 401, want it reachable (body %s)", route.method, route.path, body)
 		}
 	}
 }
@@ -1136,7 +1402,7 @@ func TestApplicationAcceptsSpecShapedBuild(t *testing.T) {
 
 	// An unsupported kind is still a validation error, not a decode error.
 	bad := `{"name":"nope","source":{"kind":"github","repo":"acme/x"},` +
-		`"build":{"kind":"nixpacks","dockerfile_path":"./Dockerfile","context":"."},` +
+		`"build":{"kind":"buildpacks","dockerfile_path":"./Dockerfile","context":"."},` +
 		`"runtime":{"server_id":"srv_test","port":8080},"route":{"domain":"n.example.com"}}`
 	status, _, resp = doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, bad)
 	if status != http.StatusBadRequest {

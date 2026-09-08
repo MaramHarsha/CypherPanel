@@ -84,9 +84,11 @@ Each scenario states the attack, the property that must hold, the controls, and 
 - **The wire protocol has no "exec arbitrary command" verb.** Agents consume *desired state* and reconcile it (ADR-005); the gRPC/NATS surface is deployment intents, not a command shell. The interactive terminal (V1.x) is the one exception and is gated separately (§5.7). This is an ENGINEERING-level constraint on proto design: **`work.*` messages describe state, never shell strings.** `[Phase 1: proto review gate]`
 - **Secrets encrypted at rest** with a key held **outside the panel's own auto-update blast radius** (a lesson taken directly from Coolify discussion #3687, where the updater destroyed `.env` including encryption keys). `[Phase 1: config/secrets design]`
 - **The CA/signing key (A2) is the highest-value secret** and is stored encrypted, never logged (rule 20), and its compromise is the one path that *does* approach A1 — so it is isolated and, post-v1, a candidate for external KMS/HSM.
-- **Full audit log** (V1.x) of every desired-state mutation, so a compromise is reconstructable and the reconciler's actions are attributable.
+- **Full audit log** ([audit-log.md](../features/audit-log.md), V1.x — **landed**) of every desired-state mutation: one immutable row per sensitive action, with the actor (session, API token *and its owner*, agent, or the mechanism behind an unattended one), the resource, the trace id and the client address — so a compromise is reconstructable and the reconciler's actions are attributable. It is a *forensic* control, not a preventive one (see the residual below): the log is written by the plane, so an attacker holding the plane can write to it and, given database access, edit it. What it removes is the class of compromise that leaves no trace at all.
 
-**Residual risk.** An attacker with a compromised plane *can* deploy malicious images to servers and read A3 secrets from the DB — this is real and serious. What they cannot do is get a root shell fleet-wide from a single stolen key. We reduce the residual further with 2FA (rule/matrix V1), audit, and encryption, and we are honest in [vision.md](../vision.md) that this is the bound, not zero.
+**Residual risk.** An attacker with a compromised plane *can* deploy malicious images to servers and read A3 secrets from the DB — this is real and serious. What they cannot do is get a root shell fleet-wide from a single stolen key. We reduce the residual further with 2FA (rule/matrix V1), audit, and encryption, and we are honest in [vision.md](../vision.md) that this is the bound, not zero. The audit log narrows it without closing it: `audit_events` has no update path in the code and no write route in the API, but it lives in the same Postgres the attacker already holds, so it is evidence against an *operator-level* mistake or an abused credential rather than against database-level tampering. Tamper-evidence proper — a hash chain, or an append-only store outside the plane — is recorded as out of scope in [audit-log.md](../features/audit-log.md) §12 and needs its own ADR.
+
+Deploy protection ([deploy-protection.md](../features/deploy-protection.md), V1.x) is deliberately **not** claimed as a control here. Its gate is enforced by the plane, so an attacker holding the plane can bypass it exactly as they can command any other deployment. What it reduces is the *accidental* blast radius — the Friday push, the mis-clicked rollback, the CI token that deploys unattended — and the one place it touches this scenario is §5.8's residual: an approval decision — and a change to the policy itself — needs an interactive session, so a stolen API token alone can neither release a deploy nor remove the gate that parked it.
 
 ### 5.2 Single-agent compromise → lateral movement
 
@@ -96,9 +98,11 @@ Each scenario states the attack, the property that must hold, the controls, and 
 
 **Controls.**
 - **Agent identity is scoped to its own server.** The plane authorizes `state.*`/`work.*` per-agent; one agent's certificate does not let it subscribe to another server's work or publish another server's state. NATS subject authorization is per-identity. `[Phase 1: bus authz]`
+- **Reply inboxes are per-identity too.** Request/reply on core NATS answers on the requester's reply subject, and the desired-state sync's answer carries the resolved `DesiredState` — plaintext `env` for every app and database on that server. Core NATS delivers a publication to *every* matching subscription, so a shared `_INBOX.>` Subscribe grant meant any agent could read any other agent's secrets: exactly the lateral movement this scenario forbids. Each agent now connects with `nats.CustomInboxPrefix("_INBOX_<cn>")` and is granted `_INBOX_<cn>.>` and nothing else, so a sync reply reaches its requester alone. **Compatibility:** an agent built before this change keeps the default `_INBOX` prefix, which is no longer granted, so its first request/reply (the JetStream work-consumer bind) times out and it converges nothing until it is upgraded — a deliberate break, because it *is* the fix. Operators are told to upgrade agents in the same window in [deployment.md §Upgrades](../dev/deployment.md#upgrades). `[Phase 4: control-plane-hardening.md §1; proven by core/bus TestAgentInboxIsIsolatedPerIdentity]`
+- **The plane validates the reply subject before it answers.** The grant above says who may *subscribe*; it does not say where the plane may *publish*. The requester picks `msg.Reply`, and NATS does not permission-check a publisher's reply subject under plain publish/subscribe allow lists (only `Responses` permissions do — verified against nats-server v2.14.5). The plane's own client is in-process and **unrestricted**, so an unvalidated `msg.Respond` was an arbitrary-subject publish primitive: any enrolled agent could request a sync on its own (permission-pinned) subject while naming `work.<other-server>.rollout`, `state.*.deploy` or `logs.*.>` as the reply, and the plane would publish there from its trusted connection. Not a cross-agent read — the payload is keyed off the request subject, so it is always the requester's own state — but injection into plane-internal subjects. `RespondDesiredState` now requires the reply to sit under `_INBOX_<cn>.` and otherwise drops the request and logs at warn with the server id (once per server: it also names an agent that is older than the plane). `[Phase 4: control-plane-hardening.md §1; proven by core/bus TestSyncReplySubjectMustBeInTheRequestersInbox]`
 - **The plane trusts observed state as a *report*, not a command.** A lying agent can misreport *its own* status (causing the scheduler to redeploy, at worst) but cannot mutate desired state or another server's reconciliation. Desired state is written only by the Core API behind user auth (ADR-005). `[Phase 1]`
-- **Certificate revocation** — a burned agent's cert can be revoked at the plane, cutting it off; enrollment of its replacement is a fresh join token. `[Phase 1: mint short-lived certs; revocation list design]`
-- **Short-lived agent certificates with rotation** (renew over the authenticated channel) bound the window a stolen cert is useful. `[Phase 1: cert TTL decision]`
+- **Certificate revocation** — a burned agent's cert can be revoked at the plane, cutting it off; enrollment of its replacement is a fresh join token. Revocation now also denies **renewal** (below), so a revoked identity ages out instead of living to its `NotAfter`. `[Phase 1: mint short-lived certs; revocation list design]`
+- **Short-lived agent certificates with rotation** (renew over the authenticated channel) bound the window a stolen cert is useful. `EnrollmentService.Renew` re-signs an agent's certificate over the mTLS channel it already holds: authorization is the verified peer CommonName (a `server_id` in the body is a claim that must agree with it, so no agent can renew another's identity), and the plane refuses an identity it no longer recognises. The agent renews at **two thirds of the certificate's lifetime** with a **fresh key pair** each time — so a leaked key stops being useful when the certificate it belongs to expires, not merely the certificate — and swaps the material atomically (`identity.json` names the pair in use; renaming it is the commit). **TTL decision: 90 days**, Let's Encrypt's number for the same reasons — long enough that a renewal outage is not an emergency, short enough that a stolen certificate is not a permanent grant. The renewal point is a fraction of the lifetime, so shortening `CYPHERD_AGENT_CERT_TTL` shortens the retry window with it rather than making renewal impossible. `[Phase 4: agent-identity-and-tls.md §3; proven by core/enroll, core/api/grpc and agent/identity tests]`
 - The agent runs with the least privilege its job needs; where the Docker socket is required it is the documented, understood grant, not an accident.
 
 **Residual risk.** The compromised host itself is forfeit — we cannot prevent that from inside it. We contain lateral movement and make it observable.
@@ -113,7 +117,7 @@ Each scenario states the attack, the property that must hold, the controls, and 
 - **Single-use** (ENGINEERING rule 22): the token is consumed on first successful enrollment; a race means one of the two fails and the operator sees an unexpected/duplicate enrollment. `[Phase 1]`
 - **Short-lived** (rule 22): tokens expire quickly (minutes, not days); an old token in shell history is inert. `[Phase 1: TTL]`
 - **Bound to intent where possible** — a token is issued for a specific pending server registration, so an enrolled agent lands as a known, named server the operator is expecting, and an unexpected enrollment is visible.
-- **Enrollment is observable**: a new server appearing is a first-class, audited event surfaced in the UI, so rogue enrollment isn't silent.
+- **Enrollment is observable**: a new server appearing is a first-class, audited event surfaced in the UI, so rogue enrollment isn't silent. Satisfied by `server.enrolled` ([audit-log.md](../features/audit-log.md) §4), written by the gRPC enrollment handler with an `agent` actor labelled by the hostname and the dialling address as its client IP — read beside the `server.created` row the operator produced when they minted the join token, an enrollment nobody asked for is visible as an enrollment with no matching creation.
 - **Constant-time token comparison** (rule 21) — no timing oracle on the token check. `[Phase 1]`
 - A rogue agent that *does* enroll is still just an agent: it controls only its own (attacker-owned) host and is subject to every §5.2 bound. It does not gain access to other servers or secrets not scheduled to it.
 
@@ -186,6 +190,13 @@ Each scenario states the attack, the property that must hold, the controls, and 
 - **Auth on every endpoint by default**; the framework denies unauthenticated access unless a route is explicitly public (login, agent enrollment). `[Phase 1: middleware]`
 - **Object-level authorization** — every resource read/write checks team ownership and role, not just authentication. This is the multi-tenant isolation P2/P3 depend on. `[Phase 1 for the admin/server surface; enforced per-resource as resources land]`
 - **Login rate limiting and session management** (matrix V1, threat-model deliverable): brute-force protection, lockout, session revocation. `[Phase 1: admin login]`
+- **Throttling in two dimensions, keyed by an address the client cannot choose.** Sign-in is counted per client address *and* per account, so one attacker behind a shared proxy cannot lock every account out and a guess spread across a botnet is still bounded by the account's own budget. The client address is the TCP peer unless the peer is inside `CYPHERD_TRUSTED_PROXIES` (a CIDR list, **empty by default**), and then it is the right-most `X-Forwarded-For` hop that is not itself a trusted proxy — so prepending addresses buys nothing. The same limiter guards the email-change request and confirm routes (§5.10). A `429` says how long to wait (`Retry-After` and `retry_after_seconds`), which is honesty, not a hint: the window is fixed and public. `[Phase 4: control-plane-hardening.md §5]`
+- **Correlation ids the client cannot forge.** Every response carries `X-Request-Id`, repeated as `trace_id` in every error body, and every 5xx is logged at error level with it. An inbound `X-Request-Id` is honoured only from a trusted proxy and only when it is a short printable token, so a client can neither file its requests under someone else's id nor inject a newline into a log line. A handler panic becomes the same envelope with `500` rather than a dropped connection. `[Phase 4: control-plane-hardening.md §2]`
+- **Expired sessions are deleted, not merely ignored.** An hourly sweep removes rows past `expires_at`; an unbounded `sessions` table was a slow disk-growth path (§5.9) and a larger pool of hashes for an attacker who reaches the database. `[Phase 4: control-plane-hardening.md §7]`
+- **The panel's own log tail is owner-and-session-only.** `GET /api/v1/panel/logs` names hosts, resources and users, so an API token — which lives in CI — may never read it, and it holds no secrets by construction (rule 20, asserted by a test that seals a value through the API and greps the tail). `[Phase 4: control-plane-hardening.md §4]`
+- **A deploy gate an API token can neither open nor remove.** Where deploy protection is enabled, a deploy into the protected environment parks and someone at or above the environment's approver rank must release it — and `POST /deployments/{id}/approve`, `/reject`, `/environments/{id}/break-glass` **and `PUT /environments/{id}/protection`** are `sessionOnly`, so a leaked CI token can neither approve the deploy it just requested nor switch the policy off and deploy freely. The `PUT` is on that list for the stronger reason: deleting the control (`require_approval: false`, `freeze_enabled: false`, `windows: []`) is more powerful than the single 30-minute grant that suspends one freeze, so a gate that stopped at the decision routes would have left the wider door open. Without all four the gate would be decorative: a token inherits its owner's role, so the same reasoning that keeps credential management off tokens applies here. The deploy routes themselves are unchanged, so CI keeps working — its deploys simply wait for a person. `[V1.x: deploy-protection.md §5]`
+- **The invitation routes are public, and bounded like sign-in.** `GET /api/v1/invites/{token}` and `POST /api/v1/invites/{token}/accept` are the only routes this feature adds without a session — the second being the panel's *second* unauthenticated mutating route, after the GitHub webhook. Each is gated by a bearer secret an authorized admin issued for one address (~130 bits, stored only as `sha256`, compared in constant time before anything is spent), throttled per client address, single-use by an atomic `UPDATE … WHERE accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()`, and answers one undifferentiated `404` for unknown, wrong-secret, expired, revoked and already-spent. Accepting for an address that **already has an account** runs the ordinary `Login` path, so that account's current password *and* its second factor are still required — an invitation is therefore not a password-reset path (§5.10's decision stands) and not a 2FA bypass. An unknown token records no audit row, for the reason a throttled sign-in records one per episode: an anonymous caller must not be able to drive unbounded durable writes. And because the token travels *in a URL*, the request-logging middleware redacts the secret half of any `/invite/…` or `/api/v1/invites/…` path — otherwise the panel's own log, which `GET /panel/logs` hands to an owner, would keep a live credential. `[V1.x: invitations-and-access-requests.md §8]`
+- **Promotion is session-only, and never self-service.** `POST /access-requests/{id}/grant` and `/deny` are `sessionOnly` for §5.8's standing reason — a token inherits its owner's role — and a request may only ask for a rank *above* the asker's own, in a team they already belong to (a team you cannot see answers `404`, so the collection is not a tenancy probe). Granting applies through the ordinary member-role path, so the last-owner guard and the grant-rank rule are enforced once rather than restated. An invitation's rank is fixed when it is issued and can never exceed the issuer's own; removing a member revokes the invitations they issued for that team, so a removed admin keeps no seven-day back door in a mailbox. `[V1.x: invitations-and-access-requests.md §3, §8]`
 - **2FA / TOTP** (matrix V1): because panel account takeover is fleet *command* (bounded by §5.1 but still serious), strong account security is not optional. `[Phase 1 admin account supports it; enforcement per matrix]`
 - **Secrets masked in all API responses** (rule 20, Coolify's `ApiSensitiveData` idea) — the API never returns a secret it doesn't have to, and masks by default. `[Phase 1]`
 - **Constant-time comparison** of tokens and secrets (rule 21). `[Phase 1]`
@@ -254,7 +265,12 @@ rather than silent. A compromised mailbox still receives the notice intended to
 warn about it; nothing here defends an operator whose mail *and* panel are both
 in someone else's hands. Password reset by email is deliberately **not** added
 (panel-mail.md §8): it would make the mailbox sufficient on its own, which is
-exactly the property this scenario exists to preserve.
+exactly the property this scenario exists to preserve — and it is why an
+**invitation** sent to an address that already has an account requires that
+account's current password rather than offering a new one
+([invitations-and-access-requests.md](../features/invitations-and-access-requests.md)
+§4). Otherwise anyone who can invite could reset any address they can name, and
+this whole section would be undone by a feature about onboarding.
 
 ### 5.11 The panel as an HTTP client: outbound webhooks
 
@@ -301,9 +317,38 @@ become a general-purpose network probe or an unbounded amplifier.
   per-attempt timeout, and the 200 most recent deliveries per endpoint retained,
   attempts cascading.
 
-**Accepted risk — egress is not filtered.** We enforce `http`/`https` only and
-refuse redirects, but we do **not** block private, loopback or link-local
-destinations. This is the same posture as
+**Email has no unsaved test.** Testing a webhook config POSTs a fixed JSON body
+to one URL; testing an email config would make the panel relay a message through
+an arbitrary SMTP server, with an arbitrary `from`, to an arbitrary recipient,
+on a member's say-so and leaving no row behind — spam and spoofing
+infrastructure rather than a connectivity check. The email channel is tested
+through its saved notifier, which is authorized, recorded and revocable.
+`[notify.ErrTestRequiresSave]`
+
+**Testing an unsaved configuration is filtered.** `POST
+/projects/{id}/notifiers/test` (notifications.md §6) hands the sender a config
+straight from the request body. Three things separate it from a saved notifier:
+nothing is persisted, so no row records that the probe happened; the result is
+returned **synchronously**, so "connection refused" versus a timeout separates a
+closed port from a filtered one; and it can be repeated at will with a different
+address each time. That is a port scanner with no trace, so this one path takes
+the control named at the end of this section: a destination check resolved **at
+request time**, in the dialer's `Control` hook, refusing loopback, RFC1918,
+IPv6 unique-local, link-local (cloud metadata), unspecified and multicast
+addresses, and their IPv4-mapped forms. Before anything is dialled the URL must
+also be `https` with a dotted hostname — no cleartext, no userinfo, no IP
+literal, the shape that skips DNS entirely. Because the hook sees the address the
+socket is about to use, a name that resolves publicly on the first lookup and
+privately on the second is refused on the second. `[core/egress]`
+
+**Addresses are parsed, not merely non-empty.** A notifier's `from` and every
+recipient in `to` must parse as an address before the config can be stored, so a
+line break cannot reach a header in the first place; `buildMessage` still
+sanitises on the way out. `[notify.validateConfig]`
+
+**Accepted risk — egress from a *saved* notifier is not filtered.** We enforce
+`http`/`https` only and refuse redirects, but for a notifier that has been
+stored we do **not** block private, loopback or link-local destinations. This is the same posture as
 [notifications.md](../features/notifications.md) §6 and rests on the same
 premise: the operator is the trust root and already runs arbitrary containers on
 these servers. It is recorded here rather than left implicit because (b) makes
@@ -382,6 +427,140 @@ do not choose, visible and attributable in the UI — but an operator running
 untrusted members should scope the token to a zone they do not mind sharing.
 **Per-team providers are the control if that assumption ever stops holding.**
 
+### 5.13 The panel as an HTTP client: the update check
+
+**Attack.** The plane polls a release feed (`CYPHERD_UPDATE_FEED_URL`, GitHub's
+`releases/latest` by default) every six hours to tell owners a newer version
+exists ([control-plane-hardening.md §3](../features/control-plane-hardening.md)).
+That is an outbound request the plane makes on its own schedule, to a host it
+does not control, and the answer becomes text an owner reads in their inbox.
+Three ways it bites. **(a)** A hostile or hijacked feed can redirect the request
+inward — `http://169.254.169.254/`, `http://127.0.0.1:5432/` — turning the plane
+into an SSRF probe of its own network from inside the trust boundary. **(b)** It
+can answer with an unbounded body and make the plane eat memory. **(c)** The
+strings it returns (a tag, a notes URL) reach an inbox item, so an unvalidated
+one is content injection into an operator-facing surface.
+
+**Property that must hold.** The check is optional, bounded, and can never be
+steered into the plane's own network or made to consume it. Nothing it returns
+is trusted beyond being displayed as text.
+
+**Controls.**
+- **Opt out entirely.** `CYPHERD_UPDATE_CHECK=off` makes no outbound request at all — for an air-gapped install this is the whole answer. A `dev` build also performs no request: there is nothing to compare against.
+- **No redirect into private space.** `http`/`https` only, at most three redirects, and a redirect is refused when its target is loopback, private, link-local, unspecified or multicast — **checked after resolving the hostname**, so a name that points inward is caught as surely as a literal address (`ErrPrivateRedirect`). This is §5.11's webhook-sender posture applied to the one other place the plane dials out.
+- **Bounded in time and size.** A 10 s timeout per request; the body is read through a 256 KiB limit and a larger one is an error (`ErrBodyTooLarge`), never a partial parse.
+- **The failure mode is silence.** A feed that errors leaves the last good answer in place and logs at warn level with the feed *host* only — never the body, which is attacker-controlled text.
+- **Nothing is executed and nothing is fetched twice.** The panel never updates itself (ADR-010); it renders a version, a class (patch/minor/major) and a notes URL. Drafts and pre-releases are ignored. The inbox item is written once per version (dedupe key `panel.update_available:<version>`), so a restart or a hostile feed flapping cannot flood owners.
+- **Only owners hear it**, and only those who have not muted the kind.
+
+**Residual risk.** The feed learns the panel's IP and its version (the
+`User-Agent`), which is the minimum a version check can cost; an operator who
+will not pay it sets `CYPHERD_UPDATE_CHECK=off`. The feed's *content* is
+displayed to owners as text — a hijacked feed can therefore advertise a
+plausible-looking version and a notes URL that is not ours. It cannot make the
+panel fetch, install or run anything, which is the property that matters.
+
+### 5.14 The panel as an HTTP client: the registry probe
+
+**Attack.** A **Registry** ([registries.md](../features/registries.md)) stores a
+credential for a container registry the operator names, and two routes test it —
+`POST /registries/test` for an unsaved one and `POST /registries/{id}/test` for
+a stored one. Both make the plane connect to a host chosen in a request body,
+and both return the outcome synchronously. That is §5.11's unsaved-notifier
+problem again, with one difference that makes it harder: a notifier's webhook
+URL can be held to a known set of provider hostnames, and a registry's cannot —
+pointing at an arbitrary registry *is* the feature. `169.254.169.254`,
+`10.0.0.7:5432` and the plane's own loopback are all reachable from where
+`cypherd` runs, and "the registry answered 404" versus "connection refused"
+versus a timeout separates a listening port from a closed one from a filtered
+one.
+
+**Property that must hold.** Testing a credential may prove reachability of a
+registry on the public internet. It may not become a way to learn what is
+listening inside the panel's network.
+
+**Controls.**
+- **The URL is built from components, never concatenated.** The operator's value
+  is held to one regular expression covering the whole host — DNS labels or a
+  bracketed IPv6 literal, with an optional port — and it is that *checked* value
+  which becomes `url.URL.Host`. A scheme, credentials before an `@`, a path, a
+  query, a fragment, a backslash, whitespace or a control character are outside
+  the alphabet, so there is nothing to strip and nothing to get subtly wrong.
+  `[registries.hostPort]`
+- **The destination is checked at dial time, not at validation time.** The same
+  `Control`-hook guard §5.11 introduced, now shared: loopback, RFC1918, IPv6
+  unique-local, link-local, unspecified and multicast are refused, along with
+  their IPv4-mapped forms, on the address the socket is about to use. A name
+  that resolves publicly once and privately the next time is refused the next
+  time. `[core/egress]`
+- **Both test paths, not just the unsaved one.** Unlike §5.11, the guard is on
+  the service's own client rather than a second client built for one route. The
+  stored path reaches the same capability with one extra step, and two policies
+  for "test this credential" would only mean the weaker one is the one people
+  reach for.
+- **Always TLS.** With every address the Docker daemon would call
+  insecure-by-default now refused, no case remains in which a credential would
+  go out in the clear, so the scheme is fixed rather than chosen.
+- **Team admin, not member.** Making an outbound request to a host you chose is
+  administration; the rank matches creating the credential itself.
+
+**What this costs, and why it is the right trade.** A registry on the operator's
+own private network cannot be *tested* from the panel. It can still be stored,
+attached to an application and pulled from — because the **agent** does the
+pulling, and the agent is already on that network. The refusal says exactly that
+rather than reporting a connection error, so the operator is not left believing
+their credential is wrong. This is deliberately stricter than §5.11's accepted
+risk for a saved notifier: that one rests on the destination being fixed at
+save time, and a registry's is not.
+
+### 5.15 Compose Stacks: a resource that can ask for root
+
+**Attack.** A **Compose Stack**
+([compose-stacks.md](../features/compose-stacks.md)) runs an operator's compose
+file as-is. A compose file can declare `privileged: true`, bind `/` into a
+container, take `pid: host` or `network_mode: host`, and add capabilities — any
+of which is root on the node. None of that is expressible as an Application, so
+this resource genuinely widens what someone inside the panel can reach: before
+it, the largest grant a project member could make was "run this image with
+these env vars".
+
+**Property that must hold.** The capability exists — that is the point of the
+resource, and the reason ~130 catalog entries need it — but it must be reachable
+only at a rank that already implies trust with the node, and every use of it
+must be attributable.
+
+**Controls.**
+- **Writing the file is team admin; deploying one is a member.** That split is
+  the whole authorization story. `POST /environments/{id}/compose-stacks`,
+  `PATCH` of the file or route, and `DELETE` are admin; deploy, rollback and the
+  env-var routes are member, because redeploying a file an admin has already
+  written and reviewed grants nothing new. `[compose-stacks.md §7]`
+- **Every mutation is audited**, and the detail records **that** the file
+  changed, never its content — a compose file often carries an inline value an
+  operator put there, and the audit log is not where it becomes permanent.
+- **The plane never sends a command.** It sends a file; the agent owns one
+  fixed invocation of its own. This is the same line §5.2 and `work.proto` draw
+  — declarative workload config is desired state and permitted, a general exec
+  verb is not — and it is what keeps a Compose Stack from becoming the
+  "run arbitrary command on the host" primitive ADR-005 exists to prevent.
+- **Secrets do not live in the stored file.** Variables are sealed rows;
+  compose interpolates them from an env file the agent writes `0600` and removes
+  on every exit path, so plaintext is on the host only for the length of one
+  converge.
+- **The stack id names a path**, so the reconciler refuses one containing a
+  separator or `..` before writing anything — the id is plane-generated, which
+  is exactly why the check is cheap.
+
+**Accepted risk — the dangerous directives are NOT blocked.** `privileged`,
+host mounts, `cap_add` and host networking are allowed. Blocking them would
+defeat the resource: the feature matrix names "a command override, a host
+mount, or privileged access" as precisely why these templates cannot be
+Applications. The mitigation is rank plus the audit trail, and it rests on §7's
+standing assumption that a team admin is trusted with the servers their team
+runs on. **If untrusted members or per-team isolation ever land, this is the
+scenario to revisit** — the control then is a policy on the environment
+declaring which directives its stacks may use, enforced at validation.
+
 ## 6. Cross-cutting controls (apply everywhere)
 
 - **Secrets never in logs, errors, or API responses** — mask by default (ENGINEERING rule 20). Every log line carries resource IDs, never secret values (rule 4).
@@ -403,12 +582,12 @@ untrusted members should scope the token to a zone they do not mind sharing.
 
 These are the concrete, checkable requirements the Phase 1 handshake code must satisfy. They are the security half of Phase 1's [acceptance gate](../roadmap.md).
 
-1. **Enrollment** issues **single-use, short-TTL join tokens**; token comparison is constant-time; a used or expired token is rejected; a new server enrollment is an audited, surfaced event. (§5.3)
+1. **Enrollment** issues **single-use, short-TTL join tokens**; token comparison is constant-time; a used or expired token is rejected; a new server enrollment is an audited, surfaced event — `server.enrolled` in the audit log, not a log line ([audit-log.md](../features/audit-log.md) §4). (§5.3)
 2. **The agent receives an mTLS client certificate** at enrollment and uses it for all subsequent traffic; there is **no other credential** and **no stored server credential on the plane**. (§5.1, §5.2)
 3. **All agent↔plane traffic is mTLS, TLS 1.3, mutually verified against a pinned CA**; no plaintext path exists, not even in dev. (§5.4, rule 23)
 4. **The wire protocol contains no arbitrary-command *verb*.** The boundary (refined by [ADR-011](../adrs/ADR-011-in-container-scheduled-tasks.md)) is *no verb that can execute outside a workload's own sandbox* — not "no command string ever." The Phase 1 surface is enrollment + heartbeat/state only, and the proto review checks that `work.*`/agent messages describe state, never an imperative "run this now" exec verb. Declarative workload config that includes a command — a container `HEALTHCHECK`, or a scheduled-task command the agent runs *inside the app's own unprivileged container* (ADR-011) — is desired state, not a verb: it grants no privilege beyond what deploying an image already does (§5.1), so it stays within the bound. A general host/privileged/cross-container exec verb remains forbidden. (§5.1)
 5. **NATS subjects are authorized per-agent-identity**: an agent can publish only its own `state.*` and consume only its own `work.*`. (§5.2)
-6. **Agent certificates are short-lived and revocable**; a revoked identity is refused. (§5.2)
+6. **Agent certificates are short-lived, self-renewing and revocable**; a revoked identity is refused a connection *and* a renewal, so it expires rather than persisting. (§5.2)
 7. **The admin login path has rate limiting and secure session handling** from the first commit that exposes it; the admin account model supports TOTP. (§5.8)
 8. **Secrets (including the CA key and the DB encryption key) are encrypted at rest and never logged**; the CA/encryption keys live outside any future auto-updater's blast radius. (§5.1, rule 20)
 9. **JetStream streams are created with explicit retention/size limits** so log/metric/heartbeat churn is bounded from day one. (§5.9)
@@ -418,17 +597,20 @@ These are the concrete, checkable requirements the Phase 1 handshake code must s
 
 | Scenario | Primary control | Anchored in |
 |---|---|---|
-| §5.1 Plane compromise → fleet | No stored server creds; no exec verb; secrets encrypted outside updater | ADR-002, ADR-005, rule 20 |
-| §5.2 Agent compromise → lateral | Per-identity subject authz; state-as-report; cert revocation | ADR-002, ADR-003, rule 12 |
-| §5.3 Join-token leak | Single-use, short-TTL, observable, constant-time check | ADR-002, rules 21–22 |
+| §5.1 Plane compromise → fleet | No stored server creds; no exec verb; secrets encrypted outside updater; **audit log of every sensitive action, per-team readable, no write route** | ADR-002, ADR-005, rule 20, audit-log.md |
+| §5.2 Agent compromise → lateral | Per-identity subject authz **including reply inboxes** (`_INBOX_<cn>.>`) **and reply-subject validation on the plane's answer**; state-as-report; cert revocation; **90-day certs renewed at 2/3 lifetime over the authenticated channel, fresh key each time, revocation denies renewal** | ADR-002, ADR-003, rule 12, control-plane-hardening.md §1, agent-identity-and-tls.md §3 |
+| §5.3 Join-token leak | Single-use, short-TTL, observable (**`server.enrolled` audit row**), constant-time check | ADR-002, rules 21–22, audit-log.md §4 |
 | §5.4 Channel MITM/replay | mTLS 1.3 pinned CA; outbound-only; idempotency | ADR-002, ADR-003, rule 23 |
 | §5.5 Malicious template | Declarative data; CI gate; consent for privileged constructs; generated secrets | project-structure, dev/ci, ADR-007 (pending) |
 | §5.6 Fork-PR secret exfil | Env-scoped preview secrets; untrusted-source policy; TTL | glossary (previews), Phase 3 spec |
 | §5.7 Build/exec | Builds off the plane; resource caps; terminal audited & authorized | vision NN-5, ADR-001, ADR-002 |
-| §5.8 Web/API | No SSR framework; auth+object-authz default; rate limit; masking | ADR-001, rules 20–21 |
+| §5.8 Web/API | No SSR framework; auth+object-authz default; two-dimension rate limit with trusted-proxy client addressing; unforgeable trace ids; expired-session purge; owner+session-only log tail; **session-only deploy approval, rejection, break glass and deploy-protection policy writes**; **hashed single-use invitation tokens on the two public invite routes, and session-only access-request decisions**; masking | ADR-001, rules 20–21, control-plane-hardening.md §§2, 4, 5, 7, deploy-protection.md §5, invitations-and-access-requests.md §8 |
 | §5.9 Disk exhaustion/self-DoS | Desired-state GC; self-headroom guard; bounded retention; alerts | ADR-003, ADR-005, matrix V1 |
-| §5.10 Mailbox-as-identity | Two factors to move an address; old address always notified; single-use hashed token; sessionOnly + rate limited | panel-mail.md §4–5, rules 20–21 |
+| §5.10 Mailbox-as-identity | Two factors to move an address; old address always notified; single-use hashed token; sessionOnly + rate limited; an invitation to a known address requires that account's current password and second factor | panel-mail.md §4–5, invitations-and-access-requests.md §4, rules 20–21 |
+| §5.15 Compose Stack privilege | Admin to write the file, member to deploy it; audited by fact-of-change, never content; no command verb on the wire; sealed env in a short-lived 0600 file | compose-stacks.md §7 |
+| §5.14 Registry probe egress | Host held to one grammar and rebuilt from it; dial-time destination guard on both test paths; TLS always; team-admin rank | registries.md §3, §7, `core/egress` |
 | §5.11 Outbound webhook egress | Metadata-only payload; HMAC over raw bytes; sealed secret; no redirects; project-scoped authz; bounded retries | outbound-webhooks.md §4, §6, rule 20 |
+| §5.13 Update check (outbound HTTP) | Opt-out; no private-range redirects (post-resolution); bounded body and timeout; last-good-on-failure; once-per-version inbox item; never self-updates | control-plane-hardening.md §3, ADR-010 |
 | §5.12 DNS control / ownership | Sealed token; only records we created; derived content; verification recomputed not stored; panel-admin gated; request host pinned and path segments validated | dns-automation.md §3.1, §4.1, §4.4, rule 20 |
 
 ---

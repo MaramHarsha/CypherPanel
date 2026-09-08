@@ -22,6 +22,17 @@ cypherpanel/
 │   │   ├── rest/                # HTTP handlers, middleware, OpenAPI spec, SSE log streams
 │   │   │   └── console/         # interim Phase 1 console (replaced by web/ in Phase 4)
 │   │   └── grpc/                # agent-facing services (proto in /proto)
+│   ├── access/                  # getting into a team from outside it: Invitations
+│   │                            #   (a hashed, single-use, 7-day link) and Access
+│   │                            #   Requests (a member asking the owners for a
+│   │                            #   higher rank). Grants nothing itself — a granted
+│   │                            #   request goes through core/teams' member-role
+│   │                            #   path (invitations-and-access-requests.md)
+│   ├── audit/                   # the audit log: the closed verb vocabulary, the
+│   │                            #   single write path (validation, secret-key
+│   │                            #   stripping, bounds) and the read path whose
+│   │                            #   visibility comes from the viewer's own
+│   │                            #   record, never the request (audit-log.md)
 │   ├── auth/                    # sessions, token hashing; OIDC/RBAC (planned)
 │   ├── config/                  # fail-closed env config for cypherd
 │   ├── domain/                  # resource model (Server, User, JoinToken; Phase 2:
@@ -29,22 +40,36 @@ cypherpanel/
 │   ├── enroll/                  # agent-facing enrollment: join token → signed cert
 │   ├── guard/                   # boot-time safety checks (disk headroom, threat-model §5.9)
 │   ├── identity/                # plane CA lifecycle: create, seal, load
+│   ├── paneltls/                # the panel's ACME account: one setting, carried to
+│   │                            #   every node as desired state so the Proxy can
+│   │                            #   obtain certificates (agent-identity-and-tls.md)
 │   ├── secret/                  # AES-256-GCM sealing with the master key
 │   ├── servers/                 # operator-facing server lifecycle
 │   ├── projects/               # operator-facing project/environment lifecycle (Phase 2)
+│   ├── protection/              # deploy protection: the freeze-window arithmetic,
+│   │                            #   the admission gate the scheduler consults, and
+│   │                            #   the approval / break-glass decisions
+│   │                            #   (deploy-protection.md)
 │   ├── applications/           # application lifecycle: config, sealed env, webhook secret (Phase 2)
 │   ├── status/                  # heartbeat consumption, liveness → status transitions
 │   ├── scheduler/               # deploy pipeline: work-item producers, deployment state
 │   │                            #   machine, observed-outcome assertion (Phase 2)
 │   ├── store/                   # Postgres access (sqlc: db/, queries/), migrations/
-│   ├── bus/                     # embedded NATS: mTLS, per-agent authz, revocation;
+│   ├── bus/                     # embedded NATS: mTLS, per-agent authz (subjects AND
+│   │                            #   per-identity reply inboxes), revocation;
 │   │                            #   memory STATE + file-backed WORK streams (Phase 2)
+│   ├── logring/                 # bounded in-memory tail of the panel's own slog output,
+│   │                            #   served by GET /panel/logs (control-plane-hardening.md §4)
+│   ├── updates/                 # what build is running + an opt-out release-feed check;
+│   │                            #   never self-updates (ADR-010, control-plane-hardening.md §3)
 │   └── notify/                  # (planned, Phase 3+) email, Discord, Telegram, webhooks
 │
 ├── agent/                       # ── data plane (single binary: cypher-agent) ──
 │   ├── cmd/cypher-agent/
 │   ├── conn/                    # dial-home mTLS connection with reconnect
-│   ├── identity/                # join-token enrollment, on-disk key/cert storage
+│   ├── identity/                # join-token enrollment, on-disk key/cert storage,
+│   │                            #   and certificate renewal (expiry awareness, the
+│   │                            #   renewal loop, the atomic swap)
 │   ├── heartbeat/               # periodic status publishing
 │   ├── worker/                  # work-item consumer + reconcile loop; the Bus seam
 │   │                            #   over nats.go, desired-state sync on connect (Phase 2)

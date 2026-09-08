@@ -33,6 +33,17 @@ function isTerminal(status: string): boolean {
   return status === "succeeded" || status === "failed";
 }
 
+/**
+ * A deploy is LIVE while the plane is working on it. `awaiting_approval` is
+ * neither live nor terminal: it is parked, waiting for a person
+ * (deploy-protection.md §3). A working toast that polled it would spin for as
+ * long as the approver took, so the watch resolves instead and says what is
+ * actually true.
+ */
+function isLive(status: string): boolean {
+  return !isTerminal(status) && status !== "awaiting_approval";
+}
+
 function shortRev(id: string): string {
   const tail = id.includes("_") ? id.slice(id.lastIndexOf("_") + 1) : id;
   return tail.slice(0, 7);
@@ -70,8 +81,9 @@ function DeploymentWatch({
       // Polled while live, whatever the events stream is doing: that stream
       // invalidates the application and its lists, not a deployment's own key,
       // so without this the watcher would learn the outcome only from the
-      // stream-down fallback poll — which is to say, usually never.
-      refetchInterval: (q) => (q.state.data && isTerminal(q.state.data.status) ? false : 3_000),
+      // stream-down fallback poll — which is to say, usually never. A parked
+      // deploy stops the polling too: only a person can move it.
+      refetchInterval: (q) => (q.state.data && !isLive(q.state.data.status) ? false : 3_000),
     },
   });
 
@@ -98,6 +110,20 @@ function DeploymentWatch({
       // becomes an error that says exactly what is known.
       toastError(
         { title: "Lost track of this deploy", detail: "Its record is gone — the Deployments tab has what remains.", actions: [openLog] },
+        toastId,
+      );
+      return;
+    }
+    if (status === "awaiting_approval") {
+      // Not a failure and not a success: the deploy is waiting for an approver
+      // (deploy-protection.md §3). Saying so — and offering the way to it — is
+      // the honest end of this watch.
+      toastSuccess(
+        {
+          title: kind === "rollback" ? `Rollback to ${rev} awaits approval` : `Deploy ${rev} awaits approval`,
+          detail: detail || "waiting for an approver",
+          actions: [openLog],
+        },
         toastId,
       );
       return;

@@ -17,8 +17,12 @@
 > Neither reference has an equivalent, so nothing is ported — the model here is
 > ours.
 >
-> Written 2026-08-21, just before implementing. Vocabulary per
-> [glossary.md](../glossary.md).
+> Written 2026-08-21, just before implementing. **Revised at implementation and
+> at review** (see [§10](#10-what-changed-at-implementation-and-why) for the five
+> changes and their reasons: the migration number, an inbox audience the first
+> draft put out of scope, the approval summary the drawer needs on a Deployment,
+> the narrowing of the no-self-approval rule to *approval*, and the policy `PUT`
+> becoming session-only). Vocabulary per [glossary.md](../glossary.md).
 
 ## 1. The core idea: one admission check, on one transition
 
@@ -50,8 +54,10 @@ until an operator opts in (ENGINEERING rule 17).
 ## 2. The resource model
 
 Four small tables, all plane-side, all in migration
-`core/store/migrations/0021_deploy_protection.sql` (additive and reversible,
-rule 16; Down drops children first).
+`core/store/migrations/0031_deploy_protection.sql` (additive and reversible,
+rule 16; Down drops children first). The number is the next free one at
+implementation time — `0021` was taken by `user_avatars` between this spec being
+written and being built.
 
 ```
 EnvironmentProtection:                  -- one row per protected Environment
@@ -200,7 +206,7 @@ mode.
 | Action | Requires |
 |---|---|
 | Read protection, windows, approvals, grants | team **member** |
-| `PUT` protection (flags, roles, windows) | team **admin** |
+| `PUT` protection (flags, roles, windows) | team **admin**, in an **interactive session** |
 | Approve / reject a parked deploy | rank ≥ the approval's `required_role`, in an **interactive session** |
 | Open a break-glass grant | team **owner**, in an **interactive session** |
 
@@ -210,18 +216,33 @@ through `projectIDForDeployment`, both via `authorizeResolved` — so a non-memb
 gets 404 and an under-ranked member gets 403, with the panel-owner bypass from
 [teams-and-roles.md](teams-and-roles.md) §1 applying as everywhere else.
 
-- **No self-approval.** `decided_by` may not equal `requested_by` — *unless* the
-  approver is the only member of the team at or above `required_role`. Without
-  that escape a solo operator (personas P1/P4) would wedge their own panel the
-  moment they enabled protection; with it, "two-person rule where two people
-  exist" is the honest description.
-- **Approve, reject and break-glass are `sessionOnly`.** An API token inherits
-  its owner's role, so a `deploy`-ability token in CI could otherwise approve the
-  deploy it had just requested and the gate would be decorative — the same
-  reasoning that already keeps credential management off tokens (threat-model
-  §5.8). Deploy routes are unchanged, so CI keeps working; its deploys park.
-  `deployRoutes` in `core/api/rest/rest.go` therefore gains no entry: approve
-  triggers a rollout, but no token ability can reach it.
+- **No self-approval.** On **approve**, `decided_by` may not equal
+  `requested_by` — *unless* the approver is the only member of the team at or
+  above `required_role`. Without that escape a solo operator (personas P1/P4)
+  would wedge their own panel the moment they enabled protection; with it,
+  "two-person rule where two people exist" is the honest description. The count
+  is of explicit `team_members` rows: a panel owner's implicit rank is an
+  authorization escape hatch, not a second person.
+
+  The rule applies to approve **only**. Rejecting your own deploy is
+  withdrawing your own request: it grants nothing, so the two-person rule has
+  nothing to protect there, and refusing it would leave a requester unable to
+  cancel a deploy they no longer want.
+- **Approve, reject, break-glass and the policy `PUT` are `sessionOnly`.** An
+  API token inherits its owner's role, so a `deploy`-ability token in CI could
+  otherwise approve the deploy it had just requested and the gate would be
+  decorative — the same reasoning that already keeps credential management off
+  tokens (threat-model §5.8). Deploy routes are unchanged, so CI keeps working;
+  its deploys park. `deployRoutes` in `core/api/rest/rest.go` therefore gains no
+  entry: approve triggers a rollout, but no token ability can reach it.
+
+  The `PUT` is on that list for a stronger reason than the other three, and its
+  place there is a revision (§10.5). A `write`-ability token whose owner is a
+  team admin does not need to *open* the gate: it can send
+  `{require_approval: false, freeze_enabled: false, windows: []}` and delete it,
+  which is strictly more powerful than the single 30-minute grant that suspends
+  one freeze. "A leaked CI token must not be able to switch a protection control
+  off" has to cover switching it off wholesale, or it covers nothing.
 - **Fail closed.** An unloadable timezone, an unreadable protection row, or any
   store error during the check refuses the deploy rather than passing it. A
   protection control that fails open is worse than none, because it is trusted.
@@ -239,8 +260,8 @@ gets 404 and an under-ranked member gets 403, with the panel-owner bypass from
 
 ```
 GET  /environments/{id}/protection            → EnvironmentProtection    (member; defaults when unset)
-PUT  /environments/{id}/protection            → EnvironmentProtection    (team admin; whole document)
-GET  /environments/{id}/approvals?state=      → [DeployApproval]         (member; default state=pending)
+PUT  /environments/{id}/protection            → EnvironmentProtection    (team admin, session only; whole document)
+GET  /environments/{id}/approvals?state=      → [DeployApproval]         (member; default state=pending, 100 newest)
 POST /environments/{id}/break-glass           → 201 BreakGlassGrant      (team owner, session only)
 GET  /environments/{id}/break-glass           → [BreakGlassGrant]        (member; active + recent)
 
@@ -251,8 +272,37 @@ POST /deployments/{id}/reject   {reason}      → 200 Deployment           (appr
 
 `PUT /protection` carries the **whole** document — flags plus the complete
 window list — and replaces it wholesale (desired state; empty `windows` means no
-freeze). `GET` on an unprotected environment returns the default document, not
-404: "not protected" is an answer, and a 404 would make the UI invent one.
+freeze). Every field of it is required for that reason, `min_approver_role`
+included: an omitted `require_approval` read as `false` would turn a client that
+forgot a field into "approval is now off", answered `200`, and an omitted
+`min_approver_role` defaulted to `owner` is the same silent rewrite in the
+tightening direction. Each omission answers `400` naming the field. `GET` on an unprotected environment
+returns the default document, not 404: "not protected" is an answer, and a 404
+would make the UI invent one. `GET /approvals` defaults to `state=pending` — the
+queue is what the screens want — and takes the literal word `all` for no filter,
+because an empty query parameter is indistinguishable from a client that forgot
+it. `GET /break-glass` derives an `active` flag from the plane's own clock, so a
+screen needs no clock to know whether an override still applies. Both listings
+are **bounded** — 100 approvals, 20 grants — because `state=all` on a long-lived
+environment asks for a history that grows without end, and `Deployment.approval`
+on a list is looked up for the ids on the page rather than for every deploy the
+application has ever run.
+
+One **additive** field appears on an existing resource: `Deployment.approval`,
+the gate decision summary (`state`, `required_role`, `requested_by`,
+`requested_by_email`, `decided_by`, `decided_by_email`, `decided_at`, `reason`).
+It is present only on a deployment that was gated and omitted entirely
+otherwise, so no existing client sees a change (rule 17), and it is what lets
+the pending card render from the payload the drawer already has instead of a
+second request per row. The list route attaches it for a whole Deployments tab
+in one query rather than one lookup per row, and it is best-effort on both:
+a summary that cannot be loaded leaves the deployment looking exactly like an
+ungated one rather than failing a request that is otherwise answerable.
+
+The two derived read-model fields elsewhere follow the same rule. A
+`FreezeWindow` is returned with a `summary` — `"Fri 18:00 → Mon 08:00
+(Europe/Berlin)"` — composed on the plane so the panel, the API and a CLI print
+the same sentence (CLAUDE.md rule 4), and never stored.
 
 Behaviour changes on existing routes, all additive:
 
@@ -260,7 +310,11 @@ Behaviour changes on existing routes, all additive:
 POST /applications/{id}/deploy    → 202 Deployment(status=awaiting_approval)  |  409 (frozen)
 POST /deployments/{id}/rollback   → 202 Deployment(status=awaiting_approval)  |  409 (frozen)
 POST /webhooks/github/{id}        → 202 Deployment(status=awaiting_approval)  |  409 (frozen)
+POST /templates/{slug}/install    → 202                                       |  409 (frozen)
 ```
+
+A template install deploys, so it passes the same gate — and a refusal rolls the
+install back, so the 409 leaves no half-created resources behind.
 
 The 409 body names the window and when it lifts
 (`"production is frozen until Mon 08:00 Europe/Berlin"`), so a failed GitHub
@@ -268,6 +322,14 @@ delivery is diagnosable from the response alone and can be redelivered after the
 window.
 
 ## 7. The screens
+
+> **Status.** This slice ships the API these screens need — the protection
+> document with rendered window summaries, the approval queue, `Deployment.approval`
+> for the pending card, the `awaiting_approval` status in the
+> OpenAPI enum, the 409 body, and the break-glass grant with its derived
+> `active` flag — and the generated client in `web/src/api/gen` follows from it.
+> The routes and components below are the web slice and are not in this change
+> set (§11).
 
 **Protection settings** is a new route at
 `web/src/routes/_app/projects/$projectId/protection.tsx`, a sibling of the
@@ -342,14 +404,148 @@ about) · approval by API token or bot (§5 — it would make the gate decorativ
 one-off or dated freeze windows such as a holiday range (weekly recurring only;
 the shape generalizes later without a rewrite) · auto-release of anything when a
 freeze lifts (a deploy nobody re-requested is stale by then) · TTL or auto-reject
-on a stale pending approval · a notification event for a pending approval
-([notifications.md](notifications.md) §3's taxonomy is fed by *terminal*
-transitions, and the card plus the environment view carry it until that taxonomy
-grows) · commit message and git author on the pending card (nothing persists
-them today) · a general audit log (**V1.x**, feature-matrix — approval decisions
-and break-glass grants are first-class rows here, not log lines) · early
+on a stale pending approval · a **notifier or outbound-webhook** event for a
+pending approval or a decision ([notifications.md](notifications.md) §3's
+taxonomy is fed by *terminal* observed transitions, and a parked deploy has not
+finished; announcing a rejection down those channels would also misreport a
+governance decision as an infrastructure failure — see §9.1 for the in-panel
+audience that *is* in scope) · commit message and git author on the pending card
+(nothing persists them today) · a general audit log — landed since, as
+[audit-log.md](audit-log.md): approval decisions and break-glass grants remain
+first-class rows *here*, and are additionally recorded there as
+`protection.approved`, `protection.rejected` and `protection.break_glass_opened`
+so they appear in the same timeline as the deploys they gated · early
 revocation of a break-glass grant · protection on Managed Databases and Compose
 Stacks (they have no Deployment record to park) · inherited protection for
 preview environments (previews are ordinary environments with a TTL and get no
 protection row, so they stay unprotected — freezing them would strand every open
 PR) · requiring approval to *change* protection itself.
+
+### 9.1 In scope after all: the inbox, and nothing louder
+
+A parked deploy that nobody is told about is a deploy that sits until someone
+happens to look, which is the failure mode this feature exists to prevent. The
+first draft put "a notification event for a pending approval" out of scope
+without separating the two audiences it could mean; the second half of that
+sentence — *"the card plus the environment view carry it"* — only holds for
+somebody already on the screen.
+
+So the slice adds **inbox items and only inbox items**
+([notification-inbox.md](notification-inbox.md)), three new kinds in
+`domain.InboxKinds()`:
+
+| Kind | Written when | Addressed to |
+|---|---|---|
+| `deploy.awaiting_approval` | a deploy parks | the project's team members at or **above** the approval's `required_role` |
+| `deploy.approved` | an approval is granted | the requester, and nobody else |
+| `deploy.rejected` | an approval is refused | the requester, and nobody else |
+
+Three properties are the point. **The awaiting item is rank-narrowed**: an item
+you cannot act on is noise, so a `member` is not told about an owner-only
+approval — the fan-out query filters on the same `RoleRank` ladder the routes
+authorize with. **The decision items go to one person**, the one who asked;
+a webhook deploy has no requester, so it produces none at all rather than
+fanning out to a team that never asked for anything. And **all three are
+severity `info` and written immediately**, not digested: a deploy waiting for a
+person is the control working, not a fault, and a rollup of "3 deploys awaited
+approval today" is unactionable — the digest windows stay defined only for the
+two terminal outcome families.
+
+They are inbox kinds *only*, exactly like `panel.update_available`: no notifier
+channel, no outbound webhook, no new `domain.EventType`. Mutes apply as they do
+to every other kind, the dedupe key is `<kind>:<deployment_id>` so a redelivered
+decision is a no-op (rule 12), and a requester who has left the team holds no
+item for it. The write is best-effort at the call site: the decision is already
+recorded and the approval is reachable from the environment's queue and the
+deployment drawer, so a failing inbox is logged, never propagated into a failed
+decision.
+
+It is also **detached**, on the same contract `notify.Manager.dispatch` already
+uses: a context that outlives the caller's, a bounded timeout, a logged failure.
+Two reasons, one per call site. `Park` runs *inside the scheduler's pipeline
+lock* — a fan-out there would hold every other deploy on the panel behind a
+handful of inbox writes. And a decision announcement runs on a request context
+that dies the moment the response is written, which would cancel the write
+mid-flight. The approval row itself is written synchronously and its failure
+does fail the deploy (§4), because a deployment parked with no approval row
+could never be decided; only the telling is detached.
+
+## 10. What changed at implementation, and why
+
+Five changes to the spec above, all recorded here rather than silently applied.
+
+1. **The migration is `0031`, not `0021`.** `0021` was taken by `user_avatars`
+   between this spec being written and being built. §2 updated.
+
+2. **Inbox items are in scope** (§9.1). The original §9 exclusion conflated the
+   *notifier* taxonomy — which is fed by terminal observed outcomes and is
+   rightly untouched here — with telling the people who can act that something
+   is waiting for them. The first is still out; the second is the difference
+   between a gate and a bottleneck.
+
+3. **`Deployment.approval` is exposed** (§6). §7 asks for a pending card in
+   three places, two of which render from a deployment payload the screen
+   already has. Without the summary each of them needs a second request per row
+   — `GET /deployments/{id}/approval` — which is a request per row on the
+   Deployments tab. The field is additive and absent on an ungated deployment,
+   so it costs no existing client anything.
+
+4. **The no-self-approval rule is narrowed to approve** (§5). The original
+   sentence — "`decided_by` may not equal `requested_by`" — sat under a heading
+   about approval but was written over both verbs. Applying it to rejection
+   would stop a requester withdrawing their own deploy, which grants nobody
+   anything and has no privilege to protect.
+
+5. **The policy `PUT` is `sessionOnly` too** (§5). The first draft's table put
+   it at team admin and stopped there, and the implementation matched the table
+   faithfully — but the table was wrong. The reasoning that makes break glass
+   session-only is that a leaked CI token must not be able to switch a
+   protection control off; a `write`-ability token whose owner is a team admin
+   did not need to open the gate, it could `PUT`
+   `{require_approval: false, freeze_enabled: false, windows: []}` and remove
+   it, which is more powerful than the 30-minute grant that route protects.
+   Fixed at review, with the threat-model bullet ("A deploy gate an API token
+   cannot open") narrowed to say what actually holds.
+
+Two smaller decisions the spec did not settle, recorded for the reviewer:
+
+- **A rejection emits nothing to the notifier/webhook sinks.** The scheduler's
+  ordinary `fail()` announces a terminal outcome; a parked deploy takes a
+  separate path (`failParked`) that does not, because the deploy never ran and
+  "deploy failed" in Slack would describe a governance decision as an
+  infrastructure failure. It also has no `deploying` override to take back and
+  no queue slot to promote, so `fail()`'s other two jobs are moot as well.
+- **Both approval listings are bounded** (§6). `state=all` and the
+  `Deployment.approval` decoration on a Deployments tab both grew with an
+  application's or an environment's whole history, beside neighbours
+  (`ListDeploymentsByApplication`, `ListBreakGlassGrants`) that are bounded. The
+  environment queue takes a limit of 100; the per-application read now takes the
+  ids of the page being decorated rather than the application.
+- **A freeze window whose zone will not load refuses the deploy** and says so,
+  naming the zone (operator-supplied configuration, not a secret) so the fix is
+  visible from the response. Break glass suspends *the freeze gate*, whatever
+  made it say no — including that refusal — which keeps a typo'd zone from
+  being unrecoverable for an owner mid-incident. Where several windows overlap,
+  the refusal names the one that lifts **last**: naming an earlier one would be
+  a lie the next attempt exposes.
+
+## 11. Deferred to the web slice
+
+Everything in §7 below the status note **except the status mapping**: the
+`$projectId/protection.tsx` route, the shared `Switch` primitive, the
+freeze-window editor, the reason-gated break-glass dialog, and the
+pending-approval card in its three places. The API they consume is complete and
+generated into `web/src/api/gen`, so none of them is blocked on the plane.
+Nothing else from §§1–8 is outstanding.
+
+**Not deferred, and it should not have been:** the panel's three `isTerminal`
+helpers classified `awaiting_approval` as *live*, which is not a cosmetic
+mismatch. A parked deploy would have shown the animated blue `deploying` dot for
+something doing nothing, the application's Deploy button would have stayed
+disabled for as long as the deploy sat there, and both the drawer and the deploy
+toast would have polled every three seconds forever, because their
+`refetchInterval` only stops on a terminal status. So the mapping ships with the
+plane that can produce the state: `awaiting_approval` is neither live nor
+terminal, it renders as the grey `stopped` dot with the word "awaiting
+approval", and `PipelineStages` orders it beside `queued` at `-1`. The editor
+and the card can wait; a panel that lies about what it is doing cannot.

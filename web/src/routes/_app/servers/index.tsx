@@ -14,6 +14,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { JoinInstructions, Server } from "@/api/gen/model";
+import { useGetPanelVersion } from "@/api/gen/panel/panel";
 import { getListServersQueryKey, useCreateServer, useListServers } from "@/api/gen/servers/servers";
 import { CopyButton } from "@/components/copy-field";
 import { EmptyState } from "@/components/empty-state";
@@ -25,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { disk } from "@/lib/bytes";
 import { useCrumbs } from "@/lib/crumbs";
 import { useRowNavigation } from "@/lib/keys";
 import { relativeTime, absoluteTime } from "@/lib/time";
@@ -104,6 +106,7 @@ function ServersPage() {
                   <ServerRow key={s.id} server={s} first={i === 0} />
                 ))}
               </ul>
+              <ControlPlaneRow />
               <JoinInvitation onJoin={() => setJoinOpen(true)} />
             </div>
           )}
@@ -118,7 +121,20 @@ function ServerRow({ server: s, first }: { server: Server; first: boolean }) {
   // The machine facts, in the order an operator reads them: which box, what it
   // runs workloads with, which agent, and — only when it is not the default —
   // what this host is allowed to do (builder-role-and-relay.md §1).
-  const facts = [s.hostname || s.id, s.driver, `agent ${s.agent_version}`, s.role && s.role !== "all" ? s.role : null]
+  const d = disk(s.disk_total_bytes, s.disk_free_bytes, s.disk_low);
+  // The machine facts, in the order an operator reads them: which box, what it
+  // runs workloads with, which agent, what this host is allowed to do when it
+  // is not the default — and how much room is left, which is the fact the
+  // reference tools let people discover by outage (disk-management.md §1).
+  // An unreported figure is simply absent: "unknown" as a fact would take a
+  // column from something that is known.
+  const facts = [
+    s.hostname || s.id,
+    s.driver,
+    `agent ${s.agent_version}`,
+    s.role && s.role !== "all" ? s.role : null,
+    d ? `${d.freeLabel} free` : null,
+  ]
     .filter(Boolean)
     .join(" · ");
 
@@ -144,8 +160,16 @@ function ServerRow({ server: s, first }: { server: Server; first: boolean }) {
           </span>
         </span>
 
-        <span className="min-w-0">
+        <span className="min-w-0 space-y-1">
           <StatusPill status={status}>{s.enrolled ? status : "waiting to join"}</StatusPill>
+          {/* Low disk is not a status — the host is running, and calling it
+              degraded would put a fleet-wide word on a thing that is working.
+              It is a second line, in the colour of the thing it will become. */}
+          {d?.low && (
+            <span className="block font-mono text-[11px] text-status-degraded-text">
+              disk {d.usedPercent}% full
+            </span>
+          )}
         </span>
 
         <span className="font-mono text-xs text-text-dim">
@@ -423,5 +447,36 @@ function JoinProgress({ serverId, command, fingerprint }: { serverId: string; co
         </DialogClose>
       </div>
     </div>
+  );
+}
+
+/**
+ * The panel's own host. It is not a Server — no agent dials home to it, it
+ * takes no workloads, and it must never be listed as one — but it is the one
+ * machine the fleet view cannot otherwise cover, and running the control plane
+ * out of disk is the failure that takes the disk warnings with it
+ * (disk-management.md §6). So it gets a line under the table, in the same mono,
+ * saying the build and the room left. Nothing is enforced about it here for the
+ * reason the spec gives: refusing to write when the panel's disk is low would
+ * turn a disk problem into an outage of the thing that reports disk problems.
+ */
+function ControlPlaneRow() {
+  const panel = useGetPanelVersion();
+  if (panel.isPending || panel.isError) return null;
+  const v = panel.data;
+  const d = disk(v.data_dir_total_bytes, v.data_dir_free_bytes, false);
+  return (
+    <p className="mt-4 flex flex-wrap items-baseline gap-x-2.5 gap-y-1 px-2 font-mono text-[11.5px] text-text-faint">
+      <span className="text-text-mid">control plane</span>
+      <span>cypherd {v.version}</span>
+      {d ? (
+        <span className={cn(d.usedPercent >= 85 && "text-status-degraded-text")}>
+          data dir {d.freeLabel} free of {d.totalLabel}
+        </span>
+      ) : (
+        <span>data dir usage unknown</span>
+      )}
+      {v.latest && <span className="text-accent">{v.latest.version} available</span>}
+    </p>
   );
 }

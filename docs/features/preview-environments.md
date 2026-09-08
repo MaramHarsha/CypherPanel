@@ -148,6 +148,13 @@ until per-preview scoping is designed. Documented in §8.
   fleet of previews is bounded by the TTL and by the operator not enabling
   previews on unlimited apps. Per-environment preview count caps are a
   follow-on (§8).
+- **Audited in both directions** ([audit-log.md](audit-log.md) §4): a preview
+  environment appears and disappears with nobody signed in, so the manager
+  writes `environment.created` and `environment.deleted` with a `system` actor
+  labelled *preview automation*, carrying the PR number and the reason (*pull
+  request closed* / *ttl expired*). The manual `DELETE` is audited by its
+  handler with the operator's name. Without these rows an environment could
+  come and go with no record that it existed.
 
 ## 7. API surface (under `/api/v1`)
 

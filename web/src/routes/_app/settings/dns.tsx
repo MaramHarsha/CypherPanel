@@ -17,6 +17,7 @@ import {
   getGetPanelDNSQueryKey,
   getListDNSZonesQueryKey,
   useDeletePanelDNS,
+  useGetDNSDisconnectPreview,
   useGetPanelDNS,
   useListDNSZones,
   useRefreshDNSZones,
@@ -249,24 +250,66 @@ function DNSForm({ settings }: { settings: DNSSettings }) {
           ↗ Test connection
         </ActionButton>
         {configured && (
-          <ConfirmDestructive
-            trigger={<ActionButton variant="danger">Disconnect…</ActionButton>}
-            title="Disconnect Cloudflare?"
-            lead="Nothing is deleted at Cloudflare — the records stay exactly as they are. What changes:"
-            blastRadius={[
-              "Every domain becomes unverified, which stops the panel routing traffic at those hostnames",
-              "The zone list is cleared, so nothing verifies until you reconnect",
-              "Records the panel created stay at Cloudflare, now unmanaged — nothing updates or removes them",
-            ]}
-            confirmName={accountName || "cloudflare"}
-            actionLabel="Disconnect"
-            pendingLabel="Disconnecting…"
+          <DisconnectConfirm
+            accountName={accountName}
             pending={disconnect.isPending}
             onConfirm={() => disconnect.mutate()}
           />
         )}
       </div>
     </form>
+  );
+}
+
+/**
+ * The disconnect, with its real blast radius rather than a generic one. Only
+ * the panel knows which application domains are verified through the connected
+ * provider, and "3 domains stop being routed, here they are" is a different
+ * decision from "every domain becomes unverified" — so the preview is fetched
+ * when the dialog opens (it reads desired state and changes nothing) and its
+ * count and names go into the list.
+ *
+ * When the preview has not arrived, or fails, the generic sentence stands: a
+ * confirm that waits for a number before it will let you read it is worse than
+ * one that is merely vaguer.
+ */
+function DisconnectConfirm({
+  accountName,
+  pending,
+  onConfirm,
+}: {
+  accountName: string | undefined;
+  pending: boolean;
+  onConfirm: () => void;
+}) {
+  const preview = useGetDNSDisconnectPreview();
+  const n = preview.data?.verified_domain_count;
+  const domains = preview.data?.domains ?? [];
+  // Enough to recognise what is affected; the full list belongs to the pages
+  // that own those applications, not to a confirm dialog.
+  const named = domains.slice(0, 4).map((d) => `${d.domain} (${d.application_name})`);
+  const rest = domains.length - named.length;
+
+  return (
+    <ConfirmDestructive
+      trigger={<ActionButton variant="danger">Disconnect…</ActionButton>}
+      title="Disconnect Cloudflare?"
+      lead="Nothing is deleted at Cloudflare — the records stay exactly as they are. What changes:"
+      blastRadius={[
+        n === undefined
+          ? "Every verified domain becomes unverified, which stops the panel routing traffic at those hostnames"
+          : n === 0
+            ? "No domain is verified through this provider yet, so no application stops being routed"
+            : `${n} verified domain${n === 1 ? "" : "s"} stop being routed: ${named.join(", ")}${rest > 0 ? `, and ${rest} more` : ""}`,
+        "The zone list is cleared, so nothing verifies until you reconnect",
+        "Records the panel created stay at Cloudflare, now unmanaged — nothing updates or removes them",
+      ]}
+      confirmName={accountName || "cloudflare"}
+      actionLabel="Disconnect"
+      pendingLabel="Disconnecting…"
+      pending={pending}
+      onConfirm={onConfirm}
+    />
   );
 }
 

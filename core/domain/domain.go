@@ -45,6 +45,15 @@ type Server struct {
 	// EnrolledAt is nil until the agent completes enrollment; it distinguishes
 	// "awaiting enrollment" from "enrolled but currently offline".
 	EnrolledAt *time.Time
+	// DiskTotalBytes / DiskFreeBytes are the Docker data root's filesystem as
+	// of the last heartbeat (disk-management.md §4). Zero means not reported —
+	// an older agent, or a host where the figure could not be read — which is
+	// read as unknown and never as full.
+	DiskTotalBytes uint64
+	DiskFreeBytes  uint64
+	// DiskLow is whether the server is currently below the threshold. Stored so
+	// the alert can fire on the transition rather than on every heartbeat.
+	DiskLow bool
 	// LastSeenAt is the time of the most recent heartbeat, nil if never seen.
 	LastSeenAt *time.Time
 	CreatedAt  time.Time
@@ -136,10 +145,13 @@ type JoinToken struct {
 // further by its abilities. Only the hash is persisted; the raw token is shown
 // exactly once at creation.
 type APIToken struct {
-	ID         string
-	UserID     string
-	Name       string
-	Abilities  []Ability
+	ID        string
+	UserID    string
+	Name      string
+	Abilities []Ability
+	// ProjectID narrows the token to one project. Empty means unscoped, which
+	// is what every token issued before scoping existed remains.
+	ProjectID  string
 	LastUsedAt *time.Time
 	ExpiresAt  *time.Time // nil = never expires
 	CreatedAt  time.Time
@@ -159,12 +171,33 @@ const (
 	// write so a CI credential can ship code without also being able to delete
 	// the application it deploys.
 	AbilityDeploy Ability = "deploy"
+
+	// The three below carve narrower grants out of what `write` covers. They
+	// exist so a token can be minted for one job instead of for everything a
+	// mutation might be; `write` still implies all three, so a token issued
+	// before they existed does exactly what it did before (see Implies).
+
+	// AbilityEnv permits setting and removing an application's environment
+	// variables. Reading them back is not a thing any credential can do —
+	// values are write-only by construction — so this covers the mutations
+	// only, and listing the keys needs `read` like any other listing.
+	AbilityEnv Ability = "env"
+	// AbilityServers permits enrolling and removing servers, and reading the
+	// join instructions that let a machine present itself to the panel.
+	// Separated because a credential that provisions fleet capacity is a
+	// different blast radius from one that ships an application.
+	AbilityServers Ability = "servers"
+	// AbilityAdmin permits changing who can reach the panel and how it
+	// behaves: teams, members, invitations, access requests, users, and
+	// panel-wide settings. It is the ability a CI credential should never
+	// hold.
+	AbilityAdmin Ability = "admin"
 )
 
 // ValidAbility reports whether a is a known ability.
 func ValidAbility(a Ability) bool {
 	switch a {
-	case AbilityRead, AbilityWrite, AbilityDeploy:
+	case AbilityRead, AbilityWrite, AbilityDeploy, AbilityEnv, AbilityServers, AbilityAdmin:
 		return true
 	}
 	return false
@@ -172,12 +205,38 @@ func ValidAbility(a Ability) bool {
 
 // AllAbilities is the full set — what a session holds, and the default for a
 // token created without an explicit choice.
+//
+// `write` is in the list and the three narrow abilities are not, because write
+// already implies them: listing all six would be the same grant written twice,
+// and a reader comparing a default token against a hand-picked one should see
+// the difference in the names, not have to work out the overlap.
 func AllAbilities() []Ability { return []Ability{AbilityRead, AbilityWrite, AbilityDeploy} }
 
-// Has reports whether the set contains want.
+// Implies reports whether holding `held` satisfies a requirement for `want`.
+//
+// Only one relationship exists: `write` implies the narrow mutation abilities
+// carved out of it. That is what keeps every token issued before those existed
+// working unchanged — the alternative, making `write` mean "mutations that are
+// not env, servers or admin", would silently strip capability from credentials
+// already in someone's CI configuration (ENGINEERING rule 17).
+func (held Ability) Implies(want Ability) bool {
+	if held == want {
+		return true
+	}
+	if held != AbilityWrite {
+		return false
+	}
+	switch want {
+	case AbilityEnv, AbilityServers, AbilityAdmin:
+		return true
+	}
+	return false
+}
+
+// HasAbility reports whether the set satisfies want, honouring implication.
 func HasAbility(set []Ability, want Ability) bool {
 	for _, a := range set {
-		if a == want {
+		if a.Implies(want) {
 			return true
 		}
 	}
@@ -209,6 +268,21 @@ type DNSZone struct {
 	// to be told that rather than left wondering (§3.2).
 	Status      string
 	RefreshedAt time.Time
+	// ManagedRecords is how many records the panel still wants to exist in this
+	// zone. Derived at read time rather than stored: it is a count of desired
+	// state, and a cached copy would drift the moment a domain moved.
+	ManagedRecords int64
+}
+
+// DNSVerifiedDomain is one application whose domain is verified through the
+// connected provider — that is, one thing that stops being verified if the
+// provider is disconnected. It exists so a confirmation can state its blast
+// radius instead of asking the operator to guess at it.
+type DNSVerifiedDomain struct {
+	ApplicationID   string
+	ApplicationName string
+	Domain          string
+	ZoneName        string
 }
 
 // Zone activation states worth naming (Cloudflare's enum is initializing,

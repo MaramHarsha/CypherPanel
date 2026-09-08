@@ -21,6 +21,10 @@ import (
 	"github.com/MaramHarsha/cypherpanel/pkg/ids"
 )
 
+// projSlug gives each seeded project a unique slug: the unique index is per
+// team, and these tests seed many projects into tm_default.
+func projSlug(name string) string { return name + "-" + ids.Secret()[:8] }
+
 func testStore(t *testing.T) *Store {
 	t.Helper()
 	dsn := os.Getenv("CYPHERD_TEST_DATABASE_URL")
@@ -49,7 +53,7 @@ func seedApp(t *testing.T, s *Store) (domain.Server, domain.Project, domain.Envi
 	if err != nil {
 		t.Fatalf("CreateServerWithToken: %v", err)
 	}
-	proj, env, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject), "proj", "tm_default", ids.New(ids.PrefixEnvironment), "production")
+	proj, env, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject), "proj", "tm_default", projSlug("proj"), ids.New(ids.PrefixEnvironment), "production")
 	if err != nil {
 		t.Fatalf("CreateProjectWithEnvironment: %v", err)
 	}
@@ -79,7 +83,7 @@ func TestStoreProjectEnvironmentTx(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 
-	proj, env, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject), "shop", "tm_default", ids.New(ids.PrefixEnvironment), "production")
+	proj, env, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject), "shop", "tm_default", projSlug("shop"), ids.New(ids.PrefixEnvironment), "production")
 	if err != nil {
 		t.Fatalf("CreateProjectWithEnvironment: %v", err)
 	}
@@ -92,7 +96,7 @@ func TestStoreProjectEnvironmentTx(t *testing.T) {
 		t.Fatalf("duplicate env err = %v, want ErrConflict", err)
 	}
 	// The same name in another project is fine.
-	proj2, _, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject), "other", "tm_default", ids.New(ids.PrefixEnvironment), "production")
+	proj2, _, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject), "other", "tm_default", projSlug("other"), ids.New(ids.PrefixEnvironment), "production")
 	if err != nil {
 		t.Fatalf("second project: %v", err)
 	}
@@ -331,7 +335,10 @@ func TestStoreTeamsAndAuthz(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 
-	tm, err := s.CreateTeam(ctx, ids.New(ids.PrefixTeam), "authz-team")
+	// The name is unique in the schema and this suite migrates in place, so a
+	// fixed one made the second run against the same database fail
+	// ("already exists") — the other team tests here already suffix theirs.
+	tm, err := s.CreateTeam(ctx, ids.New(ids.PrefixTeam), "authz-team-"+ids.Secret()[:8])
 	if err != nil {
 		t.Fatalf("CreateTeam: %v", err)
 	}
@@ -346,7 +353,7 @@ func TestStoreTeamsAndAuthz(t *testing.T) {
 	if _, err := s.UpsertTeamMember(ctx, tm.ID, member.ID, domain.RoleAdmin); err != nil {
 		t.Fatalf("UpsertTeamMember: %v", err)
 	}
-	proj, _, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject), "p", tm.ID, ids.New(ids.PrefixEnvironment), "production")
+	proj, _, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject), "p", tm.ID, projSlug("p"), ids.New(ids.PrefixEnvironment), "production")
 	if err != nil {
 		t.Fatalf("CreateProjectWithEnvironment: %v", err)
 	}
@@ -542,7 +549,7 @@ func TestStoreDatabaseLifecycle(t *testing.T) {
 		t.Fatalf("CreateServerWithToken: %v", err)
 	}
 
-	_, env, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject), "db-project", "tm_default", ids.New(ids.PrefixEnvironment), "prod")
+	_, env, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject), "db-project", "tm_default", projSlug("db-project"), ids.New(ids.PrefixEnvironment), "prod")
 	if err != nil {
 		t.Fatalf("CreateProjectWithEnvironment: %v", err)
 	}
@@ -665,11 +672,11 @@ func TestStoreAPITokens(t *testing.T) {
 
 	// A live token (no expiry) resolves to its owner and records last_used.
 	raw := []byte("hash-live-" + ids.Secret())
-	tok, err := s.CreateAPIToken(ctx, ids.New(ids.PrefixAPIToken), user.ID, "ci", domain.AllAbilities(), raw, nil)
+	tok, err := s.CreateAPIToken(ctx, ids.New(ids.PrefixAPIToken), user.ID, "ci", domain.AllAbilities(), raw, nil, "")
 	if err != nil {
 		t.Fatalf("CreateAPIToken: %v", err)
 	}
-	got, _, abilities, err := s.APITokenByHash(ctx, raw)
+	got, _, abilities, _, err := s.APITokenByHash(ctx, raw)
 	if err != nil || got.ID != user.ID {
 		t.Fatalf("APITokenByHash = %+v, %v; want user %s", got, err, user.ID)
 	}
@@ -690,10 +697,10 @@ func TestStoreAPITokens(t *testing.T) {
 	// An expired token yields no user (the SQL filters on expires_at).
 	expRaw := []byte("hash-exp-" + ids.Secret())
 	past := time.Now().Add(-time.Hour)
-	if _, err := s.CreateAPIToken(ctx, ids.New(ids.PrefixAPIToken), user.ID, "old", domain.AllAbilities(), expRaw, &past); err != nil {
+	if _, err := s.CreateAPIToken(ctx, ids.New(ids.PrefixAPIToken), user.ID, "old", domain.AllAbilities(), expRaw, &past, ""); err != nil {
 		t.Fatalf("CreateAPIToken (expired): %v", err)
 	}
-	if _, _, _, err := s.APITokenByHash(ctx, expRaw); !errors.Is(err, ErrNotFound) {
+	if _, _, _, _, err := s.APITokenByHash(ctx, expRaw); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expired token resolved a user: %v", err)
 	}
 
@@ -701,12 +708,12 @@ func TestStoreAPITokens(t *testing.T) {
 	if err := s.DeleteAPIToken(ctx, tok.ID); err != nil {
 		t.Fatalf("DeleteAPIToken: %v", err)
 	}
-	if _, _, _, err := s.APITokenByHash(ctx, raw); !errors.Is(err, ErrNotFound) {
+	if _, _, _, _, err := s.APITokenByHash(ctx, raw); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("deleted token still resolves: %v", err)
 	}
 
 	// Deleting the user cascades to their tokens (ON DELETE CASCADE).
-	if _, err := s.CreateAPIToken(ctx, ids.New(ids.PrefixAPIToken), user.ID, "c", domain.AllAbilities(), []byte("hash-c-"+ids.Secret()), nil); err != nil {
+	if _, err := s.CreateAPIToken(ctx, ids.New(ids.PrefixAPIToken), user.ID, "c", domain.AllAbilities(), []byte("hash-c-"+ids.Secret()), nil, ""); err != nil {
 		t.Fatalf("CreateAPIToken (cascade): %v", err)
 	}
 	if err := s.DeleteUser(ctx, user.ID); err != nil {
@@ -800,7 +807,7 @@ func TestStoreBackupRetentionPrune(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateServerWithToken: %v", err)
 	}
-	_, env, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject), "bk-project", "tm_default", ids.New(ids.PrefixEnvironment), "prod")
+	_, env, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject), "bk-project", "tm_default", projSlug("bk-project"), ids.New(ids.PrefixEnvironment), "prod")
 	if err != nil {
 		t.Fatalf("CreateProjectWithEnvironment: %v", err)
 	}
@@ -1166,7 +1173,7 @@ func TestStoreInboxRoundtrip(t *testing.T) {
 		}
 	}
 	projA, _, err := s.CreateProjectWithEnvironment(ctx, ids.New(ids.PrefixProject),
-		"inbox-proj-"+ids.Secret()[:8], teamA.ID, ids.New(ids.PrefixEnvironment), "production")
+		"inbox-proj-"+ids.Secret()[:8], teamA.ID, projSlug("inbox"), ids.New(ids.PrefixEnvironment), "production")
 	if err != nil {
 		t.Fatalf("CreateProjectWithEnvironment: %v", err)
 	}
@@ -1601,5 +1608,111 @@ func TestStoreSharedVariableRoundtrip(t *testing.T) {
 	}
 	if _, err := s.GetSharedVariable(ctx, projectVar.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("project-scoped row after project delete = %v, want ErrNotFound", err)
+	}
+}
+
+// The panel's ACME account (agent-identity-and-tls.md §4). A singleton with a
+// deliberately unusual property: the row exists only when TLS is configured, so
+// "is there a resolver?" has one answer in one place rather than two that can
+// disagree.
+func TestStorePanelTLSRoundtrip(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	// Start from a known state — the table is a singleton, so other tests in
+	// this package share it and order-independence has to be arranged.
+	if err := s.DeletePanelTLS(ctx); err != nil {
+		t.Fatalf("DeletePanelTLS: %v", err)
+	}
+	if _, err := s.GetPanelTLS(ctx); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetPanelTLS on an unconfigured panel = %v, want ErrNotFound", err)
+	}
+
+	tests := []struct {
+		name string
+		in   domain.PanelTLS
+	}{
+		{"production", domain.PanelTLS{ACMEEmail: "ops@example.com"}},
+		{"staging", domain.PanelTLS{
+			ACMEEmail:    "ops@example.com",
+			ACMECAServer: "https://acme-staging-v02.api.letsencrypt.org/directory",
+		}},
+		{"changed account", domain.PanelTLS{ACMEEmail: "platform@example.com"}},
+	}
+	var previous time.Time
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := s.SetPanelTLS(ctx, tc.in); err != nil {
+				t.Fatalf("SetPanelTLS: %v", err)
+			}
+			got, err := s.GetPanelTLS(ctx)
+			if err != nil {
+				t.Fatalf("GetPanelTLS: %v", err)
+			}
+			if got.ACMEEmail != tc.in.ACMEEmail || got.ACMECAServer != tc.in.ACMECAServer {
+				t.Fatalf("round-trip = %+v, want %+v", got, tc.in)
+			}
+			if !got.Configured() {
+				t.Fatalf("stored account does not report configured: %+v", got)
+			}
+			// Wholesale replacement: a second write is an upsert on the same
+			// row, not a second row, and it moves updated_at.
+			if got.UpdatedAt.IsZero() || !got.UpdatedAt.After(previous) {
+				t.Fatalf("updated_at = %s, want it to advance past %s", got.UpdatedAt, previous)
+			}
+			previous = got.UpdatedAt
+		})
+	}
+
+	// Clearing removes the row; the panel is back to "no resolver".
+	if err := s.DeletePanelTLS(ctx); err != nil {
+		t.Fatalf("DeletePanelTLS: %v", err)
+	}
+	if _, err := s.GetPanelTLS(ctx); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetPanelTLS after delete = %v, want ErrNotFound", err)
+	}
+	// Deleting again is a no-op, not a failure: the caller does not have to
+	// know whether an account existed.
+	if err := s.DeletePanelTLS(ctx); err != nil {
+		t.Fatalf("second DeletePanelTLS: %v", err)
+	}
+}
+
+// A restart is desired state, not a verb (deployment-control.md §3): the token
+// is stored on the application and nothing else about it moves — least of all
+// the desired revision, which is what would silently ship an unrelated edit.
+func TestStoreRestartTokenIsIsolated(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	_, _, _, app := seedApp(t, s)
+
+	if app.RestartToken != "" {
+		t.Fatalf("restart token = %q, want empty at birth", app.RestartToken)
+	}
+
+	restarted, err := s.BumpApplicationRestartToken(ctx, app.ID, "rst_first")
+	if err != nil {
+		t.Fatalf("BumpApplicationRestartToken: %v", err)
+	}
+	if restarted.RestartToken != "rst_first" {
+		t.Fatalf("restart token = %q", restarted.RestartToken)
+	}
+	if restarted.Name != app.Name || restarted.Route.Domain != app.Route.Domain ||
+		restarted.Runtime.Port != app.Runtime.Port {
+		t.Fatalf("a restart changed configuration: %+v", restarted)
+	}
+	if restarted.DesiredRevisionID != nil {
+		t.Fatalf("desired revision = %v, want a restart to move nothing", restarted.DesiredRevisionID)
+	}
+
+	// It survives an ordinary config update, so an edit does not silently
+	// un-restart a container.
+	restarted.Name = "web-renamed"
+	updated, err := s.UpdateApplicationConfig(ctx, restarted)
+	if err != nil {
+		t.Fatalf("UpdateApplicationConfig: %v", err)
+	}
+	if updated.RestartToken != "rst_first" {
+		t.Fatalf("restart token = %q after a config update, want it kept", updated.RestartToken)
 	}
 }

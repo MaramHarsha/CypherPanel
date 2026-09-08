@@ -13,8 +13,12 @@ WHERE sessions.token_hash = $1
 -- name: DeleteSession :exec
 DELETE FROM sessions WHERE token_hash = $1;
 
--- name: DeleteExpiredSessions :exec
-DELETE FROM sessions WHERE expires_at <= now();
+-- DeleteExpiredSessions is the purge behind auth.RunSessionPurge
+-- (control-plane-hardening.md §7). The cutoff is a parameter rather than
+-- now() so the caller's injected clock decides what "expired" means and the
+-- purge is testable without waiting.
+-- name: DeleteExpiredSessions :execrows
+DELETE FROM sessions WHERE expires_at <= $1;
 
 -- name: ListSessionsByUser :many
 -- Live sessions only: an expired row is already unusable, so showing it would

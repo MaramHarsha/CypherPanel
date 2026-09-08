@@ -1,14 +1,16 @@
 // Project home: environment switcher (tabs, not routes) + this environment's
 // resources. Empty states chain the golden path (ui-principles §11).
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Database as DatabaseIcon, Settings as SettingsIcon } from "lucide-react";
+import { Boxes, Database as DatabaseIcon, Settings as SettingsIcon } from "lucide-react";
 import { useMemo } from "react";
 import { useListApplications } from "@/api/gen/applications/applications";
+import { useListComposeStacks } from "@/api/gen/compose-stacks/compose-stacks";
 import { useGetMe } from "@/api/gen/auth/auth";
 import { useListDatabases } from "@/api/gen/databases/databases";
 import { useGetProject, useListEnvironments } from "@/api/gen/projects/projects";
 import { useListServers } from "@/api/gen/servers/servers";
-import type { Application, Database, Environment } from "@/api/gen/model";
+import type { Application, ComposeStack, Database, Environment } from "@/api/gen/model";
+import { NewComposeStackDialog } from "@/components/create-compose-stack-dialog";
 import { NewAppDialog } from "@/components/create-application-dialog";
 import { engineLabel, NewDatabaseDialog } from "@/components/create-database-dialog";
 import { ProvisioningSteps, provisioningSteps } from "@/components/db-provisioning-steps";
@@ -143,18 +145,20 @@ const SEVERITY: Record<Status, number> = {
 function EnvRollupChip({ envId }: { envId: string }) {
   const apps = useListApplications(envId);
   const dbs = useListDatabases(envId);
+  const stacks = useListComposeStacks(envId);
 
   const statuses = useMemo(
     () => [
       ...(apps.data ?? []).map((a) => normalizeStatus(a.status)),
       ...(dbs.data ?? []).map((d) => normalizeStatus(d.status)),
+      ...(stacks.data ?? []).map((s) => normalizeStatus(s.status)),
     ],
-    [apps.data, dbs.data],
+    [apps.data, dbs.data, stacks.data],
   );
 
-  // Silence until both lists have landed: a chip that guesses is worse than no
+  // Silence until every list has landed: a chip that guesses is worse than no
   // chip at all (handoff — skeletons never wear a status colour).
-  if (apps.isPending || dbs.isPending) return null;
+  if (apps.isPending || dbs.isPending || stacks.isPending) return null;
 
   const worst = statuses.reduce<Status>((acc, s) => (SEVERITY[s] > SEVERITY[acc] ? s : acc), "stopped");
   const errors = statuses.filter((s) => s === "error").length;
@@ -187,6 +191,7 @@ function EnvResources({
 }) {
   const apps = useListApplications(envId);
   const dbs = useListDatabases(envId);
+  const stacks = useListComposeStacks(envId);
   // A provisioning row says where it is landing; the create dialog holds the
   // same list, so this is the cache, not a second request.
   const servers = useListServers();
@@ -256,6 +261,43 @@ function EnvResources({
             <ul className="space-y-2.5">
               {list.map((d) => (
                 <DbRow key={d.id} projectId={projectId} db={d} serverName={serverName(d.server_id)} />
+              ))}
+            </ul>
+          )}
+        </PageState>
+      </section>
+
+      {/* The third Resource (glossary): a compose file the agent converges to.
+          It shares the database row's shape rather than the application card's,
+          because a stack has no revision to headline and no build to watch —
+          what it has is a name, a placement and a state. */}
+      <section className="space-y-3.5">
+        <div className="flex items-center justify-between gap-3">
+          <Eyebrow>Compose stacks{stacks.data ? ` — ${stacks.data.length}` : ""}</Eyebrow>
+          <NewComposeStackDialog envId={envId} projectId={projectId} projectName={projectName} envName={envName} />
+        </div>
+        <PageState
+          query={stacks}
+          empty={
+            <EmptyState
+              title="No compose stacks in this environment"
+              hint="Already have a compose file? Paste it and CypherPanel runs it as written — the file is the desired state, and its history is the way back."
+              action={
+                <NewComposeStackDialog
+                  envId={envId}
+                  projectId={projectId}
+                  projectName={projectName}
+                  envName={envName}
+                  primary
+                />
+              }
+            />
+          }
+        >
+          {(list) => (
+            <ul className="space-y-2.5">
+              {list.map((st) => (
+                <ComposeRow key={st.id} projectId={projectId} stack={st} serverName={serverName(st.server_id)} />
               ))}
             </ul>
           )}
@@ -402,6 +444,75 @@ function DbRow({ projectId, db, serverName }: { projectId: string; db: Database;
           <span className="mt-3 block rounded-md bg-status-error/[0.07] px-3 py-2.5 text-xs leading-relaxed text-danger">
             {db.status_detail ?? "The engine exited unexpectedly."}
             <span className="mt-1 block font-semibold text-text">Open {db.name} →</span>
+          </span>
+        )}
+      </Link>
+    </li>
+  );
+}
+
+/**
+ * The compose-stack row on the board, built on DbRow's shape for the reason
+ * given at its section: a stack is a name, a placement and a state. Its one
+ * extra fact is the service count the file asks for — `degraded` means some of
+ * them and not others, and a row that says "degraded" without saying how many
+ * is a row you have to click to understand.
+ */
+function ComposeRow({
+  projectId,
+  stack,
+  serverName,
+}: {
+  projectId: string;
+  stack: ComposeStack;
+  serverName: string;
+}) {
+  const status = normalizeStatus(stack.status);
+  const broken = status === "error";
+  const undeployed = !stack.desired_revision_id;
+
+  return (
+    <li data-row>
+      <Link
+        to="/projects/$projectId/compose/$stackId"
+        params={{ projectId, stackId: stack.id }}
+        className={cn(
+          "flex flex-col rounded-lg border bg-bg px-4 py-3.5",
+          "transition-[border-color,box-shadow] hover:border-border-strong hover:shadow-card",
+          broken ? "border-[1.5px] border-status-error/50" : "border-border",
+          status === "stopped" && "opacity-65",
+        )}
+      >
+        <span className="flex items-center gap-3.5">
+          <StatusDot status={stack.status} />
+          <Boxes className="h-4 w-4 shrink-0 text-text-faint" aria-hidden />
+          <span className="min-w-0 truncate text-[15px] font-semibold">{stack.name}</span>
+          <span className="min-w-0 truncate font-mono text-[11.5px] text-text-faint">
+            {stack.route.domain || "internal"} · {serverName}
+          </span>
+          <span className="ml-auto flex shrink-0 items-center gap-3.5">
+            <span className="hidden font-mono text-[11.5px] text-text-faint sm:inline">
+              created {relativeTime(stack.created_at)}
+            </span>
+            <span className={cn("font-mono text-[10.5px] font-medium uppercase tracking-wide", STATE_TEXT[status])}>
+              {status}
+            </span>
+          </span>
+        </span>
+
+        {/* A stack that exists but has never been deployed is the one state
+            the status word cannot express — "stopped" reads as something that
+            was running and is not, and this never was. */}
+        {undeployed && !broken && (
+          <span className="mt-2.5 block pl-6 font-mono text-[11.5px] text-text-faint">
+            never deployed — the file is stored, nothing is running
+          </span>
+        )}
+
+        {broken && (
+          <span className="mt-3 block rounded-md bg-status-error/[0.07] px-3 py-2.5 text-xs leading-relaxed text-danger">
+            {stack.status_detail ?? "Compose could not bring the stack up."}
+            <span className="mt-1 block font-semibold text-text">Open {stack.name} →</span>
           </span>
         )}
       </Link>

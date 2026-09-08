@@ -617,12 +617,16 @@ function TokenRow({
 }
 
 // In the order canvas 13ac draws the chips — the two a CI credential usually
-// needs first. The set is the API's (read / write / deploy); the canvas's env
-// vars, servers and admin chips wait on the ability enum growing.
+// needs first, then the narrower grants. `write` is last because it is the
+// widest: it covers env, servers and admin on its own, which is what keeps
+// tokens issued before those existed working unchanged.
 const ABILITY_HELP: Record<Ability, string> = {
   [Ability.deploy]: "Trigger deploys and rollbacks",
   [Ability.read]: "View everything you can see",
-  [Ability.write]: "Create and change resources",
+  [Ability.env]: "Set and remove env vars",
+  [Ability.servers]: "Enrol and remove servers",
+  [Ability.admin]: "Teams, members and panel settings",
+  [Ability.write]: "Create and change anything (includes the three above)",
 };
 
 /** Canvas 13ac offers a lifetime, not a checkbox — 90 days is its default. */

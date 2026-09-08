@@ -11,6 +11,24 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const cancelPendingEmailChanges = `-- name: CancelPendingEmailChanges :execrows
+UPDATE email_changes
+SET consumed_at = now()
+WHERE user_id = $1 AND consumed_at IS NULL AND expires_at > now()
+`
+
+// Cancelling is "this wasn't me": every outstanding link for the user dies at
+// once, so a second request made by an attacker cannot survive the cancel of
+// the first. Marking them consumed rather than deleting keeps the record that
+// a change was attempted.
+func (q *Queries) CancelPendingEmailChanges(ctx context.Context, userID string) (int64, error) {
+	result, err := q.db.Exec(ctx, cancelPendingEmailChanges, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const consumeEmailChange = `-- name: ConsumeEmailChange :one
 UPDATE email_changes
 SET consumed_at = now()
@@ -76,6 +94,31 @@ SELECT id, user_id, new_email, token_hash, expires_at, consumed_at, created_at F
 
 func (q *Queries) GetEmailChange(ctx context.Context, id string) (EmailChange, error) {
 	row := q.db.QueryRow(ctx, getEmailChange, id)
+	var i EmailChange
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.NewEmail,
+		&i.TokenHash,
+		&i.ExpiresAt,
+		&i.ConsumedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const pendingEmailChangeForUser = `-- name: PendingEmailChangeForUser :one
+SELECT id, user_id, new_email, token_hash, expires_at, consumed_at, created_at FROM email_changes
+WHERE user_id = $1 AND consumed_at IS NULL AND expires_at > now()
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+// The pending change a user can still confirm, if any. Newest wins: requesting
+// a second change supersedes the first in the UI even though both rows live
+// until they expire.
+func (q *Queries) PendingEmailChangeForUser(ctx context.Context, userID string) (EmailChange, error) {
+	row := q.db.QueryRow(ctx, pendingEmailChangeForUser, userID)
 	var i EmailChange
 	err := row.Scan(
 		&i.ID,

@@ -27,11 +27,27 @@ import (
 // which tokens exist.
 var ErrInvalidToken = errors.New("enroll: invalid or expired join token")
 
+// ErrUnknownIdentity is returned by Renew when the caller's certificate names a
+// server that no longer exists or was never enrolled — the revocation check the
+// bus already applies at connection time (threat-model §5.2), applied here too
+// so a revoked agent cannot mint itself a fresh certificate over a connection
+// its old one still happens to satisfy.
+var ErrUnknownIdentity = errors.New("enroll: unknown or revoked agent identity")
+
+// ErrIdentityMismatch is returned when a caller asks to renew a server id that
+// is not the one in its own verified certificate. An agent may renew itself and
+// nothing else.
+var ErrIdentityMismatch = errors.New("enroll: renewal request does not match the caller's certificate")
+
 // Store is the persistence the enrollment service needs (consumer-defined).
 type Store interface {
 	GetJoinToken(ctx context.Context, id string) (domain.JoinToken, error)
 	ConsumeJoinToken(ctx context.Context, id string) (domain.JoinToken, error)
 	MarkServerEnrolled(ctx context.Context, id, hostname, agentVersion string) (domain.Server, error)
+	// AgentEnrolled reports whether id still names an enrolled server. It is
+	// the same question the bus asks at connection time; renewal asks it again
+	// so an identity that was revoked between connect and renewal is refused.
+	AgentEnrolled(ctx context.Context, id string) (bool, error)
 }
 
 // Result is what a successful enrollment yields to the agent.
@@ -107,6 +123,62 @@ func (s *Service) Enroll(ctx context.Context, rawToken string, csrPEM []byte, ho
 		CertPEM:   certPEM,
 		CACertPEM: s.ca.CertPEM(),
 		NATSURL:   s.natsURL,
+	}, nil
+}
+
+// Renewal is what a successful certificate renewal yields to the agent.
+type Renewal struct {
+	ServerID  string
+	CertPEM   []byte
+	CACertPEM []byte
+	NotAfter  time.Time
+}
+
+// Renew re-signs an already-enrolled agent's certificate.
+//
+// callerID is the CommonName of the VERIFIED client certificate on the
+// connection — the only thing that authorizes the call. claimedID is what the
+// request says, and exists solely so a disagreement is a loud refusal rather
+// than a silent re-issue under the caller's real name. No token is involved and
+// nothing is consumed: the authenticated channel IS the credential
+// (threat-model §5.2).
+//
+// It refuses an identity the plane no longer recognises, which is what makes
+// revocation stick: deleting a server both cuts its bus connection and denies
+// it a fresh certificate, so the old one simply ages out.
+func (s *Service) Renew(ctx context.Context, callerID, claimedID string, csrPEM []byte, agentVersion string) (Renewal, error) {
+	if callerID == "" {
+		return Renewal{}, ErrUnknownIdentity
+	}
+	if claimedID != "" && claimedID != callerID {
+		return Renewal{}, ErrIdentityMismatch
+	}
+	enrolled, err := s.store.AgentEnrolled(ctx, callerID)
+	if err != nil {
+		return Renewal{}, fmt.Errorf("enroll: checking enrollment of %s: %w", callerID, err)
+	}
+	if !enrolled {
+		return Renewal{}, ErrUnknownIdentity
+	}
+
+	now := s.now()
+	certPEM, err := s.ca.SignAgentCSR(csrPEM, callerID, s.certTTL, now)
+	if err != nil {
+		return Renewal{}, fmt.Errorf("enroll: re-signing certificate for %s: %w", callerID, err)
+	}
+	// Deliberately no server-row write. MarkServerEnrolled re-stamps
+	// enrolled_at, and the panel renders that as "Enrolled <relative time>" —
+	// a renewal is not a re-introduction, and a two-year-old server claiming it
+	// joined this morning every sixty days would be a lie the operator has no
+	// way to see through. The agent version the request carries needs no write
+	// either: heartbeats already refresh it every interval. The renewal's audit
+	// trail is the plane's log line, which names the server and the new expiry.
+
+	return Renewal{
+		ServerID:  callerID,
+		CertPEM:   certPEM,
+		CACertPEM: s.ca.CertPEM(),
+		NotAfter:  now.Add(s.certTTL),
 	}, nil
 }
 

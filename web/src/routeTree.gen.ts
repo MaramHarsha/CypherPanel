@@ -14,24 +14,31 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppInboxRouteImport } from './routes/_app/inbox'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
+import { Route as InviteTokenRouteImport } from './routes/invite.$token'
 import { Route as AppProjectsIndexRouteImport } from './routes/_app/projects/index'
 import { Route as AppServersIndexRouteImport } from './routes/_app/servers/index'
 import { Route as AppServersServerIdRouteImport } from './routes/_app/servers/$serverId'
 import { Route as AppSettingsIndexRouteImport } from './routes/_app/settings/index'
+import { Route as AppSettingsAuditRouteImport } from './routes/_app/settings/audit'
 import { Route as AppSettingsBackupTargetsRouteImport } from './routes/_app/settings/backup-targets'
 import { Route as AppSettingsDeployKeysRouteImport } from './routes/_app/settings/deploy-keys'
+import { Route as AppSettingsDiagnosticsRouteImport } from './routes/_app/settings/diagnostics'
 import { Route as AppSettingsDnsRouteImport } from './routes/_app/settings/dns'
 import { Route as AppSettingsMailRouteImport } from './routes/_app/settings/mail'
 import { Route as AppSettingsProfileRouteImport } from './routes/_app/settings/profile'
+import { Route as AppSettingsRegistriesRouteImport } from './routes/_app/settings/registries'
 import { Route as AppSettingsTeamsRouteImport } from './routes/_app/settings/teams'
+import { Route as AppSettingsTlsRouteImport } from './routes/_app/settings/tls'
 import { Route as AppSettingsUsersRouteImport } from './routes/_app/settings/users'
 import { Route as AppTemplatesIndexRouteImport } from './routes/_app/templates/index'
 import { Route as AppProjectsProjectIdIndexRouteImport } from './routes/_app/projects/$projectId/index'
 import { Route as AppProjectsProjectIdSettingsRouteImport } from './routes/_app/projects/$projectId/settings'
 import { Route as AppProjectsProjectIdApplicationsAppIdRouteImport } from './routes/_app/projects/$projectId/applications/$appId'
+import { Route as AppProjectsProjectIdComposeStackIdRouteImport } from './routes/_app/projects/$projectId/compose/$stackId'
 import { Route as AppProjectsProjectIdDatabasesDbIdRouteImport } from './routes/_app/projects/$projectId/databases/$dbId'
 import { Route as AppProjectsProjectIdSettingsIndexRouteImport } from './routes/_app/projects/$projectId/settings/index'
 import { Route as AppProjectsProjectIdSettingsNotifiersRouteImport } from './routes/_app/projects/$projectId/settings/notifiers'
+import { Route as AppProjectsProjectIdSettingsProtectionRouteImport } from './routes/_app/projects/$projectId/settings/protection'
 import { Route as AppProjectsProjectIdSettingsSharedVariablesRouteImport } from './routes/_app/projects/$projectId/settings/shared-variables'
 import { Route as AppProjectsProjectIdSettingsWebhooksRouteImport } from './routes/_app/projects/$projectId/settings/webhooks'
 import { Route as AppProjectsProjectIdApplicationsAppIdIndexRouteImport } from './routes/_app/projects/$projectId/applications/$appId/index'
@@ -42,6 +49,11 @@ import { Route as AppProjectsProjectIdApplicationsAppIdPreviewsRouteImport } fro
 import { Route as AppProjectsProjectIdApplicationsAppIdSettingsRouteImport } from './routes/_app/projects/$projectId/applications/$appId/settings'
 import { Route as AppProjectsProjectIdApplicationsAppIdStorageRouteImport } from './routes/_app/projects/$projectId/applications/$appId/storage'
 import { Route as AppProjectsProjectIdApplicationsAppIdTasksRouteImport } from './routes/_app/projects/$projectId/applications/$appId/tasks'
+import { Route as AppProjectsProjectIdComposeStackIdIndexRouteImport } from './routes/_app/projects/$projectId/compose/$stackId/index'
+import { Route as AppProjectsProjectIdComposeStackIdEnvRouteImport } from './routes/_app/projects/$projectId/compose/$stackId/env'
+import { Route as AppProjectsProjectIdComposeStackIdLogsRouteImport } from './routes/_app/projects/$projectId/compose/$stackId/logs'
+import { Route as AppProjectsProjectIdComposeStackIdRevisionsRouteImport } from './routes/_app/projects/$projectId/compose/$stackId/revisions'
+import { Route as AppProjectsProjectIdComposeStackIdSettingsRouteImport } from './routes/_app/projects/$projectId/compose/$stackId/settings'
 import { Route as AppProjectsProjectIdDatabasesDbIdIndexRouteImport } from './routes/_app/projects/$projectId/databases/$dbId/index'
 import { Route as AppProjectsProjectIdDatabasesDbIdBackupsRouteImport } from './routes/_app/projects/$projectId/databases/$dbId/backups'
 import { Route as AppProjectsProjectIdDatabasesDbIdConnectionRouteImport } from './routes/_app/projects/$projectId/databases/$dbId/connection'
@@ -71,6 +83,11 @@ const AppSettingsRoute = AppSettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => AppRoute,
 } as any)
+const InviteTokenRoute = InviteTokenRouteImport.update({
+  id: '/invite/$token',
+  path: '/invite/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AppProjectsIndexRoute = AppProjectsIndexRouteImport.update({
   id: '/projects/',
   path: '/projects/',
@@ -91,6 +108,11 @@ const AppSettingsIndexRoute = AppSettingsIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AppSettingsRoute,
 } as any)
+const AppSettingsAuditRoute = AppSettingsAuditRouteImport.update({
+  id: '/audit',
+  path: '/audit',
+  getParentRoute: () => AppSettingsRoute,
+} as any)
 const AppSettingsBackupTargetsRoute =
   AppSettingsBackupTargetsRouteImport.update({
     id: '/backup-targets',
@@ -100,6 +122,11 @@ const AppSettingsBackupTargetsRoute =
 const AppSettingsDeployKeysRoute = AppSettingsDeployKeysRouteImport.update({
   id: '/deploy-keys',
   path: '/deploy-keys',
+  getParentRoute: () => AppSettingsRoute,
+} as any)
+const AppSettingsDiagnosticsRoute = AppSettingsDiagnosticsRouteImport.update({
+  id: '/diagnostics',
+  path: '/diagnostics',
   getParentRoute: () => AppSettingsRoute,
 } as any)
 const AppSettingsDnsRoute = AppSettingsDnsRouteImport.update({
@@ -117,9 +144,19 @@ const AppSettingsProfileRoute = AppSettingsProfileRouteImport.update({
   path: '/profile',
   getParentRoute: () => AppSettingsRoute,
 } as any)
+const AppSettingsRegistriesRoute = AppSettingsRegistriesRouteImport.update({
+  id: '/registries',
+  path: '/registries',
+  getParentRoute: () => AppSettingsRoute,
+} as any)
 const AppSettingsTeamsRoute = AppSettingsTeamsRouteImport.update({
   id: '/teams',
   path: '/teams',
+  getParentRoute: () => AppSettingsRoute,
+} as any)
+const AppSettingsTlsRoute = AppSettingsTlsRouteImport.update({
+  id: '/tls',
+  path: '/tls',
   getParentRoute: () => AppSettingsRoute,
 } as any)
 const AppSettingsUsersRoute = AppSettingsUsersRouteImport.update({
@@ -150,6 +187,12 @@ const AppProjectsProjectIdApplicationsAppIdRoute =
     path: '/projects/$projectId/applications/$appId',
     getParentRoute: () => AppRoute,
   } as any)
+const AppProjectsProjectIdComposeStackIdRoute =
+  AppProjectsProjectIdComposeStackIdRouteImport.update({
+    id: '/projects/$projectId/compose/$stackId',
+    path: '/projects/$projectId/compose/$stackId',
+    getParentRoute: () => AppRoute,
+  } as any)
 const AppProjectsProjectIdDatabasesDbIdRoute =
   AppProjectsProjectIdDatabasesDbIdRouteImport.update({
     id: '/projects/$projectId/databases/$dbId',
@@ -166,6 +209,12 @@ const AppProjectsProjectIdSettingsNotifiersRoute =
   AppProjectsProjectIdSettingsNotifiersRouteImport.update({
     id: '/notifiers',
     path: '/notifiers',
+    getParentRoute: () => AppProjectsProjectIdSettingsRoute,
+  } as any)
+const AppProjectsProjectIdSettingsProtectionRoute =
+  AppProjectsProjectIdSettingsProtectionRouteImport.update({
+    id: '/protection',
+    path: '/protection',
     getParentRoute: () => AppProjectsProjectIdSettingsRoute,
   } as any)
 const AppProjectsProjectIdSettingsSharedVariablesRoute =
@@ -228,6 +277,36 @@ const AppProjectsProjectIdApplicationsAppIdTasksRoute =
     path: '/tasks',
     getParentRoute: () => AppProjectsProjectIdApplicationsAppIdRoute,
   } as any)
+const AppProjectsProjectIdComposeStackIdIndexRoute =
+  AppProjectsProjectIdComposeStackIdIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => AppProjectsProjectIdComposeStackIdRoute,
+  } as any)
+const AppProjectsProjectIdComposeStackIdEnvRoute =
+  AppProjectsProjectIdComposeStackIdEnvRouteImport.update({
+    id: '/env',
+    path: '/env',
+    getParentRoute: () => AppProjectsProjectIdComposeStackIdRoute,
+  } as any)
+const AppProjectsProjectIdComposeStackIdLogsRoute =
+  AppProjectsProjectIdComposeStackIdLogsRouteImport.update({
+    id: '/logs',
+    path: '/logs',
+    getParentRoute: () => AppProjectsProjectIdComposeStackIdRoute,
+  } as any)
+const AppProjectsProjectIdComposeStackIdRevisionsRoute =
+  AppProjectsProjectIdComposeStackIdRevisionsRouteImport.update({
+    id: '/revisions',
+    path: '/revisions',
+    getParentRoute: () => AppProjectsProjectIdComposeStackIdRoute,
+  } as any)
+const AppProjectsProjectIdComposeStackIdSettingsRoute =
+  AppProjectsProjectIdComposeStackIdSettingsRouteImport.update({
+    id: '/settings',
+    path: '/settings',
+    getParentRoute: () => AppProjectsProjectIdComposeStackIdRoute,
+  } as any)
 const AppProjectsProjectIdDatabasesDbIdIndexRoute =
   AppProjectsProjectIdDatabasesDbIdIndexRouteImport.update({
     id: '/',
@@ -258,13 +337,18 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/inbox': typeof AppInboxRoute
   '/settings': typeof AppSettingsRouteWithChildren
+  '/invite/$token': typeof InviteTokenRoute
   '/servers/$serverId': typeof AppServersServerIdRoute
+  '/settings/audit': typeof AppSettingsAuditRoute
   '/settings/backup-targets': typeof AppSettingsBackupTargetsRoute
   '/settings/deploy-keys': typeof AppSettingsDeployKeysRoute
+  '/settings/diagnostics': typeof AppSettingsDiagnosticsRoute
   '/settings/dns': typeof AppSettingsDnsRoute
   '/settings/mail': typeof AppSettingsMailRoute
   '/settings/profile': typeof AppSettingsProfileRoute
+  '/settings/registries': typeof AppSettingsRegistriesRoute
   '/settings/teams': typeof AppSettingsTeamsRoute
+  '/settings/tls': typeof AppSettingsTlsRoute
   '/settings/users': typeof AppSettingsUsersRoute
   '/projects/': typeof AppProjectsIndexRoute
   '/servers/': typeof AppServersIndexRoute
@@ -273,8 +357,10 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/settings': typeof AppProjectsProjectIdSettingsRouteWithChildren
   '/projects/$projectId/': typeof AppProjectsProjectIdIndexRoute
   '/projects/$projectId/applications/$appId': typeof AppProjectsProjectIdApplicationsAppIdRouteWithChildren
+  '/projects/$projectId/compose/$stackId': typeof AppProjectsProjectIdComposeStackIdRouteWithChildren
   '/projects/$projectId/databases/$dbId': typeof AppProjectsProjectIdDatabasesDbIdRouteWithChildren
   '/projects/$projectId/settings/notifiers': typeof AppProjectsProjectIdSettingsNotifiersRoute
+  '/projects/$projectId/settings/protection': typeof AppProjectsProjectIdSettingsProtectionRoute
   '/projects/$projectId/settings/shared-variables': typeof AppProjectsProjectIdSettingsSharedVariablesRoute
   '/projects/$projectId/settings/webhooks': typeof AppProjectsProjectIdSettingsWebhooksRoute
   '/projects/$projectId/settings/': typeof AppProjectsProjectIdSettingsIndexRoute
@@ -285,23 +371,33 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/applications/$appId/settings': typeof AppProjectsProjectIdApplicationsAppIdSettingsRoute
   '/projects/$projectId/applications/$appId/storage': typeof AppProjectsProjectIdApplicationsAppIdStorageRoute
   '/projects/$projectId/applications/$appId/tasks': typeof AppProjectsProjectIdApplicationsAppIdTasksRoute
+  '/projects/$projectId/compose/$stackId/env': typeof AppProjectsProjectIdComposeStackIdEnvRoute
+  '/projects/$projectId/compose/$stackId/logs': typeof AppProjectsProjectIdComposeStackIdLogsRoute
+  '/projects/$projectId/compose/$stackId/revisions': typeof AppProjectsProjectIdComposeStackIdRevisionsRoute
+  '/projects/$projectId/compose/$stackId/settings': typeof AppProjectsProjectIdComposeStackIdSettingsRoute
   '/projects/$projectId/databases/$dbId/backups': typeof AppProjectsProjectIdDatabasesDbIdBackupsRoute
   '/projects/$projectId/databases/$dbId/connection': typeof AppProjectsProjectIdDatabasesDbIdConnectionRoute
   '/projects/$projectId/databases/$dbId/settings': typeof AppProjectsProjectIdDatabasesDbIdSettingsRoute
   '/projects/$projectId/applications/$appId/': typeof AppProjectsProjectIdApplicationsAppIdIndexRoute
+  '/projects/$projectId/compose/$stackId/': typeof AppProjectsProjectIdComposeStackIdIndexRoute
   '/projects/$projectId/databases/$dbId/': typeof AppProjectsProjectIdDatabasesDbIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/inbox': typeof AppInboxRoute
+  '/invite/$token': typeof InviteTokenRoute
   '/': typeof AppIndexRoute
   '/servers/$serverId': typeof AppServersServerIdRoute
+  '/settings/audit': typeof AppSettingsAuditRoute
   '/settings/backup-targets': typeof AppSettingsBackupTargetsRoute
   '/settings/deploy-keys': typeof AppSettingsDeployKeysRoute
+  '/settings/diagnostics': typeof AppSettingsDiagnosticsRoute
   '/settings/dns': typeof AppSettingsDnsRoute
   '/settings/mail': typeof AppSettingsMailRoute
   '/settings/profile': typeof AppSettingsProfileRoute
+  '/settings/registries': typeof AppSettingsRegistriesRoute
   '/settings/teams': typeof AppSettingsTeamsRoute
+  '/settings/tls': typeof AppSettingsTlsRoute
   '/settings/users': typeof AppSettingsUsersRoute
   '/projects': typeof AppProjectsIndexRoute
   '/servers': typeof AppServersIndexRoute
@@ -309,6 +405,7 @@ export interface FileRoutesByTo {
   '/templates': typeof AppTemplatesIndexRoute
   '/projects/$projectId': typeof AppProjectsProjectIdIndexRoute
   '/projects/$projectId/settings/notifiers': typeof AppProjectsProjectIdSettingsNotifiersRoute
+  '/projects/$projectId/settings/protection': typeof AppProjectsProjectIdSettingsProtectionRoute
   '/projects/$projectId/settings/shared-variables': typeof AppProjectsProjectIdSettingsSharedVariablesRoute
   '/projects/$projectId/settings/webhooks': typeof AppProjectsProjectIdSettingsWebhooksRoute
   '/projects/$projectId/settings': typeof AppProjectsProjectIdSettingsIndexRoute
@@ -319,10 +416,15 @@ export interface FileRoutesByTo {
   '/projects/$projectId/applications/$appId/settings': typeof AppProjectsProjectIdApplicationsAppIdSettingsRoute
   '/projects/$projectId/applications/$appId/storage': typeof AppProjectsProjectIdApplicationsAppIdStorageRoute
   '/projects/$projectId/applications/$appId/tasks': typeof AppProjectsProjectIdApplicationsAppIdTasksRoute
+  '/projects/$projectId/compose/$stackId/env': typeof AppProjectsProjectIdComposeStackIdEnvRoute
+  '/projects/$projectId/compose/$stackId/logs': typeof AppProjectsProjectIdComposeStackIdLogsRoute
+  '/projects/$projectId/compose/$stackId/revisions': typeof AppProjectsProjectIdComposeStackIdRevisionsRoute
+  '/projects/$projectId/compose/$stackId/settings': typeof AppProjectsProjectIdComposeStackIdSettingsRoute
   '/projects/$projectId/databases/$dbId/backups': typeof AppProjectsProjectIdDatabasesDbIdBackupsRoute
   '/projects/$projectId/databases/$dbId/connection': typeof AppProjectsProjectIdDatabasesDbIdConnectionRoute
   '/projects/$projectId/databases/$dbId/settings': typeof AppProjectsProjectIdDatabasesDbIdSettingsRoute
   '/projects/$projectId/applications/$appId': typeof AppProjectsProjectIdApplicationsAppIdIndexRoute
+  '/projects/$projectId/compose/$stackId': typeof AppProjectsProjectIdComposeStackIdIndexRoute
   '/projects/$projectId/databases/$dbId': typeof AppProjectsProjectIdDatabasesDbIdIndexRoute
 }
 export interface FileRoutesById {
@@ -331,14 +433,19 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/_app/inbox': typeof AppInboxRoute
   '/_app/settings': typeof AppSettingsRouteWithChildren
+  '/invite/$token': typeof InviteTokenRoute
   '/_app/': typeof AppIndexRoute
   '/_app/servers/$serverId': typeof AppServersServerIdRoute
+  '/_app/settings/audit': typeof AppSettingsAuditRoute
   '/_app/settings/backup-targets': typeof AppSettingsBackupTargetsRoute
   '/_app/settings/deploy-keys': typeof AppSettingsDeployKeysRoute
+  '/_app/settings/diagnostics': typeof AppSettingsDiagnosticsRoute
   '/_app/settings/dns': typeof AppSettingsDnsRoute
   '/_app/settings/mail': typeof AppSettingsMailRoute
   '/_app/settings/profile': typeof AppSettingsProfileRoute
+  '/_app/settings/registries': typeof AppSettingsRegistriesRoute
   '/_app/settings/teams': typeof AppSettingsTeamsRoute
+  '/_app/settings/tls': typeof AppSettingsTlsRoute
   '/_app/settings/users': typeof AppSettingsUsersRoute
   '/_app/projects/': typeof AppProjectsIndexRoute
   '/_app/servers/': typeof AppServersIndexRoute
@@ -347,8 +454,10 @@ export interface FileRoutesById {
   '/_app/projects/$projectId/settings': typeof AppProjectsProjectIdSettingsRouteWithChildren
   '/_app/projects/$projectId/': typeof AppProjectsProjectIdIndexRoute
   '/_app/projects/$projectId/applications/$appId': typeof AppProjectsProjectIdApplicationsAppIdRouteWithChildren
+  '/_app/projects/$projectId/compose/$stackId': typeof AppProjectsProjectIdComposeStackIdRouteWithChildren
   '/_app/projects/$projectId/databases/$dbId': typeof AppProjectsProjectIdDatabasesDbIdRouteWithChildren
   '/_app/projects/$projectId/settings/notifiers': typeof AppProjectsProjectIdSettingsNotifiersRoute
+  '/_app/projects/$projectId/settings/protection': typeof AppProjectsProjectIdSettingsProtectionRoute
   '/_app/projects/$projectId/settings/shared-variables': typeof AppProjectsProjectIdSettingsSharedVariablesRoute
   '/_app/projects/$projectId/settings/webhooks': typeof AppProjectsProjectIdSettingsWebhooksRoute
   '/_app/projects/$projectId/settings/': typeof AppProjectsProjectIdSettingsIndexRoute
@@ -359,10 +468,15 @@ export interface FileRoutesById {
   '/_app/projects/$projectId/applications/$appId/settings': typeof AppProjectsProjectIdApplicationsAppIdSettingsRoute
   '/_app/projects/$projectId/applications/$appId/storage': typeof AppProjectsProjectIdApplicationsAppIdStorageRoute
   '/_app/projects/$projectId/applications/$appId/tasks': typeof AppProjectsProjectIdApplicationsAppIdTasksRoute
+  '/_app/projects/$projectId/compose/$stackId/env': typeof AppProjectsProjectIdComposeStackIdEnvRoute
+  '/_app/projects/$projectId/compose/$stackId/logs': typeof AppProjectsProjectIdComposeStackIdLogsRoute
+  '/_app/projects/$projectId/compose/$stackId/revisions': typeof AppProjectsProjectIdComposeStackIdRevisionsRoute
+  '/_app/projects/$projectId/compose/$stackId/settings': typeof AppProjectsProjectIdComposeStackIdSettingsRoute
   '/_app/projects/$projectId/databases/$dbId/backups': typeof AppProjectsProjectIdDatabasesDbIdBackupsRoute
   '/_app/projects/$projectId/databases/$dbId/connection': typeof AppProjectsProjectIdDatabasesDbIdConnectionRoute
   '/_app/projects/$projectId/databases/$dbId/settings': typeof AppProjectsProjectIdDatabasesDbIdSettingsRoute
   '/_app/projects/$projectId/applications/$appId/': typeof AppProjectsProjectIdApplicationsAppIdIndexRoute
+  '/_app/projects/$projectId/compose/$stackId/': typeof AppProjectsProjectIdComposeStackIdIndexRoute
   '/_app/projects/$projectId/databases/$dbId/': typeof AppProjectsProjectIdDatabasesDbIdIndexRoute
 }
 export interface FileRouteTypes {
@@ -372,13 +486,18 @@ export interface FileRouteTypes {
     | '/login'
     | '/inbox'
     | '/settings'
+    | '/invite/$token'
     | '/servers/$serverId'
+    | '/settings/audit'
     | '/settings/backup-targets'
     | '/settings/deploy-keys'
+    | '/settings/diagnostics'
     | '/settings/dns'
     | '/settings/mail'
     | '/settings/profile'
+    | '/settings/registries'
     | '/settings/teams'
+    | '/settings/tls'
     | '/settings/users'
     | '/projects/'
     | '/servers/'
@@ -387,8 +506,10 @@ export interface FileRouteTypes {
     | '/projects/$projectId/settings'
     | '/projects/$projectId/'
     | '/projects/$projectId/applications/$appId'
+    | '/projects/$projectId/compose/$stackId'
     | '/projects/$projectId/databases/$dbId'
     | '/projects/$projectId/settings/notifiers'
+    | '/projects/$projectId/settings/protection'
     | '/projects/$projectId/settings/shared-variables'
     | '/projects/$projectId/settings/webhooks'
     | '/projects/$projectId/settings/'
@@ -399,23 +520,33 @@ export interface FileRouteTypes {
     | '/projects/$projectId/applications/$appId/settings'
     | '/projects/$projectId/applications/$appId/storage'
     | '/projects/$projectId/applications/$appId/tasks'
+    | '/projects/$projectId/compose/$stackId/env'
+    | '/projects/$projectId/compose/$stackId/logs'
+    | '/projects/$projectId/compose/$stackId/revisions'
+    | '/projects/$projectId/compose/$stackId/settings'
     | '/projects/$projectId/databases/$dbId/backups'
     | '/projects/$projectId/databases/$dbId/connection'
     | '/projects/$projectId/databases/$dbId/settings'
     | '/projects/$projectId/applications/$appId/'
+    | '/projects/$projectId/compose/$stackId/'
     | '/projects/$projectId/databases/$dbId/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
     | '/inbox'
+    | '/invite/$token'
     | '/'
     | '/servers/$serverId'
+    | '/settings/audit'
     | '/settings/backup-targets'
     | '/settings/deploy-keys'
+    | '/settings/diagnostics'
     | '/settings/dns'
     | '/settings/mail'
     | '/settings/profile'
+    | '/settings/registries'
     | '/settings/teams'
+    | '/settings/tls'
     | '/settings/users'
     | '/projects'
     | '/servers'
@@ -423,6 +554,7 @@ export interface FileRouteTypes {
     | '/templates'
     | '/projects/$projectId'
     | '/projects/$projectId/settings/notifiers'
+    | '/projects/$projectId/settings/protection'
     | '/projects/$projectId/settings/shared-variables'
     | '/projects/$projectId/settings/webhooks'
     | '/projects/$projectId/settings'
@@ -433,10 +565,15 @@ export interface FileRouteTypes {
     | '/projects/$projectId/applications/$appId/settings'
     | '/projects/$projectId/applications/$appId/storage'
     | '/projects/$projectId/applications/$appId/tasks'
+    | '/projects/$projectId/compose/$stackId/env'
+    | '/projects/$projectId/compose/$stackId/logs'
+    | '/projects/$projectId/compose/$stackId/revisions'
+    | '/projects/$projectId/compose/$stackId/settings'
     | '/projects/$projectId/databases/$dbId/backups'
     | '/projects/$projectId/databases/$dbId/connection'
     | '/projects/$projectId/databases/$dbId/settings'
     | '/projects/$projectId/applications/$appId'
+    | '/projects/$projectId/compose/$stackId'
     | '/projects/$projectId/databases/$dbId'
   id:
     | '__root__'
@@ -444,14 +581,19 @@ export interface FileRouteTypes {
     | '/login'
     | '/_app/inbox'
     | '/_app/settings'
+    | '/invite/$token'
     | '/_app/'
     | '/_app/servers/$serverId'
+    | '/_app/settings/audit'
     | '/_app/settings/backup-targets'
     | '/_app/settings/deploy-keys'
+    | '/_app/settings/diagnostics'
     | '/_app/settings/dns'
     | '/_app/settings/mail'
     | '/_app/settings/profile'
+    | '/_app/settings/registries'
     | '/_app/settings/teams'
+    | '/_app/settings/tls'
     | '/_app/settings/users'
     | '/_app/projects/'
     | '/_app/servers/'
@@ -460,8 +602,10 @@ export interface FileRouteTypes {
     | '/_app/projects/$projectId/settings'
     | '/_app/projects/$projectId/'
     | '/_app/projects/$projectId/applications/$appId'
+    | '/_app/projects/$projectId/compose/$stackId'
     | '/_app/projects/$projectId/databases/$dbId'
     | '/_app/projects/$projectId/settings/notifiers'
+    | '/_app/projects/$projectId/settings/protection'
     | '/_app/projects/$projectId/settings/shared-variables'
     | '/_app/projects/$projectId/settings/webhooks'
     | '/_app/projects/$projectId/settings/'
@@ -472,16 +616,22 @@ export interface FileRouteTypes {
     | '/_app/projects/$projectId/applications/$appId/settings'
     | '/_app/projects/$projectId/applications/$appId/storage'
     | '/_app/projects/$projectId/applications/$appId/tasks'
+    | '/_app/projects/$projectId/compose/$stackId/env'
+    | '/_app/projects/$projectId/compose/$stackId/logs'
+    | '/_app/projects/$projectId/compose/$stackId/revisions'
+    | '/_app/projects/$projectId/compose/$stackId/settings'
     | '/_app/projects/$projectId/databases/$dbId/backups'
     | '/_app/projects/$projectId/databases/$dbId/connection'
     | '/_app/projects/$projectId/databases/$dbId/settings'
     | '/_app/projects/$projectId/applications/$appId/'
+    | '/_app/projects/$projectId/compose/$stackId/'
     | '/_app/projects/$projectId/databases/$dbId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   LoginRoute: typeof LoginRoute
+  InviteTokenRoute: typeof InviteTokenRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -521,6 +671,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSettingsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/invite/$token': {
+      id: '/invite/$token'
+      path: '/invite/$token'
+      fullPath: '/invite/$token'
+      preLoaderRoute: typeof InviteTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_app/projects/': {
       id: '/_app/projects/'
       path: '/projects'
@@ -549,6 +706,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSettingsIndexRouteImport
       parentRoute: typeof AppSettingsRoute
     }
+    '/_app/settings/audit': {
+      id: '/_app/settings/audit'
+      path: '/audit'
+      fullPath: '/settings/audit'
+      preLoaderRoute: typeof AppSettingsAuditRouteImport
+      parentRoute: typeof AppSettingsRoute
+    }
     '/_app/settings/backup-targets': {
       id: '/_app/settings/backup-targets'
       path: '/backup-targets'
@@ -561,6 +725,13 @@ declare module '@tanstack/react-router' {
       path: '/deploy-keys'
       fullPath: '/settings/deploy-keys'
       preLoaderRoute: typeof AppSettingsDeployKeysRouteImport
+      parentRoute: typeof AppSettingsRoute
+    }
+    '/_app/settings/diagnostics': {
+      id: '/_app/settings/diagnostics'
+      path: '/diagnostics'
+      fullPath: '/settings/diagnostics'
+      preLoaderRoute: typeof AppSettingsDiagnosticsRouteImport
       parentRoute: typeof AppSettingsRoute
     }
     '/_app/settings/dns': {
@@ -584,11 +755,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSettingsProfileRouteImport
       parentRoute: typeof AppSettingsRoute
     }
+    '/_app/settings/registries': {
+      id: '/_app/settings/registries'
+      path: '/registries'
+      fullPath: '/settings/registries'
+      preLoaderRoute: typeof AppSettingsRegistriesRouteImport
+      parentRoute: typeof AppSettingsRoute
+    }
     '/_app/settings/teams': {
       id: '/_app/settings/teams'
       path: '/teams'
       fullPath: '/settings/teams'
       preLoaderRoute: typeof AppSettingsTeamsRouteImport
+      parentRoute: typeof AppSettingsRoute
+    }
+    '/_app/settings/tls': {
+      id: '/_app/settings/tls'
+      path: '/tls'
+      fullPath: '/settings/tls'
+      preLoaderRoute: typeof AppSettingsTlsRouteImport
       parentRoute: typeof AppSettingsRoute
     }
     '/_app/settings/users': {
@@ -626,6 +811,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppProjectsProjectIdApplicationsAppIdRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/projects/$projectId/compose/$stackId': {
+      id: '/_app/projects/$projectId/compose/$stackId'
+      path: '/projects/$projectId/compose/$stackId'
+      fullPath: '/projects/$projectId/compose/$stackId'
+      preLoaderRoute: typeof AppProjectsProjectIdComposeStackIdRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/projects/$projectId/databases/$dbId': {
       id: '/_app/projects/$projectId/databases/$dbId'
       path: '/projects/$projectId/databases/$dbId'
@@ -645,6 +837,13 @@ declare module '@tanstack/react-router' {
       path: '/notifiers'
       fullPath: '/projects/$projectId/settings/notifiers'
       preLoaderRoute: typeof AppProjectsProjectIdSettingsNotifiersRouteImport
+      parentRoute: typeof AppProjectsProjectIdSettingsRoute
+    }
+    '/_app/projects/$projectId/settings/protection': {
+      id: '/_app/projects/$projectId/settings/protection'
+      path: '/protection'
+      fullPath: '/projects/$projectId/settings/protection'
+      preLoaderRoute: typeof AppProjectsProjectIdSettingsProtectionRouteImport
       parentRoute: typeof AppProjectsProjectIdSettingsRoute
     }
     '/_app/projects/$projectId/settings/shared-variables': {
@@ -717,6 +916,41 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppProjectsProjectIdApplicationsAppIdTasksRouteImport
       parentRoute: typeof AppProjectsProjectIdApplicationsAppIdRoute
     }
+    '/_app/projects/$projectId/compose/$stackId/': {
+      id: '/_app/projects/$projectId/compose/$stackId/'
+      path: '/'
+      fullPath: '/projects/$projectId/compose/$stackId/'
+      preLoaderRoute: typeof AppProjectsProjectIdComposeStackIdIndexRouteImport
+      parentRoute: typeof AppProjectsProjectIdComposeStackIdRoute
+    }
+    '/_app/projects/$projectId/compose/$stackId/env': {
+      id: '/_app/projects/$projectId/compose/$stackId/env'
+      path: '/env'
+      fullPath: '/projects/$projectId/compose/$stackId/env'
+      preLoaderRoute: typeof AppProjectsProjectIdComposeStackIdEnvRouteImport
+      parentRoute: typeof AppProjectsProjectIdComposeStackIdRoute
+    }
+    '/_app/projects/$projectId/compose/$stackId/logs': {
+      id: '/_app/projects/$projectId/compose/$stackId/logs'
+      path: '/logs'
+      fullPath: '/projects/$projectId/compose/$stackId/logs'
+      preLoaderRoute: typeof AppProjectsProjectIdComposeStackIdLogsRouteImport
+      parentRoute: typeof AppProjectsProjectIdComposeStackIdRoute
+    }
+    '/_app/projects/$projectId/compose/$stackId/revisions': {
+      id: '/_app/projects/$projectId/compose/$stackId/revisions'
+      path: '/revisions'
+      fullPath: '/projects/$projectId/compose/$stackId/revisions'
+      preLoaderRoute: typeof AppProjectsProjectIdComposeStackIdRevisionsRouteImport
+      parentRoute: typeof AppProjectsProjectIdComposeStackIdRoute
+    }
+    '/_app/projects/$projectId/compose/$stackId/settings': {
+      id: '/_app/projects/$projectId/compose/$stackId/settings'
+      path: '/settings'
+      fullPath: '/projects/$projectId/compose/$stackId/settings'
+      preLoaderRoute: typeof AppProjectsProjectIdComposeStackIdSettingsRouteImport
+      parentRoute: typeof AppProjectsProjectIdComposeStackIdRoute
+    }
     '/_app/projects/$projectId/databases/$dbId/': {
       id: '/_app/projects/$projectId/databases/$dbId/'
       path: '/'
@@ -749,23 +983,31 @@ declare module '@tanstack/react-router' {
 }
 
 interface AppSettingsRouteChildren {
+  AppSettingsAuditRoute: typeof AppSettingsAuditRoute
   AppSettingsBackupTargetsRoute: typeof AppSettingsBackupTargetsRoute
   AppSettingsDeployKeysRoute: typeof AppSettingsDeployKeysRoute
+  AppSettingsDiagnosticsRoute: typeof AppSettingsDiagnosticsRoute
   AppSettingsDnsRoute: typeof AppSettingsDnsRoute
   AppSettingsMailRoute: typeof AppSettingsMailRoute
   AppSettingsProfileRoute: typeof AppSettingsProfileRoute
+  AppSettingsRegistriesRoute: typeof AppSettingsRegistriesRoute
   AppSettingsTeamsRoute: typeof AppSettingsTeamsRoute
+  AppSettingsTlsRoute: typeof AppSettingsTlsRoute
   AppSettingsUsersRoute: typeof AppSettingsUsersRoute
   AppSettingsIndexRoute: typeof AppSettingsIndexRoute
 }
 
 const AppSettingsRouteChildren: AppSettingsRouteChildren = {
+  AppSettingsAuditRoute: AppSettingsAuditRoute,
   AppSettingsBackupTargetsRoute: AppSettingsBackupTargetsRoute,
   AppSettingsDeployKeysRoute: AppSettingsDeployKeysRoute,
+  AppSettingsDiagnosticsRoute: AppSettingsDiagnosticsRoute,
   AppSettingsDnsRoute: AppSettingsDnsRoute,
   AppSettingsMailRoute: AppSettingsMailRoute,
   AppSettingsProfileRoute: AppSettingsProfileRoute,
+  AppSettingsRegistriesRoute: AppSettingsRegistriesRoute,
   AppSettingsTeamsRoute: AppSettingsTeamsRoute,
+  AppSettingsTlsRoute: AppSettingsTlsRoute,
   AppSettingsUsersRoute: AppSettingsUsersRoute,
   AppSettingsIndexRoute: AppSettingsIndexRoute,
 }
@@ -776,6 +1018,7 @@ const AppSettingsRouteWithChildren = AppSettingsRoute._addFileChildren(
 
 interface AppProjectsProjectIdSettingsRouteChildren {
   AppProjectsProjectIdSettingsNotifiersRoute: typeof AppProjectsProjectIdSettingsNotifiersRoute
+  AppProjectsProjectIdSettingsProtectionRoute: typeof AppProjectsProjectIdSettingsProtectionRoute
   AppProjectsProjectIdSettingsSharedVariablesRoute: typeof AppProjectsProjectIdSettingsSharedVariablesRoute
   AppProjectsProjectIdSettingsWebhooksRoute: typeof AppProjectsProjectIdSettingsWebhooksRoute
   AppProjectsProjectIdSettingsIndexRoute: typeof AppProjectsProjectIdSettingsIndexRoute
@@ -785,6 +1028,8 @@ const AppProjectsProjectIdSettingsRouteChildren: AppProjectsProjectIdSettingsRou
   {
     AppProjectsProjectIdSettingsNotifiersRoute:
       AppProjectsProjectIdSettingsNotifiersRoute,
+    AppProjectsProjectIdSettingsProtectionRoute:
+      AppProjectsProjectIdSettingsProtectionRoute,
     AppProjectsProjectIdSettingsSharedVariablesRoute:
       AppProjectsProjectIdSettingsSharedVariablesRoute,
     AppProjectsProjectIdSettingsWebhooksRoute:
@@ -834,6 +1079,33 @@ const AppProjectsProjectIdApplicationsAppIdRouteWithChildren =
     AppProjectsProjectIdApplicationsAppIdRouteChildren,
   )
 
+interface AppProjectsProjectIdComposeStackIdRouteChildren {
+  AppProjectsProjectIdComposeStackIdEnvRoute: typeof AppProjectsProjectIdComposeStackIdEnvRoute
+  AppProjectsProjectIdComposeStackIdLogsRoute: typeof AppProjectsProjectIdComposeStackIdLogsRoute
+  AppProjectsProjectIdComposeStackIdRevisionsRoute: typeof AppProjectsProjectIdComposeStackIdRevisionsRoute
+  AppProjectsProjectIdComposeStackIdSettingsRoute: typeof AppProjectsProjectIdComposeStackIdSettingsRoute
+  AppProjectsProjectIdComposeStackIdIndexRoute: typeof AppProjectsProjectIdComposeStackIdIndexRoute
+}
+
+const AppProjectsProjectIdComposeStackIdRouteChildren: AppProjectsProjectIdComposeStackIdRouteChildren =
+  {
+    AppProjectsProjectIdComposeStackIdEnvRoute:
+      AppProjectsProjectIdComposeStackIdEnvRoute,
+    AppProjectsProjectIdComposeStackIdLogsRoute:
+      AppProjectsProjectIdComposeStackIdLogsRoute,
+    AppProjectsProjectIdComposeStackIdRevisionsRoute:
+      AppProjectsProjectIdComposeStackIdRevisionsRoute,
+    AppProjectsProjectIdComposeStackIdSettingsRoute:
+      AppProjectsProjectIdComposeStackIdSettingsRoute,
+    AppProjectsProjectIdComposeStackIdIndexRoute:
+      AppProjectsProjectIdComposeStackIdIndexRoute,
+  }
+
+const AppProjectsProjectIdComposeStackIdRouteWithChildren =
+  AppProjectsProjectIdComposeStackIdRoute._addFileChildren(
+    AppProjectsProjectIdComposeStackIdRouteChildren,
+  )
+
 interface AppProjectsProjectIdDatabasesDbIdRouteChildren {
   AppProjectsProjectIdDatabasesDbIdBackupsRoute: typeof AppProjectsProjectIdDatabasesDbIdBackupsRoute
   AppProjectsProjectIdDatabasesDbIdConnectionRoute: typeof AppProjectsProjectIdDatabasesDbIdConnectionRoute
@@ -869,6 +1141,7 @@ interface AppRouteChildren {
   AppProjectsProjectIdSettingsRoute: typeof AppProjectsProjectIdSettingsRouteWithChildren
   AppProjectsProjectIdIndexRoute: typeof AppProjectsProjectIdIndexRoute
   AppProjectsProjectIdApplicationsAppIdRoute: typeof AppProjectsProjectIdApplicationsAppIdRouteWithChildren
+  AppProjectsProjectIdComposeStackIdRoute: typeof AppProjectsProjectIdComposeStackIdRouteWithChildren
   AppProjectsProjectIdDatabasesDbIdRoute: typeof AppProjectsProjectIdDatabasesDbIdRouteWithChildren
 }
 
@@ -885,6 +1158,8 @@ const AppRouteChildren: AppRouteChildren = {
   AppProjectsProjectIdIndexRoute: AppProjectsProjectIdIndexRoute,
   AppProjectsProjectIdApplicationsAppIdRoute:
     AppProjectsProjectIdApplicationsAppIdRouteWithChildren,
+  AppProjectsProjectIdComposeStackIdRoute:
+    AppProjectsProjectIdComposeStackIdRouteWithChildren,
   AppProjectsProjectIdDatabasesDbIdRoute:
     AppProjectsProjectIdDatabasesDbIdRouteWithChildren,
 }
@@ -894,6 +1169,7 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   LoginRoute: LoginRoute,
+  InviteTokenRoute: InviteTokenRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -10,6 +10,7 @@ package subjects
 //	state.<server-id>.*  — agent status/heartbeat/deploy events + sync requests
 //	work.<server-id>.*   — work items to agents (rollout/remove/build)
 //	logs.<server-id>.*   — build/runtime log streams
+//	_INBOX_<server-id>.* — the agent's own request/reply inboxes (InboxPrefix)
 //
 // Every per-server subject lives under its server's segment, so one wildcard
 // per family covers a server's entire scope — the authorization grants in
@@ -87,6 +88,14 @@ func Build(serverID string) string   { return WorkPrefix + serverID + ".build" }
 // §4). Same work.<id>.> scope, so agent authorization is unchanged.
 func Converge(serverID string) string { return WorkPrefix + serverID + ".converge" }
 
+// Resync tells one agent to re-read its full desired state from Sync and
+// converge on it. It carries no state — the authoritative set is fetched, not
+// pushed — so it is the propagation channel for anything node-wide that is not
+// attached to a single Application (today: the panel's TLS settings,
+// agent-identity-and-tls.md §4). Same work.<id>.> scope, so agent
+// authorization is unchanged (rule 14, additive).
+func Resync(serverID string) string { return WorkPrefix + serverID + ".resync" }
+
 // PushImage and Distribute are the multi-server relay work subjects
 // (builder-role-and-relay.md §2): the builder pushes a built image to the
 // plane's relay, the target obtains it from there. Both sit under their
@@ -109,6 +118,21 @@ func Sync(serverID string) string { return StatePrefix + serverID + ".sync" }
 // TaskState is where an agent reports ScheduledTaskRun observations
 // (scheduled-tasks.md §3), per-server like the database backup/restore states.
 func TaskState(serverID string) string { return StatePrefix + serverID + ".task" }
+
+// InboxPrefix is the reply-inbox prefix an agent MUST configure on its NATS
+// connection (nats.CustomInboxPrefix). Request/reply — the desired-state sync
+// and every JetStream API call — answers on a subject under this prefix, and
+// the bus grants an agent Subscribe on exactly its own inbox scope
+// (InboxForServer). With the default shared "_INBOX" prefix every agent could
+// read every other agent's sync reply, which carries plaintext env
+// (threat-model §5.2; control-plane-hardening.md §1). The prefix carries no
+// dot so it is one subject token, and it is built here on both sides so the
+// grant and the client can never drift (rule 14).
+func InboxPrefix(serverID string) string { return "_INBOX_" + serverID }
+
+// InboxForServer is the wildcard covering one agent's reply inboxes — its
+// Subscribe grant for request/reply.
+func InboxForServer(serverID string) string { return InboxPrefix(serverID) + ".>" }
 
 // WorkConsumer names the durable JetStream consumer holding one server's
 // work-item cursor. The plane creates it (agents only read from it); the name
@@ -155,8 +179,21 @@ func DbBackupState(serverID string) string      { return StatePrefix + serverID 
 func DbRestoreState(serverID string) string     { return StatePrefix + serverID + ".dbrestore" }
 func DbBackupPruneState(serverID string) string { return StatePrefix + serverID + ".dbbackupprune" }
 
+// V1: Compose Stack subjects (docs/features/compose-stacks.md §4). Additive
+// (rule 14), inside the existing work.<server>.> / state.<server>.> scope, so
+// no new per-agent grant is needed.
+func ComposeConverge(serverID string) string { return WorkPrefix + serverID + ".compose.converge" }
+func ComposeRemove(serverID string) string   { return WorkPrefix + serverID + ".compose.remove" }
+
+// ComposeState is one stack's observation. The `.compose.` segment keeps it
+// clear of the app and db status wildcards.
+func ComposeState(serverID, stackID string) string {
+	return StatePrefix + serverID + ".compose." + stackID
+}
+
 // Plane-side consumption wildcards.
 const (
+	ComposeStateAll       = "state.*.compose.>"
 	DbStateAll            = "state.*.db.>"
 	DbBackupStateAll      = "state.*.dbbackup"
 	DbRestoreStateAll     = "state.*.dbrestore"

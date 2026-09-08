@@ -74,11 +74,19 @@ func (q *Queries) GetDeployment(ctx context.Context, id string) (Deployment, err
 }
 
 const listActiveDeployments = `-- name: ListActiveDeployments :many
+
 SELECT id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at, builder_server_id, env_resolved_at FROM deployments
-WHERE status NOT IN ('succeeded', 'failed')
+WHERE status NOT IN ('succeeded', 'failed', 'awaiting_approval')
 ORDER BY created_at
 `
 
+// The two queue queries below exclude 'awaiting_approval' as well as the two
+// terminal states (deploy-protection.md §3). A parked deploy has not finished,
+// but it holds no pipeline slot either: without the exclusion an approval
+// nobody got round to would sit at the head of its application's queue and
+// block every later deploy, and Scheduler.Recover would try to resume it on
+// boot. With it, approving simply re-enters the ordinary queue through
+// tryStart, and Recover needs no new case.
 func (q *Queries) ListActiveDeployments(ctx context.Context) ([]Deployment, error) {
 	rows, err := q.db.Query(ctx, listActiveDeployments)
 	if err != nil {
@@ -113,7 +121,7 @@ func (q *Queries) ListActiveDeployments(ctx context.Context) ([]Deployment, erro
 
 const listActiveDeploymentsByApplication = `-- name: ListActiveDeploymentsByApplication :many
 SELECT id, application_id, revision_id, status, trigger, detail, created_at, updated_at, finished_at, builder_server_id, env_resolved_at FROM deployments
-WHERE application_id = $1 AND status NOT IN ('succeeded', 'failed')
+WHERE application_id = $1 AND status NOT IN ('succeeded', 'failed', 'awaiting_approval')
 ORDER BY created_at
 `
 

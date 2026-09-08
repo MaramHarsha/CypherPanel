@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/store"
 )
@@ -104,10 +105,30 @@ func (a *API) handleDeletePreview(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if err := a.deps.Previews.DestroyByID(r.Context(), r.PathValue("id")); err != nil {
+	previewID := r.PathValue("id")
+	// Snapshot the chain BEFORE the teardown: destroying a preview deletes the
+	// environment the audit row would otherwise resolve its team from, and an
+	// entry that cannot be scoped cannot be read by the team it belongs to
+	// (audit-log.md §4). The automated teardowns — a closed PR, the TTL
+	// sweeper — record themselves inside core/previews with a system actor;
+	// this one has an operator to name.
+	preview, _ := a.deps.Previews.Get(r.Context(), previewID)
+	projectID, _ := a.projectIDForPreview(r.Context(), previewID)
+	if err := a.deps.Previews.DestroyByID(r.Context(), previewID); err != nil {
 		a.deps.Log.Error("destroying preview", "error", err)
 		writeError(w, http.StatusInternalServerError, "could not destroy preview")
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:    audit.ActionEnvironmentDeleted,
+		Resource:  audit.Resource(audit.ResourceEnvironment, preview.EnvironmentID, preview.Domain),
+		ProjectID: projectID,
+		Detail: map[string]any{
+			"kind":       domain.EnvPreview,
+			"preview_id": previewID,
+			"pr":         preview.PRNumber,
+			"reason":     "operator request",
+		},
+	})
 	w.WriteHeader(http.StatusAccepted)
 }

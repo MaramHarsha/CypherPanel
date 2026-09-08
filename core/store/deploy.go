@@ -67,8 +67,8 @@ func portsFromJSON(b []byte) []domain.PortMapping {
 
 // ─── Projects ───────────────────────────────────────────────────────────────
 
-func (s *Store) CreateProject(ctx context.Context, id, name, teamID string) (domain.Project, error) {
-	row, err := s.q.CreateProject(ctx, db.CreateProjectParams{ID: id, Name: name, TeamID: teamID})
+func (s *Store) CreateProject(ctx context.Context, id, name, teamID, slug string) (domain.Project, error) {
+	row, err := s.q.CreateProject(ctx, db.CreateProjectParams{ID: id, Name: name, TeamID: teamID, Slug: slug})
 	if err != nil {
 		return domain.Project{}, wrapCreate("creating project", err)
 	}
@@ -105,7 +105,7 @@ func (s *Store) DeleteProject(ctx context.Context, id string) error {
 // CreateProjectWithEnvironment creates a project and its default environment in
 // one transaction, so a project never exists without somewhere to put
 // resources (the spec's "default production env").
-func (s *Store) CreateProjectWithEnvironment(ctx context.Context, projectID, name, teamID, envID, envName string) (domain.Project, domain.Environment, error) {
+func (s *Store) CreateProjectWithEnvironment(ctx context.Context, projectID, name, teamID, slug, envID, envName string) (domain.Project, domain.Environment, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.Project{}, domain.Environment{}, fmt.Errorf("store: beginning tx: %w", err)
@@ -113,13 +113,21 @@ func (s *Store) CreateProjectWithEnvironment(ctx context.Context, projectID, nam
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
 	qtx := s.q.WithTx(tx)
-	prow, err := qtx.CreateProject(ctx, db.CreateProjectParams{ID: projectID, Name: name, TeamID: teamID})
-	if err != nil {
+	if _, err := qtx.CreateProject(ctx, db.CreateProjectParams{ID: projectID, Name: name, TeamID: teamID, Slug: slug}); err != nil {
 		return domain.Project{}, domain.Environment{}, wrapCreate("creating project", err)
 	}
 	erow, err := qtx.CreateEnvironment(ctx, db.CreateEnvironmentParams{ID: envID, ProjectID: projectID, Name: envName})
 	if err != nil {
 		return domain.Project{}, domain.Environment{}, wrapCreate("creating environment", err)
+	}
+	// The project's first environment is its default. Done inside the same
+	// transaction so a project never exists with environments but no default.
+	prow, err := qtx.UpdateProject(ctx, db.UpdateProjectParams{
+		ID:                   projectID,
+		DefaultEnvironmentID: pgtype.Text{String: envID, Valid: true},
+	})
+	if err != nil {
+		return domain.Project{}, domain.Environment{}, wrapUpdate("setting default environment", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.Project{}, domain.Environment{}, fmt.Errorf("store: committing project: %w", err)
@@ -147,6 +155,28 @@ func (s *Store) GetEnvironment(ctx context.Context, id string) (domain.Environme
 
 // DeleteEnvironment removes an environment; its applications and previews
 // cascade (preview-environments.md §4 teardown).
+// RenameEnvironment changes an environment's name. The unique (project_id,
+// name) index makes a collision a conflict rather than a silent overwrite.
+func (s *Store) RenameEnvironment(ctx context.Context, id, name string) (domain.Environment, error) {
+	row, err := s.q.RenameEnvironment(ctx, db.RenameEnvironmentParams{ID: id, Name: name})
+	if err != nil {
+		return domain.Environment{}, wrapUpdate("renaming environment", err)
+	}
+	return environmentFromRow(row), nil
+}
+
+// CreateEnvironmentOfKind creates an environment with an explicit kind, which
+// is how the preview lifecycle marks the ones it owns.
+func (s *Store) CreateEnvironmentOfKind(ctx context.Context, id, projectID, name, kind string) (domain.Environment, error) {
+	row, err := s.q.CreateEnvironmentOfKind(ctx, db.CreateEnvironmentOfKindParams{
+		ID: id, ProjectID: projectID, Name: name, Kind: kind,
+	})
+	if err != nil {
+		return domain.Environment{}, wrapCreate("creating environment", err)
+	}
+	return environmentFromRow(row), nil
+}
+
 func (s *Store) DeleteEnvironment(ctx context.Context, id string) error {
 	if err := s.q.DeleteEnvironment(ctx, id); err != nil {
 		return wrapDelete("deleting environment", err)
@@ -241,6 +271,9 @@ func appParams(a domain.Application) db.CreateApplicationParams {
 		MemoryLimitMb:         int4FromPtr(a.Runtime.MemoryLimitMB),
 		Volumes:               volumesJSON(a.Volumes),
 		Ports:                 portsJSON(a.Ports),
+		SourceRegistryID:      textFromPtr(a.Source.RegistryID),
+		BuildPushRegistryID:   textFromPtr(a.Build.PushRegistryID),
+		BuildPushRepository:   a.Build.PushRepository,
 	}
 }
 
@@ -353,9 +386,23 @@ func (s *Store) UpdateApplicationConfig(ctx context.Context, a domain.Applicatio
 		MemoryLimitMb:         int4FromPtr(a.Runtime.MemoryLimitMB),
 		Volumes:               volumesJSON(a.Volumes),
 		Ports:                 portsJSON(a.Ports),
+		SourceRegistryID:      textFromPtr(a.Source.RegistryID),
+		BuildPushRegistryID:   textFromPtr(a.Build.PushRegistryID),
+		BuildPushRepository:   a.Build.PushRepository,
 	})
 	if err != nil {
 		return domain.Application{}, wrapUpdate("updating application", err)
+	}
+	return applicationFromRow(row), nil
+}
+
+// BumpApplicationRestartToken records a restart (deployment-control.md §3).
+// Separate from UpdateApplicationConfig on purpose: a restart must not carry an
+// unrelated config edit along with it.
+func (s *Store) BumpApplicationRestartToken(ctx context.Context, id, token string) (domain.Application, error) {
+	row, err := s.q.BumpApplicationRestartToken(ctx, db.BumpApplicationRestartTokenParams{ID: id, RestartToken: token})
+	if err != nil {
+		return domain.Application{}, wrapUpdate("restarting application", err)
 	}
 	return applicationFromRow(row), nil
 }
@@ -590,6 +637,20 @@ func (s *Store) ListDeployKeys(ctx context.Context) ([]domain.DeployKey, error) 
 	return out, nil
 }
 
+// ListApplicationsByDeployKey names the applications still referencing a
+// deploy key — the blockers a refused delete reports.
+func (s *Store) ListApplicationsByDeployKey(ctx context.Context, keyID string) ([]domain.ApplicationRef, error) {
+	rows, err := s.q.ListApplicationsByDeployKey(ctx, pgtype.Text{String: keyID, Valid: true})
+	if err != nil {
+		return nil, fmt.Errorf("store: listing applications by deploy key: %w", err)
+	}
+	out := make([]domain.ApplicationRef, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, domain.ApplicationRef{ID: r.ID, Name: r.Name})
+	}
+	return out, nil
+}
+
 func (s *Store) DeleteDeployKey(ctx context.Context, id string) error {
 	if err := s.q.DeleteDeployKey(ctx, id); err != nil {
 		return wrapDelete("deleting deploy key", err)
@@ -612,11 +673,119 @@ func deployKeyFromRow(r db.DeployKey) domain.DeployKey {
 }
 
 func projectFromRow(r db.Project) domain.Project {
-	return domain.Project{ID: r.ID, Name: r.Name, TeamID: r.TeamID, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time}
+	p := domain.Project{
+		ID: r.ID, Name: r.Name, TeamID: r.TeamID, Slug: r.Slug,
+		LastActivityAt: r.LastActivityAt.Time,
+		CreatedAt:      r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time,
+	}
+	if r.DefaultEnvironmentID.Valid {
+		p.DefaultEnvironmentID = r.DefaultEnvironmentID.String
+	}
+	return p
 }
 
 func environmentFromRow(r db.Environment) domain.Environment {
-	return domain.Environment{ID: r.ID, ProjectID: r.ProjectID, Name: r.Name, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time}
+	return domain.Environment{
+		ID: r.ID, ProjectID: r.ProjectID, Name: r.Name, Kind: r.Kind,
+		CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time,
+	}
+}
+
+// UpdateProjectFields is a partial edit. A nil field is left alone;
+// ClearDefaultEnvironment is the one way to set the default back to nothing,
+// because a nil pointer already means "do not touch".
+type UpdateProjectFields struct {
+	Name                    *string
+	TeamID                  *string
+	Slug                    *string
+	DefaultEnvironmentID    *string
+	ClearDefaultEnvironment bool
+}
+
+func (s *Store) UpdateProject(ctx context.Context, id string, f UpdateProjectFields) (domain.Project, error) {
+	p := db.UpdateProjectParams{ID: id, ClearDefault: pgtype.Bool{Bool: f.ClearDefaultEnvironment, Valid: true}}
+	if f.Name != nil {
+		p.Name = pgtype.Text{String: *f.Name, Valid: true}
+	}
+	if f.TeamID != nil {
+		p.TeamID = pgtype.Text{String: *f.TeamID, Valid: true}
+	}
+	if f.Slug != nil {
+		p.Slug = pgtype.Text{String: *f.Slug, Valid: true}
+	}
+	if f.DefaultEnvironmentID != nil {
+		p.DefaultEnvironmentID = pgtype.Text{String: *f.DefaultEnvironmentID, Valid: true}
+	}
+	row, err := s.q.UpdateProject(ctx, p)
+	if err != nil {
+		return domain.Project{}, wrapUpdate("updating project", err)
+	}
+	return projectFromRow(row), nil
+}
+
+// SlugTakenInTeam reports whether a slug is already used in the team, which is
+// the scope of the unique index.
+func (s *Store) SlugTakenInTeam(ctx context.Context, teamID, slug string) (bool, error) {
+	taken, err := s.q.SlugTakenInTeam(ctx, db.SlugTakenInTeamParams{TeamID: teamID, Slug: slug})
+	if err != nil {
+		return false, wrap("checking project slug", err)
+	}
+	return taken, nil
+}
+
+// TouchProject records that something happened in the project.
+func (s *Store) TouchProject(ctx context.Context, id string) error {
+	if err := s.q.TouchProject(ctx, id); err != nil {
+		return wrap("touching project", err)
+	}
+	return nil
+}
+
+// TouchProjectForEnvironment is the same, reached through the environment id
+// most callers actually hold.
+func (s *Store) TouchProjectForEnvironment(ctx context.Context, envID string) error {
+	if err := s.q.TouchProjectForEnvironment(ctx, envID); err != nil {
+		return wrap("touching project for environment", err)
+	}
+	return nil
+}
+
+// worstStatusByRank maps the rank the rollup query computes back to the status
+// word. Kept beside the query it mirrors so the two cannot drift apart.
+func worstStatusByRank(rank int32) string {
+	switch rank {
+	case 5:
+		return domain.AppError
+	case 4:
+		return domain.AppDegraded
+	case 3:
+		return domain.AppDeploying
+	case 1:
+		return domain.AppRunning
+	default:
+		return domain.AppUnknown
+	}
+}
+
+// ProjectRollups returns per-project resource counts and worst status, keyed by
+// project id. Projects holding nothing are absent rather than zero-valued, so a
+// caller can tell "empty" from "not counted".
+func (s *Store) ProjectRollups(ctx context.Context) (map[string]domain.ProjectRollup, error) {
+	rows, err := s.q.ProjectRollups(ctx)
+	if err != nil {
+		return nil, wrap("rolling up projects", err)
+	}
+	out := make(map[string]domain.ProjectRollup, len(rows))
+	for _, r := range rows {
+		out[r.ProjectID] = domain.ProjectRollup{
+			ProjectID:        r.ProjectID,
+			ApplicationCount: r.ApplicationCount,
+			DatabaseCount:    r.DatabaseCount,
+			ErrorCount:       r.ErrorCount,
+			WorstStatus:      worstStatusByRank(r.WorstRank),
+		}
+	}
+	return out, nil
 }
 
 func applicationFromRow(r db.Application) domain.Application {
@@ -630,11 +799,14 @@ func applicationFromRow(r db.Application) domain.Application {
 			Branch:      r.SourceBranch,
 			DeployKeyID: ptrFromText(r.SourceDeployKeyID),
 			Image:       r.SourceImage,
+			RegistryID:  ptrFromText(r.SourceRegistryID),
 		},
 		Build: domain.AppBuild{
 			Kind:           r.BuildKind,
 			DockerfilePath: r.BuildDockerfilePath,
 			Context:        r.BuildContext,
+			PushRegistryID: ptrFromText(r.BuildPushRegistryID),
+			PushRepository: r.BuildPushRepository,
 		},
 		Runtime: domain.AppRuntime{
 			ServerID:      r.RuntimeServerID,
@@ -663,6 +835,7 @@ func applicationFromRow(r db.Application) domain.Application {
 		PreviewEnabled:     r.PreviewEnabled,
 		PreviewBaseDomain:  r.PreviewBaseDomain,
 		PreviewTTLHours:    int(r.PreviewTtlHours),
+		RestartToken:       r.RestartToken,
 		DesiredRevisionID:  ptrFromText(r.DesiredRevisionID),
 		Status:             r.Status,
 		StatusDetail:       r.StatusDetail,

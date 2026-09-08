@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/store"
 	"github.com/MaramHarsha/cypherpanel/core/teams"
@@ -48,6 +49,11 @@ func (a *API) handleCreateTeam(w http.ResponseWriter, r *http.Request) {
 		a.writeTeamError(w, "creating team", err)
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionTeamCreated,
+		Resource: audit.Resource(audit.ResourceTeam, t.ID, t.Name),
+		TeamID:   t.ID,
+	})
 	writeJSON(w, http.StatusCreated, teamDTO{ID: t.ID, Name: t.Name, Role: domain.RoleOwner, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt})
 }
 
@@ -93,11 +99,18 @@ func (a *API) handleRenameTeam(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	before, _ := a.deps.Teams.Get(r.Context(), teamID)
 	t, err := a.deps.Teams.Rename(r.Context(), teamID, req.Name)
 	if err != nil {
 		a.writeTeamError(w, "renaming team", err)
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionTeamRenamed,
+		Resource: audit.Resource(audit.ResourceTeam, t.ID, t.Name),
+		TeamID:   t.ID,
+		Detail:   map[string]any{"previous_name": before.Name},
+	})
 	writeJSON(w, http.StatusOK, teamDTO{ID: t.ID, Name: t.Name, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt})
 }
 
@@ -107,10 +120,20 @@ func (a *API) handleDeleteTeam(w http.ResponseWriter, r *http.Request) {
 	if !a.requireTeamRole(w, r, user, teamID, domain.RoleOwner) {
 		return
 	}
+	// Read the name before the row is gone: the entry outlives the team, and
+	// "tm_k7q2…" is not an answer to "which team was deleted?" (§2).
+	before, _ := a.deps.Teams.Get(r.Context(), teamID)
 	if err := a.deps.Teams.Delete(r.Context(), teamID); err != nil {
 		a.writeTeamError(w, "deleting team", err)
 		return
 	}
+	// TeamID is passed explicitly because there is nothing left to resolve it
+	// from — the deleting member must still be able to see what they did (§4).
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionTeamDeleted,
+		Resource: audit.Resource(audit.ResourceTeam, teamID, before.Name),
+		TeamID:   teamID,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -174,6 +197,12 @@ func (a *API) handleAddTeamMember(w http.ResponseWriter, r *http.Request) {
 		a.writeTeamError(w, "adding team member", err)
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionTeamMemberAdded,
+		Resource: audit.Resource(audit.ResourceTeam, teamID, ""),
+		TeamID:   teamID,
+		Detail:   map[string]any{"member_user_id": m.UserID, "member_email": m.Email, "role": m.Role},
+	})
 	writeJSON(w, http.StatusCreated, toTeamMemberDTO(m))
 }
 
@@ -196,6 +225,12 @@ func (a *API) handleChangeTeamMemberRole(w http.ResponseWriter, r *http.Request)
 		a.writeTeamError(w, "changing member role", err)
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionTeamMemberRoleChanged,
+		Resource: audit.Resource(audit.ResourceTeam, teamID, ""),
+		TeamID:   teamID,
+		Detail:   map[string]any{"member_user_id": m.UserID, "member_email": m.Email, "role": m.Role},
+	})
 	writeJSON(w, http.StatusOK, toTeamMemberDTO(m))
 }
 
@@ -210,6 +245,12 @@ func (a *API) handleRemoveTeamMember(w http.ResponseWriter, r *http.Request) {
 		a.writeTeamError(w, "removing team member", err)
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionTeamMemberRemoved,
+		Resource: audit.Resource(audit.ResourceTeam, teamID, ""),
+		TeamID:   teamID,
+		Detail:   map[string]any{"member_user_id": r.PathValue("uid")},
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -234,6 +275,11 @@ func (a *API) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		a.writeTeamError(w, "creating user", err)
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionUserCreated,
+		Resource: audit.Resource(audit.ResourceUser, u.ID, u.Email),
+		Detail:   map[string]any{"role": u.Role},
+	})
 	writeJSON(w, http.StatusCreated, userDTO{ID: u.ID, Email: u.Email, Role: u.Role})
 }
 
@@ -272,6 +318,11 @@ func (a *API) handleSetUserRole(w http.ResponseWriter, r *http.Request) {
 		a.writeTeamError(w, "setting user role", err)
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionUserRoleChanged,
+		Resource: audit.Resource(audit.ResourceUser, u.ID, u.Email),
+		Detail:   map[string]any{"role": u.Role},
+	})
 	writeJSON(w, http.StatusOK, userDTO{ID: u.ID, Email: u.Email, Role: u.Role})
 }
 
@@ -284,6 +335,12 @@ func (a *API) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		a.writeTeamError(w, "deleting user", err)
 		return
 	}
+	// The deleted account's own entries stay, still naming it: the actor label
+	// on every past row is a snapshot, not a live lookup (§2, canvas 14k).
+	a.audit(r, audit.Entry{
+		Action:   audit.ActionUserDeleted,
+		Resource: audit.Resource(audit.ResourceUser, r.PathValue("id"), ""),
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -128,7 +128,45 @@ const (
 	DbStopped      = "stopped"
 	DbError        = "error"
 	DbUnknown      = "unknown"
+	// DbRestoring is neither running nor stopped: the container is being taken
+	// down and brought back with different data underneath it. A screen that
+	// cannot say this has to show "stopped" and hope nobody acts on it.
+	DbRestoring = "restoring"
 )
+
+// Restore statuses and the steps a running one passes through, mirroring the
+// agent's DbRestoreEvent vocabulary so the two cannot drift.
+const (
+	RestoreRunning   = "running"
+	RestoreSucceeded = "succeeded"
+	RestoreFailed    = "failed"
+
+	RestoreStepFetching   = "fetching"
+	RestoreStepStopping   = "stopping"
+	RestoreStepApplying   = "applying"
+	RestoreStepRestarting = "restarting"
+)
+
+// DatabaseRestore is one attempt to put a backup back into a database.
+//
+// It is a record rather than a field on the database because it outlives the
+// operation: "this database was restored from last Tuesday's backup at 03:12,
+// and it failed halfway" is the thing someone needs afterwards, and a status
+// column can only ever say what is true now.
+type DatabaseRestore struct {
+	ID             string
+	DatabaseID     string
+	BackupRecordID string
+	Status         string
+	// Step is where a running restore has got to; empty once it is finished,
+	// because the status then says everything.
+	Step       string
+	BytesDone  int64
+	BytesTotal int64
+	Detail     string
+	StartedAt  time.Time
+	FinishedAt *time.Time
+}
 
 // Database desired-state intent (managed-databases.md §3). Authoritative for
 // the scheduler; distinct from the observed Status vocabulary above.

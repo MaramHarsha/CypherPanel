@@ -13,7 +13,7 @@
 ### `.github/workflows/integration.yml`
 Dockerized Postgres via `services:`, boots a real `cypherd` and real `cypher-agent`. Jobs:
 - **handshake** — enrolls a containerized agent; verifies the mTLS handshake, heartbeat-driven status, a plane-outage reconvergence, and revocation-on-delete. This **is** Phase 1's acceptance test, automated.
-- **installer** — the `curl | sh` join under 60 s on a fresh Ubuntu container, plus tampered-CA-fingerprint refusal.
+- **installer** — the `curl | sh` join under 60 s on a fresh Ubuntu container, that a pasted command with no `CYPHER_AGENT_URL` reaches for the project's latest release asset instead of dead-ending, plus tampered-CA-fingerprint refusal.
 - **store-tests** — the store layer against a real Postgres (ENGINEERING rule 29).
 - **deploy** — Phase 2 acceptance: a host-run agent (real Docker + git) clones a repo, builds a Dockerfile image, health-gates the rollout, the container actually serves, then a rollback re-ships the revision with the build skipped.
 - **deploy-resilience** — Phase 2 acceptance gate 2: a deploy triggered while the agent is down waits in the file-backed WORK stream; on restart the agent drains it and converges to the new revision with no manual step.

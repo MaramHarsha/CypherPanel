@@ -386,8 +386,8 @@ func TestInboxPreferencesRoundtrip(t *testing.T) {
 	if len(prefs.Muted) != 0 {
 		t.Fatalf("a fresh account starts muted: %v — mutes must default to empty", prefs.Muted)
 	}
-	if len(prefs.Available) != len(domain.EventTypes()) {
-		t.Fatalf("available_kinds = %v, want the taxonomy %v", prefs.Available, domain.EventTypes())
+	if len(prefs.Available) != len(domain.InboxKinds()) {
+		t.Fatalf("available_kinds = %v, want the inbox taxonomy %v", prefs.Available, domain.InboxKinds())
 	}
 
 	status, _, body = doJSON(t, "PUT", ts.URL+"/api/v1/inbox/preferences", token,

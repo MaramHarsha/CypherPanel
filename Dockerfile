@@ -32,9 +32,15 @@ RUN cd core && go mod download
 COPY . .
 # Drop the built web assets into the go:embed path, then build.
 COPY --from=web /src/web/dist ./core/api/rest/webui/dist
+# Stamped into the binary and served by GET /api/v1/panel/version and
+# `cypherd version` (docs/features/control-plane-hardening.md §3). Unset, they
+# stay "dev", which is also what tells the update check there is no release to
+# compare against.
 ARG VERSION=dev
+ARG COMMIT=dev
+ARG BUILD_DATE=""
 RUN cd core && CGO_ENABLED=0 go build \
-      -ldflags "-s -w -X main.version=${VERSION}" \
+      -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
       -o /out/cypherd ./cmd/cypherd
 
 # ── 3. runtime ───────────────────────────────────────────────────────────────

@@ -16,6 +16,13 @@ import (
 type fakeStore struct {
 	created []domain.DeployKey
 	deleted []string
+	// inUse maps a key id to the applications referencing it; a delete of such
+	// a key is refused the way the RESTRICT foreign key refuses it.
+	inUse map[string][]domain.ApplicationRef
+}
+
+func (f *fakeStore) ListApplicationsByDeployKey(_ context.Context, keyID string) ([]domain.ApplicationRef, error) {
+	return f.inUse[keyID], nil
 }
 
 func (f *fakeStore) CreateDeployKey(_ context.Context, dk domain.DeployKey) (domain.DeployKey, error) {
@@ -37,6 +44,9 @@ func (f *fakeStore) ListDeployKeys(context.Context) ([]domain.DeployKey, error) 
 }
 
 func (f *fakeStore) DeleteDeployKey(_ context.Context, id string) error {
+	if len(f.inUse[id]) > 0 {
+		return store.ErrInUse
+	}
 	f.deleted = append(f.deleted, id)
 	return nil
 }
@@ -126,5 +136,37 @@ func TestDeleteExistingKey(t *testing.T) {
 	}
 	if len(fs.deleted) != 1 || fs.deleted[0] != dk.ID {
 		t.Fatalf("deleted = %v, want [%s]", fs.deleted, dk.ID)
+	}
+}
+
+// TestDeleteInUseNamesTheBlockingApplications: a RESTRICTed delete comes back
+// as an InUseError listing the applications by id and name, and still matches
+// store.ErrInUse for callers that only map the status
+// (deploy-key-private-repos.md §3; control-plane-hardening.md §8).
+func TestDeleteInUseNamesTheBlockingApplications(t *testing.T) {
+	fs := &fakeStore{}
+	svc := NewService(fs, &fakeSealer{})
+	dk, err := svc.Create(context.Background(), "ci")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	fs.inUse = map[string][]domain.ApplicationRef{dk.ID: {{ID: "app_1", Name: "web"}, {ID: "app_2", Name: "api"}}}
+
+	err = svc.Delete(context.Background(), dk.ID)
+	if !errors.Is(err, store.ErrInUse) {
+		t.Fatalf("err = %v, want one matching store.ErrInUse", err)
+	}
+	var inUse *InUseError
+	if !errors.As(err, &inUse) {
+		t.Fatalf("err = %T, want *InUseError", err)
+	}
+	if len(inUse.Applications) != 2 || inUse.Applications[0].Name != "web" || inUse.Applications[1].ID != "app_2" {
+		t.Fatalf("blockers = %+v", inUse.Applications)
+	}
+	if !strings.Contains(err.Error(), "web, api") {
+		t.Fatalf("message %q does not name the applications", err.Error())
+	}
+	if len(fs.deleted) != 0 {
+		t.Fatal("the key was recorded as deleted despite the refusal")
 	}
 }

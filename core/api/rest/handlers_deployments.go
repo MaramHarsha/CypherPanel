@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/previews"
 	"github.com/MaramHarsha/cypherpanel/core/scheduler"
@@ -20,14 +21,20 @@ import (
 )
 
 type deploymentDTO struct {
-	ID            string  `json:"id"`
-	ApplicationID string  `json:"application_id"`
-	RevisionID    string  `json:"revision_id"`
-	Status        string  `json:"status"`
-	Trigger       string  `json:"trigger"`
-	Detail        string  `json:"detail"`
-	CreatedAt     string  `json:"created_at"`
-	FinishedAt    *string `json:"finished_at"`
+	ID            string `json:"id"`
+	ApplicationID string `json:"application_id"`
+	RevisionID    string `json:"revision_id"`
+	Status        string `json:"status"`
+	Trigger       string `json:"trigger"`
+	Detail        string `json:"detail"`
+	// Approval is the gate decision on this deployment, present only when it
+	// was gated (deploy-protection.md §6). It is what lets the drawer render
+	// the pending card — who asked, which rank must decide, and, once decided,
+	// who decided and why — without a second request. Additive and optional:
+	// an ungated deployment omits it entirely (ENGINEERING rule 17).
+	Approval   *deployApprovalDTO `json:"approval,omitempty"`
+	CreatedAt  string             `json:"created_at"`
+	FinishedAt *string            `json:"finished_at"`
 }
 
 func toDeploymentDTO(d domain.Deployment) deploymentDTO {
@@ -45,6 +52,56 @@ func toDeploymentDTO(d domain.Deployment) deploymentDTO {
 		dto.FinishedAt = &s
 	}
 	return dto
+}
+
+// withApproval renders one deployment with its gate decision attached.
+// Best-effort by design: the summary is a read model, so a failure to load it
+// must never fail a request that is otherwise answerable — the deployment comes
+// back without it, which is exactly what an ungated deployment looks like.
+func (a *API) withApproval(ctx context.Context, d domain.Deployment) deploymentDTO {
+	dto := toDeploymentDTO(d)
+	if a.deps.Protection == nil {
+		return dto
+	}
+	ap, err := a.deps.Protection.ApprovalFor(ctx, d.ID)
+	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			a.deps.Log.Warn("loading deploy approval", "deployment_id", d.ID, "error", err)
+		}
+		return dto
+	}
+	summary := toApprovalDTO(ap)
+	dto.Approval = &summary
+	return dto
+}
+
+// withApprovals renders a whole list, attaching gate decisions in ONE round
+// trip rather than one lookup per row.
+func (a *API) withApprovals(ctx context.Context, appID string, list []domain.Deployment) []deploymentDTO {
+	var approvals map[string]domain.DeployApproval
+	if a.deps.Protection != nil && len(list) > 0 {
+		// Only the ids on this page: decorating one bounded page with every
+		// gate decision the application has ever had would grow with its whole
+		// history rather than with the answer.
+		ids := make([]string, 0, len(list))
+		for _, d := range list {
+			ids = append(ids, d.ID)
+		}
+		var err error
+		if approvals, err = a.deps.Protection.ApprovalsForApplication(ctx, appID, ids); err != nil {
+			a.deps.Log.Warn("loading deploy approvals", "app_id", appID, "error", err)
+		}
+	}
+	out := make([]deploymentDTO, 0, len(list))
+	for _, d := range list {
+		dto := toDeploymentDTO(d)
+		if ap, ok := approvals[d.ID]; ok {
+			summary := toApprovalDTO(ap)
+			dto.Approval = &summary
+		}
+		out = append(out, dto)
+	}
+	return out
 }
 
 type deployRequest struct {
@@ -69,24 +126,92 @@ func (a *API) handleDeployApplication(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	dep, err := a.deps.Scheduler.Deploy(r.Context(), r.PathValue("id"), "manual", req.Ref)
+	// The entry is built BEFORE the call: a refusal returns a zero deployment,
+	// and a row that names no application is not worth writing.
+	entry := a.appAuditEntry(r.Context(), audit.ActionDeployStarted, r.PathValue("id"),
+		map[string]any{"trigger": "manual", "ref": req.Ref})
+	dep, err := a.deps.Scheduler.DeployAs(r.Context(), r.PathValue("id"), "manual", req.Ref, user.ID)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "application not found")
+		return
+	}
+	// A deploy refused by a freeze window is a first-class row: "why did
+	// nothing ship on Friday?" is answered by the log, not by guessing
+	// (deploy-protection.md §6, canvas 13t).
+	if frozen := frozenDetail(err); frozen != "" {
+		a.auditFailed(r, entry, frozen)
+	}
+	if writeIfFrozen(w, err) {
 		return
 	}
 	if err != nil {
 		if dep.ID != "" {
 			// The pipeline started and failed fast (no builder available, a
 			// dangling deploy key): the deployment record carries the reason
-			// in its detail — return it rather than an opaque 500.
-			writeJSON(w, http.StatusAccepted, toDeploymentDTO(dep))
+			// in its detail — return it rather than an opaque 500. It is
+			// recorded as a failed deploy, because it is one.
+			entry.Resource = audit.Resource(audit.ResourceDeployment, dep.ID, entry.Resource.Name)
+			entry.Detail["application_id"] = dep.ApplicationID
+			a.auditFailed(r, entry, string(dep.Status))
+			writeJSON(w, http.StatusAccepted, a.withApproval(r.Context(), dep))
 			return
 		}
 		a.deps.Log.Error("starting deployment", "error", err)
 		writeError(w, http.StatusInternalServerError, "could not start deployment")
 		return
 	}
-	writeJSON(w, http.StatusAccepted, toDeploymentDTO(dep))
+	// A deployment that parked for approval is still a deploy that was asked
+	// for; its status is on the deployment record.
+	entry.Resource = audit.Resource(audit.ResourceDeployment, dep.ID, entry.Resource.Name)
+	entry.Detail["application_id"] = dep.ApplicationID
+	entry.Detail["status"] = string(dep.Status)
+	a.audit(r, entry)
+	writeJSON(w, http.StatusAccepted, a.withApproval(r.Context(), dep))
+}
+
+// appAuditEntry builds an entry scoped to an application, resolving its name
+// and environment for the snapshot before the action runs — which matters for
+// the deploy path, where the resource is the DEPLOYMENT and the application is
+// only its context.
+func (a *API) appAuditEntry(ctx context.Context, action, appID string, detail map[string]any) audit.Entry {
+	var app domain.Application
+	if a.deps.Applications != nil {
+		app, _ = a.deps.Applications.Get(ctx, appID)
+	}
+	if detail == nil {
+		detail = map[string]any{}
+	}
+	detail["application"] = app.Name
+	return audit.Entry{
+		Action:        action,
+		Resource:      audit.Resource(audit.ResourceApplication, appID, app.Name),
+		EnvironmentID: app.EnvironmentID,
+		Detail:        detail,
+	}
+}
+
+// frozenDetail returns a freeze refusal's explanation, or "" when err is not
+// one. It is the audit half of writeIfFrozen, kept separate so the response and
+// the record cannot drift apart.
+func frozenDetail(err error) string {
+	var frozen *scheduler.FrozenError
+	if errors.As(err, &frozen) {
+		return frozen.Detail
+	}
+	return ""
+}
+
+// writeIfFrozen answers 409 when a deploy was refused by a freeze window,
+// naming the window and when it lifts so the caller can simply retry after it
+// (deploy-protection.md §6). Nothing was written, so there is no record to
+// return alongside it.
+func writeIfFrozen(w http.ResponseWriter, err error) bool {
+	var frozen *scheduler.FrozenError
+	if errors.As(err, &frozen) {
+		writeError(w, http.StatusConflict, frozen.Detail)
+		return true
+	}
+	return false
 }
 
 func (a *API) handleListDeployments(w http.ResponseWriter, r *http.Request) {
@@ -112,11 +237,7 @@ func (a *API) handleListDeployments(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not list deployments")
 		return
 	}
-	out := make([]deploymentDTO, 0, len(list))
-	for _, d := range list {
-		out = append(out, toDeploymentDTO(d))
-	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, a.withApprovals(r.Context(), appID, list))
 }
 
 func (a *API) handleGetDeployment(w http.ResponseWriter, r *http.Request) {
@@ -136,7 +257,7 @@ func (a *API) handleGetDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not get deployment")
 		return
 	}
-	writeJSON(w, http.StatusOK, toDeploymentDTO(dep))
+	writeJSON(w, http.StatusOK, a.withApproval(r.Context(), dep))
 }
 
 // handleGetDeploymentLogs streams a deployment's build logs as SSE: retained
@@ -176,13 +297,27 @@ func (a *API) handleRollback(w http.ResponseWriter, r *http.Request) {
 	}) {
 		return
 	}
-	dep, err := a.deps.Scheduler.Rollback(r.Context(), r.PathValue("id"))
+	// Resolved from the SOURCE deployment, before the call: every refusal path
+	// below returns a zero deployment, so this is the only point at which the
+	// application behind a failed rollback is still knowable.
+	src, _ := a.deps.Deployments.GetDeployment(r.Context(), r.PathValue("id"))
+	rollback := a.appAuditEntry(r.Context(), audit.ActionRollback, src.ApplicationID,
+		map[string]any{"rolled_back_from": r.PathValue("id")})
+
+	dep, err := a.deps.Scheduler.RollbackAs(r.Context(), r.PathValue("id"), user.ID)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "deployment not found")
 		return
 	}
 	if errors.Is(err, scheduler.ErrRevisionNotBuilt) {
+		a.auditFailed(r, rollback, "the revision was never built")
 		writeError(w, http.StatusConflict, "that deployment's revision was never built — nothing to roll back to")
+		return
+	}
+	if frozen := frozenDetail(err); frozen != "" {
+		a.auditFailed(r, rollback, frozen)
+	}
+	if writeIfFrozen(w, err) {
 		return
 	}
 	if err != nil {
@@ -190,7 +325,11 @@ func (a *API) handleRollback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not start rollback")
 		return
 	}
-	writeJSON(w, http.StatusAccepted, toDeploymentDTO(dep))
+	rollback.Resource = audit.Resource(audit.ResourceDeployment, dep.ID, rollback.Resource.Name)
+	rollback.Detail["application_id"] = dep.ApplicationID
+	rollback.Detail["status"] = string(dep.Status)
+	a.audit(r, rollback)
+	writeJSON(w, http.StatusAccepted, a.withApproval(r.Context(), dep))
 }
 
 // githubPushEvent is the subset of GitHub's push payload the webhook needs.
@@ -260,13 +399,36 @@ func (a *API) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent) // authenticated, but not a deployable push
 		return
 	}
-	dep, err := a.deps.Scheduler.Deploy(r.Context(), app.ID, "webhook", push.After)
+	// No requester: a push is not a person, so a parked webhook deploy stores
+	// a NULL requested_by and its approval card says "pushed via webhook"
+	// (deploy-protection.md §2).
+	dep, err := a.deps.Scheduler.DeployAs(r.Context(), app.ID, "webhook", push.After, "")
+	// A push is not a person, so the actor is the mechanism: kind `system`,
+	// labelled by the channel that carried it. That is honest, and it keeps
+	// "which deploys had no human behind them" a one-filter question.
+	hook := audit.Entry{
+		Action:        audit.ActionDeployStarted,
+		Actor:         domain.AuditActor{Kind: domain.AuditActorSystem, Label: "github webhook"},
+		Resource:      audit.Resource(audit.ResourceApplication, app.ID, app.Name),
+		EnvironmentID: app.EnvironmentID,
+		Detail:        map[string]any{"trigger": "webhook", "ref": push.After, "application": app.Name},
+	}
+	if frozen := frozenDetail(err); frozen != "" {
+		a.auditFailed(r, hook, frozen)
+	}
+	if writeIfFrozen(w, err) {
+		return
+	}
 	if err != nil {
 		a.deps.Log.Error("webhook deploy", "app_id", app.ID, "error", err)
 		writeError(w, http.StatusInternalServerError, "could not start deployment")
 		return
 	}
-	writeJSON(w, http.StatusAccepted, toDeploymentDTO(dep))
+	hook.Resource = audit.Resource(audit.ResourceDeployment, dep.ID, app.Name)
+	hook.Detail["application_id"] = app.ID
+	hook.Detail["status"] = string(dep.Status)
+	a.audit(r, hook)
+	writeJSON(w, http.StatusAccepted, a.withApproval(r.Context(), dep))
 }
 
 // handlePullRequestWebhook drives preview environments from an already-
@@ -323,4 +485,83 @@ func (a *API) verifyWebhookSignature(app domain.Application, body []byte, header
 	mac := hmac.New(sha256.New, secret)
 	mac.Write(body)
 	return hmac.Equal(mac.Sum(nil), theirs)
+}
+
+// handleCancelDeployment ends a deployment the operator has stopped waiting on
+// (deployment-control.md §2).
+//
+// A cancel is the panel stopping waiting, not a remote kill: a build already in
+// flight finishes on its builder. The 409 at `rolling_out` is the honest half —
+// desired state has already moved by then, and the recovery is a rollback.
+func (a *API) handleCancelDeployment(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForDeployment(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
+	// Built before the call: every refusal path returns a zero deployment, and
+	// this is the only point at which the application behind one is knowable.
+	src, _ := a.deps.Deployments.GetDeployment(r.Context(), r.PathValue("id"))
+	entry := a.appAuditEntry(r.Context(), audit.ActionDeployCancelled, src.ApplicationID,
+		map[string]any{"deployment_id": r.PathValue("id"), "status": string(src.Status)})
+
+	dep, err := a.deps.Scheduler.Cancel(r.Context(), r.PathValue("id"), user.Email)
+	switch {
+	case err == nil:
+	case errors.Is(err, store.ErrNotFound):
+		writeError(w, http.StatusNotFound, "deployment not found")
+		return
+	case errors.Is(err, scheduler.ErrCannotCancel):
+		a.auditFailed(r, entry, string(dep.Status))
+		if dep.Status == domain.DeployRollingOut {
+			writeError(w, http.StatusConflict,
+				"this deploy is already rolling out — roll back instead of cancelling")
+			return
+		}
+		writeError(w, http.StatusConflict, "this deploy has already finished")
+		return
+	default:
+		a.deps.Log.Error("cancelling deployment", "deployment_id", r.PathValue("id"), "error", err)
+		writeError(w, http.StatusInternalServerError, "could not cancel the deployment")
+		return
+	}
+	entry.Resource = audit.Resource(audit.ResourceDeployment, dep.ID, entry.Resource.Name)
+	a.audit(r, entry)
+	writeJSON(w, http.StatusOK, a.withApproval(r.Context(), dep))
+}
+
+// handleRestartApplication recreates an application's container without
+// shipping a new revision (deployment-control.md §3).
+//
+// It returns the application rather than a deployment, because a restart is not
+// one: no revision is created, no build runs, and desired_revision_id does not
+// move — an operator restarting a wedged container must not silently ship the
+// config they edited an hour ago.
+func (a *API) handleRestartApplication(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForApplication(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
+	entry := a.appAuditEntry(r.Context(), audit.ActionApplicationRestarted, r.PathValue("id"), nil)
+
+	app, err := a.deps.Scheduler.Restart(r.Context(), r.PathValue("id"))
+	switch {
+	case err == nil:
+	case errors.Is(err, store.ErrNotFound):
+		writeError(w, http.StatusNotFound, "application not found")
+		return
+	case errors.Is(err, scheduler.ErrNeverDeployed):
+		a.auditFailed(r, entry, "the application has never deployed")
+		writeError(w, http.StatusConflict, "this application has never deployed — deploy it first")
+		return
+	default:
+		a.deps.Log.Error("restarting application", "app_id", r.PathValue("id"), "error", err)
+		writeError(w, http.StatusInternalServerError, "could not restart the application")
+		return
+	}
+	a.audit(r, entry)
+	writeJSON(w, http.StatusAccepted, toApplicationDTO(app))
 }

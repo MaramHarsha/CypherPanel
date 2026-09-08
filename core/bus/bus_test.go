@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"io"
@@ -123,7 +124,9 @@ func TestStartRejectsInvalidRuntimeLogLimits(t *testing.T) {
 }
 
 // dialAgent attempts to connect to the bus as an agent holding a valid cert
-// for serverID, returning the connection or the connect error.
+// for serverID, returning the connection or the connect error. It connects
+// the way conn.ConnectBus does — with the per-identity inbox prefix — so every
+// request/reply test here exercises the grant production agents run under.
 func dialAgent(b *Bus, ca *pki.CA, serverID string, opts ...nats.Option) (*nats.Conn, error) {
 	key, csr, err := pki.GenerateAgentKey(serverID)
 	if err != nil {
@@ -138,7 +141,11 @@ func dialAgent(b *Bus, ca *pki.CA, serverID string, opts ...nats.Option) (*nats.
 		return nil, err
 	}
 	url := "tls://" + b.Addr().String()
-	opts = append([]nats.Option{nats.Secure(clientCfg), nats.Timeout(5 * time.Second)}, opts...)
+	opts = append([]nats.Option{
+		nats.Secure(clientCfg),
+		nats.Timeout(5 * time.Second),
+		nats.CustomInboxPrefix(subjects.InboxPrefix(serverID)),
+	}, opts...)
 	return nats.Connect(url, opts...)
 }
 
@@ -413,6 +420,139 @@ func TestDesiredStateSync(t *testing.T) {
 	}
 }
 
+// TestAgentInboxIsIsolatedPerIdentity is the threat-model §5.2 property the
+// inbox grant exists for (control-plane-hardening.md §1): srv_beta may not
+// subscribe to the bare "_INBOX.>" wildcard nor to srv_alpha's inbox scope, so
+// srv_alpha's sync reply — plaintext DesiredState — reaches srv_alpha alone.
+func TestAgentInboxIsIsolatedPerIdentity(t *testing.T) {
+	b, ca, _ := startTestBus(t, "srv_alpha", "srv_beta")
+	if err := b.RespondDesiredState(func(serverID string) ([]byte, error) {
+		return proto.Marshal(&agentv1.DesiredState{Specs: []*agentv1.AppSpec{{AppId: "secret-app-of-" + serverID, Env: map[string]string{"DB_PASSWORD": "hunter2"}}}})
+	}); err != nil {
+		t.Fatalf("RespondDesiredState: %v", err)
+	}
+
+	// The eavesdropper: every subscription it attempts must be refused, and
+	// nothing may ever be delivered to it.
+	violations := make(chan error, 8)
+	leaked := make(chan *nats.Msg, 8)
+	beta := agentConn(t, b, ca, "srv_beta", nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, e error) {
+		violations <- e
+	}))
+	for _, subj := range []string{"_INBOX.>", subjects.InboxForServer("srv_alpha"), subjects.InboxPrefix("srv_alpha") + ".*.*"} {
+		if _, err := beta.Subscribe(subj, func(m *nats.Msg) { leaked <- m }); err != nil {
+			t.Fatalf("Subscribe(%s) returned a synchronous error %v; permission violations arrive asynchronously", subj, err)
+		}
+	}
+	if err := beta.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		select {
+		case e := <-violations:
+			if !strings.Contains(strings.ToLower(e.Error()), "permission") {
+				t.Fatalf("error %d = %v, want a permissions violation", i, e)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("subscription %d was not refused", i)
+		}
+	}
+
+	// The victim syncs; its own reply arrives, and srv_beta sees nothing.
+	alpha := agentConn(t, b, ca, "srv_alpha")
+	resp, err := alpha.Request(subjects.Sync("srv_alpha"), nil, 5*time.Second)
+	if err != nil {
+		t.Fatalf("srv_alpha sync request: %v", err)
+	}
+	var ds agentv1.DesiredState
+	if err := proto.Unmarshal(resp.Data, &ds); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(ds.Specs) != 1 || ds.Specs[0].GetAppId() != "secret-app-of-srv_alpha" {
+		t.Fatalf("srv_alpha got %+v, want its own desired state", ds.Specs)
+	}
+	select {
+	case m := <-leaked:
+		t.Fatalf("srv_beta received %q on %s — cross-agent inbox read", m.Data, m.Subject)
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	// An agent that ignores the contract and requests with the default
+	// "_INBOX" prefix can subscribe to no reply subject, so it hears nothing:
+	// the grant, not the client's good behaviour, is what closes the leak.
+	legacy, err := dialAgent(b, ca, "srv_beta", nats.CustomInboxPrefix("_INBOX"), nats.ErrorHandler(func(*nats.Conn, *nats.Subscription, error) {}))
+	if err != nil {
+		t.Fatalf("legacy dial: %v", err)
+	}
+	defer legacy.Close()
+	if _, err := legacy.Request(subjects.Sync("srv_beta"), nil, time.Second); err == nil {
+		t.Fatal("a request on the shared _INBOX prefix was answered; the inbox grant is not per identity")
+	}
+}
+
+// TestSyncReplySubjectMustBeInTheRequestersInbox is the other half of the
+// inbox grant (control-plane-hardening.md §1). A requester picks its own reply
+// subject and NATS does not permission-check it under these grants, so the
+// plane must: without the check in RespondDesiredState, an enrolled agent can
+// name any subject as its reply and the plane's unrestricted in-process client
+// publishes onto it — here a plane-internal deploy-event subject belonging to
+// another server.
+func TestSyncReplySubjectMustBeInTheRequestersInbox(t *testing.T) {
+	b, ca, _ := startTestBus(t, "srv_alpha", "srv_beta")
+	if err := b.RespondDesiredState(func(serverID string) ([]byte, error) {
+		return proto.Marshal(&agentv1.DesiredState{Specs: []*agentv1.AppSpec{{AppId: "secret-app-of-" + serverID}}})
+	}); err != nil {
+		t.Fatalf("RespondDesiredState: %v", err)
+	}
+
+	received := make(chan []byte, 4)
+	cc, err := b.ConsumeDeployEvents(context.Background(), func(_ string, data []byte) {
+		received <- data
+	})
+	if err != nil {
+		t.Fatalf("ConsumeDeployEvents: %v", err)
+	}
+	defer cc.Stop()
+
+	// srv_beta asks for its own state (the only subject it may publish on)
+	// but points the answer at srv_alpha's deploy-event subject.
+	beta := agentConn(t, b, ca, "srv_beta")
+	if err := beta.PublishRequest(subjects.Sync("srv_beta"), subjects.DeployState("srv_alpha"), nil); err != nil {
+		t.Fatalf("beta sync request: %v", err)
+	}
+	if err := beta.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+
+	// A marker published after it: the stream preserves order, so if the
+	// plane answered the hijacked reply the leaked payload arrives first.
+	// The marker also proves the consumer and the timing window are live, so
+	// the negative assertion cannot pass by being too fast.
+	marker, err := proto.Marshal(&agentv1.DeployEvent{DeploymentId: "marker"})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	alpha := agentConn(t, b, ca, "srv_alpha")
+	if err := alpha.Publish(subjects.DeployState("srv_alpha"), marker); err != nil {
+		t.Fatalf("publish marker: %v", err)
+	}
+	if err := alpha.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+
+	select {
+	case got := <-received:
+		if !bytes.Equal(got, marker) {
+			var ds agentv1.DesiredState
+			_ = proto.Unmarshal(got, &ds)
+			t.Fatalf("the plane published a desired-state reply onto %s (%d bytes, specs %+v); the reply subject is not validated",
+				subjects.DeployState("srv_alpha"), len(got), ds.Specs)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the marker deploy event never arrived; the consumer never observed anything")
+	}
+}
+
 // TestDeployEventAndAppStatusConsumers: agent publications on the deploy and
 // app-status subjects reach the plane consumers with the server id parsed
 // from the (permission-pinned) subject.
@@ -494,7 +634,7 @@ func TestSubscribeLogsReplaysThenTails(t *testing.T) {
 	}
 
 	got := make(chan string, 16)
-	stop, err := b.SubscribeLogs(context.Background(), subject, func(data []byte) {
+	stop, err := b.SubscribeLogs(context.Background(), subject, time.Time{}, func(data []byte) {
 		got <- string(data)
 	})
 	if err != nil {

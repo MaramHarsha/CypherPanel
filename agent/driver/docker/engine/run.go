@@ -189,11 +189,18 @@ func (c *Client) EnsureContainer(ctx context.Context, cfg RunConfig) error {
 // JSON-lines pull progress; this reads it to completion and surfaces a stream
 // error (auth failure, missing tag) as the returned error.
 func (c *Client) PullImage(ctx context.Context, ref string) error {
+	return c.PullImageAuth(ctx, ref, "")
+}
+
+// PullImageAuth is PullImage against a private registry. registryAuth is the
+// encoded credential (pkg/registryauth); empty pulls anonymously, which is what
+// every public image does.
+func (c *Client) PullImageAuth(ctx context.Context, ref, registryAuth string) error {
 	name, tag := splitRef(ref)
 	q := url.Values{}
 	q.Set("fromImage", name)
 	q.Set("tag", tag)
-	resp, err := c.do(ctx, http.MethodPost, "/images/create", q, nil, "")
+	resp, err := c.doAuth(ctx, http.MethodPost, "/images/create", q, nil, "", registryAuth)
 	if err != nil {
 		return err
 	}
@@ -252,7 +259,10 @@ func splitRef(ref string) (name, tag string) {
 // This does not weaken the reconciler invariants: only the create branch calls
 // EnsureImage, and a converged app never enters it (the desired revision is
 // already running), so converge-twice still makes zero calls.
-func (c *Client) EnsureImage(ctx context.Context, ref string) error {
+//
+// registryAuth is the encoded credential for a private registry
+// (pkg/registryauth); empty is the anonymous fetch every public image does.
+func (c *Client) EnsureImage(ctx context.Context, ref, registryAuth string) error {
 	if strings.Contains(ref, "@") {
 		var ignored struct{}
 		err := c.doJSON(ctx, http.MethodGet, "/images/"+url.PathEscape(ref)+"/json", nil, nil, &ignored)
@@ -264,7 +274,41 @@ func (c *Client) EnsureImage(ctx context.Context, ref string) error {
 			return fmt.Errorf("engine: inspecting image %s: %w", ref, err)
 		}
 	}
-	return c.PullImage(ctx, ref)
+	return c.PullImageAuth(ctx, ref, registryAuth)
+}
+
+// PushImage streams a local image to its registry (ADR-008 path 3). The daemon
+// answers with the same JSON-lines progress stream a pull uses, and an error
+// there — a rejected credential, a repository the token cannot write — is only
+// visible by reading it to the end. A 200 with an error line in the body is
+// still a failure.
+func (c *Client) PushImage(ctx context.Context, ref, registryAuth string) error {
+	name, tag := splitRef(ref)
+	q := url.Values{}
+	q.Set("tag", tag)
+	// The name goes into the path literally: a registry namespace contains "/"
+	// the daemon expects unescaped, exactly as SaveImage does.
+	resp, err := c.doAuth(ctx, http.MethodPost, "/images/"+name+"/push", q, nil, "", registryAuth)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	dec := json.NewDecoder(resp.Body)
+	for {
+		var line struct {
+			Error string `json:"error"`
+		}
+		if err := dec.Decode(&line); err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return fmt.Errorf("engine: reading push stream: %w", err)
+		}
+		if line.Error != "" {
+			return fmt.Errorf("engine: push failed: %s", strings.TrimSpace(line.Error))
+		}
+	}
 }
 
 // ImageDigest returns the immutable digest reference (repo@sha256:…) of a local

@@ -13,6 +13,7 @@ import (
 
 	"github.com/MaramHarsha/cypherpanel/agent/driver"
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
+	"github.com/MaramHarsha/cypherpanel/pkg/registryauth"
 )
 
 // gitEnv hardens git invocations: never prompt for credentials (a private
@@ -27,21 +28,51 @@ var gitEnv = append(os.Environ(),
 	"GIT_ALLOW_PROTOCOL=https:http:git:ssh:file",
 )
 
-// EngineClient is the interface needed from the docker engine client to build images.
+// EngineClient is the interface needed from the docker engine client to build
+// images — and, when the deploy asked for it, to push the result somewhere the
+// operator already runs a registry (ADR-008 path 3).
 type EngineClient interface {
-	BuildImage(ctx context.Context, buildContext io.Reader, tag, dockerfile string, labels map[string]string, onLog func(line string)) error
+	BuildImage(ctx context.Context, buildContext io.Reader, tag, dockerfile string, labels map[string]string, registryConfig string, onLog func(line string)) error
+	TagImage(ctx context.Context, source, target string) error
+	PushImage(ctx context.Context, ref, registryAuth string) error
 }
 
 type Builder struct {
 	engine  EngineClient
 	workDir string
+	// packs are the build packs this builder can reach, by build kind
+	// (pack-builds.md). Never nil: NewBuilder installs the real ones, and each
+	// pack's Available() is what decides whether detection may reach for it.
+	packs map[string]Pack
+	// buildKit is the second transport, for a pack whose output is a frontend
+	// plan rather than a Dockerfile (§2).
+	buildKit BuildKitBuilder
 }
 
 func NewBuilder(engine EngineClient, workDir string) *Builder {
-	return &Builder{
-		engine:  engine,
-		workDir: workDir,
+	return NewBuilderWithPacks(engine, workDir, BuildxCLI{}, map[string]Pack{
+		kindNixpacks: Nixpacks{},
+		kindRailpack: Railpack{},
+	})
+}
+
+// NewBuilderWithPacks is NewBuilder with the packs and the second transport
+// supplied, so the builder's routing is testable without either installed.
+func NewBuilderWithPacks(engine EngineClient, workDir string, bk BuildKitBuilder, packs map[string]Pack) *Builder {
+	return &Builder{engine: engine, workDir: workDir, packs: packs, buildKit: bk}
+}
+
+// packFor returns the pack for a build kind, or nil when the kind is not one.
+func (b *Builder) packFor(kind string) Pack { return b.packs[kind] }
+
+// availablePacks reports which packs this builder could actually use, which is
+// part of `auto`'s condition (pack-builds.md §4).
+func (b *Builder) availablePacks() map[string]bool {
+	out := make(map[string]bool, len(b.packs))
+	for kind, p := range b.packs {
+		out[kind] = p.Available()
 	}
+	return out
 }
 
 // sshCloneURL rewrites an https://github.com/ repository URL to its SSH form
@@ -147,10 +178,26 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 	// Decide how to build before tarring: a static site has its Dockerfile
 	// synthesized into the context, so it has to exist before the walk.
 	dockerfilePath := work.DockerfilePath
-	kind, err := resolveBuildKind(work.BuildKind, contextDir, dockerfilePath)
+	kind, err := resolveBuildKind(work.BuildKind, contextDir, dockerfilePath, b.availablePacks())
 	if err != nil {
 		onLog(err.Error())
 		return "", err
+	}
+	// plan is what a pack produced, when one ran. Its shape decides the
+	// transport: a Dockerfile goes through the ordinary path, a frontend plan
+	// through BuildKit (pack-builds.md §2).
+	var plan Plan
+	if pack := b.packFor(kind); pack != nil {
+		plan, err = pack.Generate(ctx, contextDir, work.Image, onLog)
+		if err != nil {
+			return "", err
+		}
+		if plan.Dockerfile != "" {
+			// From here the ordinary path takes over, so there is one place
+			// labels are stamped, one place a private base image's credential
+			// applies, and one place logs stream from.
+			dockerfilePath = plan.Dockerfile
+		}
 	}
 	if kind == kindStatic {
 		onLog("No Dockerfile found — detected a static site; building an nginx image to serve it.")
@@ -243,13 +290,87 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 		driver.LabelRevisionID: revID,
 	}
 
+	// A private base image authenticates through the same credential the app's
+	// image source would use. The plane sends it per work item; nothing is
+	// written to disk, so there is no daemon-level `docker login` state on the
+	// builder for a later build to inherit by accident.
+	buildAuth, err := registryauth.EncodeConfig(
+		work.GetSourceAuth().GetServerAddress(),
+		work.GetSourceAuth().GetUsername(),
+		work.GetSourceAuth().GetToken(),
+	)
+	if err != nil {
+		return "", err
+	}
+
 	defer func() { _ = tarPipeR.Close() }()
-	if err := b.engine.BuildImage(ctx, tarPipeR, work.Image, dockerfilePath, labels, onLog); err != nil {
+	if plan.NeedsBuildKit() {
+		// The second transport. Same tag, same labels — everything downstream
+		// (rollout, relay, rollback, garbage collection) cannot tell which
+		// transport produced an image, which is what makes having two
+		// acceptable (pack-builds.md §2).
+		//
+		// The tar pipe is not used here: buildx reads the context from disk
+		// itself. It is still closed by the deferred Close above, which stops
+		// the walking goroutine.
+		if b.buildKit == nil {
+			return "", ErrRailpackUnavailable
+		}
+		if err := b.buildKit.Build(ctx, BuildKitRequest{
+			ContextDir: contextDir,
+			PlanFile:   plan.PlanFile,
+			Frontend:   plan.Frontend,
+			Tag:        work.Image,
+			Labels:     labels,
+		}, onLog); err != nil {
+			return "", fmt.Errorf("build failed: %w", err)
+		}
+	} else if err := b.engine.BuildImage(ctx, tarPipeR, work.Image, dockerfilePath, labels, buildAuth, onLog); err != nil {
 		return "", fmt.Errorf("build failed: %w", err)
+	}
+
+	if err := b.push(ctx, work, onLog); err != nil {
+		return "", err
 	}
 
 	onLog("Build completed successfully.")
 	return resolvedCommitSha, nil
+}
+
+// push sends the built image to the registry the application asked for, in
+// addition to leaving it in the local daemon (ADR-008 path 3).
+//
+// A failure here fails the deployment. The alternative — warn and roll out
+// anyway — would report success for an image that is not where the operator
+// was told it would be, and the next thing to look for it (a rollback on
+// another host, something outside the panel) finds nothing.
+//
+// The rollout itself never reads this copy: it runs the local build or the
+// relayed one, so the ADR-008 contract that no registry is required is intact
+// even for an application that has configured one.
+func (b *Builder) push(ctx context.Context, work *agentv1.BuildWork, onLog func(string)) error {
+	target := work.GetPush()
+	if target.GetImage() == "" {
+		return nil
+	}
+	auth, err := registryauth.Encode(
+		target.GetAuth().GetServerAddress(),
+		target.GetAuth().GetUsername(),
+		target.GetAuth().GetToken(),
+	)
+	if err != nil {
+		return err
+	}
+	onLog(fmt.Sprintf("Pushing %s...", target.GetImage()))
+	if err := b.engine.TagImage(ctx, work.Image, target.GetImage()); err != nil {
+		return fmt.Errorf("tagging for push: %w", err)
+	}
+	if err := b.engine.PushImage(ctx, target.GetImage(), auth); err != nil {
+		// The registry's own words; the credential is not in them.
+		return fmt.Errorf("pushing %s: %w", target.GetImage(), err)
+	}
+	onLog("Pushed successfully.")
+	return nil
 }
 
 func parseDockerIgnore(contextDir string) []string {

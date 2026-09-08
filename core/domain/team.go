@@ -29,6 +29,23 @@ func RoleRank(role string) int {
 // ValidRole reports whether role is one of the closed set.
 func ValidRole(role string) bool { return RoleRank(role) > 0 }
 
+// CanGrantRole reports whether an actor holding actorRole may hand out — or
+// take away — subjectRole. Acting on the owner rank requires owner; anything
+// else requires admin (teams-and-roles.md §5: no self-service escalation).
+//
+// It lives here, in the package that owns the role vocabulary, because two
+// features now depend on exactly this comparison: adding or re-ranking a member
+// (core/teams) and issuing an invitation that will do the same later
+// (core/access, invitations-and-access-requests.md §1). One implementation, so
+// the two cannot drift into different answers about who may mint an owner.
+func CanGrantRole(actorRole, subjectRole string) bool {
+	need := RoleAdmin
+	if subjectRole == RoleOwner {
+		need = RoleOwner
+	}
+	return RoleRank(actorRole) >= RoleRank(need)
+}
+
 // Team is the tenancy boundary (glossary): owns projects; users belong to it
 // with a ranked role.
 type Team struct {

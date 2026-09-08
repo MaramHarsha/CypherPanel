@@ -13,10 +13,10 @@ export function JoinServerFirstDialog({
 }: {
   /** The same pill the real create dialog would hang off. */
   trigger: ReactNode;
-  resource: "application" | "database";
+  resource: "application" | "database" | "compose stack";
 }) {
   const navigate = useNavigate();
-  const noun = resource === "application" ? "An application" : "A database";
+  const noun = resource === "application" ? "An application" : resource === "database" ? "A database" : "A compose stack";
   return (
     <Dialog>
       <DialogTrigger asChild>{trigger}</DialogTrigger>

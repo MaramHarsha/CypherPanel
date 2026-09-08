@@ -7,9 +7,12 @@ package notify
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"sync"
 	"time"
 
@@ -20,6 +23,7 @@ import (
 // satisfies it).
 type Store interface {
 	GetEnvironment(ctx context.Context, id string) (domain.Environment, error)
+	GetProject(ctx context.Context, id string) (domain.Project, error)
 	ListEnabledNotifiersForEvent(ctx context.Context, projectID, eventType string) ([]domain.Notifier, error)
 }
 
@@ -57,6 +61,9 @@ type Manager struct {
 	log    *slog.Logger
 	// inbox is optional and nil-guarded at its one call site.
 	inbox Inbox
+	// restrictEgress marks the copy used to test an unsaved configuration; see
+	// egress.go for why only that path carries it.
+	restrictEgress bool
 }
 
 // New wires the manager. box is the inbox sink (nil = no in-panel inbox); it is
@@ -92,6 +99,29 @@ func (m *Manager) NotifyDeploy(ctx context.Context, app domain.Application, dep 
 	m.dispatch(ctx, app.EnvironmentID, ev)
 }
 
+// NotifyAppHealth delivers an application's observed health transition
+// (deployment-control.md §5). detail is the container's own last words, which
+// is the whole diagnostic value of a crash notification — an operator woken at
+// 03:00 needs the reason, not a link to go and find it.
+func (m *Manager) NotifyAppHealth(ctx context.Context, app domain.Application, eventType, detail string) {
+	ev := domain.NotifyEvent{Type: eventType, Level: domain.NotifyError}
+	if eventType == domain.EventAppRecovered {
+		ev.Level = domain.NotifyInfo
+		ev.Title = "Recovered: " + app.Name
+		ev.Body = fmt.Sprintf("Application %q is serving again.", app.Name)
+	} else {
+		ev.Title = "Crashed: " + app.Name
+		ev.Body = fmt.Sprintf("Application %q stopped serving.", app.Name)
+	}
+	if detail != "" {
+		ev.Body += "\n" + detail
+	}
+	// FocusID is the application itself: a health transition has no deployment
+	// or backup record to open, and the app's own page is where the logs are.
+	ev.ResourceKind, ev.ResourceID, ev.FocusID = domain.WebhookResourceApplication, app.ID, app.ID
+	m.dispatch(ctx, app.EnvironmentID, ev)
+}
+
 // NotifyBackup delivers a database backup's terminal outcome.
 func (m *Manager) NotifyBackup(ctx context.Context, db domain.Database, rec domain.BackupRecord) {
 	ev := domain.NotifyEvent{Type: domain.EventBackupSucceeded, Level: domain.NotifyInfo}
@@ -118,10 +148,18 @@ func (m *Manager) dispatch(ctx context.Context, envID string, ev domain.NotifyEv
 
 		env, err := m.store.GetEnvironment(c, envID)
 		if err != nil {
-			m.log.Error("notify: resolving project", "env_id", envID, "error", err)
+			m.log.Error("notify: resolving environment", "env_id", envID, "error", err)
 			return
 		}
-		ev.Project, ev.ProjectID = env.Name, env.ProjectID
+		// Both are resolved so Project carries the project's name — the
+		// environment's used to land there, which webhooks.resolve did not
+		// inherit (outbound-webhooks.md §4; control-plane-hardening.md §8).
+		proj, err := m.store.GetProject(c, env.ProjectID)
+		if err != nil {
+			m.log.Error("notify: resolving project", "env_id", envID, "project_id", env.ProjectID, "error", err)
+			return
+		}
+		ev.Project, ev.ProjectID = proj.Name, proj.ID
 
 		// The inbox write comes FIRST, before the notifier lookup — which
 		// returns early on error. Recording first is what makes the bell work
@@ -167,6 +205,95 @@ func (m *Manager) fanOut(base context.Context, notifiers []domain.Notifier, ev d
 // dispatch/fanOut.
 func (m *Manager) Deliver(ctx context.Context, n domain.Notifier, ev domain.NotifyEvent) error {
 	return m.deliver(ctx, n, ev)
+}
+
+// TestEvent is the message both test paths send, so "it worked" looks the same
+// whether the notifier was saved first or not.
+func TestEvent() domain.NotifyEvent {
+	return domain.NotifyEvent{
+		Type:  domain.EventDeploySucceeded,
+		Level: domain.NotifyInfo,
+		Title: "CypherPanel test notification",
+		Body:  "This is a test message confirming your notifier is wired correctly.",
+	}
+}
+
+// ErrTestRequiresSave marks a channel whose configuration cannot be tested
+// before it is stored.
+//
+// Email is the only one. Testing an unsaved webhook config POSTs a fixed JSON
+// body to one URL; testing an unsaved email config makes the panel relay a
+// message through an arbitrary SMTP server, with an arbitrary From, to an
+// arbitrary recipient, on a project member's say-so, leaving no record behind.
+// That is a spam and spoofing primitive rather than a connectivity check, so
+// the email channel is tested through its saved notifier — authorized,
+// recorded, and revocable — via POST /notifiers/{id}/test.
+var ErrTestRequiresSave = errors.New("notify: save an email notifier first, then send a test through it")
+
+// testableWebhookURL is the shape an unsaved webhook test is allowed to target.
+//
+// Stricter than what a saved notifier accepts, deliberately: a saved notifier
+// is a row someone created and can be found and deleted, while this path can be
+// aimed anywhere, repeatedly, leaving nothing behind (threat-model §5.11). It
+// requires https, so a payload is not put on the wire in the clear to a host
+// nobody has committed to; forbids userinfo, so a URL cannot smuggle
+// credentials; and requires a dotted name ending in an alphabetic label, which
+// rules out an IP literal — the shape that skips DNS entirely. Addresses that
+// resolve into the panel's own network are refused separately, at dial time,
+// where a second lookup cannot slip past (egress.go).
+var testableWebhookURL = regexp.MustCompile(
+	`^https://[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*\.[A-Za-z]{2,}(:[0-9]{1,5})?(/[^\s]*)?$`)
+
+// TestConfig proves a channel configuration by using it, and persists nothing.
+//
+// It exists so a connection can be tested *before* it is saved: a dialog that
+// can only test what it has already stored teaches operators to save broken
+// credentials and find out later, from a notification that never arrived. The
+// config goes through the same validation as Create, so a test that passes is a
+// config that will also store.
+//
+// The request is built here rather than handed to send() so the URL this path
+// dials is visible at the point it is checked.
+func (m *Manager) TestConfig(ctx context.Context, channel string, raw json.RawMessage) error {
+	canonical, err := validateConfig(channel, raw)
+	if err != nil {
+		return err
+	}
+	// Egress is guarded on this path only; see egress.go for why a saved
+	// notifier keeps the posture threat-model §5.11 records.
+	guarded := &Manager{store: m.store, opener: m.opener, http: guardedHTTPClient(), log: m.log, inbox: m.inbox}
+	ev := TestEvent()
+
+	switch channel {
+	case domain.NotifyChannelEmail:
+		return ErrTestRequiresSave
+
+	case domain.NotifyChannelDiscord, domain.NotifyChannelSlack:
+		var c webhookConfig
+		if err := json.Unmarshal(canonical, &c); err != nil {
+			return fmt.Errorf("decoding webhook config: %w", err)
+		}
+		if !testableWebhookURL.MatchString(c.WebhookURL) {
+			return invalid("an unsaved test needs an https URL with a hostname — save the notifier to use this address")
+		}
+		payload := map[string]string{"text": ev.Title + "\n" + ev.Body}
+		if channel == domain.NotifyChannelDiscord {
+			payload = map[string]string{"content": ev.Title + "\n" + ev.Body}
+		}
+		return guarded.postJSON(ctx, c.WebhookURL, payload)
+
+	case domain.NotifyChannelTelegram:
+		var c telegramConfig
+		if err := json.Unmarshal(canonical, &c); err != nil {
+			return fmt.Errorf("decoding telegram config: %w", err)
+		}
+		// The host is ours: only the bot token varies, in the path.
+		return guarded.postJSON(ctx, telegramAPI+"/bot"+c.BotToken+"/sendMessage",
+			map[string]string{"chat_id": c.ChatID, "text": ev.Title + "\n" + ev.Body})
+
+	default:
+		return invalid("channel must be one of email, discord, slack, telegram")
+	}
 }
 
 // deliver unseals the notifier's config and hands it to the channel sender.

@@ -8,6 +8,20 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AccessRequest struct {
+	ID             string
+	TeamID         string
+	UserID         string
+	RequestedRole  string
+	Message        string
+	State          string
+	DecidedBy      pgtype.Text
+	DecidedByLabel string
+	DecisionReason string
+	DecidedAt      pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+}
+
 type ApiToken struct {
 	ID         string
 	UserID     string
@@ -17,6 +31,7 @@ type ApiToken struct {
 	ExpiresAt  pgtype.Timestamptz
 	CreatedAt  pgtype.Timestamptz
 	Abilities  []string
+	ProjectID  pgtype.Text
 }
 
 type AppEnvVar struct {
@@ -68,6 +83,30 @@ type Application struct {
 	HealthKind            string
 	SourceImage           string
 	EnvAppliedAt          pgtype.Timestamptz
+	SourceRegistryID      pgtype.Text
+	BuildPushRegistryID   pgtype.Text
+	BuildPushRepository   string
+	RestartToken          string
+}
+
+type AuditEvent struct {
+	ID            string
+	At            pgtype.Timestamptz
+	Action        string
+	Outcome       string
+	ActorKind     string
+	ActorUserID   pgtype.Text
+	ActorTokenID  pgtype.Text
+	ActorLabel    string
+	ResourceKind  string
+	ResourceID    string
+	ResourceName  string
+	TeamID        pgtype.Text
+	ProjectID     pgtype.Text
+	EnvironmentID pgtype.Text
+	Detail        []byte
+	TraceID       string
+	ClientIp      string
 }
 
 type BackupRecord struct {
@@ -95,6 +134,47 @@ type BackupTarget struct {
 	PathPrefix     string
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
+}
+
+type BreakGlassGrant struct {
+	ID            string
+	EnvironmentID string
+	OpenedBy      pgtype.Text
+	Reason        string
+	CreatedAt     pgtype.Timestamptz
+	ExpiresAt     pgtype.Timestamptz
+}
+
+type ComposeEnvVar struct {
+	StackID    string
+	Key        string
+	ValueCt    []byte
+	ValueNonce []byte
+}
+
+type ComposeRevision struct {
+	ID          string
+	StackID     string
+	ComposeYaml string
+	CreatedAt   pgtype.Timestamptz
+}
+
+type ComposeStack struct {
+	ID                 string
+	EnvironmentID      string
+	Name               string
+	RuntimeServerID    string
+	DesiredRevisionID  pgtype.Text
+	RouteDomain        string
+	RouteService       string
+	RoutePort          int32
+	RouteHttps         bool
+	Status             string
+	StatusDetail       string
+	ObservedRevisionID string
+	StatusObservedAt   pgtype.Timestamptz
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
 }
 
 type Database struct {
@@ -140,11 +220,36 @@ type DatabaseBackup struct {
 	UpdatedAt      pgtype.Timestamptz
 }
 
+type DatabaseRestore struct {
+	ID             string
+	DatabaseID     string
+	BackupRecordID pgtype.Text
+	Status         string
+	Step           string
+	BytesDone      int64
+	BytesTotal     int64
+	Detail         string
+	StartedAt      pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+}
+
 type DatabaseRevision struct {
 	ID             string
 	DatabaseID     string
 	ConfigSnapshot []byte
 	CreatedAt      pgtype.Timestamptz
+}
+
+type DeployApproval struct {
+	DeploymentID  string
+	EnvironmentID string
+	RequestedBy   pgtype.Text
+	RequiredRole  string
+	State         string
+	DecidedBy     pgtype.Text
+	DecidedAt     pgtype.Timestamptz
+	Reason        string
+	CreatedAt     pgtype.Timestamptz
 }
 
 type DeployKey struct {
@@ -219,12 +324,33 @@ type Environment struct {
 	Name      string
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
+	Kind      string
+}
+
+type EnvironmentProtection struct {
+	EnvironmentID   string
+	RequireApproval bool
+	MinApproverRole string
+	FreezeEnabled   bool
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
+type FreezeWindow struct {
+	ID            string
+	EnvironmentID string
+	StartDow      int16
+	StartMinute   int32
+	EndDow        int16
+	EndMinute     int32
+	Timezone      string
+	CreatedAt     pgtype.Timestamptz
 }
 
 type InboxItem struct {
 	ID         string
 	UserID     string
-	ProjectID  string
+	ProjectID  pgtype.Text
 	Kind       string
 	Severity   string
 	Digest     bool
@@ -239,6 +365,7 @@ type InboxItem struct {
 	ReadAt     pgtype.Timestamptz
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
+	TeamID     pgtype.Text
 }
 
 type InboxPreference struct {
@@ -276,6 +403,13 @@ type PanelMail struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
+type PanelTl struct {
+	ID           int32
+	AcmeEmail    string
+	AcmeCaServer string
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type PlaneCa struct {
 	ID           int32
 	CertPem      []byte
@@ -299,11 +433,31 @@ type Preview struct {
 }
 
 type Project struct {
-	ID        string
-	Name      string
-	CreatedAt pgtype.Timestamptz
-	UpdatedAt pgtype.Timestamptz
-	TeamID    string
+	ID                   string
+	Name                 string
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+	TeamID               string
+	Slug                 string
+	DefaultEnvironmentID pgtype.Text
+	LastActivityAt       pgtype.Timestamptz
+}
+
+type Registry struct {
+	ID             string
+	TeamID         string
+	Name           string
+	Url            string
+	Username       string
+	TokenCt        []byte
+	TokenNonce     []byte
+	CanPull        bool
+	CanPush        bool
+	LastTestAt     pgtype.Timestamptz
+	LastTestOk     bool
+	LastTestDetail string
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
 }
 
 type Revision struct {
@@ -338,18 +492,21 @@ type ScheduledTaskRun struct {
 }
 
 type Server struct {
-	ID            string
-	Name          string
-	Status        string
-	Driver        string
-	AgentVersion  string
-	Hostname      string
-	EnrolledAt    pgtype.Timestamptz
-	LastSeenAt    pgtype.Timestamptz
-	CreatedAt     pgtype.Timestamptz
-	UpdatedAt     pgtype.Timestamptz
-	Role          string
-	PublicAddress string
+	ID             string
+	Name           string
+	Status         string
+	Driver         string
+	AgentVersion   string
+	Hostname       string
+	EnrolledAt     pgtype.Timestamptz
+	LastSeenAt     pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	Role           string
+	PublicAddress  string
+	DiskTotalBytes int64
+	DiskFreeBytes  int64
+	DiskLow        bool
 }
 
 type Session struct {
@@ -376,6 +533,20 @@ type Team struct {
 	Name      string
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
+}
+
+type TeamInvite struct {
+	ID             string
+	TeamID         string
+	Email          string
+	Role           string
+	TokenHash      []byte
+	InvitedBy      pgtype.Text
+	InvitedByLabel string
+	ExpiresAt      pgtype.Timestamptz
+	AcceptedAt     pgtype.Timestamptz
+	RevokedAt      pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
 }
 
 type TeamMember struct {

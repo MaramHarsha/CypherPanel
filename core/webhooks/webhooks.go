@@ -190,6 +190,23 @@ func (m *Manager) NotifyDeploy(ctx context.Context, app domain.Application, dep 
 	m.dispatch(ctx, app.EnvironmentID, ev)
 }
 
+// NotifyAppHealth delivers an application's observed health transition
+// (deployment-control.md §5).
+func (m *Manager) NotifyAppHealth(ctx context.Context, app domain.Application, eventType, detail string) {
+	m.dispatch(ctx, app.EnvironmentID, event{
+		Type: eventType,
+		Resource: resourceRef{
+			Kind: domain.WebhookResourceApplication,
+			ID:   app.ID,
+			Name: app.Name,
+		},
+		Data: eventData{
+			Status: app.Status,
+			Detail: detail,
+		},
+	})
+}
+
 // NotifyBackup delivers a database backup's terminal outcome.
 func (m *Manager) NotifyBackup(ctx context.Context, db domain.Database, rec domain.BackupRecord) {
 	ev := event{

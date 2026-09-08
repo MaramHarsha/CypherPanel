@@ -3,10 +3,12 @@ package notify
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/smtp"
 	"net/url"
@@ -104,6 +106,30 @@ func redactURL(err error) error {
 	return err
 }
 
+// Transport security for an SMTP conversation. The zero value is STARTTLS
+// because that is what the panel did before the mode was configurable, and a
+// silent downgrade on upgrade would be the worst possible default.
+const (
+	// TLSStartTLS upgrades a plaintext connection with STARTTLS and refuses to
+	// send if the server will not offer it. Port 587.
+	TLSStartTLS = "starttls"
+	// TLSImplicit wraps the connection in TLS from the first byte. Port 465.
+	TLSImplicit = "implicit"
+	// TLSNone sends in the clear. Only defensible for a relay on localhost or
+	// a private network the operator controls.
+	TLSNone = "none"
+)
+
+// ValidMailTLS reports whether v names a transport-security mode. The empty
+// string is valid and means STARTTLS.
+func ValidMailTLS(v string) bool {
+	switch v {
+	case "", TLSStartTLS, TLSImplicit, TLSNone:
+		return true
+	}
+	return false
+}
+
 // MailConfig is everything needed to hand a message to an SMTP server. It is
 // exported because the panel now has mail of its own to send — account mail,
 // which belongs to no project (docs/features/panel-mail.md) — and that must go
@@ -114,25 +140,117 @@ type MailConfig struct {
 	Username string
 	From     string
 	Password string
+	// TLS is one of the constants above; empty means TLSStartTLS.
+	TLS string
+	// RestrictEgress refuses to dial an address that is not publicly routable.
+	// Set only when testing a configuration nobody has saved — see egress.go
+	// for why that path is treated differently from a saved notifier.
+	RestrictEgress bool
 }
 
-// SendMail delivers one message over SMTP (stdlib net/smtp). smtp.SendMail
-// issues STARTTLS when the server advertises it; auth is used only when a
-// username is set.
+// SendMail delivers one message over SMTP.
+//
+// The three modes are driven explicitly rather than inferred from the port,
+// because inference is what makes a misconfigured panel fail at the moment it
+// matters. STARTTLS is *required* in that mode: stdlib smtp.SendMail upgrades
+// only when the server advertises STARTTLS and otherwise sends the credential
+// in the clear, which is a downgrade an operator who chose STARTTLS did not
+// agree to. Auth is used only when a username is set.
 func SendMail(c MailConfig, to []string, subject, body string) error {
 	if len(to) == 0 {
 		return fmt.Errorf("no recipients")
 	}
+	if !ValidMailTLS(c.TLS) {
+		return fmt.Errorf("unknown TLS mode %q", c.TLS)
+	}
 	msg := buildMessage(c.From, to, subject, body)
 	addr := fmt.Sprintf("%s:%d", c.SMTPHost, c.SMTPPort)
-	var auth smtp.Auth
-	if c.Username != "" {
-		auth = smtp.PlainAuth("", c.Username, c.Password, c.SMTPHost)
+
+	client, err := dialSMTP(c, addr)
+	if err != nil {
+		return err
 	}
-	if err := smtp.SendMail(addr, auth, c.From, to, msg); err != nil {
-		return fmt.Errorf("smtp send: %w", err)
+	defer func() { _ = client.Close() }()
+
+	if c.Username != "" {
+		if err := client.Auth(smtp.PlainAuth("", c.Username, c.Password, c.SMTPHost)); err != nil {
+			return fmt.Errorf("smtp auth: %w", err)
+		}
+	}
+	if err := client.Mail(c.From); err != nil {
+		return fmt.Errorf("smtp from: %w", err)
+	}
+	for _, rcpt := range to {
+		if err := client.Rcpt(rcpt); err != nil {
+			return fmt.Errorf("smtp recipient: %w", err)
+		}
+	}
+	wc, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("smtp data: %w", err)
+	}
+	if _, err := wc.Write(msg); err != nil {
+		_ = wc.Close()
+		return fmt.Errorf("smtp write: %w", err)
+	}
+	if err := wc.Close(); err != nil {
+		return fmt.Errorf("smtp write: %w", err)
+	}
+	if err := client.Quit(); err != nil {
+		return fmt.Errorf("smtp quit: %w", err)
 	}
 	return nil
+}
+
+// dialTCP opens the underlying connection, through the egress guard when the
+// caller is testing a configuration nobody has saved.
+func dialTCP(c MailConfig, addr string) (net.Conn, error) {
+	if c.RestrictEgress {
+		return dialGuarded(addr)
+	}
+	return net.DialTimeout("tcp", addr, deliveryTimeout)
+}
+
+// dialSMTP opens the connection in the requested transport security mode and
+// returns a client that has already greeted the server.
+func dialSMTP(c MailConfig, addr string) (*smtp.Client, error) {
+	if c.TLS == TLSImplicit {
+		conn, err := dialTCP(c, addr)
+		if err != nil {
+			return nil, fmt.Errorf("smtp dial (implicit TLS): %w", err)
+		}
+		conn = tls.Client(conn, &tls.Config{ServerName: c.SMTPHost, MinVersion: tls.VersionTLS12})
+		client, err := smtp.NewClient(conn, c.SMTPHost)
+		if err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("smtp greet: %w", err)
+		}
+		return client, nil
+	}
+
+	conn, err := dialTCP(c, addr)
+	if err != nil {
+		return nil, fmt.Errorf("smtp dial: %w", err)
+	}
+	client, err := smtp.NewClient(conn, c.SMTPHost)
+	if err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("smtp greet: %w", err)
+	}
+	if c.TLS == TLSNone {
+		return client, nil
+	}
+	// STARTTLS, and it is not optional: a server that will not upgrade is a
+	// server this configuration must not talk to.
+	if ok, _ := client.Extension("STARTTLS"); !ok {
+		_ = client.Close()
+		return nil, fmt.Errorf("smtp: the server does not offer STARTTLS — choose implicit TLS (port 465) or none if this relay is trusted")
+	}
+	if err := client.StartTLS(&tls.Config{ServerName: c.SMTPHost, MinVersion: tls.VersionTLS12}); err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("smtp starttls: %w", err)
+	}
+	return client, nil
 }
 
 // sendEmail delivers a notifier's event through the same sender.
@@ -142,7 +260,11 @@ func (m *Manager) sendEmail(cfg []byte, ev domain.NotifyEvent) error {
 		return fmt.Errorf("decoding email config: %w", err)
 	}
 	return SendMail(
-		MailConfig{SMTPHost: c.SMTPHost, SMTPPort: c.SMTPPort, Username: c.Username, From: c.From, Password: c.Password},
+		MailConfig{
+			SMTPHost: c.SMTPHost, SMTPPort: c.SMTPPort,
+			Username: c.Username, From: c.From, Password: c.Password,
+			RestrictEgress: m.restrictEgress,
+		},
 		splitRecipients(c.To), ev.Title, ev.Title+"\n\n"+ev.Body,
 	)
 }
@@ -183,6 +305,40 @@ func buildMessage(from string, to []string, subject, body string) []byte {
 	b.WriteString("MIME-Version: 1.0\r\n")
 	b.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
 	b.WriteString("\r\n")
-	b.WriteString(strings.ReplaceAll(body, "\n", "\r\n"))
+	b.WriteString(normalizeBody(body))
 	return []byte(b.String())
+}
+
+// normalizeBody makes an arbitrary string safe to carry as the message body.
+//
+// The body sits after the blank line, so it cannot introduce a header — that
+// class is closed by SanitizeHeader above. What is left is line-ending
+// hygiene, and doing it by hand matters for one case the obvious
+// ReplaceAll("\n", "\r\n") gets wrong: a lone CR. SMTP lines are CRLF, a bare
+// CR inside DATA is a protocol violation, and a body assembled from a commit
+// message, a container log line or an operator's own note can contain one.
+// Every line ending — CRLF, lone CR, lone LF — collapses to exactly one CRLF,
+// so what the recipient sees is what the panel meant to say.
+//
+// Dot-stuffing is deliberately NOT done here: net/smtp writes the body through
+// textproto's DotWriter, which escapes a leading "." itself. Doing it twice
+// would put the dot back in the delivered text.
+func normalizeBody(body string) string {
+	var b strings.Builder
+	b.Grow(len(body) + len(body)/16)
+	for i := 0; i < len(body); i++ {
+		switch body[i] {
+		case '\r':
+			b.WriteString("\r\n")
+			// A CRLF pair is one ending, not two.
+			if i+1 < len(body) && body[i+1] == '\n' {
+				i++
+			}
+		case '\n':
+			b.WriteString("\r\n")
+		default:
+			b.WriteByte(body[i])
+		}
+	}
+	return b.String()
 }

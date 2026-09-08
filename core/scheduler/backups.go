@@ -119,40 +119,56 @@ func (s *Scheduler) RunBackup(ctx context.Context, scheduleID string) (domain.Ba
 	return rec, nil
 }
 
-// RunRestore publishes a restore of one BackupRecord back into its database.
-// confirm must be true — restore is destructive (spec §7).
-func (s *Scheduler) RunRestore(ctx context.Context, dbID, backupRecordID string, confirm bool) error {
+// RunRestore publishes a restore of one BackupRecord back into its database and
+// returns the record that tracks it. confirm must be true — restore is
+// destructive (spec §7).
+//
+// The record is written, and the database marked restoring, BEFORE the work is
+// published: a plane that dies in between restarts knowing a restore is in
+// flight rather than having forgotten it (ENGINEERING rule 15).
+func (s *Scheduler) RunRestore(ctx context.Context, dbID, backupRecordID string, confirm bool) (domain.DatabaseRestore, error) {
 	if !confirm {
-		return ErrRestoreNotConfirmed
+		return domain.DatabaseRestore{}, ErrRestoreNotConfirmed
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	rec, err := s.store.GetBackupRecord(ctx, backupRecordID)
 	if err != nil {
-		return fmt.Errorf("scheduler: loading backup record: %w", err)
+		return domain.DatabaseRestore{}, fmt.Errorf("scheduler: loading backup record: %w", err)
 	}
 	if rec.Status != domain.BackupSucceeded {
-		return fmt.Errorf("scheduler: backup record %s is not a succeeded backup", rec.ID)
+		return domain.DatabaseRestore{}, fmt.Errorf("scheduler: backup record %s is not a succeeded backup", rec.ID)
 	}
 	sched, err := s.store.GetDatabaseBackup(ctx, rec.DatabaseBackupID)
 	if err != nil {
-		return fmt.Errorf("scheduler: loading backup schedule: %w", err)
+		return domain.DatabaseRestore{}, fmt.Errorf("scheduler: loading backup schedule: %w", err)
 	}
 	db, err := s.store.GetDatabase(ctx, dbID)
 	if err != nil {
-		return fmt.Errorf("scheduler: loading database: %w", err)
+		return domain.DatabaseRestore{}, fmt.Errorf("scheduler: loading database: %w", err)
 	}
 	if sched.DatabaseID != db.ID {
-		return fmt.Errorf("scheduler: backup record does not belong to database %s", dbID)
+		return domain.DatabaseRestore{}, fmt.Errorf("scheduler: backup record does not belong to database %s", dbID)
 	}
 	coords, err := s.resolveTarget(ctx, sched.TargetID)
 	if err != nil {
-		return err
+		return domain.DatabaseRestore{}, err
+	}
+
+	restore, err := s.store.CreateDatabaseRestore(ctx, ids.New(ids.PrefixDatabaseRestore), db.ID, rec.ID, domain.RestoreStepFetching)
+	if err != nil {
+		return domain.DatabaseRestore{}, fmt.Errorf("scheduler: recording restore: %w", err)
+	}
+	// The database is offline for the duration, and saying so is the point of
+	// the record. A failure here is logged rather than fatal: the restore is
+	// already recorded and the agent will report what happens to it.
+	if err := s.store.SetDatabaseStatus(ctx, db.ID, domain.DbRestoring, "restoring from "+rec.ObjectKey); err != nil {
+		s.log.Error("marking database restoring", "db_id", db.ID, "restore_id", restore.ID, "error", err)
 	}
 
 	work := &agentv1.DbRestoreWork{
-		RestoreId:     ids.New(ids.PrefixBackupRecord),
+		RestoreId:     restore.ID,
 		DbId:          db.ID,
 		ContainerName: "cypher-db-" + db.ID,
 		Engine:        string(db.Engine),
@@ -166,9 +182,15 @@ func (s *Scheduler) RunRestore(ctx context.Context, dbID, backupRecordID string,
 	}
 	data, err := proto.Marshal(work)
 	if err != nil {
-		return fmt.Errorf("scheduler: marshaling restore work: %w", err)
+		return domain.DatabaseRestore{}, fmt.Errorf("scheduler: marshaling restore work: %w", err)
 	}
-	return s.bus.PublishWork(ctx, subjects.DbRestore(db.ServerID), fmt.Sprintf("%s.restore.%d", rec.ID, s.now().UnixNano()), data)
+	// Keyed by the restore, not by the record and a clock reading: the restore
+	// id IS the idempotency key the agent already echoes back, so a redelivery
+	// is the same work item rather than a second one.
+	if err := s.bus.PublishWork(ctx, subjects.DbRestore(db.ServerID), restore.ID, data); err != nil {
+		return domain.DatabaseRestore{}, err
+	}
+	return restore, nil
 }
 
 // HandleDbBackupEvent records a backup's terminal outcome (ADR-005) and, on
@@ -285,15 +307,70 @@ func (s *Scheduler) HandleDbBackupPruneEvent(ctx context.Context, serverID strin
 	s.log.Info("database backups pruned", "db_id", ev.GetDbId(), "deleted", len(ev.GetDeletedKeys()), "failed", len(ev.GetFailedKeys()))
 }
 
-// HandleDbRestoreEvent records a restore's terminal outcome. The database's
-// running state is separately observed through DbStatus after the container
-// restart, so here we only log the restore's success/failure.
-func (s *Scheduler) HandleDbRestoreEvent(_ context.Context, serverID string, ev *agentv1.DbRestoreEvent) {
-	if ev.GetOutcome() == agentv1.DbRestoreEvent_OUTCOME_SUCCEEDED {
-		s.log.Info("database restore succeeded", "db_id", ev.GetDbId(), "restore_id", ev.GetRestoreId(), "server_id", serverID)
+// restoreSteps maps the agent's step enum onto the stored vocabulary. An
+// unrecognised value becomes the empty string rather than a guess: a newer agent
+// naming a step this plane does not know should leave the step blank, not
+// invent one.
+var restoreSteps = map[agentv1.DbRestoreEvent_Step]string{
+	agentv1.DbRestoreEvent_STEP_FETCHING:   domain.RestoreStepFetching,
+	agentv1.DbRestoreEvent_STEP_STOPPING:   domain.RestoreStepStopping,
+	agentv1.DbRestoreEvent_STEP_APPLYING:   domain.RestoreStepApplying,
+	agentv1.DbRestoreEvent_STEP_RESTARTING: domain.RestoreStepRestarting,
+}
+
+// HandleDbRestoreEvent advances or closes the restore record.
+//
+// A restore takes the database offline, so its progress is the answer someone
+// staring at the screen needs, not a detail. Terminal events also put the
+// database back into an observed state: it was marked `restoring` when the work
+// was published, and nothing else would clear that if the restore failed before
+// the container came back for DbStatus to observe.
+func (s *Scheduler) HandleDbRestoreEvent(ctx context.Context, serverID string, ev *agentv1.DbRestoreEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	restoreID := ev.GetRestoreId()
+
+	if ev.GetOutcome() == agentv1.DbRestoreEvent_OUTCOME_RUNNING {
+		step := restoreSteps[ev.GetStep()]
+		if _, err := s.store.AdvanceDatabaseRestore(ctx, restoreID, step, ev.GetBytesDone(), ev.GetBytesTotal()); err != nil {
+			// ErrNotFound here is a late event for a restore that already
+			// finished — a redelivery, or an agent that reconnected. Ignoring it
+			// is the point of pinning the update to status='running'.
+			if !errors.Is(err, store.ErrNotFound) {
+				s.log.Error("advancing restore", "restore_id", restoreID, "error", err)
+			}
+			return
+		}
+		s.log.Info("database restore progress", "db_id", ev.GetDbId(), "restore_id", restoreID, "step", step)
 		return
 	}
-	s.log.Warn("database restore failed", "db_id", ev.GetDbId(), "restore_id", ev.GetRestoreId(), "detail", ev.GetDetail())
+
+	status, dbStatus := domain.RestoreSucceeded, domain.DbRunning
+	if ev.GetOutcome() != agentv1.DbRestoreEvent_OUTCOME_SUCCEEDED {
+		status, dbStatus = domain.RestoreFailed, domain.DbError
+	}
+	if _, err := s.store.FinishDatabaseRestore(ctx, restoreID, status, ev.GetDetail()); err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			s.log.Error("finishing restore", "restore_id", restoreID, "error", err)
+		}
+		// Already closed: a redelivered terminal event must not re-decide the
+		// outcome, and must not move the database's status a second time.
+		return
+	}
+	// A guess, deliberately: the agent knows the restore finished, not whether
+	// the container is healthy. DbStatus overwrites this within a heartbeat
+	// with what is actually observed — this only stops the database sitting on
+	// `restoring` forever if the restore failed before the container returned.
+	if err := s.store.SetDatabaseStatus(ctx, ev.GetDbId(), dbStatus, ev.GetDetail()); err != nil {
+		s.log.Error("clearing restoring status", "db_id", ev.GetDbId(), "error", err)
+	}
+
+	if status == domain.RestoreSucceeded {
+		s.log.Info("database restore succeeded", "db_id", ev.GetDbId(), "restore_id", restoreID, "server_id", serverID)
+		return
+	}
+	s.log.Warn("database restore failed", "db_id", ev.GetDbId(), "restore_id", restoreID, "detail", ev.GetDetail())
 }
 
 // RunBackupSweeper fires due scheduled backups on a ticker until ctx is done

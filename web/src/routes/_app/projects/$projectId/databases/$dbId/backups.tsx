@@ -9,18 +9,21 @@ import { useEffect, useState, type FormEvent } from "react";
 import {
   getListBackupHistoryQueryKey,
   getListDatabaseBackupsQueryKey,
+  getListDatabaseRestoresQueryKey,
   useCreateDatabaseBackup,
   useDeleteDatabaseBackup,
   useListBackupHistory,
+  useListBackupTargets,
   useListDatabaseBackups,
+  useListDatabaseRestores,
+  usePatchDatabaseBackup,
   useRestoreDatabase,
   useRunBackupNow,
 } from "@/api/gen/backups/backups";
-import { useListBackupTargets } from "@/api/gen/backups/backups";
 import { getGetDatabaseQueryKey, useGetDatabase } from "@/api/gen/databases/databases";
-import type { BackupRecord, DatabaseBackup } from "@/api/gen/model";
+import type { BackupRecord, DatabaseBackup, DatabaseRestore } from "@/api/gen/model";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
-import { formatBytes, startRestoreWatch } from "@/components/db-restore-progress";
+import { formatBytes } from "@/components/db-restore-progress";
 import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
 import { InlineHint } from "@/components/inline-hint";
@@ -56,7 +59,7 @@ function BackupsTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <Eyebrow>Backup schedules</Eyebrow>
-        {hasTargets && <NewScheduleDialog dbId={dbId} />}
+        {hasTargets && <ScheduleDialog dbId={dbId} />}
       </div>
 
       <PageState
@@ -70,7 +73,7 @@ function BackupsTab() {
             <EmptyState
               title="No backup schedule"
               hint="Schedule automatic backups to an S3 target, with a retention window. You can also back up on demand once a schedule exists."
-              action={<NewScheduleDialog dbId={dbId} primary />}
+              action={<ScheduleDialog dbId={dbId} primary />}
             />
           ) : (
             <EmptyState
@@ -95,7 +98,62 @@ function BackupsTab() {
           </div>
         )}
       </PageState>
+
+      <RestoreHistory dbId={dbId} />
     </div>
+  );
+}
+
+/**
+ * What was PUT BACK, and how it went — a different question from the backup
+ * history above, which is what was taken. It is worth its own section for two
+ * reasons: a restore outlives the backup it came from (the record survives its
+ * source ageing out of retention), and "when did someone last overwrite this
+ * database" is the question you ask after data looks wrong.
+ *
+ * Absent entirely when nothing has ever been restored: an empty state here
+ * would suggest restoring is a thing you are supposed to have done.
+ */
+function RestoreHistory({ dbId }: { dbId: string }) {
+  const restores = useListDatabaseRestores(dbId, { query: { retry: false } });
+  const list = restores.data ?? [];
+  if (restores.isPending || restores.isError || list.length === 0) return null;
+  return (
+    <section className="space-y-2 pt-2">
+      <Eyebrow>Restores</Eyebrow>
+      <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-surface">
+        {list.map((r) => (
+          <RestoreRow key={r.id} restore={r} />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function RestoreRow({ restore: r }: { restore: DatabaseRestore }) {
+  const took =
+    r.finished_at && Number.isFinite(Date.parse(r.finished_at))
+      ? Math.max(0, Math.round((Date.parse(r.finished_at) - Date.parse(r.started_at)) / 1000))
+      : null;
+  return (
+    <li className="flex items-center justify-between gap-3 px-4 py-2.5">
+      <span className="flex min-w-0 items-center gap-2">
+        <StatusBadge status={r.status === "succeeded" ? "running" : r.status === "failed" ? "error" : "deploying"} />
+        <span className="mono min-w-0 truncate text-xs text-text-faint" title={absoluteTime(r.started_at)}>
+          {relativeTime(r.started_at)}
+          {took !== null ? ` · ${took < 60 ? `${took}s` : `${Math.floor(took / 60)}m ${took % 60}s`}` : ""}
+          {r.bytes_total > 0 ? ` · ${formatBytes(r.bytes_total)}` : ""}
+          {/* The record outlives its source, so a missing backup id is a real
+              state rather than a gap to hide. */}
+          {r.backup_record_id ? "" : " · its backup has since aged out"}
+        </span>
+      </span>
+      {r.status === "failed" && r.detail && (
+        <span className="min-w-0 max-w-[45%] truncate text-[12px] text-danger" title={r.detail}>
+          {r.detail}
+        </span>
+      )}
+    </li>
   );
 }
 
@@ -204,6 +262,11 @@ function ScheduleCard({ dbId, dbName, schedule }: { dbId: string; dbName: string
           <Button size="sm" variant="ghost" aria-pressed={showHistory} onClick={() => setShowHistory((v) => !v)}>
             <History className="h-3.5 w-3.5" /> History
           </Button>
+          {/* Pausing keeps the schedule, its target and its history and stops
+              the next tick — which is what an operator wants during a
+              migration, and is not what deleting does. */}
+          <PauseSchedule dbId={dbId} schedule={schedule} />
+          <ScheduleDialog dbId={dbId} schedule={schedule} />
           <ConfirmDestructive
             trigger={
               <Button size="sm" variant="ghost" aria-label="Delete schedule">
@@ -261,13 +324,12 @@ function RecordRow({ dbId, dbName, record: r }: { dbId: string; dbName: string; 
   const qc = useQueryClient();
   const restore = useRestoreDatabase({
     mutation: {
-      // The 202 is the whole answer the panel gets: the agent reports one
-      // terminal event to the control plane and nothing to the browser. The
-      // layout's restore watch turns that into 10d's popup — the source
-      // backup, the offline consequence, why there is no cancel — and holds
-      // it until the agent's next status report says where the database is.
+      // The 202 carries the restore record the plane now keeps, so the watch
+      // only has to be told the list changed: it reads the record from the
+      // server and draws 10d's popup from the agent's own step and byte count,
+      // until the restore's own terminal status says how it went.
       onSuccess: () => {
-        startRestoreWatch(dbId, r);
+        void qc.invalidateQueries({ queryKey: getListDatabaseRestoresQueryKey(dbId) });
         // The container may restart under the dump, so the status the
         // overview is holding is stale the instant this returns. Ask for it
         // again rather than trusting the event stream to say so — it may be
@@ -317,45 +379,104 @@ function RecordRow({ dbId, dbName, record: r }: { dbId: string; dbName: string; 
   );
 }
 
-function NewScheduleDialog({ dbId, primary }: { dbId: string; primary?: boolean }) {
+/** Pause and resume, as the one-field patch it is. */
+function PauseSchedule({ dbId, schedule }: { dbId: string; schedule: DatabaseBackup }) {
+  const qc = useQueryClient();
+  const patch = usePatchDatabaseBackup({
+    mutation: {
+      onSuccess: () => {
+        void qc.invalidateQueries({ queryKey: getListDatabaseBackupsQueryKey(dbId) });
+        toastSuccess(schedule.enabled ? "Schedule paused" : "Schedule resumed");
+      },
+      onError: (e: unknown) => toastFailed("Could not change the schedule", e),
+    },
+  });
+  return (
+    <ActionButton
+      size="sm"
+      variant="ghost"
+      state={patch.isPending ? "busy" : "idle"}
+      busyLabel={schedule.enabled ? "Pausing…" : "Resuming…"}
+      onClick={() => patch.mutate({ id: dbId, bakId: schedule.id, data: { enabled: !schedule.enabled } })}
+    >
+      {schedule.enabled ? "Pause" : "Resume"}
+    </ActionButton>
+  );
+}
+
+/**
+ * New schedule, or edit one. Nothing here is sealed — a target, a cron
+ * expression and a retention count — so the edit form is simply the create form
+ * seeded, and every field is safe to show as it is stored.
+ *
+ * Changing the retention count downward prunes on the NEXT run rather than
+ * immediately, which is worth saying: "keep 3" typed on a database with ten
+ * backups does not delete seven files the moment you press Save.
+ */
+function ScheduleDialog({ dbId, schedule: existing, primary }: { dbId: string; schedule?: DatabaseBackup; primary?: boolean }) {
+  const editing = existing !== undefined;
   const qc = useQueryClient();
   const targets = useListBackupTargets();
   const [open, setOpen] = useState(false);
-  const [targetId, setTargetId] = useState("");
-  const [schedule, setSchedule] = useState("0 3 * * *");
-  const [retention, setRetention] = useState("7");
+  const [targetId, setTargetId] = useState(existing?.target_id ?? "");
+  const [schedule, setSchedule] = useState(existing?.schedule ?? "0 3 * * *");
+  const [retention, setRetention] = useState(String(existing?.retention_count ?? 7));
   const [error, setError] = useState<string | null>(null);
 
   const chosen = targetId || targets.data?.[0]?.id || "";
 
+  const done = (verb: string) => {
+    void qc.invalidateQueries({ queryKey: getListDatabaseBackupsQueryKey(dbId) });
+    toastSuccess(verb);
+    setError(null);
+    // The card it made is the thing to look at now, not the form again.
+    setOpen(false);
+  };
+
   const create = useCreateDatabaseBackup({
     mutation: {
-      onSuccess: () => {
-        void qc.invalidateQueries({ queryKey: getListDatabaseBackupsQueryKey(dbId) });
-        toastSuccess("Backup schedule created");
-        setError(null);
-        // The card it made is the thing to look at now, not the form again.
-        setOpen(false);
-      },
+      onSuccess: () => done("Backup schedule created"),
       onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not create the schedule"),
     },
   });
-  const createState = useMutationActionState(create);
+  const patch = usePatchDatabaseBackup({
+    mutation: {
+      onSuccess: () => done("Backup schedule saved"),
+      onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not save the schedule"),
+    },
+  });
+  const createState = useMutationActionState(editing ? patch : create);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (chosen === "" || create.isPending) return;
-    create.mutate({ id: dbId, data: { target_id: chosen, schedule, retention_count: Number(retention), enabled: true } });
+    if (chosen === "" || create.isPending || patch.isPending) return;
+    const data = { target_id: chosen, schedule, retention_count: Number(retention) };
+    if (editing) {
+      // `enabled` is deliberately absent: pausing lives on the card, and an
+      // edit must not silently resume a schedule someone paused.
+      patch.mutate({ id: dbId, bakId: existing.id, data });
+      return;
+    }
+    create.mutate({ id: dbId, data: { ...data, enabled: true } });
   };
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="primary" size={primary ? "lg" : "md"}>
-          <Plus className="h-3.5 w-3.5" /> New schedule
-        </Button>
+        {editing ? (
+          <Button size="sm" variant="ghost">
+            Edit
+          </Button>
+        ) : (
+          <Button variant="primary" size={primary ? "lg" : "md"}>
+            <Plus className="h-3.5 w-3.5" /> New schedule
+          </Button>
+        )}
       </DialogTrigger>
-      <DialogContent title="Schedule backups" description="CypherPanel runs the backup on this schedule and uploads it to your S3 target.">
+      <DialogContent
+        title={editing ? "Edit this schedule" : "Schedule backups"}
+        description="CypherPanel runs the backup on this schedule and uploads it to your S3 target."
+      >
         <form onSubmit={submit} className="space-y-4">
           <Field label="Target">
             {(id) => (
@@ -380,7 +501,14 @@ function NewScheduleDialog({ dbId, primary }: { dbId: string; primary?: boolean 
               <CronField value={schedule} onChange={setSchedule} />
             </div>
           </div>
-          <Field label="Keep" hint="How many recent backups to retain. Older ones are pruned automatically.">
+          <Field
+            label="Keep"
+            hint={
+              editing
+                ? "How many recent backups to retain. Lowering it prunes on the next run, not now."
+                : "How many recent backups to retain. Older ones are pruned automatically."
+            }
+          >
             {(id) => <Input id={id} inputMode="numeric" value={retention} onChange={(e) => setRetention(e.target.value)} className="mono w-24" />}
           </Field>
           {error && (
@@ -396,11 +524,11 @@ function NewScheduleDialog({ dbId, primary }: { dbId: string; primary?: boolean 
               type="submit"
               variant="primary"
               state={createState}
-              busyLabel="Creating…"
-              successLabel="Created"
+              busyLabel={editing ? "Saving…" : "Creating…"}
+              successLabel={editing ? "Saved" : "Created"}
               disabledReason={chosen === "" ? "Add a backup target first" : undefined}
             >
-              Create schedule
+              {editing ? "Save schedule" : "Create schedule"}
             </ActionButton>
           </div>
         </form>

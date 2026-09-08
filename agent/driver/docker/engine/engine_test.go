@@ -32,6 +32,9 @@ type recordedRequest struct {
 	path   string
 	query  url.Values
 	body   []byte
+	// header is what the daemon saw. Registry credentials travel here rather
+	// than in the query, and a test has to be able to prove that.
+	header http.Header
 }
 
 func newMockDaemon(t *testing.T, routes map[string]http.HandlerFunc) *mockDaemon {
@@ -43,7 +46,7 @@ func newMockDaemon(t *testing.T, routes map[string]http.HandlerFunc) *mockDaemon
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 			body, _ := io.ReadAll(r.Body)
 			m.mu.Lock()
-			m.requests = append(m.requests, recordedRequest{r.Method, r.URL.Path, r.URL.Query(), body})
+			m.requests = append(m.requests, recordedRequest{r.Method, r.URL.Path, r.URL.Query(), body, r.Header.Clone()})
 			m.mu.Unlock()
 			handler(w, r)
 		})
@@ -401,7 +404,7 @@ func TestBuildImageStreamsLogs(t *testing.T) {
 
 	var lines []string
 	err := m.client().BuildImage(context.Background(), strings.NewReader("tar"), "cypher/app1:rev1", "Dockerfile",
-		map[string]string{driver.LabelAppID: "app1"}, func(l string) { lines = append(lines, l) })
+		map[string]string{driver.LabelAppID: "app1"}, "", func(l string) { lines = append(lines, l) })
 	if err != nil {
 		t.Fatalf("BuildImage: %v", err)
 	}
@@ -424,7 +427,7 @@ func TestBuildImageReportsStreamError(t *testing.T) {
 			_, _ = io.WriteString(w, `{"stream":"Step 1/2\n"}`+"\n"+`{"error":"no such file: Dockerfile"}`+"\n")
 		},
 	})
-	err := m.client().BuildImage(context.Background(), strings.NewReader("tar"), "cypher/app1:rev1", "", nil, nil)
+	err := m.client().BuildImage(context.Background(), strings.NewReader("tar"), "cypher/app1:rev1", "", nil, "", nil)
 	if err == nil || !strings.Contains(err.Error(), "no such file") {
 		t.Fatalf("err = %v, want the build stream error surfaced", err)
 	}
@@ -651,5 +654,97 @@ func TestPullImageSplitsReferences(t *testing.T) {
 		if got := q.Get("tag"); got != c.tag {
 			t.Errorf("%s: tag = %q, want %q", c.ref, got, c.tag)
 		}
+	}
+}
+
+// ── private registries (registries.md; ADR-008 path 3) ──────────────────────
+
+// The credential rides in a header, never the query, so it stays out of
+// anything that logs a URL — the daemon's own request log included.
+func TestPullSendsTheCredentialInAHeader(t *testing.T) {
+	m := newMockDaemon(t, map[string]http.HandlerFunc{
+		"/images/create": func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, `{"status":"Pulling"}`+"\n")
+		},
+	})
+	if err := m.client().PullImageAuth(context.Background(), "ghcr.io/acme/web:1", "encoded-credential"); err != nil {
+		t.Fatalf("PullImageAuth: %v", err)
+	}
+	req := m.lastTo(t, "/images/create")
+	if got := req.header.Get("X-Registry-Auth"); got != "encoded-credential" {
+		t.Fatalf("X-Registry-Auth = %q", got)
+	}
+	if strings.Contains(req.query.Encode(), "encoded-credential") {
+		t.Fatalf("the credential reached the query string: %v", req.query)
+	}
+}
+
+func TestPullSendsNoHeaderWithoutACredential(t *testing.T) {
+	m := newMockDaemon(t, map[string]http.HandlerFunc{
+		"/images/create": func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) },
+	})
+	if err := m.client().PullImage(context.Background(), "ghost:5"); err != nil {
+		t.Fatalf("PullImage: %v", err)
+	}
+	if got := m.lastTo(t, "/images/create").header.Get("X-Registry-Auth"); got != "" {
+		t.Fatalf("X-Registry-Auth = %q, want none for an anonymous pull", got)
+	}
+}
+
+// /build reads X-Registry-Config — a map from host to credential, because one
+// build may pull from several registries.
+func TestBuildSendsTheRegistryConfigHeader(t *testing.T) {
+	m := newMockDaemon(t, map[string]http.HandlerFunc{
+		"/build": func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, `{"stream":"Step 1/1\n"}`+"\n")
+		},
+	})
+	err := m.client().BuildImage(context.Background(), strings.NewReader("tar"), "cypher/app1:rev1", "Dockerfile",
+		nil, "encoded-config", nil)
+	if err != nil {
+		t.Fatalf("BuildImage: %v", err)
+	}
+	req := m.lastTo(t, "/build")
+	if got := req.header.Get("X-Registry-Config"); got != "encoded-config" {
+		t.Fatalf("X-Registry-Config = %q", got)
+	}
+	if req.header.Get("Content-Type") != "application/x-tar" {
+		t.Fatalf("Content-Type = %q, want the tar context still declared", req.header.Get("Content-Type"))
+	}
+}
+
+// A push answers 200 and then reports its failure inside the stream. Not
+// reading it to the end is how a denied push looks like a successful one.
+func TestPushSurfacesAStreamError(t *testing.T) {
+	m := newMockDaemon(t, map[string]http.HandlerFunc{
+		"/images/ghcr.io/acme/web/push": func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, `{"status":"Preparing"}`+"\n"+`{"error":"denied: requested access to the resource is denied"}`+"\n")
+		},
+	})
+	err := m.client().PushImage(context.Background(), "ghcr.io/acme/web:rev1", "cred")
+	if err == nil || !strings.Contains(err.Error(), "denied") {
+		t.Fatalf("err = %v, want the stream error surfaced", err)
+	}
+}
+
+func TestPushSendsTheTagAndCredential(t *testing.T) {
+	m := newMockDaemon(t, map[string]http.HandlerFunc{
+		"/images/ghcr.io/acme/web/push": func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, `{"status":"Pushed"}`+"\n")
+		},
+	})
+	if err := m.client().PushImage(context.Background(), "ghcr.io/acme/web:rev1", "cred"); err != nil {
+		t.Fatalf("PushImage: %v", err)
+	}
+	req := m.lastTo(t, "/images/ghcr.io/acme/web/push")
+	if req.query.Get("tag") != "rev1" {
+		t.Fatalf("tag = %q", req.query.Get("tag"))
+	}
+	if req.header.Get("X-Registry-Auth") != "cred" {
+		t.Fatalf("X-Registry-Auth = %q", req.header.Get("X-Registry-Auth"))
 	}
 }

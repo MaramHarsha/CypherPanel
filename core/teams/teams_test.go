@@ -19,6 +19,7 @@ type fakeStore struct {
 	projects map[string]int // teamID -> project count
 	// clearedInboxes is "<teamID>/<userID>" per inbox sweep, in call order.
 	clearedInboxes []string
+	revokedInvites []string
 }
 
 func newFakeStore() *fakeStore {
@@ -104,6 +105,14 @@ func (f *fakeStore) DeleteTeamMember(_ context.Context, teamID, userID string) e
 func (f *fakeStore) DeleteInboxItemsForTeamMember(_ context.Context, teamID, userID string) error {
 	f.clearedInboxes = append(f.clearedInboxes, teamID+"/"+userID)
 	return nil
+}
+
+// revokedInvites records the (team, issuer) pairs RemoveMember swept: an
+// invitation outlives its issuer's session, but not their membership
+// (invitations-and-access-requests.md §8).
+func (f *fakeStore) RevokeLiveTeamInvitesBy(_ context.Context, teamID, userID string) (int64, error) {
+	f.revokedInvites = append(f.revokedInvites, teamID+"/"+userID)
+	return 1, nil
 }
 func (f *fakeStore) CountTeamOwners(_ context.Context, teamID string) (int64, error) {
 	var n int64
@@ -224,6 +233,12 @@ func TestRemoveMemberClearsTheirInboxForThatTeam(t *testing.T) {
 	if len(fs.clearedInboxes) != 1 || fs.clearedInboxes[0] != "tm_1/usr_member" {
 		t.Fatalf("inbox sweeps = %v, want exactly [tm_1/usr_member]", fs.clearedInboxes)
 	}
+	// …and the invitations they issued for that team die with the membership
+	// (invitations-and-access-requests.md §8): otherwise a removed admin keeps
+	// up to seven days of live links in other people's mailboxes.
+	if len(fs.revokedInvites) != 1 || fs.revokedInvites[0] != "tm_1/usr_member" {
+		t.Fatalf("invitation sweeps = %v, want exactly [tm_1/usr_member]", fs.revokedInvites)
+	}
 }
 
 // A removal that is refused must not touch anyone's inbox — the guard runs
@@ -238,6 +253,9 @@ func TestRefusedRemovalLeavesTheInboxAlone(t *testing.T) {
 	}
 	if len(fs.clearedInboxes) != 0 {
 		t.Fatalf("inbox swept on a refused removal: %v", fs.clearedInboxes)
+	}
+	if len(fs.revokedInvites) != 0 {
+		t.Fatalf("invitations revoked on a refused removal: %v", fs.revokedInvites)
 	}
 }
 

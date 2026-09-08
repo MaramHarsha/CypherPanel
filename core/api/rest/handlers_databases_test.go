@@ -3,8 +3,11 @@ package rest
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/MaramHarsha/cypherpanel/core/domain"
 )
 
 // assertPublicDatabaseFields validates that the database DTO exposes only
@@ -155,4 +158,68 @@ func TestDatabaseCreateValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestConnectionInfoExposedHostIsTheServerAddress: with a port exposed, `host`
+// is an address an operator can actually dial — the server's public address,
+// falling back to the hostname the agent reported. It used to be the server
+// id, which was not an address at all (control-plane-hardening.md §8).
+func TestConnectionInfoExposedHostIsTheServerAddress(t *testing.T) {
+	ts, srvStore, _, _ := newTestServerFull(t)
+	token := login(t, ts)
+	srvStore.list = append(srvStore.list, domain.Server{
+		ID: "srv_test", Name: "prod-1", Hostname: "prod-1.internal", PublicAddress: "198.51.100.10",
+	})
+
+	status, _, resp := doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/databases", token,
+		`{"name":"exposed-db","engine":"postgresql","version":"16","server_id":"srv_test"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("create database = %d, response %s", status, resp)
+	}
+	var created struct {
+		Database struct {
+			ID string `json:"id"`
+		} `json:"database"`
+	}
+	if err := json.Unmarshal(resp, &created); err != nil {
+		t.Fatalf("unmarshal create: %v", err)
+	}
+	dbID := created.Database.ID
+
+	// Without an exposed port the answer is the in-network address only.
+	info := connectionInfo(t, ts, token, dbID)
+	if info.Host != "" {
+		t.Errorf("host = %q with no exposed port, want empty (there is nothing to dial from outside)", info.Host)
+	}
+
+	if status, _, resp = doJSON(t, "PATCH", ts.URL+"/api/v1/databases/"+dbID, token, `{"expose_port":5433}`); status != http.StatusOK {
+		t.Fatalf("exposing a port = %d, response %s", status, resp)
+	}
+	info = connectionInfo(t, ts, token, dbID)
+	if info.Host != "198.51.100.10" || info.Port != 5433 {
+		t.Fatalf("connection info = %+v, want the server's public address and the exposed port", info)
+	}
+	if info.Host == "srv_test" {
+		t.Fatal("host is the server id, which is not an address")
+	}
+
+	// No public address set: the hostname the agent reported is the next best
+	// answer, and still an address rather than an id.
+	srvStore.list[len(srvStore.list)-1].PublicAddress = ""
+	if info = connectionInfo(t, ts, token, dbID); info.Host != "prod-1.internal" {
+		t.Fatalf("host = %q with no public address, want the reported hostname", info.Host)
+	}
+}
+
+func connectionInfo(t *testing.T, ts *httptest.Server, token, dbID string) connectionInfoResponse {
+	t.Helper()
+	status, _, resp := doJSON(t, "GET", ts.URL+"/api/v1/databases/"+dbID+"/connection-info", token, "")
+	if status != http.StatusOK {
+		t.Fatalf("connection info = %d, response %s", status, resp)
+	}
+	var out connectionInfoResponse
+	if err := json.Unmarshal(resp, &out); err != nil {
+		t.Fatalf("unmarshal connection info %s: %v", resp, err)
+	}
+	return out
 }

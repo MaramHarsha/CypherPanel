@@ -69,6 +69,64 @@ message AppSpec {
   // zero-mutation. Carried per revision (config snapshot), so rollback of an
   // image revision pulls correctly even after the app's source changed kind.
   bool pull = 15;
+  // registry_auth authenticates the pull when image lives in a private
+  // registry (registries.md; ADR-008 path 3). Unset is the ordinary case — a
+  // public image, or one that arrived by local build or relay — and it stays
+  // unset unless pull is true, because there is nothing to authenticate to.
+  // Assembled per work item from the plane's sealed credential, carried only
+  // over mTLS (rule 23) and never logged or written to disk (rule 20).
+  RegistryAuth registry_auth = 16;
+  // restart_token expresses "restart this container" as desired state rather
+  // than as a verb the agent obeys (deployment-control.md §3; ADR-005). It is
+  // part of the container's config hash, so a NEW value is a difference the
+  // existing recreate path already closes — and converging twice after the
+  // recreate still mutates nothing, because the running container then carries
+  // the token the spec names. Empty is every application's birth value.
+  string restart_token = 17;
+}
+
+// RetainSpec names the revisions of one Application whose images must be kept
+// (disk-management.md §2).
+//
+// It is what turns garbage collection from a heuristic into a reconciler: the
+// plane knows exactly which revisions it wants to be able to run — the deployed
+// one, plus the recent ones a rollback could name — so everything else is, by
+// definition, not referenced. A prune job cannot know that, which is why every
+// prune job either spares too much or breaks rollback.
+message RetainSpec {
+  string app_id = 1;
+  // Newest first, including the desired revision. Never empty: an application
+  // with nothing to keep is omitted from the list entirely.
+  repeated string revision_ids = 2;
+}
+
+// RegistryAuth is one credential for one registry, as the daemon wants it.
+//
+// It is deliberately a value on the work item rather than agent configuration:
+// an agent holds no registry credentials of its own, so revoking one on the
+// plane revokes it everywhere at the next work item, and a captured agent disk
+// yields nothing.
+message RegistryAuth {
+  // The registry host, matching the image reference's own prefix — ghcr.io,
+  // registry.example.com, registry:5000.
+  string server_address = 1;
+  // Empty for a registry that takes a bearer identity token rather than a
+  // username and password.
+  string username = 2;
+  // Password or access token. Never logged (rule 20).
+  string token = 3;
+}
+
+// RegistryPush is the optional second home for a completed build (ADR-008
+// path 3). Nothing in the deploy path depends on it: the rollout still runs
+// the local image or the relayed one, and this is an additional copy pushed
+// where the operator already runs a registry.
+message RegistryPush {
+  // The full reference to push, already namespaced by the plane —
+  // ghcr.io/acme/web:<revision_id>. The builder tags its local build as this
+  // and pushes that reference.
+  string image = 1;
+  RegistryAuth auth = 2;
 }
 
 // PortMapping publishes a container port to a host port on one protocol. The
@@ -172,6 +230,16 @@ message BuildWork {
   // image has to listen on it — otherwise "it just works" would depend on the
   // operator having guessed the web server's default.
   uint32 runtime_port = 10;
+  // source_auth authenticates against the registry the app's INPUTS come from:
+  // here, the base image a private Dockerfile FROM names. Unset for the
+  // ordinary public base image. Same credential the app's image source would
+  // use, because "where this app's bits come from" is one answer.
+  RegistryAuth source_auth = 11;
+  // push, when set, is where the completed image is pushed in addition to
+  // staying in the builder's local daemon. A failed push fails the deployment
+  // rather than reporting success for an image that is not where it was
+  // promised to be.
+  RegistryPush push = 12;
 }
 
 // PushImageWork commands a builder-role agent to stream a built image to the
@@ -205,6 +273,49 @@ message DesiredState {
   // Databases whose db_id is absent from db_specs are removed (same
   // absence-means-remove contract as apps).
   repeated DbSpec db_specs = 2;
+  // V1: Compose Stack desired state (compose-stacks.md §4). Stacks whose
+  // stack_id is absent from compose_specs are brought down — the same
+  // absence-means-remove contract apps and databases follow.
+  repeated ComposeSpec compose_specs = 4;
+  // V1: which revisions' images must survive garbage collection
+  // (disk-management.md §2). Unlike specs, ABSENCE MEANS NO INSTRUCTION here,
+  // not removal: an application the plane could not read revisions for is
+  // omitted and left alone. The two mistakes do not cost the same.
+  repeated RetainSpec retain = 5;
+  // Node-wide TLS settings for the managed Proxy (agent-identity-and-tls.md
+  // §4). Desired state, not configuration: the panel owns the ACME account and
+  // every node it schedules onto gets the same one, so a fresh install gets
+  // certificates without anyone editing a unit file on each host. Absent (or
+  // an empty acme_email) means "no certificate resolver" — the Proxy then
+  // serves plain HTTP and says so, rather than pointing routes at a resolver
+  // that does not exist.
+  TLSSettings tls = 3;
+}
+
+// TLSSettings is the panel's ACME account as the Proxy driver needs it. It
+// carries no secret: an account email and a directory URL are both public, and
+// the ACME account KEY is generated and kept by Traefik on the serving node,
+// which is what keeps certificate private keys off the control plane (ADR-004).
+message TLSSettings {
+  // ACME account email. Empty means the node configures no resolver.
+  string acme_email = 1;
+  // ACME directory URL override (e.g. Let's Encrypt staging). Empty means
+  // Let's Encrypt production.
+  string acme_ca_server = 2;
+}
+
+// ResyncWork tells one agent to re-read its full desired state from
+// state.<server_id>.sync and converge on it. It carries no state of its own —
+// it is a nudge, published when something node-wide changed that is not
+// attached to any single Application (today: the panel's TLS settings).
+//
+// Idempotent by construction (rule 12): the agent's response is to ask for the
+// authoritative desired set and converge, which is exactly what it does on
+// connect, so a redelivered nudge costs one request and changes nothing.
+message ResyncWork {
+  // Free-text reason, logged by the agent so an operator reading agent logs can
+  // see why the node re-read its desired state. Never load-bearing.
+  string reason = 1;
 }
 
 // AppStatus is one Application's observed state, reported on
@@ -322,6 +433,82 @@ message DbStatus {
   google.protobuf.Timestamp observed_at = 5;
 }
 
+// ComposeSpec is a Compose Stack's desired state as one server's reconciler
+// sees it (compose-stacks.md).
+//
+// The FILE is the desired state, not a command: the agent has one fixed
+// invocation of its own (`docker compose up -d --remove-orphans --wait`) and
+// this message only says what it should be converging toward. That is the same
+// line work.proto draws everywhere — declarative workload config is desired
+// state and permitted; a command verb is not.
+message ComposeSpec {
+  string stack_id = 1;
+  string environment_id = 2;
+  // revision_id names the immutable version of the file this spec carries;
+  // rollback is a spec whose revision_id points at an older one (ADR-005).
+  string revision_id = 3;
+  // The compose file, verbatim, exactly as the operator wrote it.
+  string compose_yaml = 4;
+  // Decrypted env for compose's ${VAR} interpolation. The agent writes it to an
+  // env file mode 0600 and removes it on every exit path, so a secret never has
+  // to live in the file itself. Sealed at rest on the plane; never logged
+  // (rule 20); transported only over mTLS (rule 23).
+  map<string, string> env = 5;
+  // Deterministic environment network the stack joins, so its services can
+  // reach the environment's applications and databases by name.
+  string network = 6;
+  // Which service the managed Proxy publishes, and where. A compose file's own
+  // Traefik labels cannot work: the Proxy runs the file provider only and no
+  // docker provider (ADR-004), so the route is declared here and the agent
+  // points the same fragment an Application gets at the named service.
+  ComposeRoute route = 7;
+}
+
+// ComposeRoute names the service a domain reaches. An empty domain means the
+// stack publishes nothing through the Proxy.
+message ComposeRoute {
+  string domain = 1;
+  bool https = 2;
+  string path_prefix = 3;
+  // The compose service that answers, and the port it listens on inside the
+  // container.
+  string service = 4;
+  uint32 port = 5;
+}
+
+// ComposeRemoveWork commands absence of a whole stack.
+message ComposeRemoveWork {
+  string idempotency_key = 1;
+  string stack_id = 2;
+  // Explicit opt-in for data destruction. False preserves the stack's volumes,
+  // the conservative default a database removal already uses: orphaned volumes
+  // are better than data nobody meant to lose.
+  bool delete_volumes = 3;
+}
+
+// ComposeConvergeWork re-declares one stack's desired state so a deploy takes
+// effect promptly rather than at the next sync. Carries no command verb; the
+// spec is state.
+message ComposeConvergeWork {
+  ComposeSpec spec = 1;
+}
+
+// ComposeStatus is one stack's observed state, reported on
+// state.<server_id>.compose.<stack_id>. The plane records what the agent
+// reports and never asserts success from a work item (ADR-005).
+message ComposeStatus {
+  string stack_id = 1;
+  string revision_id = 2;
+  // One of: running, degraded, stopped, error — the same vocabulary an
+  // Application uses (ui-principles §5). `degraded` is some but not all of the
+  // services compose was asked for.
+  string state = 3;
+  // Compose's own last words on failure. Never contains secrets: the env file
+  // is not echoed, and compose reports service names, not values.
+  string detail = 4;
+  google.protobuf.Timestamp observed_at = 5;
+}
+
 // DbBackupWork commands a database's host agent to dump the database and upload
 // it to an S3-compatible target (managed-databases.md §7). The wire carries the
 // engine (the agent derives the dump command from its own matrix — never a
@@ -379,8 +566,14 @@ message DbBackupEvent {
   google.protobuf.Timestamp occurred_at = 7;
 }
 
-// DbRestoreEvent reports a restore's terminal outcome, published on
+// DbRestoreEvent reports a restore's progress and its terminal outcome, both on
 // state.<server>.db.restore.
+//
+// A restore takes a database offline, so "it is running" is not a detail — it is
+// the whole answer someone staring at the screen needs. OUTCOME_RUNNING carries
+// the step the agent is on; the terminal outcomes end it. Progress events are
+// additive: a plane that does not know OUTCOME_RUNNING sees an unrecognised
+// enum value and ignores the event, exactly as it did before this existed.
 message DbRestoreEvent {
   string restore_id = 1;
   string db_id = 2;
@@ -389,11 +582,30 @@ message DbRestoreEvent {
     OUTCOME_UNSPECIFIED = 0;
     OUTCOME_SUCCEEDED = 1;
     OUTCOME_FAILED = 2;
+    OUTCOME_RUNNING = 3;
   }
   Outcome outcome = 3;
 
   string detail = 4;
   google.protobuf.Timestamp occurred_at = 5;
+
+  // Step names where a running restore has got to. Set only with
+  // OUTCOME_RUNNING; a terminal event leaves it unspecified because the outcome
+  // already says where it ended up.
+  enum Step {
+    STEP_UNSPECIFIED = 0;
+    STEP_FETCHING = 1;    // downloading and decompressing the backup object
+    STEP_STOPPING = 2;    // stopping the container (engines that reload on boot)
+    STEP_APPLYING = 3;    // writing the dump in and running the engine restore
+    STEP_RESTARTING = 4;  // starting again and waiting for health
+  }
+  Step step = 6;
+
+  // Bytes of the decompressed dump handled so far, and in total. Zero when the
+  // step has no meaningful byte count — an engine restart is not measured in
+  // bytes, and pretending otherwise would draw a bar that does not move.
+  int64 bytes_done = 7;
+  int64 bytes_total = 8;
 }
 
 // DbBackupPruneWork commands a database's host agent to delete specific backup

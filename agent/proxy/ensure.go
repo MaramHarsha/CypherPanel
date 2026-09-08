@@ -45,11 +45,16 @@ type Config struct {
 	// Image is the pinned Traefik image (e.g. "traefik:v3.3"). Never :latest —
 	// a surprise major is a fleet-wide outage (routing-and-tls.md §3).
 	Image string
-	// ACMEEmail is the Let's Encrypt account email. Empty ⇒ no cert resolver is
-	// configured (HTTP-only; used in CI and before a domain is set up).
+	// ACMEEmail is a HOST-LOCAL override of the panel's ACME account email
+	// (CYPHER_ACME_EMAIL). Non-empty wins over whatever desired state carries,
+	// which is the escape hatch for a node that must use a different account —
+	// or for a hermetic test. Empty is the normal case: the account arrives in
+	// DesiredState (agent-identity-and-tls.md §4) via SetACME.
 	ACMEEmail string
-	// ACMECAServer overrides the ACME directory URL (e.g. the LE staging
-	// endpoint). Empty ⇒ Let's Encrypt production.
+	// ACMECAServer is the same kind of host-local override for the ACME
+	// directory URL (CYPHER_ACME_CASERVER, e.g. the Let's Encrypt staging
+	// endpoint). Empty defers to desired state, and if that is empty too, to
+	// Let's Encrypt production.
 	ACMECAServer string
 	// Engine runs and networks the Traefik container. A nil Engine selects
 	// fragment-only mode: SetRoute/RemoveRoute/Route still manage fragments,
@@ -180,14 +185,17 @@ func (t *Traefik) renderStaticConfig() ([]byte, error) {
 			Watch:     true,
 		}},
 	}
-	// A cert resolver is only configured when an ACME account email is set;
-	// without a real domain (CI, initial setup) the Proxy serves plain HTTP.
-	if t.cfg.ACMEEmail != "" {
+	// A cert resolver is only configured when an ACME account email is known —
+	// from the panel's TLS settings, or from the host-local override. Without
+	// one (a fresh panel, CI, a deliberately HTTP-only node) the Proxy serves
+	// plain HTTP, and the fragment writer agrees with it: routes stop naming a
+	// resolver that does not exist (agent-identity-and-tls.md §4).
+	if email, caServer := t.acme(); email != "" {
 		c.CertResolvers = map[string]certResolver{
 			acmeResolver: {ACME: acmeConfig{
-				Email:         t.cfg.ACMEEmail,
+				Email:         email,
 				Storage:       containerConfigDir + "/" + acmeStoreName,
-				CAServer:      t.cfg.ACMECAServer,
+				CAServer:      caServer,
 				HTTPChallenge: httpChallenge{EntryPoint: "web"},
 			}},
 		}

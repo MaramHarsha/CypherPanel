@@ -48,6 +48,15 @@ export function isTerminal(status: string): boolean {
   return status === "succeeded" || status === "failed";
 }
 
+/**
+ * A deploy is LIVE while the plane is working on it. `awaiting_approval` is
+ * neither live nor terminal — it is parked, waiting for a person
+ * (deploy-protection.md §3) — so it must not hold the Deploy button down.
+ */
+export function isLive(status: string): boolean {
+  return !isTerminal(status) && status !== "awaiting_approval";
+}
+
 function ApplicationLayout() {
   const { projectId, appId } = Route.useParams();
   const project = useGetProject(projectId);
@@ -198,7 +207,7 @@ function DeployButton({ appId, branch }: { appId: string; branch: string | undef
   const qc = useQueryClient();
   const { projectId } = Route.useParams();
   const deployments = useListDeployments(appId);
-  const active = (deployments.data ?? []).some((d) => !isTerminal(d.status));
+  const active = (deployments.data ?? []).some((d) => isLive(d.status));
 
   const deploy = useDeployApplication({
     mutation: {

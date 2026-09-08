@@ -7,9 +7,10 @@
 // (shared-variables.md §8). The board datelines each screen
 // ATLAS-CRM / SETTINGS / <TAB>, which is a route, not an anchor.
 //
-// 12c's strip also draws Quotas, Protection and Status page. None of the three
-// has an API, so none is drawn here: a tab that opens onto nothing is a dead
-// end, and each arrives with its endpoint.
+// 12c's strip also draws Quotas, Protection and Status page. Protection now has
+// an endpoint (deploy-protection.md) so it is drawn; Quotas and Status page do
+// not, so they are still absent — a tab that opens onto nothing is a dead end,
+// and each arrives with its endpoint.
 import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
 import { PageBody, PageHeader } from "@/components/page-header";
 
@@ -22,6 +23,7 @@ const TABS = [
   { to: "notifiers", label: "Notifiers", exact: false },
   { to: "webhooks", label: "Webhooks", exact: false },
   { to: "shared-variables", label: "Shared variables", exact: false },
+  { to: "protection", label: "Protection", exact: false },
 ] as const;
 
 function ProjectSettingsLayout() {

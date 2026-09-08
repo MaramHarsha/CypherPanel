@@ -141,9 +141,12 @@ The subscribable set is exactly the constants already in `core/domain/notify.go`
 | `backup.failed` | `scheduler.HandleDbBackupEvent` | `database` |
 
 To keep one vocabulary in one place, `core/domain/notify.go` gains `EventTypes()`
-and `ValidEventType(string) bool`, and `notify.validEvents` — today a private map
-in `core/notify/service.go` — is replaced by a call to it. Adding an event key
-then means editing one file, and notifiers *and* endpoints gain it at once.
+and `ValidEventType(string) bool`, and `notify.validEvents` — a private map in
+`core/notify/service.go` — is replaced by a call to it (done in
+[control-plane-hardening.md](control-plane-hardening.md) §8). Adding an event key
+means editing one file, and notifiers *and* endpoints gain it at once. The
+*inbox* taxonomy is a superset: `domain.InboxKinds()` is `EventTypes()` plus the
+panel-level kinds, which nothing emits to a notifier or an endpoint.
 
 **`scale.changed` is not shipped.** The board lists it as a subscribed chip, but
 there is no transition to emit it from: replicas are fixed at 1 for v1
@@ -184,9 +187,10 @@ Backup events set `resource.kind` to `database` and carry `backup_record_id`,
 `backup_id`, `status`, `detail` in `data`. The envelope is a **published
 contract**: fields are only ever added, never removed or retyped (rule 17 binds
 what we emit, not only what we accept). The manager resolves `GetEnvironment`
-**and** `GetProject` so both names are accurate — `notify.dispatch` currently
-assigns the *environment* name to `ev.Project`, and this slice does not inherit
-that.
+**and** `GetProject` so both names are accurate — `notify.dispatch` used to
+assign the *environment* name to `ev.Project`, which this slice did not inherit
+and [control-plane-hardening.md](control-plane-hardening.md) §8 has since fixed
+at the source, so notifiers and the inbox now say the project's name too.
 
 **Signing** — over the raw body, keyed by the endpoint's unsealed secret:
 

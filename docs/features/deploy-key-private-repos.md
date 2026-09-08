@@ -51,7 +51,10 @@ DELETE /deploy-keys/{id}                            → 204
 
 Deletion is `RESTRICT`-gated by the applications FK: a key in use cannot be
 deleted until all referencing applications clear their `source_deploy_key_id`.
-The 409 response names the blocking application(s).
+The 409 response names the blocking application(s): the `Error` envelope plus
+`applications: [{id, name}]` (`DeployKeyInUse` in `openapi.yaml`), so the
+operator can go detach them instead of clicking through every application
+([control-plane-hardening.md](control-plane-hardening.md) §8).
 
 Creating an application with `source.deploy_key_id` validates that the
 referenced key exists (400 otherwise). PATCH-ing `source.deploy_key_id` to a

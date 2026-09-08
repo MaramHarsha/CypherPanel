@@ -24,7 +24,7 @@ var ErrTokenNotFound = errors.New("auth: token not found")
 
 // ErrInvalidAbility is returned when a token is requested with an unknown or
 // empty ability set.
-var ErrInvalidAbility = errors.New("auth: abilities must be a non-empty subset of read, write, deploy")
+var ErrInvalidAbility = errors.New("auth: abilities must be a non-empty subset of read, write, deploy, env, servers, admin")
 
 // CreateToken issues a personal access token for userID. The raw token is
 // returned exactly once (never stored — only its hash is); name is a
@@ -33,7 +33,12 @@ var ErrInvalidAbility = errors.New("auth: abilities must be a non-empty subset o
 // memberships, narrowed further by abilities — a token can never do something
 // its owner could not. An empty ability set is rejected rather than silently
 // widened: a credential's authority is always an explicit choice.
-func (a *Authenticator) CreateToken(ctx context.Context, userID, name string, abilities []domain.Ability, expiresAt *time.Time) (raw string, tok domain.APIToken, err error) {
+//
+// projectID, when set, narrows the token to one project: abilities say what it
+// may do, this says where. The caller is responsible for having checked that
+// the project exists and that the owner can reach it — this layer only stores
+// the decision.
+func (a *Authenticator) CreateToken(ctx context.Context, userID, name string, abilities []domain.Ability, expiresAt *time.Time, projectID string) (raw string, tok domain.APIToken, err error) {
 	if len(abilities) == 0 {
 		return "", domain.APIToken{}, ErrInvalidAbility
 	}
@@ -49,7 +54,7 @@ func (a *Authenticator) CreateToken(ctx context.Context, userID, name string, ab
 		}
 	}
 	raw = APITokenPrefix + ids.Secret()
-	tok, err = a.store.CreateAPIToken(ctx, ids.New(ids.PrefixAPIToken), userID, name, deduped, HashToken(raw), expiresAt)
+	tok, err = a.store.CreateAPIToken(ctx, ids.New(ids.PrefixAPIToken), userID, name, deduped, HashToken(raw), expiresAt, projectID)
 	if err != nil {
 		return "", domain.APIToken{}, fmt.Errorf("auth: creating api token: %w", err)
 	}
@@ -89,7 +94,7 @@ func (a *Authenticator) authenticateAPIToken(ctx context.Context, rawToken strin
 		return Principal{}, ErrInvalidSession
 	}
 	hash := HashToken(rawToken)
-	user, tokenID, abilities, err := a.store.APITokenByHash(ctx, hash)
+	user, tokenID, abilities, projectID, err := a.store.APITokenByHash(ctx, hash)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return Principal{}, ErrInvalidSession
@@ -97,5 +102,8 @@ func (a *Authenticator) authenticateAPIToken(ctx context.Context, rawToken strin
 		return Principal{}, fmt.Errorf("auth: resolving api token: %w", err)
 	}
 	_ = a.store.TouchAPIToken(ctx, hash) // best-effort; never blocks the request
-	return Principal{User: user, Kind: KindAPIToken, Abilities: abilities, TokenID: tokenID}, nil
+	return Principal{
+		User: user, Kind: KindAPIToken, Abilities: abilities,
+		TokenID: tokenID, ProjectID: projectID,
+	}, nil
 }

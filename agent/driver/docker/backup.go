@@ -258,12 +258,25 @@ func (b *BackupExecutor) archiveOutGzip(ctx context.Context, containerID, path s
 // ExecuteRestore downloads a backup, copies it into the container via the
 // archive API, and runs the engine's restore (or, for RDB engines, restarts the
 // container so it reloads the placed dump). Returns a terminal event.
-func (b *BackupExecutor) ExecuteRestore(ctx context.Context, work *agentv1.DbRestoreWork) *agentv1.DbRestoreEvent {
+func (b *BackupExecutor) ExecuteRestore(ctx context.Context, work *agentv1.DbRestoreWork, progress func(*agentv1.DbRestoreEvent)) *agentv1.DbRestoreEvent {
 	fail := func(detail string) *agentv1.DbRestoreEvent {
 		return &agentv1.DbRestoreEvent{
 			RestoreId: work.RestoreId, DbId: work.DbId,
 			Outcome: agentv1.DbRestoreEvent_OUTCOME_FAILED, Detail: detail, OccurredAt: timestamppb.Now(),
 		}
+	}
+	// step reports where the restore has got to. Bytes are sent only where they
+	// are real: an engine restart is not measured in bytes, and a bar that
+	// moves for it would be drawing something nobody counted.
+	step := func(s agentv1.DbRestoreEvent_Step, done, total int64) {
+		if progress == nil {
+			return
+		}
+		progress(&agentv1.DbRestoreEvent{
+			RestoreId: work.RestoreId, DbId: work.DbId,
+			Outcome: agentv1.DbRestoreEvent_OUTCOME_RUNNING, Step: s,
+			BytesDone: done, BytesTotal: total, OccurredAt: timestamppb.Now(),
+		})
 	}
 
 	plan, err := planFor(work.Engine, work.DataPath)
@@ -273,20 +286,25 @@ func (b *BackupExecutor) ExecuteRestore(ctx context.Context, work *agentv1.DbRes
 
 	// 1. Download + decompress into memory-backed bytes (backups are bounded
 	// v1-scale; a temp file would be a small refinement for very large dumps).
+	step(agentv1.DbRestoreEvent_STEP_FETCHING, 0, 0)
 	dump, err := b.downloadGunzip(ctx, work)
 	if err != nil {
 		return fail(err.Error())
 	}
+	total := int64(len(dump))
 
 	if plan.rdbRestart {
 		// Redis/Valkey: stop, place dump.rdb in the data dir, start (it reloads
 		// on boot). The container name doubles as its id for engine calls.
+		step(agentv1.DbRestoreEvent_STEP_STOPPING, 0, total)
 		if err := b.engine.StopContainer(ctx, work.ContainerName, 30*time.Second); err != nil {
 			return fail(fmt.Sprintf("stopping container: %v", err))
 		}
+		step(agentv1.DbRestoreEvent_STEP_APPLYING, 0, total)
 		if err := b.copyFileIn(ctx, work.ContainerName, plan.restorePath, dump); err != nil {
 			return fail(err.Error())
 		}
+		step(agentv1.DbRestoreEvent_STEP_RESTARTING, total, total)
 		if err := b.engine.StartContainer(ctx, work.ContainerName); err != nil {
 			return fail(fmt.Sprintf("starting container: %v", err))
 		}
@@ -297,6 +315,7 @@ func (b *BackupExecutor) ExecuteRestore(ctx context.Context, work *agentv1.DbRes
 	}
 
 	// SQL / Mongo: copy the dump in, run the restore command reading it.
+	step(agentv1.DbRestoreEvent_STEP_APPLYING, 0, total)
 	if err := b.copyFileIn(ctx, work.ContainerName, plan.restorePath, dump); err != nil {
 		return fail(err.Error())
 	}

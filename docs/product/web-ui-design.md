@@ -185,7 +185,8 @@ without refresh (ui-principles §10).
 | Server join | `POST /servers` | joining server appears | The `curl \| sh` command front and center, copy button; “running within 60 s” progress |
 | Server detail | `GET /servers/{id}` | status | Workloads placed here; revoke = typed-name delete |
 | Templates | (Phase 4 catalog feature — own spec first) | — | Ships as an honest empty state until the catalog lands |
-| Settings · Teams | `GET/POST /teams`, members CRUD | — | Last-owner guard errors surfaced verbatim (409) |
+| Settings · Teams | `GET/POST /teams`, members CRUD, `GET/POST /teams/{id}/invites`, `DELETE …/invites/{inv}`, `GET /teams/{id}/access-requests`, `POST /access-requests/{id}/grant\|deny` | — | Last-owner guard errors surfaced verbatim (409); the invite dialog shows the accept link **once** and says whether mail went out; the owners' queue grants through the member-role path ([invitations-and-access-requests.md](../features/invitations-and-access-requests.md)) |
+| Invitation landing (public) | `GET /invites/{token}`, `POST /invites/{token}/accept` | — | Outside the authed shell, like sign-in. "Choose a password" or "Enter your password" from `account_exists`; one honest expired/used/revoked state; lands signed in |
 | Settings · Users | `GET/POST /users`, role PATCH | — | Panel-role gated; hidden below admin |
 | Settings · Backup targets | `GET/POST/DELETE /backup-targets` | — | Secrets write-only |
 | Settings · Deploy keys | `GET/POST/DELETE /deploy-keys` | — | Public key copy |
@@ -296,6 +297,15 @@ specs (this document + ui-principles govern); the *product features* in slice
    (WebSocket; carries its own security section — threat-model §5.6),
    metrics/observability (charts via the `dataviz` skill). `design-system.md`
    is written **during** this slice from the real component inventory of §6.
+
+   *Compose stacks shipped* — the board's third Resource plus a detail layout
+   (overview · logs · variables · revisions · settings). It has no card in the
+   design canvas, so it is built from the resource-card idiom the applications
+   and databases sections already carry, and each file's header records that
+   sourcing so a later diff against the canvas is a token check rather than a
+   rewrite. The same note applies to the audit page, the panel's TLS and
+   diagnostics tabs, and the invitation accept page: all four post-date the
+   canvas, and all four say so where they are defined.
 
 ## 8. Backend prerequisites (do these before or with slice 1)
 

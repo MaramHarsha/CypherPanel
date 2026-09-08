@@ -465,7 +465,9 @@ DELETE /databases/{id}/backups/{bak_id}          → 204
 
 POST   /databases/{id}/backups/{bak_id}/run      → 202 (trigger now)
 GET    /databases/{id}/backups/{bak_id}/history   → [BackupRecord]
-POST   /databases/{id}/restore                   → 202 {backup_record_id}
+POST   /databases/{id}/restore                   → 202 DatabaseRestore
+GET    /databases/{id}/restores                  → [DatabaseRestore]
+GET    /databases/{id}/restores/{rid}            → DatabaseRestore
 ```
 
 ### Restore
@@ -554,3 +556,67 @@ database clusters (single-node per database at v1) · backup encryption
 at rest in S3 (rely on S3-side encryption) · point-in-time recovery
 (PITR, WAL archiving) · database migration between servers (V1.x: same
 desired-state reassignment as Application server moves).
+
+## Restoring, as an operation rather than a request
+
+A restore takes the database offline and cannot be stopped halfway without
+leaving a half-applied dump behind. The API answered it with an empty `202`, so
+the only honest thing a screen could say was "we asked" — which is why canvas
+`10d` draws a blocking dialog the panel could not actually fill in.
+
+**A restore is now a record.** `database_restores` (migration `0035`) holds the
+database, the backup record it came from, a status, the step a running one has
+reached, byte counters, and the start and finish times.
+
+```
+status  running | succeeded | failed
+step    fetching | stopping | applying | restarting     (empty once finished)
+```
+
+The record is written, and `databases.status` set to `restoring`, **before** the
+work item is published (ENGINEERING rule 15): a plane that dies in between
+restarts knowing a restore is in flight rather than having forgotten one. The
+work is keyed by the restore id, which is the idempotency key the agent already
+echoes back, so a redelivery is the same work item rather than a second one.
+
+`backup_record_id` is `ON DELETE SET NULL`. The retention sweep deletes old
+backup records, and losing the history of a restore because the thing it restored
+has aged out would delete the more interesting half.
+
+### Progress comes from the steps the agent actually has
+
+`DbRestoreEvent` gained `OUTCOME_RUNNING`, a `step`, and byte counters — all
+additive, so a plane that does not know the new outcome sees an unrecognised
+enum value and ignores the event exactly as before. The steps are the ones the
+executor already passes through, not a smooth animation invented for the
+dialog:
+
+| Step | What is happening |
+|---|---|
+| `fetching` | Downloading and decompressing the backup object |
+| `stopping` | Stopping the container — only engines that reload on boot (Redis, Valkey) |
+| `applying` | Writing the dump in and running the engine's restore |
+| `restarting` | Starting again and waiting for health — the same engines |
+
+Bytes are sent only where they are real. An engine restart is not measured in
+bytes, and a bar that moved for it would be drawing something nobody counted.
+
+### Only a running restore moves
+
+Both the progress update and the finish are scoped to `status = 'running'` in
+SQL. A redelivered terminal event, or one from an agent that reconnected, cannot
+reopen a restore that already ended or re-decide its outcome, and a late
+progress event cannot resurrect a closed one.
+
+A terminal event also takes the database off `restoring`. That value is a guess
+— the agent knows the restore finished, not whether the container is healthy —
+and the ordinary `DbStatus` observation overwrites it within a heartbeat. It
+exists so a database whose restore failed *before* the container came back does
+not sit on `restoring` forever with nothing left to clear it.
+
+### Out of scope
+
+Cancelling a running restore (there is no safe point to stop at, which is what
+the dialog says) · restoring into a *different* database than the backup came
+from · per-row or per-table progress inside `applying`, which the engines'
+restore commands do not report.

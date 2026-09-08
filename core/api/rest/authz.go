@@ -35,6 +35,14 @@ func (a *API) requireProjectRole(w http.ResponseWriter, r *http.Request, user do
 		writeError(w, http.StatusInternalServerError, "authorization is not configured")
 		return false
 	}
+	// A project-scoped token reaching another project gets the same answer a
+	// non-member gets: not found. Anything more specific would let one token
+	// enumerate which projects its owner can see, which is exactly the reach
+	// the scope exists to remove.
+	if scope, scoped := principalScope(r.Context()); scoped && scope != projectID {
+		writeError(w, http.StatusNotFound, "not found")
+		return false
+	}
 	role, err := a.deps.Teams.RoleForProject(r.Context(), user, projectID)
 	if err != nil {
 		a.deps.Log.Error("resolving project role", "project_id", projectID, "error", err)
@@ -75,6 +83,34 @@ func (a *API) requireTeamRole(w http.ResponseWriter, r *http.Request, user domai
 	return true
 }
 
+// teamRoleAtLeast is requireTeamRole that also HANDS BACK the role. Routes
+// which both gate on a minimum rank and then reason about the caller's own rank
+// — issuing an invitation may not exceed it, an access request must ask above
+// it — need one resolution, not two, so the answer they enforce and the answer
+// they act on cannot come from different reads.
+func (a *API) teamRoleAtLeast(w http.ResponseWriter, r *http.Request, user domain.User, teamID, min string) (string, bool) {
+	if a.deps.Teams == nil {
+		writeError(w, http.StatusInternalServerError, "authorization is not configured")
+		return "", false
+	}
+	role, err := a.deps.Teams.RoleInTeam(r.Context(), user, teamID)
+	if err != nil {
+		a.deps.Log.Error("resolving team role", "team_id", teamID, "error", err)
+		writeError(w, http.StatusInternalServerError, "could not authorize request")
+		return "", false
+	}
+	if role == "" {
+		// A team you cannot see does not exist (teams-and-roles.md §3).
+		writeError(w, http.StatusNotFound, "not found")
+		return "", false
+	}
+	if domain.RoleRank(role) < domain.RoleRank(min) {
+		writeError(w, http.StatusForbidden, "insufficient role")
+		return "", false
+	}
+	return role, true
+}
+
 // teamRoleIn returns the caller's effective role in teamID ("" = none) without
 // writing a response — for handlers that branch rather than gate.
 func (a *API) teamRoleIn(ctx context.Context, user domain.User, teamID string) (string, error) {
@@ -101,6 +137,16 @@ func (a *API) projectIDForApplication(ctx context.Context, appID string) (string
 		return "", err
 	}
 	return a.projectIDForEnvironment(ctx, app.EnvironmentID)
+}
+
+// projectIDForComposeStack resolves a stack's project through its environment,
+// so a Compose Stack is authorized exactly as every other Resource is.
+func (a *API) projectIDForComposeStack(ctx context.Context, stackID string) (string, error) {
+	stack, err := a.deps.Compose.Get(ctx, stackID)
+	if err != nil {
+		return "", err
+	}
+	return a.projectIDForEnvironment(ctx, stack.EnvironmentID)
 }
 
 func (a *API) projectIDForDeployment(ctx context.Context, depID string) (string, error) {
@@ -213,4 +259,15 @@ func (a *API) authorizeResolved(w http.ResponseWriter, r *http.Request, user dom
 		return false
 	}
 	return a.requireProjectRole(w, r, user, projectID, min)
+}
+
+// principalScope returns the project an API token is confined to, if any. Every
+// project-scoped authorization funnels through requireProjectRole, so this is
+// the one place the check has to live.
+func principalScope(ctx context.Context) (string, bool) {
+	p, ok := principalFromContext(ctx)
+	if !ok {
+		return "", false
+	}
+	return p.ScopedToProject()
 }

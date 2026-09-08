@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/sharedvars"
 	"github.com/MaramHarsha/cypherpanel/core/store"
@@ -97,6 +98,15 @@ func (a *API) handleCreateSharedVariable(w http.ResponseWriter, r *http.Request)
 		a.writeSharedVariableError(w, "creating shared variable", err)
 		return
 	}
+	// The key and the scope, never the sealed value (§6) — which is also all
+	// the shared-variable API itself ever returns.
+	a.audit(r, audit.Entry{
+		Action:        audit.ActionSharedVariableCreated,
+		Resource:      audit.Resource(audit.ResourceSharedVariable, v.Variable.ID, v.Variable.Key),
+		ProjectID:     v.Variable.ProjectID,
+		EnvironmentID: derefOrEmpty(v.Variable.EnvironmentID),
+		Detail:        map[string]any{"key": v.Variable.Key, "scope": scopeWord(v.Variable.EnvironmentID)},
+	})
 	writeJSON(w, http.StatusCreated, toSharedVariableDTO(v))
 }
 
@@ -181,6 +191,13 @@ func (a *API) handlePatchSharedVariable(w http.ResponseWriter, r *http.Request) 
 		a.writeSharedVariableError(w, "updating shared variable", err)
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:        audit.ActionSharedVariableUpdated,
+		Resource:      audit.Resource(audit.ResourceSharedVariable, v.Variable.ID, v.Variable.Key),
+		ProjectID:     v.Variable.ProjectID,
+		EnvironmentID: derefOrEmpty(v.Variable.EnvironmentID),
+		Detail:        map[string]any{"key": v.Variable.Key, "used_by_count": v.UsedByCount},
+	})
 	writeJSON(w, http.StatusOK, toSharedVariableDTO(v))
 }
 
@@ -195,10 +212,18 @@ func (a *API) handleDeleteSharedVariable(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusNotFound, "shared variable not found")
 		return
 	}
+	before, _ := a.deps.SharedVariables.Get(r.Context(), r.PathValue("id"))
 	if err := a.deps.SharedVariables.Delete(r.Context(), r.PathValue("id")); err != nil {
 		a.writeSharedVariableError(w, "deleting shared variable", err)
 		return
 	}
+	a.audit(r, audit.Entry{
+		Action:        audit.ActionSharedVariableDeleted,
+		Resource:      audit.Resource(audit.ResourceSharedVariable, r.PathValue("id"), before.Key),
+		ProjectID:     before.ProjectID,
+		EnvironmentID: derefOrEmpty(before.EnvironmentID),
+		Detail:        map[string]any{"key": before.Key},
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -280,4 +305,23 @@ func (a *API) writeSharedVariableError(w http.ResponseWriter, op string, err err
 		a.deps.Log.Error(op, "error", err)
 		writeError(w, http.StatusInternalServerError, "could not "+op)
 	}
+}
+
+// derefOrEmpty reads an optional scope id. A project-scoped shared variable has
+// no environment, and the audit row records that as "no environment" rather
+// than a made-up one.
+func derefOrEmpty(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// scopeWord is the word the panel already uses for a shared variable's scope,
+// so the audit detail reads the same as the settings tab.
+func scopeWord(envID *string) string {
+	if envID == nil {
+		return "project"
+	}
+	return "environment"
 }

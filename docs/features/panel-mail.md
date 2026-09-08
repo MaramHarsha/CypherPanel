@@ -66,16 +66,40 @@ and is stated in `install/install.sh`.
 ### 2.2 API
 
 ```
-GET    /api/v1/panel/mail        → { configured, config_hint }   (panel admin)
-PUT    /api/v1/panel/mail        → { configured, config_hint }   (panel admin)
+GET    /api/v1/panel/mail        → PanelMailSettings              (panel admin)
+PUT    /api/v1/panel/mail        → PanelMailSettings              (panel admin)
 DELETE /api/v1/panel/mail        → 204                            (panel admin)
 POST   /api/v1/panel/mail/test   → 202                            (panel admin)
 ```
 
+`PanelMailSettings` carries `configured`, `config_hint`, `updated_at`, and —
+when something is configured — `smtp_host`, `smtp_port`, `username`, `from` and
+`tls`. **Everything except the password is read back.** The first cut returned
+only the hint, which made the settings form write-only: changing a port meant
+retyping the host, the username and the from address from memory, and an
+operator who mistyped one had silently reconfigured the panel. The password is
+the one field that never comes back; `configured` plus `config_hint` say that
+one is set without saying what it is, which is the notifier contract.
+
 `config_hint` is `smtp.acme.com → ops@acme.com`, built from non-secret fields by
-the same helper shape as `notify.ConfigHint`. The raw config is never returned
-by any route. `PUT` replaces wholesale; there is no partial-secret merge, for the
-same reason notifiers refuse one.
+the same helper shape as `notify.ConfigHint`. `PUT` replaces wholesale; there is
+no partial-secret merge, for the same reason notifiers refuse one.
+
+**Transport security is chosen, not guessed.** `tls` is `starttls` (the default),
+`implicit` or `none`:
+
+| mode | port | behaviour |
+|---|---|---|
+| `starttls` | 587 | Upgrades the connection and **refuses to send** if the server will not offer STARTTLS. |
+| `implicit` | 465 | TLS from the first byte. |
+| `none` | any | Cleartext. Only defensible for a relay the operator controls. |
+
+Inferring the mode from the port is what makes a misconfigured panel fail at the
+moment it matters. The refusal in `starttls` mode is deliberate: the stdlib's
+`smtp.SendMail` upgrades only when the server advertises STARTTLS and otherwise
+sends the credential in the clear, which is a downgrade an operator who chose
+STARTTLS did not agree to. Settings sealed before this field existed read back as
+`starttls`, because that is how they were already being sent.
 
 `POST …/test` sends a fixed message to the configured `from` address and reports
 the SMTP error verbatim on failure. It persists nothing — a test that wrote
@@ -135,6 +159,31 @@ wrong guess against a real id cannot burn a valid change — the ordering
 `core/enroll` is explicit about. Every failure returns one undifferentiated
 error.
 
+### 3.3 Reading and abandoning a pending change
+
+```
+GET    /api/v1/auth/email/change → PendingEmailChange   (session only)
+DELETE /api/v1/auth/email/change → { cancelled }        (session only)
+```
+
+`GET` answers `{ new_email, requested_at, expires_at }`, or 404 when nothing is
+pending — the ordinary case, and an answer rather than a failure. It exists so
+the confirm step can show *old → new* instead of asking someone to trust a link,
+and so a profile screen can say when the link dies. It never carries the token:
+holding a session is enough to **start or abandon** a move, never to complete
+one (§5).
+
+`DELETE` is the "this wasn't me" path. It spends every outstanding change for
+the account at once and reports how many died, so `0` ("nothing to undo") is
+distinguishable from `1` ("undone"). Killing them all is the point: a second
+request made in the same breath must not survive the cancel of the first.
+
+It deliberately does **not** require the current password, where requesting a
+change does. The asymmetry is intentional — the person who can undo a move they
+did not ask for is the person holding the session, and making them find a
+password first only keeps a hijacked request alive longer. The blast radius of
+an unauthorised cancel is that a legitimate change must be requested again.
+
 ## 4. Authorization
 
 Both routes are `sessionOnly`. Changing the sign-in address is credential
@@ -163,9 +212,12 @@ scenario lands there in the same PR, per that document's own header.
   when the change is legitimate.
 - **Other sessions are revoked on success**, on the same reasoning as a password
   change: the address that can recover the account has moved.
-- **Rate limiting.** Only `Login` is throttled today. Both new routes are
-  brute-force surfaces — the confirm most obviously — so both take a limiter,
-  keyed as `Login`'s is.
+- **Rate limiting.** Both routes are brute-force surfaces — the confirm most
+  obviously — so both take the same limiters `Login` does, keyed by the client
+  address *and* by the account
+  ([control-plane-hardening.md](control-plane-hardening.md) §5). A wrong
+  current password or a wrong confirmation secret spends the budget, and the
+  `429` carries `Retry-After` and `retry_after_seconds`.
 - **Enumeration.** Requesting a change to an address that already exists returns
   409. This differs from login, which deliberately hides whether an address
   exists: the caller here is authenticated, rate-limited, and probing one address
@@ -213,8 +265,15 @@ at the Mail tab rather than failing at submit — a dead end is a bug
 
 ## 8. Out of scope
 
-Invitations by email · password reset by email (the panel has no anonymous
-recovery path, and adding one is a larger decision than this) · per-person
+DKIM/SPF verification of the configured sender · ~~invitations by email~~
+(**landed** as
+[invitations-and-access-requests.md](invitations-and-access-requests.md), which
+sends its invitation and its access-request notice through this transport and
+skips both silently when none is configured) · password reset by email (the
+panel has no anonymous recovery path, and adding one is a larger decision than
+this — an invitation to an address that already has an account deliberately
+requires that account's *current* password, which is what keeps this decision
+intact) · per-person
 notification digests (the profile page's other placeholder, which this transport
 unblocks but does not implement) · DKIM/SPF guidance · a mail queue with retries
 — a failed send reports its error and the operator retries.

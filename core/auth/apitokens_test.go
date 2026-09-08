@@ -14,7 +14,7 @@ func TestCreateTokenAuthenticatesAsOwnerAndTouches(t *testing.T) {
 	a, fs := newAuthWithUser(t, "sam@example.com", "pw")
 	ctx := context.Background()
 
-	raw, tok, err := a.CreateToken(ctx, "usr_1", "ci", domain.AllAbilities(), nil)
+	raw, tok, err := a.CreateToken(ctx, "usr_1", "ci", domain.AllAbilities(), nil, "")
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestExpiredTokenDoesNotAuthenticate(t *testing.T) {
 	a, _ := newAuthWithUser(t, "sam@example.com", "pw")
 	ctx := context.Background()
 	past := time.Now().Add(-time.Hour)
-	raw, _, err := a.CreateToken(ctx, "usr_1", "old", domain.AllAbilities(), &past)
+	raw, _, err := a.CreateToken(ctx, "usr_1", "old", domain.AllAbilities(), &past, "")
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestDeleteTokenRequiresOwnership(t *testing.T) {
 	}
 
 	// The owner can delete their own.
-	raw, tok, _ := a.CreateToken(ctx, "usr_1", "mine", domain.AllAbilities(), nil)
+	raw, tok, _ := a.CreateToken(ctx, "usr_1", "mine", domain.AllAbilities(), nil, "")
 	if err := a.DeleteToken(ctx, "usr_1", tok.ID); err != nil {
 		t.Fatalf("owner delete: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestCreateTokenAbilities(t *testing.T) {
 	a, _ := newAuthWithUser(t, "sam@example.com", "pw")
 	ctx := context.Background()
 
-	raw, tok, err := a.CreateToken(ctx, "usr_1", "readonly", []domain.Ability{domain.AbilityRead}, nil)
+	raw, tok, err := a.CreateToken(ctx, "usr_1", "readonly", []domain.Ability{domain.AbilityRead}, nil, "")
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestCreateTokenRejectsBadAbilities(t *testing.T) {
 		"unknown": {domain.Ability("root")},
 		"mixed":   {domain.AbilityRead, domain.Ability("sudo")},
 	} {
-		if _, _, err := a.CreateToken(ctx, "usr_1", name, abilities, nil); !errors.Is(err, ErrInvalidAbility) {
+		if _, _, err := a.CreateToken(ctx, "usr_1", name, abilities, nil, ""); !errors.Is(err, ErrInvalidAbility) {
 			t.Errorf("%s: err = %v, want ErrInvalidAbility", name, err)
 		}
 	}

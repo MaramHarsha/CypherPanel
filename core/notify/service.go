@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	netmail "net/mail"
 	"net/url"
 	"strings"
 
@@ -150,14 +151,6 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	return s.store.DeleteNotifier(ctx, id)
 }
 
-// validEvents is the v1 event taxonomy (notifications.md §3).
-var validEvents = map[string]bool{
-	domain.EventDeploySucceeded: true,
-	domain.EventDeployFailed:    true,
-	domain.EventBackupSucceeded: true,
-	domain.EventBackupFailed:    true,
-}
-
 // validateMeta checks name, channel, and the event selection, returning the
 // deduplicated events.
 func validateMeta(name, channel string, events []string) ([]string, error) {
@@ -172,7 +165,9 @@ func validateMeta(name, channel string, events []string) ([]string, error) {
 	seen := map[string]bool{}
 	out := make([]string, 0, len(events))
 	for _, e := range events {
-		if !validEvents[e] {
+		// One vocabulary in one place: the domain taxonomy notifiers, webhook
+		// endpoints and the inbox all validate against (notifications.md §3).
+		if !domain.ValidEventType(e) {
 			return nil, invalid("unknown event: " + e)
 		}
 		if !seen[e] {
@@ -203,6 +198,22 @@ func validateConfig(channel string, raw json.RawMessage) (json.RawMessage, error
 		}
 		if c.From == "" || strings.TrimSpace(c.To) == "" {
 			return nil, invalid("email requires from and to")
+		}
+		// Parsed, not merely non-empty. A well-formed address cannot contain a
+		// line break, so this closes header injection structurally rather than
+		// relying on scrubbing at send time (buildMessage still sanitises —
+		// belt and braces is cheap on a header).
+		if _, err := netmail.ParseAddress(c.From); err != nil {
+			return nil, invalid(fmt.Sprintf("%q is not a valid email address", c.From))
+		}
+		recipients := splitRecipients(c.To)
+		if len(recipients) == 0 {
+			return nil, invalid("email requires at least one recipient")
+		}
+		for _, r := range recipients {
+			if _, err := netmail.ParseAddress(r); err != nil {
+				return nil, invalid(fmt.Sprintf("%q is not a valid email address", r))
+			}
 		}
 		return json.Marshal(c)
 	case domain.NotifyChannelDiscord, domain.NotifyChannelSlack:
