@@ -72,6 +72,26 @@ func (s *Store) Ping(ctx context.Context) error {
 	return nil
 }
 
+// WithSetupLock runs fn while holding the panel's first-run lock, so two
+// setup requests that arrive together cannot both count zero users and both
+// create an owner. A transaction-scoped advisory lock: released on commit,
+// on rollback, and on a dropped connection, so a crashed caller never leaves
+// the panel unclaimable.
+func (s *Store) WithSetupLock(ctx context.Context, fn func(context.Context) error) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("store: starting the setup lock: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(7203911)"); err != nil {
+		return fmt.Errorf("store: taking the setup lock: %w", err)
+	}
+	if err := fn(ctx); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 // LatestMigration is the highest embedded migration number — the schema
 // version a build of this binary carries. release.json records it so a panel
 // can tell, before downloading anything, which way a version change moves the

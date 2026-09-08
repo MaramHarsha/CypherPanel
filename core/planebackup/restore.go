@@ -47,7 +47,10 @@ type RestoreOptions struct {
 	// Force allows a non-empty target. Restoring over a live panel is how a
 	// fleet ends up with two half-planes, so it is never the default.
 	Force bool
-	Log   func(format string, args ...any)
+	// Source is where the snapshot came from — an object key or a path —
+	// named in the audit row the restore writes about itself.
+	Source string
+	Log    func(format string, args ...any)
 }
 
 // RestoreResult is what the operator is told afterwards.
@@ -127,6 +130,22 @@ func Restore(ctx context.Context, r io.Reader, o RestoreOptions) (RestoreResult,
 		return RestoreResult{}, fmt.Errorf("planebackup: rebuilding the schema: %w", err)
 	}
 
+	// From here on the target is no longer empty: the migrations ran on their
+	// own connection and seeded rows. If the load fails, an EMPTY target goes
+	// back to empty, so the retry the failure message asks for is accepted
+	// rather than refused as a live panel. A forced restore over a live panel
+	// is left exactly as its rolled-back transaction leaves it.
+	failed := true
+	defer func() {
+		if failed && empty {
+			if rerr := o.DB.ResetSchema(ctx); rerr != nil {
+				logf("could not empty the target after the failure: %v", rerr)
+			} else {
+				logf("the target is empty again; fix the cause and run the restore again")
+			}
+		}
+	}()
+
 	tx, err := o.DB.BeginLoad(ctx)
 	if err != nil {
 		return RestoreResult{}, err
@@ -158,11 +177,19 @@ func Restore(ctx context.Context, r io.Reader, o RestoreOptions) (RestoreResult,
 		logf("loaded %s (%d rows)", t.Name, t.Rows)
 	}
 
+	// The restore records itself INSIDE the rows it restored (§6 step 7): the
+	// evidence that the audit log was rewound lands in the rewound audit log,
+	// which is where anyone will look for it.
+	if err := tx.RecordRestore(ctx, man.CreatedAt.UTC().Format(time.RFC3339), o.Source); err != nil {
+		return RestoreResult{}, err
+	}
+
 	// Every constraint is checked here, before anything is visible. Up to this
 	// point the whole load can still be thrown away.
 	if err := tx.Commit(ctx); err != nil {
 		return RestoreResult{}, err
 	}
+	failed = false
 	logf("loaded %d tables", loaded)
 
 	logf("migrating forward to this build")

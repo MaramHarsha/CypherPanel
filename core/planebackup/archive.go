@@ -66,6 +66,9 @@ type Copier interface {
 	// transaction is also what makes "all or nothing" true rather than a
 	// promise: a failed restore leaves an empty database, not half a panel.
 	BeginLoad(ctx context.Context) (LoadTx, error)
+	// ResetSchema empties a target the restore found empty and then failed
+	// to load, so the documented retry is not refused as "a live panel".
+	ResetSchema(ctx context.Context) error
 }
 
 // LoadTx is one restore transaction.
@@ -75,6 +78,9 @@ type LoadTx interface {
 	// snapshot carries its own copies of those.
 	ClearAll(ctx context.Context) error
 	CopyFrom(ctx context.Context, r io.Reader, table string) error
+	// RecordRestore writes the restore into audit_events inside the same
+	// transaction as the rows it restored.
+	RecordRestore(ctx context.Context, snapshotCreatedAt, source string) error
 	// Commit checks every deferred constraint, restores their deferrability
 	// and commits. A violation fails here, naming the constraint.
 	Commit(ctx context.Context) error

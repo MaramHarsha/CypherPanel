@@ -128,7 +128,7 @@ Full vocabulary in [docs/glossary.md](docs/glossary.md).
 curl -fsSL https://raw.githubusercontent.com/MaramHarsha/CypherPanel/main/install/install.sh | sh
 ```
 
-It installs Docker, starts PostgreSQL on loopback, installs the `cypherd` binary, generates a master key, and enables a systemd unit that survives reboots. Then you open the panel and create the owner account in the browser — no password is ever printed or defaulted.
+It installs Docker, starts PostgreSQL on loopback, installs the `cypherd` binary, generates a master key, and enables a systemd unit that survives reboots. Then you open the panel and create the owner account in the browser — no password is ever printed or defaulted. The installer prints a one-time **setup code** that the screen asks for, so only someone at the host's console can claim a fresh panel, however long its port has been open.
 
 Re-running is safe: an existing master key is never regenerated (that would make every sealed secret unrecoverable) and an existing database is left alone. Point it at your own build with `CYPHERD_URL=file:///path/to/cypherd` until releases exist. Options are documented in the [installer's own header](install/install.sh).
 

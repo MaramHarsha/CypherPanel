@@ -24,6 +24,9 @@
 #                      https://panel.example.com). Every link the panel writes
 #                      to itself is built from it. Optional.
 #   CYPHERD_HTTP_PORT  panel port (default 8080).
+#   CYPHERD_BIND       address the panel listens on (default 0.0.0.0). Set
+#                      127.0.0.1 when a reverse proxy on this host terminates
+#                      TLS in front of it.
 #   CYPHER_SKIP_DOCKER set to 1 if you manage Docker yourself.
 #   POSTGRES_IMAGE     default postgres:16-alpine.
 #
@@ -54,6 +57,8 @@ read_env() {
 # otherwise 8080.
 HTTP_PORT="${CYPHERD_HTTP_PORT:-$(read_env CYPHERD_HTTP_ADDR | sed 's/.*://')}"
 HTTP_PORT="${HTTP_PORT:-8080}"
+BIND="${CYPHERD_BIND:-$(read_env CYPHERD_HTTP_ADDR | sed 's/:.*//')}"
+BIND="${BIND:-0.0.0.0}"
 
 say()  { printf '\033[36m=>\033[0m %s\n' "$1"; }
 warn() { printf '\033[33mwarning:\033[0m %s\n' "$1" >&2; }
@@ -145,6 +150,13 @@ rand() { head -c "$1" /dev/urandom | base64 | tr -d '\n/+=' | cut -c "1-$2"; }
 
 MASTER_KEY="$(read_env CYPHERD_MASTER_KEY)"
 PG_PASSWORD="$(read_env POSTGRES_PASSWORD)"
+# The setup code: the panel's port is open to the internet the moment this
+# script finishes, and the first-run screen creates the OWNER. Without a code,
+# "reach your own box first" is a race against every scanner on the internet.
+# Generated once, kept across re-runs, and required by the panel until an
+# account exists.
+SETUP_TOKEN="$(read_env CYPHERD_SETUP_TOKEN)"
+[ -n "$SETUP_TOKEN" ] || SETUP_TOKEN="$(rand 48 32)"
 
 if [ -n "$MASTER_KEY" ]; then
     # Reusing it is not an optimisation — regenerating would orphan every
@@ -216,14 +228,21 @@ CYPHERD_PUBLIC_HOST=$PUBLIC_HOST
 # from it. Also set CYPHERD_TRUSTED_PROXIES to the proxy's CIDR so the panel
 # knows which client address a rate limit belongs to.
 CYPHERD_PUBLIC_URL=$PUBLIC_URL
-CYPHERD_HTTP_ADDR=0.0.0.0:$HTTP_PORT
+CYPHERD_HTTP_ADDR=$BIND:$HTTP_PORT
 CYPHERD_ENROLL_ADDR=0.0.0.0:$ENROLL_PORT
 CYPHERD_NATS_ADDR=0.0.0.0:$NATS_PORT
+# The guided upgrade's fallback snapshot. Postgres runs in a container and this
+# host has no client, so the dump runs inside the container.
+CYPHERD_SNAPSHOT_PGDUMP=docker exec -i $PG_NAME pg_dump
+CYPHERD_SNAPSHOT_PGRESTORE=docker exec -i $PG_NAME pg_restore
 
 # Left blank on purpose: the owner account is created in the browser on first
 # visit, so no password is ever written to disk or printed to a terminal.
 CYPHERD_ADMIN_EMAIL=
 CYPHERD_ADMIN_PASSWORD=
+# Required by the first-run screen until an account exists. Whoever can read
+# this file — root on this host — is whoever may claim the panel.
+CYPHERD_SETUP_TOKEN=$SETUP_TOKEN
 EOF
 if [ -n "$PREV_ENV" ]; then
     carried=0
@@ -496,11 +515,21 @@ else
     printf '  Open   http://%s:%s\n' "$PUBLIC_HOST" "$HTTP_PORT"
 fi
 printf '  and create the owner account — that screen appears exactly once.\n\n'
-printf '  Anyone who reaches the panel before you can claim it, so do this now,\n'
-printf '  or restrict the port until you have:\n'
+if curl -fsS -m 2 "http://127.0.0.1:$HTTP_PORT/api/v1/auth/setup" 2>/dev/null | grep -q '"needs_setup":true'; then
+    printf '  It will ask for this setup code, which only this console has seen:\n\n'
+    printf '      %s\n\n' "$SETUP_TOKEN"
+    printf '  (also in %s, as CYPHERD_SETUP_TOKEN)\n\n' "$ENV_FILE"
+fi
+printf '  Restricting the port until you have claimed it is still worth doing:\n'
 printf '      ufw allow from YOUR.IP.ADDRESS to any port %s proto tcp\n\n' "$HTTP_PORT"
 printf '  Every server you add dials THIS host on %s (enrolment, mTLS) and %s (the\n' "$ENROLL_PORT" "$NATS_PORT"
 printf '  bus). If a firewall is on, allow those two from your servers.\n\n'
+printf '  The panel itself is plain HTTP. Before you use it from anywhere but this\n'
+printf '  machine, put TLS in front of it (Caddy or nginx on this host, or your\n'
+printf '  provider'"'"'s load balancer) and then set, in %s:\n' "$ENV_FILE"
+printf '      CYPHERD_PUBLIC_URL=https://panel.example.com\n'
+printf '      CYPHERD_TRUSTED_PROXIES=<the proxy'"'"'s address or CIDR>\n'
+printf '  Re-run this installer with CYPHERD_BIND=127.0.0.1 if the proxy is on this host.\n\n'
 printf '  Back up your master key — sealed secrets cannot be recovered without it:\n'
 printf '      %s\n\n' "$ENV_FILE"
 printf '  Add a server from the panel, then paste its join command on that host.\n'

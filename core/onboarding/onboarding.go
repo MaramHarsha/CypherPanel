@@ -47,6 +47,8 @@ type Store interface {
 	GetTeam(ctx context.Context, id string) (domain.Team, error)
 	CreateTeam(ctx context.Context, id, name string) (domain.Team, error)
 	UpsertTeamMember(ctx context.Context, teamID, userID, role string) (domain.TeamMember, error)
+	// WithSetupLock serialises first-run claims (see CreateFirstOwner).
+	WithSetupLock(ctx context.Context, fn func(context.Context) error) error
 }
 
 // Service creates the first owner. Construct with New.
@@ -81,24 +83,33 @@ func (s *Service) CreateFirstOwner(ctx context.Context, email, password string) 
 		return domain.User{}, invalid(fmt.Sprintf("password must be at least %d characters", minPasswordLen))
 	}
 
-	// Gate: setup is one-time. A tiny race (two setups seeing zero at once) is
-	// benign — both would create valid owners; the far more important property
-	// is that an already-set-up panel refuses, which this guarantees.
-	n, err := s.store.CountUsers(ctx)
-	if err != nil {
-		return domain.User{}, fmt.Errorf("onboarding: counting users: %w", err)
-	}
-	if n > 0 {
-		return domain.User{}, ErrAlreadySetUp
-	}
-
 	hash, err := auth.HashPassword(password)
 	if err != nil {
 		return domain.User{}, fmt.Errorf("onboarding: hashing password: %w", err)
 	}
-	owner, err := s.store.CreateUser(ctx, ids.New(ids.PrefixUser), email, hash, domain.RoleOwner)
+
+	// Gate: setup is one-time, and the count and the create happen under one
+	// lock. The first version called the race between two setups "benign —
+	// both would create valid owners", which on a panel port that is open to
+	// the internet from the moment install.sh finishes is the opposite of
+	// benign: the second owner is whoever else reached it first.
+	var owner domain.User
+	err = s.store.WithSetupLock(ctx, func(ctx context.Context) error {
+		n, err := s.store.CountUsers(ctx)
+		if err != nil {
+			return fmt.Errorf("onboarding: counting users: %w", err)
+		}
+		if n > 0 {
+			return ErrAlreadySetUp
+		}
+		owner, err = s.store.CreateUser(ctx, ids.New(ids.PrefixUser), email, hash, domain.RoleOwner)
+		if err != nil {
+			return fmt.Errorf("onboarding: creating owner: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
-		return domain.User{}, fmt.Errorf("onboarding: creating owner: %w", err)
+		return domain.User{}, err
 	}
 
 	// The default team always exists with the owner as a member (idempotent so

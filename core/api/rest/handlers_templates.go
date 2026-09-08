@@ -2,10 +2,10 @@ package rest
 
 import (
 	"errors"
-	"github.com/MaramHarsha/cypherpanel/core/applications"
 	"net/http"
 	"strings"
 
+	"github.com/MaramHarsha/cypherpanel/core/applications"
 	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/templates"

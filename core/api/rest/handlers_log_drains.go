@@ -114,7 +114,7 @@ func (a *API) handleCreateLogDrain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, _ := userFromContext(r.Context())
-	if !a.requirePanelRole(w, user, domain.RoleAdmin) {
+	if !a.requirePanelRole(w, user, domain.RoleOwner) {
 		return
 	}
 	var req logDrainRequest
@@ -165,7 +165,7 @@ func (a *API) handleUpdateLogDrain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, _ := userFromContext(r.Context())
-	if !a.requirePanelRole(w, user, domain.RoleAdmin) {
+	if !a.requirePanelRole(w, user, domain.RoleOwner) {
 		return
 	}
 	var req logDrainRequest
@@ -248,7 +248,7 @@ func (a *API) handleDeleteLogDrain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, _ := userFromContext(r.Context())
-	if !a.requirePanelRole(w, user, domain.RoleAdmin) {
+	if !a.requirePanelRole(w, user, domain.RoleOwner) {
 		return
 	}
 	before, _ := a.deps.LogDrains.Get(r.Context(), r.PathValue("id"))

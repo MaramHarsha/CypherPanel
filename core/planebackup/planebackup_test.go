@@ -19,6 +19,9 @@ type fakeDB struct {
 
 	committed bool
 	cleared   bool
+	reset     bool
+	recorded  string
+	copyErr   error
 	beginErr  error
 	commitErr error
 }
@@ -62,12 +65,26 @@ type fakeTx struct {
 	rolledBack bool
 }
 
+func (f *fakeDB) ResetSchema(context.Context) error {
+	f.reset = true
+	f.loaded = nil
+	return nil
+}
+
+func (t *fakeTx) RecordRestore(_ context.Context, createdAt, source string) error {
+	t.db.recorded = createdAt + " " + source
+	return nil
+}
+
 func (t *fakeTx) ClearAll(context.Context) error {
 	t.db.cleared = true
 	return nil
 }
 
 func (t *fakeTx) CopyFrom(ctx context.Context, r io.Reader, table string) error {
+	if t.db.copyErr != nil {
+		return t.db.copyErr
+	}
 	return t.db.CopyFrom(ctx, r, table)
 }
 
@@ -348,5 +365,59 @@ func TestOnlyAnAgePublicKeyIsAcceptedAsARecipient(t *testing.T) {
 		if ValidRecipient(bad) {
 			t.Errorf("ValidRecipient(%q) = true", bad)
 		}
+	}
+}
+
+// A failed restore into an EMPTY target must leave it empty: the migrations
+// have already run by then, so without this the retry the failure message asks
+// for is refused as "a live panel". A forced restore over a live panel keeps
+// that panel — only its rolled-back transaction ever touched it.
+func TestAFailedRestoreLeavesAnEmptyTargetEmpty(t *testing.T) {
+	recipient, identity, _ := GenerateRecoveryKey()
+	var buf bytes.Buffer
+	if _, err := Export(context.Background(), sampleDB(), AgeCrypto{}, &buf, recipient, "k", "v0.4.0"); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	archive := buf.Bytes()
+
+	dst := &fakeDB{empty: true, copyErr: errors.New("disk full")}
+	_, err := Restore(context.Background(), bytes.NewReader(archive), RestoreOptions{
+		DB: dst, Enc: AgeCrypto{}, Migrate: &fakeMigrator{current: 60}, Identity: identity,
+	})
+	if err == nil {
+		t.Fatal("a failing load reported success")
+	}
+	if !dst.reset {
+		t.Fatal("the empty target was left migrated and seeded, so the documented retry would be refused")
+	}
+
+	forced := &fakeDB{empty: false, copyErr: errors.New("disk full")}
+	_, _ = Restore(context.Background(), bytes.NewReader(archive), RestoreOptions{
+		DB: forced, Enc: AgeCrypto{}, Migrate: &fakeMigrator{current: 60}, Identity: identity, Force: true,
+	})
+	if forced.reset {
+		t.Fatal("a forced restore over a live panel wiped it on failure")
+	}
+}
+
+// The restore records itself inside the rows it restored (§6 step 7).
+func TestARestoreWritesItselfIntoTheAuditLog(t *testing.T) {
+	recipient, identity, _ := GenerateRecoveryKey()
+	var buf bytes.Buffer
+	if _, err := Export(context.Background(), sampleDB(), AgeCrypto{}, &buf, recipient, "k", "v0.4.0"); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	dst := &fakeDB{empty: true}
+	if _, err := Restore(context.Background(), &buf, RestoreOptions{
+		DB: dst, Enc: AgeCrypto{}, Migrate: &fakeMigrator{current: 60}, Identity: identity,
+		Source: "s3://b/plane-state/x.tar.age",
+	}); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if !strings.Contains(dst.recorded, "s3://b/plane-state/x.tar.age") {
+		t.Fatalf("audit row = %q, want the source named", dst.recorded)
+	}
+	if !dst.committed {
+		t.Fatal("the audit row was written outside the committed transaction")
 	}
 }

@@ -1,6 +1,10 @@
 package audit
 
-import "sort"
+import (
+	"sort"
+
+	"github.com/MaramHarsha/cypherpanel/core/store"
+)
 
 // The audit vocabulary (audit-log.md §3).
 //
@@ -291,6 +295,10 @@ const (
 	ResourceRegistry        = "registry"
 	ResourceComposeStack    = "compose_stack"
 	ResourcePanel           = "panel"
+	// ActionPanelRestored is written by the restore itself, inside its own
+	// transaction (store.BackupTx.RecordRestore) — the evidence that the audit
+	// log was rewound lands inside the rewound audit log.
+	ActionPanelRestored = store.RestoreAuditAction
 )
 
 // actions is the closed set Record validates against.

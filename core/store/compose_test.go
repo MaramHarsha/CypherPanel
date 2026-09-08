@@ -273,7 +273,7 @@ func TestStoreServerWithAStackCannotBeDeleted(t *testing.T) {
 // every GET /servers/{id}/workloads was a 500 and the page — and the remove
 // dialog that reads it — claimed nothing ran on the host. sqlc did not catch a
 // column inside a UNION branch; a real query against the real schema does.
-func TestWorkloadsOnServerSeesAllThreeKinds(t *testing.T) {
+func TestStoreServerWorkloadsSeeAllThreeKinds(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	srv, _, env, app := seedApp(t, s)

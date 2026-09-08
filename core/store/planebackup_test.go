@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/MaramHarsha/cypherpanel/core/planebackup"
 	"github.com/MaramHarsha/cypherpanel/pkg/ids"
@@ -22,7 +24,7 @@ import (
 //
 // This runs the real query against the real schema, which is the only place
 // that could have caught it.
-func TestTablesOrdersTheRealSchema(t *testing.T) {
+func TestStoreBackupOrdersTheRealSchema(t *testing.T) {
 	s := testStore(t)
 	SetTableSorter(planebackup.SortTables)
 	ctx := context.Background()
@@ -67,7 +69,7 @@ func TestTablesOrdersTheRealSchema(t *testing.T) {
 
 // The restore's transaction must actually defer the constraints, or a load in
 // any order fails the moment it reaches the first table of a cycle.
-func TestBeginLoadDefersEveryForeignKey(t *testing.T) {
+func TestStoreBackupLoadDefersEveryForeignKey(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 
@@ -139,4 +141,33 @@ func copyRow(t *testing.T, s *Store, table string, values map[string]string) str
 		t.Fatalf("reading the columns of %s: %v", table, err)
 	}
 	return strings.Join(out, "\t") + "\n"
+}
+
+// Two first-run claims that arrive together must not both create an owner.
+// The lock is what the onboarding service counts and creates under.
+func TestStoreSetupLockSerialisesClaims(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	var inside int32
+	var overlapped int32
+	done := make(chan struct{})
+	for i := 0; i < 4; i++ {
+		go func() {
+			defer func() { done <- struct{}{} }()
+			_ = s.WithSetupLock(ctx, func(context.Context) error {
+				if atomic.AddInt32(&inside, 1) > 1 {
+					atomic.StoreInt32(&overlapped, 1)
+				}
+				time.Sleep(20 * time.Millisecond)
+				atomic.AddInt32(&inside, -1)
+				return nil
+			})
+		}()
+	}
+	for i := 0; i < 4; i++ {
+		<-done
+	}
+	if atomic.LoadInt32(&overlapped) == 1 {
+		t.Fatal("two claims ran inside the setup lock at once")
+	}
 }

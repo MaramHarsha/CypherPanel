@@ -733,4 +733,19 @@ any one of which refuses every upgrade:
 
 `scripts/release-rehearsal.sh` now builds the release exactly as CI does, and
 `core/upgrade`'s tests hold the fixture to the real asset name.
+- **The fallback snapshot could not run on the install it was designed for.**
+  `ResolvePgDump` tried `docker exec` only when the database host was NOT
+  loopback — and install.sh's URL is always `127.0.0.1`, with Postgres in a
+  container and no client on the host. Every guided upgrade was refused at
+  pre-flight with "no pg_dump found". The resolver now accepts a command line
+  in `CYPHERD_SNAPSHOT_PGDUMP` / `CYPHERD_SNAPSHOT_PGRESTORE` (install.sh
+  writes `docker exec -i cypherpanel-postgres pg_dump`), falls back to that
+  container by name, and the dump streams through stdout and the restore
+  through stdin, because the tool may be running where this host's snapshot
+  directory does not exist.
+- **A rollback was always refused.** `ranBefore` bounded a downgrade to
+  versions this host had run, by scanning the slots directory for a versioned
+  file — which nothing ever wrote. The helper now records `ran-<version>` for
+  the version it starts from and the one it succeeds to.
+- **The probe port and the asset name** are recorded above.
 

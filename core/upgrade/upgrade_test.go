@@ -392,3 +392,35 @@ func TestParseSumsDropsDotSlash(t *testing.T) {
 		}
 	}
 }
+
+// The default install runs Postgres in a container and installs no client on
+// the host, so the dump tool is a command line, not a path.
+func TestSnapshotToolOverrideIsACommandLine(t *testing.T) {
+	t.Setenv("CYPHERD_SNAPSHOT_PGDUMP", "docker exec -i cypherpanel-postgres pg_dump")
+	tool, args, err := ResolvePgDump("postgres://u:p@127.0.0.1:5432/db")
+	if err != nil {
+		t.Fatalf("ResolvePgDump: %v", err)
+	}
+	if tool != "docker" || strings.Join(args, " ") != "exec -i cypherpanel-postgres pg_dump" {
+		t.Fatalf("tool=%q args=%v", tool, args)
+	}
+}
+
+// A rollback is bounded to versions this host actually ran, and the host has to
+// have WRITTEN that record: the first version scanned for files nothing wrote,
+// so every rollback was refused.
+func TestTheHelperRemembersWhatItRan(t *testing.T) {
+	dir := Dir(t.TempDir())
+	h := &Helper{o: HelperOptions{Dir: dir, FromVersion: "v0.1.0", Now: time.Now}}
+	if h.ranBefore("v0.1.0") {
+		t.Fatal("a version nothing recorded counted as run")
+	}
+	h.remember("v0.1.0")
+	if !h.ranBefore("v0.1.0") {
+		t.Fatal("the recorded version does not count as run")
+	}
+	h.remember("main") // not a tag; must not be recorded
+	if h.ranBefore("main") {
+		t.Fatal("a branch name was recorded as a version")
+	}
+}

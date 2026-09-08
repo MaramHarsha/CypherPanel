@@ -13,12 +13,16 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/MaramHarsha/cypherpanel/core/domain"
+	"github.com/MaramHarsha/cypherpanel/pkg/ids"
 )
 
 // BackupConn is the COPY adapter over the pool.
@@ -243,6 +247,33 @@ func (t *BackupTx) ClearAll(ctx context.Context) error {
 	return nil
 }
 
+// RestoreAuditAction is the audit_events action a restore writes about itself.
+// core/audit re-exports it: the row is written HERE, inside the restore's own
+// transaction, because the evidence that the audit log was rewound belongs
+// inside the rewound audit log — and store cannot import audit.
+const RestoreAuditAction = "panel.restored"
+
+// RecordRestore writes the restore into audit_events in the same transaction
+// as the rows it restored (plane-disaster-recovery.md §6 step 7). Actor is the
+// panel itself: nobody was signed in to a panel that did not exist yet.
+func (t *BackupTx) RecordRestore(ctx context.Context, snapshotCreatedAt, source string) error {
+	detail, err := json.Marshal(map[string]string{
+		"snapshot_created_at": snapshotCreatedAt,
+		"source":              source,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = t.tx.Exec(ctx, `INSERT INTO audit_events
+		(id, action, outcome, actor_kind, actor_label, resource_kind, resource_id, resource_name, detail, trace_id, client_ip)
+		VALUES ($1, $2, $3, $4, 'cypherd restore', $5, '', '', $6, '', '')`,
+		ids.New(ids.PrefixAuditEvent), RestoreAuditAction, domain.AuditSuccess, domain.AuditActorSystem, "panel", detail)
+	if err != nil {
+		return fmt.Errorf("store: recording the restore: %w", err)
+	}
+	return nil
+}
+
 // CopyFrom streams one table in, inside the transaction.
 func (t *BackupTx) CopyFrom(ctx context.Context, r io.Reader, table string) error {
 	_, err := t.tx.Conn().PgConn().CopyFrom(ctx, r, `COPY `+ident(table)+` FROM STDIN`)
@@ -285,6 +316,22 @@ func (t *BackupTx) Rollback(ctx context.Context) {
 // pg_constraint rather than from a request, but quoting them is what keeps that
 // true of the next caller too.
 func ident(name string) string { return pgx.Identifier{name}.Sanitize() }
+
+// ResetSchema returns an EMPTY target to empty. A restore replays the
+// migrations before its transaction opens (goose runs on its own connection),
+// so a load that then fails leaves a migrated, seeded database behind — and
+// the documented retry is refused as "a live panel". The spec's promise is
+// that a failed restore leaves nothing; this is what keeps it.
+//
+// Only ever called for a target the restore itself found empty. A --force
+// restore over a live panel keeps that panel: its rows were only ever touched
+// inside the transaction that rolled back.
+func (b *BackupConn) ResetSchema(ctx context.Context) error {
+	if _, err := b.pool.Exec(ctx, "DROP SCHEMA public CASCADE; CREATE SCHEMA public"); err != nil {
+		return fmt.Errorf("store: emptying the target after a failed restore: %w", err)
+	}
+	return nil
+}
 
 // SchemaVersion is goose's own bookkeeping — the version the snapshot's data
 // belongs to, and the version a restore replays migrations up to before it

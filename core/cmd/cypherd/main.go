@@ -862,6 +862,7 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		Logs:             b,
 		ConsoleURL:       cfg.AdvertisedConsoleURL(),
 		PublicHost:       cfg.PublicHost,
+		SetupToken:       cfg.SetupToken,
 		UpgradeDir:       cfg.UpgradeDir,
 		LocalPortInUse:   localPortInUse,
 		TrustedProxies:   cfg.TrustedProxies,

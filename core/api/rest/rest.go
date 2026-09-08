@@ -523,6 +523,10 @@ type Deps struct {
 	// PublicHost is the address agents dial and this host answers at. It names
 	// the machine the "use this machine" button will change (local-server.md §8).
 	PublicHost string
+	// SetupToken, when set, is required to claim a fresh panel
+	// (first-run-setup.md §5). Empty means the claim is open, which is what a
+	// dev panel and the env-var bootstrap want.
+	SetupToken string
 	// UpgradeDir is the root helper handoff directory, shared by the panel
 	// upgrade and the local-agent install. Empty is a container install, where
 	// there is no host service manager to install into and both say so rather
@@ -763,9 +767,10 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/mail/domains/{id}/mailboxes", a.authed(a.handleDeleteMailbox))
 	mux.HandleFunc("POST /api/v1/mail/domains/{id}/mailboxes/password", a.authed(a.handleResetMailboxPassword))
 
-	// Log drains (log-drains.md §9). Panel admin: a drain spends the panel's
-	// stream, CPU and egress, and a project-scoped one still ships lines out
-	// of the install.
+	// Log drains (log-drains.md §9). Reads are panel admin; the mutations are
+	// panel OWNER, because a drain exports what only an owner can already read
+	// — every project's logs — and an admin who could point one at a sink they
+	// control would be escalating through a settings form.
 	mux.HandleFunc("GET /api/v1/log-drains", a.authed(a.handleListLogDrains))
 	mux.HandleFunc("POST /api/v1/log-drains", a.authed(a.handleCreateLogDrain))
 	mux.HandleFunc("PATCH /api/v1/log-drains/{id}", a.authed(a.handleUpdateLogDrain))
@@ -1245,6 +1250,9 @@ var serverRoutes = map[string]bool{
 // session-only already; the ability exists so the few that a token may reach
 // are refused to one that was not minted for administration.
 var adminRoutes = map[string]bool{
+	"POST /api/v1/log-drains":                 true,
+	"PATCH /api/v1/log-drains/{id}":           true,
+	"DELETE /api/v1/log-drains/{id}":          true,
 	"POST /api/v1/teams":                      true,
 	"PATCH /api/v1/teams/{id}":                true,
 	"DELETE /api/v1/teams/{id}":               true,
@@ -1318,6 +1326,7 @@ var panelScopePrefixes = []string{
 	"/api/v1/audit",
 	"/api/v1/invites",
 	"/api/v1/access-requests",
+	"/api/v1/log-drains",
 }
 
 // outsideProjectScope reports whether a project-scoped credential is reaching

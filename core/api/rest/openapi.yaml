@@ -2882,11 +2882,13 @@ paths:
       tags: [panel]
       summary: Replace a drain's config, or just pause it (panel admin)
       description: >-
-        A body carrying `config` replaces it WHOLESALE — a config is one
-        document, and half-changing an endpoint's URL and its headers would
-        leave a drain pointed somewhere with credentials for somewhere else. A
-        body with only `enabled` pauses or resumes without re-sending the
-        credential.
+        A body carrying `config` replaces it — a config is one object, and a
+        field left out is a field cleared. Sealed values (a token, a key) are
+        write-only: a `config` that carries NONE of them keeps the stored ones,
+        so an edit that only moves an endpoint does not need the secret typed
+        again. An EMPTY `config` (`{}`) keeps the whole stored config. Send just
+        `enabled` to pause or resume without touching anything else; an edit
+        that says nothing about `enabled` leaves it as it is.
       requestBody:
         required: true
         content: { application/json: { schema: { $ref: "#/components/schemas/LogDrainRequest" } } }
@@ -7338,6 +7340,13 @@ components:
         needs_setup:
           type: boolean
           description: True when the panel has no account yet.
+        requires_token:
+          type: boolean
+          description: >-
+            True when claiming the panel needs the setup code the installer
+            printed (`CYPHERD_SETUP_TOKEN`). The panel's port is open to the
+            internet from the moment install.sh finishes, so without this the
+            first person to reach it — not necessarily the operator — owns it.
 
     SetupRequest:
       type: object
@@ -7349,6 +7358,12 @@ components:
         password:
           type: string
           minLength: 8
+        setup_token:
+          type: string
+          description: >-
+            The setup code, when `SetupStatus.requires_token` is true. Printed
+            at the end of install.sh and kept in /etc/cypherpanel/cypherd.env
+            on the host. A wrong code answers 403.
 
     LoginRequest:
       type: object

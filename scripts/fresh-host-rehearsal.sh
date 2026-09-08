@@ -107,9 +107,14 @@ x curl -sf "$API/readyz" >/dev/null && ok "/readyz answers" || bad "/readyz does
 x stat -c '%a %U' /etc/cypherpanel/cypherd.env | grep -q '^600 root' && ok "cypherd.env is 0600 root" || bad "cypherd.env permissions"
 KEY1=$(x sed -n 's/^CYPHERD_MASTER_KEY=//p' /etc/cypherpanel/cypherd.env)
 
-say "first-run owner account"
+say "first-run owner account (with the setup code the installer wrote)"
+SETUP_TOKEN=$(x sed -n 's/^CYPHERD_SETUP_TOKEN=//p' /etc/cypherpanel/cypherd.env)
+[ -n "$SETUP_TOKEN" ] && ok "the installer generated a setup code" || bad "no setup code in cypherd.env"
+x curl -s -o /dev/null -w '%{http_code}' -X POST "$API/api/v1/auth/setup" -H 'Content-Type: application/json' \
+    -d '{"email":"intruder@example.com","password":"intruder-password-1","setup_token":"wrong"}' | grep -q '^403$' \
+    && ok "a claim without the code is refused (403)" || bad "a claim without the code was NOT refused"
 x curl -sf -X POST "$API/api/v1/auth/setup" -H 'Content-Type: application/json' \
-    -d '{"email":"owner@example.com","password":"owner-password-1"}' >/dev/null 2>&1 || true
+    -d "{\"email\":\"owner@example.com\",\"password\":\"owner-password-1\",\"setup_token\":\"$SETUP_TOKEN\"}" >/dev/null 2>&1 || true
 login() {
     x curl -sf -X POST "$API/api/v1/auth/login" -H 'Content-Type: application/json' \
         -d '{"email":"owner@example.com","password":"owner-password-1"}' | sed 's/.*"token":"\([^"]*\)".*/\1/'

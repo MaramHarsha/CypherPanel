@@ -116,6 +116,10 @@ type Config struct {
 	UpgradeProbation  time.Duration
 	// ReleaseBaseURL is where release assets live, with a %s for the tag.
 	ReleaseBaseURL string
+	// SetupToken, when set, is required by the first-run setup: the installer
+	// generates it and prints it, so the person who can read the host's console
+	// is the only person who can claim the panel (first-run-setup.md §5).
+	SetupToken string
 	// SnapshotRetention is the default a snapshot is created with; the operator
 	// picks per upgrade and 0 keeps forever.
 	SnapshotRetention time.Duration
@@ -191,6 +195,7 @@ func Load() (Config, error) {
 		UpgradeReadyURL:    envOr("CYPHERD_UPGRADE_READY_URL", ""),
 		UpgradeProbation:   envDuration("CYPHERD_UPGRADE_PROBATION", 120*time.Second),
 		ReleaseBaseURL:     envOr("CYPHERD_RELEASE_BASE_URL", "https://github.com/MaramHarsha/CypherPanel/releases/download/%s"),
+		SetupToken:         strings.TrimSpace(os.Getenv("CYPHERD_SETUP_TOKEN")),
 		SnapshotRetention:  envDuration("CYPHERD_SNAPSHOT_RETENTION", 7*24*time.Hour),
 		DrainBatchLines:    envInt("CYPHERD_DRAIN_BATCH_LINES", 500),
 		DrainBatchInterval: envDuration("CYPHERD_DRAIN_BATCH_INTERVAL", 5*time.Second),
