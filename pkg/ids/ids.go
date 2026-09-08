@@ -33,6 +33,8 @@ const (
 	PrefixBackupTarget     = "bt"
 	PrefixDatabaseBackup   = "bak"
 	PrefixBackupRecord     = "br"
+	PrefixVolumeBackup     = "vb"
+	PrefixVolumeRecord     = "vbr"
 	// A restore is its own record rather than a second kind of backup record:
 	// it is an operation with steps and an outcome, and the design's blocking
 	// popup needs to address one (managed-databases.md §"Restoring").
@@ -104,6 +106,33 @@ const (
 	// labelled with, so a restart is a difference in desired state rather than
 	// a verb the agent obeys.
 	PrefixRestart = "rst"
+
+	// Status pages (status-pages.md §5): the page, one component on it, and
+	// one interval in its time series.
+	PrefixStatusPage      = "sp"
+	PrefixStatusComponent = "spc"
+	PrefixStatusInterval  = "si"
+
+	// Threshold alerts (threshold-alerts.md §2): the rule and one episode.
+	PrefixAlertRule  = "alr"
+	PrefixAlertEvent = "ale"
+
+	// Guided panel upgrades and their fallback snapshots (panel-updates.md).
+	PrefixPanelUpgrade  = "pup"
+	PrefixPanelSnapshot = "psn"
+
+	// Log drains (log-drains.md §3).
+	PrefixLogDrain = "ldr"
+
+	// Plane snapshots (plane-disaster-recovery.md §9.2).
+	PrefixPlaneSnapshot = "snap"
+
+	// Mail (managed-email.md §§4, 5).
+	PrefixMailDomain  = "mdm"
+	PrefixMailboxLink = "mbx"
+
+	// Resource quotas (resource-quotas.md §8; ADR-012).
+	PrefixQuota = "quo"
 
 	// V1.x: team invitations and access requests
 	// (docs/features/invitations-and-access-requests.md §2). An invite id is

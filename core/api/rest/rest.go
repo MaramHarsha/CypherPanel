@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/netip"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/MaramHarsha/cypherpanel/core/access"
+	"github.com/MaramHarsha/cypherpanel/core/agentupdates"
 	"github.com/MaramHarsha/cypherpanel/core/api/rest/webui"
 	"github.com/MaramHarsha/cypherpanel/core/applications"
 	"github.com/MaramHarsha/cypherpanel/core/audit"
@@ -24,14 +26,19 @@ import (
 	"github.com/MaramHarsha/cypherpanel/core/databases"
 	"github.com/MaramHarsha/cypherpanel/core/deploykeys"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
+	"github.com/MaramHarsha/cypherpanel/core/githubapp"
 	"github.com/MaramHarsha/cypherpanel/core/inbox"
 	"github.com/MaramHarsha/cypherpanel/core/notify"
+	"github.com/MaramHarsha/cypherpanel/core/onboarding"
 	"github.com/MaramHarsha/cypherpanel/core/projects"
 	"github.com/MaramHarsha/cypherpanel/core/protection"
 	"github.com/MaramHarsha/cypherpanel/core/scheduledtasks"
+	"github.com/MaramHarsha/cypherpanel/core/scheduler"
 	"github.com/MaramHarsha/cypherpanel/core/servers"
 	"github.com/MaramHarsha/cypherpanel/core/sharedvars"
+	"github.com/MaramHarsha/cypherpanel/core/statuspage"
 	"github.com/MaramHarsha/cypherpanel/core/templates"
+	"github.com/MaramHarsha/cypherpanel/core/updates"
 	"github.com/MaramHarsha/cypherpanel/core/webhooks"
 )
 
@@ -58,6 +65,13 @@ type Deployer interface {
 	// new (deployment-control.md §§2-3).
 	Cancel(ctx context.Context, deploymentID, by string) (domain.Deployment, error)
 	Restart(ctx context.Context, appID string) (domain.Application, error)
+	// RequestResync nudges the fleet to re-read desired state. Access control
+	// is current app state rather than a deploy, so a change must reach the
+	// Proxy without shipping a revision (app-access-control.md §8). Best-effort
+	// by design: the policy is already in Postgres, which is what makes it
+	// true — the nudge only decides whether it applies in a second or at the
+	// agent's next reconcile.
+	RequestResync(ctx context.Context, reason string) error
 }
 
 // ProtectionService is deploy protection (consumer-defined; *protection.Service
@@ -91,6 +105,9 @@ type ProtectionService interface {
 type DeploymentReader interface {
 	GetDeployment(ctx context.Context, id string) (domain.Deployment, error)
 	ListDeploymentsByApplication(ctx context.Context, appID string, limit int32) ([]domain.Deployment, error)
+	// GetRevision resolves a revision to its application, which is what a
+	// promotion needs to authorize the SOURCE end.
+	GetRevision(ctx context.Context, id string) (domain.Revision, error)
 }
 
 // Opener unseals the webhook HMAC secret for verification (consumer-defined;
@@ -104,6 +121,9 @@ type Opener interface {
 type BackupOps interface {
 	RunBackup(ctx context.Context, scheduleID string) (domain.BackupRecord, error)
 	RunRestore(ctx context.Context, dbID, backupRecordID string, confirm bool) (domain.DatabaseRestore, error)
+	// Volume backups (volume-backups.md). One run fans out across every volume
+	// the application has flagged, so this returns a record per volume.
+	RunVolumeBackup(ctx context.Context, appID string) ([]domain.VolumeBackupRecord, error)
 }
 
 // PreviewManager drives preview environments from PR events and exposes the
@@ -292,6 +312,95 @@ type LogSubscriber interface {
 type OnboardingService interface {
 	NeedsSetup(ctx context.Context) (bool, error)
 	CreateFirstOwner(ctx context.Context, email, password string) (domain.User, error)
+	// Progress is the guided band's four derived steps. Same service, because
+	// "has this panel been set up" and "how far through setting it up is it"
+	// are the same question asked at two resolutions (guided-onboarding.md).
+	Progress(ctx context.Context, ps onboarding.ProgressStore) (onboarding.Progress, error)
+}
+
+// GitHubAppService owns the App credential and what it can reach
+// (consumer-defined; *githubapp.Service satisfies it).
+type GitHubAppService interface {
+	Get(ctx context.Context) (githubapp.Settings, error)
+	Set(ctx context.Context, c githubapp.Config) (githubapp.Settings, error)
+	Delete(ctx context.Context) error
+	RefreshInstallations(ctx context.Context) ([]domain.GitHubInstallation, error)
+	Repositories(ctx context.Context) ([]githubapp.Repository, error)
+	WebhookSecret(ctx context.Context) (string, error)
+}
+
+// GitHubPushHandler deploys every application a push matches. EVERY one,
+// deliberately: a repository can be deployed by several environments, and
+// picking one would silently skip the rest (github-app.md §6).
+type GitHubPushHandler interface {
+	DeployFromPush(ctx context.Context, payload []byte) (int, error)
+}
+
+// ProjectExporter writes a project's portable archive. Consumer-defined
+// (ENGINEERING rule 6) and deliberately narrow: the handler hands it a writer
+// and a project id, and the package on the other side has no key material.
+type ProjectExporter interface {
+	WriteTo(ctx context.Context, w io.Writer, projectID string) error
+}
+
+// StatusPageStore is the read/write surface the status page routes need
+// (consumer-defined). It embeds statuspage.Reader because the preview route
+// builds the real public payload from the same code the public page uses —
+// two renderers would be two chances to disclose different things.
+type StatusPageStore interface {
+	statuspage.Reader
+	GetStatusPage(ctx context.Context, id string) (domain.StatusPage, error)
+	GetStatusPageByProject(ctx context.Context, projectID string) (domain.StatusPage, error)
+	UpsertStatusPage(ctx context.Context, p domain.StatusPage) (domain.StatusPage, error)
+	DeleteStatusPage(ctx context.Context, projectID string) error
+	UpsertStatusPageComponent(ctx context.Context, c domain.StatusPageComponent) (domain.StatusPageComponent, error)
+	DeleteStatusPageComponentsNotIn(ctx context.Context, pageID string, keep []string) error
+	GetStatusInterval(ctx context.Context, id string) (domain.StatusInterval, error)
+	SetStatusIntervalMessage(ctx context.Context, id, message string) error
+	GetEnvironment(ctx context.Context, id string) (domain.Environment, error)
+}
+
+// AgentUpdateService is the plane's half of ADR-010 (consumer-defined;
+// *agentupdates.Service satisfies it).
+type AgentUpdateService interface {
+	Get(ctx context.Context) (agentupdates.View, error)
+	Set(ctx context.Context, channel, version, artifactBase, by string) (domain.AgentChannelRow, error)
+	Promote(ctx context.Context, by string) (domain.AgentChannelRow, error)
+	SetServerChannel(ctx context.Context, serverID, channel string) (domain.Server, error)
+}
+
+// PromotionService plans and performs a revision promotion (consumer-defined).
+type PromotionService interface {
+	PlanPromotion(ctx context.Context, sourceRevisionID, targetApplicationID string) (scheduler.PromotionPlan, error)
+	Promote(ctx context.Context, sourceRevisionID, targetApplicationID, requestedBy string) (domain.Deployment, error)
+}
+
+// UpdateChecker reports the running build and the newest release seen
+// (consumer-defined; *updates.Checker satisfies it).
+type UpdateChecker interface {
+	Current() updates.Info
+	Latest() *updates.Release
+}
+
+// StatusPageRoutes registers the public, unauthenticated status routes.
+type StatusPageRoutes interface {
+	Routes(mux *http.ServeMux)
+}
+
+// StatusPageCache is the rendered-page cache, so an operator who renames or
+// disables a page sees it change now rather than waiting out the TTL.
+type StatusPageCache interface {
+	Invalidate(slug string)
+}
+
+// VolumeBackupStore is the schedule and history surface the volume-backup
+// routes need (consumer-defined, ENGINEERING rule 6). nil answers 501, the
+// shape every optional surface here takes.
+type VolumeBackupStore interface {
+	GetVolumeBackupByApplication(ctx context.Context, appID string) (domain.VolumeBackup, error)
+	UpsertVolumeBackup(ctx context.Context, v domain.VolumeBackup) (domain.VolumeBackup, error)
+	DeleteVolumeBackup(ctx context.Context, appID string) error
+	ListVolumeBackupRecords(ctx context.Context, scheduleID string, limit int) ([]domain.VolumeBackupRecord, error)
 }
 
 type Deps struct {
@@ -319,7 +428,62 @@ type Deps struct {
 	// on every stack route, which is what a panel that has not wired them
 	// looked like before they existed.
 	Compose ComposeService
-	Inbox   InboxService
+	// Export streams a project out as a portable archive (project-export.md);
+	// nil answers 501, the same shape every optional surface here takes. It is
+	// deliberately given no way to unseal a secret — see core/export.
+	Export ProjectExporter
+	// VolumeBackups is the volume schedule store (volume-backups.md).
+	VolumeBackups VolumeBackupStore
+	// StatusPages is the public status page surface (status-pages.md).
+	StatusPages  StatusPageStore
+	StatusServer StatusPageCache
+	// StatusRoutes registers the two PUBLIC routes. Separate from
+	// StatusServer so a panel can hold the cache without opening the routes.
+	StatusRoutes StatusPageRoutes
+	// Metrics is the metrics, traffic and usage surface (metrics-and-usage.md).
+	Metrics MetricsStore
+	// Alerts is the threshold-rule surface, and AlertBacktest is the SAME
+	// evaluator the loop uses — two implementations would be two answers to
+	// "what would this rule have done" (threshold-alerts.md §6).
+	Alerts        AlertStore
+	AlertBacktest AlertBacktester
+	// Upgrades is the guided panel upgrade (panel-updates.md). nil is a panel
+	// with no helper, and every route here answers 501 rather than pretending.
+	Upgrades UpgradeService
+	// LogDrains is the panel's outbox for log lines (log-drains.md).
+	LogDrains LogDrainService
+	// Promotion ships a tested artifact to another environment
+	// (revision-promotion.md). *scheduler.Scheduler satisfies it.
+	Promotion PromotionService
+	// Quotas is admission control on aggregate consumption (ADR-012).
+	Quotas QuotaService
+	// MailHost is provider-backed email for verified domains (managed-email.md).
+	MailHost MailHostService
+	// GitHubApp is the panel's App: repository discovery and a short-lived
+	// clone credential (github-app.md). nil is a panel that has not enabled it,
+	// and every route answers accordingly rather than pretending.
+	GitHubApp GitHubAppService
+	// GitHubPush turns one App delivery into deployments.
+	GitHubPush GitHubPushHandler
+	// OnboardingCounts is what the guided band counts. nil answers "done",
+	// which is the honest degradation: a band that cannot know what is left
+	// must not claim work remains.
+	OnboardingCounts onboarding.ProgressStore
+	// AgentUpdates owns the two release channels and the gate between them
+	// (agent-updates.md, ADR-010). nil answers 503 on every route here, which
+	// is a panel that has not wired the feature rather than one that has no
+	// version to name.
+	AgentUpdates AgentUpdateService
+	// PlaneDR is the control plane backing itself up, and PlaneDRFetch reads
+	// one object back so a Recovery Key can be proven to still work.
+	PlaneDR      PlaneDRService
+	PlaneDRFetch func(ctx context.Context, target domain.BackupTarget, key string) ([]byte, error)
+	// Updates is the release-feed checker, for what version is available.
+	Updates UpdateChecker
+	// PanelURL is the panel's own advertised base URL, used to tell the
+	// operator where their status page is reachable without any DNS.
+	PanelURL string
+	Inbox    InboxService
 	// Audit records every sensitive action and serves the log back
 	// (audit-log.md). nil records nothing and serves an empty log.
 	Audit           AuditRecorder
@@ -356,6 +520,24 @@ type Deps struct {
 	NATSURL     string // advertised data-plane URL
 	Logs        LogSubscriber
 	ConsoleURL  string // advertised HTTP base URL (installer + CA fetch)
+	// PublicHost is the address agents dial and this host answers at. It names
+	// the machine the "use this machine" button will change (local-server.md §8).
+	PublicHost string
+	// SetupToken, when set, is required to claim a fresh panel
+	// (first-run-setup.md §5). Empty means the claim is open, which is what a
+	// dev panel and the env-var bootstrap want.
+	SetupToken string
+	// UpgradeDir is the root helper handoff directory, shared by the panel
+	// upgrade and the local-agent install. Empty is a container install, where
+	// there is no host service manager to install into and both say so rather
+	// than drawing a control that cannot work.
+	UpgradeDir string
+	// LocalPortInUse answers whether something on this host already answers on
+	// a TCP port ("80", "443"). "Use this machine" installs a Proxy that must
+	// bind both, so a host with a reverse proxy in front of the panel is named
+	// as unsupported up front rather than joining and going amber. Nil probes
+	// nothing, which is what the tests want.
+	LocalPortInUse func(port string) bool
 	// TrustedProxies are the peer CIDRs allowed to speak for a client through
 	// X-Forwarded-For / X-Real-IP / X-Request-Id. Empty means nothing is
 	// trusted and the TCP peer is always the client (§5).
@@ -389,6 +571,16 @@ func (a *API) Handler() http.Handler {
 	// Health (unauthenticated).
 	mux.HandleFunc("GET /healthz", a.handleHealthz)
 	mux.HandleFunc("GET /readyz", a.handleReadyz)
+
+	// Public status pages (status-pages.md §8). The third route family this
+	// panel opens to people outside it — after the inbound GitHub webhook and
+	// the invitation links — and the first meant for an anonymous audience
+	// rather than for someone holding a secret. Read-only, no body, no query
+	// parameters, and one undifferentiated 404 for an unknown slug, a disabled
+	// page and a deleted page alike.
+	if a.deps.StatusRoutes != nil {
+		a.deps.StatusRoutes.Routes(mux)
+	}
 
 	// Live status stream (SSE): the UI subscribes once and refetches the
 	// resources it names as they change, instead of polling (ui-principles §10).
@@ -450,6 +642,13 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/servers", a.authed(a.handleListServers))
 	mux.HandleFunc("POST /api/v1/servers", a.authed(a.handleCreateServer))
 	mux.HandleFunc("GET /api/v1/servers/{id}", a.authed(a.handleGetServer))
+	// What this server already routes, so a form can warn before it refuses.
+	mux.HandleFunc("GET /api/v1/servers/{id}/domains", a.authed(a.handleListServerDomains))
+	// What runs here — the first question anyone asks about a host.
+	mux.HandleFunc("GET /api/v1/servers/{id}/workloads", a.authed(a.handleListServerWorkloads))
+	// Push-to-deploy needs a secret the operator holds. sessionOnly because it
+	// is credential management: an API token must not mint one.
+	mux.HandleFunc("POST /api/v1/applications/{id}/webhook/rotate", a.sessionOnly(a.handleRotateApplicationWebhook))
 	mux.HandleFunc("PATCH /api/v1/servers/{id}", a.authed(a.handlePatchServer))
 	mux.HandleFunc("DELETE /api/v1/servers/{id}", a.authed(a.handleDeleteServer))
 
@@ -464,6 +663,9 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/projects", a.authed(a.handleCreateProject))
 	mux.HandleFunc("GET /api/v1/projects/{id}", a.authed(a.handleGetProject))
 	mux.HandleFunc("DELETE /api/v1/projects/{id}", a.authed(a.handleDeleteProject))
+	// Portable export (project-export.md). Team admin; the archive carries
+	// configuration and env-var KEYS, never a sealed value.
+	mux.HandleFunc("GET /api/v1/projects/{id}/export", a.authed(a.handleExportProject))
 	mux.HandleFunc("PATCH /api/v1/projects/{id}", a.authed(a.handlePatchProject))
 	mux.HandleFunc("PATCH /api/v1/environments/{id}", a.authed(a.handlePatchEnvironment))
 	mux.HandleFunc("DELETE /api/v1/environments/{id}", a.authed(a.handleDeleteEnvironment))
@@ -501,6 +703,121 @@ func (a *API) Handler() http.Handler {
 	// session-only: cancelling and restarting from CI is legitimate.
 	mux.HandleFunc("POST /api/v1/deployments/{id}/cancel", a.authed(a.handleCancelDeployment))
 	mux.HandleFunc("POST /api/v1/applications/{id}/restart", a.authed(a.handleRestartApplication))
+	// Front-door access control (app-access-control.md §9). Member rank: an
+	// operator who may deploy the app may decide who reaches it.
+	// Volume backups (volume-backups.md §3): one schedule per application,
+	// covering every volume it marks as backed up.
+	// Guided panel upgrades (panel-updates.md §10). Owner, and session-only, on
+	// everything that acts: this is the control that decides what code the
+	// control plane runs, and an API token may live in a CI runner.
+	mux.HandleFunc("GET /api/v1/panel/updates", a.authed(a.handleGetUpdates))
+	mux.HandleFunc("GET /api/v1/panel/changelog", a.authed(a.handleChangelog))
+	mux.HandleFunc("GET /api/v1/panel/updates/preflight", a.sessionOnly(a.handlePreflight))
+	mux.HandleFunc("POST /api/v1/panel/updates/upgrade", a.sessionOnly(a.handleStartUpgrade))
+	mux.HandleFunc("POST /api/v1/panel/updates/cancel", a.sessionOnly(a.handleCancelUpgrade))
+	mux.HandleFunc("GET /api/v1/panel/updates/history", a.sessionOnly(a.handleUpgradeHistory))
+	mux.HandleFunc("PATCH /api/v1/panel/snapshots/{id}", a.sessionOnly(a.handleSetSnapshotRetention))
+	mux.HandleFunc("DELETE /api/v1/panel/snapshots/{id}", a.sessionOnly(a.handleDeleteSnapshot))
+	mux.HandleFunc("POST /api/v1/panel/snapshots/{id}/restore", a.sessionOnly(a.handleRestoreSnapshot))
+
+	// The plane's own disaster recovery (plane-disaster-recovery.md §9).
+	// Owner and session-only: arming it decides where a complete copy of the
+	// panel, master key included, is written.
+	mux.HandleFunc("GET /api/v1/panel/disaster-recovery", a.sessionOnly(a.handleGetPlaneDR))
+	mux.HandleFunc("PUT /api/v1/panel/disaster-recovery", a.sessionOnly(a.handleArmPlaneDR))
+	mux.HandleFunc("DELETE /api/v1/panel/disaster-recovery", a.sessionOnly(a.handleDisarmPlaneDR))
+	mux.HandleFunc("POST /api/v1/panel/disaster-recovery/run", a.sessionOnly(a.handleRunPlaneDR))
+	mux.HandleFunc("POST /api/v1/panel/disaster-recovery/verify", a.sessionOnly(a.handleVerifyPlaneDR))
+	mux.HandleFunc("GET /api/v1/panel/disaster-recovery/snapshots", a.sessionOnly(a.handleListPlaneSnapshots))
+
+	// Revision promotion (revision-promotion.md §6). The plan is a GET because
+	// it writes nothing, and it IS the screen: an operator decides from what
+	// would change rather than from a confirmation dialog.
+	mux.HandleFunc("GET /api/v1/revisions/{id}/promotion-plan", a.authed(a.handlePlanPromotion))
+	mux.HandleFunc("POST /api/v1/revisions/{id}/promote", a.authed(a.handlePromote))
+
+	// Resource quotas (resource-quotas.md §9; ADR-012). Reading is a member;
+	// SETTING is admin, because capping what a scope may consume is a decision
+	// about shared capacity rather than about the scope's own code.
+	//
+	// Every mutation is sessionOnly for the reason the protection policy
+	// already records: an API token inherits its owner's role, so a `write`
+	// token belonging to an admin could otherwise raise the cap and then deploy
+	// freely — and a control a leaked CI credential can switch off is
+	// decorative (§3).
+	mux.HandleFunc("GET /api/v1/projects/{id}/quota", a.authed(a.handleGetProjectQuota))
+	mux.HandleFunc("PUT /api/v1/projects/{id}/quota", a.sessionOnly(a.handleSetProjectQuota))
+	mux.HandleFunc("DELETE /api/v1/projects/{id}/quota", a.sessionOnly(a.handleDeleteProjectQuota))
+	mux.HandleFunc("GET /api/v1/teams/{id}/quota", a.authed(a.handleGetTeamQuota))
+	mux.HandleFunc("PUT /api/v1/teams/{id}/quota", a.sessionOnly(a.handleSetTeamQuota))
+	mux.HandleFunc("DELETE /api/v1/teams/{id}/quota", a.sessionOnly(a.handleDeleteTeamQuota))
+
+	// Email for verified domains, via a provider (managed-email.md). The panel
+	// writes DNS and manages mailboxes; it runs no MTA and stores no message.
+	mux.HandleFunc("GET /api/v1/mail/provider", a.authed(a.handleGetMailHost))
+	mux.HandleFunc("PUT /api/v1/mail/provider", a.authed(a.handleConnectMailHost))
+	mux.HandleFunc("DELETE /api/v1/mail/provider", a.authed(a.handleDisconnectMailHost))
+	mux.HandleFunc("GET /api/v1/mail/domains", a.authed(a.handleListMailDomains))
+	mux.HandleFunc("POST /api/v1/mail/domains", a.authed(a.handleEnableMailDomain))
+	mux.HandleFunc("GET /api/v1/mail/domains/{id}/records", a.authed(a.handleMailDomainRecords))
+	mux.HandleFunc("POST /api/v1/mail/domains/{id}/records", a.authed(a.handleRewriteMailRecords))
+	mux.HandleFunc("DELETE /api/v1/mail/domains/{id}", a.authed(a.handleDisableMailDomain))
+	mux.HandleFunc("GET /api/v1/mail/domains/{id}/mailboxes", a.authed(a.handleListMailboxes))
+	mux.HandleFunc("POST /api/v1/mail/domains/{id}/mailboxes", a.authed(a.handleCreateMailbox))
+	mux.HandleFunc("DELETE /api/v1/mail/domains/{id}/mailboxes", a.authed(a.handleDeleteMailbox))
+	mux.HandleFunc("POST /api/v1/mail/domains/{id}/mailboxes/password", a.authed(a.handleResetMailboxPassword))
+
+	// Log drains (log-drains.md §9). Reads are panel admin; the mutations are
+	// panel OWNER, because a drain exports what only an owner can already read
+	// — every project's logs — and an admin who could point one at a sink they
+	// control would be escalating through a settings form.
+	mux.HandleFunc("GET /api/v1/log-drains", a.authed(a.handleListLogDrains))
+	mux.HandleFunc("POST /api/v1/log-drains", a.authed(a.handleCreateLogDrain))
+	mux.HandleFunc("PATCH /api/v1/log-drains/{id}", a.authed(a.handleUpdateLogDrain))
+	mux.HandleFunc("DELETE /api/v1/log-drains/{id}", a.authed(a.handleDeleteLogDrain))
+
+	// Threshold alerts (threshold-alerts.md §7).
+	mux.HandleFunc("GET /api/v1/alert-rules", a.authed(a.handleListAlertRules))
+	mux.HandleFunc("POST /api/v1/alert-rules", a.authed(a.handleCreateAlertRule))
+	mux.HandleFunc("POST /api/v1/alert-rules/backtest", a.authed(a.handleBacktestAlertRule))
+	mux.HandleFunc("PATCH /api/v1/alert-rules/{id}", a.authed(a.handleSetAlertRuleEnabled))
+	mux.HandleFunc("DELETE /api/v1/alert-rules/{id}", a.authed(a.handleDeleteAlertRule))
+	mux.HandleFunc("GET /api/v1/alert-rules/{id}/events", a.authed(a.handleListAlertEvents))
+
+	// Metrics, traffic and usage (metrics-and-usage.md §10). Fixed endpoints,
+	// not a query language: they answer the questions the screens ask.
+	mux.HandleFunc("GET /api/v1/applications/{id}/metrics", a.authed(a.handleApplicationMetrics))
+	mux.HandleFunc("GET /api/v1/compose-stacks/{id}/metrics", a.authed(a.handleComposeStackMetrics))
+	mux.HandleFunc("GET /api/v1/databases/{id}/metrics", a.authed(a.handleDatabaseMetrics))
+	mux.HandleFunc("GET /api/v1/servers/{id}/metrics", a.authed(a.handleServerMetrics))
+	mux.HandleFunc("GET /api/v1/applications/{id}/traffic", a.authed(a.handleApplicationTraffic))
+	mux.HandleFunc("GET /api/v1/compose-stacks/{id}/traffic", a.authed(a.handleComposeStackTraffic))
+	mux.HandleFunc("GET /api/v1/usage", a.authed(a.handleUsage))
+	mux.HandleFunc("GET /api/v1/usage/export", a.authed(a.handleUsageExport))
+	mux.HandleFunc("GET /api/v1/settings/metrics", a.authed(a.handleGetMetricsSettings))
+	mux.HandleFunc("PUT /api/v1/settings/metrics", a.authed(a.handleSetMetricsSettings))
+
+	// Status pages (status-pages.md §8). Enabling one is TEAM ADMIN;
+	// annotating a live incident is a member, on purpose.
+	mux.HandleFunc("GET /api/v1/projects/{id}/status-page", a.authed(a.handleGetStatusPage))
+	mux.HandleFunc("PUT /api/v1/projects/{id}/status-page", a.authed(a.handleSetStatusPage))
+	mux.HandleFunc("DELETE /api/v1/projects/{id}/status-page", a.authed(a.handleDeleteStatusPage))
+	mux.HandleFunc("GET /api/v1/status-pages/{id}/components", a.authed(a.handleListStatusComponents))
+	mux.HandleFunc("PUT /api/v1/status-pages/{id}/components", a.authed(a.handleSetStatusComponents))
+	mux.HandleFunc("GET /api/v1/status-pages/{id}/domain-check", a.authed(a.handleCheckStatusPageDomain))
+	mux.HandleFunc("GET /api/v1/status-pages/{id}/preview", a.authed(a.handlePreviewStatusPage))
+	mux.HandleFunc("PATCH /api/v1/status-pages/{id}/incidents/{iid}", a.authed(a.handleAnnotateIncident))
+
+	mux.HandleFunc("GET /api/v1/applications/{id}/volume-backup", a.authed(a.handleGetVolumeBackup))
+	mux.HandleFunc("PUT /api/v1/applications/{id}/volume-backup", a.authed(a.handleSetVolumeBackup))
+	mux.HandleFunc("DELETE /api/v1/applications/{id}/volume-backup", a.authed(a.handleDeleteVolumeBackup))
+	mux.HandleFunc("POST /api/v1/applications/{id}/volume-backup/run", a.authed(a.handleRunVolumeBackup))
+	mux.HandleFunc("GET /api/v1/applications/{id}/volume-backup/history", a.authed(a.handleVolumeBackupHistory))
+	mux.HandleFunc("GET /api/v1/applications/{id}/access", a.authed(a.handleGetApplicationAccess))
+	mux.HandleFunc("PUT /api/v1/applications/{id}/access", a.authed(a.handleSetApplicationAccess))
+	mux.HandleFunc("POST /api/v1/applications/{id}/access/preview-password", a.authed(a.handleSetPreviewPassword))
+	mux.HandleFunc("PUT /api/v1/applications/{id}/maintenance", a.authed(a.handleSetMaintenance))
+	mux.HandleFunc("DELETE /api/v1/applications/{id}/maintenance", a.authed(a.handleClearMaintenance))
 
 	// GitHub webhook: authenticated by per-app HMAC secret, not a session
 	// (spec §4) — the only unauthenticated mutating route.
@@ -531,6 +848,36 @@ func (a *API) Handler() http.Handler {
 	// and session-only, because it names hosts and resources and an API token
 	// must never be able to lift it.
 	mux.HandleFunc("GET /api/v1/panel/version", a.authed(a.handleGetPanelVersion))
+
+	// Agent version channels (agent-updates.md §7, ADR-010). The three mutating
+	// routes are owner AND session-only: this is the one control that changes
+	// what code runs on every server, and an API token that can move a channel
+	// is an API token that owns the fleet.
+	// Guided onboarding: the thread between the golden path's four steps
+	// (guided-onboarding.md).
+	mux.HandleFunc("GET /api/v1/onboarding", a.authed(a.handleGetOnboarding))
+
+	// The GitHub App (github-app.md §7). Writing is owner AND session-only: the
+	// private key can mint a token for every repository the App reaches.
+	mux.HandleFunc("GET /api/v1/github/app", a.authed(a.handleGetGitHubApp))
+	mux.HandleFunc("PUT /api/v1/github/app", a.sessionOnly(a.handleSetGitHubApp))
+	mux.HandleFunc("DELETE /api/v1/github/app", a.sessionOnly(a.handleDeleteGitHubApp))
+	mux.HandleFunc("POST /api/v1/github/installations/refresh", a.authed(a.handleRefreshGitHubInstallations))
+	mux.HandleFunc("GET /api/v1/github/repositories", a.authed(a.handleListGitHubRepositories))
+	// Unauthenticated by design, verified by the App's own HMAC — the second
+	// such route, beside the per-application webhook it does not replace.
+	mux.HandleFunc("POST /webhooks/github/app", a.handleGitHubAppWebhook)
+
+	mux.HandleFunc("GET /api/v1/panel/agent-updates", a.authed(a.handleGetAgentUpdates))
+	mux.HandleFunc("PUT /api/v1/panel/agent-updates/{channel}", a.sessionOnly(a.handleSetAgentChannel))
+	mux.HandleFunc("POST /api/v1/panel/agent-updates/promote", a.sessionOnly(a.handlePromoteAgentChannel))
+	mux.HandleFunc("PUT /api/v1/servers/{id}/agent-channel", a.sessionOnly(a.handleSetServerAgentChannel))
+
+	// "Use this machine" (local-server.md §7). The POST is owner AND
+	// session-only: it installs software on the panel's own host as root, and
+	// an API token that can do that is an API token that owns the box.
+	mux.HandleFunc("GET /api/v1/servers/local", a.authed(a.handleGetLocalServer))
+	mux.HandleFunc("POST /api/v1/servers/local", a.sessionOnly(a.handleCreateLocalServer))
 	mux.HandleFunc("GET /api/v1/panel/logs", a.sessionOnly(a.handleGetPanelLogs))
 
 	// The panel's ACME account (agent-identity-and-tls.md §4). Owner-only: it
@@ -808,10 +1155,41 @@ func (a *API) authed(next http.HandlerFunc) http.HandlerFunc {
 			writeError(w, http.StatusForbidden, "this token is scoped to one project and cannot reach panel-wide routes")
 			return
 		}
+		// The upgrade read-only lock. Reads and SSE continue; anything that
+		// mutates answers 503 with a Retry-After, so a deploy submitted while
+		// the plane is being replaced is refused clearly rather than half
+		// applied across a restart (panel-updates.md §6).
+		if a.upgradeLocked(r) {
+			w.Header().Set("Retry-After", "60")
+			writeError(w, http.StatusServiceUnavailable,
+				"The panel is upgrading and is read-only for about a minute. Your applications keep serving — they do not depend on the control plane.")
+			return
+		}
 		ctx := context.WithValue(r.Context(), principalKey, principal)
 		ctx = context.WithValue(ctx, rawTokenKey, token)
 		next(w, r.WithContext(ctx))
 	}
+}
+
+// upgradeLocked reports whether this request must be refused because a guided
+// upgrade holds the lock.
+//
+// Only mutating methods are refused, and the upgrade's OWN routes are always
+// allowed: an operator watching the progress screen must be able to read status
+// and to cancel, and locking them out of the thing they are watching would be
+// the worst possible moment to do it.
+func (a *API) upgradeLocked(r *http.Request) bool {
+	if a.deps.Upgrades == nil {
+		return false
+	}
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/v1/panel/updates") {
+		return false
+	}
+	return a.deps.Upgrades.Locked(r.Context())
 }
 
 // sessionOnly further restricts a route to interactive sessions. Credential
@@ -872,6 +1250,9 @@ var serverRoutes = map[string]bool{
 // session-only already; the ability exists so the few that a token may reach
 // are refused to one that was not minted for administration.
 var adminRoutes = map[string]bool{
+	"POST /api/v1/log-drains":                 true,
+	"PATCH /api/v1/log-drains/{id}":           true,
+	"DELETE /api/v1/log-drains/{id}":          true,
 	"POST /api/v1/teams":                      true,
 	"PATCH /api/v1/teams/{id}":                true,
 	"DELETE /api/v1/teams/{id}":               true,
@@ -945,6 +1326,7 @@ var panelScopePrefixes = []string{
 	"/api/v1/audit",
 	"/api/v1/invites",
 	"/api/v1/access-requests",
+	"/api/v1/log-drains",
 }
 
 // outsideProjectScope reports whether a project-scoped credential is reaching

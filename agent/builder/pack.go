@@ -45,10 +45,22 @@ type Plan struct {
 	// BuildKit gateway frontend. PlanFile is relative to the context.
 	PlanFile string
 	Frontend string
+	// BuildKitDockerfile marks a DOCKERFILE that nonetheless needs BuildKit.
+	//
+	// This spec assumed the two shapes above were the whole story: "Nixpacks
+	// emits a Dockerfile, which the daemon's classic /build endpoint parses".
+	// That is no longer true. Nixpacks emits `RUN --mount=type=cache,...` for
+	// every Node, Python and Go project it plans, and the classic endpoint
+	// answers "the --mount option requires BuildKit" — which reads like a
+	// daemon misconfiguration rather than a pack's output the builder cannot
+	// consume. So the transport is chosen from what the file actually contains.
+	BuildKitDockerfile bool
 }
 
-// NeedsBuildKit reports whether this plan requires the second transport.
-func (p Plan) NeedsBuildKit() bool { return p.Frontend != "" }
+// NeedsBuildKit reports whether this plan requires the second transport —
+// either because it is a frontend plan, or because the Dockerfile a pack wrote
+// uses syntax only BuildKit parses.
+func (p Plan) NeedsBuildKit() bool { return p.Frontend != "" || p.BuildKitDockerfile }
 
 // Pack runs a build pack over a checkout. Consumer-defined so the builder's
 // decisions are testable without the binary installed.
@@ -104,8 +116,49 @@ func (Nixpacks) Generate(ctx context.Context, contextDir, imageTag string, onLog
 	if st, serr := os.Stat(generated); serr != nil || st.IsDir() {
 		return Plan{}, fmt.Errorf("nixpacks reported success but wrote no Dockerfile at %s", nixpacksDockerfile)
 	}
-	onLog("Nixpacks wrote a Dockerfile; building it.")
-	return Plan{Dockerfile: nixpacksDockerfile}, nil
+	needsBuildKit, err := dockerfileNeedsBuildKit(generated)
+	if err != nil {
+		return Plan{}, err
+	}
+	if needsBuildKit {
+		onLog("Nixpacks wrote a Dockerfile using BuildKit cache mounts; building it with buildx.")
+	} else {
+		onLog("Nixpacks wrote a Dockerfile; building it.")
+	}
+	return Plan{Dockerfile: nixpacksDockerfile, BuildKitDockerfile: needsBuildKit}, nil
+}
+
+// buildKitOnly is the syntax the classic /build endpoint cannot parse. Only
+// directives that actually FAIL there, not everything BuildKit adds: a
+// Dockerfile that merely builds better under BuildKit still builds correctly
+// without it, and routing it to a transport the host may not have would trade a
+// working build for a missing binary.
+var buildKitOnly = []string{
+	"--mount=",   // cache, bind, secret and ssh mounts — what Nixpacks emits
+	"--network=", // RUN --network=none
+	"# syntax=",  // an explicit frontend directive
+	"--link",     // COPY --link
+}
+
+// dockerfileNeedsBuildKit reads the file a pack wrote and decides which
+// transport can build it. Reading it is the honest check: the alternative —
+// assuming a pack's output shape from the pack's name — is the assumption that
+// broke here in the first place, and it would break again the next time a pack
+// changes what it emits.
+func dockerfileNeedsBuildKit(path string) (bool, error) {
+	body, err := os.ReadFile(path) //nolint:gosec // a path this builder just wrote
+	if err != nil {
+		return false, fmt.Errorf("reading the generated Dockerfile: %w", err)
+	}
+	for _, line := range strings.Split(string(body), "\n") {
+		trimmed := strings.TrimSpace(line)
+		for _, marker := range buildKitOnly {
+			if strings.Contains(trimmed, marker) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // Railpack is the second pack. Unlike Nixpacks it does not emit a Dockerfile:
@@ -116,6 +169,14 @@ type Railpack struct{}
 
 // ErrRailpackUnavailable reports that the pack, or the BuildKit transport it
 // needs, is missing. Both are named because either one alone is not enough.
+// ErrBuildKitUnavailable is the general case: something needs the second
+// transport and this builder has no buildx. Distinct from the Railpack error
+// because the remedy differs — Railpack needs two things installed, while a
+// Nixpacks Dockerfile with cache mounts needs only buildx.
+var ErrBuildKitUnavailable = fmt.Errorf(
+	"this build needs `docker buildx` on the builder: the pack wrote a Dockerfile using BuildKit cache mounts, " +
+		"which the classic Docker build cannot parse")
+
 var ErrRailpackUnavailable = fmt.Errorf(
 	"railpack builds need both the railpack binary and docker buildx on this builder")
 

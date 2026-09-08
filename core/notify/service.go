@@ -26,6 +26,15 @@ func (e *ValidationError) Error() string { return e.Msg }
 
 func invalid(msg string) error { return &ValidationError{Msg: msg} }
 
+// InUseError marks a delete refused because something still points here
+// (surfaced as HTTP 409). It NAMES the count rather than surfacing a
+// constraint, the way registries.md's used-by refusal does.
+type InUseError struct{ Msg string }
+
+func (e *InUseError) Error() string { return e.Msg }
+
+func inUse(msg string) error { return &InUseError{Msg: msg} }
+
 // Sealer seals channel config at rest (consumer-defined; *secret.Box satisfies
 // it).
 type Sealer interface {
@@ -47,6 +56,7 @@ type NotifierStore interface {
 type Service struct {
 	store  NotifierStore
 	sealer Sealer
+	rules  AlertRuleCounter
 }
 
 // NewService wires the notifier CRUD service.
@@ -147,9 +157,39 @@ func (s *Service) List(ctx context.Context, projectID string) ([]domain.Notifier
 }
 
 // Delete removes a notifier.
+// Delete refuses while a threshold rule still points here. A notifier that can
+// vanish and leave rules behind is a smoke detector whose battery someone
+// removed in another room — the rules keep evaluating and deliver nothing, and
+// nobody learns that until the alert they needed does not arrive.
+//
+// The database enforces it too (ON DELETE RESTRICT); this exists so the refusal
+// says HOW MANY rules rather than surfacing a constraint name.
 func (s *Service) Delete(ctx context.Context, id string) error {
+	if s.rules != nil {
+		n, err := s.rules.CountAlertRulesByNotifier(ctx, id)
+		if err != nil {
+			return fmt.Errorf("notify: counting alert rules: %w", err)
+		}
+		if n == 1 {
+			return inUse("1 alert rule still sends here — delete or re-point it first")
+		}
+		if n > 1 {
+			return inUse(fmt.Sprintf("%d alert rules still send here — delete or re-point them first", n))
+		}
+	}
 	return s.store.DeleteNotifier(ctx, id)
 }
+
+// AlertRuleCounter is the alert-rule dependency (consumer-defined). nil means
+// the panel has no alerts wired, and delete behaves exactly as it did before
+// the feature existed.
+type AlertRuleCounter interface {
+	CountAlertRulesByNotifier(ctx context.Context, notifierID string) (int, error)
+}
+
+// WatchAlertRules attaches the counter. Kept out of New so alerts stay an
+// opt-in add-on.
+func (s *Service) WatchAlertRules(c AlertRuleCounter) { s.rules = c }
 
 // validateMeta checks name, channel, and the event selection, returning the
 // deduplicated events.

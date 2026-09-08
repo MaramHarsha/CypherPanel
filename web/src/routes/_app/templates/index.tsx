@@ -8,6 +8,7 @@ import type { FirstLogin, Template } from "@/api/gen/model";
 import { useListEnvironments, useListProjects } from "@/api/gen/projects/projects";
 import { useListServers } from "@/api/gen/servers/servers";
 import { useInstallTemplate, useListTemplates } from "@/api/gen/templates/templates";
+import { DomainField } from "@/components/domain-field";
 import { AdvancedSection } from "@/components/advanced-section";
 import { EmptyState } from "@/components/empty-state";
 import { FirstLoginNotice } from "@/components/first-login-notice";
@@ -31,15 +32,39 @@ function count(n: number, singular: string, plural = `${singular}s`) {
 const ALL = "all";
 
 /**
- * Mirrors the server's Template.needsDomain: a routed app, or any value that
- * interpolates {{domain}}, makes the domain mandatory. Both the form and the
- * "what you get" summary answer to it, so it lives outside them.
+ * Whether this template needs a domain — ASKED, not re-derived.
+ *
+ * This used to mirror the server's predicate in TypeScript, reading the routed
+ * flag and any {{domain}} in an application's env. The mirror went stale the
+ * day compose templates landed: it knew nothing of stacks, so OpenClaw reported
+ * "no domain needed", the form never rendered its domain field, and the install
+ * came back refused for a control that was not on screen. A copy of a rule is a
+ * rule that will disagree with the original eventually.
+ *
+ * The fallback is the old shape, for a panel older than `needs_domain`.
  */
+/** The service names in a compose file, for the "what you get" summary. */
+function composeServices(file: string): string[] {
+  const out: string[] = [];
+  let inServices = false;
+  for (const raw of file.split("\n")) {
+    if (/^services:\s*$/.test(raw)) {
+      inServices = true;
+      continue;
+    }
+    if (inServices && /^\S/.test(raw)) break;
+    const m = inServices ? raw.match(/^ {2}([A-Za-z0-9_.-]+):\s*$/) : null;
+    if (m?.[1]) out.push(m[1]);
+  }
+  return out;
+}
+
 function needsDomain(template: Template) {
-  return template.resources.applications.some(
-    // Whitespace is legal inside a placeholder ({{ domain }}), so match the
-    // grammar rather than a literal — the server does the same.
-    (app) => app.route || Object.values(app.env ?? {}).some((v) => /\{\{\s*domain\s*\}\}/.test(v)),
+  if (template.needs_domain !== undefined) return template.needs_domain;
+  return (
+    (template.resources.applications ?? []).some(
+      (app) => app.route || Object.values(app.env ?? {}).some((v) => /\{\{\s*domain\s*\}\}/.test(v)),
+    ) || (template.resources.stacks ?? []).some((st) => st.route != null)
   );
 }
 
@@ -218,9 +243,14 @@ function TemplateCard({ template }: { template: Template }) {
       </div>
       <p className="mt-3 flex-1 text-[13px] leading-relaxed text-text-mid">{template.description}</p>
       <p className="mt-4 flex items-center gap-1.5 font-mono text-[11px] text-text-faint">
-        <Package className="h-3 w-3" /> {count(template.resources.applications.length, "app")}
+        <Package className="h-3 w-3" />{" "}
+        {/* A compose template installs no application, and saying "0 apps"
+            about something that runs two containers is a card that lies. */}
+        {(template.resources.stacks ?? []).length > 0
+          ? count((template.resources.stacks ?? []).length, "stack")
+          : count((template.resources.applications ?? []).length, "app")}
         <span className="mx-1">·</span>
-        <Database className="h-3 w-3" /> {count(template.resources.databases.length, "database", "databases")}
+        <Database className="h-3 w-3" /> {count((template.resources.databases ?? []).length, "database", "databases")}
       </p>
       <div className="mt-4"><InstallDialog template={template} /></div>
     </li>
@@ -237,16 +267,22 @@ function TemplateCard({ template }: { template: Template }) {
 // The closing promise is assembled from what this template actually does,
 // because "TLS + subdomain" is a lie on a template that publishes nothing.
 function TemplateContents({ template }: { template: Template }) {
-  const apps = template.resources.applications;
-  const dbs = template.resources.databases;
+  // `?? []` on all three: the server normalises these to empty arrays, and a
+  // panel older than that normalisation must not be able to blank the screen.
+  const apps = template.resources.applications ?? [];
+  const dbs = template.resources.databases ?? [];
   const handled = [
     needsDomain(template) && "TLS + subdomain",
     dbs.length > 0 && "generated secrets",
   ].filter(Boolean) as string[];
 
   // "app container (n8n) + postgresql 16 sidecar"
+  const stacks = template.resources.stacks ?? [];
   const brings = [
     apps.length > 0 && `app container (${apps.map((app) => app.name).join(", ")})`,
+    // Named by their services, because that is what the operator will see
+    // running — "compose stack" alone says nothing about what arrives.
+    ...stacks.map((st) => `compose stack (${composeServices(st.compose).join(" + ") || st.name})`),
     ...dbs.map((db) => `${db.engine}${db.version ? ` ${db.version}` : ""} sidecar`),
   ].filter(Boolean) as string[];
   const lines = [
@@ -402,7 +438,7 @@ function InstallDialog({ template }: { template: Template }) {
   const [domain, setDomain] = useState("");
   const [error, setError] = useState<string | null>(null);
   // What the 202 handed back, held until the first-login notice is dismissed.
-  const [installed, setInstalled] = useState<{ first: FirstLogin; appID: string | undefined } | null>(null);
+  const [installed, setInstalled] = useState<{ first: FirstLogin; appID: string | undefined; stackID?: string } | null>(null);
 
   // 12b asks only where: Project and Server. With exactly one project there
   // was never a choice to make, and the first enrolled server is the working
@@ -422,8 +458,17 @@ function InstallDialog({ template }: { template: Template }) {
   const chosenEnvID = environmentID || defaultEnv?.id || "";
   const chosenEnv = envList.find((env) => env.id === chosenEnvID);
 
-  const goTo = (appID: string | undefined) => {
-    if (appID) void navigate({ to: "/projects/$projectId/applications/$appId", params: { projectId: chosenProjectID, appId: appID } });
+  // A COMPOSE template installs no application (compose-templates.md), so the
+  // landing place is its stack. Navigating to `undefined` would have left the
+  // operator on the catalog wondering whether anything happened.
+  const goTo = (appID: string | undefined, stackID?: string) => {
+    if (appID) {
+      void navigate({ to: "/projects/$projectId/applications/$appId", params: { projectId: chosenProjectID, appId: appID } });
+      return;
+    }
+    if (stackID) {
+      void navigate({ to: "/projects/$projectId/compose/$stackId", params: { projectId: chosenProjectID, stackId: stackID } });
+    }
   };
 
   const install = useInstallTemplate({ mutation: {
@@ -434,14 +479,15 @@ function InstallDialog({ template }: { template: Template }) {
       void qc.invalidateQueries({ queryKey: getListApplicationsQueryKey(vars.data.environment_id) });
       void qc.invalidateQueries({ queryKey: getListDatabasesQueryKey(vars.data.environment_id) });
       const appID = result.applications[0];
+      const stackID = result.stacks?.[0];
       // A generated password appears in this response and nowhere else ever, so
       // navigating straight past it would destroy it. Hold the navigation until
       // the notice is dismissed; with nothing to say, go as before.
       if (result.first_login) {
-        setInstalled({ first: result.first_login, appID });
+        setInstalled({ first: result.first_login, appID, stackID });
         return;
       }
-      goTo(appID);
+      goTo(appID, stackID);
     },
     // The pill turns to "✕ Retry" and the toast carries the why (10b/10c); the
     // inline line keeps the server's sentence beside the form it is about.
@@ -574,18 +620,18 @@ function InstallDialog({ template }: { template: Template }) {
                     https:/// into the container. Ask for it as required rather than
                     letting the form advertise a default that always fails. */}
                 {routed && (
-                  <Field label="Domain" hint="Required — this template publishes a public URL. TLS is automatic.">
-                    {(id, describedBy) => (
-                      <Input
-                        id={id}
-                        required
-                        aria-describedby={describedBy}
-                        value={domain}
-                        onChange={(e) => setDomain(e.target.value)}
-                        placeholder={`${template.slug}.example.com`}
-                      />
-                    )}
-                  </Field>
+                  // The same control the application forms use: the panel knows
+                  // which zones its DNS provider manages, so it offers them
+                  // rather than asking somebody to type a hostname it could
+                  // have listed. It also says when the hostname is ALREADY
+                  // SERVED on the chosen server — which is the failure that
+                  // brought this here, an operator installing a template onto a
+                  // domain their own site was already answering on.
+                  <DomainField
+                    value={domain}
+                    onChange={setDomain}
+                    serverId={chosenServerID}
+                  />
                 )}
                 {/* Both have a working default — production, and the template's
                     own slug — so they fold (ui-principles §6); the note says what
@@ -645,10 +691,10 @@ function InstallDialog({ template }: { template: Template }) {
           first={installed.first}
           templateName={template.name}
           onContinue={() => {
-            const { appID } = installed;
+            const { appID, stackID } = installed;
             setInstalled(null);
             setOpen(false);
-            goTo(appID);
+            goTo(appID, stackID);
           }}
         />
       )}

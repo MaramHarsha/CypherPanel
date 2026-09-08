@@ -10,7 +10,7 @@
 // actually searched rather than what the canvas promises.
 import { useNavigate } from "@tanstack/react-router";
 import { Boxes, CornerDownLeft, LayoutTemplate, Search, Server, Settings } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { useListProjects } from "@/api/gen/projects/projects";
 import { useListServers } from "@/api/gen/servers/servers";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -42,6 +42,11 @@ export function CommandPalette() {
   const [active, setActive] = useState(0);
   const navigate = useNavigate();
   const listRef = useRef<HTMLUListElement>(null);
+  // The input keeps DOM focus while ↑↓ move `active`, so the selection is
+  // carried to a screen reader by aria-activedescendant rather than by focus —
+  // which means every option needs an id the input can name.
+  const listId = useId();
+  const optionId = (item: Item) => `${listId}-${item.id}`;
 
   const projects = useListProjects({ query: { enabled: open } });
   const servers = useListServers({ query: { enabled: open } });
@@ -92,6 +97,8 @@ export function CommandPalette() {
     return items.filter((i) => i.label.toLowerCase().includes(q) || i.hint.includes(q));
   }, [items, query]);
 
+  const activeItem = filtered[active];
+
   useEffect(() => setActive(0), [query, open]);
 
   const run = (item: Item | undefined) => {
@@ -131,6 +138,11 @@ export function CommandPalette() {
           <Search className="h-4 w-4 shrink-0 text-text-faint" aria-hidden />
           <input
             autoFocus
+            role="combobox"
+            aria-expanded={filtered.length > 0}
+            aria-controls={listId}
+            aria-autocomplete="list"
+            aria-activedescendant={activeItem ? optionId(activeItem) : undefined}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
@@ -160,18 +172,26 @@ export function CommandPalette() {
             <NoMatches query={query.trim()} onCreateProject={createProject} />
           </div>
         ) : (
-          <ul ref={listRef} className="max-h-80 overflow-y-auto p-2" role="listbox">
+          <ul ref={listRef} id={listId} className="max-h-80 overflow-y-auto p-2" role="listbox" aria-label="Results">
             {filtered.map((item, i) => {
               // Section eyebrows are derived, not hand-placed: the first item
               // of each run of a kind labels the run.
               const heading = item.hint !== filtered[i - 1]?.hint ? SECTION[item.hint] : null;
               return (
-                <li key={item.id}>
+                // The li is presentational: a listbox owns options, and a
+                // listitem between the two is what would stop the input's
+                // aria-activedescendant resolving to anything announceable.
+                <li key={item.id} role="presentation">
                   {heading && <div className="eyebrow px-2.5 pb-1 pt-2">{heading}</div>}
+                  {/* tabIndex -1: the list is driven from the input by ↑↓, so
+                      an option that were also a Tab stop would make the palette
+                      take one Tab per result to leave. */}
                   <button
                     type="button"
                     role="option"
+                    id={optionId(item)}
                     aria-selected={i === active}
+                    tabIndex={-1}
                     onMouseEnter={() => setActive(i)}
                     onClick={() => run(item)}
                     className={cn(

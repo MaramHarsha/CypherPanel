@@ -35,6 +35,14 @@ const (
 	LabelAppID = "cypherpanel.app-id"
 	// LabelRevisionID carries the revision the resource was created from.
 	LabelRevisionID = "cypherpanel.revision-id"
+	// LabelReplicaIndex carries this container's replica index (app-scaling.md
+	// §2). Absent means index 1, which is every container that existed before
+	// replicas did — identity comes from labels, never from the name, so a
+	// driver can discover its own replicas on a host it has never seen.
+	//
+	// A label is data on a container, so every read of it is bounded by
+	// MaxReplicaIndex below rather than trusted.
+	LabelReplicaIndex = "cypherpanel.replica-index"
 	// LabelRestartToken carries the restart token the container was created
 	// under (deployment-control.md §3). It is part of the container's identity
 	// so a NEW token reads as drift — the same way a new revision does — and
@@ -43,6 +51,12 @@ const (
 	// which both compare equal to an empty spec token.
 	LabelRestartToken = "cypherpanel.restart-token"
 )
+
+// MaxReplicaIndex bounds what a replica-index label may say. It matches the
+// plane's own ceiling on replicas per application: a container claiming to be
+// replica four billion is not a replica this panel created, and reading the
+// label without a bound is how a 64-bit parse becomes a 32-bit collision.
+const MaxReplicaIndex = 20
 
 // PullMarkerPrefix is the repository namespace of the marker reference that
 // records "our own pull created this registry reference".

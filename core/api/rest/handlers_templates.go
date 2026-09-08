@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/MaramHarsha/cypherpanel/core/applications"
 	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/templates"
@@ -20,6 +21,9 @@ type installTemplateRequest struct {
 type installTemplateResponse struct {
 	Applications []string `json:"applications"`
 	Databases    []string `json:"databases"`
+	// Stacks are the Compose Stacks installed (compose-templates.md). A compose
+	// template installs no application, so this is what the screen navigates to.
+	Stacks []string `json:"stacks,omitempty"`
 	// FirstLogin is how to get into what was just installed. Returned ONCE — a
 	// generated password appears here and nowhere else, ever (managed-databases
 	// §9's discipline). Absent when the template declares nothing.
@@ -31,8 +35,10 @@ type firstLoginDTO struct {
 	// create the account), "none" (nothing to sign into).
 	Kind          string `json:"kind"`
 	ApplicationID string `json:"application_id,omitempty"`
-	Username      string `json:"username,omitempty"`
-	Password      string `json:"password,omitempty"`
+	// StackID is set instead, for a compose template.
+	StackID  string `json:"stack_id,omitempty"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
 	// Generated distinguishes a password the panel invented — shown once and
 	// unrecoverable — from a documented upstream default, which is public
 	// knowledge and can be shown at any time.
@@ -88,6 +94,7 @@ func (a *API) handleInstallTemplate(w http.ResponseWriter, r *http.Request) {
 	})
 	var validation *templates.ValidationError
 	var partial *templates.PartialInstallError
+	var inUse *applications.DomainInUseError
 	switch {
 	case errors.Is(err, templates.ErrNotFound):
 		writeError(w, http.StatusNotFound, "template not found")
@@ -101,6 +108,12 @@ func (a *API) handleInstallTemplate(w http.ResponseWriter, r *http.Request) {
 			"environment_id", req.EnvironmentID, "remaining", partial.Remaining, "error", partial.Cause)
 		writeError(w, http.StatusInternalServerError,
 			"could not install template, and rolling it back left resources behind: "+strings.Join(partial.Remaining, ", "))
+	case errors.As(err, &inUse):
+		// The same 409 the application path answers. A template install
+		// creates applications through the same checks, so a hostname another
+		// application already serves is refused the same way — named, with the
+		// application that holds it — rather than as a blank 500.
+		writeError(w, http.StatusConflict, a.domainConflictMessage(r, inUse))
 	case writeIfFrozen(w, err):
 		// A template install deploys, so it passes the same gate a deploy
 		// does (deploy-protection.md §1). Placed after the partial branch: a
@@ -125,10 +138,12 @@ func (a *API) handleInstallTemplate(w http.ResponseWriter, r *http.Request) {
 				"server_id":    req.ServerID,
 				"applications": result.ApplicationIDs,
 				"databases":    result.DatabaseIDs,
+				"stacks":       result.StackIDs,
 			},
 		})
 		writeJSON(w, http.StatusAccepted, installTemplateResponse{
 			Applications: result.ApplicationIDs, Databases: result.DatabaseIDs,
+			Stacks:     result.StackIDs,
 			FirstLogin: firstLoginToDTO(result.FirstLogin),
 		})
 	}
@@ -139,7 +154,7 @@ func firstLoginToDTO(fl *templates.FirstLogin) *firstLoginDTO {
 		return nil
 	}
 	return &firstLoginDTO{
-		Kind: fl.Kind, ApplicationID: fl.ApplicationID,
+		Kind: fl.Kind, ApplicationID: fl.ApplicationID, StackID: fl.StackID,
 		Username: fl.Username, Password: fl.Password,
 		Generated: fl.Generated, Note: fl.Note,
 	}

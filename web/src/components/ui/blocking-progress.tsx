@@ -29,7 +29,7 @@ export interface ProgressStep {
 const MARK: Record<StepState, { glyph: string; word: string; className: string }> = {
   done: { glyph: "✓", word: "Done:", className: "text-status-running" },
   active: { glyph: "▸", word: "In progress:", className: "text-status-deploying" },
-  pending: { glyph: "○", word: "Waiting:", className: "text-text-disabled" },
+  pending: { glyph: "○", word: "Waiting:", className: "text-text-faint" },
 };
 
 export interface BlockingProgressProps {
@@ -73,10 +73,13 @@ export function BlockingProgress({
       >
         {/* Steps are set in the panel's readable secondary body colour, not the
             label grey: this is the only account of what the machine is doing
-            and it has to survive being read across a desk. */}
+            and it has to survive being read across a desk. A step that has not
+            started yet is quieter — --text-faint, not --text-disabled: nothing
+            in this list is a control, so it answers to 14g's 4.5:1 text floor
+            rather than the 3:1 an inert button gets. */}
         <ol className="mt-0.5 font-mono text-[11.5px] leading-[2.1] text-text-dim">
           {steps.map((s) => (
-            <li key={s.label} className={cn(s.state === "pending" && "text-text-disabled")}>
+            <li key={s.label} className={cn(s.state === "pending" && "text-text-faint")}>
               <span className={MARK[s.state].className} aria-hidden>
                 {MARK[s.state].glyph}
               </span>

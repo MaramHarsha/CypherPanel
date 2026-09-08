@@ -15,7 +15,11 @@ export interface AppRuntime {
      * @maximum 65535
      */
   port: number;
-  /** Fixed at 1 for v1 (multiple replicas are post-v1). */
+  /**
+     * How many containers of this application run, load-balanced by the Proxy on its node. More than one is refused for an application that mounts a volume (two writers on one filesystem is how data gets corrupted) or publishes a raw host port (two containers cannot bind one port).
+     * @minimum 1
+     * @maximum 20
+     */
   replicas: number;
   /**
      * Fractional cores; null/omitted/0 = no limit (noisy-neighbor control).

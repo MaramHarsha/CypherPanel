@@ -211,6 +211,16 @@ func writeIfFrozen(w http.ResponseWriter, err error) bool {
 		writeError(w, http.StatusConflict, frozen.Detail)
 		return true
 	}
+	// A quota refusal is also a 409 but a DIFFERENT answer: a freeze says "not
+	// now", a quota says "not here until something is freed". Collapsing them
+	// would give the operator the wrong remedy, so the message names which cap
+	// and by how much rather than saying "quota exceeded".
+	var over *scheduler.QuotaError
+	if errors.As(err, &over) {
+		writeError(w, http.StatusConflict, over.Detail+
+			" — free some, raise the cap, or roll back, which is never refused for space")
+		return true
+	}
 	return false
 }
 

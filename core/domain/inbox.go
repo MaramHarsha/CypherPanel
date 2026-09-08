@@ -42,6 +42,35 @@ const (
 	// over by attaching a server to an arbitrary project.
 	InboxKindServerDiskLow       = "server.disk_low"
 	InboxKindServerDiskRecovered = "server.disk_recovered"
+
+	// A threshold alert has stopped delivering, for one of the two reasons it
+	// can (threshold-alerts.md §§4, 5). Inbox-only rather than subscribable by
+	// the same test the kinds above pass: "your rule stopped watching" is
+	// governance news for the person who wrote it, not an observed transition
+	// of a resource — and putting it on an ops channel is how the channel
+	// learns to be ignored.
+	InboxAlertNoData   = "alert.no_data"
+	InboxAlertFlapping = "alert.flapping"
+
+	// A scope crossed 90% of a cap, or reached it (resource-quotas.md §5).
+	// Panel-level for the reason the disk warning is: a quota is set by an
+	// administrator on shared capacity, and crossing one is news for the people
+	// who can act on it rather than an event on a project's timeline.
+	//
+	// Announced on the TRANSITION only. A warning repeated on every deploy is a
+	// warning nobody reads by the second week.
+	InboxQuotaWarn     = "quota.warn"
+	InboxQuotaExceeded = "quota.exceeded"
+
+	// InboxAgentUpdateFailed: an agent rolled its own update back
+	// (agent-updates.md §7). Written on the TRANSITION into rolled_back, never
+	// per heartbeat — the rule disk alerting already states, for the reason it
+	// states it: one arrives every few seconds and a channel that repeats
+	// itself gets muted, taking the next real alert with it.
+	//
+	// Panel-level for the structural reason recorded above InboxKindServerDiskLow:
+	// a Server belongs to no project and a Notifier is scoped to one.
+	InboxAgentUpdateFailed = "agent.update_failed"
 )
 
 // panelInboxKinds is the panel-level half of the inbox taxonomy.
@@ -49,6 +78,11 @@ var panelInboxKinds = []string{
 	InboxKindPanelUpdateAvailable,
 	InboxKindServerDiskLow,
 	InboxKindServerDiskRecovered,
+	InboxAlertNoData,
+	InboxAlertFlapping,
+	InboxQuotaWarn,
+	InboxQuotaExceeded,
+	InboxAgentUpdateFailed,
 }
 
 // Deploy-protection inbox kinds (deploy-protection.md §9). Like the panel-level

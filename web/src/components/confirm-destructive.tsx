@@ -33,6 +33,15 @@ interface ConfirmDestructiveProps {
   lead?: string;
   /** When set, the user must type this (resource name) to arm the action. */
   confirmName?: string;
+  /**
+   * An extra control shown between the blast radius and the confirmation — a
+   * choice that CHANGES the blast radius, such as whether a database's volume
+   * goes with it. It sits there rather than on the page behind because the
+   * radius above has to describe what the choice currently means, and a
+   * checkbox the operator cannot see while reading that list is one they will
+   * answer from memory.
+   */
+  extra?: ReactNode;
   actionLabel: string;
   onConfirm: () => void;
   pending?: boolean;
@@ -46,6 +55,7 @@ export function ConfirmDestructive({
   blastRadius,
   lead = "This permanently removes:",
   confirmName,
+  extra,
   actionLabel,
   onConfirm,
   pending,
@@ -101,6 +111,8 @@ export function ConfirmDestructive({
           ))}
         </ul>
 
+        {extra && <div className="mt-3">{extra}</div>}
+
         {confirmName && (
           <div className="mt-3">
             <label htmlFor={inputId} className="text-[12.5px] text-text-mid">
@@ -110,13 +122,18 @@ export function ConfirmDestructive({
               </span>{" "}
               to confirm:
             </label>
+            {/* No `outline-none` here, unlike ui/input.tsx: that field trades the
+                ring for a border that deepens on focus, and this one is already
+                drawn at full ink strength, so removing the outline would leave
+                the control that arms an irreversible action with no focus
+                indicator at all. It takes the global 14g ring instead. */}
             <input
               id={inputId}
               value={typed}
               onChange={(e) => setTyped(e.target.value)}
               autoComplete="off"
               spellCheck={false}
-              className="mt-2 w-full rounded-md border-[1.5px] border-border-strong bg-surface px-[11px] py-[9px] font-mono text-[13px] text-text outline-none"
+              className="mt-2 w-full rounded-md border-[1.5px] border-border-strong bg-surface px-[11px] py-[9px] font-mono text-[13px] text-text"
             />
           </div>
         )}

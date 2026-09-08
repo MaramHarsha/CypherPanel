@@ -31,13 +31,25 @@ type Traefik struct {
 	mu              sync.RWMutex
 	desiredEmail    string
 	desiredCAServer string
+	// desiredAccessLog is request analytics, from the panel's metrics
+	// settings. Changing it changes the static config, which is part of the
+	// Proxy container's identity — so a change recreates cypher-proxy once.
+	// That is a few seconds with no routing on the node, and the release note
+	// must say so.
+	desiredAccessLog bool
+	// maintenanceMayExist records whether a maintenance responder could be
+	// running on this node. It starts TRUE so the first reconcile after an
+	// agent start sweeps one left behind by a previous process; after that it
+	// is exact, and a node that never uses maintenance makes no daemon call
+	// for it at all (maintenance.go).
+	maintenanceMayExist bool
 }
 
 // New constructs the Traefik proxy driver. A nil Config.Engine selects
 // fragment-only mode: fragment management still works while the Proxy
 // lifecycle (EnsureProxy / AttachNetwork) is disabled.
 func New(cfg Config) *Traefik {
-	return &Traefik{cfg: cfg, appsDir: fragmentsDir(cfg.Dir)}
+	return &Traefik{cfg: cfg, appsDir: fragmentsDir(cfg.Dir), maintenanceMayExist: true}
 }
 
 // SetACME records the panel's ACME account as carried in desired state. The
@@ -51,6 +63,21 @@ func (t *Traefik) SetACME(email, caServer string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.desiredEmail, t.desiredCAServer = email, caServer
+}
+
+// SetAccessLog turns the Proxy's JSON access log on or off. It is desired
+// state like the ACME account, applied the same way and for the same reason:
+// one panel, one policy, every node.
+func (t *Traefik) SetAccessLog(on bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.desiredAccessLog = on
+}
+
+func (t *Traefik) accessLogEnabled() bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.desiredAccessLog
 }
 
 // acme resolves the effective ACME account: the host-local override if set,
@@ -79,8 +106,37 @@ func (t *Traefik) hasResolver() bool {
 // Name identifies the proxy driver ("traefik"; "caddy" is a later driver).
 func (t *Traefik) Name() string { return "traefik" }
 
-// SetRoute writes the Traefik fragment for an app atomically.
-func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.RouteSpec, upstream string) error {
+// SetRoute writes the Traefik fragment for an app atomically. The upstream is
+// a bare host:port, which is what a container is.
+// SetRoute writes the fragment for an app, load-balancing across every healthy
+// replica on this node. One server entry per replica: Traefik round-robins
+// them, so scaling out needs no new address to configure and no new port.
+func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.RouteSpec, upstreams []string) error {
+	urls := make([]string, 0, len(upstreams))
+	for _, u := range upstreams {
+		urls = append(urls, "http://"+u)
+	}
+	return t.setRoute(ctx, appID, route, urls, "")
+}
+
+// SetStaticRoute writes a fragment for an upstream that is not a container
+// (status-pages.md §4). Two things differ from SetRoute and only two: the
+// upstream arrives as an ABSOLUTE URL — a control plane behind a TLS
+// terminator has to be expressible as https:// — and an addPrefix middleware
+// rewrites the path, which is why the plane needs no Host-header dispatch and
+// the same page works under any number of domains.
+//
+// upstreamURL is the plane's own base URL, filled in by the plane. It is never
+// operator input, so this is not a way to aim a node's Proxy at an address
+// somebody typed into a form.
+func (t *Traefik) SetStaticRoute(ctx context.Context, routeID string, route *agentv1.RouteSpec, upstreamURL, addPrefix string) error {
+	if !strings.HasPrefix(upstreamURL, "http://") && !strings.HasPrefix(upstreamURL, "https://") {
+		return fmt.Errorf("static route upstream must be an absolute http(s) URL")
+	}
+	return t.setRoute(ctx, routeID, route, []string{upstreamURL}, addPrefix)
+}
+
+func (t *Traefik) setRoute(ctx context.Context, appID string, route *agentv1.RouteSpec, upstreamURLs []string, addPrefix string) error {
 	if route == nil {
 		return fmt.Errorf("route spec is nil")
 	}
@@ -122,6 +178,17 @@ func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.Rou
 		Headers *struct {
 			CustomResponseHeaders map[string]string `yaml:"customResponseHeaders"`
 		} `yaml:"headers,omitempty"`
+		IPAllowList *struct {
+			SourceRange []string `yaml:"sourceRange"`
+		} `yaml:"ipAllowList,omitempty"`
+		BasicAuth *struct {
+			Users []string `yaml:"users"`
+			// The app must never see the credential it might log.
+			RemoveHeader bool `yaml:"removeHeader"`
+		} `yaml:"basicAuth,omitempty"`
+		AddPrefix *struct {
+			Prefix string `yaml:"prefix"`
+		} `yaml:"addPrefix,omitempty"`
 	}
 
 	doc := struct {
@@ -146,6 +213,49 @@ func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.Rou
 		CustomResponseHeaders map[string]string `yaml:"customResponseHeaders"`
 	}{CustomResponseHeaders: map[string]string{ServedByHeader: ServedByValue}}
 	doc.HTTP.Middlewares[markName] = mark
+
+	// Access control (app-access-control.md §4). MARK STAYS FIRST, deliberately:
+	// middlewares wrap in list order, so a visitor the allowlist rejects still
+	// gets X-Served-By on their 403 — and an operator locked out from a cafe
+	// learns the panel is refusing them rather than guessing at DNS.
+	chain := []string{markName}
+	if acc := route.GetAccess(); acc != nil {
+		if len(acc.GetAllowCidrs()) > 0 {
+			name := appID + "-allow"
+			mw := Middleware{}
+			mw.IPAllowList = &struct {
+				SourceRange []string `yaml:"sourceRange"`
+			}{SourceRange: acc.GetAllowCidrs()}
+			doc.HTTP.Middlewares[name] = mw
+			chain = append(chain, name)
+		}
+		if len(acc.GetBasicAuthUsers()) > 0 {
+			name := appID + "-auth"
+			mw := Middleware{}
+			mw.BasicAuth = &struct {
+				Users        []string `yaml:"users"`
+				RemoveHeader bool     `yaml:"removeHeader"`
+			}{Users: acc.GetBasicAuthUsers(), RemoveHeader: true}
+			doc.HTTP.Middlewares[name] = mw
+			chain = append(chain, name)
+		}
+	}
+
+	// addPrefix goes LAST in the chain, after the mark and after any access
+	// control: rewriting the path for a visitor the allowlist is about to
+	// reject would be work done for a 403.
+	if addPrefix != "" {
+		if strings.Contains(addPrefix, "`") || !strings.HasPrefix(addPrefix, "/") {
+			return fmt.Errorf("invalid add prefix")
+		}
+		name := appID + "-prefix"
+		mw := Middleware{}
+		mw.AddPrefix = &struct {
+			Prefix string `yaml:"prefix"`
+		}{Prefix: addPrefix}
+		doc.HTTP.Middlewares[name] = mw
+		chain = append(chain, name)
+	}
 
 	rule := fmt.Sprintf("Host(`%s`)", route.Domain)
 	if route.PathPrefix != "" {
@@ -172,7 +282,7 @@ func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.Rou
 		doc.HTTP.Routers[appID] = Router{
 			Rule:        rule,
 			EntryPoints: []string{"websecure"},
-			Middlewares: []string{markName},
+			Middlewares: chain,
 			Service:     appID,
 			TLS: &struct {
 				CertResolver string `yaml:"certResolver,omitempty"`
@@ -204,15 +314,21 @@ func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.Rou
 		doc.HTTP.Routers[appID] = Router{
 			Rule:        rule,
 			EntryPoints: []string{"web"},
-			Middlewares: []string{markName},
+			Middlewares: chain,
 			Service:     appID,
 		}
 	}
 
 	srv := Service{}
-	srv.LoadBalancer.Servers = []struct {
+	servers := make([]struct {
 		URL string `yaml:"url"`
-	}{{URL: "http://" + upstream}}
+	}, 0, len(upstreamURLs))
+	for _, u := range upstreamURLs {
+		servers = append(servers, struct {
+			URL string `yaml:"url"`
+		}{URL: u})
+	}
+	srv.LoadBalancer.Servers = servers
 
 	doc.HTTP.Services[appID] = srv
 
@@ -236,7 +352,14 @@ func (t *Traefik) SetRoute(ctx context.Context, appID string, route *agentv1.Rou
 	}
 	tmpPath := filepath.Join(cleanAppsDir, "."+appID+".yml.tmp")
 
-	if err := os.WriteFile(tmpPath, b, 0644); err != nil {
+	// 0600, not 0644: a fragment can now carry a bcrypt credential hash, and a
+	// file mode that varies with content is a mode nobody can reason about. The
+	// node's existing rule for credential material (acme.json, the env file
+	// compose-stacks writes) is the same. This works because the agent and the
+	// Proxy's Traefik both run as root on the node — if Traefik is ever run as
+	// non-root this becomes a usersFile with matched ownership, and the routing
+	// integration test is what catches it (app-access-control.md §4).
+	if err := os.WriteFile(tmpPath, b, 0600); err != nil {
 		return fmt.Errorf("writing route tmp file: %w", err)
 	}
 	if err := os.Rename(tmpPath, finalPath); err != nil {
@@ -264,59 +387,64 @@ func (t *Traefik) RemoveRoute(ctx context.Context, appID string) error {
 }
 
 // Route returns the currently configured upstream for an app, if any.
-func (t *Traefik) Route(ctx context.Context, appID string) (upstream string, ok bool, err error) {
+func (t *Traefik) Route(ctx context.Context, appID string) (upstreams []string, ok bool, err error) {
 	if strings.Contains(appID, "..") || strings.Contains(appID, "/") || strings.Contains(appID, "\\") {
-		return "", false, fmt.Errorf("invalid appID")
+		return nil, false, fmt.Errorf("invalid appID")
 	}
 	cleanAppsDir := filepath.Clean(t.appsDir)
 	finalPath := filepath.Clean(filepath.Join(cleanAppsDir, appID+".yml"))
 	if !strings.HasPrefix(finalPath, cleanAppsDir) {
-		return "", false, fmt.Errorf("invalid route path")
+		return nil, false, fmt.Errorf("invalid route path")
 	}
 	b, err := os.ReadFile(finalPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", false, nil
+			return nil, false, nil
 		}
-		return "", false, fmt.Errorf("reading route file: %w", err)
+		return nil, false, fmt.Errorf("reading route file: %w", err)
 	}
 
 	var doc map[string]interface{}
 	if err := yaml.Unmarshal(b, &doc); err != nil {
-		return "", false, fmt.Errorf("parsing route file: %w", err)
+		return nil, false, fmt.Errorf("parsing route file: %w", err)
 	}
 
 	httpMap, ok := doc["http"].(map[string]interface{})
 	if !ok {
-		return "", false, nil
+		return nil, false, nil
 	}
 	servicesMap, ok := httpMap["services"].(map[string]interface{})
 	if !ok {
-		return "", false, nil
+		return nil, false, nil
 	}
 	appSrv, ok := servicesMap[appID].(map[string]interface{})
 	if !ok {
-		return "", false, nil
+		return nil, false, nil
 	}
 	lb, ok := appSrv["loadBalancer"].(map[string]interface{})
 	if !ok {
-		return "", false, nil
+		return nil, false, nil
 	}
 	servers, ok := lb["servers"].([]interface{})
 	if !ok || len(servers) == 0 {
-		return "", false, nil
+		return nil, false, nil
 	}
-	srv, ok := servers[0].(map[string]interface{})
-	if !ok {
-		return "", false, nil
+	out := make([]string, 0, len(servers))
+	for _, entry := range servers {
+		srv, ok := entry.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		url, ok := srv["url"].(string)
+		if !ok {
+			continue
+		}
+		out = append(out, strings.TrimPrefix(url, "http://"))
 	}
-	url, ok := srv["url"].(string)
-	if !ok {
-		return "", false, nil
+	if len(out) == 0 {
+		return nil, false, nil
 	}
-
-	url = strings.TrimPrefix(url, "http://")
-	return url, true, nil
+	return out, true, nil
 }
 
 // ServedByHeader marks responses that actually passed through this panel's

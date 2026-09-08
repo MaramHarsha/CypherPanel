@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -199,4 +200,14 @@ func composeRevisionFromRow(r db.ComposeRevision) domain.ComposeRevision {
 	return domain.ComposeRevision{
 		ID: r.ID, StackID: r.StackID, ComposeYAML: r.ComposeYaml, CreatedAt: r.CreatedAt.Time,
 	}
+}
+
+// ListComposeEnvVarKeys returns a stack's variable keys and nothing else, for
+// the same reason ListEnvVarKeys exists (project-export.md §4).
+func (s *Store) ListComposeEnvVarKeys(ctx context.Context, stackID string) ([]string, error) {
+	keys, err := s.q.ListComposeEnvVarKeys(ctx, stackID)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing compose env var keys: %w", err)
+	}
+	return keys, nil
 }

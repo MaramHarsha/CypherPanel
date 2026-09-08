@@ -11,6 +11,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Undo2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { ApprovalActions } from "@/components/approval-actions";
 import { ConfirmRollback } from "@/components/confirm-rollback";
 import { toastDeployment } from "@/components/deploy-toast";
 import {
@@ -28,9 +29,12 @@ import type { Deployment } from "@/api/gen/model";
 import { EmptyState } from "@/components/empty-state";
 import { LogViewer } from "@/components/log-viewer";
 import { PageState } from "@/components/page-state";
+import { PromoteCard } from "@/components/promote-card";
 import { failedStage, PipelineStages } from "@/components/pipeline-stages";
 import { StatusDot } from "@/components/status-badge";
 import { ActionButton, useMutationActionState } from "@/components/ui/action-button";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { Drawer } from "@/components/ui/drawer";
 import { useRowNavigation } from "@/lib/keys";
 import { relativeTime, absoluteTime } from "@/lib/time";
@@ -272,18 +276,34 @@ function DeploymentsTab() {
     serving,
     served,
     deployBusy,
+    ordinal,
   };
 
   return (
     <div className="lg:flex lg:items-stretch">
       <div className="min-w-0 flex-1 lg:pr-8">
+        {/* Promotion sits above the list rather than beside a row: it is a
+            decision about THIS application's current build going somewhere
+            else, not about one historical deployment. */}
+        {app?.observed_revision_id && (
+          <div className="mb-3.5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface px-4 py-3">
+            <div className="min-w-0">
+              <p className="text-[13px] font-medium text-text">Promote what is running</p>
+              <p className="mt-0.5 text-[12.5px] leading-[1.5] text-text-mid">
+                Ship this exact image to another environment. No rebuild, so what arrives is what has been running
+                here.
+              </p>
+            </div>
+            <PromoteCard app={app} projectId={projectId} revisionId={app.observed_revision_id} />
+          </div>
+        )}
         <PageState
           query={deployments}
           empty={
             <EmptyState
               emphasis
               title="No deployments yet"
-              hint="Deploy builds the repository's Dockerfile and rolls it out with a health-gated, zero-downtime switch. Push-to-deploy is on the Overview tab."
+              hint="Deploy builds the source — or pulls the image — and rolls it out with a health-gated, zero-downtime switch. Push-to-deploy is under Settings."
               action={
                 <ActionButton
                   variant="primary"
@@ -324,7 +344,21 @@ function DeploymentsTab() {
       {column ? (
         <aside
           aria-label="Deployment detail"
-          className="-my-6 -mr-8 flex min-h-[560px] w-[460px] flex-none flex-col border-l-[1.5px] border-border-strong bg-toast text-toast-text"
+          // Sticky and viewport-bounded, so the LOG scrolls inside its own box
+          // rather than growing the page. It had only a min-height, so a long
+          // build made the whole document taller and taller: reading the tail
+          // of a log meant scrolling the page past the deployment list, and the
+          // list header scrolled away with it.
+          //
+          // top-14 is the 56px top bar, and the height subtracts it so the
+          // panel ends exactly at the viewport edge. min-h-0 is what lets the
+          // LogViewer's own flex-1 resolve against a bounded parent — without
+          // it the child would still size to its content.
+          className={cn(
+            "-my-6 -mr-8 flex w-[460px] flex-none flex-col border-l-[1.5px] border-border-strong bg-toast text-toast-text",
+            "lg:sticky lg:top-14 lg:h-[calc(100vh-3.5rem)] lg:min-h-0",
+            "max-lg:min-h-[560px]",
+          )}
         >
           {dep && (
             <div className="flex items-baseline gap-2.5 px-6 pt-[22px]">
@@ -569,6 +603,7 @@ function DeployPanel({
   serving,
   served,
   deployBusy,
+  ordinal,
   className,
 }: {
   depId: string;
@@ -579,9 +614,14 @@ function DeployPanel({
   serving: Deployment | undefined;
   served: Map<string, string>;
   deployBusy: boolean;
+  /** Which deploy this is, for the cancel confirm's title (12e: "Cancel deploy #214?"). */
+  ordinal: number | undefined;
   /** How the panel takes its height: the column stretches it, the sheet fills it. */
   className?: string;
 }) {
+  // Its own client: approving a parked deploy changes state this drawer,
+  // the list behind it and the application header all render.
+  const panelQc = useQueryClient();
   const dep = useGetDeployment(depId, {
     query: {
       // The events stream invalidates the application and its lists, not this
@@ -594,7 +634,11 @@ function DeployPanel({
   });
   const { rollback, state } = useRollbackAction(appId, projectId);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const frame = cn("flex min-h-0 flex-col px-6 pb-[22px]", className);
+  // flex-1 so this fills the now-bounded aside, and min-h-0 so the LogViewer
+  // inside it can shrink below its content — without both, the viewer's own
+  // flex-1 resolves against an unbounded parent and the log grows the page
+  // instead of scrolling in its own box.
+  const frame = cn("flex min-h-0 flex-1 flex-col px-6 pb-[22px]", className);
 
   // The panel is the one surface an operator stares at while something is
   // happening, so it owes them the same four states as any page: an empty
@@ -657,6 +701,23 @@ function DeployPanel({
           button's own line, because "cancel" reads as "make it stop" and a
           build already in flight finishes regardless — its image is reclaimed
           by desired-state GC afterwards, because nothing desires its revision. */}
+      {/* The gate's release, on the screen that SHOWS the deploy parked. It
+          lived only on Project → Settings → Protection, so whoever noticed had
+          to leave, find a settings page two levels away and identify the deploy
+          again by id. The approval summary rides on the deployment already, so
+          this needs no second request. */}
+      {d.status === "awaiting_approval" && (
+        <div className="mt-3 rounded-md border border-status-degraded/40 bg-status-degraded/[0.06] p-3">
+          <p className="text-[12.5px] leading-[1.5] text-toast-text">
+            Parked for approval
+            {d.approval?.requested_by_email ? ` — pushed by ${d.approval.requested_by_email}` : ""}.
+            {d.approval?.required_role ? ` Needs ${d.approval.required_role}.` : ""}
+          </p>
+          <div className="mt-2.5">
+            <ApprovalActions deploymentId={d.id} onSettled={() => void panelQc.invalidateQueries()} />
+          </div>
+        </div>
+      )}
       {isCancellable(d.status) && (
         <div className="mt-3 flex items-center justify-between gap-3">
           <span className="font-mono text-[11.5px] text-toast-faint">
@@ -664,7 +725,13 @@ function DeployPanel({
               ? "parked for approval — cancelling withdraws it"
               : "a build already running finishes; its image is reclaimed"}
           </span>
-          <CancelAction depId={d.id} appId={appId} />
+          <CancelAction
+            depId={d.id}
+            appId={appId}
+            ordinal={ordinal}
+            servingRev={serving ? shortRev(serving.revision_id) : undefined}
+            parked={d.status === "awaiting_approval"}
+          />
         </div>
       )}
       {/* The phone list has no right-hand column (14c), so on a phone the way
@@ -702,11 +769,40 @@ function DeployPanel({
 }
 
 /**
- * Cancel. It announces nothing to notifiers or outbound webhooks — a
- * cancellation is a person's decision, not an infrastructure failure — so the
- * only feedback is here, and it says what it actually did.
+ * Cancel, behind the confirm the canvas gives it (12e). The reassurance is the
+ * whole reason this verb gets a modal: "cancel" reads as "make something stop",
+ * and what an operator actually needs told is that nothing in production moves
+ * either way. Saying that in the success toast says it one click too late.
+ *
+ * Two clauses of 12e's body are this plane's rather than the canvas's, because
+ * the canvas's are not true here. ADR-002 gives the plane no way to stop a
+ * build that is already running (deployment-control.md), so it finishes and its
+ * image is reclaimed instead of stopping "now"; and a half-finished rollout is
+ * not rolled back but refused a cancel altogether — `isCancellable` never
+ * offers the button once `rolling_out`. The sentence the modal exists for is
+ * the canvas's, word for word.
+ *
+ * It announces nothing to notifiers or outbound webhooks — a cancellation is a
+ * person's decision, not an infrastructure failure — so the only feedback is
+ * here, and it says what it actually did.
  */
-function CancelAction({ depId, appId }: { depId: string; appId: string }) {
+function CancelAction({
+  depId,
+  appId,
+  ordinal,
+  servingRev,
+  parked,
+}: {
+  depId: string;
+  appId: string;
+  /** Which deploy this is — "#214", when the list that numbers it has arrived. */
+  ordinal: number | undefined;
+  /** The revision that keeps serving through all of this. */
+  servingRev: string | undefined;
+  /** A deploy protection parked before it started: there is no build to speak of. */
+  parked: boolean;
+}) {
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const qc = useQueryClient();
   const cancel = useCancelDeployment({
     mutation: {
@@ -723,17 +819,51 @@ function CancelAction({ depId, appId }: { depId: string; appId: string }) {
   });
   const state = useMutationActionState(cancel);
   return (
-    <ActionButton
-      size="sm"
-      variant="ghost"
-      state={state}
-      busyLabel="Cancelling…"
-      successLabel="Cancelled"
-      failedLabel="Retry"
-      onClick={() => cancel.mutate({ id: depId })}
-      className="text-toast-text hover:bg-white/10 hover:text-toast-text"
-    >
-      <X className="h-3 w-3" aria-hidden /> Cancel
-    </ActionButton>
+    <>
+      <ActionButton
+        size="sm"
+        variant="ghost"
+        state={state}
+        busyLabel="Cancelling…"
+        successLabel="Cancelled"
+        failedLabel="Retry"
+        onClick={() => setConfirmOpen(true)}
+        className="text-toast-text hover:bg-white/10 hover:text-toast-text"
+      >
+        <X className="h-3 w-3" aria-hidden /> Cancel
+      </ActionButton>
+      {/* No ✕ on confirms (canvas 9g/9h) — "Keep going" is the way out. */}
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent size="alert" hideClose title={ordinal !== undefined ? `Cancel deploy #${ordinal}?` : "Cancel this deploy?"}>
+          <p className="mt-0.5 text-[12.5px] leading-[1.55] text-text-mid">
+            {parked ? "It never started, so there is nothing to stop. " : "The deploy stops here. "}
+            <b className="text-text">Nothing changes in production</b>
+            {servingRev ? ` — ${servingRev} keeps serving` : " — nothing has shipped yet"}
+            {parked
+              ? "; the approval it was waiting for disappears with it."
+              : "; a build already running finishes on its node, and its image is reclaimed."}
+          </p>
+
+          <div className="mt-4 flex justify-end gap-2.5">
+            <DialogClose asChild>
+              <Button variant="ghost">Keep going</Button>
+            </DialogClose>
+            <ActionButton
+              variant="primary"
+              state={cancel.isPending ? "busy" : "idle"}
+              busyLabel="Cancelling…"
+              onClick={() => {
+                cancel.mutate({ id: depId });
+                // The panel underneath is where this plays out — the row's own
+                // pill carries the outcome, and the toast says what it did.
+                setConfirmOpen(false);
+              }}
+            >
+              Cancel deploy
+            </ActionButton>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

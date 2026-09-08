@@ -12,4 +12,6 @@ export interface SetupRequest {
   email: string;
   /** @minLength 8 */
   password: string;
+  /** The setup code, when `SetupStatus.requires_token` is true. Printed at the end of install.sh and kept in /etc/cypherpanel/cypherd.env on the host. A wrong code answers 403. */
+  setup_token?: string;
 }

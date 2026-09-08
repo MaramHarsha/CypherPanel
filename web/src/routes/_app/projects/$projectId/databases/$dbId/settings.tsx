@@ -40,6 +40,8 @@ function DatabaseSettings() {
   const db = useGetDatabase(dbId);
   const schedules = useListDatabaseBackups(dbId);
 
+  // Off by default: a delete that takes data with it must be asked for.
+  const [deleteVolume, setDeleteVolume] = useState(false);
   const del = useDeleteDatabase({
     mutation: {
       onSuccess: () => {
@@ -70,17 +72,34 @@ function DatabaseSettings() {
               <div>
                 <p className="text-[13px] font-medium text-text">Delete this database</p>
                 <p className="text-xs text-text-mid">
-                  Stops the container and deletes its data volume. Backup files in your S3 targets are kept.
+                  Stops the container and removes it. Whether the data volume goes with it is yours to choose.
+                  Backup files in your S3 targets are kept either way.
                 </p>
               </div>
               <ConfirmDestructive
                 trigger={<Button variant="danger">Delete</Button>}
+                extra={
+                  <label className="flex items-start gap-2.5 text-[12.5px] leading-[1.5] text-text-mid">
+                    <input
+                      type="checkbox"
+                      checked={deleteVolume}
+                      onChange={(e) => setDeleteVolume(e.target.checked)}
+                      className="mt-[3px] size-3.5 shrink-0 accent-[var(--danger)]"
+                    />
+                    <span>
+                      <span className="font-semibold text-text">Delete the data volume too</span> — off keeps it on
+                      the server, holding disk nothing in the panel will name again.
+                    </span>
+                  </label>
+                }
                 title={`Delete ${d.name}?`}
                 // One entry per class of thing, each carrying its own
                 // consequence: a run-on sentence about a deletion is the one
                 // paragraph an operator skims (canvas 13af).
                 blastRadius={[
-                  `the ${d.engine} container and its data volume — permanently (backup files already in S3 survive)`,
+                  deleteVolume
+                    ? `the ${d.engine} container AND its data volume — permanently (backup files already in S3 survive)`
+                    : `the ${d.engine} container — the data volume is KEPT on the server and nothing in the panel will reference it again`,
                   ...(scheduleCount > 0
                     ? [`${scheduleCount} backup schedule${scheduleCount > 1 ? "s" : ""} — nothing further is uploaded`]
                     : []),
@@ -88,7 +107,18 @@ function DatabaseSettings() {
                 confirmName={d.name}
                 actionLabel="Delete database"
                 pending={del.isPending}
-                onConfirm={() => del.mutate({ id: dbId })}
+                // delete_volume=true, because the sentence above and the
+                // blast radius below BOTH promise the data volume goes. They
+                // promised it while the request sent nothing, so the volume
+                // survived on the host after the operator had been told twice
+                // that it was gone — disk nobody could account for, and data
+                // somebody believed was deleted.
+                // The operator's choice, not the panel's. It sent nothing at
+                // all once — while promising the volume was gone — and then
+                // always true, which is the same mistake pointing the other
+                // way: a database deleted to free a name should not have to
+                // take its data with it.
+                onConfirm={() => del.mutate({ id: dbId, params: { delete_volume: deleteVolume } })}
               />
             </div>
           </div>

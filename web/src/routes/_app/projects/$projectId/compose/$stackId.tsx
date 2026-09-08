@@ -8,25 +8,29 @@
 // tab strip, same ResourceGone. What differs is the badge's second line: a
 // stack's history is its revision list rather than a deployment pipeline, so
 // the masthead says which revision is serving.
-import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
+import { createFileRoute, Outlet } from "@tanstack/react-router";
 import { useGetComposeStack } from "@/api/gen/compose-stacks/compose-stacks";
 import { useGetProject } from "@/api/gen/projects/projects";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { ResourceGone } from "@/components/resource-gone";
 import { StatusBadge } from "@/components/status-badge";
+import { TabStrip, type Tab } from "@/components/tab-strip";
 import { useCrumbs } from "@/lib/crumbs";
 
 export const Route = createFileRoute("/_app/projects/$projectId/compose/$stackId")({
   component: ComposeStackLayout,
 });
 
-const TABS = [
+// The same strip an application gets, and the same fold at 360px (canvas 14c):
+// the first four survive and Settings — the one a phone reaches for least —
+// moves into "More" rather than off the edge of the screen.
+const TABS: readonly Tab[] = [
   { to: "", label: "Overview" },
   { to: "logs", label: "Logs" },
   { to: "env", label: "Variables" },
   { to: "revisions", label: "Revisions" },
   { to: "settings", label: "Settings" },
-] as const;
+];
 
 /** Short revision for display, the same 7 characters an application's card gets. */
 function shortRevision(id: string | null | undefined): string {
@@ -80,20 +84,11 @@ function ComposeStackLayout() {
           </span>
         }
         below={
-          <nav className="-mb-px flex gap-5 overflow-x-auto" aria-label="Compose stack">
-            {TABS.map((t) => (
-              <Link
-                key={t.label}
-                from={Route.fullPath}
-                to={t.to === "" ? "." : t.to}
-                activeOptions={{ exact: t.to === "" }}
-                className="whitespace-nowrap border-b-2 border-transparent px-0.5 py-2.5 text-[13px] text-text-mid hover:text-text"
-                activeProps={{ className: "border-border-strong font-semibold text-text" }}
-              >
-                {t.label}
-              </Link>
-            ))}
-          </nav>
+          <TabStrip
+            label="Compose stack"
+            base={`/projects/${projectId}/compose/${stackId}`}
+            tabs={TABS}
+          />
         }
       />
       <PageBody>

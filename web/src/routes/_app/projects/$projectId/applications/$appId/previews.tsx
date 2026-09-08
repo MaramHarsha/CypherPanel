@@ -52,7 +52,7 @@ function PreviewsTab() {
                 ? "Previews follow pull requests on a git source — this app deploys from an image, so none will appear."
                 : "Open a pull request and one appears here with its own URL — torn down when the PR closes."
             }
-            action={app.data && !fromImage && <PrWebhookDialog app={app.data} />}
+            action={app.data && !fromImage && <PrWebhookDialog projectId={projectId} app={app.data} />}
           />
         ) : (
           <EmptyState
@@ -86,7 +86,7 @@ function PreviewsTab() {
  * listening for a second event type (preview-environments.md §4) — so setting
  * it up is the Overview's URL plus the `pull_request` events ticked on GitHub.
  */
-function PrWebhookDialog({ app }: { app: Application }) {
+function PrWebhookDialog({ app, projectId }: { app: Application; projectId: string }) {
   const webhookUrl = new URL(getHandleGithubWebhookUrl(app.webhook_id), window.location.origin).toString();
   return (
     <Dialog>
@@ -101,8 +101,26 @@ function PrWebhookDialog({ app }: { app: Application }) {
         <ol className="mt-3.5 space-y-0.5 font-mono text-[11.5px] leading-[1.7] text-text-dim">
           <li>1 · payload URL: the address above</li>
           <li>2 · content type: application/json</li>
-          <li>3 · events: pushes + pull requests</li>
+          <li>3 · secret: mint one on the Settings tab — see below</li>
+          <li>4 · events: pushes + pull requests</li>
         </ol>
+        {/* The URL alone is not enough and handing it over alone is how
+            push-to-deploy silently never worked: the endpoint refuses any
+            delivery whose signature does not verify, and the secret is minted
+            on Settings. This dialog used to stop at the URL, reproducing the
+            exact failure the Settings card was built to end. */}
+        <p className="mt-3 rounded-md border border-status-degraded/40 bg-status-degraded/[0.06] px-3 py-2 text-[12px] leading-[1.5] text-status-degraded-text">
+          A webhook with no secret is refused on arrival — every delivery answers 401 and nothing deploys. Mint one
+          under{" "}
+          <Link
+            to="/projects/$projectId/applications/$appId/settings"
+            params={{ projectId, appId: app.id }}
+            className="font-semibold underline underline-offset-2"
+          >
+            Settings → Push to deploy
+          </Link>
+          , then paste it into the same webhook on GitHub.
+        </p>
         <p className="mt-3 text-[12px] leading-[1.55] text-text-faint">
           Opening a pull request then builds a preview at its own subdomain; closing it tears the preview down.
         </p>

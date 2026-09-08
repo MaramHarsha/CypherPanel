@@ -9,7 +9,7 @@
 // changing?" is the first thing this page has to answer.
 import { createFileRoute } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import {
   getGetEnvironmentProtectionQueryKey,
   getListBreakGlassGrantsQueryKey,
@@ -123,6 +123,7 @@ function EnvironmentProtectionPanel({ env }: { env: Environment }) {
 // pair of unexplained switches: what the setting DOES is the label.
 function PolicyRules({ env, p }: { env: Environment; p: EnvironmentProtection }) {
   const qc = useQueryClient();
+  const approvalId = useId();
   const set = useSetEnvironmentProtection({
     mutation: {
       onSuccess: () => {
@@ -154,16 +155,24 @@ function PolicyRules({ env, p }: { env: Environment; p: EnvironmentProtection })
   return (
     <div className="space-y-5">
       <section className="space-y-1.5">
-        <label className="flex items-start gap-2.5">
+        {/* The rule sentence carries a control of its own, so the checkbox is
+            named by htmlFor rather than by wrapping it: nested, the picker's
+            selected option folds into the checkbox's own name (canvas 14g).
+            The sentence stays its description, which is what it is. */}
+        <div className="flex items-start gap-2.5">
           <input
             type="checkbox"
+            id={approvalId}
             checked={p.require_approval}
             onChange={(e) => save({ require_approval: e.currentTarget.checked })}
+            aria-describedby={`${approvalId}-rule`}
             className="mt-0.5 size-3.5 accent-accent"
           />
           <span className="min-w-0">
-            <span className="block text-[13px] font-semibold text-text">Require approval</span>
-            <span className="block text-[12.5px] leading-[1.5] text-text-mid">
+            <label htmlFor={approvalId} className="block text-[13px] font-semibold text-text">
+              Require approval
+            </label>
+            <span id={`${approvalId}-rule`} className="block text-[12.5px] leading-[1.5] text-text-mid">
               Deploys to this environment wait for 1 approval from{" "}
               <select
                 value={p.min_approver_role}
@@ -180,7 +189,7 @@ function PolicyRules({ env, p }: { env: Environment; p: EnvironmentProtection })
               . Webhook deploys queue as “pending approval”.
             </span>
           </span>
-        </label>
+        </div>
       </section>
 
       <section className="space-y-1.5">

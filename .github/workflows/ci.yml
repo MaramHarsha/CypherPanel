@@ -108,3 +108,31 @@ jobs:
         run: make generate
       - name: Diff must be empty
         run: git diff --exit-code
+
+      # The web bundle is COMMITTED BUILT and release.yml embeds it without
+      # rebuilding — it only checks index.html exists. So a stale
+      # core/api/rest/webui/dist ships a panel missing every screen change since
+      # it was last built, silently, and nothing else in this pipeline would
+      # notice: Go tests pass, the typecheck passes, and the source is correct.
+      #
+      # `pnpm build` is byte-reproducible for identical input, so a rebuild that
+      # differs means the committed bundle is out of date.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Rebuild the embedded web UI
+        run: make build-web
+      - name: The committed bundle must match a fresh build
+        run: |
+          git diff --exit-code -- core/api/rest/webui/dist || {
+            echo
+            echo "core/api/rest/webui/dist is stale — the release embeds this directory"
+            echo "without rebuilding it, so these screen changes would not ship."
+            echo "Run 'make build-web' and commit core/api/rest/webui/dist."
+            exit 1
+          }

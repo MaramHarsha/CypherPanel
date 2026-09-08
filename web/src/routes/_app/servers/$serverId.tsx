@@ -2,12 +2,20 @@
 // revoking a server is a typed-name delete (ui-principles §2).
 import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { getGetServerQueryKey, getListServersQueryKey, useDeleteServer, useGetServer } from "@/api/gen/servers/servers";
+import {
+  getGetServerQueryKey,
+  getListServersQueryKey,
+  useDeleteServer,
+  useGetServer,
+  useListServerWorkloads,
+  useGetServerMetrics,
+} from "@/api/gen/servers/servers";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
 import { Fact, FactCard } from "@/components/fact-card";
 import { ServerPublicAddress } from "@/components/server-public-address";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { ResourceGone } from "@/components/resource-gone";
+import { MetricsCard, useMetricsWindow } from "@/components/metrics-card";
 import { PageState } from "@/components/page-state";
 import { StatusBadge, StatusDot } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
@@ -23,6 +31,9 @@ function ServerDetail() {
   const { serverId } = Route.useParams();
   const navigate = useNavigate();
   const server = useGetServer(serverId, { query: { refetchInterval: 5_000 } });
+  // What runs here — needed by the page AND by the remove confirm, which used
+  // to claim "its apps survive" without being able to say what they were.
+  const workloads = useListServerWorkloads(serverId).data?.workloads ?? [];
 
   useCrumbs([{ label: "servers", to: "/servers" }, { label: server.data?.name ?? serverId }]);
 
@@ -65,7 +76,7 @@ function ServerDetail() {
             <StatusBadge status={s.status} />
           ) : (
             <span className="flex items-center gap-2">
-              <StatusDot status="unknown" />
+              <StatusDot status="unknown" decorative />
               <span className="font-mono text-[11px] font-medium uppercase tracking-wide text-status-unknown">
                 not joined
               </span>
@@ -77,6 +88,8 @@ function ServerDetail() {
         <PageState query={server} isEmpty={() => false}>
           {(srv) => (
             <div className="max-w-2xl space-y-3.5">
+              <DegradedCard status={srv.status} health={srv.subsystem_health ?? []} />
+
               <FactCard title="Host">
                 <Fact label="Hostname">{srv.hostname || "—"}</Fact>
                 <Fact label="Public address">
@@ -104,10 +117,6 @@ function ServerDetail() {
                 enrolled={srv.enrolled}
               />
 
-              {/* "Workloads placed here" needs a per-server list endpoint the
-                  API doesn't expose yet — API-first (CLAUDE.md rule 4), so it
-                  arrives with that route, not as a client-side scan. */}
-
               <section className="rounded-lg border border-danger/35 p-4.5">
                 <h2 className="eyebrow text-danger">Danger zone</h2>
                 <div className="mt-3.5 flex flex-wrap items-center justify-between gap-3">
@@ -130,7 +139,9 @@ function ServerDetail() {
                     blastRadius={[
                       "its agent's identity — the live connection is cut and the certificate is refused on any reconnect",
                       "its pending join tokens — an install still in progress can't complete",
-                      "its place in the fleet (its apps survive: the remove is refused while any still runs here — move or delete them first)",
+                      workloads.length > 0
+                        ? `nothing that runs here — the remove is REFUSED while ${workloadSummary(workloads)} remain on it; move or delete them first`
+                        : "its place in the fleet (nothing runs here, so nothing is taken down)",
                     ]}
                     confirmName={srv.name}
                     actionLabel="Remove server"
@@ -140,11 +151,98 @@ function ServerDetail() {
                   />
                 </div>
               </section>
+
+              {/* WHAT RUNS HERE. The plane assembles desired state from exactly
+                  these three lists and no screen ever showed them, so a server
+                  could be reported degraded — or offered for removal — without
+                  the operator being able to see what was on it. */}
+              <section className="rounded-lg border border-border bg-surface p-4.5">
+                <h2 className="eyebrow">Workloads</h2>
+                {workloads.length === 0 ? (
+                  <p className="mt-3 text-[12.5px] leading-relaxed text-text-dim">
+                    Nothing runs on this server yet. Applications, compose stacks and managed databases placed here
+                    will be listed.
+                  </p>
+                ) : (
+                  <ul className="mt-3 divide-y divide-border-subtle">
+                    {workloads.map((w) => (
+                      <li key={`${w.kind}-${w.id}`} className="flex flex-wrap items-baseline justify-between gap-2 py-2">
+                        <span className="min-w-0">
+                          <span className="text-[13px] text-text">{w.name}</span>{" "}
+                          <span className="mono text-[11px] text-text-faint">
+                            {w.kind.replace("_", " ")} · {w.project_name}
+                          </span>
+                        </span>
+                        <span className="mono text-[11.5px] text-text-mid">{w.status}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+
+              {/* The node's own load is the sum of what it runs. There is no
+                  separate server sampler: a second source would be a second
+                  answer to the same question, and the two would drift. */}
+              <ServerMetrics serverId={srv.id} />
             </div>
           )}
         </PageState>
       </PageBody>
     </>
+  );
+}
+
+function ServerMetrics({ serverId }: { serverId: string }) {
+  const [win, setWin] = useMetricsWindow();
+  const metrics = useGetServerMetrics(serverId, { window: win });
+  return <MetricsCard query={metrics} title="Load" window={win} onWindow={setWin} />;
+}
+
+/**
+ * WHY A DEGRADED SERVER IS AMBER, in the agent's own words.
+ *
+ * The agent has keyed its health by subsystem since ADR-010 — the Proxy and the
+ * self-updater each report their own — but only the collapsed status word
+ * crossed the wire, so this page showed amber and stopped there. The one thing
+ * an operator needs at that moment is which part failed, and the architecture
+ * (ADR-002, no SSH) gives them no other way to find out.
+ *
+ * It renders only while the server IS degraded: keeping the last finding on
+ * screen beside a status that has since gone green would be a stale accusation.
+ */
+function DegradedCard({
+  status,
+  health,
+}: {
+  status?: string;
+  health: { subsystem: string; message: string }[];
+}) {
+  if (status !== "degraded") return null;
+  return (
+    <section className="rounded-lg border border-status-degraded/40 bg-status-degraded/5 p-4.5">
+      <h2 className="eyebrow text-status-degraded">Degraded</h2>
+      {health.length === 0 ? (
+        // An empty list beside "degraded" is an agent too old to say which part
+        // failed — `repeated` has no presence on the wire, so silence and
+        // health look the same and only the status word separates them. Say
+        // that, rather than showing amber with no reason at all.
+        <p className="mt-3 text-[12.5px] leading-relaxed text-text-mid">
+          The agent reports itself degraded but does not say which part — it predates per-subsystem health. Update it,
+          or read its log on the host.
+        </p>
+      ) : (
+        <ul className="mt-3 space-y-2.5">
+          {health.map((h) => (
+            <li key={h.subsystem}>
+              <p className="text-[13px] font-semibold text-text">{h.subsystem}</p>
+              <p className="mono mt-0.5 break-words text-[11.5px] leading-relaxed text-text-mid">
+                {h.message || "reported unhealthy, with no message"}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -215,4 +313,16 @@ function DiskCard({
       )}
     </FactCard>
   );
+}
+
+/** "2 applications and 1 database", for a refusal that names what blocks it. */
+function workloadSummary(workloads: { kind: string }[]): string {
+  const counts = new Map<string, number>();
+  for (const w of workloads) counts.set(w.kind, (counts.get(w.kind) ?? 0) + 1);
+  const parts = [...counts.entries()].map(([kind, n]) => {
+    const noun = kind === "compose_stack" ? "compose stack" : kind;
+    return `${n} ${noun}${n === 1 ? "" : "s"}`;
+  });
+  if (parts.length <= 1) return parts[0] ?? "nothing";
+  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
 }

@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta http-equiv="refresh" content="60">
+<title>{{.Title}} status</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff; --panel: #ffffff; --border: #e6e6ea; --text: #16161a;
+  --mid: #55555f; --faint: #8a8a95;
+  --ok: #16a34a; --warn: #d97706; --bad: #dc2626; --none: #d4d4d8;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b0b0d; --panel: #131316; --border: #26262b; --text: #f2f2f4;
+    --mid: #a0a0ab; --faint: #6d6d78;
+    --ok: #22c55e; --warn: #f59e0b; --bad: #ef4444; --none: #303036;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 760px; margin: 0 auto; padding: 48px 20px 64px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 12px; }
+h1 { margin: 0; font-size: 20px; font-weight: 640; letter-spacing: -0.01em; }
+.domain { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--faint); }
+.banner {
+  display: flex; align-items: center; gap: 10px;
+  margin: 24px 0 28px; padding: 16px 18px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--panel);
+  font-size: 16px; font-weight: 600;
+}
+.dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.s-operational { background: var(--ok); }
+.s-degraded { background: var(--warn); }
+.s-down { background: var(--bad); }
+.s-unknown { background: var(--none); }
+.component { padding: 18px 0; border-top: 1px solid var(--border); }
+.component:first-of-type { border-top: none; }
+.crow { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.label { font-weight: 560; }
+.meta { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--mid); white-space: nowrap; }
+.bars { display: block; width: 100%; height: 34px; margin-top: 10px; }
+.bars rect.s-operational { fill: var(--ok); }
+.bars rect.s-degraded { fill: var(--warn); }
+.bars rect.s-down { fill: var(--bad); }
+.bars rect.s-unknown { fill: var(--none); }
+.scale { display: flex; justify-content: space-between; font-size: 11px; color: var(--faint); margin-top: 4px; }
+.empty { padding: 28px 0; color: var(--mid); }
+.incidents { margin-top: 36px; }
+.incidents h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--faint); font-weight: 600; margin: 0 0 10px; }
+.incident { padding: 12px 0; border-top: 1px solid var(--border); font-size: 14px; }
+.incident .when { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--faint); }
+.incident .msg { color: var(--mid); margin-top: 3px; }
+footer { margin-top: 44px; padding-top: 18px; border-top: 1px solid var(--border); font-size: 12px; color: var(--faint); }
+footer p { margin: 4px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>{{.Title}}</h1>
+    {{if .Domain}}<span class="domain">{{.Domain}}</span>{{end}}
+  </header>
+
+  <div class="banner">
+    <span class="dot s-{{.State}}"></span>
+    <span>{{.Headline}}</span>
+  </div>
+
+  {{if .Components}}
+    {{range .Components}}
+    <section class="component">
+      <div class="crow">
+        <span class="label">{{.Label}}</span>
+        <span class="meta">{{.State}} · {{if .Uptime}}{{printf "%.2f" .Uptime}}%{{else}}—{{end}}</span>
+      </div>
+      <svg class="bars" viewBox="0 0 300 34" preserveAspectRatio="none" role="img"
+           aria-label="{{.Label}} daily history">
+        {{range $i, $d := .Days}}
+        <rect x="{{barX $i}}" y="0" width="7" height="34" rx="1.5" class="s-{{$d.State}}"><title>{{$d.Title}}</title></rect>
+        {{end}}
+      </svg>
+      <div class="scale"><span>{{$.WindowDays}} days ago</span><span>Today</span></div>
+    </section>
+    {{end}}
+  {{else}}
+    <p class="empty">No systems are being reported here yet.</p>
+  {{end}}
+
+  {{if .Incidents}}
+  <div class="incidents">
+    <h2>Recent incidents</h2>
+    {{range .Incidents}}
+    <div class="incident">
+      <div><strong>{{.Component}}</strong> — {{if .EndedAt}}down for {{.Duration}}{{else}}down for {{.Duration}} and counting{{end}}</div>
+      <div class="when">{{stamp .StartedAt}} UTC</div>
+      {{if .Message}}<div class="msg">{{.Message}}</div>{{end}}
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+
+  <footer>
+    <p>Updated <span title="{{stamp .UpdatedAt}} UTC">{{.UpdatedLabel}}</span>.</p>
+    <p>
+      These figures come from health checks run against each service from the machine it runs on,
+      sampled about once a minute. Outages shorter than a minute do not appear. Grey means the
+      service was not being observed, and that time is left out of the percentage rather than
+      counted as up.
+    </p>
+  </footer>
+</div>
+</body>
+</html>

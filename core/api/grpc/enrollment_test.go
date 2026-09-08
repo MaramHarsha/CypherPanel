@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"reflect"
 	"testing"
 	"time"
 
@@ -101,7 +102,7 @@ func TestRenewOverMTLSHappyPath(t *testing.T) {
 	}
 	// A renewal is not a re-enrollment: the server row is untouched, so the
 	// panel keeps showing when the server actually joined.
-	if st.servers["srv_a"] != before {
+	if !reflect.DeepEqual(st.servers["srv_a"], before) {
 		t.Fatalf("renewal mutated the server row: %+v", st.servers["srv_a"])
 	}
 }

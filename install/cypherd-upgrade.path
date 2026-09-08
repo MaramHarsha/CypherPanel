@@ -1,0 +1,16 @@
+# Watches for an upgrade request from the plane (panel-updates.md §3).
+#
+# A path unit rather than a socket or a timer: the plane's only power is to
+# create a file, and systemd's own file watch is what turns that into a root
+# process — with no daemon of ours listening, and no IPC surface to attack.
+
+[Unit]
+Description=Watch for a CypherPanel upgrade request
+Documentation=https://github.com/MaramHarsha/cypherpanel
+
+[Path]
+PathExists=/var/lib/cypherpanel/upgrade/request.json
+Unit=cypherd-upgrade.service
+
+[Install]
+WantedBy=multi-user.target

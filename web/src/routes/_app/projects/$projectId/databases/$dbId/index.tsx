@@ -7,6 +7,7 @@ import { useState } from "react";
 import {
   getGetDatabaseQueryKey,
   useGetDatabase,
+  useGetDatabaseMetrics,
   useResetDatabasePassword,
   useStartDatabase,
   useStopDatabase,
@@ -14,6 +15,7 @@ import {
 import { CopyField } from "@/components/copy-field";
 import { Eyebrow } from "@/components/eyebrow";
 import { PageState } from "@/components/page-state";
+import { MetricsCard, useMetricsWindow } from "@/components/metrics-card";
 import { StatusBadge } from "@/components/status-badge";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
 import { ActionButton, useMutationActionState } from "@/components/ui/action-button";
@@ -172,11 +174,22 @@ function DatabaseOverview() {
                 </div>
               </DialogContent>
             </Dialog>
+
+            {/* A database serves no HTTP through the Proxy, so it gets
+                resources and nothing else — a traffic card here would be a
+                permanently empty card implying a missing feature. */}
+            <DbMetrics dbId={d.id} />
           </div>
         );
       }}
     </PageState>
   );
+}
+
+function DbMetrics({ dbId }: { dbId: string }) {
+  const [win, setWin] = useMetricsWindow();
+  const metrics = useGetDatabaseMetrics(dbId, { window: win });
+  return <MetricsCard query={metrics} window={win} onWindow={setWin} />;
 }
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {

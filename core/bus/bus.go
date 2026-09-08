@@ -249,7 +249,7 @@ func Start(ctx context.Context, opts Options) (*Bus, error) {
 	// step with the state.* subjects in pkg/subjects.
 	if _, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
 		Name:      streamState,
-		Subjects:  []string{subjects.HeartbeatAll, subjects.DeployStateAll, subjects.AppStateAll, subjects.DbStateAll, subjects.ComposeStateAll, subjects.DbBackupStateAll, subjects.DbRestoreStateAll, subjects.DbBackupPruneStateAll, subjects.TaskStateAll},
+		Subjects:  []string{subjects.HeartbeatAll, subjects.DeployStateAll, subjects.AppStateAll, subjects.DbStateAll, subjects.ComposeStateAll, subjects.DbBackupStateAll, subjects.DbRestoreStateAll, subjects.DbBackupPruneStateAll, subjects.VolumeBackupStateAll, subjects.TaskStateAll, subjects.MetricsStateAll},
 		Storage:   jetstream.MemoryStorage,
 		Retention: jetstream.LimitsPolicy,
 		Discard:   jetstream.DiscardOld,
@@ -340,6 +340,47 @@ func (b *Bus) SubscribeLogs(ctx context.Context, subject string, since time.Time
 // within the retention window survives a plane restart.
 func (b *Bus) SubscribeRuntimeLogs(ctx context.Context, subject string, since time.Time, handle func(data []byte)) (stop func(), err error) {
 	return b.subscribeStream(ctx, streamRuntimeLogs, subject, since, handle)
+}
+
+// ConsumeRuntimeLogs delivers runtime log lines to a DURABLE consumer named for
+// its drain, with MANUAL acks (log-drains.md §5).
+//
+// Durable, unlike every other log subscription here, and that is the most
+// important property in the feature: a durable consumer's ack floor survives a
+// plane restart, so a drain resumes where it stopped instead of re-shipping a
+// day or skipping one.
+//
+// Manual acks are where the whole backpressure design lives. A batch is acked
+// only after the sink accepts it, so a failing far end simply stops the cursor
+// advancing and the backlog stays in RUNTIME_LOGS — already file-backed,
+// already capped at 24h and 512 MiB, already DiscardOld. The buffer exists, is
+// bounded, and is already paid for; a deliveries table with a row per log line
+// would be the disk fill this project exists to not repeat.
+func (b *Bus) ConsumeRuntimeLogs(ctx context.Context, durable string, handle func(subject string, data []byte, ack func())) (jetstream.ConsumeContext, error) {
+	cons, err := b.js.CreateOrUpdateConsumer(ctx, streamRuntimeLogs, jetstream.ConsumerConfig{
+		Durable:       durable,
+		FilterSubject: subjects.RuntimeLogAll,
+		AckPolicy:     jetstream.AckExplicitPolicy,
+		// Generous: a batch is held until its sink accepts it, and a sink that
+		// takes thirty seconds is slow rather than broken.
+		AckWait: 5 * time.Minute,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bus: creating the log drain consumer: %w", err)
+	}
+	return cons.Consume(func(msg jetstream.Msg) {
+		handle(msg.Subject(), msg.Data(), func() { _ = msg.Ack() })
+	})
+}
+
+// DeleteRuntimeLogConsumer removes a drain's cursor when the drain is gone. The
+// plane owns consumer lifecycle here exactly as it does for work items; the
+// agent has no part in it and no grant to it.
+func (b *Bus) DeleteRuntimeLogConsumer(ctx context.Context, durable string) error {
+	if err := b.js.DeleteConsumer(ctx, streamRuntimeLogs, durable); err != nil {
+		return fmt.Errorf("bus: deleting the log drain consumer: %w", err)
+	}
+	return nil
 }
 
 // SubscribeStatus delivers new application/database status observations (the
@@ -459,6 +500,11 @@ func (b *Bus) ConsumeDbBackupEvents(ctx context.Context, handle func(serverID st
 	return b.consumeState(ctx, "plane-db-backup", subjects.DbBackupStateAll, handle)
 }
 
+// ConsumeVolumeBackupEvents delivers each VolumeBackupEvent payload to handle.
+func (b *Bus) ConsumeVolumeBackupEvents(ctx context.Context, handle func(serverID string, data []byte)) (jetstream.ConsumeContext, error) {
+	return b.consumeState(ctx, "plane-volume-backup", subjects.VolumeBackupStateAll, handle)
+}
+
 // ConsumeDbRestoreEvents delivers each DbRestoreEvent payload to handle.
 func (b *Bus) ConsumeDbRestoreEvents(ctx context.Context, handle func(serverID string, data []byte)) (jetstream.ConsumeContext, error) {
 	return b.consumeState(ctx, "plane-db-restore", subjects.DbRestoreStateAll, handle)
@@ -467,6 +513,15 @@ func (b *Bus) ConsumeDbRestoreEvents(ctx context.Context, handle func(serverID s
 // ConsumeDbBackupPruneEvents delivers each DbBackupPruneEvent payload to handle.
 func (b *Bus) ConsumeDbBackupPruneEvents(ctx context.Context, handle func(serverID string, data []byte)) (jetstream.ConsumeContext, error) {
 	return b.consumeState(ctx, "plane-db-backup-prune", subjects.DbBackupPruneStateAll, handle)
+}
+
+// ConsumeMetrics delivers each MetricsReport payload to handle
+// (metrics-and-usage.md §4.6). It rides the memory-backed STATE stream
+// alongside heartbeats deliberately: a durable stream for metrics would put
+// this write volume on the plane's own disk to protect data whose entire
+// purpose is to be approximately right.
+func (b *Bus) ConsumeMetrics(ctx context.Context, handle func(serverID string, data []byte)) (jetstream.ConsumeContext, error) {
+	return b.consumeState(ctx, "plane-metrics", subjects.MetricsStateAll, handle)
 }
 
 // ConsumeTaskRuns delivers each ScheduledTaskRun payload to handle

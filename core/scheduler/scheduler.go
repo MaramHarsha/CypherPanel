@@ -102,6 +102,8 @@ type Store interface {
 	BumpApplicationRestartToken(ctx context.Context, appID, token string) (domain.Application, error)
 	SetApplicationStatus(ctx context.Context, appID, status, detail string) error
 	SetApplicationObservedStatus(ctx context.Context, appID, status, detail, observedRevisionID string, observedAt time.Time) error
+	// Replica observations, replaced wholesale (app-scaling.md §8).
+	SetApplicationReplicaStatus(ctx context.Context, appID string, replicas []domain.ReplicaObservation) error
 	ListEnvVars(ctx context.Context, appID string) ([]domain.EnvVar, error)
 	GetEnvironment(ctx context.Context, id string) (domain.Environment, error)
 
@@ -118,11 +120,21 @@ type Store interface {
 	ListActiveDeploymentsByApplication(ctx context.Context, appID string) ([]domain.Deployment, error)
 
 	ListServers(ctx context.Context) ([]domain.Server, error)
+	GetServer(ctx context.Context, id string) (domain.Server, error)
+	// ListApplicationsByRepo resolves one GitHub App push to every application
+	// it should deploy (github-app.md §6).
+	ListApplicationsByRepo(ctx context.Context, repo, branch string) ([]domain.Application, error)
 
 	// GetPanelTLS is the panel's ACME account, carried to every node inside
 	// DesiredState (agent-identity-and-tls.md §4). store.ErrNotFound means TLS
 	// is not configured, which is a normal state, not a failure.
 	GetPanelTLS(ctx context.Context) (domain.PanelTLS, error)
+	// Status page routes for the desired-state build (status-pages.md §4).
+	ListRoutableStatusPages(ctx context.Context) ([]domain.StatusPage, error)
+	// Panel-wide metrics policy, carried to every node (metrics-and-usage.md §5).
+	GetMetricsSettings(ctx context.Context) (domain.MetricsSettings, error)
+	// A revision whose artifact already exists (revision-promotion.md §5).
+	CreatePromotedRevision(ctx context.Context, id, appID, sourceCommit string, configSnapshot []byte, image, fromRevisionID string) (domain.Revision, error)
 
 	GetDeployKey(ctx context.Context, id string) (domain.DeployKey, error)
 
@@ -136,6 +148,19 @@ type Store interface {
 
 	// Phase 3: database backups (managed-databases.md §7)
 	GetDatabaseBackup(ctx context.Context, id string) (domain.DatabaseBackup, error)
+
+	// Volume backups (volume-backups.md). Sibling tables rather than a widened
+	// backup_records, because that table's key is the SCHEDULE and making it
+	// nullable would turn a clean table into a union type.
+	GetVolumeBackupByApplication(ctx context.Context, appID string) (domain.VolumeBackup, error)
+	GetVolumeBackup(ctx context.Context, id string) (domain.VolumeBackup, error)
+	ListEnabledVolumeBackupSchedules(ctx context.Context) ([]domain.VolumeBackup, error)
+	SetVolumeBackupLastRun(ctx context.Context, id string, at *time.Time, status string) error
+	CreateVolumeBackupRecord(ctx context.Context, id, scheduleID, volumeName string) (domain.VolumeBackupRecord, error)
+	GetVolumeBackupRecord(ctx context.Context, id string) (domain.VolumeBackupRecord, error)
+	UpdateVolumeBackupRecord(ctx context.Context, id, objectKey string, size int64, status, detail string) error
+	ListVolumeRecordsBeyondRetention(ctx context.Context, scheduleID, volumeName string, keep int) ([]domain.VolumeBackupRecord, error)
+	DeleteVolumeBackupRecords(ctx context.Context, ids []string) error
 	ListEnabledBackupSchedules(ctx context.Context) ([]domain.DatabaseBackup, error)
 	GetBackupTarget(ctx context.Context, id string) (domain.BackupTarget, error)
 	CreateBackupRecord(ctx context.Context, r domain.BackupRecord) (domain.BackupRecord, error)
@@ -208,6 +233,33 @@ type DomainVerifier interface {
 // nil-guard the optional DomainVerifier uses. It is deliberately NOT a sink:
 // the gate can refuse, so its errors are propagated, never swallowed (§5, fail
 // closed).
+// QuotaGate is the quota admission check (consumer-defined; *quota.Service
+// satisfies it), exactly as protection's Gate already is.
+type QuotaGate interface {
+	Admit(ctx context.Context, projectID string, delta QuotaDelta) (domain.QuotaAdmission, error)
+}
+
+// QuotaDelta is what an admission asks for on top of what is already there.
+type QuotaDelta struct {
+	MemoryBytes int64
+	Previews    int
+}
+
+// QuotaError is a refusal for space. Distinct from FrozenError because the two
+// are different answers — one says "not now", the other says "not here until
+// something is freed" — and a caller that collapsed them would give the
+// operator the wrong remedy.
+type QuotaError struct {
+	Dimension string
+	Detail    string
+}
+
+func (e *QuotaError) Error() string { return e.Detail }
+func (e *QuotaError) Unwrap() error { return ErrQuotaExceeded }
+
+// ErrQuotaExceeded is the sentinel a handler maps to 409.
+var ErrQuotaExceeded = errors.New("scheduler: a resource quota refused this")
+
 type Gate interface {
 	Admit(ctx context.Context, environmentID string) (domain.DeployAdmission, error)
 	// Park records the gate decision for a deployment the scheduler has just
@@ -228,11 +280,15 @@ type RegistryCredentials interface {
 }
 
 type Scheduler struct {
-	store  Store
-	bus    Bus
-	opener Opener
-	log    *slog.Logger
-	now    func() time.Time
+	// volumePrunes maps an in-flight S3 key to the volume record row it came
+	// from, so the shared prune event can delete the right rows once the
+	// objects are confirmed gone rather than optimistically.
+	volumePrunes map[string]string
+	store        Store
+	bus          Bus
+	opener       Opener
+	log          *slog.Logger
+	now          func() time.Time
 
 	// sinks receive terminal outcomes. An empty slice is already a no-op, so
 	// the call sites need no nil guard (outbound-webhooks.md §5).
@@ -246,7 +302,8 @@ type Scheduler struct {
 	// gate is deploy protection (deploy-protection.md). nil when it is not
 	// wired, which admit() treats as "every deploy is clear" — the behaviour
 	// of every panel before this feature existed.
-	gate Gate
+	gate  Gate
+	quota QuotaGate
 
 	// registries resolves the sealed credential for a private registry
 	// (registries.md). nil is the ordinary panel: no application can name a
@@ -259,6 +316,19 @@ type Scheduler struct {
 	// Zero means the default — the wiring sets it, and a test that does not
 	// still gets a sane window.
 	revisionRetain int
+	// panelURL is the panel's own advertised base URL, and it is the ONLY
+	// thing a status page's Proxy fragment can point at (status-pages.md §4).
+	panelURL string
+
+	// agentUpdates resolves each server's desired agent version from the
+	// channel it follows (agent-updates.md §2). Optional: nil sends no
+	// instruction, which is exactly how a panel behaved before ADR-010.
+	agentUpdates AgentUpdates
+
+	// githubApp mints a short-lived clone credential for an application whose
+	// repository is reached through the panel's App. Optional: nil is a panel
+	// with no App, where every application clones as it always did.
+	githubApp GitHubAppTokens
 
 	// mu serializes pipeline transitions: deploy requests and event handlers
 	// race on the per-app queue, and the transitions are read-modify-write.
@@ -383,6 +453,20 @@ func (s *Scheduler) DeployAs(ctx context.Context, appID, trigger, ref, requested
 	if admission.Frozen {
 		return domain.Deployment{}, &FrozenError{Detail: admission.FreezeDetail}
 	}
+	// The quota check runs immediately after the freeze check and BEFORE any
+	// row is written — same reason: a refused deploy must leave no orphan
+	// Revision behind. It also runs before the approval branch, so a deploy
+	// that will be refused for space is refused rather than parked; a hard
+	// "not now" is more useful than parking something that would have to be
+	// refused later anyway (resource-quotas.md §6).
+	//
+	// Note the ROLLBACK path deliberately does not get this check. A rollback
+	// is the recovery path, and a guardrail that blocks recovery has become the
+	// outage it was installed to prevent — and a rollback re-runs a revision
+	// whose consumption the scope already had.
+	if qerr := s.admitQuota(ctx, app); qerr != nil {
+		return domain.Deployment{}, qerr
+	}
 	snapshot, err := snapshotOf(app)
 	if err != nil {
 		return domain.Deployment{}, err
@@ -495,6 +579,39 @@ func (s *Scheduler) admit(ctx context.Context, app domain.Application) (domain.D
 		return domain.DeployAdmission{}, fmt.Errorf("scheduler: evaluating deploy protection for %s: %w", app.ID, err)
 	}
 	return adm, nil
+}
+
+// admitQuota asks the quota gate whether this application's project has room.
+// No gate means no quota, which is how every panel behaved before the feature
+// existed.
+//
+// A gate that ERRORS admits, which is the opposite of deploy protection's
+// stance and deliberately so: protection fails closed because a protection
+// control that fails open is worse than none, while a quota that fails closed
+// on its own database error becomes the outage it was installed to prevent.
+// One control exists to stop the wrong code shipping; the other exists to stop
+// a fleet filling up, and only the first is worth an outage to enforce.
+func (s *Scheduler) admitQuota(ctx context.Context, app domain.Application) error {
+	if s.quota == nil {
+		return nil
+	}
+	env, envErr := s.store.GetEnvironment(ctx, app.EnvironmentID)
+	if envErr != nil {
+		// An environment that cannot be read is a scope that cannot be metered,
+		// and this control admits rather than refuses when it cannot see —
+		// see the doc comment above.
+		s.log.Error("quota: could not resolve the project; admitting", "app_id", app.ID, "error", envErr)
+		return nil
+	}
+	adm, err := s.quota.Admit(ctx, env.ProjectID, QuotaDelta{})
+	if err != nil {
+		s.log.Error("quota: evaluating admission; admitting", "app_id", app.ID, "error", err)
+		return nil
+	}
+	if adm.Allowed {
+		return nil
+	}
+	return &QuotaError{Dimension: adm.Dimension, Detail: adm.Reason}
 }
 
 // park holds a freshly created Deployment at the gate: it moves to
@@ -748,6 +865,18 @@ func (s *Scheduler) start(ctx context.Context, dep domain.Deployment) error {
 		}
 		return err
 	}
+	if rev.PromotedFromRevisionID != "" {
+		// A promotion: the artifact exists, but on the SOURCE's server. The
+		// distribute stage's meaning generalises by one word — from "obtain
+		// this deployment's image from the relay" to "make this deployment's
+		// image exist, under the name it will run as, on this host" — and that
+		// is the whole of the change (revision-promotion.md §5).
+		//
+		// Same-server is the cheap case and still goes through here: the relay
+		// short-circuits when the image is already present under its run name,
+		// so the path is one call rather than two code paths that can diverge.
+		return s.startDistribute(ctx, dep, app, rev)
+	}
 	if rev.Image != "" {
 		// Already built (rollback): straight to rollout.
 		return s.startRollout(ctx, dep, app, rev)
@@ -843,6 +972,26 @@ func builderFor(dep domain.Deployment, app domain.Application) string {
 	return app.Runtime.ServerID
 }
 
+// gitCredential mints a one-hour clone token for a repository reached through
+// the panel's GitHub App. Nil for every other application, which is every
+// application that exists today: a deploy key and a public repository both
+// clone exactly as they did.
+//
+// A failure here FAILS THE DEPLOY rather than falling through to an anonymous
+// clone. Anonymous would succeed for a public repository and fail confusingly
+// for a private one, and the confusing half is the case that matters — the same
+// stance registries.md takes for a named registry the plane cannot resolve.
+func (s *Scheduler) gitCredential(ctx context.Context, app domain.Application) (*agentv1.GitCredential, error) {
+	if app.Source.GitHubInstallationID == nil || s.githubApp == nil {
+		return nil, nil
+	}
+	user, pass, err := s.githubApp.CloneToken(ctx, *app.Source.GitHubInstallationID)
+	if err != nil {
+		return nil, fmt.Errorf("scheduler: minting a GitHub App clone token: %w", err)
+	}
+	return &agentv1.GitCredential{Username: user, Password: pass}, nil
+}
+
 // buildWork assembles one deployment's build work item. The referenced deploy
 // key is unsealed only here, at work-build time, and travels only inside the
 // mTLS-carried BuildWork (deploy-key-private-repos.md §4; ENGINEERING rule
@@ -873,6 +1022,14 @@ func (s *Scheduler) buildWork(ctx context.Context, dep domain.Deployment, app do
 	if err != nil {
 		return nil, err
 	}
+	// The App's clone credential, minted HERE — the same moment and the same
+	// place the deploy key is unsealed and the registry credential is resolved.
+	// One place a build's credentials come into existence is one place to audit
+	// (github-app.md §4).
+	gitCred, err := s.gitCredential(ctx, app)
+	if err != nil {
+		return nil, err
+	}
 	return &agentv1.BuildWork{
 		DeploymentId:   dep.ID,
 		AppId:          app.ID,
@@ -885,9 +1042,10 @@ func (s *Scheduler) buildWork(ctx context.Context, dep domain.Deployment, app do
 		BuildKind:      app.Build.Kind,
 		// A synthesized static image must listen where the route and health
 		// check already expect it, not on whatever its base image defaults to.
-		RuntimePort: uint32(app.Runtime.Port), //nolint:gosec // validated 1–65535
-		SourceAuth:  sourceAuth,
-		Push:        push,
+		RuntimePort:   uint32(app.Runtime.Port), //nolint:gosec // validated 1–65535
+		SourceAuth:    sourceAuth,
+		Push:          push,
+		GitCredential: gitCred,
 	}, nil
 }
 
@@ -1097,6 +1255,18 @@ func (s *Scheduler) buildSpec(ctx context.Context, app domain.Application, rev d
 	if err != nil {
 		return nil, err
 	}
+	// The preview password gates PREVIEW environments only, which is what the
+	// design promises ("every pr-* environment asks for this passphrase").
+	// Reading the environment costs a query, so it is read only when a password
+	// is actually set — the rare case — rather than on every spec build.
+	access := accessSpec(app, false)
+	if app.Access.PreviewPasswordEnabled && app.Access.PreviewPasswordHash != "" {
+		environment, err := s.store.GetEnvironment(ctx, app.EnvironmentID)
+		if err != nil {
+			return nil, fmt.Errorf("scheduler: getting environment of %s: %w", app.ID, err)
+		}
+		access = accessSpec(app, environment.Kind == "preview")
+	}
 	image := rev.Image
 	if image == "" {
 		image = imageTag(app.ID, rev.ID)
@@ -1132,10 +1302,17 @@ func (s *Scheduler) buildSpec(ctx context.Context, app domain.Application, rev d
 			TimeoutSeconds:  uint32(cs.Health.TimeoutSeconds),
 			Retries:         uint32(cs.Health.Retries),
 		},
+		// Mixed provenance, deliberately (app-access-control.md §3): the domain,
+		// https and path prefix come from the REVISION's config snapshot, while
+		// access control comes from the application ROW. Snapshotting access
+		// would mean a rollback silently lifted a lockout or restored a deleted
+		// allowlist entry, and a control that changes when someone re-points a
+		// revision is not a control.
 		Route: &agentv1.RouteSpec{
 			Domain:     s.routableDomain(ctx, cs.Route.Domain),
 			Https:      cs.Route.HTTPS,
 			PathPrefix: cs.Route.PathPrefix,
+			Access:     access,
 		},
 		ScheduledTasks: tasks,
 		Pull:           cs.Pull,
@@ -1150,7 +1327,29 @@ func (s *Scheduler) buildSpec(ctx context.Context, app domain.Application, rev d
 		MemoryLimitMb: memLimitValue(app.Runtime.MemoryLimitMB),
 		Volumes:       volumeMounts(app.ID, app.Volumes),
 		Ports:         portMappings(app.Ports),
+		// Replica indexes rather than a count, because AppSpec is already
+		// per-application-per-server: this node runs THESE replicas
+		// (app-scaling.md §2). Stage 1 places them all on the application's own
+		// server, so the set is 1..N; an agent that predates the field ignores
+		// it and runs exactly one container under exactly the name it runs
+		// today, which is what makes rolling this out safe.
+		ReplicaIndexes: replicaIndexes(app.Runtime.Replicas),
 	}, nil
+}
+
+// replicaIndexes is 1..N. It returns nil for a single replica so the wire
+// stays byte-identical to what every application already sends — a spec that
+// changed shape for every app in the fleet would make the whole fleet read as
+// drift on the upgrade that shipped this.
+func replicaIndexes(n int) []uint32 {
+	if n <= 1 {
+		return nil
+	}
+	out := make([]uint32, 0, n)
+	for i := 1; i <= n; i++ {
+		out = append(out, uint32(i))
+	}
+	return out
 }
 
 // portMappings maps an app's raw host-port publishes to the wire.
@@ -1330,14 +1529,30 @@ func (s *Scheduler) startDistribute(ctx context.Context, dep domain.Deployment, 
 	}
 	builderID := builderFor(dep, app)
 
-	push, err := proto.Marshal(&agentv1.PushImageWork{DeploymentId: dep.ID, AppId: app.ID, Image: image})
+	pushImage := image
+	if source := s.promotedSourceImage(ctx, rev); source != "" {
+		pushImage = source
+	}
+	push, err := proto.Marshal(&agentv1.PushImageWork{DeploymentId: dep.ID, AppId: app.ID, Image: pushImage})
 	if err != nil {
 		return fmt.Errorf("scheduler: marshaling push work: %w", err)
 	}
 	if err := s.bus.PublishWork(ctx, subjects.PushImage(builderID), dep.ID+".push", push); err != nil {
 		return fmt.Errorf("scheduler: publishing push: %w", err)
 	}
-	dist, err := proto.Marshal(&agentv1.DistributeWork{DeploymentId: dep.ID, AppId: app.ID, Image: image})
+	// For a promotion the image ARRIVES under the source application's tag and
+	// must RUN under the target's, so both names ride the work item. For every
+	// other deploy the two are the same and target_image is empty, which is
+	// what every agent that predates this reads.
+	target := ""
+	if rev.PromotedFromRevisionID != "" {
+		if source := s.promotedSourceImage(ctx, rev); source != "" {
+			image, target = source, rev.Image
+		}
+	}
+	dist, err := proto.Marshal(&agentv1.DistributeWork{
+		DeploymentId: dep.ID, AppId: app.ID, Image: image, TargetImage: target,
+	})
 	if err != nil {
 		return fmt.Errorf("scheduler: marshaling distribute work: %w", err)
 	}
@@ -1372,6 +1587,21 @@ func (s *Scheduler) HandleAppStatus(ctx context.Context, serverID string, st *ag
 	if err := s.store.SetApplicationObservedStatus(ctx, st.GetAppId(), st.GetState(), st.GetDetail(), st.GetRevisionId(), observedAt); err != nil {
 		s.log.Error("app status: recording observation", "app_id", st.GetAppId(), "error", err)
 		return
+	}
+	// Only when the report carries replicas: a failure path reports the state
+	// and nothing else, and overwriting the set with an empty one there would
+	// erase the last thing we actually knew (app-scaling.md §8).
+	if reps := st.GetReplicas(); len(reps) > 0 {
+		out := make([]domain.ReplicaObservation, 0, len(reps))
+		for _, r := range reps {
+			out = append(out, domain.ReplicaObservation{
+				Index: int(r.GetIndex()), ContainerID: r.GetContainerId(),
+				RevisionID: r.GetRevisionId(), State: r.GetState(), Detail: r.GetDetail(),
+			})
+		}
+		if err := s.store.SetApplicationReplicaStatus(ctx, st.GetAppId(), out); err != nil {
+			s.log.Error("app status: recording replicas", "app_id", st.GetAppId(), "error", err)
+		}
 	}
 	// Announce the TRANSITION, from the status that was stored a moment ago —
 	// never the observation, which arrives continuously (deployment-control.md
@@ -1782,7 +2012,85 @@ func (s *Scheduler) DesiredStateFor(ctx context.Context, serverID string) ([]byt
 		ds.Tls = &agentv1.TLSSettings{AcmeEmail: tls.ACMEEmail, AcmeCaServer: tls.ACMECAServer}
 	}
 
+	// V1: status page routes (status-pages.md §4). Absence-means-remove like
+	// the specs, so a read failure here CANNOT be swallowed: an empty list is
+	// an instruction to remove every status route on the node.
+	staticRoutes, err := s.statusRoutesFor(ctx, serverID)
+	if err != nil {
+		return nil, err
+	}
+	ds.StaticRoutes = staticRoutes
+
+	// V1: metrics settings (metrics-and-usage.md §5). A read failure sends the
+	// DEFAULTS rather than nothing, for the same reason the TLS block does the
+	// safe thing: absent means "collect with the defaults", and a node that
+	// silently stopped collecting because one read failed would leave a hole
+	// in a chart nobody could explain.
+	if ms, merr := s.store.GetMetricsSettings(ctx); merr == nil {
+		ds.Metrics = &agentv1.MetricsSettings{
+			Enabled:          ms.Enabled,
+			RequestAnalytics: ms.RequestAnalytics,
+			BucketSeconds:    uint32(ms.BucketSeconds),
+		}
+	} else {
+		s.log.Error("desired state: reading metrics settings", "server_id", serverID, "error", merr)
+		d := domain.DefaultMetricsSettings()
+		ds.Metrics = &agentv1.MetricsSettings{
+			Enabled: d.Enabled, RequestAnalytics: d.RequestAnalytics,
+			BucketSeconds: uint32(d.BucketSeconds),
+		}
+	}
+
+	// V1: the agent's own desired version (agent-updates.md §7, ADR-010). A
+	// read failure sends NOTHING rather than a guess, and nothing means no
+	// instruction — the one direction that cannot replace a binary by accident.
+	if s.agentUpdates != nil {
+		if srv, serr := s.store.GetServer(ctx, serverID); serr != nil {
+			s.log.Error("desired state: reading server for the agent update", "server_id", serverID, "error", serr)
+		} else if version, base, rollback, aerr := s.agentUpdates.SpecFor(ctx, srv); aerr != nil {
+			s.log.Error("desired state: resolving the agent update", "server_id", serverID, "error", aerr)
+		} else if version != "" {
+			ds.AgentUpdate = &agentv1.AgentUpdateSpec{
+				Version: version, ArtifactBase: base, Rollback: rollback,
+			}
+		}
+	}
+
 	return proto.Marshal(ds)
+}
+
+// statusRoutesFor names the status-page fragments this node's Proxy must
+// serve. The upstream is the panel's own base URL, taken from the plane's
+// configuration — never from anything an operator typed into the page's form,
+// which is what stops this from being a way to aim a node's Proxy anywhere.
+//
+// A page with no panel URL configured is skipped rather than routed at a
+// guessed address: pointing a public hostname at the wrong upstream is worse
+// than not routing it, and the settings tab says which pages are waiting on it.
+func (s *Scheduler) statusRoutesFor(ctx context.Context, serverID string) ([]*agentv1.StaticRouteSpec, error) {
+	if s.panelURL == "" {
+		return nil, nil
+	}
+	pages, err := s.store.ListRoutableStatusPages(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("scheduler: listing status page routes for %s: %w", serverID, err)
+	}
+	out := make([]*agentv1.StaticRouteSpec, 0, len(pages))
+	for _, p := range pages {
+		if p.RouteServerID != serverID {
+			continue
+		}
+		out = append(out, &agentv1.StaticRouteSpec{
+			RouteId:     p.ID,
+			Route:       &agentv1.RouteSpec{Domain: p.Domain, Https: p.HTTPS},
+			UpstreamUrl: s.panelURL,
+			// The prefix is why the plane needs no Host-header dispatch: the
+			// Proxy rewrites / to /status/<slug>, so one ordinary path serves
+			// the same page under any number of domains.
+			AddPrefix: "/status/" + p.Slug,
+		})
+	}
+	return out, nil
 }
 
 // retainFor names, per application, the revisions whose images must survive on
@@ -1869,6 +2177,30 @@ func (s *Scheduler) RequestResync(ctx context.Context, reason string) error {
 		return fmt.Errorf("scheduler: %d of %d servers could not be nudged to resync", failed, len(servers))
 	}
 	s.log.Info("fleet asked to re-read desired state", "reason", reason, "servers", len(servers))
+	return nil
+}
+
+// RequestServerResync nudges ONE server. A channel change is one host's
+// business, and waking the fleet for it would make every dropdown a fleet-wide
+// event (agent-updates.md §7). It publishes the same ResyncWork to the same
+// per-server subject the fleet nudge uses — the subject vocabulary is untouched
+// (ENGINEERING rule 14).
+func (s *Scheduler) RequestServerResync(ctx context.Context, serverID, reason string) error {
+	srv, err := s.store.GetServer(ctx, serverID)
+	if err != nil {
+		return fmt.Errorf("scheduler: reading server for resync: %w", err)
+	}
+	if srv.EnrolledAt == nil {
+		return nil // never joined: nothing is listening on its work subject
+	}
+	data, err := proto.Marshal(&agentv1.ResyncWork{Reason: reason})
+	if err != nil {
+		return fmt.Errorf("scheduler: marshaling resync: %w", err)
+	}
+	msgID := fmt.Sprintf("%s.resync.%d", srv.ID, s.now().UnixNano())
+	if err := s.bus.PublishWork(ctx, subjects.Resync(srv.ID), msgID, data); err != nil {
+		return fmt.Errorf("scheduler: nudging %s to resync: %w", srv.ID, err)
+	}
 	return nil
 }
 
@@ -1994,10 +2326,42 @@ func (s *Scheduler) SetDomainVerifier(v DomainVerifier) { s.dns = v }
 // (deploy-protection.md §4).
 func (s *Scheduler) SetGate(g Gate) { s.gate = g }
 
+// SetQuotaGate attaches quota admission (resource-quotas.md §6). Kept out of
+// New so quotas stay an opt-in add-on: a panel that never calls this behaves
+// exactly as it did before the feature existed.
+func (s *Scheduler) SetQuotaGate(g QuotaGate) { s.quota = g }
+
+// AgentUpdates resolves one server's desired agent version (consumer-defined;
+// *agentupdates.Service satisfies it).
+type AgentUpdates interface {
+	SpecFor(ctx context.Context, srv domain.Server) (version, artifactBase string, rollback bool, err error)
+}
+
+// SetAgentUpdates wires the release channels. Without it DesiredState carries
+// no agent_update at all, and an agent that receives none does nothing —
+// which is the behaviour every fleet has until an operator opens the screen.
+func (s *Scheduler) SetAgentUpdates(a AgentUpdates) { s.agentUpdates = a }
+
+// GitHubAppTokens mints a clone credential (consumer-defined;
+// *githubapp.Service satisfies it).
+type GitHubAppTokens interface {
+	CloneToken(ctx context.Context, installationID int64) (username, password string, err error)
+}
+
+// SetGitHubApp wires the App. Without it an application that names an
+// installation fails its deploy with a reason, which is better than cloning
+// anonymously and failing at `git fetch` with GitHub's own words.
+func (s *Scheduler) SetGitHubApp(g GitHubAppTokens) { s.githubApp = g }
+
 // SetRegistries wires private-registry credentials. Optional: an application
 // can only name a registry the panel stored, so a panel without this never has
 // one to resolve (registries.md §5).
 func (s *Scheduler) SetRegistries(r RegistryCredentials) { s.registries = r }
+
+// SetPanelURL gives the scheduler the panel's own base URL, which status page
+// route fragments point at. Empty means no page is routed — the settings tab
+// says so rather than the plane guessing an address.
+func (s *Scheduler) SetPanelURL(u string) { s.panelURL = strings.TrimRight(u, "/") }
 
 // SetRevisionRetain sets how many of an application's images a node keeps
 // (disk-management.md §7). Below 1 is ignored: the deployed revision is never
@@ -2073,4 +2437,35 @@ func pushRepository(app domain.Application) string {
 		return app.ID
 	}
 	return name
+}
+
+// accessSpec renders the front-door policy for the wire. It carries the bcrypt
+// hash, never a passphrase — the plaintext exists in the operator's clipboard
+// and nowhere else (app-access-control.md §3).
+//
+// The preview password gates PREVIEW environments only, which is what the
+// design card promises ("every pr-* environment asks for this passphrase").
+// Applying it to production because a flag was left on would be a lockout
+// nobody asked for, so the environment kind decides.
+func accessSpec(app domain.Application, isPreview bool) *agentv1.AccessSpec {
+	var out agentv1.AccessSpec
+	if app.Access.IPAllowlistEnabled && len(app.Access.IPAllowlist) > 0 {
+		out.AllowCidrs = append([]string(nil), app.Access.IPAllowlist...)
+	}
+	if isPreview && app.Access.PreviewPasswordEnabled && app.Access.PreviewPasswordHash != "" {
+		// Traefik's htpasswd shape. One line today; the field is repeated
+		// because that is Traefik's own shape and widening later is the change
+		// `buf breaking` refuses.
+		out.BasicAuthUsers = []string{"preview:" + app.Access.PreviewPasswordHash}
+	}
+	// Maintenance applies to every environment kind, unlike the passphrase: an
+	// operator raising a holding page around a migration means production, and
+	// that is the case the feature exists for.
+	out.Maintenance = app.Access.MaintenanceMode
+	if len(out.AllowCidrs) == 0 && len(out.BasicAuthUsers) == 0 && !out.Maintenance {
+		// Absent rather than empty: an empty AccessSpec and no AccessSpec mean
+		// the same thing, and sending the smaller one keeps the diff quiet.
+		return nil
+	}
+	return &out
 }

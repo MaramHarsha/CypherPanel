@@ -83,6 +83,12 @@ message AppSpec {
   // recreate still mutates nothing, because the running container then carries
   // the token the spec names. Empty is every application's birth value.
   string restart_token = 17;
+  // V1: which replica indexes THIS server runs (app-scaling.md §2). Empty
+  // means [1], which is every application that exists today — an agent that
+  // predates this ignores the field and runs exactly one container under
+  // exactly the name it runs now, which is what makes rolling this feature out
+  // safe.
+  repeated uint32 replica_indexes = 18;
 }
 
 // RetainSpec names the revisions of one Application whose images must be kept
@@ -173,6 +179,29 @@ message RouteSpec {
   string domain = 1;
   bool https = 2;
   string path_prefix = 3;
+  // Who may reach this route at all (app-access-control.md §4). Absent means
+  // no restriction, which is what every route was before this existed.
+  AccessSpec access = 4;
+}
+
+// AccessSpec is the front-door policy the Proxy enforces. It carries no
+// passphrase — only the bcrypt htpasswd line Traefik needs — because the
+// plaintext exists in the operator's clipboard and nowhere else (§3).
+message AccessSpec {
+  // Empty means no allowlist middleware at all, rather than an allowlist that
+  // matches nothing: a spec field that silently locks everyone out when a
+  // writer forgets to set it is the wrong default.
+  repeated string allow_cidrs = 1;
+  // "user:<bcrypt>" htpasswd lines. Repeated although exactly one is emitted
+  // today: it is Traefik's own shape, and widening a singular string later is
+  // the kind of change `buf breaking` refuses.
+  repeated string basic_auth_users = 2;
+  // Serve the node's maintenance responder instead of this application's own
+  // containers (app-access-control.md §7). It is a SERVICE SWAP, not a
+  // middleware: Traefik cannot return a body of ours, so the route's rule, TLS,
+  // allowlist and basic auth are all unchanged and only the load balancer's
+  // server moves. The app keeps running and keeps passing its health gate.
+  bool maintenance = 3;
 }
 
 // RolloutWork commands one server's reconciler to converge an Application
@@ -240,6 +269,25 @@ message BuildWork {
   // rather than reporting success for an image that is not where it was
   // promised to be.
   RegistryPush push = 12;
+  // An HTTPS clone credential, for a repository reached through the panel's
+  // GitHub App (github-app.md §4). Additive beside deploy_key_pem rather than
+  // replacing it: a GitLab, Gitea or self-hosted repository has no App and must
+  // keep working through its deploy key exactly as it does.
+  //
+  // It is a ONE-HOUR token minted for this build and never stored, which is the
+  // security argument for the whole feature: a deploy key is a long-lived
+  // credential sitting in the database, and this does not exist until a build
+  // needs it. Transported only over mTLS (rule 23), never logged (rule 20).
+  GitCredential git_credential = 13;
+}
+
+// GitCredential is an HTTPS username/password pair for `git clone`. GitHub's
+// installation tokens take this shape — the username is fixed and the token is
+// the password — and so does every other forge's PAT, which is why it is not
+// named after GitHub.
+message GitCredential {
+  string username = 1;
+  string password = 2;
 }
 
 // PushImageWork commands a builder-role agent to stream a built image to the
@@ -259,6 +307,17 @@ message DistributeWork {
   string deployment_id = 1;
   string app_id = 2;
   string image = 3;
+  // V1: the name the image must run under on THIS host (revision-promotion.md
+  // §5). Empty means it already has it, which is every deploy today.
+  //
+  // A promotion moves a tested artifact rather than rebuilding it, so the image
+  // arrives under the SOURCE application's managed tag and has to be renamed
+  // to the target's. This is not cosmetic: the agent parses ownership out of
+  // the tag, and gcImages reclaims every managed reference whose application is
+  // absent from this server's desired set — so an image left under the source's
+  // name would be reclaimed on the first reconcile after the rollout, while
+  // production was serving from it.
+  string target_image = 4;
 }
 
 // DesiredState is the full desired set for one server: the reply to the
@@ -290,6 +349,157 @@ message DesiredState {
   // serves plain HTTP and says so, rather than pointing routes at a resolver
   // that does not exist.
   TLSSettings tls = 3;
+  // V1: routes to upstreams that are not containers (status-pages.md §4).
+  // Today that is exactly one thing — a Status Page served by the control
+  // plane. Absence means remove, the same contract apps and databases follow.
+  repeated StaticRouteSpec static_routes = 6;
+  // V1: metrics collection settings (metrics-and-usage.md §5). Panel-wide,
+  // carried to every node the way TLSSettings is. Absent means the defaults,
+  // which is collection on and request analytics off.
+  MetricsSettings metrics = 7;
+  // V1: which agent binary this server should be running (agent-updates.md §7,
+  // ADR-010). Absent — or an empty version — means NO INSTRUCTION, never
+  // "downgrade to nothing": upgrading a panel must not start replacing binaries
+  // across a fleet nobody asked it to touch.
+  AgentUpdateSpec agent_update = 8;
+}
+
+// AgentUpdateSpec is the desired agent version for one server, resolved from
+// the channel that server follows (agent-updates.md §2).
+//
+// The plane names a version and never stores or serves a byte of the binary
+// (ADR-010 §2): artifact_base is a PREFIX the agent fetches three fixed file
+// names under — the binary for its own GOARCH, SHA256SUMS, and SHA256SUMS.sig
+// — so a mirror mirrors the prefix and the plane never guesses the host's
+// architecture, which it has never needed to know.
+message AgentUpdateSpec {
+  string version = 1;
+  string artifact_base = 2;
+  // rollback permits a version BELOW the running one. Without it the agent
+  // refuses to go backwards (ADR-010 §3), which stops an accident — a stale
+  // desired set, a mistyped tag, a restored database snapshot walking the fleet
+  // backwards. It does not stop a compromised plane, and does not pretend to:
+  // that bound is the signature, and it is the one threat-model §5.1 states.
+  bool rollback = 3;
+}
+
+// MetricsSettings is what the operator can change about collection. Three
+// fields, not a knob per dimension: `enabled` and `request_analytics` are the
+// two an operator has a real reason to change (cost, and privacy about paths),
+// and `bucket_seconds` is load-bearing for the write budget — an operator with
+// 500 containers raises it to 900 and cuts the row count by a factor of three.
+//
+// Sample interval, path cap and the rate ceiling stay agent-side, because they
+// protect the NODE's memory and CPU and the node is where that is known.
+message MetricsSettings {
+  bool enabled = 1;            // container CPU / memory / disk collection
+  bool request_analytics = 2;  // Proxy access-log aggregation
+  uint32 bucket_seconds = 3;   // 0 = the default, 300; must divide an hour
+}
+
+// MetricsReport is ONE message per server per bucket, carrying every resource
+// on the node (metrics-and-usage.md §4.6). Not one message per resource, and
+// emphatically not one per sample: the whole write budget rests on the agent
+// aggregating into a fixed bucket and publishing the bucket.
+//
+// The bucket identity (resource_kind, resource_id, bucket_start) IS the
+// idempotency key, so JetStream redelivery and the agent's own replay are both
+// no-ops and no separate key needs inventing (ENGINEERING rule 12).
+message MetricsReport {
+  string server_id = 1;
+  google.protobuf.Timestamp bucket_start = 2;
+  uint32 bucket_seconds = 3;
+  repeated ResourceMetricBucket resources = 4;
+  repeated RequestBucket requests = 5;
+  repeated RequestPathBucket paths = 6;  // hourly only
+  repeated ResourceDiskBucket disk = 7;  // hourly only
+}
+
+// EVERY STORED FIELD MERGES. Counters merge by sum, peaks by max, histograms
+// element-wise — so the answer for any window is exact and does not depend on
+// the bucket size we happened to pick. That is why there are no averages here:
+// cpu_core_ms and memory_byte_seconds are accumulators, and a mean is derived
+// by dividing by covered_seconds. Storing a mean would make a longer window's
+// mean an average-of-averages, which is wrong whenever the buckets are not
+// equally covered — and after an agent restart they are not.
+message ResourceMetricBucket {
+  string resource_kind = 1;  // application | compose_stack | database
+  string resource_id = 2;
+  uint64 cpu_core_ms = 3;
+  double cpu_percent_peak = 4;
+  uint64 memory_byte_seconds = 5;
+  uint64 memory_bytes_peak = 6;
+  uint64 memory_limit_bytes = 7;
+  uint32 sample_count = 8;
+  // Coverage is STORED, not assumed: an agent that restarted at 12:03
+  // publishes a 12:00 bucket covering 120 seconds, and the chart draws it as
+  // partial rather than as a dip. Without this every agent restart, every
+  // proxy recreate and every deploy reads as an outage on the graph.
+  uint32 covered_seconds = 9;
+}
+
+// RequestBucket carries a 16-slot latency histogram rather than a percentile,
+// because PERCENTILES DO NOT AVERAGE: two 5-minute buckets with p95 = 100 ms
+// and p95 = 2000 ms have an hour-p95 that is neither the mean nor the max of
+// them, and no arithmetic on the two numbers recovers it. Histograms add, so
+// p50/p95/p99 over any window are computed once from the summed histogram.
+message RequestBucket {
+  string resource_kind = 1;  // application | compose_stack | server
+  string resource_id = 2;
+  uint64 requests = 3;
+  // A routed application with HTTPS gets two routers, and a visitor arriving
+  // over HTTP produces a 308 before the real request. Counting both would
+  // double every visit and drag p95 toward the 1 ms redirect, so redirects are
+  // counted here and excluded from the histogram and the path table.
+  uint64 redirect_count = 4;
+  uint64 status_2xx = 5;
+  uint64 status_3xx = 6;
+  uint64 status_4xx = 7;
+  uint64 status_5xx = 8;
+  uint64 response_bytes = 9;
+  repeated uint64 latency_buckets = 10;
+  // The boundary set, so the constants can change later without silently
+  // reinterpreting old rows.
+  uint32 histogram_version = 11;
+  // 1 normally; N when the node fell back to deterministic 1-in-N sampling
+  // past its line-rate ceiling. The plane scales counters back up on read and
+  // the UI SAYS the number is an estimate rather than presenting it as exact.
+  uint32 sample_rate = 12;
+}
+
+message RequestPathBucket {
+  string resource_kind = 1;
+  string resource_id = 2;
+  string path = 3;  // normalised: no query string, ≤3 segments, ids as :id
+  uint64 requests = 4;
+  uint64 status_5xx = 5;
+  repeated uint64 latency_buckets = 6;
+  uint32 histogram_version = 7;
+}
+
+// Per-resource disk figures DO NOT SUM to the host's usage: image layers are
+// shared, and a base layer used by four applications is counted for each of
+// them, because the question the number answers is "what is this resource
+// responsible for", not "how would the host shrink if I deleted it".
+message ResourceDiskBucket {
+  string resource_kind = 1;
+  string resource_id = 2;
+  uint64 image_bytes = 3;
+  uint64 volume_bytes = 4;
+  uint64 container_bytes = 5;
+}
+
+// StaticRouteSpec routes a domain to an upstream that is not a container.
+//
+// It carries no command and no credential — a hostname, an absolute URL and a
+// path prefix. upstream_url is filled by the PLANE from its own configuration
+// and is NEVER operator input, which is what keeps this from being a way to
+// aim a node's Proxy at an address someone typed.
+message StaticRouteSpec {
+  string route_id = 1;      // fragment identity on the node (sp_…)
+  RouteSpec route = 2;      // domain + https, exactly as an Application's route
+  string upstream_url = 3;  // absolute http(s) URL of the control plane
+  string add_prefix = 4;    // prepended to the request path before forwarding
 }
 
 // TLSSettings is the panel's ACME account as the Proxy driver needs it. It
@@ -321,6 +531,15 @@ message ResyncWork {
 // AppStatus is one Application's observed state, reported on
 // state.<server_id>.app.<app_id>. The plane asserts "deploy succeeded" only
 // from these reports — never from work-item completion (ADR-005).
+// ReplicaStatus is one container of a multi-replica Application.
+message ReplicaStatus {
+  uint32 index = 1;
+  string container_id = 2;  // short id
+  string revision_id = 3;
+  string state = 4;         // the ui-principles §5 vocabulary
+  string detail = 5;
+}
+
 message AppStatus {
   string app_id = 1;
   // revision_id actually serving traffic right now (empty if none).
@@ -340,6 +559,13 @@ message AppStatus {
   // digest, which is the only way it can know it (ADR-001: the control plane
   // never talks to a registry; ADR-005: status is observation).
   string resolved_image = 6;
+  // V1: one observation per replica (app-scaling.md §8), reported by the node
+  // that owns them. The aggregate `state` above is DERIVED from these: running
+  // iff every desired index is running, degraded if some but not all, error if
+  // none. Losing one replica of three is a degradation, not a crash — so a
+  // partial loss pages nobody, which is correct, because the application is
+  // still serving.
+  repeated ReplicaStatus replicas = 7;
 }
 
 // DeployEvent reports a work item's terminal outcome for a deployment,
@@ -528,6 +754,47 @@ message DbBackupWork {
   string s3_key = 9;            // object key: <prefix>/<db_id>/<ts>.gz
   string s3_access_key = 10;
   string s3_secret_key = 11;
+}
+
+// VolumeBackupWork archives one named volume out of a running container and
+// uploads it, exactly the way DbBackupWork does — minus the dump. There is no
+// engine and no command: a volume has nothing to ask for a consistent view, so
+// the agent tars the mount path as it stands (volume-backups.md §2).
+//
+// The artefact is CRASH-CONSISTENT: the same thing you would have if the power
+// had been cut at that instant. That is stated on the wire because it is the
+// property a caller has to reason about, not an implementation detail.
+message VolumeBackupWork {
+  string backup_record_id = 1;  // idempotency key
+  string application_id = 2;
+  string container_name = 3;
+  string volume_name = 4;       // the operator's label, for the event
+  string mount_path = 5;        // absolute path inside the container
+  string s3_endpoint = 6;
+  string s3_bucket = 7;
+  string s3_region = 8;
+  string s3_key = 9;            // <prefix>/<app_id>/<volume>/<ts>.tar.gz
+  string s3_access_key = 10;
+  string s3_secret_key = 11;
+}
+
+// VolumeBackupEvent is the observed outcome. Deliberately its own message
+// rather than a reused DbBackupEvent: the ids differ, and a message whose
+// db_id field is empty half the time is a message nobody can read.
+message VolumeBackupEvent {
+  string backup_record_id = 1;
+  string application_id = 2;
+  string volume_name = 3;
+  enum Outcome {
+    OUTCOME_UNSPECIFIED = 0;
+    OUTCOME_SUCCEEDED = 1;
+    OUTCOME_FAILED = 2;
+  }
+  Outcome outcome = 4;
+  string object_key = 5;
+  int64 size_bytes = 6;
+  string detail = 7;
+  google.protobuf.Timestamp occurred_at = 8;
 }
 
 // DbRestoreWork commands the host agent to download a backup and restore it into

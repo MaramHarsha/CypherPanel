@@ -16,4 +16,8 @@ export const NotifierEventsItem = {
   deployfailed: 'deploy.failed',
   backupsucceeded: 'backup.succeeded',
   backupfailed: 'backup.failed',
+  appcrashed: 'app.crashed',
+  apprecovered: 'app.recovered',
+  alertfiring: 'alert.firing',
+  alertresolved: 'alert.resolved',
 } as const;

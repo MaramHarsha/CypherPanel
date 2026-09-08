@@ -10,6 +10,9 @@ go.work.sum
 
 # Local dev state — agent identity material, plane CA, secrets
 /.dev/
+# The real panel env, beside its committed .example. It carries the master key
+# that seals every secret in the database, so it must never be committed.
+/deploy/cypherd.env
 *.pem
 *.key
 *.crt
@@ -34,3 +37,12 @@ go.work.sum
 
 # Build-tool scratch (coolify-import registry answers — regenerable)
 /.cache/
+
+# scripts/e2e.sh scratch: binaries, panel state and Playwright artefacts.
+.e2e/
+web/e2e/node_modules/
+web/e2e/test-results/
+web/e2e/package-lock.json
+web/e2e/package.json
+# scripts/release-rehearsal.sh: throwaway binaries and run state.
+/.rehearsal/

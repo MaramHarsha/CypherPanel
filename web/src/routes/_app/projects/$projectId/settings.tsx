@@ -7,26 +7,34 @@
 // (shared-variables.md §8). The board datelines each screen
 // ATLAS-CRM / SETTINGS / <TAB>, which is a route, not an anchor.
 //
-// 12c's strip also draws Quotas, Protection and Status page. Protection now has
-// an endpoint (deploy-protection.md) so it is drawn; Quotas and Status page do
-// not, so they are still absent — a tab that opens onto nothing is a dead end,
-// and each arrives with its endpoint.
-import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
+// 12c's strip draws Quotas, Protection and Status page, and all three now have
+// endpoints — Protection (deploy-protection.md), Status page (status-pages.md)
+// and Quotas (resource-quotas.md, permitted by ADR-012). Each arrived with its
+// endpoint rather than as a tab opening onto nothing.
+import { createFileRoute, Outlet } from "@tanstack/react-router";
 import { PageBody, PageHeader } from "@/components/page-header";
+import { TabStrip, type Tab } from "@/components/tab-strip";
 
 export const Route = createFileRoute("/_app/projects/$projectId/settings")({
   component: ProjectSettingsLayout,
 });
 
-const TABS = [
-  { to: ".", label: "General", exact: true },
-  { to: "notifiers", label: "Notifiers", exact: false },
-  { to: "webhooks", label: "Webhooks", exact: false },
-  { to: "shared-variables", label: "Shared variables", exact: false },
-  { to: "protection", label: "Protection", exact: false },
-] as const;
+const TABS: readonly Tab[] = [
+  { to: "", label: "General" },
+  { to: "notifiers", label: "Notifiers" },
+  { to: "webhooks", label: "Webhooks" },
+  { to: "shared-variables", label: "Shared variables" },
+  { to: "protection", label: "Protection" },
+  { to: "status-page", label: "Status page" },
+  { to: "quotas", label: "Quotas" },
+];
+
+// Three rather than 14c's four: "Shared variables" is the widest label in the
+// panel, and four of these leave nothing for the fold at 360px.
+const NARROW = 3;
 
 function ProjectSettingsLayout() {
+  const { projectId } = Route.useParams();
   // The trail is declared by each tab, not here: a dateline reading SETTINGS on
   // the Webhooks tab names the section rather than the place, and the accent
   // segment is meant to be where you actually are (mirrors _app/settings.tsx).
@@ -35,20 +43,12 @@ function ProjectSettingsLayout() {
       <PageHeader
         title="Project settings"
         below={
-          <nav className="-mb-px flex gap-[18px] overflow-x-auto" aria-label="Project settings">
-            {TABS.map((t) => (
-              <Link
-                key={t.label}
-                from={Route.fullPath}
-                to={t.to}
-                activeOptions={{ exact: t.exact }}
-                className="whitespace-nowrap border-b-2 border-transparent px-0.5 py-2 text-[13px] text-text-mid hover:text-text"
-                activeProps={{ className: "border-border-strong font-semibold text-text" }}
-              >
-                {t.label}
-              </Link>
-            ))}
-          </nav>
+          <TabStrip
+            label="Project settings"
+            base={`/projects/${projectId}/settings`}
+            tabs={TABS}
+            narrow={NARROW}
+          />
         }
       />
       {/* The layout owns the page gutters so every tab is inset identically. */}

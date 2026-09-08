@@ -249,7 +249,7 @@ func (f *fakeClient) addRestartedContainer(appID, revID, restartToken string, ru
 	id := "c" + itoa(f.nextID)
 	f.containers[id] = &Container{
 		ID:           id,
-		Name:         containerName(appID, revID, restartToken),
+		Name:         containerName(appID, revID, restartToken, 1),
 		AppID:        appID,
 		RevisionID:   revID,
 		RestartToken: restartToken,
@@ -275,6 +275,12 @@ type fakeRouter struct {
 	setCalls      int
 	proxyErr      error
 	networksBound []string
+	// The maintenance responder is the Proxy's twin: ensuring it is an
+	// idempotent daemon call, so it is counted separately and kept out of
+	// `mutations` for the same reason EnsureProxy is.
+	maintenanceEnsured int
+	maintenanceRemoved int
+	maintenanceErr     error
 }
 
 func newFakeRouter() *fakeRouter { return &fakeRouter{routes: map[string]string{}} }
@@ -291,16 +297,17 @@ func (r *fakeRouter) AttachNetwork(_ context.Context, network string) error {
 // bytes and skips an identical write. The fake models that contract: a call
 // that changes nothing is not a mutation, which is what the converge-twice
 // invariant actually asserts.
-func (r *fakeRouter) SetRoute(_ context.Context, appID string, _ *agentv1.RouteSpec, upstream string) error {
+func (r *fakeRouter) SetRoute(_ context.Context, appID string, _ *agentv1.RouteSpec, upstreams []string) error {
 	if r.setErr != nil {
 		return r.setErr
 	}
 	r.setCalls++
-	if cur, ok := r.routes[appID]; ok && cur == upstream {
+	joined := strings.Join(upstreams, ",")
+	if cur, ok := r.routes[appID]; ok && cur == joined {
 		return nil
 	}
 	r.mutations++
-	r.routes[appID] = upstream
+	r.routes[appID] = joined
 	return nil
 }
 
@@ -310,9 +317,25 @@ func (r *fakeRouter) RemoveRoute(_ context.Context, appID string) error {
 	return nil
 }
 
-func (r *fakeRouter) Route(_ context.Context, appID string) (string, bool, error) {
+func (r *fakeRouter) EnsureMaintenance(context.Context) (string, error) {
+	r.maintenanceEnsured++
+	if r.maintenanceErr != nil {
+		return "", r.maintenanceErr
+	}
+	return "cypher-maintenance:8080", nil
+}
+
+func (r *fakeRouter) RemoveMaintenance(context.Context) error {
+	r.maintenanceRemoved++
+	return nil
+}
+
+func (r *fakeRouter) Route(_ context.Context, appID string) ([]string, bool, error) {
 	up, ok := r.routes[appID]
-	return up, ok, nil
+	if !ok || up == "" {
+		return nil, false, nil
+	}
+	return strings.Split(up, ","), true, nil
 }
 
 type fakeProber struct {
@@ -1664,5 +1687,218 @@ func TestGCKeepsAnImageAnotherApplicationStillWants(t *testing.T) {
 	// app1 is not desired, but the image is shared with app2 — so it survives.
 	if len(c.removedImages) != 0 {
 		t.Fatalf("removed %v from an image another application still wants", c.removedImages)
+	}
+}
+
+// The compatibility promise of app-scaling.md §2, asserted rather than trusted:
+// index 1 keeps EXACTLY the name and labels it had before replicas existed.
+//
+// Without this, upgrading the agent would make every existing container in
+// every fleet read as drift and get recreated on the next reconcile, turning a
+// version bump into a fleet-wide rolling restart.
+func TestReplicaOneIsIndistinguishableFromABeforeTimesContainer(t *testing.T) {
+	if got, want := containerName("app_1", "rev_1", "", 1), "cypher-app_1-rev_1"; got != want {
+		t.Errorf("containerName index 1 = %q, want %q", got, want)
+	}
+	if got, want := containerName("app_1", "rev_1", "tok", 1), "cypher-app_1-rev_1-tok"; got != want {
+		t.Errorf("containerName index 1 with a token = %q, want %q", got, want)
+	}
+	if got, want := containerName("app_1", "rev_1", "", 3), "cypher-app_1-rev_1-r3"; got != want {
+		t.Errorf("containerName index 3 = %q, want %q", got, want)
+	}
+
+	spec := &agentv1.AppSpec{AppId: "app_1", RevisionId: "rev_1"}
+	if _, stamped := managedLabels(spec, 1)[driver.LabelReplicaIndex]; stamped {
+		t.Error("index 1 must carry no replica-index label — a container that predates replicas has none, and a stamped one would read as drift")
+	}
+	if got := managedLabels(spec, 4)[driver.LabelReplicaIndex]; got != "4" {
+		t.Errorf("index 4 label = %q, want \"4\"", got)
+	}
+}
+
+// Empty means [1], which is every application that exists today.
+func TestAnAbsentReplicaSetIsOneReplica(t *testing.T) {
+	if got := desiredIndexes(&agentv1.AppSpec{}); len(got) != 1 || got[0] != 1 {
+		t.Fatalf("desiredIndexes of an empty spec = %v, want [1]", got)
+	}
+	got := desiredIndexes(&agentv1.AppSpec{ReplicaIndexes: []uint32{3, 1, 3, 0, 2}})
+	if len(got) != 3 || got[0] != 1 || got[1] != 2 || got[2] != 3 {
+		t.Fatalf("desiredIndexes = %v, want a sorted deduplicated [1 2 3] with the zero dropped", got)
+	}
+}
+
+// Three replicas means three containers and three upstreams behind one
+// fragment — Traefik round-robins them, so scaling out needs no new address
+// and no new port.
+func TestThreeReplicasProduceThreeContainersBehindOneRoute(t *testing.T) {
+	c := newFakeClient()
+	r := newFakeRouter()
+	p := &fakeProber{}
+	d := newDriver(c, r, p)
+
+	sp := spec("app1", "rev1", "img:1")
+	sp.ReplicaIndexes = []uint32{1, 2, 3}
+
+	statuses, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{sp}, nil)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(statuses) != 1 || statuses[0].State != stateRunning {
+		t.Fatalf("status = %+v, want one running app", statuses[0])
+	}
+	if len(statuses[0].Replicas) != 3 {
+		t.Fatalf("reported %d replicas, want 3", len(statuses[0].Replicas))
+	}
+	running := 0
+	for _, ct := range c.containers {
+		if ct.AppID == sp.AppId && ct.Running {
+			running++
+		}
+	}
+	if running != 3 {
+		t.Errorf("%d containers running, want 3", running)
+	}
+	if got := strings.Count(r.routes[sp.AppId], ",") + 1; got != 3 {
+		t.Errorf("the fragment carries %d upstreams, want 3 — one per replica behind one route", got)
+	}
+}
+
+// ── maintenance mode (app-access-control.md §7) ──────────────────────────────
+
+func maintenanceSpec(appID, revID, image string) *agentv1.AppSpec {
+	s := spec(appID, revID, image)
+	s.Route.Access = &agentv1.AccessSpec{Maintenance: true}
+	return s
+}
+
+// The property that makes maintenance mode a service swap rather than an
+// outage: the application's containers keep running, and only the route moves.
+// A maintenance page that stopped the app would make lifting it a cold start
+// with a cold cache, at the exact moment traffic returns.
+func TestMaintenanceMovesTheRouteAndLeavesTheApplicationRunning(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "img:rev1")}, nil); err != nil {
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+	served := r.routes["app1"]
+	if served == "" {
+		t.Fatal("no route applied before maintenance")
+	}
+
+	statuses, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{maintenanceSpec("app1", "rev1", "img:rev1")}, nil)
+	if err != nil {
+		t.Fatalf("maintenance Reconcile: %v", err)
+	}
+	if got := r.routes["app1"]; got != "cypher-maintenance:8080" {
+		t.Fatalf("route under maintenance = %q, want the responder", got)
+	}
+	if st := statusOf(statuses, "app1"); st.GetState() != "running" {
+		t.Fatalf("state under maintenance = %q, want running: the app is still up", st.GetState())
+	}
+	running := 0
+	for _, ct := range c.containers {
+		if ct.AppID == "app1" && ct.Running {
+			running++
+		}
+	}
+	if running != 1 {
+		t.Fatalf("running containers under maintenance = %d, want 1", running)
+	}
+
+	// And lifting it puts the app's own upstream back.
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "img:rev1")}, nil); err != nil {
+		t.Fatalf("lifting Reconcile: %v", err)
+	}
+	if got := r.routes["app1"]; got != served {
+		t.Fatalf("route after lifting = %q, want the app's own upstream %q", got, served)
+	}
+}
+
+// Converging twice under maintenance must mutate nothing — including not
+// re-probing the app. Without the maintenance-aware comparison the applied
+// upstream (the responder's) can never equal the app's, so every cycle reads as
+// "the fragment disagrees" and health-probes every replica for the whole
+// outage window (§8).
+func TestConvergeTwiceUnderMaintenanceProbesNothing(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+	specs := []*agentv1.AppSpec{maintenanceSpec("app1", "rev1", "img:rev1")}
+
+	if _, err := d.Reconcile(context.Background(), specs, nil); err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+	mutations, probes := c.mutations+r.mutations, p.calls
+
+	if _, err := d.Reconcile(context.Background(), specs, nil); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	if after := c.mutations + r.mutations; after != mutations {
+		t.Fatalf("second converge mutated state: %d calls (want 0)", after-mutations)
+	}
+	if p.calls != probes {
+		t.Fatalf("second converge probed %d times (want 0)", p.calls-probes)
+	}
+}
+
+// Failing to take an application down politely must never take it down. The
+// route is left exactly where it was, so the app keeps serving, and the state
+// is degraded — "serving, with something wrong" — which is also what keeps
+// app.crashed (running → error only) from paging anyone.
+func TestAResponderThatCannotStartNeverTakesTheApplicationDown(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+
+	if _, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{spec("app1", "rev1", "img:rev1")}, nil); err != nil {
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+	served := r.routes["app1"]
+
+	r.maintenanceErr = errors.New("pull nginx:1.27-alpine: no such host")
+	statuses, err := d.Reconcile(context.Background(), []*agentv1.AppSpec{maintenanceSpec("app1", "rev1", "img:rev1")}, nil)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got := r.routes["app1"]; got != served {
+		t.Fatalf("route = %q, want it untouched at %q", got, served)
+	}
+	st := statusOf(statuses, "app1")
+	if st.GetState() != "degraded" {
+		t.Fatalf("state = %q, want degraded", st.GetState())
+	}
+	if !strings.Contains(st.GetDetail(), "no such host") {
+		t.Fatalf("detail = %q, want the pull error named", st.GetDetail())
+	}
+}
+
+// The responder is shared, so it survives while ANY resource on the node is in
+// maintenance and goes away when the last one leaves.
+func TestTheResponderGoesAwayWhenTheLastResourceLeavesMaintenance(t *testing.T) {
+	c, r, p := newFakeClient(), newFakeRouter(), &fakeProber{}
+	d := newDriver(c, r, p)
+	both := []*agentv1.AppSpec{maintenanceSpec("app1", "rev1", "img:rev1"), maintenanceSpec("app2", "rev1", "img:rev1")}
+
+	if _, err := d.Reconcile(context.Background(), both, nil); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if r.maintenanceRemoved != 0 {
+		t.Fatalf("responder removed while two apps are in maintenance")
+	}
+
+	half := []*agentv1.AppSpec{maintenanceSpec("app1", "rev1", "img:rev1"), spec("app2", "rev1", "img:rev1")}
+	if _, err := d.Reconcile(context.Background(), half, nil); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if r.maintenanceRemoved != 0 {
+		t.Fatalf("responder removed while one app is still in maintenance")
+	}
+
+	none := []*agentv1.AppSpec{spec("app1", "rev1", "img:rev1"), spec("app2", "rev1", "img:rev1")}
+	if _, err := d.Reconcile(context.Background(), none, nil); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if r.maintenanceRemoved != 1 {
+		t.Fatalf("responder removals = %d, want 1 once the last app left", r.maintenanceRemoved)
 	}
 }

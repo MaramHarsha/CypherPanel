@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/MaramHarsha/cypherpanel/agent/builder"
 	"github.com/MaramHarsha/cypherpanel/agent/driver"
+	"github.com/MaramHarsha/cypherpanel/agent/metrics"
 	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
 	"github.com/MaramHarsha/cypherpanel/pkg/subjects"
 )
@@ -53,7 +55,9 @@ type Message interface {
 // work items with a clear error instead of guessing.
 type ImageRelay interface {
 	PushImage(ctx context.Context, deploymentID, image string) error
-	PullImage(ctx context.Context, deploymentID, image string) error
+	// PullImage fetches the deployment's image and, when targetImage is set,
+	// gives it the name it must RUN under here (revision-promotion.md §5).
+	PullImage(ctx context.Context, deploymentID, image, targetImage string) error
 }
 
 // BackupRunner executes one database backup or restore and returns the terminal
@@ -61,6 +65,9 @@ type ImageRelay interface {
 // managed-databases.md §7). Nil on nodes that run no databases.
 type BackupRunner interface {
 	ExecuteBackup(ctx context.Context, work *agentv1.DbBackupWork) *agentv1.DbBackupEvent
+	// ExecuteVolumeBackup archives a named volume rather than dumping an
+	// engine (volume-backups.md). Same transport, same S3 client, no exec.
+	ExecuteVolumeBackup(ctx context.Context, work *agentv1.VolumeBackupWork) *agentv1.VolumeBackupEvent
 	// ExecuteRestore reports each step it reaches through progress before
 	// returning the terminal event. A restore takes the database offline, so
 	// how far along it is is the answer someone is waiting for.
@@ -103,18 +110,29 @@ const defaultDriftInterval = 60 * time.Second
 // Worker consumes work items, manages the local desired state, and invokes the
 // orchestrator driver to converge reality.
 type Worker struct {
-	bus           Bus
-	serverID      string
-	driver        driver.Reconciler
-	dbReconciler  driver.DbReconciler
-	composeRec    driver.ComposeReconciler
-	backup        BackupRunner
-	builder       *builder.Builder
-	relay         ImageRelay
-	log           *slog.Logger
-	driftInterval time.Duration
-	cron          CronRunner
-	proxyTLS      ProxyTLS
+	bus            Bus
+	serverID       string
+	driver         driver.Reconciler
+	dbReconciler   driver.DbReconciler
+	composeRec     driver.ComposeReconciler
+	backup         BackupRunner
+	builder        *builder.Builder
+	relay          ImageRelay
+	log            *slog.Logger
+	driftInterval  time.Duration
+	cron           CronRunner
+	proxyTLS       ProxyTLS
+	staticRouter   StaticRouter
+	metrics        MetricsSink
+	proxyAccessLog AccessLogSink
+	updater        SelfUpdater
+
+	// working is true while a work item is being handled. It is the quiescence
+	// signal the self-updater waits on: a restart mid-build throws away ten
+	// minutes of CPU and a restart mid-restore interrupts a database that is
+	// already offline (agent-updates.md §3.1). The work loop is single
+	// threaded, so this is exact rather than approximate.
+	working atomic.Bool
 
 	mu           sync.Mutex
 	state        map[string]*agentv1.AppSpec     // map[app_id]spec
@@ -124,6 +142,38 @@ type Worker struct {
 	// images must survive (disk-management.md §2). Held beside the specs and
 	// replaced wholesale on every sync, like them.
 	retain []*agentv1.RetainSpec
+	// staticRoutes are proxy fragments for upstreams that are not containers
+	// (status-pages.md §4). Replaced wholesale on every sync like the specs,
+	// with the same absence-means-remove contract.
+	staticRoutes map[string]*agentv1.StaticRouteSpec
+}
+
+// SelfUpdater converges the agent's own binary onto the version desired state
+// names (consumer-defined; *updater.Updater satisfies it). Optional: a nil one
+// makes a node behave exactly as it did before agent updates existed.
+type SelfUpdater interface {
+	Apply(ctx context.Context, spec *agentv1.AgentUpdateSpec)
+}
+
+// MetricsSink receives the panel-wide collection policy. Consumer-defined and
+// optional: a node without a collector simply reports nothing, and the panel
+// shows "no data yet" with the reason rather than a flat line at 0%.
+type MetricsSink interface {
+	Apply(s metrics.Settings)
+}
+
+// AccessLogSink is the Proxy's own access-log switch, which is part of its
+// static config and therefore of its container identity.
+type AccessLogSink interface {
+	SetAccessLog(on bool)
+}
+
+// StaticRouter writes and removes proxy fragments whose upstream is not a
+// container. Consumer-defined and optional: a node whose agent was built
+// without a Proxy driver simply carries no status routes.
+type StaticRouter interface {
+	SetStaticRoute(ctx context.Context, routeID string, route *agentv1.RouteSpec, upstreamURL, addPrefix string) error
+	RemoveRoute(ctx context.Context, routeID string) error
 }
 
 // CronRunner arms scheduled tasks from desired state and fires them on schedule
@@ -163,6 +213,7 @@ func New(bus Bus, serverID string, drv driver.Reconciler, dbRec driver.DbReconci
 		state:         make(map[string]*agentv1.AppSpec),
 		dbState:       make(map[string]*agentv1.DbSpec),
 		composeState:  make(map[string]*agentv1.ComposeSpec),
+		staticRoutes:  make(map[string]*agentv1.StaticRouteSpec),
 	}
 }
 
@@ -179,6 +230,25 @@ func (w *Worker) SetCron(c CronRunner) { w.cron = c }
 // SetProxyTLS attaches the Proxy's TLS settings sink, wired only on nodes that
 // run a Proxy (agent-identity-and-tls.md §4).
 func (w *Worker) SetProxyTLS(p ProxyTLS) { w.proxyTLS = p }
+
+// SetStaticRouter attaches the writer for non-container proxy fragments,
+// wired only on nodes that run a Proxy (status-pages.md §4).
+func (w *Worker) SetStaticRouter(r StaticRouter) { w.staticRouter = r }
+
+// SetMetrics attaches the metrics collector (metrics-and-usage.md §5).
+func (w *Worker) SetMetrics(m MetricsSink) { w.metrics = m }
+
+// SetUpdater wires the self-updater. Without it an AgentUpdateSpec in desired
+// state is simply ignored, which is what a builder-role agent and every unit
+// test want.
+func (w *Worker) SetUpdater(u SelfUpdater) { w.updater = u }
+
+// Quiet reports that no work item is in flight. It is what the updater waits
+// on before replacing the binary underneath a running build.
+func (w *Worker) Quiet() bool { return !w.working.Load() }
+
+// SetProxyAccessLog attaches the Proxy's access-log switch.
+func (w *Worker) SetProxyAccessLog(a AccessLogSink) { w.proxyAccessLog = a }
 
 // Run performs an initial desired-state sync, converges once on boot, then
 // processes work items until the context is canceled. Between work items it
@@ -226,7 +296,9 @@ func (w *Worker) Run(ctx context.Context) error {
 			}
 			continue
 		}
+		w.working.Store(true)
 		w.handleMsg(ctx, msg)
+		w.working.Store(false)
 		lastConverge = time.Now()
 	}
 }
@@ -282,10 +354,34 @@ func (w *Worker) syncState(ctx context.Context) error {
 	for _, spec := range ds.ComposeSpecs {
 		composeState[spec.StackId] = spec
 	}
+	staticState := make(map[string]*agentv1.StaticRouteSpec, len(ds.StaticRoutes))
+	for _, sr := range ds.StaticRoutes {
+		if sr.GetRouteId() != "" {
+			staticState[sr.GetRouteId()] = sr
+		}
+	}
+
 	w.mu.Lock()
+	var gone []string
+	for id := range w.staticRoutes {
+		if _, still := staticState[id]; !still {
+			gone = append(gone, id)
+		}
+	}
 	w.state, w.dbState, w.composeState = state, dbState, composeState
 	w.retain = ds.Retain
+	w.staticRoutes = staticState
 	w.mu.Unlock()
+
+	// Absence means remove, and it is done here rather than in reconcile
+	// because this is the only place that knows what USED to be present.
+	if w.staticRouter != nil {
+		for _, id := range gone {
+			if err := w.staticRouter.RemoveRoute(ctx, id); err != nil {
+				w.log.Error("worker: removing static route", "route_id", id, "error", err)
+			}
+		}
+	}
 
 	// Node-wide TLS settings ride along with the desired set: one panel, one
 	// ACME account, every node (agent-identity-and-tls.md §4). An empty
@@ -295,11 +391,43 @@ func (w *Worker) syncState(ctx context.Context) error {
 		w.proxyTLS.SetACME(ds.GetTls().GetAcmeEmail(), ds.GetTls().GetAcmeCaServer())
 	}
 
+	// Metrics settings ride along the same way. An ABSENT metrics block means
+	// the defaults rather than "off": an old plane that does not send one must
+	// not silently stop a node collecting, and a nil message's getters give
+	// exactly the zero values, so the absence is read explicitly.
+	ms := metrics.Settings{Enabled: true, BucketSeconds: metrics.DefaultBucketSeconds}
+	if m := ds.GetMetrics(); m != nil {
+		ms = metrics.Settings{
+			Enabled:          m.GetEnabled(),
+			RequestAnalytics: m.GetRequestAnalytics(),
+			BucketSeconds:    int(m.GetBucketSeconds()),
+		}
+	}
+	if w.metrics != nil {
+		w.metrics.Apply(ms)
+	}
+	if w.proxyAccessLog != nil {
+		w.proxyAccessLog.SetAccessLog(ms.Enabled && ms.RequestAnalytics)
+	}
+
+	// The agent's own version rides along with the desired set like the ACME
+	// account and the metrics policy do. It runs on its own goroutine because
+	// converging it means WAITING — for the jitter, and for this very work loop
+	// to go quiet — and a sync that blocked on that would deadlock the loop it
+	// is waiting for. Apply is re-entrant-safe, so a second nudge during a
+	// download is a no-op rather than a second download.
+	if w.updater != nil {
+		spec := ds.GetAgentUpdate()
+		go w.updater.Apply(ctx, spec)
+	}
+
 	w.log.Info("worker: desired-state sync complete",
 		"apps", len(ds.Specs),
 		"databases", len(ds.DbSpecs),
 		"compose_stacks", len(ds.ComposeSpecs),
 		"tls_configured", ds.GetTls().GetAcmeEmail() != "",
+		"metrics", ms.Enabled,
+		"request_analytics", ms.RequestAnalytics,
 	)
 	return nil
 }
@@ -487,7 +615,7 @@ func (w *Worker) handleMsg(ctx context.Context, msg Message) {
 			if w.relay == nil {
 				return errNoRelay
 			}
-			return w.relay.PullImage(ctx, work.DeploymentId, work.Image)
+			return w.relay.PullImage(ctx, work.DeploymentId, work.Image, work.TargetImage)
 		})
 		return
 
@@ -620,6 +748,30 @@ func (w *Worker) handleMsg(ctx context.Context, msg Message) {
 		})
 		if data, err := proto.Marshal(event); err == nil {
 			_ = w.bus.Publish(subjects.DbBackupPruneState(w.serverID), data)
+		}
+		_ = msg.Ack()
+		return
+
+	case strings.HasSuffix(subject, ".volume.backup"):
+		var work agentv1.VolumeBackupWork
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
+			w.log.Error("worker: unmarshaling volume backup work", "error", err)
+			_ = msg.Term()
+			return
+		}
+		if w.backup == nil {
+			w.log.Error("worker: received volume backup work but no backup runner")
+			_ = msg.Term()
+			return
+		}
+		// Held in-flight across the archive and upload, exactly as a database
+		// backup is. Idempotent by record id: redelivery re-uploads to the same
+		// key, and S3 PUT is last-writer-wins.
+		event := w.runWithHeartbeat(ctx, msg, func(ctx context.Context) proto.Message {
+			return w.backup.ExecuteVolumeBackup(ctx, &work)
+		})
+		if data, err := proto.Marshal(event); err == nil {
+			_ = w.bus.Publish(subjects.VolumeBackupState(w.serverID), data)
 		}
 		_ = msg.Ack()
 		return
@@ -759,6 +911,11 @@ func (w *Worker) reconcile(ctx context.Context, triggerDeploymentID, triggerAppI
 		w.log.Error("worker: compose reconcile failed", "error", err)
 	}
 
+	// V1: static routes (status-pages.md §4). One fragment each, rewritten
+	// every cycle — the writer skips an identical write, so this costs a
+	// stat and a compare rather than a Traefik reload.
+	w.reconcileStaticRoutes(ctx)
+
 	// Publish the terminal outcome for the triggering app work item, if any. A
 	// failed rollout or teardown surfaces as the triggered app's 'error'
 	// AppStatus; anything else is success.
@@ -778,6 +935,27 @@ func (w *Worker) reconcile(ctx context.Context, triggerDeploymentID, triggerAppI
 	}
 
 	return nil
+}
+
+// reconcileStaticRoutes converges the node's non-container proxy fragments.
+// A failure on one route is logged and the rest still converge: a status page
+// that will not route is not a reason to leave an application's route stale.
+func (w *Worker) reconcileStaticRoutes(ctx context.Context) {
+	if w.staticRouter == nil {
+		return
+	}
+	w.mu.Lock()
+	desired := make([]*agentv1.StaticRouteSpec, 0, len(w.staticRoutes))
+	for _, sr := range w.staticRoutes {
+		desired = append(desired, sr)
+	}
+	w.mu.Unlock()
+
+	for _, sr := range desired {
+		if err := w.staticRouter.SetStaticRoute(ctx, sr.GetRouteId(), sr.GetRoute(), sr.GetUpstreamUrl(), sr.GetAddPrefix()); err != nil {
+			w.log.Error("worker: writing static route", "route_id", sr.GetRouteId(), "error", err)
+		}
+	}
 }
 
 // reconcileDatabases converges the local database set toward w.dbState and

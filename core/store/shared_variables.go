@@ -200,3 +200,22 @@ func sharedVariableFromRow(r db.SharedVariable) domain.SharedVariable {
 		UpdatedAt:     r.UpdatedAt.Time,
 	}
 }
+
+// ListSharedVariableKeysByProject returns keys and scope only, for the reason
+// ListEnvVarKeys exists (project-export.md §4).
+func (s *Store) ListSharedVariableKeysByProject(ctx context.Context, projectID string) ([]domain.SharedVariableKey, error) {
+	rows, err := s.q.ListSharedVariableKeysByProject(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing shared variable keys: %w", err)
+	}
+	out := make([]domain.SharedVariableKey, 0, len(rows))
+	for _, r := range rows {
+		v := domain.SharedVariableKey{Key: r.Key}
+		if r.EnvironmentID.Valid {
+			id := r.EnvironmentID.String
+			v.EnvironmentID = &id
+		}
+		out = append(out, v)
+	}
+	return out, nil
+}

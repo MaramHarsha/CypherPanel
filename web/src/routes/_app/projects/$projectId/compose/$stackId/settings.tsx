@@ -29,6 +29,7 @@ import { Eyebrow } from "@/components/eyebrow";
 import { PageState } from "@/components/page-state";
 import { ActionButton, useMutationActionState } from "@/components/ui/action-button";
 import { Button } from "@/components/ui/button";
+import { DomainField } from "@/components/domain-field";
 import { Field } from "@/components/ui/field";
 import { Input, Textarea } from "@/components/ui/input";
 import { toastFailed, toastSuccess } from "@/lib/toast";
@@ -56,6 +57,7 @@ function ComposeSettingsTab() {
                 service={s.route.service}
                 port={s.route.port}
                 https={s.route.https}
+                serverId={s.server_id}
               />
             )}
           </PageState>
@@ -73,7 +75,8 @@ function StackForm({
   domain: initialDomain,
   service: initialService,
   port: initialPort,
-  https,
+  https: initialHTTPS,
+  serverId,
 }: {
   stackId: string;
   name: string;
@@ -82,6 +85,7 @@ function StackForm({
   service: string;
   port: number;
   https: boolean;
+  serverId: string;
 }) {
   const qc = useQueryClient();
   const [name, setName] = useState(initialName);
@@ -89,6 +93,11 @@ function StackForm({
   const [domain, setDomain] = useState(initialDomain);
   const [service, setService] = useState(initialService);
   const [port, setPort] = useState(initialPort ? String(initialPort) : "");
+  // HTTPS was threaded through this form as a prop and rendered nowhere, so a
+  // stack on a domain that can never get a certificate was redirected to one
+  // permanently, with no way to say "serve this over plain HTTP". The identical
+  // field on an Application has been a checkbox all along.
+  const [https, setHTTPS] = useState(initialHTTPS);
   const [error, setError] = useState<string | null>(null);
 
   // A rollback on another tab replaces the stored file underneath this form.
@@ -174,8 +183,28 @@ function StackForm({
         qualifier="· optional"
         hint="Empty publishes nothing through the Proxy. The file's own Traefik labels cannot work — the managed Proxy runs the file provider only — so the stack names which service answers and the panel emits the route itself."
       >
-        {(id) => <Input id={id} value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="grafana.example.com" />}
+        {() => (
+          // The same control the application forms use: it offers the zones the
+          // panel's DNS provider manages and warns when a hostname is already
+          // served on this server. A stack claims a hostname exactly as an
+          // application does, and collided exactly as silently.
+          <DomainField value={domain} onChange={setDomain} serverId={serverId} selfDomain={initialDomain} />
+        )}
       </Field>
+      <label className="flex items-start gap-2.5 text-[12.5px] leading-[1.5] text-text-mid">
+        <input
+          type="checkbox"
+          checked={https}
+          onChange={(e) => setHTTPS(e.target.checked)}
+          className="mt-[3px] size-3.5 shrink-0 accent-[var(--accent)]"
+        />
+        <span>
+          <span className="font-semibold text-text">Serve this domain over HTTPS</span> — a certificate is requested
+          automatically once an issuer is configured. Turn it off for a name that can never get one, such as a
+          split-horizon or LAN address: with it on, the proxy redirects every visitor to a certificate that will
+          never exist.
+        </span>
+      </label>
 
       {domain.trim() !== "" && (
         <div className="grid grid-cols-2 gap-3">
