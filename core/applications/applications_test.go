@@ -203,6 +203,12 @@ func (f *fakeStore) SetApplicationWebhookSecret(_ context.Context, id string, ct
 	return domain.Application{ID: id, WebhookSecretCT: ct, WebhookSecretNonce: nonce}, nil
 }
 
+// ListServerWorkloads backs "what runs on this host". Empty here; the tests
+// that care seed it.
+func (f *fakeStore) ListServerWorkloads(_ context.Context, _ string) ([]domain.ServerWorkload, error) {
+	return nil, nil
+}
+
 func (f *fakeStore) ListSharedVariableKeysInScope(_ context.Context, _, _ string) ([]string, error) {
 	return f.sharedKeys, nil
 }

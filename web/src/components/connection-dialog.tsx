@@ -211,11 +211,18 @@ const CHANNELS: { value: CreateNotifierRequestChannel; label: string }[] = [
   { value: "email", label: "Email" },
 ];
 
+// Every subscribable event. It stopped at four while the plane fires eight, so
+// a notifier could not be told about a crashed application or a firing alert —
+// the two an operator most wants woken for.
 const EVENTS: { key: CreateNotifierRequestEventsItem; label: string }[] = [
   { key: "deploy.succeeded", label: "deploy.succeeded" },
   { key: "deploy.failed", label: "deploy.failed" },
   { key: "backup.succeeded", label: "backup.succeeded" },
   { key: "backup.failed", label: "backup.failed" },
+  { key: "app.crashed", label: "app.crashed" },
+  { key: "app.recovered", label: "app.recovered" },
+  { key: "alert.firing", label: "alert.firing" },
+  { key: "alert.resolved", label: "alert.resolved" },
 ];
 
 const TEST_NOTE =

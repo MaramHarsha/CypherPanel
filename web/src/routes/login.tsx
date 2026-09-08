@@ -66,7 +66,7 @@ function EntryPage() {
               <Skeleton className="h-10 rounded-full" />
             </div>
           ) : setup.data?.needs_setup ? (
-            <SetupForm />
+            <SetupForm requiresToken={setup.data?.requires_token === true} />
           ) : (
             <LoginForm />
           )}
@@ -84,11 +84,12 @@ function FormError({ message }: { message: string }) {
   );
 }
 
-function SetupForm() {
+function SetupForm({ requiresToken }: { requiresToken: boolean }) {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [setupToken, setSetupToken] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const setup = useSetup({
@@ -121,7 +122,7 @@ function SetupForm() {
       setError("Password must be at least 8 characters");
       return;
     }
-    setup.mutate({ data: { email, password } });
+    setup.mutate({ data: { email, password, ...(requiresToken ? { setup_token: setupToken.trim() } : {}) } });
   };
 
   return (
@@ -172,6 +173,26 @@ function SetupForm() {
           />
         )}
       </Field>
+      {requiresToken && (
+        // The claim window: the installer printed this code on the host's
+        // console, so the person who ran the install is the person who can
+        // claim the panel — not whoever's scanner reached the port first.
+        <Field
+          label="Setup code"
+          hint="Printed at the end of the install, and kept in /etc/cypherpanel/cypherd.env on the panel's host."
+        >
+          {(id) => (
+            <Input
+              id={id}
+              autoComplete="off"
+              required
+              value={setupToken}
+              onChange={(e) => setSetupToken(e.target.value)}
+              className="mono"
+            />
+          )}
+        </Field>
+      )}
       {error && <FormError message={error} />}
       <ActionButton
         type="submit"

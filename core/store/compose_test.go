@@ -267,3 +267,30 @@ func TestStoreServerWithAStackCannotBeDeleted(t *testing.T) {
 		t.Fatalf("DeleteComposeStack: %v", err)
 	}
 }
+
+// The server page's "what runs here" list joined compose stacks on a column
+// that does not exist (`server_id`; the real one is `runtime_server_id`), so
+// every GET /servers/{id}/workloads was a 500 and the page — and the remove
+// dialog that reads it — claimed nothing ran on the host. sqlc did not catch a
+// column inside a UNION branch; a real query against the real schema does.
+func TestStoreServerWorkloadsSeeAllThreeKinds(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	srv, _, env, app := seedApp(t, s)
+	stack := seedStack(t, s, env.ID, srv.ID, "stack-"+ids.Secret()[:8])
+
+	got, err := s.ListServerWorkloads(ctx, srv.ID)
+	if err != nil {
+		t.Fatalf("ListServerWorkloads: %v", err)
+	}
+	kinds := map[string]string{}
+	for _, w := range got {
+		kinds[w.Kind] = w.ID
+	}
+	if kinds["application"] != app.ID {
+		t.Errorf("the application is missing: %+v", got)
+	}
+	if kinds["compose_stack"] != stack.ID {
+		t.Errorf("the compose stack is missing: %+v", got)
+	}
+}

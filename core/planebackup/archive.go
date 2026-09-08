@@ -58,9 +58,34 @@ type Copier interface {
 	// foreign key so a restore can load them in order.
 	Tables(ctx context.Context) ([]string, error)
 	CopyTo(ctx context.Context, w io.Writer, table string) (int64, error)
-	CopyFrom(ctx context.Context, r io.Reader, table string) error
 	SchemaVersion(ctx context.Context) (int64, error)
 	IsEmpty(ctx context.Context) (bool, error)
+	// BeginLoad opens the restore's single transaction with every foreign key
+	// deferred inside it. Three pairs of tables here reference each other, so
+	// no load order satisfies every constraint row by row — and one
+	// transaction is also what makes "all or nothing" true rather than a
+	// promise: a failed restore leaves an empty database, not half a panel.
+	BeginLoad(ctx context.Context) (LoadTx, error)
+	// ResetSchema empties a target the restore found empty and then failed
+	// to load, so the documented retry is not refused as "a live panel".
+	ResetSchema(ctx context.Context) error
+}
+
+// LoadTx is one restore transaction.
+type LoadTx interface {
+	// ClearAll empties the target. The migrations that just rebuilt the schema
+	// seeded rows into it — the default team, both release channels — and the
+	// snapshot carries its own copies of those.
+	ClearAll(ctx context.Context) error
+	CopyFrom(ctx context.Context, r io.Reader, table string) error
+	// RecordRestore writes the restore into audit_events inside the same
+	// transaction as the rows it restored.
+	RecordRestore(ctx context.Context, snapshotCreatedAt, source string) error
+	// Commit checks every deferred constraint, restores their deferrability
+	// and commits. A violation fails here, naming the constraint.
+	Commit(ctx context.Context) error
+	// Rollback discards everything; safe after Commit.
+	Rollback(ctx context.Context)
 }
 
 // Encryptor wraps a writer in the archive's encryption. Asymmetric on purpose
@@ -182,9 +207,25 @@ func (g *gzipBuffer) Write(p []byte) (int, error) {
 func (g *gzipBuffer) Bytes() []byte { return g.b }
 
 // SortTables is the load order: a topological sort of the foreign key graph, so
-// a new table or a new foreign key needs no edit anywhere. A CYCLE breaks the
-// sort, and it is detected at EXPORT time — in CI, rather than during a
-// recovery.
+// a new table or a new foreign key needs no edit anywhere.
+//
+// A CYCLE IS NOT AN ERROR, and the first version of this said it was. Three
+// pairs in this schema point at each other by design — an Application names its
+// desired Revision while a Revision names its Application, and Databases and
+// Projects do the same with their revisions and their default Environment — so
+// "the foreign key graph has a cycle" refused every snapshot the panel ever
+// tried to take. The check was written against a graph nobody had run it on.
+//
+// There is no load order that satisfies a cycle, so the restore does not ask
+// for one: it defers every foreign key inside its single transaction and checks
+// them all before it commits (store.BackupConn.BeginLoad). What this sort still
+// buys is that the ACYCLIC majority loads parents-first, which keeps the
+// deferred set small and makes a genuine violation attributable to the table
+// that carries it rather than to the commit.
+//
+// A back edge is therefore dropped from the ordering, deterministically: the
+// tables are visited in name order, so the same schema always produces the same
+// sequence and two exports of an unchanged panel stay byte-identical.
 func SortTables(tables []string, deps map[string][]string) ([]string, error) {
 	state := map[string]int{} // 0 unvisited, 1 visiting, 2 done
 	var out []string
@@ -194,7 +235,11 @@ func SortTables(tables []string, deps map[string][]string) ([]string, error) {
 		case 2:
 			return nil
 		case 1:
-			return fmt.Errorf("planebackup: the foreign key graph has a cycle at %q — a restore could not order the load", t)
+			// A back edge: this table is already on the stack, so following it
+			// again would not terminate. Dropping it is what makes a cyclic
+			// graph orderable at all, and the restore's deferred constraints
+			// are what make the result loadable.
+			return nil
 		}
 		state[t] = 1
 		parents := append([]string(nil), deps[t]...)

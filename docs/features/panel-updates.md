@@ -676,3 +676,76 @@ because an air-gapped panel deserves the signature check most of all.
   selector would be a second, weaker version of the fleet's channel model for
   a population of one host. An operator who wants a pre-release types its
   version.
+
+## Implementation note — rollback was unreachable *(fixed 2026-09-07)*
+
+§7 of this spec draws `[↺ Roll back]` on each version-history row, and its
+confirmation copy is *"Nothing you created is lost — in either direction."*
+The mechanism was built: `core/upgrade/helper.go` refuses any downgrade unless
+the request carries `rollback` AND `ranBefore(version)` proves this host has run
+it, then downloads, verifies, migrates and swaps while keeping every row.
+
+`handleStartUpgrade` passed a literal `false`. It was the only caller of
+`Start`. So the entire branch was unreachable from every client, and the only
+backward control on the screen was the snapshot restore — whose own blast radius
+reads *"everything recorded since — deploys, users, tokens, audit rows — is
+gone"*. An owner who upgraded into a bad release chose between losing an hour of
+work and editing systemd by hand.
+
+`rollback` is now a field on `StartUpgradeRequest`, the handler passes it, and
+each succeeded upgrade that came from somewhere offers the button. The helper is
+still the gate: a version this host never ran is refused there, so the screen
+cannot invent a target.
+
+**Both parity scripts were blind to this**, which is worth recording because it
+shows their edges. `api-ui-parity.py` had no request field to check — the
+contract did not declare one. `schema-contract-parity.py` lists `PanelUpgrade`
+in `INTERNAL_TABLES`, so its `rollback` column was never compared. The finding
+came from reading the spec against the code, which is the thing neither script
+can do.
+
+**Not done here:** §7's disabled-with-a-reason affordance. `rollback_floor` is
+parsed in `core/upgrade/release.go` and enforced nowhere, so the screen would
+have nothing to gate on. Offering a button that is never disabled is honest;
+offering one disabled by a rule that does not exist is not.
+
+## Implementation note — the pipeline and the panel disagreed on every file *(2026-09-08)*
+
+The guided upgrade was implemented against a release layout that the release
+workflow did not produce, and nothing could tell, because there had never been
+a release. The readiness audit before the first tag found four disagreements,
+any one of which refuses every upgrade:
+
+- The panel was never stamped with `core/upgrade.ReleasePublicKey`, so
+  `VerifyRelease` answered "this build carries no release public key" for
+  every release. `PLANE_STAMPS` carries it now, in CI, in `release-sign.sh` and
+  in the rehearsal — the same list the agent bakes in, and the panel accepts
+  either key of a rotation pair.
+- The panel requires `release.json` inside the signed manifest; nothing wrote
+  one. `core/cmd/release-manifest` does, deterministically from the tag and
+  the commit date, with the compatibility floors as constants in code so the
+  signer's rebuild is byte-identical.
+- The helper downloaded `cypherd_<version>_linux_<arch>`; the release uploads
+  `cypherd-linux-<arch>`, which is also what `install.sh` fetches. One name.
+- The helper probed `http://127.0.0.1:8080/readyz` regardless of the panel's
+  port, so an install on any other port would have rolled every upgrade back.
+  The probe follows `CYPHERD_HTTP_ADDR`.
+
+`scripts/release-rehearsal.sh` now builds the release exactly as CI does, and
+`core/upgrade`'s tests hold the fixture to the real asset name.
+- **The fallback snapshot could not run on the install it was designed for.**
+  `ResolvePgDump` tried `docker exec` only when the database host was NOT
+  loopback — and install.sh's URL is always `127.0.0.1`, with Postgres in a
+  container and no client on the host. Every guided upgrade was refused at
+  pre-flight with "no pg_dump found". The resolver now accepts a command line
+  in `CYPHERD_SNAPSHOT_PGDUMP` / `CYPHERD_SNAPSHOT_PGRESTORE` (install.sh
+  writes `docker exec -i cypherpanel-postgres pg_dump`), falls back to that
+  container by name, and the dump streams through stdout and the restore
+  through stdin, because the tool may be running where this host's snapshot
+  directory does not exist.
+- **A rollback was always refused.** `ranBefore` bounded a downgrade to
+  versions this host had run, by scanning the slots directory for a versioned
+  file — which nothing ever wrote. The helper now records `ran-<version>` for
+  the version it starts from and the one it succeeds to.
+- **The probe port and the asset name** are recorded above.
+

@@ -15,7 +15,7 @@ import { useListDeployKeys } from "@/api/gen/deploy-keys/deploy-keys";
 import { useGetGitHubApp, useListGitHubRepositories } from "@/api/gen/panel/panel";
 import { useListRegistries } from "@/api/gen/registries/registries";
 import { useListDeployments } from "@/api/gen/deployments/deployments";
-import type { Application } from "@/api/gen/model";
+import type { Application, AppPort } from "@/api/gen/model";
 import { useListPreviews } from "@/api/gen/previews/previews";
 import { useListScheduledTasks } from "@/api/gen/scheduled-tasks/scheduled-tasks";
 import { AppAccessCard } from "@/components/app-access-card";
@@ -30,6 +30,7 @@ import { Field } from "@/components/ui/field";
 import { DomainField } from "@/components/domain-field";
 import { RouteStatus } from "@/components/route-status";
 import { Input, Select } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 import { toastFailed, toastSuccess } from "@/lib/toast";
 
 export const Route = createFileRoute("/_app/projects/$projectId/applications/$appId/settings")({
@@ -112,6 +113,18 @@ function SettingsForm({
   const [memLimit, setMemLimit] = useState(
     initial.runtime.memory_limit_mb == null ? "" : String(initial.runtime.memory_limit_mb),
   );
+  // The gate's KIND, which was settable nowhere. 151 of the 159 bundled
+  // templates set it, so an operator who installed one and then opened this
+  // screen could edit four of the five fields and not the one that decides
+  // what the other four mean.
+  const [healthKind, setHealthKind] = useState(initial.health.kind ?? "http");
+  // Raw host-port publishes. A shipped V1 capability that was read-only on the
+  // Overview tab and editable on no screen — so a game server, a database
+  // proxy or anything that speaks something other than HTTP could be created
+  // with ports through the API and never changed from the panel. Edited as
+  // text because the list is short and typing `25565:25565/tcp` is faster than
+  // three controls per row.
+  const [portsText, setPortsText] = useState(() => portsToText(initial.ports ?? []));
   const [healthPath, setHealthPath] = useState(initial.health.path);
   const [healthRetries, setHealthRetries] = useState(String(initial.health.retries));
   const [previewEnabled, setPreviewEnabled] = useState(initial.preview_enabled ?? false);
@@ -127,6 +140,8 @@ function SettingsForm({
     port !== String(initial.runtime.port) ||
     cpuLimit !== (initial.runtime.cpu_limit == null ? "" : String(initial.runtime.cpu_limit)) ||
     memLimit !== (initial.runtime.memory_limit_mb == null ? "" : String(initial.runtime.memory_limit_mb)) ||
+    portsText.trim() !== portsToText(initial.ports ?? []) ||
+    healthKind !== (initial.health.kind ?? "http") ||
     healthPath !== initial.health.path ||
     healthRetries !== String(initial.health.retries) ||
     healthInterval !== String(initial.health.interval_seconds) ||
@@ -232,7 +247,7 @@ function SettingsForm({
       data: {
         name,
         source: isImageSource
-          ? { ...initial.source, image }
+          ? { ...initial.source, image, registry_id: registryID || null }
           : // Empty means "no key": a public repository needs none, and the API
             // reads null as exactly that.
             {
@@ -260,11 +275,13 @@ function SettingsForm({
         },
         health: {
           ...initial.health,
+          kind: healthKind as typeof initial.health.kind,
           path: healthPath,
           retries: Number(healthRetries) || initial.health.retries,
           interval_seconds: Number(healthInterval) || initial.health.interval_seconds,
           timeout_seconds: Number(healthTimeout) || initial.health.timeout_seconds,
         },
+        ports: parsePorts(portsText),
         route: { ...initial.route, domain: domain || undefined, path_prefix: prefix, https },
         preview_enabled: previewEnabled,
         preview_base_domain: previewDomain.trim(),
@@ -272,6 +289,34 @@ function SettingsForm({
       },
     });
   };
+
+  // One definition, rendered in both branches. The hint differs because the
+  // credential means different things: for an image it authenticates the pull
+  // itself, for a git source only the private base image a Dockerfile FROMs.
+  const pullRegistryField = (
+    <Field
+      label="Pull registry"
+      qualifier="· optional"
+      hint={
+        isImageSource
+          ? "The credential this image is pulled with, for a private registry. Only registries marked as allowing pulls are listed."
+          : "For a private base image in your Dockerfile. Only registries marked as allowing pulls are listed."
+      }
+    >
+      {(id, describedBy) => (
+        <Select id={id} aria-describedby={describedBy} value={registryID} onChange={(e) => setRegistryID(e.target.value)}>
+          <option value="">None</option>
+          {registries
+            .filter((r) => r.can_pull)
+            .map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name} · {r.url}
+              </option>
+            ))}
+        </Select>
+      )}
+    </Field>
+  );
 
   return (
     <div className="max-w-xl space-y-8">
@@ -283,6 +328,12 @@ function SettingsForm({
             <Field label="Image" hint="A moving tag is re-pulled on every deploy; a digest is pinned.">
               {(id) => <Input id={id} required value={image} onChange={(e) => setImage(e.target.value)} className="mono" />}
             </Field>
+            {/* The credential for a PRIVATE image, and this is the kind that
+                actually uses it: the scheduler attaches it only on the pulling
+                path, which is exactly `kind: image`. It rendered for git
+                sources alone, so deploying a private image — a shipped V1
+                capability — had no way to authenticate from any screen. */}
+            {pullRegistryField}
           </>
         ) : (
           <>
@@ -304,22 +355,7 @@ function SettingsForm({
                 {(id) => <Input id={id} value={branch} onChange={(e) => setBranch(e.target.value)} className="mono" />}
               </Field>
             </div>
-            <Field
-              label="Pull registry"
-              qualifier="· optional"
-              hint="For a private base image in your Dockerfile. Only registries marked as allowing pulls are listed."
-            >
-              {(id, describedBy) => (
-                <Select id={id} aria-describedby={describedBy} value={registryID} onChange={(e) => setRegistryID(e.target.value)}>
-                  <option value="">None</option>
-                  {registries.filter((r) => r.can_pull).map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.name} · {r.url}
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </Field>
+            {pullRegistryField}
             {/* github-app.md §5: an application records `github_installation_id`
                 beside its `repo`, and that is what distinguishes "this GitHub
                 repository, through the App" from "this URL, through a deploy
@@ -511,7 +547,27 @@ function SettingsForm({
         </div>
 
         <Eyebrow className="pt-4">Health check</Eyebrow>
-        <div className="grid gap-3 sm:grid-cols-[1fr_130px]">
+        <Field
+          label="Gate"
+          hint="What has to succeed before a new container takes the route. HTTP probes the path below; TCP only opens a connection to the port; None accepts the container as soon as it runs."
+        >
+          {(id, describedBy) => (
+            <Select
+              id={id}
+              aria-describedby={describedBy}
+              value={healthKind}
+              onChange={(e) => setHealthKind(e.target.value as typeof healthKind)}
+            >
+              <option value="http">HTTP — a path must answer 2xx</option>
+              <option value="tcp">TCP — the port must accept a connection</option>
+              <option value="none">None — liveness only, for a service that serves no readiness signal</option>
+            </Select>
+          )}
+        </Field>
+        {/* Only the HTTP gate reads a path, and only HTTP and TCP have a
+            timeout worth setting. Showing all five regardless is what made the
+            fifth look like it had no effect. */}
+        <div className={cn("grid gap-3 sm:grid-cols-[1fr_130px]", healthKind !== "http" && "hidden")}>
           <Field
             label="Path"
             hint="Probed on the port above before a new container takes the route. A rollout that never passes this is discarded, and the old container keeps serving."
@@ -615,6 +671,29 @@ function SettingsForm({
           HTTP→HTTPS is automatic once issued. Wildcards, BYO certificates, and custom redirects are deliberately
           later (routing spec §10).
         </p>
+
+        {/* The alternative to a domain, and it belongs here for that reason:
+            the operator deciding how this application is reached is looking at
+            this section. It is what a non-HTTP service uses — a game server, a
+            TCP proxy — and it had no control on any tab. */}
+        <Field
+          label="Published ports"
+          qualifier="· optional"
+          hint="One per line, host:container/protocol — 25565:25565/tcp. For services the HTTP proxy cannot carry. Each host port is taken on the server itself, so two applications cannot claim the same one."
+        >
+          {(id, describedBy) => (
+            <textarea
+              id={id}
+              aria-describedby={describedBy}
+              value={portsText}
+              onChange={(e) => setPortsText(e.target.value)}
+              rows={Math.max(2, portsText.split("\n").length)}
+              spellCheck={false}
+              placeholder="25565:25565/tcp"
+              className="mono w-full rounded-md border border-border-input bg-surface px-3 py-2 text-[13px] text-text placeholder:text-text-faint focus-visible:border-border-strong focus-visible:ring-1 focus-visible:ring-border-strong focus-visible:outline-none"
+            />
+          )}
+        </Field>
 
         {/* Preview environments were reachable in the API but nowhere in the
             UI, while the Previews tab told the operator to enable them "in
@@ -734,4 +813,32 @@ function counted(n: number | undefined, noun: string, fallback: string): string[
   if (n === undefined) return fallback ? [fallback] : [];
   if (n === 0) return [];
   return [plural(n, noun)];
+}
+
+/** `[{host_port: 25565, container_port: 25565, protocol: "tcp"}]` -> text. */
+function portsToText(ports: AppPort[]): string {
+  return ports.map((p) => `${p.host_port}:${p.container_port}/${p.protocol}`).join("\n");
+}
+
+/**
+ * Text -> ports, skipping anything that is not a complete mapping.
+ *
+ * Silently skipping a half-typed line is deliberate: the field is edited a
+ * character at a time, and the API validates the result anyway. A parse that
+ * threw would make the form unusable while it was being filled in.
+ */
+function parsePorts(text: string): AppPort[] {
+  const out: AppPort[] = [];
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (line === "") continue;
+    const m = line.match(/^(\d{1,5}):(\d{1,5})(?:\/(tcp|udp))?$/i);
+    if (!m?.[1] || !m[2]) continue;
+    out.push({
+      host_port: Number(m[1]),
+      container_port: Number(m[2]),
+      protocol: (m[3] ?? "tcp").toLowerCase() as AppPort["protocol"],
+    });
+  }
+  return out;
 }

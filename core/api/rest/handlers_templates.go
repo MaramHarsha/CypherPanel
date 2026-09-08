@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/MaramHarsha/cypherpanel/core/applications"
 	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/templates"
@@ -93,6 +94,7 @@ func (a *API) handleInstallTemplate(w http.ResponseWriter, r *http.Request) {
 	})
 	var validation *templates.ValidationError
 	var partial *templates.PartialInstallError
+	var inUse *applications.DomainInUseError
 	switch {
 	case errors.Is(err, templates.ErrNotFound):
 		writeError(w, http.StatusNotFound, "template not found")
@@ -106,6 +108,12 @@ func (a *API) handleInstallTemplate(w http.ResponseWriter, r *http.Request) {
 			"environment_id", req.EnvironmentID, "remaining", partial.Remaining, "error", partial.Cause)
 		writeError(w, http.StatusInternalServerError,
 			"could not install template, and rolling it back left resources behind: "+strings.Join(partial.Remaining, ", "))
+	case errors.As(err, &inUse):
+		// The same 409 the application path answers. A template install
+		// creates applications through the same checks, so a hostname another
+		// application already serves is refused the same way — named, with the
+		// application that holds it — rather than as a blank 500.
+		writeError(w, http.StatusConflict, a.domainConflictMessage(r, inUse))
 	case writeIfFrozen(w, err):
 		// A template install deploys, so it passes the same gate a deploy
 		// does (deploy-protection.md §1). Placed after the partial branch: a

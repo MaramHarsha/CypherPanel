@@ -37,8 +37,27 @@ type ShellRunner struct{}
 func (ShellRunner) Run(ctx context.Context, script string, env []string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "sh", "-s")
 	cmd.Stdin = strings.NewReader(script)
-	cmd.Env = append(os.Environ(), env...)
+	// A MINIMAL environment. The helper runs from a unit whose EnvironmentFile
+	// is cypherd.env — the master key, the database password, the setup code —
+	// and the first version handed all of that to the installer and to every
+	// process it spawns (systemctl, curl, the agent it starts). The installer
+	// needs a PATH and the join variables, and nothing else.
+	cmd.Env = append(minimalEnv(), env...)
 	return cmd.CombinedOutput()
+}
+
+// minimalEnv carries over only what a shell script needs to find its tools.
+func minimalEnv() []string {
+	var out []string
+	for _, key := range []string{"PATH", "HOME", "LANG", "LC_ALL", "TMPDIR"} {
+		if v, ok := os.LookupEnv(key); ok {
+			out = append(out, key+"="+v)
+		}
+	}
+	if len(out) == 0 || !strings.HasPrefix(out[0], "PATH=") {
+		out = append([]string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}, out...)
+	}
+	return out
 }
 
 // Options wires the helper.
@@ -137,11 +156,23 @@ func envFor(r Request) []string {
 	return env
 }
 
-// lastLine pulls the installer's final message out for the dialog. Its `fail`
-// helper prints the reason last, so the last non-empty line is the sentence an
-// operator can act on; the exit status alone is not.
+// lastLine pulls the installer's reason out for the dialog; the exit status
+// alone is not one.
+//
+// The installer's `fail` prints "error: <reason>" and exits, and the reason is
+// often SEVERAL lines — "could not download the agent binary from …" followed
+// by the remedies. The first version of this took the last non-empty line, and
+// on a fresh host with no release published the dialog therefore read
+// "Building from a source checkout: cd agent && go build …" — the tail of the
+// remedy, with the failure itself scrolled off. The line that starts with
+// "error:" is the sentence; everything after it is advice.
 func lastLine(out string, err error) string {
 	lines := strings.Split(strings.TrimSpace(stripANSI(out)), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if line := strings.TrimSpace(lines[i]); strings.HasPrefix(line, "error:") {
+			return line
+		}
+	}
 	for i := len(lines) - 1; i >= 0; i-- {
 		if line := strings.TrimSpace(lines[i]); line != "" {
 			return line

@@ -75,6 +75,14 @@ func (a *API) localState() localServerDTO {
 		// as a version gap rather than as a bug.
 		out.State = localjoin.StateHelperMissing
 		out.Reason = "this panel was installed before the local-agent helper existed — re-run install.sh on this host to add it"
+	case a.deps.LocalPortInUse != nil && (a.deps.LocalPortInUse("80") || a.deps.LocalPortInUse("443")):
+		// The agent's Proxy needs 80 and 443 on this host, and something else
+		// already answers there — usually a reverse proxy in front of the
+		// panel. Joining anyway produces a server whose Proxy cannot bind and
+		// which every deploy on it then fails, reported as degraded but never
+		// as this sentence.
+		out.State = localjoin.StateUnsupported
+		out.Reason = "ports 80 and 443 on this host are already in use, and the agent's Proxy needs both — add a different server, or free them first"
 	default:
 		out.State = localjoin.StateAvailable
 	}

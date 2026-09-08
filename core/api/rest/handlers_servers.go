@@ -42,14 +42,18 @@ type serverDTO struct {
 	// (agent-updates.md §2). It is changed through its own owner-and-session-only
 	// route, never through PATCH: an API token that can move a channel is an API
 	// token that owns the fleet.
-	AgentChannel      string  `json:"agent_channel"`
-	AgentUpdatePhase  string  `json:"agent_update_phase"`
-	AgentUpdateTarget string  `json:"agent_update_target"`
-	AgentUpdateDetail string  `json:"agent_update_detail"`
-	Enrolled          bool    `json:"enrolled"`
-	EnrolledAt        *string `json:"enrolled_at"`
-	LastSeenAt        *string `json:"last_seen_at"`
-	CreatedAt         string  `json:"created_at"`
+	AgentChannel      string `json:"agent_channel"`
+	AgentUpdatePhase  string `json:"agent_update_phase"`
+	AgentUpdateTarget string `json:"agent_update_target"`
+	AgentUpdateDetail string `json:"agent_update_detail"`
+	// SubsystemHealth is WHICH parts of the agent are unhealthy as of the last
+	// heartbeat. Empty beside `status: degraded` means the agent is too old to
+	// say — which the panel states, rather than showing amber with no reason.
+	SubsystemHealth []subsystemHealthDTO `json:"subsystem_health"`
+	Enrolled        bool                 `json:"enrolled"`
+	EnrolledAt      *string              `json:"enrolled_at"`
+	LastSeenAt      *string              `json:"last_seen_at"`
+	CreatedAt       string               `json:"created_at"`
 }
 
 func toServerDTO(s domain.Server) serverDTO {
@@ -69,11 +73,27 @@ func toServerDTO(s domain.Server) serverDTO {
 		AgentUpdatePhase:  s.AgentUpdatePhase,
 		AgentUpdateTarget: s.AgentUpdateTarget,
 		AgentUpdateDetail: s.AgentUpdateDetail,
+		SubsystemHealth:   toSubsystemHealthDTOs(s.SubsystemHealth),
 		Enrolled:          s.Enrolled(),
 		EnrolledAt:        formatTime(s.EnrolledAt),
 		LastSeenAt:        formatTime(s.LastSeenAt),
 		CreatedAt:         s.CreatedAt.UTC().Format(time.RFC3339),
 	}
+}
+
+type subsystemHealthDTO struct {
+	Subsystem string `json:"subsystem"`
+	Message   string `json:"message"`
+}
+
+// toSubsystemHealthDTOs always returns a slice, never nil: a client that has to
+// null-check before iterating is a client that will forget once.
+func toSubsystemHealthDTOs(in []domain.SubsystemHealth) []subsystemHealthDTO {
+	out := make([]subsystemHealthDTO, 0, len(in))
+	for _, h := range in {
+		out = append(out, subsystemHealthDTO{Subsystem: h.Subsystem, Message: h.Message})
+	}
+	return out
 }
 
 // channelOrDefault reads a blank channel as stable, which is what a server

@@ -15,6 +15,7 @@ package upgrade
 // signature-verified release.
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -57,9 +58,23 @@ type HelperOptions struct {
 // Runner executes one host command.
 type Runner interface {
 	Run(ctx context.Context, name string, args ...string) ([]byte, error)
+	// RunIO runs with stdin and stdout wired to the caller's streams and
+	// returns stderr — for pg_dump and pg_restore, whose data must not go
+	// through a file when the tool runs inside the Postgres container.
+	RunIO(ctx context.Context, stdin io.Reader, stdout io.Writer, name string, args ...string) ([]byte, error)
 }
 
 type execRunner struct{}
+
+func (execRunner) RunIO(ctx context.Context, stdin io.Reader, stdout io.Writer, name string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // the helper's own tool
+	cmd.Stdin = stdin
+	cmd.Stdout = stdout
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	return stderr.Bytes(), err
+}
 
 func (execRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	return exec.CommandContext(ctx, name, args...).CombinedOutput()
@@ -121,10 +136,28 @@ func (h *Helper) Run(ctx context.Context) error {
 		return h.fail(req, "This upgrade request expired before it could run. Start it again from the panel.")
 	}
 
+	// This host is running FromVersion right now, which is exactly the record
+	// ranBefore needs and the one thing the first version never wrote — so a
+	// rollback to the version an operator had yesterday was always refused.
+	h.remember(h.o.FromVersion)
+
 	if req.RestoreSnapshot != "" {
 		return h.restoreOnly(ctx, req)
 	}
 	return h.upgrade(ctx, req)
+}
+
+// remember records that this host has run a version. A marker file in the
+// slots directory, beside the binaries: the directory survives the upgrade and
+// the panel's restart, and it is root's.
+func (h *Helper) remember(version string) {
+	if version == "" || !ValidTag(version) {
+		return
+	}
+	if err := os.MkdirAll(h.o.Dir.Slots(), 0o770); err != nil {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(h.o.Dir.Slots(), "ran-"+version), []byte(h.o.Now().UTC().Format(time.RFC3339)+"\n"), 0o600)
 }
 
 func (h *Helper) status(req Request, phase, detail string, step, steps int) {
@@ -214,6 +247,7 @@ func (h *Helper) upgrade(ctx context.Context, req Request) error {
 		return h.rollback(ctx, req, snapshot, err)
 	}
 
+	h.remember(req.Version)
 	_ = h.o.Dir.WriteStatus(Status{
 		RequestID: req.ID, Version: req.Version, Phase: PhaseSucceeded,
 		Detail:       "Running " + req.Version + ".",
@@ -335,7 +369,7 @@ func (h *Helper) restoreOnly(ctx context.Context, req Request) error {
 // not against a checksum file that whoever replaced the binary could also have
 // replaced.
 func (h *Helper) download(ctx context.Context, rel VerifiedRelease, version string) (string, error) {
-	name := fmt.Sprintf("cypherd_%s_%s_%s", strings.TrimPrefix(version, "v"), runtime.GOOS, runtime.GOARCH)
+	name := AssetName(runtime.GOARCH)
 	want, ok := rel.Digests[name]
 	if !ok {
 		return "", fmt.Errorf("the signed manifest does not cover %s", name)
@@ -393,16 +427,8 @@ func (h *Helper) swap(staged string) error {
 // ranBefore reports whether this host has a record of running a version, which
 // is what bounds a downgrade to releases this install actually had.
 func (h *Helper) ranBefore(version string) bool {
-	entries, err := os.ReadDir(h.o.Dir.Slots())
-	if err != nil {
-		return false
-	}
-	for _, e := range entries {
-		if strings.Contains(e.Name(), version) {
-			return true
-		}
-	}
-	return false
+	_, err := os.Stat(filepath.Join(h.o.Dir.Slots(), "ran-"+version))
+	return err == nil
 }
 
 func lastLine(s string) string {

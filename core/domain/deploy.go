@@ -65,6 +65,19 @@ const (
 	EnvPreview    = "preview"
 )
 
+// ServerWorkload is one thing placed on a host — an application, a compose
+// stack or a managed database. The team travels with it so a caller sees only
+// what they may.
+type ServerWorkload struct {
+	ID          string
+	Kind        string
+	Name        string
+	ProjectID   string
+	ProjectName string
+	Status      string
+	TeamID      string
+}
+
 // DomainClaim is one application already serving a domain (routing-and-tls.md).
 // It carries the team and the server because a conflict is refused per SERVER —
 // that is where Traefik actually collides — and named only to a caller who

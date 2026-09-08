@@ -64,6 +64,10 @@ type Server struct {
 	AgentUpdatePhase  string
 	AgentUpdateTarget string
 	AgentUpdateDetail string
+	// SubsystemHealth is WHICH parts of the agent are unhealthy, as of the last
+	// heartbeat. Empty means nothing is — or that the agent predates the field
+	// and is degraded for a reason it cannot name; Status distinguishes them.
+	SubsystemHealth []SubsystemHealth
 	// LastSeenAt is the time of the most recent heartbeat, nil if never seen.
 	LastSeenAt *time.Time
 	CreatedAt  time.Time
@@ -72,6 +76,14 @@ type Server struct {
 
 // Enrolled reports whether an agent has completed enrollment for this server.
 func (s Server) Enrolled() bool { return s.EnrolledAt != nil }
+
+// SubsystemHealth is one unhealthy part of an agent, as its heartbeat reported
+// it. Subsystem is the agent's own stable name ("proxy", "updater"); Message is
+// its error text, which is a diagnosis and never a value (ENGINEERING rule 20).
+type SubsystemHealth struct {
+	Subsystem string `json:"subsystem"`
+	Message   string `json:"message"`
+}
 
 // GitHubApp is the panel's single GitHub App credential (github-app.md §2).
 // The sealed half never leaves the store layer's hands except through

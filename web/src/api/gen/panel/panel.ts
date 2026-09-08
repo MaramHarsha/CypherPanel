@@ -4608,7 +4608,7 @@ export const useCreateLogDrain = <TError = BadRequestResponse | UnauthorizedResp
 }
 
 /**
- * A body carrying `config` replaces it WHOLESALE — a config is one document, and half-changing an endpoint's URL and its headers would leave a drain pointed somewhere with credentials for somewhere else. A body with only `enabled` pauses or resumes without re-sending the credential.
+ * A body carrying `config` replaces it — a config is one object, and a field left out is a field cleared. Sealed values (a token, a key) are write-only: a `config` that carries NONE of them keeps the stored ones, so an edit that only moves an endpoint does not need the secret typed again. An EMPTY `config` (`{}`) keeps the whole stored config. Send just `enabled` to pause or resume without touching anything else; an edit that says nothing about `enabled` leaves it as it is.
  * @summary Replace a drain's config, or just pause it (panel admin)
  */
 export const updateLogDrain = async (id: string,

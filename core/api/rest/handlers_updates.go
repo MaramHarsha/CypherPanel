@@ -167,6 +167,11 @@ type startUpgradeRequest struct {
 	// irreversible to earn one, and it stays ONE dialog because confirmations
 	// never stack.
 	AcknowledgeIncompatibleAgents string `json:"acknowledge_incompatible_agents"`
+	// Rollback puts back a version this host has already run, keeping every row
+	// written since. The helper refuses any downgrade without it, and refuses
+	// one with it unless it can prove the host ran that version — so the flag
+	// opens a door bounded by history, not by trust.
+	Rollback bool `json:"rollback"`
 }
 
 func (a *API) handleStartUpgrade(w http.ResponseWriter, r *http.Request) {
@@ -207,7 +212,11 @@ func (a *API) handleStartUpgrade(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	u, err := a.deps.Upgrades.Start(r.Context(), req.Version, user.Email, req.SnapshotRetentionDays, false)
+	// req.Rollback, not a literal false. The helper is the real gate — it
+	// refuses any downgrade unless this flag is set AND it can prove the host
+	// ran that version — and passing false unconditionally made that whole
+	// branch unreachable from every client.
+	u, err := a.deps.Upgrades.Start(r.Context(), req.Version, user.Email, req.SnapshotRetentionDays, req.Rollback)
 	if errors.Is(err, upgrade.ErrActive) {
 		writeError(w, http.StatusConflict, "an upgrade is already running")
 		return

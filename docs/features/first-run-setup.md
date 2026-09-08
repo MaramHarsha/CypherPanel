@@ -110,3 +110,32 @@ door into the panel is weaker than another) · password-strength policy and
 rotation · SSO/OIDC
 first-run (post-v1) · recovery of a lost sole-owner account (operator restores
 from the DB / re-bootstraps).
+
+## Implementation note — the claim window is closed, and the claim is atomic *(2026-09-08)*
+
+§5 called the race between two setups "benign — both would create valid
+owners". The release-readiness audit read that against what `install.sh`
+actually does — open the panel's port to the internet the moment it finishes —
+and it is the opposite of benign: the second owner is whoever else reached the
+port first, and "reach your own box first" is a race against every scanner on
+the internet, one the operator can lose in the seconds between the installer's
+last line and their browser.
+
+Two changes:
+
+- **A setup code.** `install.sh` generates `CYPHERD_SETUP_TOKEN` once, keeps it
+  across re-runs in `cypherd.env`, and prints it while the panel is unclaimed.
+  `GET /api/v1/auth/setup` reports `requires_token`, the screen asks for it,
+  and `POST /api/v1/auth/setup` refuses a wrong one with 403 (compared in
+  constant time, never logged). Only someone who can read the host's console —
+  root on that host — holds it. A panel with no `CYPHERD_SETUP_TOKEN` behaves
+  as before, which is what a dev panel, `docker compose`, and the env-var
+  bootstrap want.
+- **The claim runs under a lock.** The count and the create happen inside
+  `store.WithSetupLock` — a transaction-scoped advisory lock — so two requests
+  that arrive together cannot both count zero users. `TestStoreSetupLockSerialisesClaims`
+  runs four claims at once against the real database.
+
+`scripts/fresh-host-rehearsal.sh` claims its panel with the code the installer
+wrote, after proving that a claim with the wrong one is refused.
+

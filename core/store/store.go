@@ -7,6 +7,7 @@ package store
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -69,6 +70,51 @@ func (s *Store) Ping(ctx context.Context) error {
 		return fmt.Errorf("store: ping: %w", err)
 	}
 	return nil
+}
+
+// WithSetupLock runs fn while holding the panel's first-run lock, so two
+// setup requests that arrive together cannot both count zero users and both
+// create an owner. A transaction-scoped advisory lock: released on commit,
+// on rollback, and on a dropped connection, so a crashed caller never leaves
+// the panel unclaimable.
+func (s *Store) WithSetupLock(ctx context.Context, fn func(context.Context) error) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("store: starting the setup lock: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(7203911)"); err != nil {
+		return fmt.Errorf("store: taking the setup lock: %w", err)
+	}
+	if err := fn(ctx); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// LatestMigration is the highest embedded migration number — the schema
+// version a build of this binary carries. release.json records it so a panel
+// can tell, before downloading anything, which way a version change moves the
+// schema.
+func LatestMigration() int {
+	entries, err := fs.ReadDir(migrationsFS, "migrations")
+	if err != nil {
+		return 0
+	}
+	latest := 0
+	for _, e := range entries {
+		n := 0
+		for _, c := range e.Name() {
+			if c < '0' || c > '9' {
+				break
+			}
+			n = n*10 + int(c-'0')
+		}
+		if n > latest {
+			latest = n
+		}
+	}
+	return latest
 }
 
 // Migrate applies all embedded migrations to the database at databaseURL. It
@@ -329,6 +375,39 @@ func (s *Store) RecordHeartbeat(ctx context.Context, id string, status domain.Se
 		return domain.Server{}, wrap("recording heartbeat", err)
 	}
 	return serverFromRow(row), nil
+}
+
+// SetServerSubsystemHealth records which subsystems the agent last reported
+// unhealthy. Empty clears the column, which is what a healthy heartbeat means.
+func (s *Store) SetServerSubsystemHealth(ctx context.Context, id string, health []domain.SubsystemHealth) error {
+	if health == nil {
+		health = []domain.SubsystemHealth{}
+	}
+	encoded, err := json.Marshal(health)
+	if err != nil {
+		return fmt.Errorf("store: encoding subsystem health: %w", err)
+	}
+	if err := s.q.SetServerSubsystemHealth(ctx, db.SetServerSubsystemHealthParams{
+		ID: id, SubsystemHealth: encoded,
+	}); err != nil {
+		return wrapUpdate("recording subsystem health", err)
+	}
+	return nil
+}
+
+// decodeSubsystemHealth reads the stored column back. A row written before the
+// column existed, or one somehow holding something else, reads as nothing
+// rather than failing the whole server load: this is diagnostic detail beside
+// a status word that stands on its own.
+func decodeSubsystemHealth(raw []byte) []domain.SubsystemHealth {
+	if len(raw) == 0 {
+		return nil
+	}
+	var out []domain.SubsystemHealth
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
+	return out
 }
 
 // SetServerAgentUpdate records what the agent last said about its own binary.
@@ -1042,6 +1121,7 @@ func serverFromRow(r db.Server) domain.Server {
 		AgentUpdatePhase:  r.AgentUpdatePhase,
 		AgentUpdateTarget: r.AgentUpdateTarget,
 		AgentUpdateDetail: r.AgentUpdateDetail,
+		SubsystemHealth:   decodeSubsystemHealth(r.SubsystemHealth),
 		EnrolledAt:        ptrTime(r.EnrolledAt),
 		LastSeenAt:        ptrTime(r.LastSeenAt),
 		CreatedAt:         r.CreatedAt.Time,

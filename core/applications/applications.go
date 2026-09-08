@@ -182,6 +182,9 @@ type Store interface {
 	ApplicationsByRouteDomain(ctx context.Context, routeDomain string) ([]domain.DomainClaim, error)
 	// ListRouteDomainsByServer backs the screen's "that one is taken" warning.
 	ListRouteDomainsByServer(ctx context.Context, serverID string) ([]string, error)
+	// ListServerWorkloads answers "what runs on this host" — the question every
+	// screen about a server needs and none could ask.
+	ListServerWorkloads(ctx context.Context, serverID string) ([]domain.ServerWorkload, error)
 	SetApplicationWebhookSecret(ctx context.Context, id string, ct, nonce []byte) (domain.Application, error)
 }
 
@@ -622,6 +625,13 @@ func (s *Service) checkRegistries(ctx context.Context, env domain.Environment, s
 // from a caller outside the owning team.
 func (s *Service) RouteDomainsOnServer(ctx context.Context, serverID string) ([]string, error) {
 	return s.store.ListRouteDomainsByServer(ctx, serverID)
+}
+
+// WorkloadsOnServer reports everything placed on a host, unfiltered. The caller
+// scopes it to what the viewer may see — this package knows about resources,
+// not about who is asking.
+func (s *Service) WorkloadsOnServer(ctx context.Context, serverID string) ([]domain.ServerWorkload, error) {
+	return s.store.ListServerWorkloads(ctx, serverID)
 }
 
 // RotateWebhookSecret mints a new push-webhook secret and returns it ONCE.

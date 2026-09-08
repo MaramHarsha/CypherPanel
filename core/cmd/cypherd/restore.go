@@ -81,8 +81,8 @@ func runRestore(log *slog.Logger, args []string) error {
 
 	store.SetTableSorter(planebackup.SortTables)
 	res, err := planebackup.Restore(ctx, strings.NewReader(string(body)), planebackup.RestoreOptions{
-		DB: store.NewBackupConn(pool), Enc: planebackup.AgeCrypto{}, Migrate: migrator,
-		Identity: string(identity), Force: *force,
+		DB: backupSurface{store.NewBackupConn(pool)}, Enc: planebackup.AgeCrypto{}, Migrate: migrator,
+		Identity: string(identity), Force: *force, Source: *from,
 		Log: func(format string, args ...any) { fmt.Printf(format+"\n", args...) },
 	})
 	if err != nil {

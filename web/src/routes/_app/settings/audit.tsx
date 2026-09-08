@@ -63,18 +63,37 @@ function AuditTab() {
   // refused" is one predicate over the whole vocabulary — which is exactly the
   // filter worth having on screen.
   const [failuresOnly, setFailuresOnly] = useState(false);
+  // How far back to look, and how much further.
+  //
+  // The screen asked for the newest 100 rows and stopped — no window, no
+  // cursor. So the log that exists to answer "what happened during the
+  // incident" could not reach past whatever the last hundred actions were, and
+  // on a busy panel that is an afternoon. The API has carried `since`, `before`
+  // and `next_before` all along.
+  const [since, setSince] = useState("");
+  const [pages, setPages] = useState<string[]>([]);
 
   const events = useListAuditEvents({
     ...(family ? { action: family } : {}),
     ...(actor.trim() ? { actor: actor.trim() } : {}),
     ...(failuresOnly ? { outcome: "failure" as const } : {}),
+    ...(since ? { since } : {}),
+    ...(pages.length > 0 ? { before: pages[pages.length - 1] } : {}),
     limit: 100,
   });
-  const filtered = Boolean(family || actor.trim() || failuresOnly);
+  const filtered = Boolean(family || actor.trim() || failuresOnly || since);
   const clearFilters = () => {
     setFamily("");
     setActor("");
     setFailuresOnly(false);
+    setSince("");
+    setPages([]);
+  };
+  // Any change of predicate restarts the walk: a cursor from one filter means
+  // nothing under another.
+  const refilter = (fn: () => void) => {
+    setPages([]);
+    fn();
   };
 
   return (
@@ -88,7 +107,7 @@ function AuditTab() {
       <div className="flex flex-wrap items-center gap-2">
         <select
           value={family}
-          onChange={(e) => setFamily(e.currentTarget.value)}
+          onChange={(e) => refilter(() => setFamily(e.currentTarget.value))}
           className="mono rounded-md border border-border-input bg-surface px-2.5 py-2 text-[12px]"
           aria-label="Filter by action family"
         >
@@ -101,7 +120,7 @@ function AuditTab() {
         </select>
         <Input
           value={actor}
-          onChange={(e) => setActor(e.currentTarget.value)}
+          onChange={(e) => refilter(() => setActor(e.currentTarget.value))}
           placeholder="actor — an email"
           className="mono max-w-[220px]"
           aria-label="Filter by actor"
@@ -111,10 +130,25 @@ function AuditTab() {
           variant={failuresOnly ? "primary" : "secondary"}
           size="sm"
           aria-pressed={failuresOnly}
-          onClick={() => setFailuresOnly((v) => !v)}
+          onClick={() => refilter(() => setFailuresOnly((v) => !v))}
         >
           Refused only
         </Button>
+        {/* The window. Without one the log answered only "the last hundred
+            things", which on a busy panel is an afternoon — and the question it
+            exists for is always about a particular day. */}
+        <select
+          value={since}
+          onChange={(e) => refilter(() => setSince(e.currentTarget.value))}
+          className="mono rounded-md border border-border-input bg-surface px-2.5 py-2 text-[12px]"
+          aria-label="How far back to look"
+        >
+          <option value="">any time</option>
+          <option value="1h">last hour</option>
+          <option value="24h">last 24 hours</option>
+          <option value="168h">last 7 days</option>
+          <option value="720h">last 30 days</option>
+        </select>
       </div>
 
       <PageState
@@ -142,7 +176,44 @@ function AuditTab() {
           )
         }
       >
-        {(page) => <AuditTable events={page.events} />}
+        {(page) => (
+          <>
+            <AuditTable events={page.events} />
+            {/* Walking backwards. `next_before` is the server's own cursor —
+                the screen used to ignore it and show the newest hundred rows
+                forever, so the log that exists to answer "what happened during
+                the incident" could not reach past this afternoon. */}
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {pages.length > 0 && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setPages((p) => p.slice(0, -1))}
+                >
+                  ← Newer
+                </Button>
+              )}
+              {page.next_before ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setPages((p) => [...p, page.next_before])}
+                >
+                  Older →
+                </Button>
+              ) : (
+                <span className="mono text-[11.5px] text-text-faint">
+                  {pages.length > 0 ? "the oldest entry this filter matches" : "everything this filter matches"}
+                </span>
+              )}
+              {pages.length > 0 && (
+                <span className="mono text-[11.5px] text-text-faint">page {pages.length + 1}</span>
+              )}
+            </div>
+          </>
+        )}
       </PageState>
     </div>
   );

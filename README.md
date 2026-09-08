@@ -35,7 +35,7 @@ The tagline is a measurement, not a boast:
 
 > **Status.** Phases 1–3 are complete and Phase 4 is nearly closed. The deploy pipeline is proven end to end in CI against real Docker and real Traefik; the state model, the security model, the template catalog and the web UI are all in. See [What works today](#what-works-today) for the honest checklist — including what is CI-proven versus verified by hand — and [docs/roadmap.md](docs/roadmap.md) for the phase gates.
 >
-> **There is no published release yet.** The one-line installer below expects one, so today you build the two binaries yourself ([Build from source](#build-from-source)).
+> **Releases are signed and published on GitHub.** The one-line installer below fetches the latest; every asset's digest is in a `SHA256SUMS` signed with an offline key ([docs/dev/release-signing.md](docs/dev/release-signing.md)). Building from source stays a first-class path ([Build from source](#build-from-source)).
 
 ## How it works
 
@@ -106,7 +106,7 @@ Full vocabulary in [docs/glossary.md](docs/glossary.md).
 
 **Breadth and hardening** (Phase 4):
 
-- **A catalog of 158 one-click templates** — 7 hand-curated plus 151 translated from Coolify's compose library by a build-time importer, every image digest-pinned. What the importer refused, and why, is recorded per template ([docs/dev/template-import-report.md](docs/dev/template-import-report.md)).
+- **A catalog of 159 one-click templates** — 8 hand-curated (one of them a compose stack) plus 151 translated from Coolify's compose library by a build-time importer, every image digest-pinned. What the importer refused, and why, is recorded per template ([docs/dev/template-import-report.md](docs/dev/template-import-report.md)).
 - **Compose stacks** — bring your own compose file and the agent converges to it. The file *is* the desired state, so the revision list is the history and rollback re-points it ([docs/features/compose-stacks.md](docs/features/compose-stacks.md)).
 - **Deploy protection** — per environment, who must approve a deploy and when deploys are refused outright. Freeze windows are weekly and zone-aware; break glass is a 30-minute recorded owner override; approvals are session-only, so a CI token can neither open its own gate nor delete it.
 - **An immutable audit log** — one row per sensitive action: who did what to which resource, from where, and whether it worked. Scope *is* the authorization, so it needs no role gate.
@@ -118,19 +118,19 @@ Full vocabulary in [docs/glossary.md](docs/glossary.md).
 - **Agent identity and TLS** — certificates renew themselves over the mTLS channel at two thirds of their life with a fresh key; one panel-wide ACME account reaches every node.
 - **The web UI** — React, embedded in the binary, and at parity with the API: every mutating capability the plane exposes is reachable from the panel.
 
-**Not built yet**, tracked in [docs/roadmap.md](docs/roadmap.md): named application databases, a dashboard, an interactive terminal, metrics and observability, a published design system, a CLI, and the implementation of agent auto-update ([ADR-010](docs/adrs/ADR-010-agent-auto-update.md), which lands with the release pipeline). Granular RBAC is deliberately deferred to V1.x behind its own ADR.
+**Not built yet**, tracked in [docs/roadmap.md](docs/roadmap.md): an interactive terminal, a CLI, and a home dashboard ([ui-principles.md](docs/product/ui-principles.md) §4 decided the landing page is Projects). Granular RBAC is deliberately deferred to V1.x behind its own ADR.
 
 ## Install
 
-> Once a release is published, one command on a fresh Linux VPS (amd64 or arm64, systemd, root) is the whole install:
+> One command on a fresh Linux VPS (amd64 or arm64, systemd, root) is the whole install:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/MaramHarsha/CypherPanel/main/install/install.sh | sh
 ```
 
-It installs Docker, starts PostgreSQL on loopback, installs the `cypherd` binary, generates a master key, and enables a systemd unit that survives reboots. Then you open the panel and create the owner account in the browser — no password is ever printed or defaulted.
+It installs Docker, starts PostgreSQL on loopback, installs the `cypherd` binary, generates a master key, and enables a systemd unit that survives reboots. Then you open the panel and create the owner account in the browser — no password is ever printed or defaulted. The installer prints a one-time **setup code** that the screen asks for, so only someone at the host's console can claim a fresh panel, however long its port has been open.
 
-Re-running is safe: an existing master key is never regenerated (that would make every sealed secret unrecoverable) and an existing database is left alone. Point it at your own build with `CYPHERD_URL=file:///path/to/cypherd` until releases exist. Options are documented in the [installer's own header](install/install.sh).
+Re-running is safe: an existing master key is never regenerated (that would make every sealed secret unrecoverable) and an existing database is left alone. Point it at your own build with `CYPHERD_URL=file:///path/to/cypherd` to install from source instead. Options are documented in the [installer's own header](install/install.sh).
 
 Servers are joined afterwards from the panel's copy-paste command, one per host.
 

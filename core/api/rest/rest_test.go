@@ -760,6 +760,12 @@ func (f *fakeAppsStore) SetApplicationWebhookSecret(_ context.Context, id string
 	return app, nil
 }
 
+// ListServerWorkloads backs "what runs on this host". Empty here; the tests
+// that care seed it.
+func (f *fakeAppsStore) ListServerWorkloads(_ context.Context, _ string) ([]domain.ServerWorkload, error) {
+	return nil, nil
+}
+
 // ListSharedVariableKeysInScope backs the write-time {{shared.KEY}} check
 // (shared-variables.md §3). Empty: no shared variable resolves in these tests,
 // so any reference an env-var write carries is a 400.
@@ -2425,5 +2431,25 @@ func TestRaisingAMaintenancePageTwiceDoesNotResetItsClock(t *testing.T) {
 	}
 	if down.MaintenanceMode || down.MaintenanceSince != nil {
 		t.Fatalf("after DELETE: mode=%v since=%v", down.MaintenanceMode, down.MaintenanceSince)
+	}
+}
+
+// Every subscribable event is offered in the contract.
+//
+// The taxonomy has eight keys; the notifier and outbound-webhook enums stopped
+// at four, so app.crashed, app.recovered, alert.firing and alert.resolved could
+// be FIRED by the plane and never subscribed to. A channel that cannot carry
+// half of what it exists to carry is a channel nobody trusts, and the gap was
+// invisible to both parity scripts — the field is there, its VALUES were not.
+func TestEveryEventTypeIsSubscribableInTheContract(t *testing.T) {
+	spec, err := os.ReadFile("openapi.yaml")
+	if err != nil {
+		t.Fatalf("reading the spec: %v", err)
+	}
+	for _, key := range domain.EventTypes() {
+		if !bytes.Contains(spec, []byte(key)) {
+			t.Errorf("event %q is subscribable in core/domain and appears nowhere in the contract — "+
+				"the plane fires it and no notifier or webhook can ask for it", key)
+		}
 	}
 }

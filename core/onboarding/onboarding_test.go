@@ -23,6 +23,10 @@ func newFakeStore() *fakeStore {
 	return &fakeStore{users: map[string]domain.User{}, teams: map[string]domain.Team{}, members: map[string]string{}}
 }
 
+func (f *fakeStore) WithSetupLock(ctx context.Context, fn func(context.Context) error) error {
+	return fn(ctx)
+}
+
 func (f *fakeStore) CountUsers(context.Context) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

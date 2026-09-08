@@ -17,6 +17,7 @@ package upgrade
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,26 +25,47 @@ import (
 	"time"
 )
 
+// installPostgresContainer is the container install.sh starts. Its name is a
+// constant in install.sh, which is what lets the panel guess it here.
+const installPostgresContainer = "cypherpanel-postgres"
+
 // ResolvePgDump finds a usable dump tool, in a fixed order. If none resolves,
 // the pre-flight's snapshot line is a REFUSAL, not a warning: an upgrade with
 // no fallback is the upgrade this whole feature exists to avoid.
 //
-// The order is: an explicit override, then pg_dump on PATH, then a docker exec
-// into the container the DATABASE_URL host resolves to — which is the default
-// install, where Postgres runs in a container the panel host has no client for.
+// The order is: an explicit override (a command line, so it can be
+// "docker exec -i <container> pg_dump"), then pg_dump on PATH, then a docker
+// exec into the container Postgres runs in. The default install is exactly
+// that last case — install.sh starts Postgres in a container and installs no
+// client on the host — and the first version of this only tried docker when
+// the URL's host was NOT loopback, which the default install's URL always is.
+// So on every install.sh host this resolved to nothing, and every guided
+// upgrade was refused at pre-flight.
 func ResolvePgDump(databaseURL string) (tool string, args []string, err error) {
-	if override := os.Getenv("CYPHERD_SNAPSHOT_PGDUMP"); override != "" {
-		return override, nil, nil
+	return resolveTool("CYPHERD_SNAPSHOT_PGDUMP", "pg_dump", databaseURL)
+}
+
+// ResolvePgRestore mirrors ResolvePgDump.
+func ResolvePgRestore(databaseURL string) (tool string, args []string, err error) {
+	return resolveTool("CYPHERD_SNAPSHOT_PGRESTORE", "pg_restore", databaseURL)
+}
+
+func resolveTool(envName, name, databaseURL string) (string, []string, error) {
+	if override := strings.Fields(os.Getenv(envName)); len(override) > 0 {
+		return override[0], override[1:], nil
 	}
-	if path, lookErr := exec.LookPath("pg_dump"); lookErr == nil {
+	if path, lookErr := exec.LookPath(name); lookErr == nil {
 		return path, nil, nil
 	}
-	if host := hostOf(databaseURL); host != "" && host != "localhost" && host != "127.0.0.1" {
-		if docker, lookErr := exec.LookPath("docker"); lookErr == nil {
-			return docker, []string{"exec", "-i", host, "pg_dump"}, nil
+	if docker, lookErr := exec.LookPath("docker"); lookErr == nil {
+		container := hostOf(databaseURL)
+		if container == "" || container == "localhost" || container == "127.0.0.1" {
+			container = installPostgresContainer
 		}
+		return docker, []string{"exec", "-i", container, name}, nil
 	}
-	return "", nil, fmt.Errorf("no pg_dump found: install postgresql-client on this host, or set CYPHERD_SNAPSHOT_PGDUMP")
+	return "", nil, fmt.Errorf("no %s found: install postgresql-client on this host, or set %s (e.g. \"docker exec -i %s %s\")",
+		name, envName, installPostgresContainer, name)
 }
 
 // hostOf pulls the host out of a postgres URL without importing net/url's
@@ -81,20 +103,29 @@ func (h *Helper) snapshot(ctx context.Context) (path string, size int64, err err
 	path = filepath.Join(h.o.SnapshotDir, name)
 
 	// Custom format, so pg_restore can order the restore itself rather than us
-	// hoping a plain SQL script applies cleanly.
-	full := append(append([]string{}, args...), "--format=custom", "--file="+path, h.o.DatabaseURL)
-	out, err := h.o.Runner.Run(ctx, tool, full...)
+	// hoping a plain SQL script applies cleanly. Streamed through stdout
+	// rather than written with --file: the tool may be running inside the
+	// Postgres container, where this host's snapshot directory does not exist.
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
+		return "", 0, err
+	}
+	full := append(append([]string{}, args...), "--format=custom", h.o.DatabaseURL)
+	stderr, runErr := h.o.Runner.RunIO(ctx, nil, f, tool, full...)
+	closeErr := f.Close()
+	if runErr != nil {
+		_ = os.Remove(path)
 		// The URL carries a password, so only the tool's own last line is
 		// surfaced — never the command line (ENGINEERING rule 20).
-		return "", 0, fmt.Errorf("pg_dump failed: %s", lastLine(string(out)))
+		return "", 0, fmt.Errorf("pg_dump failed: %s", lastLine(string(stderr)))
+	}
+	if closeErr != nil {
+		return "", 0, closeErr
 	}
 	info, statErr := os.Stat(path)
-	if statErr != nil {
-		return "", 0, fmt.Errorf("the dump produced no file")
-	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		return "", 0, err
+	if statErr != nil || info.Size() == 0 {
+		_ = os.Remove(path)
+		return "", 0, fmt.Errorf("the dump produced no data")
 	}
 	return path, info.Size(), nil
 }
@@ -113,28 +144,19 @@ func (h *Helper) restore(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
+	// The snapshot goes in on stdin, for the same reason the dump came out on
+	// stdout: the tool may be inside the Postgres container.
+	f, err := os.Open(path) //nolint:gosec // the helper's own snapshot directory
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
 	full := append(append([]string{}, args...),
-		"--clean", "--if-exists", "--single-transaction", "--dbname="+h.o.DatabaseURL, path)
-	if out, err := h.o.Runner.Run(ctx, tool, full...); err != nil {
-		return fmt.Errorf("pg_restore failed: %s", lastLine(string(out)))
+		"--clean", "--if-exists", "--single-transaction", "--dbname="+h.o.DatabaseURL)
+	if stderr, err := h.o.Runner.RunIO(ctx, f, io.Discard, tool, full...); err != nil {
+		return fmt.Errorf("pg_restore failed: %s", lastLine(string(stderr)))
 	}
 	return nil
-}
-
-// ResolvePgRestore mirrors ResolvePgDump.
-func ResolvePgRestore(databaseURL string) (tool string, args []string, err error) {
-	if override := os.Getenv("CYPHERD_SNAPSHOT_PGRESTORE"); override != "" {
-		return override, nil, nil
-	}
-	if path, lookErr := exec.LookPath("pg_restore"); lookErr == nil {
-		return path, nil, nil
-	}
-	if host := hostOf(databaseURL); host != "" && host != "localhost" && host != "127.0.0.1" {
-		if docker, lookErr := exec.LookPath("docker"); lookErr == nil {
-			return docker, []string{"exec", "-i", host, "pg_restore"}, nil
-		}
-	}
-	return "", nil, fmt.Errorf("no pg_restore found: install postgresql-client on this host, or set CYPHERD_SNAPSHOT_PGRESTORE")
 }
 
 // PruneSnapshots removes snapshots past their retention. Zero days keeps them

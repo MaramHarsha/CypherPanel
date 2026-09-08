@@ -576,3 +576,28 @@ Four things differ from the spec as written, all of them narrowings:
   agent before this release sends none, and absence is silence rather than
   "idle" — overwriting a `rolled_back` row with a blank because one old
   heartbeat arrived would erase the amber row an operator has to act on.
+- **The wire now carries WHICH subsystem failed.** §7 stopped at "keyed by
+  subsystem", and that was one step short: the agent knew which part was broken
+  and the heartbeat still carried only the collapsed status word, so the panel
+  showed a host amber and an operator's only next move was to read the agent's
+  log ON THE HOST — in an architecture whose first decision (ADR-002) is that
+  there is no way in. `Heartbeat.subsystem_health` (field 10, additive) carries
+  every entry of `Health.All()`, sorted, and the plane stores it beside the
+  status. `repeated` has no presence, so an empty list means BOTH "healthy" and
+  "an agent older than the field"; the status word separates them, and both
+  readings land on the same write — a READY agent has nothing wrong with it
+  either way, and a DEGRADED agent naming nothing is one that cannot, which the
+  screen says in those words rather than showing amber with no reason.
+- **No agent could ever have updated itself, and the check that stopped it
+  passed its test.** `writable()` asked whether the running binary could be
+  opened for writing, and Linux answers ETXTBSY for any process's own
+  executable — so every host reported "binary is not writable; managed outside
+  the panel" and the updater excluded itself. The swap never needed that: it
+  stages beside the binary and renames over it, which is allowed. The check now
+  probes the DIRECTORY, and the test runs a copied `sleep` and asks about it
+  while it runs. Found by the release-readiness audit, not by a test, because
+  the test opened a file nothing was executing.
+- **The release workflow wrote the manifest with `sha256sum ./*`**, so every
+  name in it began with `./` and the agent's lookup by bare name missed. Both
+  parsers strip it now and the workflow names its files explicitly.
+

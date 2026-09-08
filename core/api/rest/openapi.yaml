@@ -495,6 +495,54 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/v1/servers/{id}/workloads:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: Server ID. }
+    get:
+      operationId: listServerWorkloads
+      tags: [servers]
+      summary: What runs on this server (member)
+      description: >-
+        Applications, compose stacks and managed databases placed on this host,
+        with the project each belongs to.
+
+
+        The plane has always known — it assembles desired state from exactly
+        these three lists — and no route exposed it, so the panel could show a
+        server as degraded, or ask an operator to confirm removing it, without
+        ever being able to say what was on it. "What will I break" is the first
+        question anyone asks about a host, and the answer needed a database
+        query.
+
+
+        Scoped to what the caller may see: a workload in a team they do not
+        belong to is omitted rather than refused, so the count is honest about
+        their own view without revealing another team's.
+      responses:
+        "200":
+          description: The workloads.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [workloads]
+                properties:
+                  workloads:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, kind, name, project_id, project_name, status]
+                      properties:
+                        id: { type: string }
+                        kind: { type: string, enum: [application, compose_stack, database] }
+                        name: { type: string }
+                        project_id: { type: string }
+                        project_name: { type: string }
+                        status: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /api/v1/servers/{id}/domains:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string }, description: Server ID. }
@@ -2834,11 +2882,13 @@ paths:
       tags: [panel]
       summary: Replace a drain's config, or just pause it (panel admin)
       description: >-
-        A body carrying `config` replaces it WHOLESALE — a config is one
-        document, and half-changing an endpoint's URL and its headers would
-        leave a drain pointed somewhere with credentials for somewhere else. A
-        body with only `enabled` pauses or resumes without re-sending the
-        credential.
+        A body carrying `config` replaces it — a config is one object, and a
+        field left out is a field cleared. Sealed values (a token, a key) are
+        write-only: a `config` that carries NONE of them keeps the stored ones,
+        so an edit that only moves an endpoint does not need the secret typed
+        again. An EMPTY `config` (`{}`) keeps the whole stored config. Send just
+        `enabled` to pause or resume without touching anything else; an edit
+        that says nothing about `enabled` leaves it as it is.
       requestBody:
         required: true
         content: { application/json: { schema: { $ref: "#/components/schemas/LogDrainRequest" } } }
@@ -7290,6 +7340,13 @@ components:
         needs_setup:
           type: boolean
           description: True when the panel has no account yet.
+        requires_token:
+          type: boolean
+          description: >-
+            True when claiming the panel needs the setup code the installer
+            printed (`CYPHERD_SETUP_TOKEN`). The panel's port is open to the
+            internet from the moment install.sh finishes, so without this the
+            first person to reach it — not necessarily the operator — owns it.
 
     SetupRequest:
       type: object
@@ -7301,6 +7358,12 @@ components:
         password:
           type: string
           minLength: 8
+        setup_token:
+          type: string
+          description: >-
+            The setup code, when `SetupStatus.requires_token` is true. Printed
+            at the end of install.sh and kept in /etc/cypherpanel/cypherd.env
+            on the host. A wrong code answers 403.
 
     LoginRequest:
       type: object
@@ -8215,6 +8278,16 @@ components:
         agent_update_detail:
           type: string
           description: Operator-facing prose about the phase; never a secret.
+        subsystem_health:
+          type: array
+          description: >-
+            Which parts of the agent are unhealthy as of the last heartbeat.
+            Empty means nothing is — or, beside `status: degraded`, that the
+            agent predates the field and cannot say which. A client should state
+            that difference rather than show amber with no reason: the agent has
+            no SSH to go and look through (ADR-002).
+          items:
+            $ref: '#/components/schemas/SubsystemHealth'
         enrolled:
           type: boolean
           description: Whether an agent has completed enrollment.
@@ -8228,6 +8301,22 @@ components:
         created_at:
           type: string
           format: date-time
+
+    SubsystemHealth:
+      type: object
+      required: [subsystem, message]
+      properties:
+        subsystem:
+          type: string
+          description: >-
+            The agent's own stable name for the failing part — `proxy`,
+            `updater`. These are subsystems that fail in a LOOP rather than
+            crashing, which is exactly why they need reporting.
+        message:
+          type: string
+          description: >-
+            What the subsystem said went wrong. A diagnosis, never a value —
+            nothing that unseals a secret reports through here.
 
     CreateServerRequest:
       type: object
@@ -9229,7 +9318,7 @@ components:
             means the engine's own default — the `postgres` maintenance
             database for PostgreSQL, and nothing at all for MySQL, MariaDB and
             MongoDB.
-        status: { type: string, enum: [running, provisioning, stopped, error, unknown] }
+        status: { type: string, enum: [running, provisioning, restoring, stopped, error, unknown] }
         status_detail: { type: string }
         desired_state:
           type: string
@@ -9627,6 +9716,26 @@ components:
       type: object
       required: [version]
       properties:
+        rollback:
+          type: boolean
+          default: false
+          description: >-
+            Put back a version this host has ALREADY RUN, keeping every row
+            written since. The upgrade path and the rollback path are the same
+            code — download, verify, migrate, swap — and this is the flag that
+            distinguishes a deliberate downgrade from an accidental one.
+
+
+            The helper refuses any downgrade without it, and refuses one WITH it
+            unless it can prove this host ran that version before. So the danger
+            it opens is bounded by history rather than by trust.
+
+
+            Without it the only backward move a panel owner had was the snapshot
+            restore, which rewinds the database and discards every deploy, user,
+            token and audit row written since the upgrade. That is a very
+            different act, and offering only it meant an owner who hit a bad
+            release either lost an hour of work or edited systemd by hand.
         version: { type: string }
         snapshot_retention_days: { type: integer, description: "0 keeps the fallback forever. You decide when, if ever, it is pruned." }
         acknowledge_incompatible_agents:
@@ -10280,7 +10389,7 @@ components:
         channel: { type: string, enum: [email, discord, slack, telegram] }
         events:
           type: array
-          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed] }
+          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed, app.crashed, app.recovered, alert.firing, alert.resolved] }
         enabled: { type: boolean }
         config_hint: { type: string, description: Masked summary of the sealed channel config; never the secret. }
         created_at: { type: string, format: date-time }
@@ -10301,7 +10410,7 @@ components:
         events:
           type: array
           minItems: 1
-          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed] }
+          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed, app.crashed, app.recovered, alert.firing, alert.resolved] }
         enabled: { type: boolean, default: true }
     PatchNotifierRequest:
       type: object
@@ -10309,7 +10418,7 @@ components:
         name: { type: string }
         events:
           type: array
-          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed] }
+          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed, app.crashed, app.recovered, alert.firing, alert.resolved] }
         enabled: { type: boolean }
         config:
           type: object
@@ -10326,7 +10435,7 @@ components:
         url: { type: string, description: "The http(s) receiver. It is the endpoint's identity — there is no name." }
         events:
           type: array
-          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed] }
+          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed, app.crashed, app.recovered, alert.firing, alert.resolved] }
         enabled: { type: boolean }
         health:
           type: string
@@ -10347,7 +10456,7 @@ components:
         events:
           type: array
           minItems: 1
-          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed] }
+          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed, app.crashed, app.recovered, alert.firing, alert.resolved] }
           description: "webhook.ping is not subscribable — an endpoint always receives its own pings."
         enabled: { type: boolean, default: true }
     PatchWebhookEndpointRequest:
@@ -10356,7 +10465,7 @@ components:
         url: { type: string }
         events:
           type: array
-          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed] }
+          items: { type: string, enum: [deploy.succeeded, deploy.failed, backup.succeeded, backup.failed, app.crashed, app.recovered, alert.firing, alert.resolved] }
         enabled: { type: boolean }
     CreateWebhookEndpointResponse:
       type: object

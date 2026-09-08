@@ -47,6 +47,25 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# AGENT MODE. `run` (the default) enrols an agent and runs it, which is what CI
+# does on a clean runner. The other two exist for a host that already has a real
+# panel on it:
+#
+#   enroll  enrols and stops there. The `enroll` subcommand talks to the plane's
+#           enrolment port and writes certificates to its own state dir; it
+#           touches no Docker and converges nothing, so it cannot disturb a live
+#           agent. Every create dialog filters on `server.enrolled`, not on a
+#           running status, so this is enough to reach the screens under test.
+#   none    boots the panel alone; specs that need a server will fail.
+#
+# E2E_NO_AGENT=1 is kept as the old spelling of `none`.
+AGENT_MODE="${E2E_AGENT:-run}"
+[ "${E2E_NO_AGENT:-}" = 1 ] && AGENT_MODE=none
+case "$AGENT_MODE" in
+    run | enroll | none) ;;
+    *) fail "E2E_AGENT=$AGENT_MODE — want run, enroll or none" ;;
+esac
+
 # REFUSE TO RUN BESIDE A LIVE AGENT.
 #
 # The Proxy's container name (`cypher-proxy`) is a HOST-GLOBAL constant, not a
@@ -58,11 +77,10 @@ trap cleanup EXIT
 # once before the check existed.
 #
 # A suite that exists to catch defects must not cause them.
-# E2E_NO_AGENT=1 boots the panel alone. The contention this guard exists for is
-# between AGENTS — two of them converge the same `cypher-proxy` container — so a
-# run that starts none cannot disturb anything, and the specs that need no
-# enrolled server can be debugged on a host that has one.
-if [ "${E2E_NO_AGENT:-}" != 1 ] \
+# The contention this guard exists for is between RUNNING agents — two of them
+# converge the same `cypher-proxy` container — so the guard applies to that mode
+# only. `enroll` and `none` start no reconciler and cannot disturb anything.
+if [ "$AGENT_MODE" = run ] \
     && [ "${E2E_I_KNOW_THIS_HOST_HAS_NO_AGENT:-}" != 1 ] \
     && command -v docker >/dev/null 2>&1 \
     && docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^cypher-proxy$'; then
@@ -177,8 +195,8 @@ fi
 # An enrolled agent, because the create-application dialog offers only servers
 # that are actually enrolled — so without one the screens under test cannot be
 # reached at all.
-if [ "${E2E_NO_AGENT:-}" = 1 ]; then
-    say "E2E_NO_AGENT=1 — no agent; specs needing an enrolled server will fail"
+if [ "$AGENT_MODE" = none ]; then
+    say "E2E_AGENT=none — no agent; specs needing an enrolled server will fail"
 else
 say "enrolling an agent"
 TOKEN=$(curl -sf -X POST "$API/api/v1/auth/login" -H 'Content-Type: application/json' \
@@ -190,14 +208,20 @@ JOIN=$(curl -sf -X POST "$API/api/v1/servers" -H "Authorization: Bearer $TOKEN" 
 curl -sf "$API/api/v1/ca.pem" -o "$WORK/ca.pem"
 "$WORK/cypher-agent" enroll --plane "127.0.0.1:$ENROLL_PORT" --token "$JOIN" \
     --ca-file "$WORK/ca.pem" --state-dir "$WORK/agent" --hostname e2e-host >/dev/null
-"$WORK/cypher-agent" run --state-dir "$WORK/agent" --heartbeat 2s > "$WORK/agent.log" 2>&1 &
-echo $! > "$WORK/agent.pid"
-agent_running() {
-    curl -sf "$API/api/v1/servers" -H "Authorization: Bearer $TOKEN" | grep -q '"status":"running"'
-}
-if ! STREAK=1 wait_for "the agent" 30 agent_running; then
-    tail -20 "$WORK/agent.log" >&2
-    fail "the agent never reported running — the screens under test need an enrolled server"
+if [ "$AGENT_MODE" = enroll ]; then
+    say "E2E_AGENT=enroll — enrolled but not running; nothing converges, nothing is disturbed"
+    curl -sf "$API/api/v1/servers" -H "Authorization: Bearer $TOKEN" | grep -q '"enrolled":true' \
+        || fail "the server did not come back enrolled"
+else
+    "$WORK/cypher-agent" run --state-dir "$WORK/agent" --heartbeat 2s > "$WORK/agent.log" 2>&1 &
+    echo $! > "$WORK/agent.pid"
+    agent_running() {
+        curl -sf "$API/api/v1/servers" -H "Authorization: Bearer $TOKEN" | grep -q '"status":"running"'
+    }
+    if ! STREAK=1 wait_for "the agent" 30 agent_running; then
+        tail -20 "$WORK/agent.log" >&2
+        fail "the agent never reported running — the screens under test need an enrolled server"
+    fi
 fi
 fi
 

@@ -173,6 +173,15 @@ function ServerRow({ server: s, first }: { server: Server; first: boolean }) {
               disk {d.usedPercent}% full
             </span>
           )}
+          {/* Which part earned the amber. The word "degraded" alone sends an
+              operator to the host to find out, and ADR-002 left them no way in
+              — the names are on the heartbeat, so they belong on the row that
+              shows the status. Detail is on the server's own page. */}
+          {status === "degraded" && (s.subsystem_health?.length ?? 0) > 0 && (
+            <span className="block truncate font-mono text-[11px] text-status-degraded-text">
+              {s.subsystem_health?.map((h) => h.subsystem).join(", ")}
+            </span>
+          )}
         </span>
 
         <span className="font-mono text-xs text-text-dim">

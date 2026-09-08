@@ -101,6 +101,28 @@ func (s *Service) validate(in CreateInput) error {
 	return nil
 }
 
+// validateWithoutConfig is validate minus the config parse, for an update that
+// keeps the stored endpoint. Everything else still applies: a rename must not
+// be able to move an s3 drain off its backup target.
+func (s *Service) validateWithoutConfig(in CreateInput) error {
+	if !drainName.MatchString(in.Name) {
+		return invalid("the name is 3–40 lowercase letters, digits and dashes")
+	}
+	switch in.Kind {
+	case domain.DrainLoki, domain.DrainSyslog:
+		if in.TargetID != "" {
+			return invalid("only an s3 drain names a backup target")
+		}
+	case domain.DrainS3:
+		if in.TargetID == "" {
+			return invalid("an s3 drain writes to an existing backup target — pick one")
+		}
+	default:
+		return invalid("the kind is one of loki, syslog, s3")
+	}
+	return nil
+}
+
 func (s *Service) Create(ctx context.Context, in CreateInput) (domain.LogDrain, error) {
 	if err := s.validate(in); err != nil {
 		return domain.LogDrain{}, err
@@ -125,12 +147,27 @@ func (s *Service) Update(ctx context.Context, id string, in CreateInput) (domain
 		return domain.LogDrain{}, err
 	}
 	in.Kind = existing.Kind // the kind is the drain's identity, not a field
-	if err := s.validate(in); err != nil {
+	// AN EMPTY CONFIG KEEPS THE STORED ONE.
+	//
+	// A drain's endpoint is never read back — `ConfigHint` masks a Loki URL's
+	// path deliberately, because it can carry a tenant — so a screen that lets
+	// somebody rename a drain cannot show them the endpoint to resubmit with
+	// it. Without this, editing the name would blank the destination.
+	//
+	// It is the same rule the panel's SMTP password already follows: the field
+	// you cannot be shown is the field that empty means "leave alone".
+	ct, nonce := existing.ConfigCT, existing.ConfigNonce
+	if replacing := len(in.Config) > 0 && string(in.Config) != "{}" && string(in.Config) != "null"; replacing {
+		if err := s.validate(in); err != nil {
+			return domain.LogDrain{}, err
+		}
+		sealedCT, sealedNonce, err := s.sealer.Seal(in.Config)
+		if err != nil {
+			return domain.LogDrain{}, fmt.Errorf("logdrain: sealing the config: %w", err)
+		}
+		ct, nonce = sealedCT, sealedNonce
+	} else if err := s.validateWithoutConfig(in); err != nil {
 		return domain.LogDrain{}, err
-	}
-	ct, nonce, err := s.sealer.Seal(in.Config)
-	if err != nil {
-		return domain.LogDrain{}, fmt.Errorf("logdrain: sealing the config: %w", err)
 	}
 	return s.store.UpdateLogDrain(ctx, domain.LogDrain{
 		ID: id, Name: in.Name, ProjectID: in.ProjectID, TargetID: in.TargetID,

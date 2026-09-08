@@ -11,4 +11,6 @@
 export interface SetupStatus {
   /** True when the panel has no account yet. */
   needs_setup: boolean;
+  /** True when claiming the panel needs the setup code the installer printed (`CYPHERD_SETUP_TOKEN`). The panel's port is open to the internet from the moment install.sh finishes, so without this the first person to reach it — not necessarily the operator — owns it. */
+  requires_token?: boolean;
 }

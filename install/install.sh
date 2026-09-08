@@ -24,6 +24,9 @@
 #                      https://panel.example.com). Every link the panel writes
 #                      to itself is built from it. Optional.
 #   CYPHERD_HTTP_PORT  panel port (default 8080).
+#   CYPHERD_BIND       address the panel listens on (default 0.0.0.0). Set
+#                      127.0.0.1 when a reverse proxy on this host terminates
+#                      TLS in front of it.
 #   CYPHER_SKIP_DOCKER set to 1 if you manage Docker yourself.
 #   POSTGRES_IMAGE     default postgres:16-alpine.
 #
@@ -38,9 +41,35 @@ BIN="/usr/local/bin/cypherd"
 UNIT="/etc/systemd/system/cypherd.service"
 PG_NAME="cypherpanel-postgres"
 PG_IMAGE="${POSTGRES_IMAGE:-postgres:16-alpine}"
-HTTP_PORT="${CYPHERD_HTTP_PORT:-8080}"
 ENROLL_PORT=8443
 NATS_PORT=4222
+
+# read_env reads one value out of an existing cypherd.env. Defined this early
+# because the port preflight below needs it: a re-run that forgot the port it
+# installed with would first complain that its own panel holds 8080 and then
+# rewrite the env file back to 8080, moving a panel an operator had deliberately
+# put elsewhere.
+read_env() {
+    [ -f "$ENV_FILE" ] || return 0
+    sed -n "s/^$1=//p" "$ENV_FILE" | head -1
+}
+# CYPHERD_HTTP_PORT wins; otherwise the port an existing install listens on;
+# otherwise 8080.
+HTTP_PORT="${CYPHERD_HTTP_PORT:-$(read_env CYPHERD_HTTP_ADDR | sed 's/.*://')}"
+HTTP_PORT="${HTTP_PORT:-8080}"
+BIND="${CYPHERD_BIND:-$(read_env CYPHERD_HTTP_ADDR | sed 's/:.*//')}"
+BIND="${BIND:-0.0.0.0}"
+# A database this script did not start. An operator who pointed cypherd.env at
+# their own PostgreSQL (the remedy this script's own error text names) gets it
+# KEPT on a re-run: the first version rewrote the URL to loopback, started a
+# fresh empty container beside their real database, and brought the panel up on
+# first-run setup as if nothing had ever existed.
+EXISTING_DB_URL="$(read_env CYPHERD_DATABASE_URL)"
+FOREIGN_DB=0
+case "$EXISTING_DB_URL" in
+    ""|*@127.0.0.1:5432/cypherpanel*) ;;
+    *) FOREIGN_DB=1 ;;
+esac
 
 say()  { printf '\033[36m=>\033[0m %s\n' "$1"; }
 warn() { printf '\033[33mwarning:\033[0m %s\n' "$1" >&2; }
@@ -79,6 +108,15 @@ for p in "$HTTP_PORT" "$ENROLL_PORT" "$NATS_PORT"; do
         fail "port $p is already in use by something else — free it, or set CYPHERD_HTTP_PORT"
     fi
 done
+# Our own PostgreSQL container holding 5432 is what a re-run looks like; anything
+# else holding it is a database this script would otherwise collide with after
+# it had already written cypherd.env.
+if [ "$FOREIGN_DB" = 0 ] && port_busy 5432 && ! docker inspect "$PG_NAME" >/dev/null 2>&1; then
+    fail "port 5432 is already in use, and it is not this panel's PostgreSQL container.
+  This script runs its own PostgreSQL on 127.0.0.1:5432. Stop the other one, or
+  point the panel at it instead: install with CYPHER_SKIP_DOCKER=1 if you manage
+  Docker yourself, then set CYPHERD_DATABASE_URL in $ENV_FILE and restart cypherd."
+fi
 for p in 80 443; do
     if port_busy "$p"; then
         warn "port $p is in use. Apps are published through a Traefik proxy that needs 80 and 443 on whichever server runs them. If that is this machine, free them or you will not be able to serve any app at a domain."
@@ -121,13 +159,15 @@ chmod 700 "$ETC_DIR"
 
 rand() { head -c "$1" /dev/urandom | base64 | tr -d '\n/+=' | cut -c "1-$2"; }
 
-read_env() {
-    [ -f "$ENV_FILE" ] || return 0
-    sed -n "s/^$1=//p" "$ENV_FILE" | head -1
-}
-
 MASTER_KEY="$(read_env CYPHERD_MASTER_KEY)"
 PG_PASSWORD="$(read_env POSTGRES_PASSWORD)"
+# The setup code: the panel's port is open to the internet the moment this
+# script finishes, and the first-run screen creates the OWNER. Without a code,
+# "reach your own box first" is a race against every scanner on the internet.
+# Generated once, kept across re-runs, and required by the panel until an
+# account exists.
+SETUP_TOKEN="$(read_env CYPHERD_SETUP_TOKEN)"
+[ -n "$SETUP_TOKEN" ] || SETUP_TOKEN="$(rand 48 32)"
 
 if [ -n "$MASTER_KEY" ]; then
     # Reusing it is not an optimisation — regenerating would orphan every
@@ -138,7 +178,7 @@ else
     MASTER_KEY="$(head -c 32 /dev/urandom | base64)"
     say "generated a new master key"
 fi
-[ -n "$PG_PASSWORD" ] || PG_PASSWORD="$(rand 48 32)"
+[ -n "$PG_PASSWORD" ] || [ "$FOREIGN_DB" = 1 ] || PG_PASSWORD="$(rand 48 32)"
 
 # ── public host ──────────────────────────────────────────────────────────────
 
@@ -178,6 +218,13 @@ esac
 # Written whole each run so upgrades pick up new defaults, with the two values
 # that must never change carried over from above.
 umask 077
+# Settings an operator added by hand — CYPHERD_TRUSTED_PROXIES, a retention,
+# an SMTP relay — are carried over below. The first version of this rewrote the
+# file wholesale and silently dropped every one of them on the next re-run.
+PREV_ENV=""
+[ -f "$ENV_FILE" ] && PREV_ENV="$(cat "$ENV_FILE")"
+FOREIGN_DB_URL=""
+[ "$FOREIGN_DB" = 1 ] && FOREIGN_DB_URL="$EXISTING_DB_URL"
 cat > "$ENV_FILE" <<EOF
 # CypherPanel control plane. Generated by install.sh — keep this file secret.
 #
@@ -186,7 +233,7 @@ cat > "$ENV_FILE" <<EOF
 # secrets are unrecoverable; if you change it, they stop decrypting.
 POSTGRES_PASSWORD=$PG_PASSWORD
 CYPHERD_MASTER_KEY=$MASTER_KEY
-CYPHERD_DATABASE_URL=postgres://cypherpanel:$PG_PASSWORD@127.0.0.1:5432/cypherpanel?sslmode=disable
+CYPHERD_DATABASE_URL=${FOREIGN_DB_URL:-postgres://cypherpanel:$PG_PASSWORD@127.0.0.1:5432/cypherpanel?sslmode=disable}
 CYPHERD_PUBLIC_HOST=$PUBLIC_HOST
 # Set this to the URL a browser types when TLS or a reverse proxy is in front
 # (e.g. https://panel.example.com). Every link the panel writes to itself — the
@@ -194,61 +241,85 @@ CYPHERD_PUBLIC_HOST=$PUBLIC_HOST
 # from it. Also set CYPHERD_TRUSTED_PROXIES to the proxy's CIDR so the panel
 # knows which client address a rate limit belongs to.
 CYPHERD_PUBLIC_URL=$PUBLIC_URL
-CYPHERD_HTTP_ADDR=0.0.0.0:$HTTP_PORT
+CYPHERD_HTTP_ADDR=$BIND:$HTTP_PORT
 CYPHERD_ENROLL_ADDR=0.0.0.0:$ENROLL_PORT
 CYPHERD_NATS_ADDR=0.0.0.0:$NATS_PORT
+# The guided upgrade's fallback snapshot. Postgres runs in a container and this
+# host has no client, so the dump runs inside the container. (Left out for a
+# database this script does not run: install postgresql-client there instead.)
+$([ "$FOREIGN_DB" = 1 ] || printf 'CYPHERD_SNAPSHOT_PGDUMP=docker exec -i %s pg_dump\nCYPHERD_SNAPSHOT_PGRESTORE=docker exec -i %s pg_restore' "$PG_NAME" "$PG_NAME")
 
 # Left blank on purpose: the owner account is created in the browser on first
 # visit, so no password is ever written to disk or printed to a terminal.
 CYPHERD_ADMIN_EMAIL=
 CYPHERD_ADMIN_PASSWORD=
+# Required by the first-run screen until an account exists. Whoever can read
+# this file — root on this host — is whoever may claim the panel.
+CYPHERD_SETUP_TOKEN=$SETUP_TOKEN
 EOF
+if [ -n "$PREV_ENV" ]; then
+    carried=0
+    printf '%s\n' "$PREV_ENV" | while IFS= read -r line; do
+        case "$line" in
+            [A-Z_]*=*) key="${line%%=*}" ;;
+            *) continue ;;
+        esac
+        grep -q "^$key=" "$ENV_FILE" && continue
+        [ "$carried" = 0 ] && printf '\n# Carried over from the previous install (set by hand):\n' >> "$ENV_FILE"
+        carried=1
+        printf '%s\n' "$line" >> "$ENV_FILE"
+    done
+fi
 chmod 600 "$ENV_FILE"
 ok "wrote $ENV_FILE (0600)"
 
 # ── postgres ─────────────────────────────────────────────────────────────────
 
-if docker inspect "$PG_NAME" >/dev/null 2>&1; then
-    docker start "$PG_NAME" >/dev/null 2>&1 || true
-    ok "PostgreSQL container already exists — left as is"
+if [ "$FOREIGN_DB" = 1 ]; then
+    ok "using the database cypherd.env already points at — not starting PostgreSQL here"
 else
-    say "starting PostgreSQL ($PG_IMAGE)"
-    # Bound to loopback: the database is never a public service. The panel and
-    # the database live on the same host by design (ADR-001).
-    docker run -d --name "$PG_NAME" \
-        --restart unless-stopped \
-        -e POSTGRES_USER=cypherpanel \
-        -e POSTGRES_PASSWORD="$PG_PASSWORD" \
-        -e POSTGRES_DB=cypherpanel \
-        -p 127.0.0.1:5432:5432 \
-        -v cypherpanel-pgdata:/var/lib/postgresql/data \
-        "$PG_IMAGE" >/dev/null || fail "could not start PostgreSQL"
-fi
+    if docker inspect "$PG_NAME" >/dev/null 2>&1; then
+        docker start "$PG_NAME" >/dev/null 2>&1 || true
+        ok "PostgreSQL container already exists — left as is"
+    else
+        say "starting PostgreSQL ($PG_IMAGE)"
+        # Bound to loopback: the database is never a public service. The panel and
+        # the database live on the same host by design (ADR-001).
+        docker run -d --name "$PG_NAME" \
+            --restart unless-stopped \
+            -e POSTGRES_USER=cypherpanel \
+            -e POSTGRES_PASSWORD="$PG_PASSWORD" \
+            -e POSTGRES_DB=cypherpanel \
+            -p 127.0.0.1:5432:5432 \
+            -v cypherpanel-pgdata:/var/lib/postgresql/data \
+            "$PG_IMAGE" >/dev/null || fail "could not start PostgreSQL"
+    fi
 
-say "waiting for PostgreSQL"
-i=0
-while [ "$i" -lt 60 ]; do
-    docker exec "$PG_NAME" pg_isready -U cypherpanel -d cypherpanel >/dev/null 2>&1 && break
-    i=$((i + 1)); sleep 1
-done
-docker exec "$PG_NAME" pg_isready -U cypherpanel -d cypherpanel >/dev/null 2>&1 \
-    || fail "PostgreSQL did not become ready within 60s (docker logs $PG_NAME)"
+    say "waiting for PostgreSQL"
+    i=0
+    while [ "$i" -lt 60 ]; do
+        docker exec "$PG_NAME" pg_isready -U cypherpanel -d cypherpanel >/dev/null 2>&1 && break
+        i=$((i + 1)); sleep 1
+    done
+    docker exec "$PG_NAME" pg_isready -U cypherpanel -d cypherpanel >/dev/null 2>&1 \
+        || fail "PostgreSQL did not become ready within 60s (docker logs $PG_NAME)"
 
-# pg_isready answers "the server is accepting connections", not "these
-# credentials work" — so an existing container whose password we do not hold
-# passes it and then fails the panel four restarts later, with an error that
-# names SASL rather than this. Ask the question directly, here, where the
-# remedy is obvious.
-if ! docker exec -e PGPASSWORD="$PG_PASSWORD" "$PG_NAME" \
-        psql -U cypherpanel -d cypherpanel -c 'SELECT 1' >/dev/null 2>&1; then
-    fail "the existing '$PG_NAME' container does not accept the password in $ENV_FILE.
-  It was created by an earlier install whose password was never written down.
-  Nothing in it is yours yet, so remove it and re-run:
-      docker rm -f $PG_NAME && docker volume rm cypherpanel-pgdata
-  If that database DOES hold data you want, set POSTGRES_PASSWORD in
-  $ENV_FILE to its real password instead."
+    # pg_isready answers "the server is accepting connections", not "these
+    # credentials work" — so an existing container whose password we do not hold
+    # passes it and then fails the panel four restarts later, with an error that
+    # names SASL rather than this. Ask the question directly, here, where the
+    # remedy is obvious.
+    if ! docker exec -e PGPASSWORD="$PG_PASSWORD" "$PG_NAME" \
+            psql -U cypherpanel -d cypherpanel -c 'SELECT 1' >/dev/null 2>&1; then
+        fail "the existing '$PG_NAME' container does not accept the password in $ENV_FILE.
+      It was created by an earlier install whose password was never written down.
+      Nothing in it is yours yet, so remove it and re-run:
+          docker rm -f $PG_NAME && docker volume rm cypherpanel-pgdata
+      If that database DOES hold data you want, set POSTGRES_PASSWORD in
+      $ENV_FILE to its real password instead."
+    fi
+    ok "PostgreSQL ready"
 fi
-ok "PostgreSQL ready"
 
 # ── binary ───────────────────────────────────────────────────────────────────
 
@@ -285,7 +356,11 @@ if [ -n "${CYPHERD_SHA256:-}" ]; then
 fi
 
 chmod 0755 "$TMP/cypherd"
-"$TMP/cypherd" --version >/dev/null 2>&1 || true
+# It has to RUN before it is installed over the binary a service depends on:
+# an HTML error page with a .sh-shaped name, or a build for the wrong
+# architecture, would otherwise replace a working panel with a crash loop.
+"$TMP/cypherd" version >/dev/null 2>&1 \
+    || fail "the downloaded cypherd does not run on this host ($(uname -m)) — is $URL the right asset?"
 install -m 0755 "$TMP/cypherd" "$BIN"
 ok "installed $BIN"
 
@@ -413,7 +488,7 @@ Environment=CYPHERD_DATA_DIR=/var/lib/cypherd
 # The upgrade handoff. Joining the group rather than naming a UID is what makes
 # this work regardless of which UID DynamicUser picked this boot.
 SupplementaryGroups=cypherpanel-upgrade
-ReadWritePaths=/var/lib/cypherpanel/upgrade
+ReadWritePaths=-/var/lib/cypherpanel/upgrade
 Environment=CYPHERD_UPGRADE_DIR=/var/lib/cypherpanel/upgrade
 
 # cypherd is a network service with a data directory and needs nothing else.
@@ -461,9 +536,21 @@ else
     printf '  Open   http://%s:%s\n' "$PUBLIC_HOST" "$HTTP_PORT"
 fi
 printf '  and create the owner account — that screen appears exactly once.\n\n'
-printf '  Anyone who reaches the panel before you can claim it, so do this now,\n'
-printf '  or restrict the port until you have:\n'
+if curl -fsS -m 2 "http://127.0.0.1:$HTTP_PORT/api/v1/auth/setup" 2>/dev/null | grep -q '"needs_setup":true'; then
+    printf '  It will ask for this setup code, which only this console has seen:\n\n'
+    printf '      %s\n\n' "$SETUP_TOKEN"
+    printf '  (also in %s, as CYPHERD_SETUP_TOKEN)\n\n' "$ENV_FILE"
+fi
+printf '  Restricting the port until you have claimed it is still worth doing:\n'
 printf '      ufw allow from YOUR.IP.ADDRESS to any port %s proto tcp\n\n' "$HTTP_PORT"
+printf '  Every server you add dials THIS host on %s (enrolment, mTLS) and %s (the\n' "$ENROLL_PORT" "$NATS_PORT"
+printf '  bus). If a firewall is on, allow those two from your servers.\n\n'
+printf '  The panel itself is plain HTTP. Before you use it from anywhere but this\n'
+printf '  machine, put TLS in front of it (Caddy or nginx on this host, or your\n'
+printf '  provider'"'"'s load balancer) and then set, in %s:\n' "$ENV_FILE"
+printf '      CYPHERD_PUBLIC_URL=https://panel.example.com\n'
+printf '      CYPHERD_TRUSTED_PROXIES=<the proxy'"'"'s address or CIDR>\n'
+printf '  Re-run this installer with CYPHERD_BIND=127.0.0.1 if the proxy is on this host.\n\n'
 printf '  Back up your master key — sealed secrets cannot be recovered without it:\n'
 printf '      %s\n\n' "$ENV_FILE"
 printf '  Add a server from the panel, then paste its join command on that host.\n'

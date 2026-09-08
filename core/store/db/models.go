@@ -775,6 +775,7 @@ type Server struct {
 	AgentUpdatePhase  string
 	AgentUpdateTarget string
 	AgentUpdateDetail string
+	SubsystemHealth   []byte
 }
 
 type Session struct {

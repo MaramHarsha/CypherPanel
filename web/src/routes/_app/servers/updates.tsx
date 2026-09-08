@@ -103,13 +103,31 @@ function Fleet({ data }: { data: AgentUpdates }) {
   return (
     <section className="space-y-3">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
-        <Eyebrow>
-          Agents{stable?.desired_version ? ` — desired ${stable.desired_version}` : ""}
-        </Eyebrow>
+        <div className="min-w-0">
+          <Eyebrow>
+            Agents{stable?.desired_version ? ` — desired ${stable.desired_version}` : ""}
+          </Eyebrow>
+          {/* WHERE THE BINARIES COME FROM, which no screen said. An agent
+              fetches and verifies its own artifact; the panel serves none. So
+              a mirror that was wiped, or one an operator never knew was set,
+              is the difference between a fleet that can update and one that
+              silently cannot — and it was invisible. */}
+          {(stable?.resolved_artifact_base || canary?.resolved_artifact_base) && (
+            <p className="mono mt-1 truncate text-[11px] text-text-faint">
+              binaries from {stable?.resolved_artifact_base || canary?.resolved_artifact_base}
+              {canary?.resolved_artifact_base &&
+              stable?.resolved_artifact_base &&
+              canary.resolved_artifact_base !== stable.resolved_artifact_base
+                ? ` · canary from ${canary.resolved_artifact_base}`
+                : ""}
+            </p>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           <SetVersionButton
             channel="stable"
             current={stable?.desired_version ?? ""}
+            currentBase={stable?.artifact_base ?? ""}
             panelVersion={data.panel_version}
             onSaved={refresh}
           />
@@ -121,6 +139,7 @@ function Fleet({ data }: { data: AgentUpdates }) {
               <SetVersionButton
                 channel="canary"
                 current={canary?.desired_version ?? ""}
+                currentBase={canary?.artifact_base ?? ""}
                 panelVersion={data.panel_version}
                 onSaved={refresh}
               />
@@ -312,11 +331,14 @@ const IN_FLIGHT: Record<string, string> = {
 function SetVersionButton({
   channel,
   current,
+  currentBase,
   panelVersion,
   onSaved,
 }: {
   channel: "stable" | "canary";
   current: string;
+  /** The mirror already configured, so setting a version does not erase it. */
+  currentBase: string;
   panelVersion: string;
   onSaved: () => void;
 }) {
@@ -350,7 +372,11 @@ function SetVersionButton({
         size="sm"
         onClick={() => {
           setVersion(current);
-          setBase("");
+          // Seeded, not blanked. Blanking it meant that setting a version — the
+          // ordinary reason to open this dialog — silently erased the artifact
+          // mirror, and no screen ever showed where agent binaries came from,
+          // so the erasure was invisible until a host tried to fetch one.
+          setBase(currentBase);
           setError(null);
           setOpen(true);
         }}

@@ -30,7 +30,48 @@ import (
 // able to install a signed one on trust.
 //
 // Set at build time with -ldflags "-X …/core/upgrade.ReleasePublicKey=<base64>".
+// One or two comma-separated keys, the same list release-pubkey.txt holds and
+// the agent bakes in: rotation ships the outgoing and the incoming key together
+// for one release, and a panel that accepted only one would refuse the release
+// signed with the other.
 var ReleasePublicKey = ""
+
+// The compatibility floors release.json carries, as CODE rather than as release
+// inputs: CI and the signer's rebuild must produce a byte-identical
+// release.json, so a value either side could type differently cannot exist.
+// Bump these in the commit that breaks the thing they guard.
+const (
+	// AgentMinVersion is the oldest agent this panel can still talk to. The
+	// wire is additive since the first release (control-plane-hardening.md
+	// records the one deliberate break, before it), so this stays at the first
+	// release until a field is removed or repurposed.
+	AgentMinVersion = "v0.1.0"
+	// RollbackFloor is the oldest panel whose binary can still read this
+	// release's schema. Migrations are additive so far; a migration that drops
+	// or rewrites a column moves this to the release that shipped it.
+	RollbackFloor = "v0.1.0"
+)
+
+// trustedKeys parses the baked-in list. A malformed entry is dropped, as the
+// agent does, so a typo in the second key cannot disable every upgrade.
+func trustedKeys() []ed25519.PublicKey {
+	var out []ed25519.PublicKey
+	for _, entry := range strings.Split(ReleasePublicKey, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		b, err := base64.StdEncoding.DecodeString(entry)
+		if err != nil || len(b) != ed25519.PublicKeySize {
+			continue
+		}
+		out = append(out, ed25519.PublicKey(b))
+		if len(out) == 2 {
+			break
+		}
+	}
+	return out
+}
 
 // ErrUnverifiable is any break in the chain from the signature to the file.
 var ErrUnverifiable = errors.New("upgrade: the release could not be verified")
@@ -68,6 +109,13 @@ type VerifiedRelease struct {
 	Digests map[string]string
 }
 
+// AssetName is the release file for this platform, by the layout release.yml
+// publishes and install.sh downloads: cypherd-linux-<arch>. The first version
+// of the helper asked for cypherd_<version>_linux_<arch>, a name nothing has
+// ever uploaded, so every guided upgrade would have stopped at "the signed
+// manifest does not cover" — after the signature had verified.
+func AssetName(goarch string) string { return "cypherd-linux-" + goarch }
+
 // VerifyRelease fetches SHA256SUMS, its signature and release.json for a tag,
 // and returns the manifest only when every link holds.
 //
@@ -83,8 +131,8 @@ func VerifyRelease(ctx context.Context, f Fetcher, baseURL, version string) (Ver
 	if ReleasePublicKey == "" {
 		return VerifiedRelease{}, fmt.Errorf("%w: this build carries no release public key, so it cannot check a signature", ErrUnverifiable)
 	}
-	pub, err := base64.StdEncoding.DecodeString(ReleasePublicKey)
-	if err != nil || len(pub) != ed25519.PublicKeySize {
+	keys := trustedKeys()
+	if len(keys) == 0 {
 		return VerifiedRelease{}, fmt.Errorf("%w: the baked release key is malformed", ErrUnverifiable)
 	}
 
@@ -103,7 +151,14 @@ func VerifyRelease(ctx context.Context, f Fetcher, baseURL, version string) (Ver
 	}
 	// THE load-bearing line. Everything after it is arithmetic over bytes a
 	// human signed offline.
-	if !ed25519.Verify(ed25519.PublicKey(pub), sums, sig) {
+	verified := false
+	for _, pub := range keys {
+		if ed25519.Verify(pub, sums, sig) {
+			verified = true
+			break
+		}
+	}
+	if !verified {
 		return VerifiedRelease{}, fmt.Errorf("%w: the manifest's signature does not match the release key", ErrUnverifiable)
 	}
 
@@ -139,7 +194,9 @@ func ParseSums(body string) map[string]string {
 		if len(fields) != 2 || len(fields[0]) != 64 {
 			continue
 		}
-		out[strings.TrimPrefix(fields[1], "*")] = strings.ToLower(fields[0])
+		// "*name" is sha256sum's binary-mode marker and "./name" is what
+		// `sha256sum ./*` writes; the release file is called neither.
+		out[strings.TrimPrefix(strings.TrimPrefix(fields[1], "*"), "./")] = strings.ToLower(fields[0])
 	}
 	return out
 }

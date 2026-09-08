@@ -43,7 +43,7 @@ func release(t *testing.T, m Manifest) (fakeFetcher, string) {
 	sum := sha256.Sum256(body)
 	binary := []byte("#!/bin/true\n")
 	binSum := sha256.Sum256(binary)
-	binName := fmt.Sprintf("cypherd_%s_linux_amd64", strings.TrimPrefix(m.Version, "v"))
+	binName := AssetName("amd64")
 
 	sums := fmt.Sprintf("%s  release.json\n%s  %s\n",
 		hex.EncodeToString(sum[:]), hex.EncodeToString(binSum[:]), binName)
@@ -359,5 +359,68 @@ func TestVerifyReleaseRefusesANonTagBeforeItFetchesAnything(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not a release tag") {
 		t.Errorf("error = %q; the refusal should name the shape, which means it happened before any fetch", err)
+	}
+}
+
+// Rotation ships two keys for one release: the panel must accept a manifest
+// signed by EITHER, and a malformed second entry must not disable the first.
+func TestEitherOfTwoBakedKeysVerifies(t *testing.T) {
+	m := Manifest{Version: "v0.2.0", AgentMinVersion: "v0.1.0"}
+	f, key := release(t, m)
+	otherPub, _, _ := ed25519.GenerateKey(nil)
+	other := base64.StdEncoding.EncodeToString(otherPub)
+
+	for _, list := range []string{other + "," + key, key + "," + other, key + ",not-a-key"} {
+		withKey(t, list)
+		if _, err := VerifyRelease(context.Background(), f, baseURL, "v0.2.0"); err != nil {
+			t.Fatalf("key list %q: %v", list, err)
+		}
+	}
+	withKey(t, other)
+	if _, err := VerifyRelease(context.Background(), f, baseURL, "v0.2.0"); err == nil {
+		t.Fatal("a manifest signed by a key not in the list verified")
+	}
+}
+
+// `sha256sum ./*` names files "./name"; the release file is called "name".
+func TestParseSumsDropsDotSlash(t *testing.T) {
+	sums := ParseSums("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  ./cypherd-linux-amd64\n" +
+		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef *release.json\n")
+	for _, name := range []string{"cypherd-linux-amd64", "release.json"} {
+		if _, ok := sums[name]; !ok {
+			t.Fatalf("%s missing from %v", name, sums)
+		}
+	}
+}
+
+// The default install runs Postgres in a container and installs no client on
+// the host, so the dump tool is a command line, not a path.
+func TestSnapshotToolOverrideIsACommandLine(t *testing.T) {
+	t.Setenv("CYPHERD_SNAPSHOT_PGDUMP", "docker exec -i cypherpanel-postgres pg_dump")
+	tool, args, err := ResolvePgDump("postgres://u:p@127.0.0.1:5432/db")
+	if err != nil {
+		t.Fatalf("ResolvePgDump: %v", err)
+	}
+	if tool != "docker" || strings.Join(args, " ") != "exec -i cypherpanel-postgres pg_dump" {
+		t.Fatalf("tool=%q args=%v", tool, args)
+	}
+}
+
+// A rollback is bounded to versions this host actually ran, and the host has to
+// have WRITTEN that record: the first version scanned for files nothing wrote,
+// so every rollback was refused.
+func TestTheHelperRemembersWhatItRan(t *testing.T) {
+	dir := Dir(t.TempDir())
+	h := &Helper{o: HelperOptions{Dir: dir, FromVersion: "v0.1.0", Now: time.Now}}
+	if h.ranBefore("v0.1.0") {
+		t.Fatal("a version nothing recorded counted as run")
+	}
+	h.remember("v0.1.0")
+	if !h.ranBefore("v0.1.0") {
+		t.Fatal("the recorded version does not count as run")
+	}
+	h.remember("main") // not a tag; must not be recorded
+	if h.ranBefore("main") {
+		t.Fatal("a branch name was recorded as a version")
 	}
 }

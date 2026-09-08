@@ -861,3 +861,55 @@ func (a *API) handleRotateApplicationWebhook(w http.ResponseWriter, r *http.Requ
 		"webhook": webhookInfo{URL: a.deps.ConsoleURL + "/webhooks/github/" + app.WebhookID, Secret: secret},
 	})
 }
+
+type serverWorkloadDTO struct {
+	ID          string `json:"id"`
+	Kind        string `json:"kind"`
+	Name        string `json:"name"`
+	ProjectID   string `json:"project_id"`
+	ProjectName string `json:"project_name"`
+	Status      string `json:"status"`
+}
+
+// handleListServerWorkloads reports what runs on a host.
+//
+// The plane assembles desired state from exactly these three lists, and no
+// route exposed them — so the panel could call a server degraded, or ask an
+// operator to confirm removing it, and never say what was on it. "What will I
+// break" is the first question anyone asks about a host.
+//
+// Scoped to what the caller may see: a workload in a team they do not belong to
+// is OMITTED, not refused. The count is then honest about their own view
+// without turning a server page into a census of other teams' projects.
+func (a *API) handleListServerWorkloads(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.requirePanelRole(w, user, domain.RoleMember) {
+		return
+	}
+	if a.deps.Applications == nil {
+		writeJSON(w, http.StatusOK, map[string][]serverWorkloadDTO{"workloads": {}})
+		return
+	}
+	all, err := a.deps.Applications.WorkloadsOnServer(r.Context(), r.PathValue("id"))
+	if err != nil {
+		a.deps.Log.Error("listing server workloads", "server_id", r.PathValue("id"), "error", err)
+		writeError(w, http.StatusInternalServerError, "could not read what runs on this server")
+		return
+	}
+	out := make([]serverWorkloadDTO, 0, len(all))
+	for _, wl := range all {
+		if a.deps.Teams != nil && wl.TeamID != "" {
+			role, rerr := a.deps.Teams.RoleInTeam(r.Context(), user, wl.TeamID)
+			// Non-empty, not merely error-free: RoleInTeam reports a non-member
+			// as ("", nil), so testing only the error shows everything.
+			if rerr != nil || role == "" {
+				continue
+			}
+		}
+		out = append(out, serverWorkloadDTO{
+			ID: wl.ID, Kind: wl.Kind, Name: wl.Name,
+			ProjectID: wl.ProjectID, ProjectName: wl.ProjectName, Status: wl.Status,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string][]serverWorkloadDTO{"workloads": out})
+}

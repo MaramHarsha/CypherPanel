@@ -34,6 +34,7 @@ import type {
   ForbiddenResponse,
   GetServerMetricsParams,
   ListServerDomains200,
+  ListServerWorkloads200,
   LocalServer,
   LocalServerCreated,
   NotFoundResponse,
@@ -65,6 +66,111 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   }
   return result;
 };
+
+export const getListServerWorkloadsUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/servers/${id}/workloads`
+}
+
+/**
+ * Applications, compose stacks and managed databases placed on this host, with the project each belongs to.
+ *
+ * The plane has always known — it assembles desired state from exactly these three lists — and no route exposed it, so the panel could show a server as degraded, or ask an operator to confirm removing it, without ever being able to say what was on it. "What will I break" is the first question anyone asks about a host, and the answer needed a database query.
+ *
+ * Scoped to what the caller may see: a workload in a team they do not belong to is omitted rather than refused, so the count is honest about their own view without revealing another team's.
+ * @summary What runs on this server (member)
+ */
+export const listServerWorkloads = async (id: string, options?: RequestInit): Promise<ListServerWorkloads200> => {
+
+  return apiFetch<ListServerWorkloads200>(getListServerWorkloadsUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListServerWorkloadsQueryKey = (id: string,) => {
+    return [
+    `/api/v1/servers/${id}/workloads`
+    ] as const;
+    }
+
+
+export const getListServerWorkloadsQueryOptions = <TData = Awaited<ReturnType<typeof listServerWorkloads>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServerWorkloads>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListServerWorkloadsQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listServerWorkloads>>> = ({ signal }) => listServerWorkloads(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listServerWorkloads>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListServerWorkloadsQueryResult = NonNullable<Awaited<ReturnType<typeof listServerWorkloads>>>
+export type ListServerWorkloadsQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useListServerWorkloads<TData = Awaited<ReturnType<typeof listServerWorkloads>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServerWorkloads>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listServerWorkloads>>,
+          TError,
+          Awaited<ReturnType<typeof listServerWorkloads>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListServerWorkloads<TData = Awaited<ReturnType<typeof listServerWorkloads>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServerWorkloads>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listServerWorkloads>>,
+          TError,
+          Awaited<ReturnType<typeof listServerWorkloads>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListServerWorkloads<TData = Awaited<ReturnType<typeof listServerWorkloads>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServerWorkloads>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary What runs on this server (member)
+ */
+
+export function useListServerWorkloads<TData = Awaited<ReturnType<typeof listServerWorkloads>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServerWorkloads>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListServerWorkloadsQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
 
 export const getListServerDomainsUrl = (id: string,) => {
 

@@ -79,6 +79,9 @@ func parseManifest(sums []byte) (manifest, error) {
 		}
 		name = strings.TrimSpace(name)
 		name = strings.TrimPrefix(name, "*")
+		// `sha256sum ./*` writes "./cypher-agent-linux-amd64", and the release
+		// workflow did exactly that: every lookup by bare name missed.
+		name = strings.TrimPrefix(name, "./")
 		if name == "" {
 			continue
 		}

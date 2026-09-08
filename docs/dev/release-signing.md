@@ -76,6 +76,59 @@ go build -ldflags "-X github.com/MaramHarsha/cypherpanel/agent/updater.publicKey
 RELEASE_PUBKEY = <not yet generated — see "Status" below>
 ```
 
+## What a release contains
+
+```
+cypherd-linux-amd64        cypher-agent-linux-amd64
+cypherd-linux-arm64        cypher-agent-linux-arm64
+release.json               version, schema version, the agent floor — what the
+                           panel's guided upgrade reads before it fetches a byte
+SHA256SUMS                 every file above, by exactly these names
+SHA256SUMS.sig             the offline key's signature over SHA256SUMS
+```
+
+The names are the contract: `install.sh` downloads `cypherd-linux-{arch}`, the
+panel's join command and "use this machine" fetch `cypher-agent-linux-{arch}`
+from the panel's own version, the panel's upgrade fetches `release.json` and the
+same binary name, and the agent's updater fetches `cypher-agent-linux-<arch>`.
+`release.json` is written by `core/cmd/release-manifest` from the tag and the
+commit date and nothing else, so the signer's rebuild reproduces it.
+
+## Rehearsing, before the first tag
+
+`make release-rehearsal` runs the release on this machine, end to end, against
+throwaway containers it removes afterwards. It builds the artifacts with the
+workflow's own ldflags, **rebuilds one of them and compares byte for byte**
+(without that, `make release-sign` could never verify a rebuild and the offline
+key would be unusable), installs onto an empty database, enrols a server,
+restarts the plane, migrates a database made by the PREVIOUS release's binary,
+and takes a snapshot to a real S3 endpoint and restores it into a database it
+did not come from.
+
+It starts no agent reconciler, so it is safe to run on a host that is already
+serving a panel.
+
+`make fresh-host-rehearsal` is the other half: a bare Ubuntu host with systemd
+in a privileged container running its own Docker daemon, taken through
+`install.sh` exactly as the README says, the first-run owner account, a re-run
+(the master key must survive it), a reboot, "use this machine", a template
+deployed through the real agent and served through the real Proxy at its
+domain, and a second reboot with that workload on it. Its own Docker daemon is
+what makes it safe beside a live panel — the `cypher-proxy` it starts is inside
+the container.
+
+**Publish before you install.** `install.sh` defaults to
+`releases/latest/download/…`, and the panel's join command and "use this
+machine" fetch the agent from the panel's own version's release asset. A DRAFT
+release is not `latest` and its assets are not downloadable, so an install run
+between the tag and `make release-sign` fails at the download with the
+"no release published yet" remedy. Sign and publish first; then install.
+
+It is not decoration. Its first run found that the plane could not take a
+snapshot at all, and then two more defects behind that one — all three recorded
+in `docs/features/plane-disaster-recovery.md`. Nothing else in the repository
+could have found them, because every other test used a fake schema.
+
 ## Releasing
 
 Tagging builds the binaries and creates a **draft** release. It stays a draft —
@@ -101,11 +154,18 @@ survive. Comparing against a local rebuild makes the signature mean *"I built
 this from source I read"* rather than *"CI agrees with itself"*.
 
 Go builds are reproducible under `-trimpath` with `CGO_ENABLED=0` and fixed
-ldflags, which is what lets a mismatch carry meaning. The script refuses to run
-on a different Go toolchain than the release was built with, because a version
-skew is indistinguishable from a tampered artifact once the comparison fails —
-and an operator who learns that mismatches are normal is an operator who will
-sign through a real one.
+ldflags **on the same toolchain**, which is what lets a mismatch carry meaning.
+A patch release of Go can change the compiler's output, so "the same toolchain"
+means the exact version, not the minor: CI reads it from `go.work`
+(`go-version-file`), and `release-sign.sh` reads the same line and sets
+`GOTOOLCHAIN` to it, so whatever Go the signer has installed fetches and uses
+that exact version for the rebuild. The script still refuses if it cannot get
+there, because a version skew is indistinguishable from a tampered artifact
+once the comparison fails — and an operator who learns that mismatches are
+normal is an operator who will sign through a real one.
+
+Bumping Go is therefore one edit, to `go.work`, and it is part of the release:
+a tag built with one version and rebuilt with another cannot be signed.
 
 ## Verifying a release by hand
 

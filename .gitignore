@@ -44,3 +44,5 @@ web/e2e/node_modules/
 web/e2e/test-results/
 web/e2e/package-lock.json
 web/e2e/package.json
+# scripts/release-rehearsal.sh: throwaway binaries and run state.
+/.rehearsal/

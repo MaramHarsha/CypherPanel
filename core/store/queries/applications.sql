@@ -166,3 +166,33 @@ UPDATE applications
 SET webhook_secret_ct = $2, webhook_secret_nonce = $3, updated_at = now()
 WHERE id = $1
 RETURNING *;
+
+-- ListServerWorkloads answers "what runs on this host" in one query.
+--
+-- The plane assembles desired state from exactly these three lists and no route
+-- ever exposed them, so the panel could report a server degraded, or ask for
+-- confirmation before removing it, without being able to say what was on it.
+-- "What will I break" is the first question anyone asks about a host.
+--
+-- The project travels with each row because a workload without one is a name in
+-- a list; the caller filters by what they may see.
+-- name: ListServerWorkloads :many
+SELECT a.id, 'application' AS kind, a.name, e.project_id, p.name AS project_name,
+       a.status, p.team_id
+FROM applications a
+JOIN environments e ON e.id = a.environment_id
+JOIN projects p ON p.id = e.project_id
+WHERE a.runtime_server_id = $1
+UNION ALL
+SELECT c.id, 'compose_stack', c.name, e.project_id, p.name, c.status, p.team_id
+FROM compose_stacks c
+JOIN environments e ON e.id = c.environment_id
+JOIN projects p ON p.id = e.project_id
+WHERE c.runtime_server_id = $1
+UNION ALL
+SELECT d.id, 'database', d.name, e.project_id, p.name, d.status, p.team_id
+FROM databases d
+JOIN environments e ON e.id = d.environment_id
+JOIN projects p ON p.id = e.project_id
+WHERE d.server_id = $1 AND d.pending_delete = false
+ORDER BY kind, name;
