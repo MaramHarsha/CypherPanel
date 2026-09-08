@@ -9303,7 +9303,7 @@ components:
             means the engine's own default — the `postgres` maintenance
             database for PostgreSQL, and nothing at all for MySQL, MariaDB and
             MongoDB.
-        status: { type: string, enum: [running, provisioning, stopped, error, unknown] }
+        status: { type: string, enum: [running, provisioning, restoring, stopped, error, unknown] }
         status_detail: { type: string }
         desired_state:
           type: string

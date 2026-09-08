@@ -62,9 +62,20 @@ git worktree add --detach --force "$WORK/src" "$VERSION" >/dev/null
 # beside this script.
 echo "==> Rebuilding with CI's flags"
 COMMIT=$(git -C "$WORK/src" rev-parse --short HEAD)
-BUILD_DATE=$(git -C "$WORK/src" log -1 --format=%cd --date=format:%Y-%m-%dT%H:%M:%SZ)
+BUILD_DATE=$(TZ=UTC git -C "$WORK/src" log -1 --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ)
 PUBKEYS=$(tr -d '[:space:]' < "$WORK/src/release-pubkey.txt" 2>/dev/null || true)
-PLANE_STAMPS="-X main.version=$VERSION -X main.commit=$COMMIT -X main.buildDate=$BUILD_DATE"
+# A release whose agents and plane trust no key can never be updated by the
+# panel, and no later release can retroactively give them one. Refusing here is
+# what makes "the key must exist before the first release" a rule rather than
+# a sentence in a document.
+if [ -z "$PUBKEYS" ]; then
+  echo "release-pubkey.txt is empty at $VERSION."
+  echo "The agents and the plane built from this tag would trust no update key, and"
+  echo "nothing published later can change what they trust. Generate the key"
+  echo "(docs/dev/release-signing.md), commit its public half, and tag again."
+  exit 1
+fi
+PLANE_STAMPS="-X main.version=$VERSION -X main.commit=$COMMIT -X main.buildDate=$BUILD_DATE -X github.com/MaramHarsha/cypherpanel/core/upgrade.ReleasePublicKey=$PUBKEYS"
 AGENT_STAMPS="-X main.version=$VERSION -X github.com/MaramHarsha/cypherpanel/agent/updater.publicKeys=$PUBKEYS"
 for arch in amd64 arm64; do
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
@@ -75,8 +86,14 @@ for arch in amd64 arm64; do
       -o "$(pwd)/$WORK/built/cypher-agent-linux-$arch" ./cmd/cypher-agent
 done
 
+# release.json is rebuilt and compared like a binary: the panel verifies it
+# through the signed manifest, so a draft that carried a different one would be
+# a draft that says something the tag does not.
+go run -C "$WORK/src/core" ./cmd/release-manifest -version "$VERSION" -published-at "$BUILD_DATE" \
+  -out "$(pwd)/$WORK/built/release.json"
+
 echo "==> Downloading the draft's artifacts"
-gh release download "$VERSION" -D "$WORK/draft" -p 'cypher*' -p 'SHA256SUMS'
+gh release download "$VERSION" -D "$WORK/draft" -p 'cypher*' -p 'release.json' -p 'SHA256SUMS'
 
 echo "==> Comparing the draft against the rebuild"
 mismatch=0
@@ -93,8 +110,9 @@ for f in "$WORK"/built/*; do
 done
 # Anything the draft carries that we did not build is unaccounted for, which is
 # the shape an injected artifact takes.
-for f in "$WORK"/draft/cypher*; do
+for f in "$WORK"/draft/*; do
   name="$(basename "$f")"
+  case "$name" in SHA256SUMS*) continue ;; esac
   [ -f "$WORK/built/$name" ] || { echo "  UNEXPECTED in the draft: $name"; mismatch=1; }
 done
 if [ "$mismatch" -ne 0 ]; then
@@ -108,7 +126,7 @@ echo "==> Signing our own manifest"
 # Ours, computed from the rebuild — not the file the draft supplied. If they
 # agree it makes no difference, and if they ever disagree this is the one that
 # should carry a signature.
-( cd "$WORK/built" && sha256sum ./* > SHA256SUMS )
+( cd "$WORK/built" && sha256sum cypher* release.json > SHA256SUMS )
 if ! diff -q "$WORK/built/SHA256SUMS" "$WORK/draft/SHA256SUMS" >/dev/null 2>&1; then
   echo "  note: the draft's SHA256SUMS differs in form; signing the rebuilt one"
 fi

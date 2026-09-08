@@ -335,7 +335,7 @@ func (h *Helper) restoreOnly(ctx context.Context, req Request) error {
 // not against a checksum file that whoever replaced the binary could also have
 // replaced.
 func (h *Helper) download(ctx context.Context, rel VerifiedRelease, version string) (string, error) {
-	name := fmt.Sprintf("cypherd_%s_%s_%s", strings.TrimPrefix(version, "v"), runtime.GOOS, runtime.GOARCH)
+	name := AssetName(runtime.GOARCH)
 	want, ok := rel.Digests[name]
 	if !ok {
 		return "", fmt.Errorf("the signed manifest does not cover %s", name)

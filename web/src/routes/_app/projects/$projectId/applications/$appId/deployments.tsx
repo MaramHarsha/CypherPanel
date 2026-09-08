@@ -303,7 +303,7 @@ function DeploymentsTab() {
             <EmptyState
               emphasis
               title="No deployments yet"
-              hint="Deploy builds the repository's Dockerfile and rolls it out with a health-gated, zero-downtime switch. Push-to-deploy is on the Overview tab."
+              hint="Deploy builds the source — or pulls the image — and rolls it out with a health-gated, zero-downtime switch. Push-to-deploy is under Settings."
               action={
                 <ActionButton
                   variant="primary"

@@ -11,8 +11,9 @@ Format: `## <version> — <YYYY-MM-DD>`, then one-line bullets. Nothing else is
 parsed, and anything the parser does not recognise is skipped rather than
 rendered.
 
-## v0.4.0 — 2026-09-07
+## v0.1.0 — 2026-09-08
 
+- The first release: projects, environments, applications, the deploy pipeline, and the dial-home agent.
 - GitHub App: pick a repository instead of typing a URL, and clone with a token minted for each build rather than a long-lived deploy key.
 - Guided onboarding: the four steps from a fresh panel to a live URL, on the page you already land on.
 - Use this machine: add the panel's own host as a server from the panel, with no command to paste.
@@ -32,20 +33,10 @@ rendered.
 - Volume backups: archive an application's flagged volumes to an S3 target on a schedule.
 - Access control: IP allowlists and preview passphrases, enforced by the Proxy.
 - Project export: download a project as a portable archive that runs anywhere Docker runs.
-
-## v0.3.0 — 2026-08-20
-
 - Compose stacks: deploy a docker-compose file as a first-class resource, with revisions and rollback.
 - Deploy protection: per-environment approval rules, freeze windows and an audited break-glass override.
 - Scheduled tasks: cron jobs that run inside an application's own container.
 - Outbound webhooks: signed JSON deliveries for machines, alongside the notifiers that reach people.
-
-## v0.2.0 — 2026-07-30
-
 - Managed databases with S3 backups and restore.
 - Preview environments: a pull request gets its own environment, destroyed when it closes.
 - DNS automation and certificate issuance through the managed Proxy.
-
-## v0.1.0 — 2026-07-01
-
-- First release: projects, environments, applications, the deploy pipeline, and the dial-home agent.

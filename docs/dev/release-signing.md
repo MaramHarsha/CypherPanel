@@ -76,6 +76,24 @@ go build -ldflags "-X github.com/MaramHarsha/cypherpanel/agent/updater.publicKey
 RELEASE_PUBKEY = <not yet generated — see "Status" below>
 ```
 
+## What a release contains
+
+```
+cypherd-linux-amd64        cypher-agent-linux-amd64
+cypherd-linux-arm64        cypher-agent-linux-arm64
+release.json               version, schema version, the agent floor — what the
+                           panel's guided upgrade reads before it fetches a byte
+SHA256SUMS                 every file above, by exactly these names
+SHA256SUMS.sig             the offline key's signature over SHA256SUMS
+```
+
+The names are the contract: `install.sh` downloads `cypherd-linux-{arch}`, the
+panel's join command and "use this machine" fetch `cypher-agent-linux-{arch}`
+from the panel's own version, the panel's upgrade fetches `release.json` and the
+same binary name, and the agent's updater fetches `cypher-agent-linux-<arch>`.
+`release.json` is written by `core/cmd/release-manifest` from the tag and the
+commit date and nothing else, so the signer's rebuild reproduces it.
+
 ## Rehearsing, before the first tag
 
 `make release-rehearsal` runs the release on this machine, end to end, against

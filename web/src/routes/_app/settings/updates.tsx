@@ -586,7 +586,7 @@ function RollBackButton({ toVersion, fromVersion }: { toVersion: string; fromVer
         blastRadius={[
           "Nothing you created is lost — every project, deploy, user, token and audit row written since stays exactly as it is.",
           "The panel is briefly unavailable while it swaps and restarts; agents keep running and reconverge on their own.",
-          "A schema change that shipped in the newer version is migrated back down, so anything only the newer version could store is what you lose.",
+          "The schema is not migrated down — migrations are additive, so the older panel runs on the newer schema and anything only the newer version could show is simply not shown until you upgrade again.",
         ]}
         actionLabel={`Roll back to ${toVersion}`}
         pendingLabel="Starting…"

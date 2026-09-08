@@ -95,9 +95,9 @@ if [ "${REHEARSAL_SKIP_BUILD:-}" = 1 ]; then
     ok "reusing $DIST"
 else
     COMMIT=$(git -C "$ROOT" rev-parse --short HEAD)
-    BUILD_DATE=$(git -C "$ROOT" log -1 --format=%cd --date=format:%Y-%m-%dT%H:%M:%SZ)
+    BUILD_DATE=$(TZ=UTC git -C "$ROOT" log -1 --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ)
     PUBKEYS=$(tr -d '[:space:]' < "$ROOT/release-pubkey.txt" 2>/dev/null || true)
-    PLANE_STAMPS="-X main.version=$VERSION -X main.commit=$COMMIT -X main.buildDate=$BUILD_DATE"
+    PLANE_STAMPS="-X main.version=$VERSION -X main.commit=$COMMIT -X main.buildDate=$BUILD_DATE -X github.com/MaramHarsha/cypherpanel/core/upgrade.ReleasePublicKey=$PUBKEYS"
     AGENT_STAMPS="-X main.version=$VERSION -X github.com/MaramHarsha/cypherpanel/agent/updater.publicKeys=$PUBKEYS"
     test -f "$ROOT/core/api/rest/webui/dist/index.html" \
         || fail "core/api/rest/webui/dist is missing — run 'make build-web'"
@@ -106,7 +106,9 @@ else
         $RUN_GO "cd '$ROOT/core' && $GO_PIN CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath -ldflags '-s -w $PLANE_STAMPS' -o '$DIST/cypherd-linux-$arch' ./cmd/cypherd"
         $RUN_GO "cd '$ROOT/agent' && $GO_PIN CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath -ldflags '-s -w $AGENT_STAMPS' -o '$DIST/cypher-agent-linux-$arch' ./cmd/cypher-agent"
     done
-    (cd "$DIST" && sha256sum ./cypherd-linux-* ./cypher-agent-linux-* > SHA256SUMS)
+    $RUN_GO "cd '$ROOT/core' && $GO_PIN go run ./cmd/release-manifest -version '$VERSION' -published-at '$BUILD_DATE' -out '$DIST/release.json'" || fail "release.json"
+    (cd "$DIST" && sha256sum cypher* release.json > SHA256SUMS)
+    grep -q '"version": "'"$VERSION"'"' "$DIST/release.json" && ok "release.json names $VERSION" || bad "release.json is wrong"
     ok "built 4 binaries for 2 architectures with $($RUN_GO "cd '$ROOT' && $GO_PIN go env GOVERSION")"
 fi
 

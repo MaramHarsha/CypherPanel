@@ -417,6 +417,11 @@ function NewEndpointDialog({
   const [error, setError] = useState<string | null>(null);
   const [secret, setSecret] = useState<string | null>(null);
   const [createdUrl, setCreatedUrl] = useState("");
+  // Controlled, so a successful EDIT can close the dialog. Creating stays open
+  // on purpose — its success screen is the one showing of the signing secret —
+  // but an edit has nothing to show, and a dialog that stays open after "Saved"
+  // reads as a save that did not happen.
+  const [open, setOpen] = useState(false);
 
   const create = useCreateWebhookEndpoint({
     mutation: {
@@ -436,6 +441,7 @@ function NewEndpointDialog({
         void qc.invalidateQueries({ queryKey: getListWebhookEndpointsQueryKey(projectId) });
         setError(null);
         toastSuccess({ title: "Endpoint updated", detail: "Its signing secret is unchanged." });
+        setOpen(false);
       },
       onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not update the endpoint"),
     },
@@ -466,7 +472,13 @@ function NewEndpointDialog({
   };
 
   return (
-    <Dialog onOpenChange={(open) => !open && reset()}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) reset();
+      }}
+    >
       <DialogTrigger asChild>
         {editing ? (
           <Button size="sm" variant="ghost">
@@ -478,7 +490,7 @@ function NewEndpointDialog({
           </Button>
         )}
       </DialogTrigger>
-      <DialogContent title={secret ? "Endpoint added" : "Add an endpoint"}>
+      <DialogContent title={secret ? "Endpoint added" : editing ? "Edit endpoint" : "Add an endpoint"}>
         {secret ? (
           // Success is a different screen, not a toast: the secret is the whole
           // point of the interaction and it can never be shown again.
@@ -540,8 +552,14 @@ function NewEndpointDialog({
                   Cancel
                 </Button>
               </DialogClose>
-              <ActionButton variant="primary" type="submit" state={addState} busyLabel="Adding…" successLabel="Added">
-                Add endpoint
+              <ActionButton
+                variant="primary"
+                type="submit"
+                state={addState}
+                busyLabel={editing ? "Saving…" : "Adding…"}
+                successLabel={editing ? "Saved" : "Added"}
+              >
+                {editing ? "Save changes" : "Add endpoint"}
               </ActionButton>
             </div>
           </form>

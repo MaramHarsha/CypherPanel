@@ -588,3 +588,16 @@ Four things differ from the spec as written, all of them narrowings:
   readings land on the same write — a READY agent has nothing wrong with it
   either way, and a DEGRADED agent naming nothing is one that cannot, which the
   screen says in those words rather than showing amber with no reason.
+- **No agent could ever have updated itself, and the check that stopped it
+  passed its test.** `writable()` asked whether the running binary could be
+  opened for writing, and Linux answers ETXTBSY for any process's own
+  executable — so every host reported "binary is not writable; managed outside
+  the panel" and the updater excluded itself. The swap never needed that: it
+  stages beside the binary and renames over it, which is allowed. The check now
+  probes the DIRECTORY, and the test runs a copied `sleep` and asks about it
+  while it runs. Found by the release-readiness audit, not by a test, because
+  the test opened a file nothing was executing.
+- **The release workflow wrote the manifest with `sha256sum ./*`**, so every
+  name in it began with `./` and the agent's lookup by bare name missed. Both
+  parsers strip it now and the workflow names its files explicitly.
+

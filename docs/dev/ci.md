@@ -18,15 +18,26 @@ Dockerized Postgres via `services:`, boots a real `cypherd` and real `cypher-age
 - **deploy** — Phase 2 acceptance: a host-run agent (real Docker + git) clones a repo, builds a Dockerfile image, health-gates the rollout, the container actually serves, then a rollback re-ships the revision with the build skipped.
 - **deploy-resilience** — Phase 2 acceptance gate 2: a deploy triggered while the agent is down waits in the file-backed WORK stream; on restart the agent drains it and converges to the new revision with no manual step.
 
-Still to grow: real Traefik + Let's Encrypt routing with a zero-dropped-requests check across a live flip (acceptance gate 1), and the two-agent build-relay scenario (ADR-008).
+Also in `integration.yml`: the **deploy** job routes the built application
+through the real managed Proxy (Traefik) and checks the body at its domain, and
+the **browser regression** job drives the built panel through a real browser
+(`web/e2e/`). The two-agent build-relay scenario (ADR-008) is proven live rather
+than in CI.
 
 ### `.github/dependabot.yml`
 Weekly grouped updates: Go modules, pnpm, and Actions versions. Every new runtime dependency still requires PR justification per [tech-stack.md](../tech-stack.md).
 
-## Phase 2 — created with the first release
+## Releases
 
 ### `.github/workflows/release.yml` — on version tag
-GoReleaser: builds `cypherd` (web UI embedded via `go:embed`) and `cypher-agent` for linux amd64/arm64, checksums, changelog, GitHub Release, multi-arch Docker images to GHCR. **Care point:** these artifacts are also what the agent self-update channel (ADR-010) will serve — artifact naming and versioning chosen here become a compatibility contract.
+Builds `cypherd` (web UI embedded via `go:embed`) and `cypher-agent` for linux
+amd64/arm64 with `-trimpath` and the exact toolchain named in `go.work`, writes
+`release.json`, `SHA256SUMS`, and publishes a **draft**. It never signs: the
+release key is offline, and `make release-sign` rebuilds the tag from source,
+compares byte for byte, signs the manifest and publishes
+([release-signing.md](release-signing.md)). The artifact names are a
+compatibility contract — `install.sh`, the panel's guided upgrade and the
+agent's self-update all download by them.
 
 ### `.github/workflows/security.yml` — scheduled + on PR
 `govulncheck` (Go CVEs), CodeQL, `gitleaks` (leaked secrets in history), Trivy scan of release images. For a product whose compromise means fleet compromise, this workflow is part of the trust story, not hygiene.

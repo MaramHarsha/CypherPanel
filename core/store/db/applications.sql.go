@@ -680,7 +680,7 @@ SELECT c.id, 'compose_stack', c.name, e.project_id, p.name, c.status, p.team_id
 FROM compose_stacks c
 JOIN environments e ON e.id = c.environment_id
 JOIN projects p ON p.id = e.project_id
-WHERE c.server_id = $1
+WHERE c.runtime_server_id = $1
 UNION ALL
 SELECT d.id, 'database', d.name, e.project_id, p.name, d.status, p.team_id
 FROM databases d

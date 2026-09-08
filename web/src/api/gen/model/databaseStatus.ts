@@ -14,6 +14,7 @@ export type DatabaseStatus = typeof DatabaseStatus[keyof typeof DatabaseStatus];
 export const DatabaseStatus = {
   running: 'running',
   provisioning: 'provisioning',
+  restoring: 'restoring',
   stopped: 'stopped',
   error: 'error',
   unknown: 'unknown',

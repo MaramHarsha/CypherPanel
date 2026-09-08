@@ -528,6 +528,12 @@ type Deps struct {
 	// there is no host service manager to install into and both say so rather
 	// than drawing a control that cannot work.
 	UpgradeDir string
+	// LocalPortInUse answers whether something on this host already answers on
+	// a TCP port ("80", "443"). "Use this machine" installs a Proxy that must
+	// bind both, so a host with a reverse proxy in front of the panel is named
+	// as unsupported up front rather than joining and going amber. Nil probes
+	// nothing, which is what the tests want.
+	LocalPortInUse func(port string) bool
 	// TrustedProxies are the peer CIDRs allowed to speak for a client through
 	// X-Forwarded-For / X-Real-IP / X-Request-Id. Empty means nothing is
 	// trusted and the TCP peer is always the client (§5).

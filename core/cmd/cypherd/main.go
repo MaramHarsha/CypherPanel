@@ -863,6 +863,7 @@ func run(log *slog.Logger, panelLogs *logring.Ring) error {
 		ConsoleURL:       cfg.AdvertisedConsoleURL(),
 		PublicHost:       cfg.PublicHost,
 		UpgradeDir:       cfg.UpgradeDir,
+		LocalPortInUse:   localPortInUse,
 		TrustedProxies:   cfg.TrustedProxies,
 		Panel:            updateChecker,
 		PanelLogs:        panelLogs,
@@ -1163,4 +1164,17 @@ func percentOf(u domain.QuotaUsage) int {
 		return 0
 	}
 	return int(float64(u.Used) / float64(*u.Limit) * 100)
+}
+
+// localPortInUse reports whether something on this host answers on a TCP port.
+// A dial rather than a bind: the plane runs without CAP_NET_BIND_SERVICE, so a
+// bind of :80 fails whether or not the port is free, and "refused" is the only
+// answer that means free.
+func localPortInUse(port string) bool {
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", port), 300*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }

@@ -708,3 +708,29 @@ can do.
 parsed in `core/upgrade/release.go` and enforced nowhere, so the screen would
 have nothing to gate on. Offering a button that is never disabled is honest;
 offering one disabled by a rule that does not exist is not.
+
+## Implementation note — the pipeline and the panel disagreed on every file *(2026-09-08)*
+
+The guided upgrade was implemented against a release layout that the release
+workflow did not produce, and nothing could tell, because there had never been
+a release. The readiness audit before the first tag found four disagreements,
+any one of which refuses every upgrade:
+
+- The panel was never stamped with `core/upgrade.ReleasePublicKey`, so
+  `VerifyRelease` answered "this build carries no release public key" for
+  every release. `PLANE_STAMPS` carries it now, in CI, in `release-sign.sh` and
+  in the rehearsal — the same list the agent bakes in, and the panel accepts
+  either key of a rotation pair.
+- The panel requires `release.json` inside the signed manifest; nothing wrote
+  one. `core/cmd/release-manifest` does, deterministically from the tag and
+  the commit date, with the compatibility floors as constants in code so the
+  signer's rebuild is byte-identical.
+- The helper downloaded `cypherd_<version>_linux_<arch>`; the release uploads
+  `cypherd-linux-<arch>`, which is also what `install.sh` fetches. One name.
+- The helper probed `http://127.0.0.1:8080/readyz` regardless of the panel's
+  port, so an install on any other port would have rolled every upgrade back.
+  The probe follows `CYPHERD_HTTP_ADDR`.
+
+`scripts/release-rehearsal.sh` now builds the release exactly as CI does, and
+`core/upgrade`'s tests hold the fixture to the real asset name.
+

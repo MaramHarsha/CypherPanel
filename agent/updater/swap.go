@@ -191,11 +191,22 @@ func copyFile(from, to string) error {
 // writable reports whether the agent can actually replace its own binary. A
 // host where it cannot — a package-managed install, an immutable image — is
 // visibly EXCLUDED rather than failing forever (§9).
+//
+// THE QUESTION IS THE DIRECTORY, NOT THE FILE. The swap never writes into the
+// running binary: it stages beside it and renames over it, and rename(2) onto
+// an executing file is allowed. Opening the running binary for write is NOT —
+// Linux answers ETXTBSY for any process's own executable — and that is exactly
+// what the first version of this did, so every agent on every real host
+// reported "binary is not writable; managed outside the panel" and no agent
+// could ever have updated itself. The check passed its unit test, which opened
+// a file nothing was running.
 func writable(binary string) bool {
-	f, err := os.OpenFile(binary, os.O_WRONLY|os.O_APPEND, 0)
+	f, err := os.CreateTemp(filepath.Dir(binary), "."+filepath.Base(binary)+".probe-*")
 	if err != nil {
 		return false
 	}
+	name := f.Name()
 	_ = f.Close()
+	_ = os.Remove(name)
 	return true
 }

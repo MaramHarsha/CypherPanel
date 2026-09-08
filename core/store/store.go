@@ -72,6 +72,31 @@ func (s *Store) Ping(ctx context.Context) error {
 	return nil
 }
 
+// LatestMigration is the highest embedded migration number — the schema
+// version a build of this binary carries. release.json records it so a panel
+// can tell, before downloading anything, which way a version change moves the
+// schema.
+func LatestMigration() int {
+	entries, err := fs.ReadDir(migrationsFS, "migrations")
+	if err != nil {
+		return 0
+	}
+	latest := 0
+	for _, e := range entries {
+		n := 0
+		for _, c := range e.Name() {
+			if c < '0' || c > '9' {
+				break
+			}
+			n = n*10 + int(c-'0')
+		}
+		if n > latest {
+			latest = n
+		}
+	}
+	return latest
+}
+
 // Migrate applies all embedded migrations to the database at databaseURL. It
 // opens its own database/sql handle because goose operates on that interface;
 // the handle is closed before returning.

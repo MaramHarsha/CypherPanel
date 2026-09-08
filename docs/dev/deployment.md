@@ -56,6 +56,10 @@ cd core && CGO_ENABLED=0 go build -o cypherd ./cmd/cypherd
 # On the VPS:
 sudo cp cypherd /usr/local/bin/
 sudo cp install/cypherd.service /etc/systemd/system/
+# The unit joins this group for the upgrade handoff (panel-updates.md §3), and
+# systemd refuses to start a service whose supplementary group does not exist.
+sudo groupadd -f cypherpanel-upgrade
+sudo install -d -m 0770 -o root -g cypherpanel-upgrade /var/lib/cypherpanel/upgrade /var/lib/cypherpanel/upgrade/slots
 sudo mkdir -p /etc/cypherpanel
 sudo cp deploy/cypherd.env.example /etc/cypherpanel/cypherd.env
 sudo $EDITOR /etc/cypherpanel/cypherd.env        # MASTER_KEY, DATABASE_URL, PUBLIC_HOST
@@ -195,22 +199,31 @@ the value to quote when reporting a fault.
 
 ## Upgrades
 
+- **From the panel:** Settings → Updates offers each release with a pre-flight,
+  a fallback snapshot and a health gate, and rolls back by itself when the gate
+  fails ([panel-updates.md](../features/panel-updates.md)). This is the path
+  `install.sh` sets up.
+- **Re-running `install.sh`** converges: it refreshes the binary and the units,
+  keeps the master key, the database password and every setting in
+  `cypherd.env`, and restarts the service.
 - **Compose:** `git pull && docker compose --env-file cypherd.env up -d --build`.
-- **Binary:** rebuild, replace `/usr/local/bin/cypherd`, `systemctl restart
+- **Binary by hand:** replace `/usr/local/bin/cypherd`, `systemctl restart
   cypherd`.
 
 Migrations are additive and run automatically on start. Keep the same
 `CYPHERD_MASTER_KEY` across upgrades.
 
-### Upgrade every agent in the same window
+### Agents follow a release channel
 
-**There is no agent self-update yet** (ADR-010 is not implemented), and this
-release changes the agent↔plane bus contract, so a plane upgraded on its own
-leaves a fleet that connects but does nothing. Plan the two together:
+Agents update themselves ([agent-updates.md](../features/agent-updates.md),
+ADR-010): Settings → Updates names a version per channel, every agent on that
+channel verifies the signed release and swaps its own binary, and puts the
+previous one back if the new one cannot dial home. Nothing on a server is
+touched by hand.
 
-1. Upgrade the plane.
-2. On **every** server listed under **Servers**, replace the agent binary with
-   the build from this release and restart it:
+The one exception is the deliberate bus-contract break recorded below, which
+predates the first release: a fleet enrolled before it had to be upgraded by
+hand, with the same binary from this checkout —
 
    ```sh
    # on a build machine, from this checkout:
@@ -224,9 +237,8 @@ leaves a fleet that connects but does nothing. Plan the two together:
 
    The identity in `/var/lib/cypher-agent` is untouched: the server keeps its
    id, certificate and role, and is **not** re-enrolled. Re-running the panel's
-   join command does *not* upgrade an agent —
-   [install/agent.sh](../../install/agent.sh) reuses the binary already on the
-   host unless `CYPHER_AGENT_URL` points at a new one.
+   join command *does* upgrade an agent, because the join command pins the
+   agent binary to the panel's own release.
 
 **Why.** Reply inboxes on the bus are now scoped per agent identity — an agent
 subscribes to `_INBOX_<server-id>.>` and nothing else, so one agent can no
