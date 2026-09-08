@@ -6,8 +6,9 @@ you deploy to. This guide brings up the **control plane** on a VPS. Agents join
 afterwards from the UI with a one-line command (they install Docker themselves
 — see [install/agent.sh](../../install/agent.sh)).
 
-There are no hosted release binaries yet, so you build the plane from source or
-its Docker image. Two paths — pick one.
+The one-line installer (`install/install.sh`, see the README) fetches the latest
+signed release and is the supported path. The two below build the plane from
+source or its Docker image, for a host that cannot use it — pick one.
 
 ---
 

@@ -118,11 +118,11 @@ Full vocabulary in [docs/glossary.md](docs/glossary.md).
 - **Agent identity and TLS** — certificates renew themselves over the mTLS channel at two thirds of their life with a fresh key; one panel-wide ACME account reaches every node.
 - **The web UI** — React, embedded in the binary, and at parity with the API: every mutating capability the plane exposes is reachable from the panel.
 
-**Not built yet**, tracked in [docs/roadmap.md](docs/roadmap.md): named application databases, a dashboard, an interactive terminal, metrics and observability, a published design system, a CLI, and the implementation of agent auto-update ([ADR-010](docs/adrs/ADR-010-agent-auto-update.md), which lands with the release pipeline). Granular RBAC is deliberately deferred to V1.x behind its own ADR.
+**Not built yet**, tracked in [docs/roadmap.md](docs/roadmap.md): an interactive terminal, a CLI, and a home dashboard ([ui-principles.md](docs/product/ui-principles.md) §4 decided the landing page is Projects). Granular RBAC is deliberately deferred to V1.x behind its own ADR.
 
 ## Install
 
-> Once a release is published, one command on a fresh Linux VPS (amd64 or arm64, systemd, root) is the whole install:
+> One command on a fresh Linux VPS (amd64 or arm64, systemd, root) is the whole install:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/MaramHarsha/CypherPanel/main/install/install.sh | sh
@@ -130,7 +130,7 @@ curl -fsSL https://raw.githubusercontent.com/MaramHarsha/CypherPanel/main/instal
 
 It installs Docker, starts PostgreSQL on loopback, installs the `cypherd` binary, generates a master key, and enables a systemd unit that survives reboots. Then you open the panel and create the owner account in the browser — no password is ever printed or defaulted. The installer prints a one-time **setup code** that the screen asks for, so only someone at the host's console can claim a fresh panel, however long its port has been open.
 
-Re-running is safe: an existing master key is never regenerated (that would make every sealed secret unrecoverable) and an existing database is left alone. Point it at your own build with `CYPHERD_URL=file:///path/to/cypherd` until releases exist. Options are documented in the [installer's own header](install/install.sh).
+Re-running is safe: an existing master key is never regenerated (that would make every sealed secret unrecoverable) and an existing database is left alone. Point it at your own build with `CYPHERD_URL=file:///path/to/cypherd` to install from source instead. Options are documented in the [installer's own header](install/install.sh).
 
 Servers are joined afterwards from the panel's copy-paste command, one per host.
 
