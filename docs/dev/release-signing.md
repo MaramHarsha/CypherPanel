@@ -90,6 +90,22 @@ did not come from.
 It starts no agent reconciler, so it is safe to run on a host that is already
 serving a panel.
 
+`make fresh-host-rehearsal` is the other half: a bare Ubuntu host with systemd
+in a privileged container running its own Docker daemon, taken through
+`install.sh` exactly as the README says, the first-run owner account, a re-run
+(the master key must survive it), a reboot, "use this machine", a template
+deployed through the real agent and served through the real Proxy at its
+domain, and a second reboot with that workload on it. Its own Docker daemon is
+what makes it safe beside a live panel — the `cypher-proxy` it starts is inside
+the container.
+
+**Publish before you install.** `install.sh` defaults to
+`releases/latest/download/…`, and the panel's join command and "use this
+machine" fetch the agent from the panel's own version's release asset. A DRAFT
+release is not `latest` and its assets are not downloadable, so an install run
+between the tag and `make release-sign` fails at the download with the
+"no release published yet" remedy. Sign and publish first; then install.
+
 It is not decoration. Its first run found that the plane could not take a
 snapshot at all, and then two more defects behind that one — all three recorded
 in `docs/features/plane-disaster-recovery.md`. Nothing else in the repository

@@ -99,6 +99,10 @@ e2e: ## Browser regression tests against a real panel (web/e2e/README.md)
 release-rehearsal: ## Rehearse a release on this machine: build, upgrade, snapshot, restore (scripts/release-rehearsal.sh)
 	./scripts/release-rehearsal.sh
 
+.PHONY: fresh-host-rehearsal
+fresh-host-rehearsal: ## Install on a bare systemd host in a container, use this machine, deploy, reboot (scripts/fresh-host-rehearsal.sh)
+	./scripts/fresh-host-rehearsal.sh
+
 .PHONY: parity
 parity: ## Audit that every capability is reachable: schema -> contract -> screen (docs/dev/api-ui-parity.md)
 	python3 scripts/schema-contract-parity.py --check
