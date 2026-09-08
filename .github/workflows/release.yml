@@ -24,7 +24,6 @@ permissions:
   contents: read
 
 env:
-  GO_VERSION: "1.25.x"
   # One source of truth for the ref being released. Resolving this per-step is
   # what broke manual runs: on workflow_dispatch GITHUB_REF_NAME is the branch
   # the run was started from and is always non-empty, so a
@@ -53,9 +52,16 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # The EXACT toolchain, read from go.work — never a floating "1.25.x".
+      # scripts/release-sign.sh rebuilds this tag on the signer's machine and
+      # compares byte for byte, and a patch release of Go can change the
+      # compiler's output; a floating version here would have CI build with
+      # whatever was newest at tag time and the signer with whatever they had,
+      # and the first mismatch would read exactly like a tampered artifact.
+      # One pin, in one file, that both sides read.
       - uses: actions/setup-go@v7
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.work
           cache-dependency-path: "**/go.sum"
 
       # The web UI is committed built (core/api/rest/webui/dist) so `go build`

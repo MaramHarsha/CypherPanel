@@ -18,22 +18,28 @@ set -eu
 
 VERSION="${1:?usage: release-sign.sh vX.Y.Z}"
 WORK="${WORK:-dist/sign}"
-GO_VERSION_WANT="${GO_VERSION_WANT:-go1.25}"
 
 : "${CYPHER_RELEASE_SIGNING_KEY:?not set — see docs/dev/release-signing.md}"
 command -v gh >/dev/null || { echo "gh is required"; exit 1; }
+command -v go >/dev/null || { echo "go is required (any 1.21+; the exact release toolchain is fetched below)"; exit 1; }
 
-# A different toolchain produces different bytes, which would look exactly like
-# a compromised artifact. Fail on the ambiguity rather than teaching the
-# operator that mismatches are normal.
+# The EXACT toolchain CI built with, read from the same file CI reads it from
+# (go.work, via setup-go's go-version-file). This used to accept any "go1.25*",
+# which is not a check: a patch release of Go can change the compiler's output,
+# so a signer on 1.25.14 rebuilding what CI made on 1.25.12 would see every
+# binary DIFFER — and the script's own words would then tell them not to
+# publish. GOTOOLCHAIN makes the go command fetch and use that exact version
+# regardless of what is installed, so the comparison below means what it says.
+GO_VERSION_WANT="go$(awk '/^go /{print $2; exit}' go.work)"
+export GOTOOLCHAIN="$GO_VERSION_WANT"
 have="$(go env GOVERSION)"
-case "$have" in
-  "$GO_VERSION_WANT"*) ;;
-  *) echo "go toolchain is $have, release built with $GO_VERSION_WANT*."
-     echo "Install the matching toolchain — a version skew is indistinguishable"
-     echo "from a tampered artifact once the comparison fails."
-     exit 1 ;;
-esac
+if [ "$have" != "$GO_VERSION_WANT" ]; then
+  echo "go toolchain is $have, the release is built with $GO_VERSION_WANT (go.work)."
+  echo "GOTOOLCHAIN=$GO_VERSION_WANT could not switch to it — is GOTOOLCHAIN forced"
+  echo "to 'local', or is the network unreachable? A version skew is"
+  echo "indistinguishable from a tampered artifact once the comparison fails."
+  exit 1
+fi
 
 rm -rf "$WORK"
 mkdir -p "$WORK/built" "$WORK/draft"

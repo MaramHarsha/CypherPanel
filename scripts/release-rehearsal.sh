@@ -43,6 +43,9 @@ EMAIL=rehearsal@example.com
 PASSWORD=rehearsal-password-1
 
 RUN_GO="${REHEARSAL_GO:-sh -c}"
+# The exact toolchain the release is built and signed with (go.work, read by
+# release.yml and release-sign.sh). Any installed Go fetches it on demand.
+GO_PIN="GOTOOLCHAIN=go$(awk '/^go /{print $2; exit}' "$ROOT/go.work")"
 PASS=0; FAILED=0
 say()  { printf '\n\033[36m== %s\033[0m\n' "$1"; }
 ok()   { PASS=$((PASS+1)); printf '\033[32m  ok\033[0m %s\n' "$1"; }
@@ -100,11 +103,11 @@ else
         || fail "core/api/rest/webui/dist is missing — run 'make build-web'"
     ok "the embedded web UI is present"
     for arch in amd64 arm64; do
-        $RUN_GO "cd '$ROOT/core' && CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath -ldflags '-s -w $PLANE_STAMPS' -o '$DIST/cypherd-linux-$arch' ./cmd/cypherd"
-        $RUN_GO "cd '$ROOT/agent' && CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath -ldflags '-s -w $AGENT_STAMPS' -o '$DIST/cypher-agent-linux-$arch' ./cmd/cypher-agent"
+        $RUN_GO "cd '$ROOT/core' && $GO_PIN CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath -ldflags '-s -w $PLANE_STAMPS' -o '$DIST/cypherd-linux-$arch' ./cmd/cypherd"
+        $RUN_GO "cd '$ROOT/agent' && $GO_PIN CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath -ldflags '-s -w $AGENT_STAMPS' -o '$DIST/cypher-agent-linux-$arch' ./cmd/cypher-agent"
     done
     (cd "$DIST" && sha256sum ./cypherd-linux-* ./cypher-agent-linux-* > SHA256SUMS)
-    ok "built 4 binaries for 2 architectures"
+    ok "built 4 binaries for 2 architectures with $($RUN_GO "cd '$ROOT' && $GO_PIN go env GOVERSION")"
 fi
 
 (cd "$DIST" && sha256sum -c SHA256SUMS >/dev/null) \
@@ -116,7 +119,7 @@ if [ "${REHEARSAL_SKIP_BUILD:-}" = 1 ]; then
     printf '  -- skipped with the build\n'
 else
     CHECK="$WORK/repro"; mkdir -p "$CHECK"
-    $RUN_GO "cd '$ROOT/core' && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '-s -w $PLANE_STAMPS' -o '$CHECK/cypherd-linux-amd64' ./cmd/cypherd"
+    $RUN_GO "cd '$ROOT/core' && $GO_PIN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '-s -w $PLANE_STAMPS' -o '$CHECK/cypherd-linux-amd64' ./cmd/cypherd"
     A=$(sha256sum "$DIST/cypherd-linux-amd64" | cut -d' ' -f1)
     B=$(sha256sum "$CHECK/cypherd-linux-amd64" | cut -d' ' -f1)
     if [ "$A" = "$B" ]; then

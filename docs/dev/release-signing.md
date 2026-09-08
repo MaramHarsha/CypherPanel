@@ -120,11 +120,18 @@ survive. Comparing against a local rebuild makes the signature mean *"I built
 this from source I read"* rather than *"CI agrees with itself"*.
 
 Go builds are reproducible under `-trimpath` with `CGO_ENABLED=0` and fixed
-ldflags, which is what lets a mismatch carry meaning. The script refuses to run
-on a different Go toolchain than the release was built with, because a version
-skew is indistinguishable from a tampered artifact once the comparison fails —
-and an operator who learns that mismatches are normal is an operator who will
-sign through a real one.
+ldflags **on the same toolchain**, which is what lets a mismatch carry meaning.
+A patch release of Go can change the compiler's output, so "the same toolchain"
+means the exact version, not the minor: CI reads it from `go.work`
+(`go-version-file`), and `release-sign.sh` reads the same line and sets
+`GOTOOLCHAIN` to it, so whatever Go the signer has installed fetches and uses
+that exact version for the rebuild. The script still refuses if it cannot get
+there, because a version skew is indistinguishable from a tampered artifact
+once the comparison fails — and an operator who learns that mismatches are
+normal is an operator who will sign through a real one.
+
+Bumping Go is therefore one edit, to `go.work`, and it is part of the release:
+a tag built with one version and rebuilt with another cannot be signed.
 
 ## Verifying a release by hand
 
