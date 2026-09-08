@@ -1118,6 +1118,10 @@ func (f *fakeBackupSchedules) ListBackupRecords(_ context.Context, _ string) ([]
 	return []domain.BackupRecord{}, nil
 }
 
+func (f *fakeBackupSchedules) RunVolumeBackup(_ context.Context, appID string) ([]domain.VolumeBackupRecord, error) {
+	return nil, store.ErrNotFound
+}
+
 func (f *fakeBackupSchedules) RunBackup(_ context.Context, scheduleID string) (domain.BackupRecord, error) {
 	if _, ok := f.schedules[scheduleID]; !ok {
 		return domain.BackupRecord{}, store.ErrNotFound

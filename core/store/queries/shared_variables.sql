@@ -190,3 +190,10 @@ FROM deployments d
 WHERE d.id = $1
   AND a.id = d.application_id
   AND d.env_resolved_at IS NOT NULL;
+
+-- Keys and scope, never the sealed value — so core/export's Store interface
+-- can be structurally incapable of holding a ciphertext (project-export.md §4).
+-- name: ListSharedVariableKeysByProject :many
+SELECT key, environment_id FROM shared_variables
+WHERE project_id = $1
+ORDER BY key, environment_id NULLS FIRST;

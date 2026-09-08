@@ -11,6 +11,12 @@
 export type PatchApplicationRequestRuntime = {
   port?: number;
   /**
+     * Desired state, not an action: the reconciler converges to it. Scaling out surges — the new replicas start alongside the old ones before the route flips — so a node needs headroom for twice the count during a rollout. Scaling in drains first: the departing replica leaves the route, in-flight requests finish, and only then is the container stopped.
+     * @minimum 1
+     * @maximum 20
+     */
+  replicas?: number;
+  /**
      * Fractional cores; a non-positive value clears the limit.
      * @nullable
      */

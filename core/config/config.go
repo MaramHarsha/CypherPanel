@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -85,6 +86,52 @@ type Config struct {
 	// requirement and the wrong default for a panel nobody prunes.
 	AuditRetention time.Duration
 
+	// Status pages (status-pages.md §11). StatusDwell is how long a component
+	// must hold a state before the page records it — and therefore the page's
+	// own resolution, which it states out loud rather than implying a
+	// stopwatch. StatusCacheTTL bounds what anonymous traffic can cost the
+	// plane. StatusRetention keeps intervals longer than the 30-day window the
+	// page shows, so a wider window is possible later with no hole; 0 keeps
+	// them forever.
+	StatusDwell     time.Duration
+	StatusCacheTTL  time.Duration
+	StatusRetention time.Duration
+
+	// Metrics and usage (metrics-and-usage.md §7). MetricsRetention bounds the
+	// 5-minute and hourly buckets; 0 keeps them forever, which — said plainly —
+	// is how a busy fleet fills a disk. UsageRetention bounds the daily rows at
+	// 400 days rather than 365, so "the same month last year" is always still
+	// there.
+	MetricsRetention time.Duration
+	UsageRetention   time.Duration
+
+	// Guided panel upgrades (panel-updates.md §3). UpgradeDir is the handoff
+	// directory shared with the root helper; empty means this install has no
+	// helper and the panel reports `manual` mode rather than drawing a button
+	// that would not work.
+	UpgradeDir        string
+	UpgradeBinaryPath string
+	UpgradeUnit       string
+	UpgradeReadyURL   string
+	UpgradeProbation  time.Duration
+	// ReleaseBaseURL is where release assets live, with a %s for the tag.
+	ReleaseBaseURL string
+	// SetupToken, when set, is required by the first-run setup: the installer
+	// generates it and prints it, so the person who can read the host's console
+	// is the only person who can claim the panel (first-run-setup.md §5).
+	SetupToken string
+	// SnapshotRetention is the default a snapshot is created with; the operator
+	// picks per upgrade and 0 keeps forever.
+	SnapshotRetention time.Duration
+
+	// Log drains (log-drains.md §5). A batch ships at whichever of these comes
+	// first, and the backoff cap is short — far shorter than the outbound
+	// webhooks' horizon — because there sleeping is free and here every second
+	// asleep spends the retention window that is acting as the buffer.
+	DrainBatchLines    int
+	DrainBatchInterval time.Duration
+	DrainMaxBackoff    time.Duration
+
 	// RevisionRetain is how many of an application's images the plane wants
 	// kept on a node, newest first and including the deployed one
 	// (disk-management.md §7). It is the whole garbage-collection policy: the
@@ -100,6 +147,18 @@ type Config struct {
 	// whole answer for an air-gapped install. The panel never updates itself
 	// either way (ADR-010; control-plane-hardening.md §3).
 	UpdateCheck bool
+	// AgentUpdatePrecheck is whether the plane HEADs a release manifest when an
+	// operator SETS a channel version, so a typo is refused where it is cheap
+	// rather than discovered by forty hosts (agent-updates.md §4a).
+	//
+	// The probe goes to ONE host — the constant this project publishes releases
+	// from — and never to an artifact_base from the request body: the plane
+	// connecting to a host a caller named is a request-forgery primitive
+	// whatever guards sit in front of it (threat-model §5.14). A mirror is
+	// shape-checked and left to the agents, which is what this switch already
+	// meant; `off` now only turns off the probe of our own release host, for a
+	// panel with no outbound internet.
+	AgentUpdatePrecheck bool
 	// UpdateFeedURL is the feed to poll; empty means the package default
 	// (GitHub's releases/latest for this project).
 	UpdateFeedURL string
@@ -108,29 +167,53 @@ type Config struct {
 // Load reads and validates configuration from the process environment.
 func Load() (Config, error) {
 	c := Config{
-		DatabaseURL:       os.Getenv("CYPHERD_DATABASE_URL"),
-		PublicHost:        envOr("CYPHERD_PUBLIC_HOST", "localhost"),
-		PublicURL:         strings.TrimRight(envOr("CYPHERD_PUBLIC_URL", ""), "/"),
-		HTTPAddr:          envOr("CYPHERD_HTTP_ADDR", ":8080"),
-		EnrollAddr:        envOr("CYPHERD_ENROLL_ADDR", ":8443"),
-		NATSAddr:          envOr("CYPHERD_NATS_ADDR", ":4222"),
-		AdminEmail:        os.Getenv("CYPHERD_ADMIN_EMAIL"),
-		AdminPassword:     os.Getenv("CYPHERD_ADMIN_PASSWORD"),
-		JoinTokenTTL:      envDuration("CYPHERD_JOIN_TOKEN_TTL", 15*time.Minute),
-		AgentCertTTL:      envDuration("CYPHERD_AGENT_CERT_TTL", 90*24*time.Hour),
-		SessionTTL:        envDuration("CYPHERD_SESSION_TTL", 24*time.Hour),
-		HeartbeatStale:    envDuration("CYPHERD_HEARTBEAT_STALE", 90*time.Second),
-		SweepInterval:     envDuration("CYPHERD_SWEEP_INTERVAL", 30*time.Second),
-		ShutdownGrace:     envDuration("CYPHERD_SHUTDOWN_GRACE", 20*time.Second),
-		DataDir:           envOr("CYPHERD_DATA_DIR", "/var/lib/cypherd"),
-		RuntimeLogsMaxAge: envDuration("CYPHERD_RUNTIME_LOGS_MAX_AGE", 24*time.Hour),
-		AuditRetention:    envDuration("CYPHERD_AUDIT_RETENTION", 90*24*time.Hour),
+		DatabaseURL:        os.Getenv("CYPHERD_DATABASE_URL"),
+		PublicHost:         envOr("CYPHERD_PUBLIC_HOST", "localhost"),
+		PublicURL:          strings.TrimRight(envOr("CYPHERD_PUBLIC_URL", ""), "/"),
+		HTTPAddr:           envOr("CYPHERD_HTTP_ADDR", ":8080"),
+		EnrollAddr:         envOr("CYPHERD_ENROLL_ADDR", ":8443"),
+		NATSAddr:           envOr("CYPHERD_NATS_ADDR", ":4222"),
+		AdminEmail:         os.Getenv("CYPHERD_ADMIN_EMAIL"),
+		AdminPassword:      os.Getenv("CYPHERD_ADMIN_PASSWORD"),
+		JoinTokenTTL:       envDuration("CYPHERD_JOIN_TOKEN_TTL", 15*time.Minute),
+		AgentCertTTL:       envDuration("CYPHERD_AGENT_CERT_TTL", 90*24*time.Hour),
+		SessionTTL:         envDuration("CYPHERD_SESSION_TTL", 24*time.Hour),
+		HeartbeatStale:     envDuration("CYPHERD_HEARTBEAT_STALE", 90*time.Second),
+		SweepInterval:      envDuration("CYPHERD_SWEEP_INTERVAL", 30*time.Second),
+		ShutdownGrace:      envDuration("CYPHERD_SHUTDOWN_GRACE", 20*time.Second),
+		DataDir:            envOr("CYPHERD_DATA_DIR", "/var/lib/cypherd"),
+		RuntimeLogsMaxAge:  envDuration("CYPHERD_RUNTIME_LOGS_MAX_AGE", 24*time.Hour),
+		AuditRetention:     envDuration("CYPHERD_AUDIT_RETENTION", 90*24*time.Hour),
+		StatusDwell:        envDuration("CYPHERD_STATUS_DWELL", time.Minute),
+		StatusCacheTTL:     envDuration("CYPHERD_STATUS_CACHE_TTL", 15*time.Second),
+		StatusRetention:    envDuration("CYPHERD_STATUS_RETENTION", 90*24*time.Hour),
+		MetricsRetention:   envDuration("CYPHERD_METRICS_RETENTION", 14*24*time.Hour),
+		UsageRetention:     envDuration("CYPHERD_USAGE_RETENTION", 400*24*time.Hour),
+		UpgradeDir:         envOr("CYPHERD_UPGRADE_DIR", ""),
+		UpgradeBinaryPath:  envOr("CYPHERD_UPGRADE_BINARY", "/usr/local/bin/cypherd"),
+		UpgradeUnit:        envOr("CYPHERD_UPGRADE_UNIT", "cypherd.service"),
+		UpgradeReadyURL:    envOr("CYPHERD_UPGRADE_READY_URL", ""),
+		UpgradeProbation:   envDuration("CYPHERD_UPGRADE_PROBATION", 120*time.Second),
+		ReleaseBaseURL:     envOr("CYPHERD_RELEASE_BASE_URL", "https://github.com/MaramHarsha/CypherPanel/releases/download/%s"),
+		SetupToken:         strings.TrimSpace(os.Getenv("CYPHERD_SETUP_TOKEN")),
+		SnapshotRetention:  envDuration("CYPHERD_SNAPSHOT_RETENTION", 7*24*time.Hour),
+		DrainBatchLines:    envInt("CYPHERD_DRAIN_BATCH_LINES", 500),
+		DrainBatchInterval: envDuration("CYPHERD_DRAIN_BATCH_INTERVAL", 5*time.Second),
+		DrainMaxBackoff:    envDuration("CYPHERD_DRAIN_MAX_BACKOFF", time.Minute),
 		// Minimum 1 enforced below: the deployed revision is never reclaimable,
 		// so a zero here would be a request to delete what is running.
-		RevisionRetain:  envInt("CYPHERD_REVISION_RETAIN", 3),
-		DiskWarnPercent: envInt("CYPHERD_DISK_WARN_PERCENT", 85),
-		UpdateCheck:     !strings.EqualFold(envOr("CYPHERD_UPDATE_CHECK", "on"), "off"),
-		UpdateFeedURL:   envOr("CYPHERD_UPDATE_FEED_URL", ""),
+		RevisionRetain:      envInt("CYPHERD_REVISION_RETAIN", 3),
+		DiskWarnPercent:     envInt("CYPHERD_DISK_WARN_PERCENT", 85),
+		UpdateCheck:         !strings.EqualFold(envOr("CYPHERD_UPDATE_CHECK", "on"), "off"),
+		UpdateFeedURL:       envOr("CYPHERD_UPDATE_FEED_URL", ""),
+		AgentUpdatePrecheck: !strings.EqualFold(envOr("CYPHERD_AGENT_UPDATE_PRECHECK", "on"), "off"),
+	}
+	// The upgrade helper's readiness probe follows the panel's own port. A
+	// literal :8080 default here meant an install on any other port (install.sh
+	// takes CYPHERD_HTTP_PORT) would have every guided upgrade probe a port
+	// nothing answers on, conclude the new binary was dead, and roll it back.
+	if c.UpgradeReadyURL == "" {
+		c.UpgradeReadyURL = "http://127.0.0.1:" + portOf(c.HTTPAddr, "8080") + "/readyz"
 	}
 
 	runtimeBytes, err := envBytes("CYPHERD_RUNTIME_LOGS_MAX_BYTES", 536870912) // 512 MiB
@@ -177,10 +260,22 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("config: CYPHERD_MIN_DISK_FREE invalid: %w", err)
 	}
+	// Bounded here rather than at every reader. It is parsed as a uint64 and
+	// read as a signed count in places that compare it against free bytes, and
+	// a value past the signed range would wrap to a NEGATIVE floor — a headroom
+	// check that passes on a full disk. No filesystem is an exabyte, so a value
+	// above the ceiling is a typo and is refused with the number named.
+	if minFree > maxMinDiskFree {
+		return Config{}, fmt.Errorf("config: CYPHERD_MIN_DISK_FREE is %d bytes, which is larger than any filesystem — the maximum is %d", minFree, maxMinDiskFree)
+	}
 	c.MinDiskFree = minFree
 
 	return c, nil
 }
+
+// maxMinDiskFree is one exbibyte: past any real filesystem, and comfortably
+// inside the signed range every reader of this value converts to.
+const maxMinDiskFree = uint64(1) << 60
 
 // AdvertisedNATSURL is the URL agents are told to dial for the data plane. It
 // combines the public host with the embedded NATS listener's port.
@@ -309,4 +404,10 @@ func envDuration(key string, def time.Duration) time.Duration {
 		return def
 	}
 	return d
+}
+
+// SnapshotDir is where fallback snapshots live: under the data directory, so
+// one path is what an operator backs up and one path is what fills a disk.
+func (c Config) SnapshotDir() string {
+	return filepath.Join(c.DataDir, "snapshots")
 }

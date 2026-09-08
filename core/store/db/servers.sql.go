@@ -11,10 +11,25 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countEnrolledServers = `-- name: CountEnrolledServers :one
+SELECT count(*) FROM servers WHERE enrolled_at IS NOT NULL
+`
+
+// CountEnrolledServers counts servers whose agent actually joined. A row that
+// was created and never enrolled is a join command someone has not run yet, and
+// counting it would tell an operator they have a server when they have a token
+// (guided-onboarding.md §2).
+func (q *Queries) CountEnrolledServers(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countEnrolledServers)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createServer = `-- name: CreateServer :one
 INSERT INTO servers (id, name)
 VALUES ($1, $2)
-RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low
+RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low, agent_channel, agent_update_phase, agent_update_target, agent_update_detail, subsystem_health
 `
 
 type CreateServerParams struct {
@@ -41,6 +56,11 @@ func (q *Queries) CreateServer(ctx context.Context, arg CreateServerParams) (Ser
 		&i.DiskTotalBytes,
 		&i.DiskFreeBytes,
 		&i.DiskLow,
+		&i.AgentChannel,
+		&i.AgentUpdatePhase,
+		&i.AgentUpdateTarget,
+		&i.AgentUpdateDetail,
+		&i.SubsystemHealth,
 	)
 	return i, err
 }
@@ -54,8 +74,26 @@ func (q *Queries) DeleteServer(ctx context.Context, id string) error {
 	return err
 }
 
+const getAgentChannel = `-- name: GetAgentChannel :one
+SELECT channel, desired_version, artifact_base, rollback, updated_at, updated_by FROM agent_channels WHERE channel = $1
+`
+
+func (q *Queries) GetAgentChannel(ctx context.Context, channel string) (AgentChannel, error) {
+	row := q.db.QueryRow(ctx, getAgentChannel, channel)
+	var i AgentChannel
+	err := row.Scan(
+		&i.Channel,
+		&i.DesiredVersion,
+		&i.ArtifactBase,
+		&i.Rollback,
+		&i.UpdatedAt,
+		&i.UpdatedBy,
+	)
+	return i, err
+}
+
 const getServer = `-- name: GetServer :one
-SELECT id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low FROM servers WHERE id = $1
+SELECT id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low, agent_channel, agent_update_phase, agent_update_target, agent_update_detail, subsystem_health FROM servers WHERE id = $1
 `
 
 func (q *Queries) GetServer(ctx context.Context, id string) (Server, error) {
@@ -77,12 +115,48 @@ func (q *Queries) GetServer(ctx context.Context, id string) (Server, error) {
 		&i.DiskTotalBytes,
 		&i.DiskFreeBytes,
 		&i.DiskLow,
+		&i.AgentChannel,
+		&i.AgentUpdatePhase,
+		&i.AgentUpdateTarget,
+		&i.AgentUpdateDetail,
+		&i.SubsystemHealth,
 	)
 	return i, err
 }
 
+const listAgentChannels = `-- name: ListAgentChannels :many
+SELECT channel, desired_version, artifact_base, rollback, updated_at, updated_by FROM agent_channels ORDER BY channel
+`
+
+func (q *Queries) ListAgentChannels(ctx context.Context) ([]AgentChannel, error) {
+	rows, err := q.db.Query(ctx, listAgentChannels)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentChannel{}
+	for rows.Next() {
+		var i AgentChannel
+		if err := rows.Scan(
+			&i.Channel,
+			&i.DesiredVersion,
+			&i.ArtifactBase,
+			&i.Rollback,
+			&i.UpdatedAt,
+			&i.UpdatedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listServers = `-- name: ListServers :many
-SELECT id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low FROM servers ORDER BY created_at DESC
+SELECT id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low, agent_channel, agent_update_phase, agent_update_target, agent_update_detail, subsystem_health FROM servers ORDER BY created_at DESC
 `
 
 func (q *Queries) ListServers(ctx context.Context) ([]Server, error) {
@@ -110,6 +184,11 @@ func (q *Queries) ListServers(ctx context.Context) ([]Server, error) {
 			&i.DiskTotalBytes,
 			&i.DiskFreeBytes,
 			&i.DiskLow,
+			&i.AgentChannel,
+			&i.AgentUpdatePhase,
+			&i.AgentUpdateTarget,
+			&i.AgentUpdateDetail,
+			&i.SubsystemHealth,
 		); err != nil {
 			return nil, err
 		}
@@ -128,7 +207,7 @@ SET enrolled_at = now(),
     agent_version = $3,
     updated_at = now()
 WHERE id = $1
-RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low
+RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low, agent_channel, agent_update_phase, agent_update_target, agent_update_detail, subsystem_health
 `
 
 type MarkServerEnrolledParams struct {
@@ -156,6 +235,11 @@ func (q *Queries) MarkServerEnrolled(ctx context.Context, arg MarkServerEnrolled
 		&i.DiskTotalBytes,
 		&i.DiskFreeBytes,
 		&i.DiskLow,
+		&i.AgentChannel,
+		&i.AgentUpdatePhase,
+		&i.AgentUpdateTarget,
+		&i.AgentUpdateDetail,
+		&i.SubsystemHealth,
 	)
 	return i, err
 }
@@ -201,7 +285,7 @@ SET status = $2,
     last_seen_at = now(),
     updated_at = now()
 WHERE id = $1
-RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low
+RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low, agent_channel, agent_update_phase, agent_update_target, agent_update_detail, subsystem_health
 `
 
 type RecordHeartbeatParams struct {
@@ -241,6 +325,11 @@ func (q *Queries) RecordHeartbeat(ctx context.Context, arg RecordHeartbeatParams
 		&i.DiskTotalBytes,
 		&i.DiskFreeBytes,
 		&i.DiskLow,
+		&i.AgentChannel,
+		&i.AgentUpdatePhase,
+		&i.AgentUpdateTarget,
+		&i.AgentUpdateDetail,
+		&i.SubsystemHealth,
 	)
 	return i, err
 }
@@ -261,6 +350,112 @@ func (q *Queries) ServerIsEnrolled(ctx context.Context, id string) (bool, error)
 	return enrolled, err
 }
 
+const setAgentChannel = `-- name: SetAgentChannel :one
+UPDATE agent_channels
+SET desired_version = $2,
+    artifact_base   = $3,
+    rollback        = $4,
+    updated_at      = now(),
+    updated_by      = $5
+WHERE channel = $1
+RETURNING channel, desired_version, artifact_base, rollback, updated_at, updated_by
+`
+
+type SetAgentChannelParams struct {
+	Channel        string
+	DesiredVersion string
+	ArtifactBase   string
+	Rollback       bool
+	UpdatedBy      pgtype.Text
+}
+
+func (q *Queries) SetAgentChannel(ctx context.Context, arg SetAgentChannelParams) (AgentChannel, error) {
+	row := q.db.QueryRow(ctx, setAgentChannel,
+		arg.Channel,
+		arg.DesiredVersion,
+		arg.ArtifactBase,
+		arg.Rollback,
+		arg.UpdatedBy,
+	)
+	var i AgentChannel
+	err := row.Scan(
+		&i.Channel,
+		&i.DesiredVersion,
+		&i.ArtifactBase,
+		&i.Rollback,
+		&i.UpdatedAt,
+		&i.UpdatedBy,
+	)
+	return i, err
+}
+
+const setServerAgentChannel = `-- name: SetServerAgentChannel :one
+UPDATE servers SET agent_channel = $2, updated_at = now() WHERE id = $1 RETURNING id, name, status, driver, agent_version, hostname, enrolled_at, last_seen_at, created_at, updated_at, role, public_address, disk_total_bytes, disk_free_bytes, disk_low, agent_channel, agent_update_phase, agent_update_target, agent_update_detail, subsystem_health
+`
+
+type SetServerAgentChannelParams struct {
+	ID           string
+	AgentChannel string
+}
+
+func (q *Queries) SetServerAgentChannel(ctx context.Context, arg SetServerAgentChannelParams) (Server, error) {
+	row := q.db.QueryRow(ctx, setServerAgentChannel, arg.ID, arg.AgentChannel)
+	var i Server
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Status,
+		&i.Driver,
+		&i.AgentVersion,
+		&i.Hostname,
+		&i.EnrolledAt,
+		&i.LastSeenAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Role,
+		&i.PublicAddress,
+		&i.DiskTotalBytes,
+		&i.DiskFreeBytes,
+		&i.DiskLow,
+		&i.AgentChannel,
+		&i.AgentUpdatePhase,
+		&i.AgentUpdateTarget,
+		&i.AgentUpdateDetail,
+		&i.SubsystemHealth,
+	)
+	return i, err
+}
+
+const setServerAgentUpdate = `-- name: SetServerAgentUpdate :exec
+UPDATE servers
+SET agent_update_phase  = $2,
+    agent_update_target = $3,
+    agent_update_detail = $4,
+    updated_at = now()
+WHERE id = $1
+`
+
+type SetServerAgentUpdateParams struct {
+	ID                string
+	AgentUpdatePhase  string
+	AgentUpdateTarget string
+	AgentUpdateDetail string
+}
+
+// SetServerAgentUpdate records the observed half of ADR-010. Separate from the
+// heartbeat write because it changes rarely while a heartbeat arrives every few
+// seconds, and because the plane compares the PREVIOUS phase to decide whether
+// a rollback is a transition worth announcing (agent-updates.md §7).
+func (q *Queries) SetServerAgentUpdate(ctx context.Context, arg SetServerAgentUpdateParams) error {
+	_, err := q.db.Exec(ctx, setServerAgentUpdate,
+		arg.ID,
+		arg.AgentUpdatePhase,
+		arg.AgentUpdateTarget,
+		arg.AgentUpdateDetail,
+	)
+	return err
+}
+
 const setServerDiskLow = `-- name: SetServerDiskLow :exec
 UPDATE servers SET disk_low = $2, updated_at = now() WHERE id = $1
 `
@@ -275,5 +470,23 @@ type SetServerDiskLowParams struct {
 // plane decides, not a measurement the agent reports (disk-management.md §5).
 func (q *Queries) SetServerDiskLow(ctx context.Context, arg SetServerDiskLowParams) error {
 	_, err := q.db.Exec(ctx, setServerDiskLow, arg.ID, arg.DiskLow)
+	return err
+}
+
+const setServerSubsystemHealth = `-- name: SetServerSubsystemHealth :exec
+UPDATE servers SET subsystem_health = $2, updated_at = now() WHERE id = $1
+`
+
+type SetServerSubsystemHealthParams struct {
+	ID              string
+	SubsystemHealth []byte
+}
+
+// SetServerSubsystemHealth records WHICH subsystems the agent reported unhealthy.
+// Separate from the heartbeat write for the same reason the agent-update
+// columns are: it changes rarely while a heartbeat arrives every few seconds,
+// and the plane compares the previous value to decide whether to write at all.
+func (q *Queries) SetServerSubsystemHealth(ctx context.Context, arg SetServerSubsystemHealthParams) error {
+	_, err := q.db.Exec(ctx, setServerSubsystemHealth, arg.ID, arg.SubsystemHealth)
 	return err
 }

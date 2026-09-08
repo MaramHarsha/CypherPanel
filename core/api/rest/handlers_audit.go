@@ -216,14 +216,10 @@ func (a *API) handleListAuditEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = int(n)
 	}
-	var since time.Time
-	if raw := q.Get("since"); raw != "" {
-		t, err := time.Parse(time.RFC3339, raw)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "since must be an RFC 3339 timestamp")
-			return
-		}
-		since = t
+	since, err := parseSince(q.Get("since"), time.Now())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	page, err := a.deps.Audit.List(r.Context(), user, audit.Query{
 		TeamID:     q.Get("team_id"),
@@ -275,4 +271,22 @@ func (a *API) writeAuditError(w http.ResponseWriter, op string, err error) {
 		a.deps.Log.Error(op, "error", err)
 		writeError(w, http.StatusInternalServerError, "could not "+op)
 	}
+}
+
+// parseSince reads the audit page's window: an RFC 3339 instant, or a Go
+// duration back from now — "24h" is what the screen's "last 24 hours" sends,
+// and it is what both log streams already accept. The first version took the
+// instant only, so choosing any window on the audit page answered 400 and
+// blanked the screen. Empty means no lower bound.
+func parseSince(raw string, now time.Time) (time.Time, error) {
+	if raw == "" {
+		return time.Time{}, nil
+	}
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+		return t, nil
+	}
+	if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+		return now.Add(-d), nil
+	}
+	return time.Time{}, errors.New("since must be an RFC 3339 timestamp or a duration such as 24h")
 }

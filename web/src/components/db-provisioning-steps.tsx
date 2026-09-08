@@ -27,7 +27,7 @@ export interface DbStep {
 const MARK: Record<DbStepState, { glyph: string; word: string; className: string }> = {
   done: { glyph: "✓", word: "Done:", className: "text-status-running" },
   active: { glyph: "▸", word: "In progress:", className: "text-status-deploying" },
-  pending: { glyph: "○", word: "Waiting:", className: "text-text-disabled" },
+  pending: { glyph: "○", word: "Waiting:", className: "text-text-faint" },
   failed: { glyph: "✕", word: "Failed:", className: "text-danger" },
 };
 
@@ -86,7 +86,7 @@ export function ProvisioningSteps({
         )}
       >
         {steps.map((s) => (
-          <li key={s.label} className={cn(s.state === "pending" && "text-text-disabled")}>
+          <li key={s.label} className={cn(s.state === "pending" && "text-text-faint")}>
             <span className={MARK[s.state].className} aria-hidden>
               {MARK[s.state].glyph}
             </span>

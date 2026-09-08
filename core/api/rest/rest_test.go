@@ -596,6 +596,9 @@ type fakeAppsStore struct {
 	servers map[string]bool
 	apps    map[string]domain.Application
 	env     map[string][]domain.EnvVar
+	// domainClaims is what ApplicationsByRouteDomain reports — empty means
+	// every hostname is free, which is what most of these tests want.
+	domainClaims []domain.DomainClaim
 }
 
 func newFakeAppsStore() *fakeAppsStore {
@@ -648,6 +651,46 @@ func (f *fakeAppsStore) UpdateApplicationConfig(_ context.Context, a domain.Appl
 	return a, nil
 }
 
+func (f *fakeAppsStore) SetApplicationAllowlist(_ context.Context, id string, enabled bool, cidrs []string) (domain.Application, error) {
+	a, ok := f.apps[id]
+	if !ok {
+		return domain.Application{}, store.ErrNotFound
+	}
+	a.Access.IPAllowlistEnabled = enabled
+	a.Access.IPAllowlist = cidrs
+	f.apps[id] = a
+	return a, nil
+}
+
+func (f *fakeAppsStore) SetApplicationMaintenance(_ context.Context, id string, on bool) (domain.Application, error) {
+	a, ok := f.apps[id]
+	if !ok {
+		return domain.Application{}, store.ErrNotFound
+	}
+	a.Access.MaintenanceMode = on
+	if on {
+		if a.Access.MaintenanceSince == nil {
+			now := time.Now()
+			a.Access.MaintenanceSince = &now
+		}
+	} else {
+		a.Access.MaintenanceSince = nil
+	}
+	f.apps[id] = a
+	return a, nil
+}
+
+func (f *fakeAppsStore) SetApplicationPreviewPassword(_ context.Context, id string, enabled bool, hash string) (domain.Application, error) {
+	a, ok := f.apps[id]
+	if !ok {
+		return domain.Application{}, store.ErrNotFound
+	}
+	a.Access.PreviewPasswordEnabled = enabled
+	a.Access.PreviewPasswordHash = hash
+	f.apps[id] = a
+	return a, nil
+}
+
 func (f *fakeAppsStore) ListApplicationsByEnvironment(_ context.Context, envID string) ([]domain.Application, error) {
 	var out []domain.Application
 	for _, a := range f.apps {
@@ -679,6 +722,48 @@ func (f *fakeAppsStore) GetProject(_ context.Context, id string) (domain.Project
 // care about a real one seed it themselves.
 func (f *fakeAppsStore) GetRegistry(_ context.Context, _ string) (domain.Registry, error) {
 	return domain.Registry{}, store.ErrNotFound
+}
+
+// ListGitHubInstallations backs the application-side App check
+// (github-app.md §3). This fake reports the one installation the GitHub tests
+// attach; every other id is refused, which is the behaviour under test.
+func (f *fakeAppsStore) ListGitHubInstallations(_ context.Context) ([]domain.GitHubInstallation, error) {
+	return []domain.GitHubInstallation{{
+		ID: "ghi_test", InstallationID: 4242, AccountLogin: "acme",
+		AccountType: "Organization", RepoSelection: "all",
+	}}, nil
+}
+
+// ApplicationsByRouteDomain backs the domain-conflict refusal. This fake knows
+// of no claims, so every domain is free unless a test says otherwise.
+func (f *fakeAppsStore) ApplicationsByRouteDomain(_ context.Context, _ string) ([]domain.DomainClaim, error) {
+	return f.domainClaims, nil
+}
+
+// ListRouteDomainsByServer backs the "already in use" warning.
+func (f *fakeAppsStore) ListRouteDomainsByServer(_ context.Context, serverID string) ([]string, error) {
+	var out []string
+	for _, c := range f.domainClaims {
+		if c.ServerID == serverID {
+			out = append(out, c.ApplicationName)
+		}
+	}
+	return out, nil
+}
+
+// SetApplicationWebhookSecret backs push-webhook secret rotation.
+func (f *fakeAppsStore) SetApplicationWebhookSecret(_ context.Context, id string, ct, nonce []byte) (domain.Application, error) {
+	app := f.apps[id]
+	app.ID = id
+	app.WebhookSecretCT, app.WebhookSecretNonce = ct, nonce
+	f.apps[id] = app
+	return app, nil
+}
+
+// ListServerWorkloads backs "what runs on this host". Empty here; the tests
+// that care seed it.
+func (f *fakeAppsStore) ListServerWorkloads(_ context.Context, _ string) ([]domain.ServerWorkload, error) {
+	return nil, nil
 }
 
 // ListSharedVariableKeysInScope backs the write-time {{shared.KEY}} check
@@ -716,6 +801,7 @@ func (f *fakeAppsStore) DeleteEnvVar(_ context.Context, appID, key string) error
 }
 
 type fakeDeployer struct {
+	resyncs   []string
 	deploys   []string // "appID/trigger/ref"
 	removed   []string // "serverID/appID"
 	rollbacks []string
@@ -802,6 +888,13 @@ func (f *fakeDeployer) Cancel(_ context.Context, deploymentID, by string) (domai
 	return domain.Deployment{ID: deploymentID, ApplicationID: "app_test", Status: status, Detail: "cancelled by " + by}, f.cancelErr
 }
 
+// resyncs records the nudges an access change asks for, so a test can assert
+// the fleet was told rather than only that the row changed.
+func (f *fakeDeployer) RequestResync(_ context.Context, reason string) error {
+	f.resyncs = append(f.resyncs, reason)
+	return nil
+}
+
 func (f *fakeDeployer) Restart(_ context.Context, appID string) (domain.Application, error) {
 	f.restarted = append(f.restarted, appID)
 	if f.restartErr != nil {
@@ -811,6 +904,10 @@ func (f *fakeDeployer) Restart(_ context.Context, appID string) (domain.Applicat
 }
 
 type fakeDeploymentReader struct{}
+
+func (fakeDeploymentReader) GetRevision(context.Context, string) (domain.Revision, error) {
+	return domain.Revision{}, store.ErrNotFound
+}
 
 func (fakeDeploymentReader) GetDeployment(_ context.Context, id string) (domain.Deployment, error) {
 	// dep_unbuilt exists (so authz resolution succeeds) but its revision was
@@ -1011,7 +1108,22 @@ func newTestServerControl(t *testing.T) (*httptest.Server, *fakeDeployer, *fakeL
 	return ts, deployer, logs
 }
 
+// newTestServerApps hands back the applications store so a test can seed what
+// the panel already serves — the domain-conflict tests need that and nothing
+// else does.
+func newTestServerApps(t *testing.T) (*httptest.Server, *fakeAppsStore) {
+	t.Helper()
+	ts, _, _, _, _, apps := newTestServerPartsFull(t)
+	return ts, apps
+}
+
 func newTestServerParts(t *testing.T) (*httptest.Server, *fakeServersStore, *fakeLogs, *fakeDeployKeysStore, *fakeDeployer) {
+	t.Helper()
+	ts, srv, logs, dk, dep, _ := newTestServerPartsFull(t)
+	return ts, srv, logs, dk, dep
+}
+
+func newTestServerPartsFull(t *testing.T) (*httptest.Server, *fakeServersStore, *fakeLogs, *fakeDeployKeysStore, *fakeDeployer, *fakeAppsStore) {
 	t.Helper()
 	hash, err := auth.HashPassword(testPassword)
 	if err != nil {
@@ -1031,7 +1143,8 @@ func newTestServerParts(t *testing.T) (*httptest.Server, *fakeServersStore, *fak
 	dbReconciler := &fakeDbReconciler{}
 	dbSvc := databases.NewService(dbStore, box, dbReconciler)
 
-	appSvc := applications.NewService(newFakeAppsStore(), box)
+	appsStore := newFakeAppsStore()
+	appSvc := applications.NewService(appsStore, box)
 	deployer := &fakeDeployer{}
 	templateSvc, err := templates.New(appSvc, dbSvc, deployer, log)
 	if err != nil {
@@ -1059,7 +1172,7 @@ func newTestServerParts(t *testing.T) (*httptest.Server, *fakeServersStore, *fak
 	})
 	ts := httptest.NewServer(api.Handler())
 	t.Cleanup(ts.Close)
-	return ts, srvStore, logs, dkStore, deployer
+	return ts, srvStore, logs, dkStore, deployer, appsStore
 }
 
 func doJSON(t *testing.T, method, url, token, body string) (int, http.Header, []byte) {
@@ -1129,6 +1242,8 @@ func TestProtectedRoutesRequireAuth(t *testing.T) {
 		{"GET", "/api/v1/applications/app_x/env"},
 		{"PUT", "/api/v1/applications/app_x/env/KEY"},
 		{"DELETE", "/api/v1/applications/app_x/env/KEY"},
+		{"PUT", "/api/v1/applications/app_x/maintenance"},
+		{"DELETE", "/api/v1/applications/app_x/maintenance"},
 		// Invitations and access requests: every route EXCEPT the two public
 		// ones (invitations-and-access-requests.md §3).
 		{"POST", "/api/v1/teams/tm_x/invites"},
@@ -1368,7 +1483,7 @@ func TestApplicationAcceptsSpecShapedBuild(t *testing.T) {
 	ts := newTestServer(t)
 	token := login(t, ts)
 
-	body := `{"name":"specshape","source":{"kind":"github","repo":"acme/web","branch":"main"},` +
+	body := `{"name":"specshape","source":{"kind":"github","repo": "https://github.com/acme/web","branch":"main"},` +
 		`"build":{"kind":"dockerfile","dockerfile_path":"./Dockerfile","context":"."},` +
 		`"runtime":{"server_id":"srv_test","port":8080,"replicas":1},` +
 		`"route":{"domain":"spec.example.com","https":true,"path_prefix":"/"}}`
@@ -1401,7 +1516,7 @@ func TestApplicationAcceptsSpecShapedBuild(t *testing.T) {
 	}
 
 	// An unsupported kind is still a validation error, not a decode error.
-	bad := `{"name":"nope","source":{"kind":"github","repo":"acme/x"},` +
+	bad := `{"name":"nope","source":{"kind":"github","repo":"https://github.com/acme/x"},` +
 		`"build":{"kind":"buildpacks","dockerfile_path":"./Dockerfile","context":"."},` +
 		`"runtime":{"server_id":"srv_test","port":8080},"route":{"domain":"n.example.com"}}`
 	status, _, resp = doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, bad)
@@ -1418,7 +1533,7 @@ func TestApplicationLifecycleOverHTTP(t *testing.T) {
 	token := login(t, ts)
 
 	// Create under the seeded env_test, targeting the seeded srv_test.
-	body := `{"name":"web","source":{"kind":"github","repo":"acme/web"},` +
+	body := `{"name":"web","source":{"kind":"github","repo": "https://github.com/acme/web"},` +
 		`"runtime":{"server_id":"srv_test","port":8080},"route":{"domain":"web.example.com"},` +
 		`"env_vars":{"DATABASE_URL":"postgres://secret"}}`
 	status, _, resp := doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, body)
@@ -1612,7 +1727,7 @@ func TestConflictAndInUseAre409(t *testing.T) {
 	}
 
 	// Duplicate application name inside one environment.
-	body := `{"name":"web","source":{"kind":"github","repo":"acme/web"},` +
+	body := `{"name":"web","source":{"kind":"github","repo": "https://github.com/acme/web"},` +
 		`"runtime":{"server_id":"srv_test","port":8080},"route":{"domain":"web.example.com"}}`
 	if status, _, _ = doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, body); status != http.StatusCreated {
 		t.Fatalf("create application: status %d", status)
@@ -1647,7 +1762,7 @@ func TestDeployAndRollbackEndpoints(t *testing.T) {
 	token := login(t, ts)
 
 	// Create an app to deploy.
-	body := `{"name":"web","source":{"kind":"github","repo":"acme/web"},` +
+	body := `{"name":"web","source":{"kind":"github","repo": "https://github.com/acme/web"},` +
 		`"runtime":{"server_id":"srv_test","port":8080},"route":{"domain":"web.example.com"}}`
 	status, _, resp := doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, body)
 	if status != http.StatusCreated {
@@ -1689,7 +1804,7 @@ func TestDeployAndRollbackEndpoints(t *testing.T) {
 func TestPatchApplication(t *testing.T) {
 	ts := newTestServer(t)
 	token := login(t, ts)
-	body := `{"name":"web","source":{"kind":"github","repo":"acme/web"},` +
+	body := `{"name":"web","source":{"kind":"github","repo": "https://github.com/acme/web"},` +
 		`"runtime":{"server_id":"srv_test","port":8080},"route":{"domain":"web.example.com"}}`
 	status, _, resp := doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, body)
 	if status != http.StatusCreated {
@@ -1721,7 +1836,7 @@ func TestPatchApplication(t *testing.T) {
 func TestGitHubWebhook(t *testing.T) {
 	ts := newTestServer(t)
 	token := login(t, ts)
-	body := `{"name":"web","source":{"kind":"github","repo":"acme/web"},` +
+	body := `{"name":"web","source":{"kind":"github","repo": "https://github.com/acme/web"},` +
 		`"runtime":{"server_id":"srv_test","port":8080},"route":{"domain":"web.example.com"}}`
 	status, _, resp := doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, body)
 	if status != http.StatusCreated {
@@ -1821,7 +1936,7 @@ func TestApplicationLogsSSEReplaysHistory(t *testing.T) {
 	ts, _, logs, _ := newTestServerFull(t)
 	token := login(t, ts)
 
-	body := `{"name":"web","source":{"kind":"github","repo":"acme/web"},` +
+	body := `{"name":"web","source":{"kind":"github","repo": "https://github.com/acme/web"},` +
 		`"runtime":{"server_id":"srv_test","port":8080},"route":{"domain":"web.example.com"}}`
 	status, _, resp := doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, body)
 	if status != http.StatusCreated {
@@ -2054,7 +2169,7 @@ func TestDeleteProjectRefusesWhileResourcesRemain(t *testing.T) {
 		token := login(t, ts)
 
 		// The seeded env_test is the one the applications fixture knows.
-		body := `{"name":"web","source":{"kind":"github","repo":"acme/web"},` +
+		body := `{"name":"web","source":{"kind":"github","repo": "https://github.com/acme/web"},` +
 			`"runtime":{"server_id":"srv_test","port":8080},"route":{"domain":"guard.example.com"}}`
 		if st, _, b := doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, body); st != http.StatusCreated {
 			t.Fatalf("seeding an application: %d %s", st, b)
@@ -2262,5 +2377,79 @@ func TestSessionListAndRevokeOthers(t *testing.T) {
 	}
 	if status, _, _ = doJSON(t, "GET", ts.URL+"/api/v1/auth/me", other, ""); status != http.StatusUnauthorized {
 		t.Fatalf("other session survived revoke-others: status %d", status)
+	}
+}
+
+// Maintenance mode is idempotent in the one way that matters: raising a page
+// that is already up must not reset the clock the panel counts from. A
+// migration script that retries its PUT would otherwise hide the age of an
+// outage — and the age is the whole mechanism keeping a Friday page from
+// becoming a Monday of silence (app-access-control.md §10).
+func TestRaisingAMaintenancePageTwiceDoesNotResetItsClock(t *testing.T) {
+	ts := newTestServer(t)
+	token := login(t, ts)
+
+	var first struct {
+		MaintenanceMode  bool    `json:"maintenance_mode"`
+		MaintenanceSince *string `json:"maintenance_since"`
+	}
+	status, _, body := doJSON(t, "PUT", ts.URL+"/api/v1/applications/app_x/maintenance", token, "")
+	if status != http.StatusOK {
+		t.Fatalf("raising the page: status %d, body %s", status, body)
+	}
+	if err := json.Unmarshal(body, &first); err != nil {
+		t.Fatalf("decoding: %v", err)
+	}
+	if !first.MaintenanceMode || first.MaintenanceSince == nil {
+		t.Fatalf("after PUT: mode=%v since=%v", first.MaintenanceMode, first.MaintenanceSince)
+	}
+
+	var again struct {
+		MaintenanceSince *string `json:"maintenance_since"`
+	}
+	status, _, body = doJSON(t, "PUT", ts.URL+"/api/v1/applications/app_x/maintenance", token, "")
+	if status != http.StatusOK {
+		t.Fatalf("second PUT: status %d, body %s", status, body)
+	}
+	if err := json.Unmarshal(body, &again); err != nil {
+		t.Fatalf("decoding: %v", err)
+	}
+	if again.MaintenanceSince == nil || *again.MaintenanceSince != *first.MaintenanceSince {
+		t.Fatalf("second PUT moved the stamp: %v → %v", first.MaintenanceSince, again.MaintenanceSince)
+	}
+
+	var down struct {
+		MaintenanceMode  bool    `json:"maintenance_mode"`
+		MaintenanceSince *string `json:"maintenance_since"`
+	}
+	status, _, body = doJSON(t, "DELETE", ts.URL+"/api/v1/applications/app_x/maintenance", token, "")
+	if status != http.StatusOK {
+		t.Fatalf("lowering the page: status %d, body %s", status, body)
+	}
+	if err := json.Unmarshal(body, &down); err != nil {
+		t.Fatalf("decoding: %v", err)
+	}
+	if down.MaintenanceMode || down.MaintenanceSince != nil {
+		t.Fatalf("after DELETE: mode=%v since=%v", down.MaintenanceMode, down.MaintenanceSince)
+	}
+}
+
+// Every subscribable event is offered in the contract.
+//
+// The taxonomy has eight keys; the notifier and outbound-webhook enums stopped
+// at four, so app.crashed, app.recovered, alert.firing and alert.resolved could
+// be FIRED by the plane and never subscribed to. A channel that cannot carry
+// half of what it exists to carry is a channel nobody trusts, and the gap was
+// invisible to both parity scripts — the field is there, its VALUES were not.
+func TestEveryEventTypeIsSubscribableInTheContract(t *testing.T) {
+	spec, err := os.ReadFile("openapi.yaml")
+	if err != nil {
+		t.Fatalf("reading the spec: %v", err)
+	}
+	for _, key := range domain.EventTypes() {
+		if !bytes.Contains(spec, []byte(key)) {
+			t.Errorf("event %q is subscribable in core/domain and appears nowhere in the contract — "+
+				"the plane fires it and no notifier or webhook can ask for it", key)
+		}
 	}
 }

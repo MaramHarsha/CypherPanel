@@ -130,4 +130,59 @@ message Heartbeat {
   // and never as full.
   uint64 disk_total_bytes = 7;
   uint64 disk_free_bytes = 8;
+  // V1: what this agent is doing about its own binary (agent-updates.md §7).
+  // Observed state like everything else in a heartbeat — the plane asserts a
+  // version was adopted from `agent_version` above, never from a phase.
+  AgentUpdateStatus agent_update = 9;
+  // V1: WHICH subsystem is unhealthy when `status` is DEGRADED. The agent has
+  // keyed its health by subsystem since ADR-010, but the wire carried only the
+  // collapsed status word, so a degraded server could say nothing about what
+  // was wrong with it — an operator saw amber and had to go read the agent's
+  // log on the host to find out that the Proxy could not bind :80.
+  //
+  // Additive, so an agent older than this field keeps working: `repeated` has
+  // no presence, so an empty list is BOTH "healthy" and "old agent". The plane
+  // resolves that with `status` — a READY agent has nothing wrong with it
+  // either way, and a DEGRADED agent sending no entries is one too old to say.
+  repeated SubsystemHealth subsystem_health = 10;
+}
+
+// SubsystemHealth names one failing part of an agent and what it said.
+//
+// The message is an error string from a subsystem that fails in a LOOP rather
+// than crashing — the Proxy and the self-updater — so it is the agent's own
+// diagnosis, never a secret: nothing that unseals a value reports through here
+// (ENGINEERING rule 20).
+message SubsystemHealth {
+  // Stable identifier the agent chose: "proxy", "updater".
+  string subsystem = 1;
+  string message = 2;
+}
+
+// AgentUpdateStatus is the observed half of ADR-010: which phase the updater is
+// in, what it is moving to, and what went wrong if anything did.
+//
+// PHASE_ROLLED_BACK also raises the agent's own AgentStatus to degraded, so the
+// server goes amber in the ordinary status vocabulary rather than only in this
+// feature's column.
+message AgentUpdateStatus {
+  enum Phase {
+    PHASE_UNSPECIFIED = 0;
+    PHASE_IDLE = 1;
+    PHASE_PENDING = 2;
+    PHASE_DOWNLOADING = 3;
+    PHASE_VERIFYING = 4;
+    PHASE_SWAPPING = 5;
+    PHASE_ROLLED_BACK = 6;
+    PHASE_FAILED = 7;
+    // PHASE_DISABLED is a host that is visibly EXCLUDED rather than failing
+    // forever: CYPHER_UPDATE_DISABLE is set, the binary path is not writable,
+    // or this build trusts no release key and so can verify nothing.
+    PHASE_DISABLED = 8;
+  }
+  Phase phase = 1;
+  string target_version = 2;
+  string previous_version = 3;
+  // detail is operator-facing prose and never a secret (ENGINEERING rule 20).
+  string detail = 4;
 }

@@ -12,6 +12,8 @@ import type { FirstLogin } from './firstLogin.ts';
 export interface InstallTemplateResponse {
   applications: string[];
   databases: string[];
+  /** Compose Stacks this template installed (compose-templates.md). A compose template installs no application, so this is where the screen finds what to navigate to. */
+  stacks?: string[];
   /** How to get into what was just installed. Returned ONCE — when `generated` is true this is the only place that password ever appears. Absent when the template declares nothing. */
   first_login?: FirstLogin;
 }

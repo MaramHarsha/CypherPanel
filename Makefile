@@ -15,11 +15,20 @@ help: ## Show this help
 ## ── Generation ─────────────────────────────────────────────────────────────
 
 .PHONY: generate
-generate: proto sqlc installsh ## Regenerate all generated code (proto + sqlc + embedded installer)
+generate: proto sqlc installsh changelog ## Regenerate all generated code (proto + sqlc + embedded installer + changelog)
 
 .PHONY: installsh
 installsh: ## Copy the canonical installer into core for go:embed (one home: /install)
 	cp install/agent.sh core/api/rest/install-agent.sh
+
+.PHONY: changelog
+changelog: ## Copy the canonical changelog into core for go:embed (one home: the repo root)
+	cp CHANGELOG.md core/changelog/CHANGELOG.md
+
+.PHONY: docs-site
+docs-site: ## Generate the public documentation site from docs/ + the OpenAPI spec into dist/docs
+	cd core && go run ./cmd/docs-site \
+		-docs ../docs -openapi api/rest/openapi.yaml -out ../dist/docs
 
 .PHONY: proto
 proto: ## Generate Go stubs from proto/ (buf)
@@ -81,6 +90,23 @@ test-store: ## Run the real-Postgres store tests against a throwaway container
 	cd core && CYPHERD_TEST_DATABASE_URL="postgres://postgres:pw@127.0.0.1:15440/cypher_test?sslmode=disable" \
 		go test ./store/ -run TestStore -v; status=$$?; \
 		docker rm -f cypher-store-test-pg >/dev/null; exit $$status
+
+.PHONY: e2e
+e2e: ## Browser regression tests against a real panel (web/e2e/README.md)
+	./scripts/e2e.sh
+
+.PHONY: release-rehearsal
+release-rehearsal: ## Rehearse a release on this machine: build, upgrade, snapshot, restore (scripts/release-rehearsal.sh)
+	./scripts/release-rehearsal.sh
+
+.PHONY: fresh-host-rehearsal
+fresh-host-rehearsal: ## Install on a bare systemd host in a container, use this machine, deploy, reboot (scripts/fresh-host-rehearsal.sh)
+	./scripts/fresh-host-rehearsal.sh
+
+.PHONY: parity
+parity: ## Audit that every capability is reachable: schema -> contract -> screen (docs/dev/api-ui-parity.md)
+	python3 scripts/schema-contract-parity.py --check
+	python3 scripts/api-ui-parity.py --check
 
 .PHONY: vet
 vet: ## go vet across all modules

@@ -10,7 +10,7 @@
 // canvas's other half) reuse this row when they ship.
 import { useMutation, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useId, useRef, useState, type DragEvent, type FormEvent, type ReactNode } from "react";
+import { useId, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import {
   getDeleteAvatarUrl,
   getGetMeQueryKey,
@@ -31,6 +31,7 @@ import { ApiError, apiFetch } from "@/api/client";
 import { getGetInboxPreferencesQueryKey, useGetInboxPreferences, useSetInboxPreferences } from "@/api/gen/inbox/inbox";
 import type { InboxPreferences, Me, MeRole, SetInboxPreferencesRequestMutedKindsItem } from "@/api/gen/model";
 import { useGetPanelMail } from "@/api/gen/panel/panel";
+import { radioArrowTarget } from "@/components/build-strategy-field";
 import { ChoiceChip } from "@/components/connection-dialog";
 import { Eyebrow } from "@/components/eyebrow";
 import { PageState } from "@/components/page-state";
@@ -488,6 +489,20 @@ function ProfileForm({ who }: { who: Me }) {
 
 function ThemeField() {
   const preference = useThemePreference();
+
+  const onKeyDown = (e: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    const target = radioArrowTarget(e.key, index, THEMES.length);
+    if (target === null) return;
+    e.preventDefault();
+    const next = THEMES[target];
+    if (!next) return;
+    setTheme(next.value);
+    // Roving tabindex: the choice and the focus move together, as they do on
+    // native radios, so the ring is always on the selected segment.
+    const buttons = e.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="radio"]');
+    buttons?.[target]?.focus();
+  };
+
   return (
     <div>
       <p className="mb-[5px] text-[12px] font-semibold text-text">Theme</p>
@@ -496,7 +511,7 @@ function ThemeField() {
         aria-label="Theme"
         className="flex overflow-hidden rounded-md border border-border-input bg-surface text-center text-[12.5px] font-semibold"
       >
-        {THEMES.map((t) => {
+        {THEMES.map((t, i) => {
           const active = preference === t.value;
           return (
             <button
@@ -504,9 +519,13 @@ function ThemeField() {
               type="button"
               role="radio"
               aria-checked={active}
+              tabIndex={active ? 0 : -1}
               onClick={() => setTheme(t.value)}
+              onKeyDown={(e) => onKeyDown(e, i)}
               className={cn(
-                "flex-1 py-[9px] transition-colors",
+                // The group clips its corners, so the ring is drawn inside the
+                // segment rather than 3px outside it, where it would be cut off.
+                "flex-1 py-[9px] transition-colors focus-visible:outline-offset-[-3px]",
                 active ? "bg-primary text-primary-fg" : "text-text-mid hover:text-text",
               )}
             >

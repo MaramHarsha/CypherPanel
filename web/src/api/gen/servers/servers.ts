@@ -32,9 +32,16 @@ import type {
   CreateServerResponse,
   Error,
   ForbiddenResponse,
+  GetServerMetricsParams,
+  ListServerDomains200,
+  ListServerWorkloads200,
+  LocalServer,
+  LocalServerCreated,
   NotFoundResponse,
   PatchServerRequest,
+  ResourceMetrics,
   Server,
+  SetServerChannelRequest,
   UnauthorizedResponse
 } from '../model';
 
@@ -59,6 +66,214 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   }
   return result;
 };
+
+export const getListServerWorkloadsUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/servers/${id}/workloads`
+}
+
+/**
+ * Applications, compose stacks and managed databases placed on this host, with the project each belongs to.
+ *
+ * The plane has always known — it assembles desired state from exactly these three lists — and no route exposed it, so the panel could show a server as degraded, or ask an operator to confirm removing it, without ever being able to say what was on it. "What will I break" is the first question anyone asks about a host, and the answer needed a database query.
+ *
+ * Scoped to what the caller may see: a workload in a team they do not belong to is omitted rather than refused, so the count is honest about their own view without revealing another team's.
+ * @summary What runs on this server (member)
+ */
+export const listServerWorkloads = async (id: string, options?: RequestInit): Promise<ListServerWorkloads200> => {
+
+  return apiFetch<ListServerWorkloads200>(getListServerWorkloadsUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListServerWorkloadsQueryKey = (id: string,) => {
+    return [
+    `/api/v1/servers/${id}/workloads`
+    ] as const;
+    }
+
+
+export const getListServerWorkloadsQueryOptions = <TData = Awaited<ReturnType<typeof listServerWorkloads>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServerWorkloads>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListServerWorkloadsQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listServerWorkloads>>> = ({ signal }) => listServerWorkloads(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listServerWorkloads>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListServerWorkloadsQueryResult = NonNullable<Awaited<ReturnType<typeof listServerWorkloads>>>
+export type ListServerWorkloadsQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useListServerWorkloads<TData = Awaited<ReturnType<typeof listServerWorkloads>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServerWorkloads>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listServerWorkloads>>,
+          TError,
+          Awaited<ReturnType<typeof listServerWorkloads>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListServerWorkloads<TData = Awaited<ReturnType<typeof listServerWorkloads>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServerWorkloads>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listServerWorkloads>>,
+          TError,
+          Awaited<ReturnType<typeof listServerWorkloads>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListServerWorkloads<TData = Awaited<ReturnType<typeof listServerWorkloads>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServerWorkloads>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary What runs on this server (member)
+ */
+
+export function useListServerWorkloads<TData = Awaited<ReturnType<typeof listServerWorkloads>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServerWorkloads>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListServerWorkloadsQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getListServerDomainsUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/servers/${id}/domains`
+}
+
+/**
+ * What the create and settings screens need to say "that domain is already in use" BEFORE somebody submits, rather than after — a refusal you meet only on save is a form you filled in twice.
+ *
+ * It returns hostnames and nothing else: no application names, no project or team. Those are the parts that would make this an enumeration tool, and they are exactly what the conflict refusal withholds from a caller outside the owning team. The hostnames themselves are public DNS, and a create attempt already reveals whether one is taken.
+ * @summary Hostnames already served by this server (member)
+ */
+export const listServerDomains = async (id: string, options?: RequestInit): Promise<ListServerDomains200> => {
+
+  return apiFetch<ListServerDomains200>(getListServerDomainsUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListServerDomainsQueryKey = (id: string,) => {
+    return [
+    `/api/v1/servers/${id}/domains`
+    ] as const;
+    }
+
+
+export const getListServerDomainsQueryOptions = <TData = Awaited<ReturnType<typeof listServerDomains>>, TError = UnauthorizedResponse | ForbiddenResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServerDomains>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListServerDomainsQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listServerDomains>>> = ({ signal }) => listServerDomains(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listServerDomains>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListServerDomainsQueryResult = NonNullable<Awaited<ReturnType<typeof listServerDomains>>>
+export type ListServerDomainsQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useListServerDomains<TData = Awaited<ReturnType<typeof listServerDomains>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServerDomains>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listServerDomains>>,
+          TError,
+          Awaited<ReturnType<typeof listServerDomains>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListServerDomains<TData = Awaited<ReturnType<typeof listServerDomains>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServerDomains>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listServerDomains>>,
+          TError,
+          Awaited<ReturnType<typeof listServerDomains>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListServerDomains<TData = Awaited<ReturnType<typeof listServerDomains>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServerDomains>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Hostnames already served by this server (member)
+ */
+
+export function useListServerDomains<TData = Awaited<ReturnType<typeof listServerDomains>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listServerDomains>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListServerDomainsQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
 
 export const getGetCaCertUrl = () => {
 
@@ -674,3 +889,371 @@ export const useDeleteServer = <TError = UnauthorizedResponse | ForbiddenRespons
       > => {
       return useMutation(getDeleteServerMutationOptions(options), queryClient);
     }
+    export const getGetLocalServerUrl = () => {
+
+
+
+
+  return `/api/v1/servers/local`
+}
+
+/**
+ * The most common first server is the machine the panel is already installed on, and the join command works there as well as anywhere — it is just not discoverable, because the dialog says "run this on the server you want to add" and the box you are signed into is not obviously one of those.
+ *
+ * `state` is `available`, `helper_missing` (this panel predates the root helper — re-run install.sh), `unsupported` (a container install, which has no host service manager to install into), `already_joined`, or `unknown` when the panel cannot read this machine's agent identity and so cannot tell. Anything but `available` carries a `reason` sentence to show in place of the button: a disabled control with no explanation is a dead end.
+ * @summary Whether this panel can add its own host as a server (admin+)
+ */
+export const getLocalServer = async ( options?: RequestInit): Promise<LocalServer> => {
+
+  return apiFetch<LocalServer>(getGetLocalServerUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetLocalServerQueryKey = () => {
+    return [
+    `/api/v1/servers/local`
+    ] as const;
+    }
+
+
+export const getGetLocalServerQueryOptions = <TData = Awaited<ReturnType<typeof getLocalServer>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLocalServer>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetLocalServerQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLocalServer>>> = ({ signal }) => getLocalServer({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getLocalServer>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetLocalServerQueryResult = NonNullable<Awaited<ReturnType<typeof getLocalServer>>>
+export type GetLocalServerQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useGetLocalServer<TData = Awaited<ReturnType<typeof getLocalServer>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLocalServer>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getLocalServer>>,
+          TError,
+          Awaited<ReturnType<typeof getLocalServer>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetLocalServer<TData = Awaited<ReturnType<typeof getLocalServer>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLocalServer>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getLocalServer>>,
+          TError,
+          Awaited<ReturnType<typeof getLocalServer>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetLocalServer<TData = Awaited<ReturnType<typeof getLocalServer>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLocalServer>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Whether this panel can add its own host as a server (admin+)
+ */
+
+export function useGetLocalServer<TData = Awaited<ReturnType<typeof getLocalServer>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLocalServer>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetLocalServerQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getCreateLocalServerUrl = () => {
+
+
+
+
+  return `/api/v1/servers/local`
+}
+
+/**
+ * Creates the Server through the ordinary path, mints a join token, and writes a request that a root one-shot performs. THE PLANE INSTALLS NOTHING ITSELF: `cypherd` runs with `DynamicUser` and `ProtectSystem=strict`, so writing the agent binary, a unit file, or calling systemctl are all forbidden to it — deliberately, because relaxing that turns any RCE in this API into persistence on the control-plane host. Its entire power is to ask.
+ *
+ * ADR-002 is not bent. Nothing reaches out: the request never leaves the host, names no address, and holds no remote credential. The agent still dials home to enroll exactly as a pasted command's agent does — what changes is who types the command. The request has no field naming a machine and must never gain one, which is what keeps this from becoming a remote-execution primitive.
+ *
+ * Owner AND session-only: this installs software on the panel's own host as root, and API tokens live in CI. `POST /servers` stays admin and token-reachable, because handing out a join command grants nothing.
+ * @summary Add this machine as a server (owner, session only)
+ */
+export const createLocalServer = async ( options?: RequestInit): Promise<LocalServerCreated> => {
+
+  return apiFetch<LocalServerCreated>(getCreateLocalServerUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getCreateLocalServerMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createLocalServer>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createLocalServer>>, TError,void, TContext> => {
+
+const mutationKey = ['createLocalServer'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createLocalServer>>, void> = () => {
+
+
+          return  createLocalServer(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateLocalServerMutationResult = NonNullable<Awaited<ReturnType<typeof createLocalServer>>>
+
+    export type CreateLocalServerMutationError = UnauthorizedResponse | ForbiddenResponse | void
+
+    /**
+ * @summary Add this machine as a server (owner, session only)
+ */
+export const useCreateLocalServer = <TError = UnauthorizedResponse | ForbiddenResponse | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createLocalServer>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof createLocalServer>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getCreateLocalServerMutationOptions(options), queryClient);
+    }
+    export const getSetServerAgentChannelUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/servers/${id}/agent-channel`
+}
+
+/**
+ * Its own route rather than a field on `PATCH /servers/{id}`. That PATCH is panel-admin and deliberately reachable by a provisioning token, so re-ranking it would take `public_address` away from every admin that sets it today — while a field-level rank check would be the first in this API, and a new authorization precedent is a bad thing to introduce incidentally inside a feature.
+ *
+ * Only this server is nudged to re-read desired state: a channel change is one host's business.
+ * @summary Move one server between release channels (owner, session only)
+ */
+export const setServerAgentChannel = async (id: string,
+    setServerChannelRequest: SetServerChannelRequest, options?: RequestInit): Promise<Server> => {
+
+  return apiFetch<Server>(getSetServerAgentChannelUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(setServerChannelRequest)
+  }
+);}
+
+
+
+
+
+export const getSetServerAgentChannelMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setServerAgentChannel>>, TError,{id: string;data: SetServerChannelRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setServerAgentChannel>>, TError,{id: string;data: SetServerChannelRequest}, TContext> => {
+
+const mutationKey = ['setServerAgentChannel'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setServerAgentChannel>>, {id: string;data: SetServerChannelRequest}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  setServerAgentChannel(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetServerAgentChannelMutationResult = NonNullable<Awaited<ReturnType<typeof setServerAgentChannel>>>
+    export type SetServerAgentChannelMutationBody = SetServerChannelRequest
+    export type SetServerAgentChannelMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | void
+
+    /**
+ * @summary Move one server between release channels (owner, session only)
+ */
+export const useSetServerAgentChannel = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setServerAgentChannel>>, TError,{id: string;data: SetServerChannelRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setServerAgentChannel>>,
+        TError,
+        {id: string;data: SetServerChannelRequest},
+        TContext
+      > => {
+      return useMutation(getSetServerAgentChannelMutationOptions(options), queryClient);
+    }
+    export const getGetServerMetricsUrl = (id: string,
+    params?: GetServerMetricsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/servers/${id}/metrics?${stringifiedParams}` : `/api/v1/servers/${id}/metrics`
+}
+
+/**
+ * A node's figure IS its resources' figures, so there is no separate server-level sampler — a second source would be a second answer to the same question. Containers the panel does not manage are never sampled, so an operator's own workloads on a shared box do not appear here.
+ * @summary The node's managed containers, summed (panel admin)
+ */
+export const getServerMetrics = async (id: string,
+    params?: GetServerMetricsParams, options?: RequestInit): Promise<ResourceMetrics> => {
+
+  return apiFetch<ResourceMetrics>(getGetServerMetricsUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetServerMetricsQueryKey = (id: string,
+    params?: GetServerMetricsParams,) => {
+    return [
+    `/api/v1/servers/${id}/metrics`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetServerMetricsQueryOptions = <TData = Awaited<ReturnType<typeof getServerMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(id: string,
+    params?: GetServerMetricsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getServerMetrics>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetServerMetricsQueryKey(id,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getServerMetrics>>> = ({ signal }) => getServerMetrics(id,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getServerMetrics>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetServerMetricsQueryResult = NonNullable<Awaited<ReturnType<typeof getServerMetrics>>>
+export type GetServerMetricsQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+
+
+export function useGetServerMetrics<TData = Awaited<ReturnType<typeof getServerMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ id: string,
+    params: undefined |  GetServerMetricsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getServerMetrics>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getServerMetrics>>,
+          TError,
+          Awaited<ReturnType<typeof getServerMetrics>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetServerMetrics<TData = Awaited<ReturnType<typeof getServerMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ id: string,
+    params?: GetServerMetricsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getServerMetrics>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getServerMetrics>>,
+          TError,
+          Awaited<ReturnType<typeof getServerMetrics>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetServerMetrics<TData = Awaited<ReturnType<typeof getServerMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ id: string,
+    params?: GetServerMetricsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getServerMetrics>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary The node's managed containers, summed (panel admin)
+ */
+
+export function useGetServerMetrics<TData = Awaited<ReturnType<typeof getServerMetrics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ id: string,
+    params?: GetServerMetricsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getServerMetrics>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetServerMetricsQueryOptions(id,params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+

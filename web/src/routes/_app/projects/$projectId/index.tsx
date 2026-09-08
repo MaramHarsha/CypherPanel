@@ -17,6 +17,7 @@ import { ProvisioningSteps, provisioningSteps } from "@/components/db-provisioni
 import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
 import { PageBody, PageHeader } from "@/components/page-header";
+import { MaintenanceBadge } from "@/components/maintenance-badge";
 import { PageState } from "@/components/page-state";
 import { normalizeStatus, StatusDot, StatusPill, type Status } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
@@ -356,7 +357,7 @@ function AppRow({ projectId, app }: { projectId: string; app: Application }) {
         )}
       >
         <span className="flex items-center gap-2.5">
-          <StatusDot status={status} />
+          <StatusDot status={status} decorative />
           <span className="min-w-0 truncate text-base font-semibold">{app.name}</span>
           <span
             className={cn(
@@ -372,6 +373,15 @@ function AppRow({ projectId, app }: { projectId: string; app: Application }) {
           {app.route.domain || "internal"}
           {rev && ` · rev ${rev}`}
         </span>
+
+        {/* The board is where a page left up over a weekend is actually seen.
+            The status word still says `running`, because it is — this is the
+            fact beside it (app-access-control.md §10). */}
+        {app.maintenance_mode && (
+          <span className="mt-2 block">
+            <MaintenanceBadge since={app.maintenance_since} />
+          </span>
+        )}
 
         {/* An error card says what broke and offers the remedy inline — a
             screen you can only stare at is a bug (ui-principles §11). */}
@@ -415,7 +425,7 @@ function DbRow({ projectId, db, serverName }: { projectId: string; db: Database;
         )}
       >
         <span className="flex items-center gap-3.5">
-          <StatusDot status={db.status} />
+          <StatusDot status={db.status} decorative />
           <DatabaseIcon className="h-4 w-4 shrink-0 text-text-faint" aria-hidden />
           <span className="min-w-0 truncate text-[15px] font-semibold">{db.name}</span>
           <span className="min-w-0 truncate font-mono text-[11.5px] text-text-faint">{engineLabel(db.engine, db.version)}</span>
@@ -484,7 +494,7 @@ function ComposeRow({
         )}
       >
         <span className="flex items-center gap-3.5">
-          <StatusDot status={stack.status} />
+          <StatusDot status={stack.status} decorative />
           <Boxes className="h-4 w-4 shrink-0 text-text-faint" aria-hidden />
           <span className="min-w-0 truncate text-[15px] font-semibold">{stack.name}</span>
           <span className="min-w-0 truncate font-mono text-[11.5px] text-text-faint">

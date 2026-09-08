@@ -18,22 +18,28 @@ set -eu
 
 VERSION="${1:?usage: release-sign.sh vX.Y.Z}"
 WORK="${WORK:-dist/sign}"
-GO_VERSION_WANT="${GO_VERSION_WANT:-go1.25}"
 
 : "${CYPHER_RELEASE_SIGNING_KEY:?not set — see docs/dev/release-signing.md}"
 command -v gh >/dev/null || { echo "gh is required"; exit 1; }
+command -v go >/dev/null || { echo "go is required (any 1.21+; the exact release toolchain is fetched below)"; exit 1; }
 
-# A different toolchain produces different bytes, which would look exactly like
-# a compromised artifact. Fail on the ambiguity rather than teaching the
-# operator that mismatches are normal.
+# The EXACT toolchain CI built with, read from the same file CI reads it from
+# (go.work, via setup-go's go-version-file). This used to accept any "go1.25*",
+# which is not a check: a patch release of Go can change the compiler's output,
+# so a signer on 1.25.14 rebuilding what CI made on 1.25.12 would see every
+# binary DIFFER — and the script's own words would then tell them not to
+# publish. GOTOOLCHAIN makes the go command fetch and use that exact version
+# regardless of what is installed, so the comparison below means what it says.
+GO_VERSION_WANT="go$(awk '/^go /{print $2; exit}' go.work)"
+export GOTOOLCHAIN="$GO_VERSION_WANT"
 have="$(go env GOVERSION)"
-case "$have" in
-  "$GO_VERSION_WANT"*) ;;
-  *) echo "go toolchain is $have, release built with $GO_VERSION_WANT*."
-     echo "Install the matching toolchain — a version skew is indistinguishable"
-     echo "from a tampered artifact once the comparison fails."
-     exit 1 ;;
-esac
+if [ "$have" != "$GO_VERSION_WANT" ]; then
+  echo "go toolchain is $have, the release is built with $GO_VERSION_WANT (go.work)."
+  echo "GOTOOLCHAIN=$GO_VERSION_WANT could not switch to it — is GOTOOLCHAIN forced"
+  echo "to 'local', or is the network unreachable? A version skew is"
+  echo "indistinguishable from a tampered artifact once the comparison fails."
+  exit 1
+fi
 
 rm -rf "$WORK"
 mkdir -p "$WORK/built" "$WORK/draft"
@@ -45,18 +51,49 @@ git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null \
 # A worktree, so an unclean working tree cannot leak into what gets signed.
 git worktree add --detach --force "$WORK/src" "$VERSION" >/dev/null
 
+# CI's flags, LITERALLY — this block and the one in .github/workflows/release.yml
+# have to agree exactly or every comparison below fails and no release can ever
+# be signed. They previously did not: CI stamped the plane with `main.commit` and
+# `main.buildDate` and this rebuilt with neither, so `cmp` was guaranteed to
+# mismatch on the very first release. Worse, CI's build date came from `date -u`
+# at run time, which nothing can reproduce — the comparison was impossible by
+# construction rather than merely misconfigured. Both now derive every stamp
+# from the TAG: the commit, the commit's date, and the release key checked in
+# beside this script.
 echo "==> Rebuilding with CI's flags"
+COMMIT=$(git -C "$WORK/src" rev-parse --short HEAD)
+BUILD_DATE=$(TZ=UTC git -C "$WORK/src" log -1 --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ)
+PUBKEYS=$(tr -d '[:space:]' < "$WORK/src/release-pubkey.txt" 2>/dev/null || true)
+# A release whose agents and plane trust no key can never be updated by the
+# panel, and no later release can retroactively give them one. Refusing here is
+# what makes "the key must exist before the first release" a rule rather than
+# a sentence in a document.
+if [ -z "$PUBKEYS" ]; then
+  echo "release-pubkey.txt is empty at $VERSION."
+  echo "The agents and the plane built from this tag would trust no update key, and"
+  echo "nothing published later can change what they trust. Generate the key"
+  echo "(docs/dev/release-signing.md), commit its public half, and tag again."
+  exit 1
+fi
+PLANE_STAMPS="-X main.version=$VERSION -X main.commit=$COMMIT -X main.buildDate=$BUILD_DATE -X github.com/MaramHarsha/cypherpanel/core/upgrade.ReleasePublicKey=$PUBKEYS"
+AGENT_STAMPS="-X main.version=$VERSION -X github.com/MaramHarsha/cypherpanel/agent/updater.publicKeys=$PUBKEYS"
 for arch in amd64 arm64; do
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
-    go build -C "$WORK/src/core" -trimpath -ldflags "-s -w -X main.version=$VERSION" \
+    go build -C "$WORK/src/core" -trimpath -ldflags "-s -w $PLANE_STAMPS" \
       -o "$(pwd)/$WORK/built/cypherd-linux-$arch" ./cmd/cypherd
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
-    go build -C "$WORK/src/agent" -trimpath -ldflags "-s -w -X main.version=$VERSION" \
+    go build -C "$WORK/src/agent" -trimpath -ldflags "-s -w $AGENT_STAMPS" \
       -o "$(pwd)/$WORK/built/cypher-agent-linux-$arch" ./cmd/cypher-agent
 done
 
+# release.json is rebuilt and compared like a binary: the panel verifies it
+# through the signed manifest, so a draft that carried a different one would be
+# a draft that says something the tag does not.
+go run -C "$WORK/src/core" ./cmd/release-manifest -version "$VERSION" -published-at "$BUILD_DATE" \
+  -out "$(pwd)/$WORK/built/release.json"
+
 echo "==> Downloading the draft's artifacts"
-gh release download "$VERSION" -D "$WORK/draft" -p 'cypher*' -p 'SHA256SUMS'
+gh release download "$VERSION" -D "$WORK/draft" -p 'cypher*' -p 'release.json' -p 'SHA256SUMS'
 
 echo "==> Comparing the draft against the rebuild"
 mismatch=0
@@ -73,8 +110,9 @@ for f in "$WORK"/built/*; do
 done
 # Anything the draft carries that we did not build is unaccounted for, which is
 # the shape an injected artifact takes.
-for f in "$WORK"/draft/cypher*; do
+for f in "$WORK"/draft/*; do
   name="$(basename "$f")"
+  case "$name" in SHA256SUMS*) continue ;; esac
   [ -f "$WORK/built/$name" ] || { echo "  UNEXPECTED in the draft: $name"; mismatch=1; }
 done
 if [ "$mismatch" -ne 0 ]; then
@@ -88,7 +126,7 @@ echo "==> Signing our own manifest"
 # Ours, computed from the rebuild — not the file the draft supplied. If they
 # agree it makes no difference, and if they ever disagree this is the one that
 # should carry a signature.
-( cd "$WORK/built" && sha256sum ./* > SHA256SUMS )
+( cd "$WORK/built" && sha256sum cypher* release.json > SHA256SUMS )
 if ! diff -q "$WORK/built/SHA256SUMS" "$WORK/draft/SHA256SUMS" >/dev/null 2>&1; then
   echo "  note: the draft's SHA256SUMS differs in form; signing the rebuilt one"
 fi

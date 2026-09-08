@@ -217,6 +217,13 @@ func (a *API) handleDeleteNotifier(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "notifier not found")
 			return
 		}
+		// A notifier that vanishes leaves alert rules that evaluate and
+		// deliver nothing, so the refusal names how many still point here.
+		var inUse *notify.InUseError
+		if errors.As(err, &inUse) {
+			writeError(w, http.StatusConflict, inUse.Msg)
+			return
+		}
 		a.deps.Log.Error("deleting notifier", "error", err)
 		writeError(w, http.StatusInternalServerError, "could not delete notifier")
 		return

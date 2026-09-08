@@ -24,6 +24,7 @@ import { JoinServerFirstDialog } from "@/components/join-server-first-dialog";
 import { ActionButton, useMutationActionState } from "@/components/ui/action-button";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
+import { DomainField } from "@/components/domain-field";
 import { Field } from "@/components/ui/field";
 import { Input, Select, Textarea } from "@/components/ui/input";
 import { toastFailed, toastSuccess } from "@/lib/toast";
@@ -201,13 +202,13 @@ export function NewComposeStackDialog({
               qualifier="· optional"
               hint="Leave it empty and the stack publishes nothing through the Proxy; its services still reach each other, and anything the file publishes with `ports:` is published as the file asks."
             >
-              {(id) => (
-                <Input
-                  id={id}
-                  value={domain}
-                  onChange={(e) => setDomain(e.target.value)}
-                  placeholder="grafana.example.com"
-                />
+              {() => (
+                // The same control the application and template forms use: it
+                // offers the zones the panel's DNS provider manages and warns
+                // when a hostname is already served on this server. A stack
+                // claims one exactly as an application does, and collided
+                // exactly as silently.
+                <DomainField value={domain} onChange={setDomain} serverId={chosenServer} />
               )}
             </Field>
 

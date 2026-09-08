@@ -11,12 +11,18 @@ import {
   useListEnvVarKeys,
   useUpdateApplication,
 } from "@/api/gen/applications/applications";
+import { useListDeployKeys } from "@/api/gen/deploy-keys/deploy-keys";
+import { useGetGitHubApp, useListGitHubRepositories } from "@/api/gen/panel/panel";
+import { useListRegistries } from "@/api/gen/registries/registries";
 import { useListDeployments } from "@/api/gen/deployments/deployments";
-import type { Application } from "@/api/gen/model";
+import type { Application, AppPort } from "@/api/gen/model";
 import { useListPreviews } from "@/api/gen/previews/previews";
 import { useListScheduledTasks } from "@/api/gen/scheduled-tasks/scheduled-tasks";
+import { AppAccessCard } from "@/components/app-access-card";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
 import { Eyebrow } from "@/components/eyebrow";
+import { PushToDeploy } from "@/components/push-to-deploy";
+import { getHandleGithubWebhookUrl } from "@/api/gen/deployments/deployments";
 import { PageState } from "@/components/page-state";
 import { ActionButton, useMutationActionState } from "@/components/ui/action-button";
 import { Button } from "@/components/ui/button";
@@ -24,6 +30,7 @@ import { Field } from "@/components/ui/field";
 import { DomainField } from "@/components/domain-field";
 import { RouteStatus } from "@/components/route-status";
 import { Input, Select } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 import { toastFailed, toastSuccess } from "@/lib/toast";
 
 export const Route = createFileRoute("/_app/projects/$projectId/applications/$appId/settings")({
@@ -52,18 +59,74 @@ function SettingsForm({
 }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const deployKeys = useListDeployKeys().data ?? [];
+  // Both empty on a panel with no App connected — both endpoints answer 200
+  // with [] for that case, which is why neither needs a gate of its own.
+  const repos = useListGitHubRepositories().data ?? [];
+  const installations = useGetGitHubApp().data?.installations ?? [];
+  // Registries were creatable in Settings and attachable to NOTHING: an
+  // application could not name one to pull its base image through, and a build
+  // could not name one to push to — both of which the API has always accepted.
+  // can_pull / can_push are checked when a registry is ATTACHED, so the two
+  // pickers offer different sets rather than failing after a five-minute build.
+  const registries = useListRegistries().data ?? [];
   const [name, setName] = useState(initial.name);
   const [repo, setRepo] = useState(initial.source.repo);
   const [branch, setBranch] = useState(initial.source.branch);
+  // The deploy key an application clones a PRIVATE repository with. The API has
+  // taken it on create and update since deploy-key-private-repos.md shipped and
+  // nothing in the panel ever offered it, so the only way to attach one was the
+  // API — which meant a private repository failed to clone with no way to fix
+  // it from the screen that owns the source.
+  const [deployKeyID, setDeployKeyID] = useState(initial.source.deploy_key_id ?? "");
+  // The App installation this repository is cloned through, as a string so the
+  // Select can hold it; "" means "not through the App".
+  const [installationID, setInstallationID] = useState(
+    initial.source.github_installation_id != null ? String(initial.source.github_installation_id) : "",
+  );
+  const [registryID, setRegistryID] = useState(initial.source.registry_id ?? "");
+  const [pushRegistryID, setPushRegistryID] = useState(initial.build.push_registry_id ?? "");
+  const [pushRepository, setPushRepository] = useState(initial.build.push_repository ?? "");
+  const [https, setHTTPS] = useState(initial.route.https);
+  const [healthInterval, setHealthInterval] = useState(String(initial.health.interval_seconds));
+  const [healthTimeout, setHealthTimeout] = useState(String(initial.health.timeout_seconds));
   const [image, setImage] = useState(initial.source.image ?? "");
   // An image-source app has no repository, branch, or build step — showing
   // those fields would invite edits the server rejects.
   const isImageSource = initial.source.kind === "image";
+  const webhookUrl = new URL(
+    getHandleGithubWebhookUrl(initial.webhook_id),
+    window.location.origin,
+  ).toString();
   const [domain, setDomain] = useState(initial.route.domain ?? "");
   const [pathPrefix, setPathPrefix] = useState(initial.route.path_prefix);
   const [buildKind, setBuildKind] = useState(initial.build.kind ?? "dockerfile");
   const [dockerfile, setDockerfile] = useState(initial.build.dockerfile_path);
   const [context, setContext] = useState(initial.build.context);
+  // Runtime and health were readable on the overview and editable NOWHERE. The
+  // API has always accepted both blocks, so the only way to change the port an
+  // application listens on was to call the API by hand — and the port is the
+  // single most common thing that needs changing, because a framework picks its
+  // own (Next.js 3000, Rails 3000, Vite 5173) and the panel defaults to 8080.
+  const [port, setPort] = useState(String(initial.runtime.port));
+  const [cpuLimit, setCPULimit] = useState(initial.runtime.cpu_limit == null ? "" : String(initial.runtime.cpu_limit));
+  const [memLimit, setMemLimit] = useState(
+    initial.runtime.memory_limit_mb == null ? "" : String(initial.runtime.memory_limit_mb),
+  );
+  // The gate's KIND, which was settable nowhere. 151 of the 159 bundled
+  // templates set it, so an operator who installed one and then opened this
+  // screen could edit four of the five fields and not the one that decides
+  // what the other four mean.
+  const [healthKind, setHealthKind] = useState(initial.health.kind ?? "http");
+  // Raw host-port publishes. A shipped V1 capability that was read-only on the
+  // Overview tab and editable on no screen — so a game server, a database
+  // proxy or anything that speaks something other than HTTP could be created
+  // with ports through the API and never changed from the panel. Edited as
+  // text because the list is short and typing `25565:25565/tcp` is faster than
+  // three controls per row.
+  const [portsText, setPortsText] = useState(() => portsToText(initial.ports ?? []));
+  const [healthPath, setHealthPath] = useState(initial.health.path);
+  const [healthRetries, setHealthRetries] = useState(String(initial.health.retries));
   const [previewEnabled, setPreviewEnabled] = useState(initial.preview_enabled ?? false);
   const [previewDomain, setPreviewDomain] = useState(initial.preview_base_domain ?? "");
   const [previewTTL, setPreviewTTL] = useState(String(initial.preview_ttl_hours ?? 72));
@@ -72,6 +135,21 @@ function SettingsForm({
     name !== initial.name ||
     repo !== initial.source.repo ||
     branch !== initial.source.branch ||
+    deployKeyID !== (initial.source.deploy_key_id ?? "") ||
+    installationID !== (initial.source.github_installation_id != null ? String(initial.source.github_installation_id) : "") ||
+    port !== String(initial.runtime.port) ||
+    cpuLimit !== (initial.runtime.cpu_limit == null ? "" : String(initial.runtime.cpu_limit)) ||
+    memLimit !== (initial.runtime.memory_limit_mb == null ? "" : String(initial.runtime.memory_limit_mb)) ||
+    portsText.trim() !== portsToText(initial.ports ?? []) ||
+    healthKind !== (initial.health.kind ?? "http") ||
+    healthPath !== initial.health.path ||
+    healthRetries !== String(initial.health.retries) ||
+    healthInterval !== String(initial.health.interval_seconds) ||
+    healthTimeout !== String(initial.health.timeout_seconds) ||
+    registryID !== (initial.source.registry_id ?? "") ||
+    pushRegistryID !== (initial.build.push_registry_id ?? "") ||
+    pushRepository !== (initial.build.push_repository ?? "") ||
+    https !== initial.route.https ||
     image !== (initial.source.image ?? "") ||
     domain !== (initial.route.domain ?? "") ||
     normalizePrefix(pathPrefix) !== normalizePrefix(initial.route.path_prefix) ||
@@ -168,15 +246,77 @@ function SettingsForm({
       id: appId,
       data: {
         name,
-        source: isImageSource ? { ...initial.source, image } : { ...initial.source, repo, branch },
-        build: { ...initial.build, kind: buildKind, dockerfile_path: dockerfile, context },
-        route: { ...initial.route, domain: domain || undefined, path_prefix: prefix },
+        source: isImageSource
+          ? { ...initial.source, image, registry_id: registryID || null }
+          : // Empty means "no key": a public repository needs none, and the API
+            // reads null as exactly that.
+            {
+              ...initial.source,
+              repo,
+              branch,
+              deploy_key_id: deployKeyID || null,
+              github_installation_id: installationID ? Number(installationID) : null,
+              registry_id: registryID || null,
+            },
+        build: {
+          ...initial.build,
+          kind: buildKind,
+          dockerfile_path: dockerfile,
+          context,
+          push_registry_id: pushRegistryID || null,
+          push_repository: pushRepository.trim(),
+        },
+        runtime: {
+          port: Number(port) || initial.runtime.port,
+          // Blank means "no limit", which the API reads as null — not zero,
+          // which would be a limit of nothing.
+          cpu_limit: cpuLimit.trim() === "" ? null : Number(cpuLimit),
+          memory_limit_mb: memLimit.trim() === "" ? null : Number(memLimit),
+        },
+        health: {
+          ...initial.health,
+          kind: healthKind as typeof initial.health.kind,
+          path: healthPath,
+          retries: Number(healthRetries) || initial.health.retries,
+          interval_seconds: Number(healthInterval) || initial.health.interval_seconds,
+          timeout_seconds: Number(healthTimeout) || initial.health.timeout_seconds,
+        },
+        ports: parsePorts(portsText),
+        route: { ...initial.route, domain: domain || undefined, path_prefix: prefix, https },
         preview_enabled: previewEnabled,
         preview_base_domain: previewDomain.trim(),
         preview_ttl_hours: Number(previewTTL) || 72,
       },
     });
   };
+
+  // One definition, rendered in both branches. The hint differs because the
+  // credential means different things: for an image it authenticates the pull
+  // itself, for a git source only the private base image a Dockerfile FROMs.
+  const pullRegistryField = (
+    <Field
+      label="Pull registry"
+      qualifier="· optional"
+      hint={
+        isImageSource
+          ? "The credential this image is pulled with, for a private registry. Only registries marked as allowing pulls are listed."
+          : "For a private base image in your Dockerfile. Only registries marked as allowing pulls are listed."
+      }
+    >
+      {(id, describedBy) => (
+        <Select id={id} aria-describedby={describedBy} value={registryID} onChange={(e) => setRegistryID(e.target.value)}>
+          <option value="">None</option>
+          {registries
+            .filter((r) => r.can_pull)
+            .map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name} · {r.url}
+              </option>
+            ))}
+        </Select>
+      )}
+    </Field>
+  );
 
   return (
     <div className="max-w-xl space-y-8">
@@ -188,29 +328,125 @@ function SettingsForm({
             <Field label="Image" hint="A moving tag is re-pulled on every deploy; a digest is pinned.">
               {(id) => <Input id={id} required value={image} onChange={(e) => setImage(e.target.value)} className="mono" />}
             </Field>
+            {/* The credential for a PRIVATE image, and this is the kind that
+                actually uses it: the scheduler attaches it only on the pulling
+                path, which is exactly `kind: image`. It rendered for git
+                sources alone, so deploying a private image — a shipped V1
+                capability — had no way to authenticate from any screen. */}
+            {pullRegistryField}
           </>
         ) : (
           <>
-            <Field label="Repository">
-              {(id) => <Input id={id} value={repo} onChange={(e) => setRepo(e.target.value)} className="mono" />}
+            <Field label="Repository" hint="An https:// URL, or git@host:owner/repo.git.">
+              {(id, describedBy) => (
+                <Input
+                  id={id}
+                  aria-describedby={describedBy}
+                  value={repo}
+                  onChange={(e) => setRepo(e.target.value)}
+                  placeholder="https://github.com/acme/web"
+                  spellCheck={false}
+                  className="mono"
+                />
+              )}
             </Field>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Branch">
                 {(id) => <Input id={id} value={branch} onChange={(e) => setBranch(e.target.value)} className="mono" />}
               </Field>
             </div>
+            {pullRegistryField}
+            {/* github-app.md §5: an application records `github_installation_id`
+                beside its `repo`, and that is what distinguishes "this GitHub
+                repository, through the App" from "this URL, through a deploy
+                key". Both are legal at once and the builder prefers the App, so
+                when both are set the screen says which one wins rather than
+                refusing a combination the spec allows. */}
+            {repos.length > 0 && (
+              <Field
+                label="GitHub App"
+                qualifier="· optional"
+                hint="Clones with a token minted for each build instead of a stored key. The repository above must be one the App can see."
+              >
+                {(id, describedBy) => (
+                  <Select
+                    id={id}
+                    aria-describedby={describedBy}
+                    value={installationID}
+                    onChange={(e) => setInstallationID(e.target.value)}
+                  >
+                    <option value="">Not through the App</option>
+                    {installations.map((i) => (
+                      <option key={i.installation_id} value={String(i.installation_id)}>
+                        {i.account_login} · {i.repo_selection === "all" ? "all repositories" : "selected repositories"}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+            )}
+            {installationID !== "" && deployKeyID !== "" && (
+              <p className="text-[12px] leading-[1.5] text-status-degraded-text">
+                Both credentials are set. The build uses the GitHub App token and ignores the deploy key — which is
+                fine, but the deploy key here is doing nothing.
+              </p>
+            )}
+            <Field
+              label="Deploy key"
+              qualifier="· for a private repository"
+              hint={
+                deployKeys.length === 0
+                  ? "No deploy keys yet. Create one in Settings → Deploy keys, then add its public half to the repository."
+                  : "The panel clones over SSH with this key. Add its public half to the repository's own Deploy keys first."
+              }
+            >
+              {(id, describedBy) => (
+                <Select
+                  id={id}
+                  aria-describedby={describedBy}
+                  value={deployKeyID}
+                  onChange={(e) => setDeployKeyID(e.target.value)}
+                >
+                  <option value="">None — the repository is public</option>
+                  {deployKeys.map((k) => (
+                    <option key={k.id} value={k.id}>
+                      {k.name}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
           </>
+        )}
+        {/* Push-to-deploy is SOURCE configuration, and it lives here because
+            this is where an operator comes to configure a source. It used to
+            sit on the Overview tab, and the operator who needed it looked in
+            Settings, then in Project → Settings → Webhooks — which is a
+            different feature that happens to share the word — and found
+            neither. An image source has no repository to push to. */}
+        {!isImageSource && (
+          <PushToDeploy appId={initial.id} webhookUrl={webhookUrl} branch={initial.source.branch || "the branch"} />
         )}
         {/* No build stage runs for an image source — the agent pulls the
             reference and rolls it out, so build settings would be inert. */}
         {!isImageSource && (
           <>
-            <Field label="How to build it" hint="Detect picks a Dockerfile if the repository has one, otherwise serves it as a static site.">
+            <Field
+              label="How to build it"
+              hint="Detect prefers a Dockerfile, then Nixpacks where it is installed on the builder, then a static site."
+            >
               {(id) => (
                 <Select id={id} value={buildKind} onChange={(e) => setBuildKind(e.target.value as typeof buildKind)}>
                   <option value="auto">Detect automatically</option>
                   <option value="dockerfile">Dockerfile</option>
                   <option value="static">Static site (HTML, CSS, JS)</option>
+                  {/* Both packs are legal on the API and neither was offered
+                      here, so a framework app could only be built by editing it
+                      through the API. Chosen explicitly they are an assertion:
+                      a builder without the binary fails loudly rather than
+                      silently falling back (pack-builds.md §4). */}
+                  <option value="nixpacks">Nixpacks (framework auto-build)</option>
+                  <option value="railpack">Railpack (needs buildx)</option>
                 </Select>
               )}
             </Field>
@@ -226,13 +462,180 @@ function SettingsForm({
             </div>
           </>
         )}
+        {!isImageSource && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field
+              label="Push the built image to"
+              qualifier="· optional"
+              hint="Registries that allow pushes. Leave as None to keep the image on the builder — no registry is ever required."
+            >
+              {(id, describedBy) => (
+                <Select
+                  id={id}
+                  aria-describedby={describedBy}
+                  value={pushRegistryID}
+                  onChange={(e) => setPushRegistryID(e.target.value)}
+                >
+                  <option value="">None — keep it local</option>
+                  {registries.filter((r) => r.can_push).map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name} · {r.url}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+            <Field label="Push repository" qualifier="· optional" hint="Defaults to the application's own name.">
+              {(id, describedBy) => (
+                <Input
+                  id={id}
+                  aria-describedby={describedBy}
+                  value={pushRepository}
+                  onChange={(e) => setPushRepository(e.target.value)}
+                  placeholder="acme/web"
+                  className="mono"
+                />
+              )}
+            </Field>
+          </div>
+        )}
+
+        <Eyebrow className="pt-4">Runtime</Eyebrow>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Field
+            label="Port"
+            hint="The port your app listens on inside its container — not a host port. A framework usually picks its own: Next.js and Rails use 3000, Vite 5173."
+          >
+            {(id, describedBy) => (
+              <Input
+                id={id}
+                aria-describedby={describedBy}
+                required
+                inputMode="numeric"
+                value={port}
+                onChange={(e) => setPort(e.target.value)}
+                className="mono"
+              />
+            )}
+          </Field>
+          <Field label="CPU limit" qualifier="· cores" hint="Blank means no limit.">
+            {(id, describedBy) => (
+              <Input
+                id={id}
+                aria-describedby={describedBy}
+                inputMode="decimal"
+                value={cpuLimit}
+                onChange={(e) => setCPULimit(e.target.value)}
+                placeholder="0.5"
+                className="mono"
+              />
+            )}
+          </Field>
+          <Field label="Memory limit" qualifier="· MiB" hint="Blank means no limit.">
+            {(id, describedBy) => (
+              <Input
+                id={id}
+                aria-describedby={describedBy}
+                inputMode="numeric"
+                value={memLimit}
+                onChange={(e) => setMemLimit(e.target.value)}
+                placeholder="512"
+                className="mono"
+              />
+            )}
+          </Field>
+        </div>
+
+        <Eyebrow className="pt-4">Health check</Eyebrow>
+        <Field
+          label="Gate"
+          hint="What has to succeed before a new container takes the route. HTTP probes the path below; TCP only opens a connection to the port; None accepts the container as soon as it runs."
+        >
+          {(id, describedBy) => (
+            <Select
+              id={id}
+              aria-describedby={describedBy}
+              value={healthKind}
+              onChange={(e) => setHealthKind(e.target.value as typeof healthKind)}
+            >
+              <option value="http">HTTP — a path must answer 2xx</option>
+              <option value="tcp">TCP — the port must accept a connection</option>
+              <option value="none">None — liveness only, for a service that serves no readiness signal</option>
+            </Select>
+          )}
+        </Field>
+        {/* Only the HTTP gate reads a path, and only HTTP and TCP have a
+            timeout worth setting. Showing all five regardless is what made the
+            fifth look like it had no effect. */}
+        <div className={cn("grid gap-3 sm:grid-cols-[1fr_130px]", healthKind !== "http" && "hidden")}>
+          <Field
+            label="Path"
+            hint="Probed on the port above before a new container takes the route. A rollout that never passes this is discarded, and the old container keeps serving."
+          >
+            {(id, describedBy) => (
+              <Input
+                id={id}
+                aria-describedby={describedBy}
+                value={healthPath}
+                onChange={(e) => setHealthPath(e.target.value)}
+                placeholder="/"
+                className="mono"
+              />
+            )}
+          </Field>
+          <Field label="Retries" hint="Before the rollout is given up.">
+            {(id, describedBy) => (
+              <Input
+                id={id}
+                aria-describedby={describedBy}
+                inputMode="numeric"
+                value={healthRetries}
+                onChange={(e) => setHealthRetries(e.target.value)}
+                className="mono"
+              />
+            )}
+          </Field>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Interval" qualifier="· seconds" hint="Between probes while waiting for the new container.">
+            {(id, describedBy) => (
+              <Input
+                id={id}
+                aria-describedby={describedBy}
+                inputMode="numeric"
+                value={healthInterval}
+                onChange={(e) => setHealthInterval(e.target.value)}
+                className="mono"
+              />
+            )}
+          </Field>
+          <Field label="Timeout" qualifier="· seconds" hint="How long one probe waits before it counts as failed.">
+            {(id, describedBy) => (
+              <Input
+                id={id}
+                aria-describedby={describedBy}
+                inputMode="numeric"
+                value={healthTimeout}
+                onChange={(e) => setHealthTimeout(e.target.value)}
+                className="mono"
+              />
+            )}
+          </Field>
+        </div>
+
         {/* Canvas 13c: the route is its own section — the domain, the path it
             answers on, and one row per hostname saying how it is served. The
             row reports the SAVED route (everything on it is fetched by id),
             so it does not chase the field while someone is typing. */}
         <Eyebrow className="pt-4">Route</Eyebrow>
         <div className="grid gap-3 sm:grid-cols-[1fr_130px]">
-          <DomainField applicationId={initial.id} value={domain} onChange={setDomain} />
+          <DomainField
+            applicationId={initial.id}
+            serverId={initial.runtime.server_id}
+            selfDomain={initial.route.domain}
+            value={domain}
+            onChange={setDomain}
+          />
           <Field label="Path prefix" hint="Only this path and below; empty means the whole host.">
             {(id, describedBy) => (
               <Input
@@ -248,11 +651,49 @@ function SettingsForm({
             )}
           </Field>
         </div>
+        <label className="flex items-start gap-2.5">
+          <input
+            type="checkbox"
+            checked={https}
+            onChange={(e) => setHTTPS(e.currentTarget.checked)}
+            className="mt-0.5 size-3.5 accent-accent"
+          />
+          <span className="min-w-0">
+            <span className="block text-[13px] font-medium text-text">Serve this domain over HTTPS</span>
+            <span className="block text-[12.5px] leading-[1.5] text-text-mid">
+              A certificate is requested automatically once a certificate issuer is configured. Without one the route
+              is served over plain HTTP and the panel says so, rather than promising a certificate it cannot get.
+            </span>
+          </span>
+        </label>
         <RouteStatus app={initial} />
         <p className="text-[12px] leading-relaxed text-text-faint">
           HTTP→HTTPS is automatic once issued. Wildcards, BYO certificates, and custom redirects are deliberately
           later (routing spec §10).
         </p>
+
+        {/* The alternative to a domain, and it belongs here for that reason:
+            the operator deciding how this application is reached is looking at
+            this section. It is what a non-HTTP service uses — a game server, a
+            TCP proxy — and it had no control on any tab. */}
+        <Field
+          label="Published ports"
+          qualifier="· optional"
+          hint="One per line, host:container/protocol — 25565:25565/tcp. For services the HTTP proxy cannot carry. Each host port is taken on the server itself, so two applications cannot claim the same one."
+        >
+          {(id, describedBy) => (
+            <textarea
+              id={id}
+              aria-describedby={describedBy}
+              value={portsText}
+              onChange={(e) => setPortsText(e.target.value)}
+              rows={Math.max(2, portsText.split("\n").length)}
+              spellCheck={false}
+              placeholder="25565:25565/tcp"
+              className="mono w-full rounded-md border border-border-input bg-surface px-3 py-2 text-[13px] text-text placeholder:text-text-faint focus-visible:border-border-strong focus-visible:ring-1 focus-visible:ring-border-strong focus-visible:outline-none"
+            />
+          )}
+        </Field>
 
         {/* Preview environments were reachable in the API but nowhere in the
             UI, while the Previews tab told the operator to enable them "in
@@ -324,6 +765,8 @@ function SettingsForm({
         </div>
       </form>
 
+      <AppAccessCard appId={appId} />
+
       <section className="space-y-2">
         <Eyebrow className="text-danger">Danger zone</Eyebrow>
         <div className="flex items-center justify-between gap-3 rounded-lg border-[1.5px] border-status-error/40 bg-surface px-4 py-3.5">
@@ -370,4 +813,32 @@ function counted(n: number | undefined, noun: string, fallback: string): string[
   if (n === undefined) return fallback ? [fallback] : [];
   if (n === 0) return [];
   return [plural(n, noun)];
+}
+
+/** `[{host_port: 25565, container_port: 25565, protocol: "tcp"}]` -> text. */
+function portsToText(ports: AppPort[]): string {
+  return ports.map((p) => `${p.host_port}:${p.container_port}/${p.protocol}`).join("\n");
+}
+
+/**
+ * Text -> ports, skipping anything that is not a complete mapping.
+ *
+ * Silently skipping a half-typed line is deliberate: the field is edited a
+ * character at a time, and the API validates the result anyway. A parse that
+ * threw would make the form unusable while it was being filled in.
+ */
+function parsePorts(text: string): AppPort[] {
+  const out: AppPort[] = [];
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (line === "") continue;
+    const m = line.match(/^(\d{1,5}):(\d{1,5})(?:\/(tcp|udp))?$/i);
+    if (!m?.[1] || !m[2]) continue;
+    out.push({
+      host_port: Number(m[1]),
+      container_port: Number(m[2]),
+      protocol: (m[3] ?? "tcp").toLowerCase() as AppPort["protocol"],
+    });
+  }
+  return out;
 }

@@ -77,3 +77,7 @@ SELECT
         END)::int AS worst_rank
 FROM resources
 GROUP BY project_id;
+
+-- CountProjects is one of guided onboarding's four derived counts (§2).
+-- name: CountProjects :one
+SELECT count(*) FROM projects;

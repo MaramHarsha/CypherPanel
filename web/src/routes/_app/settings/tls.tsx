@@ -28,9 +28,9 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
 import { useGetMe } from "@/api/gen/auth/auth";
 import { getGetPanelTLSQueryKey, useGetPanelTLS, useSetPanelTLS } from "@/api/gen/panel/panel";
-import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
 import { PageState } from "@/components/page-state";
+import { PanelRoleRefusal } from "@/components/role-refusal";
 import { ActionButton, useMutationActionState } from "@/components/ui/action-button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -54,13 +54,7 @@ function TLSTab() {
   const tls = useGetPanelTLS({ query: { enabled: canManage } });
 
   if (me.isSuccess && !canManage) {
-    return (
-      <EmptyState
-        glyph="🔒"
-        title="TLS settings need the panel owner"
-        hint="One ACME account serves every routed application on every server, so it is the panel owner's to set. Ask them if your apps need certificates."
-      />
-    );
+    return <PanelRoleRefusal action="Managing the panel's ACME account" needs="owner" />;
   }
 
   return (

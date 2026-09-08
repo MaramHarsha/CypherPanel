@@ -39,6 +39,9 @@
 #   CYPHER_HOSTNAME        hostname to report; default $(hostname)
 #   CYPHER_STATE_DIR       agent identity directory; default /var/lib/cypher-agent
 #   CYPHER_SKIP_DOCKER     set to 1 if you manage Docker yourself
+#   CYPHER_SKIP_NIXPACKS   set to 1 to skip the pack builder (build_kind: auto
+#                          then resolves as it did before it existed)
+#   CYPHER_NIXPACKS_VERSION  override the pinned nixpacks release (unverified)
 #   CYPHER_NO_START        set to 1 to install everything but not start the service
 
 set -eu
@@ -116,6 +119,81 @@ ensure_docker() {
     say "Docker is running"
 }
 ensure_docker
+
+# ── Nixpacks: the pack builder `auto` prefers when a repo has no Dockerfile ──
+#
+# WHY THIS IS PART OF JOINING rather than left to the operator. `build_kind:
+# auto` prefers a pack over the static fallback when a language manifest is
+# present, but ONLY where the binary is actually installed
+# (docs/features/pack-builds.md). A fleet that never installs it silently
+# resolves every Next.js, Rails and Django repository to "serve the source
+# directory" — which builds, deploys, health-checks and serves an unbuilt
+# index.html. That looks like a successful deploy and is not, and it is how the
+# first live deploy this panel ever ran failed.
+#
+# PINNED AND CHECKSUMMED, not `curl | bash`. Nixpacks publishes an install
+# script that resolves "latest" at run time, so two servers joined a week apart
+# would build the same repository with two different builders and nobody would
+# know which. The version below moves when a person moves it, and the sums are
+# the release assets as published.
+#
+# Failing to install it is a WARNING, never fatal: a host without a pack builder
+# resolves `auto` exactly as it did before, and refusing to join a fleet over an
+# optional convenience would be the worse trade.
+NIXPACKS_VERSION="${CYPHER_NIXPACKS_VERSION:-v1.41.0}"
+NIXPACKS_SHA256_amd64=0f55de7874507b9cf7502113120bd96f2ab6979f78d10eaf2eb2ade9207b3af6
+NIXPACKS_SHA256_arm64=912bd02dd2bb6f9c3a9ed965fe8a68b4aa318dc7a2546e2eca6f2806a894ba39
+
+ensure_nixpacks() {
+    if [ "${CYPHER_SKIP_NIXPACKS:-}" = 1 ]; then
+        say "CYPHER_SKIP_NIXPACKS=1 — skipping the pack builder"
+        return
+    fi
+    # A worker never builds; only `all` and `builder` do.
+    if [ "$ROLE" = worker ]; then
+        return
+    fi
+    if command -v nixpacks >/dev/null 2>&1; then
+        say "nixpacks present ($(nixpacks --version 2>/dev/null || echo ok))"
+        return
+    fi
+    case "$ARCH" in
+        amd64) triple=x86_64-unknown-linux-musl;  want=$NIXPACKS_SHA256_amd64 ;;
+        arm64) triple=aarch64-unknown-linux-musl; want=$NIXPACKS_SHA256_arm64 ;;
+        *) warn "no pinned nixpacks build for $ARCH — 'auto' will fall back to a Dockerfile or the static path"; return ;;
+    esac
+    # A pinned version means a pinned sum, so a version override without one has
+    # nothing to check against. Say so rather than installing unverified.
+    if [ "$NIXPACKS_VERSION" != v1.41.0 ]; then
+        warn "CYPHER_NIXPACKS_VERSION overrides the pinned build, so its checksum cannot be verified"
+        want=""
+    fi
+    url="https://github.com/railwayapp/nixpacks/releases/download/$NIXPACKS_VERSION/nixpacks-$NIXPACKS_VERSION-$triple.tar.gz"
+    say "installing nixpacks $NIXPACKS_VERSION ($ARCH)"
+    tmp=$(mktemp -d)
+    if ! fetch "$url" -o "$tmp/nixpacks.tar.gz"; then
+        rm -rf "$tmp"
+        warn "could not download nixpacks from $url — 'auto' will fall back to a Dockerfile or the static path"
+        return
+    fi
+    if [ -n "$want" ]; then
+        got=$(sha256sum "$tmp/nixpacks.tar.gz" | cut -d' ' -f1)
+        if [ "$got" != "$want" ]; then
+            rm -rf "$tmp"
+            warn "nixpacks checksum mismatch (got $got) — refusing to install it"
+            return
+        fi
+    fi
+    if ! tar -xzf "$tmp/nixpacks.tar.gz" -C "$tmp" nixpacks 2>/dev/null; then
+        rm -rf "$tmp"
+        warn "the nixpacks archive did not contain the expected binary — skipping"
+        return
+    fi
+    install -m 0755 "$tmp/nixpacks" /usr/local/bin/nixpacks
+    rm -rf "$tmp"
+    say "installed nixpacks to /usr/local/bin/nixpacks"
+}
+ensure_nixpacks
 
 # The proxy binds :80 and :443 on hosts that run apps (all/worker). A conflict
 # is worth surfacing now, not as a silent Traefik crash-loop later.

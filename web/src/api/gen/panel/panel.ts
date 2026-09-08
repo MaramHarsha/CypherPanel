@@ -27,23 +27,68 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AgentChannel,
+  AgentUpdates,
+  AlertBacktest,
+  AlertEvent,
+  AlertRule,
+  ArmPlaneDRRequest,
+  ArmPlaneDRResponse,
   BadRequestResponse,
+  Changelog,
   ChooseAccountError,
+  CreateAlertRuleRequest,
+  CreateMailboxRequest,
+  CreateMailboxResponse,
   DNSDisconnectPreview,
   DNSSettings,
   DNSZone,
+  DeleteMailboxParams,
+  EnableMailDomainBody,
   Error,
+  ExportUsageParams,
   ForbiddenResponse,
   GetPanelLogsParams,
+  GetUsageParams,
+  GitHubApp,
+  GitHubRepository,
+  LogDrain,
+  LogDrainRequest,
+  MailDomain,
+  MailDomainRecords,
+  MailProviderConfig,
+  MailProviderStatus,
+  Mailbox,
+  MetricsSettings,
+  NotFoundResponse,
+  Onboarding,
   PanelLogs,
   PanelMailSettings,
+  PanelSnapshot,
   PanelTLSSettings,
+  PanelUpdates,
+  PanelUpgrade,
+  PanelUpgradeHistory,
   PanelVersion,
+  PlaneDisasterRecovery,
+  PlaneSnapshot,
+  PreflightPanelUpdateParams,
+  ResetMailboxPassword200,
+  ResetMailboxPasswordBody,
+  RestorePanelSnapshotBody,
+  SetAgentChannelRequest,
+  SetAlertRuleEnabledBody,
+  SetGitHubAppRequest,
   SetPanelDNSRequest,
   SetPanelMailRequest,
   SetPanelTLSRequest,
+  SnapshotRetentionRequest,
+  StartUpgradeRequest,
   UnauthorizedResponse,
-  UnavailableResponse
+  UnavailableResponse,
+  UpdatePreflight,
+  Usage,
+  VerifyRecoveryKeyBody
 } from '../model';
 
 import { apiFetch } from '../../client.ts';
@@ -665,7 +710,8 @@ export const getListDNSZonesUrl = () => {
 }
 
 /**
- * @summary The zones this panel can manage (panel admin)
+ * MEMBER rank, because creating an application needs it: the domain picker offers these instead of asking somebody to type a hostname and discover later that it was not one the panel can write DNS for. A zone row is a hostname, an activation state and a count of managed records — no credential, and connecting the provider stays panel admin.
+ * @summary The zones this panel can manage (member)
  */
 export const listDNSZones = async ( options?: RequestInit): Promise<DNSZone[]> => {
 
@@ -736,7 +782,7 @@ export function useListDNSZones<TData = Awaited<ReturnType<typeof listDNSZones>>
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
- * @summary The zones this panel can manage (panel admin)
+ * @summary The zones this panel can manage (member)
  */
 
 export function useListDNSZones<TData = Awaited<ReturnType<typeof listDNSZones>>, TError = UnauthorizedResponse | ForbiddenResponse>(
@@ -1349,4 +1395,4233 @@ export const useTestPanelMail = <TError = BadRequestResponse | UnauthorizedRespo
         TContext
       > => {
       return useMutation(getTestPanelMailMutationOptions(options), queryClient);
+    }
+    export const getGetAgentUpdatesUrl = () => {
+
+
+
+
+  return `/api/v1/panel/agent-updates`
+}
+
+/**
+ * Two channels and a selector per server, rather than a desired version per host: a forty-host fleet would otherwise be forty decisions that must agree, and "promote" would be a bulk edit.
+ *
+ * Both channels ship EMPTY, and empty means no instruction — upgrading a panel must not start replacing binaries across a fleet nobody asked it to touch. The cost is a fleet whose operator never opens this screen stays stale, which is paid for by making the empty state the action.
+ * @summary Release channels and the fleet's agent versions (member+)
+ */
+export const getAgentUpdates = async ( options?: RequestInit): Promise<AgentUpdates> => {
+
+  return apiFetch<AgentUpdates>(getGetAgentUpdatesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAgentUpdatesQueryKey = () => {
+    return [
+    `/api/v1/panel/agent-updates`
+    ] as const;
+    }
+
+
+export const getGetAgentUpdatesQueryOptions = <TData = Awaited<ReturnType<typeof getAgentUpdates>>, TError = UnauthorizedResponse | ForbiddenResponse | void>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentUpdates>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAgentUpdatesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAgentUpdates>>> = ({ signal }) => getAgentUpdates({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAgentUpdates>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetAgentUpdatesQueryResult = NonNullable<Awaited<ReturnType<typeof getAgentUpdates>>>
+export type GetAgentUpdatesQueryError = UnauthorizedResponse | ForbiddenResponse | void
+
+
+export function useGetAgentUpdates<TData = Awaited<ReturnType<typeof getAgentUpdates>>, TError = UnauthorizedResponse | ForbiddenResponse | void>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentUpdates>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getAgentUpdates>>,
+          TError,
+          Awaited<ReturnType<typeof getAgentUpdates>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAgentUpdates<TData = Awaited<ReturnType<typeof getAgentUpdates>>, TError = UnauthorizedResponse | ForbiddenResponse | void>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentUpdates>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getAgentUpdates>>,
+          TError,
+          Awaited<ReturnType<typeof getAgentUpdates>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAgentUpdates<TData = Awaited<ReturnType<typeof getAgentUpdates>>, TError = UnauthorizedResponse | ForbiddenResponse | void>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentUpdates>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Release channels and the fleet's agent versions (member+)
+ */
+
+export function useGetAgentUpdates<TData = Awaited<ReturnType<typeof getAgentUpdates>>, TError = UnauthorizedResponse | ForbiddenResponse | void>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentUpdates>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetAgentUpdatesQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getSetAgentChannelUrl = (channel: 'stable' | 'canary',) => {
+
+
+
+
+  return `/api/v1/panel/agent-updates/${channel}`
+}
+
+/**
+ * Owner AND session-only: this is the one control in the panel that changes what code runs on every server, and an API token that can move a channel is an API token that owns the fleet — API tokens live in CI.
+ *
+ * An empty version clears the instruction, which is how a rollout an operator no longer wants is stopped. A version NEWER than the panel's own build is refused naming the remedy: additive-only proto guarantees the old-agent direction, not the new-agent one. A development panel cannot make that comparison and so does not.
+ *
+ * Setting an older version than the channel already names permits the agents to move backwards; moving forward clears that permission. It is derived rather than a second checkbox, because an operator who has to remember one is an operator whose rollback does not happen. It stops an ACCIDENT — a stale desired set, a mistyped tag, a restored snapshot walking the fleet backwards — and not a compromised plane, whose bound is the signature the agent checks.
+ *
+ * The version must be tag-shaped (`v1.2.3`, optionally with a pre-release suffix). It is bounded because it is concatenated into a URL by this pre-flight and by every agent's download, and `../` in a tag would aim a fetcher at a path the panel never named.
+ *
+ * Unless `CYPHERD_AGENT_UPDATE_PRECHECK=off`, the plane HEADs the release manifest first so a mistyped tag is refused where it is cheap. That probe goes to ONE host — the constant this project publishes releases from — and never to an `artifact_base` from this request body: the plane connecting to a host a caller named is a request-forgery primitive whatever guards sit in front of it, since a public host can redirect inward and a name can resolve differently the second time it is looked up (threat-model §5.14). A mirror is validated for SHAPE — absolute http(s), no credentials, query or fragment — and is otherwise the agents' business, which is what the off switch already meant.
+ * @summary Set a channel's desired agent version (owner, session only)
+ */
+export const setAgentChannel = async (channel: 'stable' | 'canary',
+    setAgentChannelRequest: SetAgentChannelRequest, options?: RequestInit): Promise<AgentChannel> => {
+
+  return apiFetch<AgentChannel>(getSetAgentChannelUrl(channel),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(setAgentChannelRequest)
+  }
+);}
+
+
+
+
+
+export const getSetAgentChannelMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setAgentChannel>>, TError,{channel: 'stable' | 'canary';data: SetAgentChannelRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setAgentChannel>>, TError,{channel: 'stable' | 'canary';data: SetAgentChannelRequest}, TContext> => {
+
+const mutationKey = ['setAgentChannel'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setAgentChannel>>, {channel: 'stable' | 'canary';data: SetAgentChannelRequest}> = (props) => {
+          const {channel,data} = props ?? {};
+
+          return  setAgentChannel(channel,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetAgentChannelMutationResult = NonNullable<Awaited<ReturnType<typeof setAgentChannel>>>
+    export type SetAgentChannelMutationBody = SetAgentChannelRequest
+    export type SetAgentChannelMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | void
+
+    /**
+ * @summary Set a channel's desired agent version (owner, session only)
+ */
+export const useSetAgentChannel = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setAgentChannel>>, TError,{channel: 'stable' | 'canary';data: SetAgentChannelRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setAgentChannel>>,
+        TError,
+        {channel: 'stable' | 'canary';data: SetAgentChannelRequest},
+        TContext
+      > => {
+      return useMutation(getSetAgentChannelMutationOptions(options), queryClient);
+    }
+    export const getPromoteAgentChannelUrl = () => {
+
+
+
+
+  return `/api/v1/panel/agent-updates/promote`
+}
+
+/**
+ * Refused with 409 when no canary server has CONVERGED on the candidate — promoting a version no host has run defeats a gate whose whole purpose is that a host ran it — or when any canary server reports it rolled back. Both refusals name what they refused on. There is no override flag: an operator who believes a rollback was spurious sets stable's version directly and owns that explicitly.
+ *
+ * A canary server that is merely OFFLINE neither blocks nor counts: blocking would make one powered-down host a permanent hold on every fleet update.
+ *
+ * Promotion moves every stable host at once. No waves and no percentages — ADR-010 §6 names staged rollout as a later refinement on this same primitive, and there is no automatic promotion on a health timer, because the only available health signal is "it reached the bus" and a timer that promotes on it converts one bad release into a fleet-wide outage while nobody is watching.
+ * @summary Promote canary to stable (owner, session only)
+ */
+export const promoteAgentChannel = async ( options?: RequestInit): Promise<AgentChannel> => {
+
+  return apiFetch<AgentChannel>(getPromoteAgentChannelUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getPromoteAgentChannelMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof promoteAgentChannel>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof promoteAgentChannel>>, TError,void, TContext> => {
+
+const mutationKey = ['promoteAgentChannel'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof promoteAgentChannel>>, void> = () => {
+
+
+          return  promoteAgentChannel(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PromoteAgentChannelMutationResult = NonNullable<Awaited<ReturnType<typeof promoteAgentChannel>>>
+
+    export type PromoteAgentChannelMutationError = UnauthorizedResponse | ForbiddenResponse | void
+
+    /**
+ * @summary Promote canary to stable (owner, session only)
+ */
+export const usePromoteAgentChannel = <TError = UnauthorizedResponse | ForbiddenResponse | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof promoteAgentChannel>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof promoteAgentChannel>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getPromoteAgentChannelMutationOptions(options), queryClient);
+    }
+    export const getGetGitHubAppUrl = () => {
+
+
+
+
+  return `/api/v1/github/app`
+}
+
+/**
+ * NEVER returns the private key, not even redacted: a field that is sometimes a secret is a field that eventually leaks one.
+ * @summary Whether a GitHub App is connected, and where it is installed (admin+)
+ */
+export const getGitHubApp = async ( options?: RequestInit): Promise<GitHubApp> => {
+
+  return apiFetch<GitHubApp>(getGetGitHubAppUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetGitHubAppQueryKey = () => {
+    return [
+    `/api/v1/github/app`
+    ] as const;
+    }
+
+
+export const getGetGitHubAppQueryOptions = <TData = Awaited<ReturnType<typeof getGitHubApp>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGitHubApp>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetGitHubAppQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getGitHubApp>>> = ({ signal }) => getGitHubApp({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getGitHubApp>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetGitHubAppQueryResult = NonNullable<Awaited<ReturnType<typeof getGitHubApp>>>
+export type GetGitHubAppQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useGetGitHubApp<TData = Awaited<ReturnType<typeof getGitHubApp>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGitHubApp>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getGitHubApp>>,
+          TError,
+          Awaited<ReturnType<typeof getGitHubApp>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetGitHubApp<TData = Awaited<ReturnType<typeof getGitHubApp>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGitHubApp>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getGitHubApp>>,
+          TError,
+          Awaited<ReturnType<typeof getGitHubApp>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetGitHubApp<TData = Awaited<ReturnType<typeof getGitHubApp>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGitHubApp>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Whether a GitHub App is connected, and where it is installed (admin+)
+ */
+
+export function useGetGitHubApp<TData = Awaited<ReturnType<typeof getGitHubApp>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGitHubApp>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetGitHubAppQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getSetGitHubAppUrl = () => {
+
+
+
+
+  return `/api/v1/github/app`
+}
+
+/**
+ * Owner AND session-only: the private key can mint a token for every repository the App is installed on, and API tokens live in CI. It is the rule break glass and the agent channel already carry, applied to the credential with the widest reach in the panel.
+ *
+ * The credentials are validated against GitHub BEFORE anything is stored — a credential that fails at first use is a dead end, and a dead end is a bug. On success the installations are cached from GitHub's own answer.
+ *
+ * `private_key_pem` is write-only.
+ * @summary Connect a GitHub App (owner, session only)
+ */
+export const setGitHubApp = async (setGitHubAppRequest: SetGitHubAppRequest, options?: RequestInit): Promise<GitHubApp> => {
+
+  return apiFetch<GitHubApp>(getSetGitHubAppUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(setGitHubAppRequest)
+  }
+);}
+
+
+
+
+
+export const getSetGitHubAppMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setGitHubApp>>, TError,{data: SetGitHubAppRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setGitHubApp>>, TError,{data: SetGitHubAppRequest}, TContext> => {
+
+const mutationKey = ['setGitHubApp'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setGitHubApp>>, {data: SetGitHubAppRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  setGitHubApp(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetGitHubAppMutationResult = NonNullable<Awaited<ReturnType<typeof setGitHubApp>>>
+    export type SetGitHubAppMutationBody = SetGitHubAppRequest
+    export type SetGitHubAppMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary Connect a GitHub App (owner, session only)
+ */
+export const useSetGitHubApp = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setGitHubApp>>, TError,{data: SetGitHubAppRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setGitHubApp>>,
+        TError,
+        {data: SetGitHubAppRequest},
+        TContext
+      > => {
+      return useMutation(getSetGitHubAppMutationOptions(options), queryClient);
+    }
+    export const getDeleteGitHubAppUrl = () => {
+
+
+
+
+  return `/api/v1/github/app`
+}
+
+/**
+ * Applications that reached their repository through it fail their next deploy with a reason, rather than silently falling back to an anonymous clone — which would succeed for a public repository and fail confusingly for a private one.
+ * @summary Disconnect the GitHub App (owner, session only)
+ */
+export const deleteGitHubApp = async ( options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getDeleteGitHubAppUrl(),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteGitHubAppMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteGitHubApp>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteGitHubApp>>, TError,void, TContext> => {
+
+const mutationKey = ['deleteGitHubApp'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteGitHubApp>>, void> = () => {
+
+
+          return  deleteGitHubApp(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteGitHubAppMutationResult = NonNullable<Awaited<ReturnType<typeof deleteGitHubApp>>>
+
+    export type DeleteGitHubAppMutationError = UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary Disconnect the GitHub App (owner, session only)
+ */
+export const useDeleteGitHubApp = <TError = UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteGitHubApp>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteGitHubApp>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getDeleteGitHubAppMutationOptions(options), queryClient);
+    }
+    export const getRefreshGitHubInstallationsUrl = () => {
+
+
+
+
+  return `/api/v1/github/installations/refresh`
+}
+
+/**
+ * Installations are OBSERVED, never authored: the panel does not decide which organisations its App is installed on, GitHub does. This replaces the cache with GitHub's answer, so an installation it no longer reports is gone — the same contract the DNS zone cache follows, for the same reason: an operator-entered list would be a second place to lie about what access exists.
+ * @summary Re-read where the App is installed (admin+)
+ */
+export const refreshGitHubInstallations = async ( options?: RequestInit): Promise<GitHubApp> => {
+
+  return apiFetch<GitHubApp>(getRefreshGitHubInstallationsUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRefreshGitHubInstallationsMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshGitHubInstallations>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof refreshGitHubInstallations>>, TError,void, TContext> => {
+
+const mutationKey = ['refreshGitHubInstallations'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof refreshGitHubInstallations>>, void> = () => {
+
+
+          return  refreshGitHubInstallations(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RefreshGitHubInstallationsMutationResult = NonNullable<Awaited<ReturnType<typeof refreshGitHubInstallations>>>
+
+    export type RefreshGitHubInstallationsMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | void
+
+    /**
+ * @summary Re-read where the App is installed (admin+)
+ */
+export const useRefreshGitHubInstallations = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshGitHubInstallations>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof refreshGitHubInstallations>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getRefreshGitHubInstallationsMutationOptions(options), queryClient);
+    }
+    export const getListGitHubRepositoriesUrl = () => {
+
+
+
+
+  return `/api/v1/github/repositories`
+}
+
+/**
+ * Read live rather than cached: the list changes when someone adds a repository, and a stale list that omits the one you just made is worse than a request. An empty list is what a panel with no App returns, and a client reads that as "type a URL instead".
+ * @summary Repositories the App can deploy (member+)
+ */
+export const listGitHubRepositories = async ( options?: RequestInit): Promise<GitHubRepository[]> => {
+
+  return apiFetch<GitHubRepository[]>(getListGitHubRepositoriesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListGitHubRepositoriesQueryKey = () => {
+    return [
+    `/api/v1/github/repositories`
+    ] as const;
+    }
+
+
+export const getListGitHubRepositoriesQueryOptions = <TData = Awaited<ReturnType<typeof listGitHubRepositories>>, TError = UnauthorizedResponse | ForbiddenResponse | void>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listGitHubRepositories>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListGitHubRepositoriesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listGitHubRepositories>>> = ({ signal }) => listGitHubRepositories({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listGitHubRepositories>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListGitHubRepositoriesQueryResult = NonNullable<Awaited<ReturnType<typeof listGitHubRepositories>>>
+export type ListGitHubRepositoriesQueryError = UnauthorizedResponse | ForbiddenResponse | void
+
+
+export function useListGitHubRepositories<TData = Awaited<ReturnType<typeof listGitHubRepositories>>, TError = UnauthorizedResponse | ForbiddenResponse | void>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listGitHubRepositories>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listGitHubRepositories>>,
+          TError,
+          Awaited<ReturnType<typeof listGitHubRepositories>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListGitHubRepositories<TData = Awaited<ReturnType<typeof listGitHubRepositories>>, TError = UnauthorizedResponse | ForbiddenResponse | void>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listGitHubRepositories>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listGitHubRepositories>>,
+          TError,
+          Awaited<ReturnType<typeof listGitHubRepositories>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListGitHubRepositories<TData = Awaited<ReturnType<typeof listGitHubRepositories>>, TError = UnauthorizedResponse | ForbiddenResponse | void>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listGitHubRepositories>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Repositories the App can deploy (member+)
+ */
+
+export function useListGitHubRepositories<TData = Awaited<ReturnType<typeof listGitHubRepositories>>, TError = UnauthorizedResponse | ForbiddenResponse | void>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listGitHubRepositories>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListGitHubRepositoriesQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getGetOnboardingUrl = () => {
+
+
+
+
+  return `/api/v1/onboarding`
+}
+
+/**
+ * Four steps — an owner account, a server, a project, a deployment that SUCCEEDED — each read from what exists rather than from a stored flag.
+ *
+ * Deriving it is the design, not an optimisation. A stored flag has to be written by whoever completes a step, so every creation path would have to remember: the template installer, preview environments, the API, a future CLI. DNS automation shipped with exactly that bug and the first real use hit it. Derived progress also self-heals in the direction that matters — delete every server and the panel says you need one again, which is true, where a flag would have lied.
+ *
+ * `done` is what a client renders on: the guided band appears only while it is false, and because nothing is stored it then stays gone rather than greeting an operator with a beginner's wizard after routine maintenance. There is deliberately no dismiss route — there is no flag to clear.
+ * @summary How far this panel is through the golden path (member+)
+ */
+export const getOnboarding = async ( options?: RequestInit): Promise<Onboarding> => {
+
+  return apiFetch<Onboarding>(getGetOnboardingUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetOnboardingQueryKey = () => {
+    return [
+    `/api/v1/onboarding`
+    ] as const;
+    }
+
+
+export const getGetOnboardingQueryOptions = <TData = Awaited<ReturnType<typeof getOnboarding>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOnboarding>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetOnboardingQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getOnboarding>>> = ({ signal }) => getOnboarding({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getOnboarding>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetOnboardingQueryResult = NonNullable<Awaited<ReturnType<typeof getOnboarding>>>
+export type GetOnboardingQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useGetOnboarding<TData = Awaited<ReturnType<typeof getOnboarding>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOnboarding>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getOnboarding>>,
+          TError,
+          Awaited<ReturnType<typeof getOnboarding>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetOnboarding<TData = Awaited<ReturnType<typeof getOnboarding>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOnboarding>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getOnboarding>>,
+          TError,
+          Awaited<ReturnType<typeof getOnboarding>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetOnboarding<TData = Awaited<ReturnType<typeof getOnboarding>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOnboarding>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary How far this panel is through the golden path (member+)
+ */
+
+export function useGetOnboarding<TData = Awaited<ReturnType<typeof getOnboarding>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOnboarding>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetOnboardingQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getGetPanelUpdatesUrl = () => {
+
+
+
+
+  return `/api/v1/panel/updates`
+}
+
+/**
+ * `mode` is `assisted` on a systemd install and `manual` in a container, where the panel CANNOT upgrade itself and says so rather than drawing a button that would not work.
+ * @summary What is running, what is available, and any upgrade in flight (member+)
+ */
+export const getPanelUpdates = async ( options?: RequestInit): Promise<PanelUpdates> => {
+
+  return apiFetch<PanelUpdates>(getGetPanelUpdatesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPanelUpdatesQueryKey = () => {
+    return [
+    `/api/v1/panel/updates`
+    ] as const;
+    }
+
+
+export const getGetPanelUpdatesQueryOptions = <TData = Awaited<ReturnType<typeof getPanelUpdates>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelUpdates>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPanelUpdatesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPanelUpdates>>> = ({ signal }) => getPanelUpdates({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPanelUpdates>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetPanelUpdatesQueryResult = NonNullable<Awaited<ReturnType<typeof getPanelUpdates>>>
+export type GetPanelUpdatesQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useGetPanelUpdates<TData = Awaited<ReturnType<typeof getPanelUpdates>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelUpdates>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getPanelUpdates>>,
+          TError,
+          Awaited<ReturnType<typeof getPanelUpdates>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetPanelUpdates<TData = Awaited<ReturnType<typeof getPanelUpdates>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelUpdates>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getPanelUpdates>>,
+          TError,
+          Awaited<ReturnType<typeof getPanelUpdates>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetPanelUpdates<TData = Awaited<ReturnType<typeof getPanelUpdates>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelUpdates>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary What is running, what is available, and any upgrade in flight (member+)
+ */
+
+export function useGetPanelUpdates<TData = Awaited<ReturnType<typeof getPanelUpdates>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPanelUpdates>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetPanelUpdatesQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getGetChangelogUrl = () => {
+
+
+
+
+  return `/api/v1/panel/changelog`
+}
+
+/**
+ * Embedded in the binary rather than fetched: a fetched changelog is a second outbound call with its own rate limit, and it renders prose from a network source inside an operator-facing surface. The AVAILABLE release contributes only its version, its kind and a link pointing out — no untrusted prose is ever rendered here.
+ * @summary What changed in each release (any authenticated caller)
+ */
+export const getChangelog = async ( options?: RequestInit): Promise<Changelog> => {
+
+  return apiFetch<Changelog>(getGetChangelogUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetChangelogQueryKey = () => {
+    return [
+    `/api/v1/panel/changelog`
+    ] as const;
+    }
+
+
+export const getGetChangelogQueryOptions = <TData = Awaited<ReturnType<typeof getChangelog>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getChangelog>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetChangelogQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getChangelog>>> = ({ signal }) => getChangelog({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getChangelog>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetChangelogQueryResult = NonNullable<Awaited<ReturnType<typeof getChangelog>>>
+export type GetChangelogQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useGetChangelog<TData = Awaited<ReturnType<typeof getChangelog>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getChangelog>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getChangelog>>,
+          TError,
+          Awaited<ReturnType<typeof getChangelog>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetChangelog<TData = Awaited<ReturnType<typeof getChangelog>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getChangelog>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getChangelog>>,
+          TError,
+          Awaited<ReturnType<typeof getChangelog>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetChangelog<TData = Awaited<ReturnType<typeof getChangelog>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getChangelog>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary What changed in each release (any authenticated caller)
+ */
+
+export function useGetChangelog<TData = Awaited<ReturnType<typeof getChangelog>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getChangelog>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetChangelogQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getPreflightPanelUpdateUrl = (params: PreflightPanelUpdateParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/panel/updates/preflight?${stringifiedParams}` : `/api/v1/panel/updates/preflight`
+}
+
+/**
+ * Changes nothing, which is why it is a GET. Signature, disk headroom, agent compatibility, snapshot readiness and quiescence.
+ *
+ * A signature failure is a REFUSAL, never a warning: an unverifiable artifact is the one thing this feature exists to not install. A disk refusal names BOTH numbers, because a disk that fills during an upgrade is how you end up with a panel that is neither the old version nor the new one. Agents below the release's floor are NAMED, and proceeding anyway needs the target version typed back.
+ * @summary The five checks, before anything changes (panel OWNER, session only)
+ */
+export const preflightPanelUpdate = async (params: PreflightPanelUpdateParams, options?: RequestInit): Promise<UpdatePreflight> => {
+
+  return apiFetch<UpdatePreflight>(getPreflightPanelUpdateUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getPreflightPanelUpdateQueryKey = (params?: PreflightPanelUpdateParams,) => {
+    return [
+    `/api/v1/panel/updates/preflight`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getPreflightPanelUpdateQueryOptions = <TData = Awaited<ReturnType<typeof preflightPanelUpdate>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(params: PreflightPanelUpdateParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof preflightPanelUpdate>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getPreflightPanelUpdateQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof preflightPanelUpdate>>> = ({ signal }) => preflightPanelUpdate(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof preflightPanelUpdate>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type PreflightPanelUpdateQueryResult = NonNullable<Awaited<ReturnType<typeof preflightPanelUpdate>>>
+export type PreflightPanelUpdateQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+
+
+export function usePreflightPanelUpdate<TData = Awaited<ReturnType<typeof preflightPanelUpdate>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ params: PreflightPanelUpdateParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof preflightPanelUpdate>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof preflightPanelUpdate>>,
+          TError,
+          Awaited<ReturnType<typeof preflightPanelUpdate>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function usePreflightPanelUpdate<TData = Awaited<ReturnType<typeof preflightPanelUpdate>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ params: PreflightPanelUpdateParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof preflightPanelUpdate>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof preflightPanelUpdate>>,
+          TError,
+          Awaited<ReturnType<typeof preflightPanelUpdate>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function usePreflightPanelUpdate<TData = Awaited<ReturnType<typeof preflightPanelUpdate>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ params: PreflightPanelUpdateParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof preflightPanelUpdate>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary The five checks, before anything changes (panel OWNER, session only)
+ */
+
+export function usePreflightPanelUpdate<TData = Awaited<ReturnType<typeof preflightPanelUpdate>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ params: PreflightPanelUpdateParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof preflightPanelUpdate>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getPreflightPanelUpdateQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getStartPanelUpgradeUrl = () => {
+
+
+
+
+  return `/api/v1/panel/updates/upgrade`
+}
+
+/**
+ * Owner, and session-only. This is the control that decides what code the control plane runs, and an API token may live in a CI runner.
+ *
+ * The plane does NOT perform the swap: it writes a request file that a separate root one-shot consumes. That helper has no dependency on the session that asked, so closing the tab, losing the network or signing out changes nothing.
+ *
+ * The panel goes read-only for about a minute and is unreachable for the few seconds of restart inside that. YOUR APPLICATIONS KEEP SERVING — they do not depend on the control plane.
+ * @summary Run the guided upgrade (panel OWNER, session only)
+ */
+export const startPanelUpgrade = async (startUpgradeRequest: StartUpgradeRequest, options?: RequestInit): Promise<PanelUpgrade> => {
+
+  return apiFetch<PanelUpgrade>(getStartPanelUpgradeUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(startUpgradeRequest)
+  }
+);}
+
+
+
+
+
+export const getStartPanelUpgradeMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startPanelUpgrade>>, TError,{data: StartUpgradeRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof startPanelUpgrade>>, TError,{data: StartUpgradeRequest}, TContext> => {
+
+const mutationKey = ['startPanelUpgrade'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startPanelUpgrade>>, {data: StartUpgradeRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  startPanelUpgrade(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StartPanelUpgradeMutationResult = NonNullable<Awaited<ReturnType<typeof startPanelUpgrade>>>
+    export type StartPanelUpgradeMutationBody = StartUpgradeRequest
+    export type StartPanelUpgradeMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error
+
+    /**
+ * @summary Run the guided upgrade (panel OWNER, session only)
+ */
+export const useStartPanelUpgrade = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startPanelUpgrade>>, TError,{data: StartUpgradeRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof startPanelUpgrade>>,
+        TError,
+        {data: StartUpgradeRequest},
+        TContext
+      > => {
+      return useMutation(getStartPanelUpgradeMutationOptions(options), queryClient);
+    }
+    export const getCancelPanelUpgradeUrl = () => {
+
+
+
+
+  return `/api/v1/panel/updates/cancel`
+}
+
+/**
+ * Only before the swap. After it the helper owns the host and the panel has nothing to cancel with — it answers 409 and says the upgrade will roll itself back if the new version does not come up.
+ * @summary Cancel before the swap (panel OWNER, session only)
+ */
+export const cancelPanelUpgrade = async ( options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getCancelPanelUpgradeUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getCancelPanelUpgradeMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelPanelUpgrade>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof cancelPanelUpgrade>>, TError,void, TContext> => {
+
+const mutationKey = ['cancelPanelUpgrade'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof cancelPanelUpgrade>>, void> = () => {
+
+
+          return  cancelPanelUpgrade(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CancelPanelUpgradeMutationResult = NonNullable<Awaited<ReturnType<typeof cancelPanelUpgrade>>>
+
+    export type CancelPanelUpgradeMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error
+
+    /**
+ * @summary Cancel before the swap (panel OWNER, session only)
+ */
+export const useCancelPanelUpgrade = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelPanelUpgrade>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof cancelPanelUpgrade>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getCancelPanelUpgradeMutationOptions(options), queryClient);
+    }
+    export const getListPanelUpgradesUrl = () => {
+
+
+
+
+  return `/api/v1/panel/updates/history`
+}
+
+/**
+ * Records what RAN, not only what this panel performed: a boot whose version differs from the last recorded one writes a row with an `external` actor, which is what a container install's upgrades look like from in here.
+ * @summary Version history and the snapshots it kept (panel OWNER, session only)
+ */
+export const listPanelUpgrades = async ( options?: RequestInit): Promise<PanelUpgradeHistory> => {
+
+  return apiFetch<PanelUpgradeHistory>(getListPanelUpgradesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListPanelUpgradesQueryKey = () => {
+    return [
+    `/api/v1/panel/updates/history`
+    ] as const;
+    }
+
+
+export const getListPanelUpgradesQueryOptions = <TData = Awaited<ReturnType<typeof listPanelUpgrades>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPanelUpgrades>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListPanelUpgradesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listPanelUpgrades>>> = ({ signal }) => listPanelUpgrades({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listPanelUpgrades>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListPanelUpgradesQueryResult = NonNullable<Awaited<ReturnType<typeof listPanelUpgrades>>>
+export type ListPanelUpgradesQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useListPanelUpgrades<TData = Awaited<ReturnType<typeof listPanelUpgrades>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPanelUpgrades>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listPanelUpgrades>>,
+          TError,
+          Awaited<ReturnType<typeof listPanelUpgrades>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListPanelUpgrades<TData = Awaited<ReturnType<typeof listPanelUpgrades>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPanelUpgrades>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listPanelUpgrades>>,
+          TError,
+          Awaited<ReturnType<typeof listPanelUpgrades>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListPanelUpgrades<TData = Awaited<ReturnType<typeof listPanelUpgrades>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPanelUpgrades>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Version history and the snapshots it kept (panel OWNER, session only)
+ */
+
+export function useListPanelUpgrades<TData = Awaited<ReturnType<typeof listPanelUpgrades>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPanelUpgrades>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListPanelUpgradesQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getSetSnapshotRetentionUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/panel/snapshots/${id}`
+}
+
+/**
+ * Retention is the one decision this feature leaves to the operator, and it must not be made for them: the snapshot is the only thing standing between a bad release and a lost panel. A PINNED snapshot is never swept whatever its expiry says.
+ * @summary Extend, pin or expire a snapshot (panel OWNER, session only)
+ */
+export const setSnapshotRetention = async (id: string,
+    snapshotRetentionRequest: SnapshotRetentionRequest, options?: RequestInit): Promise<PanelSnapshot> => {
+
+  return apiFetch<PanelSnapshot>(getSetSnapshotRetentionUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(snapshotRetentionRequest)
+  }
+);}
+
+
+
+
+
+export const getSetSnapshotRetentionMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setSnapshotRetention>>, TError,{id: string;data: SnapshotRetentionRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setSnapshotRetention>>, TError,{id: string;data: SnapshotRetentionRequest}, TContext> => {
+
+const mutationKey = ['setSnapshotRetention'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setSnapshotRetention>>, {id: string;data: SnapshotRetentionRequest}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  setSnapshotRetention(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetSnapshotRetentionMutationResult = NonNullable<Awaited<ReturnType<typeof setSnapshotRetention>>>
+    export type SetSnapshotRetentionMutationBody = SnapshotRetentionRequest
+    export type SetSnapshotRetentionMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Extend, pin or expire a snapshot (panel OWNER, session only)
+ */
+export const useSetSnapshotRetention = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setSnapshotRetention>>, TError,{id: string;data: SnapshotRetentionRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setSnapshotRetention>>,
+        TError,
+        {id: string;data: SnapshotRetentionRequest},
+        TContext
+      > => {
+      return useMutation(getSetSnapshotRetentionMutationOptions(options), queryClient);
+    }
+    export const getDeletePanelSnapshotUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/panel/snapshots/${id}`
+}
+
+/**
+ * @summary Delete a snapshot and its file (panel OWNER, session only)
+ */
+export const deletePanelSnapshot = async (id: string, options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getDeletePanelSnapshotUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeletePanelSnapshotMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deletePanelSnapshot>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deletePanelSnapshot>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['deletePanelSnapshot'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deletePanelSnapshot>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deletePanelSnapshot(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeletePanelSnapshotMutationResult = NonNullable<Awaited<ReturnType<typeof deletePanelSnapshot>>>
+
+    export type DeletePanelSnapshotMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Delete a snapshot and its file (panel OWNER, session only)
+ */
+export const useDeletePanelSnapshot = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deletePanelSnapshot>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deletePanelSnapshot>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getDeletePanelSnapshotMutationOptions(options), queryClient);
+    }
+    export const getRestorePanelSnapshotUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/panel/snapshots/${id}/restore`
+}
+
+/**
+ * THE LAST RESORT. It rewinds the panel's own database to the moment the snapshot was taken, and everything written since is gone. The automatic rollback does not reach for this — it renames the previous binary back first, and only restores when the old build cannot start on the new schema.
+ * @summary Put the panel's database back (panel OWNER, session only)
+ */
+export const restorePanelSnapshot = async (id: string,
+    restorePanelSnapshotBody: RestorePanelSnapshotBody, options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getRestorePanelSnapshotUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(restorePanelSnapshotBody)
+  }
+);}
+
+
+
+
+
+export const getRestorePanelSnapshotMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof restorePanelSnapshot>>, TError,{id: string;data: RestorePanelSnapshotBody}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof restorePanelSnapshot>>, TError,{id: string;data: RestorePanelSnapshotBody}, TContext> => {
+
+const mutationKey = ['restorePanelSnapshot'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof restorePanelSnapshot>>, {id: string;data: RestorePanelSnapshotBody}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  restorePanelSnapshot(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RestorePanelSnapshotMutationResult = NonNullable<Awaited<ReturnType<typeof restorePanelSnapshot>>>
+    export type RestorePanelSnapshotMutationBody = RestorePanelSnapshotBody
+    export type RestorePanelSnapshotMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error
+
+    /**
+ * @summary Put the panel's database back (panel OWNER, session only)
+ */
+export const useRestorePanelSnapshot = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof restorePanelSnapshot>>, TError,{id: string;data: RestorePanelSnapshotBody}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof restorePanelSnapshot>>,
+        TError,
+        {id: string;data: RestorePanelSnapshotBody},
+        TContext
+      > => {
+      return useMutation(getRestorePanelSnapshotMutationOptions(options), queryClient);
+    }
+    export const getGetPlaneDisasterRecoveryUrl = () => {
+
+
+
+
+  return `/api/v1/panel/disaster-recovery`
+}
+
+/**
+ * `armed` is whether a configuration exists at all — disarming deletes it rather than flipping a flag, so there is never a stale configuration beside a boolean.
+ *
+ * `recipient_verified_at` being null means ARMED BUT NOT PROVEN: the panel has never watched anyone decrypt with the matching key, so it must not imply the operator still has it. "Armed" and "recoverable" are different claims.
+ * @summary Whether this panel backs itself up (panel OWNER, session only)
+ */
+export const getPlaneDisasterRecovery = async ( options?: RequestInit): Promise<PlaneDisasterRecovery> => {
+
+  return apiFetch<PlaneDisasterRecovery>(getGetPlaneDisasterRecoveryUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPlaneDisasterRecoveryQueryKey = () => {
+    return [
+    `/api/v1/panel/disaster-recovery`
+    ] as const;
+    }
+
+
+export const getGetPlaneDisasterRecoveryQueryOptions = <TData = Awaited<ReturnType<typeof getPlaneDisasterRecovery>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPlaneDisasterRecovery>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPlaneDisasterRecoveryQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPlaneDisasterRecovery>>> = ({ signal }) => getPlaneDisasterRecovery({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPlaneDisasterRecovery>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetPlaneDisasterRecoveryQueryResult = NonNullable<Awaited<ReturnType<typeof getPlaneDisasterRecovery>>>
+export type GetPlaneDisasterRecoveryQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useGetPlaneDisasterRecovery<TData = Awaited<ReturnType<typeof getPlaneDisasterRecovery>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPlaneDisasterRecovery>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getPlaneDisasterRecovery>>,
+          TError,
+          Awaited<ReturnType<typeof getPlaneDisasterRecovery>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetPlaneDisasterRecovery<TData = Awaited<ReturnType<typeof getPlaneDisasterRecovery>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPlaneDisasterRecovery>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getPlaneDisasterRecovery>>,
+          TError,
+          Awaited<ReturnType<typeof getPlaneDisasterRecovery>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetPlaneDisasterRecovery<TData = Awaited<ReturnType<typeof getPlaneDisasterRecovery>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPlaneDisasterRecovery>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Whether this panel backs itself up (panel OWNER, session only)
+ */
+
+export function useGetPlaneDisasterRecovery<TData = Awaited<ReturnType<typeof getPlaneDisasterRecovery>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPlaneDisasterRecovery>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetPlaneDisasterRecoveryQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getArmPlaneDisasterRecoveryUrl = () => {
+
+
+
+
+  return `/api/v1/panel/disaster-recovery`
+}
+
+/**
+ * A snapshot of this panel's database is WORTHLESS without the master key — the CA that signs every agent certificate is sealed with it — and CATASTROPHIC with it. So the master key travels inside the archive, and the ARCHIVE is what is protected: encrypted to a public key whose private half the panel never holds.
+ *
+ * `generate: true` mints the pair and returns the private half in THIS response and never again. There is no endpoint that can return it later and no column that holds it. Alternatively pass a `recipient` you already have the key for.
+ * @summary Arm nightly plane snapshots (panel OWNER, session only)
+ */
+export const armPlaneDisasterRecovery = async (armPlaneDRRequest: ArmPlaneDRRequest, options?: RequestInit): Promise<ArmPlaneDRResponse> => {
+
+  return apiFetch<ArmPlaneDRResponse>(getArmPlaneDisasterRecoveryUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(armPlaneDRRequest)
+  }
+);}
+
+
+
+
+
+export const getArmPlaneDisasterRecoveryMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof armPlaneDisasterRecovery>>, TError,{data: ArmPlaneDRRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof armPlaneDisasterRecovery>>, TError,{data: ArmPlaneDRRequest}, TContext> => {
+
+const mutationKey = ['armPlaneDisasterRecovery'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof armPlaneDisasterRecovery>>, {data: ArmPlaneDRRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  armPlaneDisasterRecovery(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ArmPlaneDisasterRecoveryMutationResult = NonNullable<Awaited<ReturnType<typeof armPlaneDisasterRecovery>>>
+    export type ArmPlaneDisasterRecoveryMutationBody = ArmPlaneDRRequest
+    export type ArmPlaneDisasterRecoveryMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary Arm nightly plane snapshots (panel OWNER, session only)
+ */
+export const useArmPlaneDisasterRecovery = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof armPlaneDisasterRecovery>>, TError,{data: ArmPlaneDRRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof armPlaneDisasterRecovery>>,
+        TError,
+        {data: ArmPlaneDRRequest},
+        TContext
+      > => {
+      return useMutation(getArmPlaneDisasterRecoveryMutationOptions(options), queryClient);
+    }
+    export const getDisarmPlaneDisasterRecoveryUrl = () => {
+
+
+
+
+  return `/api/v1/panel/disaster-recovery`
+}
+
+/**
+ * Archives already in the bucket are left alone. Disarming is not the same decision as discarding, and deleting an operator's off-site copies from a panel action is the one mistake with no undo.
+ * @summary Stop backing the panel up (panel OWNER, session only)
+ */
+export const disarmPlaneDisasterRecovery = async ( options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getDisarmPlaneDisasterRecoveryUrl(),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDisarmPlaneDisasterRecoveryMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof disarmPlaneDisasterRecovery>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof disarmPlaneDisasterRecovery>>, TError,void, TContext> => {
+
+const mutationKey = ['disarmPlaneDisasterRecovery'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof disarmPlaneDisasterRecovery>>, void> = () => {
+
+
+          return  disarmPlaneDisasterRecovery(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DisarmPlaneDisasterRecoveryMutationResult = NonNullable<Awaited<ReturnType<typeof disarmPlaneDisasterRecovery>>>
+
+    export type DisarmPlaneDisasterRecoveryMutationError = UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary Stop backing the panel up (panel OWNER, session only)
+ */
+export const useDisarmPlaneDisasterRecovery = <TError = UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof disarmPlaneDisasterRecovery>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof disarmPlaneDisasterRecovery>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getDisarmPlaneDisasterRecoveryMutationOptions(options), queryClient);
+    }
+    export const getRunPlaneSnapshotUrl = () => {
+
+
+
+
+  return `/api/v1/panel/disaster-recovery/run`
+}
+
+/**
+ * @summary Take a snapshot now (panel OWNER, session only)
+ */
+export const runPlaneSnapshot = async ( options?: RequestInit): Promise<PlaneSnapshot> => {
+
+  return apiFetch<PlaneSnapshot>(getRunPlaneSnapshotUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRunPlaneSnapshotMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runPlaneSnapshot>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof runPlaneSnapshot>>, TError,void, TContext> => {
+
+const mutationKey = ['runPlaneSnapshot'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof runPlaneSnapshot>>, void> = () => {
+
+
+          return  runPlaneSnapshot(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RunPlaneSnapshotMutationResult = NonNullable<Awaited<ReturnType<typeof runPlaneSnapshot>>>
+
+    export type RunPlaneSnapshotMutationError = UnauthorizedResponse | ForbiddenResponse | Error
+
+    /**
+ * @summary Take a snapshot now (panel OWNER, session only)
+ */
+export const useRunPlaneSnapshot = <TError = UnauthorizedResponse | ForbiddenResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runPlaneSnapshot>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof runPlaneSnapshot>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getRunPlaneSnapshotMutationOptions(options), queryClient);
+    }
+    export const getVerifyRecoveryKeyUrl = () => {
+
+
+
+
+  return `/api/v1/panel/disaster-recovery/verify`
+}
+
+/**
+ * Because a backup nobody can open is worse than no backup: it is a year of green checkmarks ending in a discovery. The key is used to decrypt one manifest and discarded — never stored, never logged, never returned.
+ * @summary Prove the Recovery Key still opens a snapshot (panel OWNER, session only)
+ */
+export const verifyRecoveryKey = async (verifyRecoveryKeyBody: VerifyRecoveryKeyBody, options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getVerifyRecoveryKeyUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(verifyRecoveryKeyBody)
+  }
+);}
+
+
+
+
+
+export const getVerifyRecoveryKeyMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyRecoveryKey>>, TError,{data: VerifyRecoveryKeyBody}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof verifyRecoveryKey>>, TError,{data: VerifyRecoveryKeyBody}, TContext> => {
+
+const mutationKey = ['verifyRecoveryKey'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof verifyRecoveryKey>>, {data: VerifyRecoveryKeyBody}> = (props) => {
+          const {data} = props ?? {};
+
+          return  verifyRecoveryKey(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type VerifyRecoveryKeyMutationResult = NonNullable<Awaited<ReturnType<typeof verifyRecoveryKey>>>
+    export type VerifyRecoveryKeyMutationBody = VerifyRecoveryKeyBody
+    export type VerifyRecoveryKeyMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary Prove the Recovery Key still opens a snapshot (panel OWNER, session only)
+ */
+export const useVerifyRecoveryKey = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyRecoveryKey>>, TError,{data: VerifyRecoveryKeyBody}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof verifyRecoveryKey>>,
+        TError,
+        {data: VerifyRecoveryKeyBody},
+        TContext
+      > => {
+      return useMutation(getVerifyRecoveryKeyMutationOptions(options), queryClient);
+    }
+    export const getListPlaneSnapshotsUrl = () => {
+
+
+
+
+  return `/api/v1/panel/disaster-recovery/snapshots`
+}
+
+/**
+ * An INDEX of what is in the bucket, not the truth about it. The bucket is the truth, and a row here whose object was deleted out of band describes something gone.
+ * @summary The snapshot index (panel OWNER, session only)
+ */
+export const listPlaneSnapshots = async ( options?: RequestInit): Promise<PlaneSnapshot[]> => {
+
+  return apiFetch<PlaneSnapshot[]>(getListPlaneSnapshotsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListPlaneSnapshotsQueryKey = () => {
+    return [
+    `/api/v1/panel/disaster-recovery/snapshots`
+    ] as const;
+    }
+
+
+export const getListPlaneSnapshotsQueryOptions = <TData = Awaited<ReturnType<typeof listPlaneSnapshots>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPlaneSnapshots>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListPlaneSnapshotsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listPlaneSnapshots>>> = ({ signal }) => listPlaneSnapshots({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listPlaneSnapshots>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListPlaneSnapshotsQueryResult = NonNullable<Awaited<ReturnType<typeof listPlaneSnapshots>>>
+export type ListPlaneSnapshotsQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useListPlaneSnapshots<TData = Awaited<ReturnType<typeof listPlaneSnapshots>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPlaneSnapshots>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listPlaneSnapshots>>,
+          TError,
+          Awaited<ReturnType<typeof listPlaneSnapshots>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListPlaneSnapshots<TData = Awaited<ReturnType<typeof listPlaneSnapshots>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPlaneSnapshots>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listPlaneSnapshots>>,
+          TError,
+          Awaited<ReturnType<typeof listPlaneSnapshots>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListPlaneSnapshots<TData = Awaited<ReturnType<typeof listPlaneSnapshots>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPlaneSnapshots>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary The snapshot index (panel OWNER, session only)
+ */
+
+export function useListPlaneSnapshots<TData = Awaited<ReturnType<typeof listPlaneSnapshots>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPlaneSnapshots>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListPlaneSnapshotsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getGetMailProviderUrl = () => {
+
+
+
+
+  return `/api/v1/mail/provider`
+}
+
+/**
+ * @summary Whether a mail provider is connected (panel admin)
+ */
+export const getMailProvider = async ( options?: RequestInit): Promise<MailProviderStatus> => {
+
+  return apiFetch<MailProviderStatus>(getGetMailProviderUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetMailProviderQueryKey = () => {
+    return [
+    `/api/v1/mail/provider`
+    ] as const;
+    }
+
+
+export const getGetMailProviderQueryOptions = <TData = Awaited<ReturnType<typeof getMailProvider>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMailProvider>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMailProviderQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMailProvider>>> = ({ signal }) => getMailProvider({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMailProvider>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetMailProviderQueryResult = NonNullable<Awaited<ReturnType<typeof getMailProvider>>>
+export type GetMailProviderQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useGetMailProvider<TData = Awaited<ReturnType<typeof getMailProvider>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMailProvider>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getMailProvider>>,
+          TError,
+          Awaited<ReturnType<typeof getMailProvider>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMailProvider<TData = Awaited<ReturnType<typeof getMailProvider>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMailProvider>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getMailProvider>>,
+          TError,
+          Awaited<ReturnType<typeof getMailProvider>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMailProvider<TData = Awaited<ReturnType<typeof getMailProvider>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMailProvider>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Whether a mail provider is connected (panel admin)
+ */
+
+export function useGetMailProvider<TData = Awaited<ReturnType<typeof getMailProvider>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMailProvider>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetMailProviderQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getConnectMailProviderUrl = () => {
+
+
+
+
+  return `/api/v1/mail/provider`
+}
+
+/**
+ * THE PANEL IS NOT BECOMING A MAIL SERVER. It writes MX, SPF, DKIM and DMARC through the DNS provider already connected, and creates mailboxes through this provider's API. It runs no MTA, stores no message, and never holds a DKIM private key — the provider generates that pair and publishes only the public half.
+ *
+ * The credential is tested before it is stored, then sealed under the master key and never returned. A credential saved and later found broken is one an operator discovers when a mailbox creation fails, which is the wrong moment.
+ * @summary Connect a mail provider (panel admin)
+ */
+export const connectMailProvider = async (mailProviderConfig: MailProviderConfig, options?: RequestInit): Promise<MailProviderStatus> => {
+
+  return apiFetch<MailProviderStatus>(getConnectMailProviderUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(mailProviderConfig)
+  }
+);}
+
+
+
+
+
+export const getConnectMailProviderMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof connectMailProvider>>, TError,{data: MailProviderConfig}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof connectMailProvider>>, TError,{data: MailProviderConfig}, TContext> => {
+
+const mutationKey = ['connectMailProvider'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof connectMailProvider>>, {data: MailProviderConfig}> = (props) => {
+          const {data} = props ?? {};
+
+          return  connectMailProvider(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ConnectMailProviderMutationResult = NonNullable<Awaited<ReturnType<typeof connectMailProvider>>>
+    export type ConnectMailProviderMutationBody = MailProviderConfig
+    export type ConnectMailProviderMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary Connect a mail provider (panel admin)
+ */
+export const useConnectMailProvider = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof connectMailProvider>>, TError,{data: MailProviderConfig}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof connectMailProvider>>,
+        TError,
+        {data: MailProviderConfig},
+        TContext
+      > => {
+      return useMutation(getConnectMailProviderMutationOptions(options), queryClient);
+    }
+    export const getDisconnectMailProviderUrl = () => {
+
+
+
+
+  return `/api/v1/mail/provider`
+}
+
+/**
+ * Domains and mailboxes at the provider are untouched — disconnecting the panel is not the same decision as deleting somebody's mail.
+ * @summary Forget the provider credential (panel admin)
+ */
+export const disconnectMailProvider = async ( options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getDisconnectMailProviderUrl(),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDisconnectMailProviderMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof disconnectMailProvider>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof disconnectMailProvider>>, TError,void, TContext> => {
+
+const mutationKey = ['disconnectMailProvider'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof disconnectMailProvider>>, void> = () => {
+
+
+          return  disconnectMailProvider(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DisconnectMailProviderMutationResult = NonNullable<Awaited<ReturnType<typeof disconnectMailProvider>>>
+
+    export type DisconnectMailProviderMutationError = UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary Forget the provider credential (panel admin)
+ */
+export const useDisconnectMailProvider = <TError = UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof disconnectMailProvider>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof disconnectMailProvider>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getDisconnectMailProviderMutationOptions(options), queryClient);
+    }
+    export const getListMailDomainsUrl = () => {
+
+
+
+
+  return `/api/v1/mail/domains`
+}
+
+/**
+ * @summary Domains with mail enabled (panel admin)
+ */
+export const listMailDomains = async ( options?: RequestInit): Promise<MailDomain[]> => {
+
+  return apiFetch<MailDomain[]>(getListMailDomainsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListMailDomainsQueryKey = () => {
+    return [
+    `/api/v1/mail/domains`
+    ] as const;
+    }
+
+
+export const getListMailDomainsQueryOptions = <TData = Awaited<ReturnType<typeof listMailDomains>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMailDomains>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListMailDomainsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listMailDomains>>> = ({ signal }) => listMailDomains({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listMailDomains>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListMailDomainsQueryResult = NonNullable<Awaited<ReturnType<typeof listMailDomains>>>
+export type ListMailDomainsQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useListMailDomains<TData = Awaited<ReturnType<typeof listMailDomains>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMailDomains>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listMailDomains>>,
+          TError,
+          Awaited<ReturnType<typeof listMailDomains>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListMailDomains<TData = Awaited<ReturnType<typeof listMailDomains>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMailDomains>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listMailDomains>>,
+          TError,
+          Awaited<ReturnType<typeof listMailDomains>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListMailDomains<TData = Awaited<ReturnType<typeof listMailDomains>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMailDomains>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Domains with mail enabled (panel admin)
+ */
+
+export function useListMailDomains<TData = Awaited<ReturnType<typeof listMailDomains>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMailDomains>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListMailDomainsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getEnableMailDomainUrl = () => {
+
+
+
+
+  return `/api/v1/mail/domains`
+}
+
+/**
+ * Refused for a domain the panel cannot write DNS for. That is not gatekeeping: on such a domain this feature can do nothing but print instructions, and enabling it would be claiming to have done something.
+ * @summary Enable mail on a verified domain (panel admin)
+ */
+export const enableMailDomain = async (enableMailDomainBody: EnableMailDomainBody, options?: RequestInit): Promise<MailDomainRecords> => {
+
+  return apiFetch<MailDomainRecords>(getEnableMailDomainUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(enableMailDomainBody)
+  }
+);}
+
+
+
+
+
+export const getEnableMailDomainMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof enableMailDomain>>, TError,{data: EnableMailDomainBody}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof enableMailDomain>>, TError,{data: EnableMailDomainBody}, TContext> => {
+
+const mutationKey = ['enableMailDomain'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof enableMailDomain>>, {data: EnableMailDomainBody}> = (props) => {
+          const {data} = props ?? {};
+
+          return  enableMailDomain(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type EnableMailDomainMutationResult = NonNullable<Awaited<ReturnType<typeof enableMailDomain>>>
+    export type EnableMailDomainMutationBody = EnableMailDomainBody
+    export type EnableMailDomainMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary Enable mail on a verified domain (panel admin)
+ */
+export const useEnableMailDomain = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof enableMailDomain>>, TError,{data: EnableMailDomainBody}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof enableMailDomain>>,
+        TError,
+        {data: EnableMailDomainBody},
+        TContext
+      > => {
+      return useMutation(getEnableMailDomainMutationOptions(options), queryClient);
+    }
+    export const getDisableMailDomainUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/mail/domains/${id}`
+}
+
+/**
+ * The domain and its mailboxes stay at the provider. Deleting somebody's mail because a panel switch was turned off is not a trade this feature makes.
+ * @summary Stop managing this domain's mail (panel admin)
+ */
+export const disableMailDomain = async (id: string, options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getDisableMailDomainUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDisableMailDomainMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof disableMailDomain>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof disableMailDomain>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['disableMailDomain'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof disableMailDomain>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  disableMailDomain(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DisableMailDomainMutationResult = NonNullable<Awaited<ReturnType<typeof disableMailDomain>>>
+
+    export type DisableMailDomainMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Stop managing this domain's mail (panel admin)
+ */
+export const useDisableMailDomain = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof disableMailDomain>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof disableMailDomain>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getDisableMailDomainMutationOptions(options), queryClient);
+    }
+    export const getGetMailDomainRecordsUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/mail/domains/${id}/records`
+}
+
+/**
+ * @summary The records this domain's mail requires (panel admin)
+ */
+export const getMailDomainRecords = async (id: string, options?: RequestInit): Promise<MailDomainRecords> => {
+
+  return apiFetch<MailDomainRecords>(getGetMailDomainRecordsUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetMailDomainRecordsQueryKey = (id: string,) => {
+    return [
+    `/api/v1/mail/domains/${id}/records`
+    ] as const;
+    }
+
+
+export const getGetMailDomainRecordsQueryOptions = <TData = Awaited<ReturnType<typeof getMailDomainRecords>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMailDomainRecords>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMailDomainRecordsQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMailDomainRecords>>> = ({ signal }) => getMailDomainRecords(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMailDomainRecords>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetMailDomainRecordsQueryResult = NonNullable<Awaited<ReturnType<typeof getMailDomainRecords>>>
+export type GetMailDomainRecordsQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useGetMailDomainRecords<TData = Awaited<ReturnType<typeof getMailDomainRecords>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMailDomainRecords>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getMailDomainRecords>>,
+          TError,
+          Awaited<ReturnType<typeof getMailDomainRecords>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMailDomainRecords<TData = Awaited<ReturnType<typeof getMailDomainRecords>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMailDomainRecords>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getMailDomainRecords>>,
+          TError,
+          Awaited<ReturnType<typeof getMailDomainRecords>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMailDomainRecords<TData = Awaited<ReturnType<typeof getMailDomainRecords>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMailDomainRecords>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary The records this domain's mail requires (panel admin)
+ */
+
+export function useGetMailDomainRecords<TData = Awaited<ReturnType<typeof getMailDomainRecords>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMailDomainRecords>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetMailDomainRecordsQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getRewriteMailDomainRecordsUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/mail/domains/${id}/records`
+}
+
+/**
+ * For a domain whose last attempt left something unwritten. Idempotent — a record that is already correct is left alone.
+ * @summary Write the records again (panel admin)
+ */
+export const rewriteMailDomainRecords = async (id: string, options?: RequestInit): Promise<MailDomain> => {
+
+  return apiFetch<MailDomain>(getRewriteMailDomainRecordsUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRewriteMailDomainRecordsMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rewriteMailDomainRecords>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof rewriteMailDomainRecords>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['rewriteMailDomainRecords'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rewriteMailDomainRecords>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  rewriteMailDomainRecords(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RewriteMailDomainRecordsMutationResult = NonNullable<Awaited<ReturnType<typeof rewriteMailDomainRecords>>>
+
+    export type RewriteMailDomainRecordsMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Write the records again (panel admin)
+ */
+export const useRewriteMailDomainRecords = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rewriteMailDomainRecords>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof rewriteMailDomainRecords>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getRewriteMailDomainRecordsMutationOptions(options), queryClient);
+    }
+    export const getListMailboxesUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/mail/domains/${id}/mailboxes`
+}
+
+/**
+ * Read from the PROVIDER, which owns them. The panel caches nothing that would go stale; the only thing it stores is the link to a panel account, because that is a fact the provider knows nothing about.
+ * @summary The domain's mailboxes (panel admin)
+ */
+export const listMailboxes = async (id: string, options?: RequestInit): Promise<Mailbox[]> => {
+
+  return apiFetch<Mailbox[]>(getListMailboxesUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListMailboxesQueryKey = (id: string,) => {
+    return [
+    `/api/v1/mail/domains/${id}/mailboxes`
+    ] as const;
+    }
+
+
+export const getListMailboxesQueryOptions = <TData = Awaited<ReturnType<typeof listMailboxes>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMailboxes>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListMailboxesQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listMailboxes>>> = ({ signal }) => listMailboxes(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listMailboxes>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListMailboxesQueryResult = NonNullable<Awaited<ReturnType<typeof listMailboxes>>>
+export type ListMailboxesQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useListMailboxes<TData = Awaited<ReturnType<typeof listMailboxes>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMailboxes>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listMailboxes>>,
+          TError,
+          Awaited<ReturnType<typeof listMailboxes>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListMailboxes<TData = Awaited<ReturnType<typeof listMailboxes>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMailboxes>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listMailboxes>>,
+          TError,
+          Awaited<ReturnType<typeof listMailboxes>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListMailboxes<TData = Awaited<ReturnType<typeof listMailboxes>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMailboxes>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary The domain's mailboxes (panel admin)
+ */
+
+export function useListMailboxes<TData = Awaited<ReturnType<typeof listMailboxes>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMailboxes>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListMailboxesQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getCreateMailboxUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/mail/domains/${id}/mailboxes`
+}
+
+/**
+ * The password appears in THIS response and never again. The panel cannot read it back because it does not have it — the provider stores the hash and the panel forwarded it once, which is the contract an invitation link already has.
+ * @summary Create a mailbox (panel admin)
+ */
+export const createMailbox = async (id: string,
+    createMailboxRequest: CreateMailboxRequest, options?: RequestInit): Promise<CreateMailboxResponse> => {
+
+  return apiFetch<CreateMailboxResponse>(getCreateMailboxUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(createMailboxRequest)
+  }
+);}
+
+
+
+
+
+export const getCreateMailboxMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createMailbox>>, TError,{id: string;data: CreateMailboxRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createMailbox>>, TError,{id: string;data: CreateMailboxRequest}, TContext> => {
+
+const mutationKey = ['createMailbox'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createMailbox>>, {id: string;data: CreateMailboxRequest}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  createMailbox(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateMailboxMutationResult = NonNullable<Awaited<ReturnType<typeof createMailbox>>>
+    export type CreateMailboxMutationBody = CreateMailboxRequest
+    export type CreateMailboxMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Create a mailbox (panel admin)
+ */
+export const useCreateMailbox = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createMailbox>>, TError,{id: string;data: CreateMailboxRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof createMailbox>>,
+        TError,
+        {id: string;data: CreateMailboxRequest},
+        TContext
+      > => {
+      return useMutation(getCreateMailboxMutationOptions(options), queryClient);
+    }
+    export const getDeleteMailboxUrl = (id: string,
+    params: DeleteMailboxParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/mail/domains/${id}/mailboxes?${stringifiedParams}` : `/api/v1/mail/domains/${id}/mailboxes`
+}
+
+/**
+ * @summary Delete a mailbox (panel admin)
+ */
+export const deleteMailbox = async (id: string,
+    params: DeleteMailboxParams, options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getDeleteMailboxUrl(id,params),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteMailboxMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteMailbox>>, TError,{id: string;params: DeleteMailboxParams}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteMailbox>>, TError,{id: string;params: DeleteMailboxParams}, TContext> => {
+
+const mutationKey = ['deleteMailbox'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteMailbox>>, {id: string;params: DeleteMailboxParams}> = (props) => {
+          const {id,params} = props ?? {};
+
+          return  deleteMailbox(id,params,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteMailboxMutationResult = NonNullable<Awaited<ReturnType<typeof deleteMailbox>>>
+
+    export type DeleteMailboxMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Delete a mailbox (panel admin)
+ */
+export const useDeleteMailbox = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteMailbox>>, TError,{id: string;params: DeleteMailboxParams}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteMailbox>>,
+        TError,
+        {id: string;params: DeleteMailboxParams},
+        TContext
+      > => {
+      return useMutation(getDeleteMailboxMutationOptions(options), queryClient);
+    }
+    export const getResetMailboxPasswordUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/mail/domains/${id}/mailboxes/password`
+}
+
+/**
+ * Shown once, like the create response, and for the same reason.
+ * @summary Mint a new mailbox password (panel admin)
+ */
+export const resetMailboxPassword = async (id: string,
+    resetMailboxPasswordBody: ResetMailboxPasswordBody, options?: RequestInit): Promise<ResetMailboxPassword200> => {
+
+  return apiFetch<ResetMailboxPassword200>(getResetMailboxPasswordUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(resetMailboxPasswordBody)
+  }
+);}
+
+
+
+
+
+export const getResetMailboxPasswordMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resetMailboxPassword>>, TError,{id: string;data: ResetMailboxPasswordBody}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof resetMailboxPassword>>, TError,{id: string;data: ResetMailboxPasswordBody}, TContext> => {
+
+const mutationKey = ['resetMailboxPassword'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof resetMailboxPassword>>, {id: string;data: ResetMailboxPasswordBody}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  resetMailboxPassword(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ResetMailboxPasswordMutationResult = NonNullable<Awaited<ReturnType<typeof resetMailboxPassword>>>
+    export type ResetMailboxPasswordMutationBody = ResetMailboxPasswordBody
+    export type ResetMailboxPasswordMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Mint a new mailbox password (panel admin)
+ */
+export const useResetMailboxPassword = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resetMailboxPassword>>, TError,{id: string;data: ResetMailboxPasswordBody}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof resetMailboxPassword>>,
+        TError,
+        {id: string;data: ResetMailboxPasswordBody},
+        TContext
+      > => {
+      return useMutation(getResetMailboxPasswordMutationOptions(options), queryClient);
+    }
+    export const getListLogDrainsUrl = () => {
+
+
+
+
+  return `/api/v1/log-drains`
+}
+
+/**
+ * A drain ships APPLICATION runtime logs. Managed databases and Compose Stacks carry different labels and are not on the stream this reads — a gap in those features rather than this one, and the copy says so rather than letting somebody discover it later.
+ *
+ * Health is derived, never stored, and a FAILING DRAIN IS NEVER AUTO-DISABLED: that would turn a visible failure into a silently stopped pipeline that does not resume when the sink returns, and the operator finds out when they go looking for last week's logs.
+ * @summary Every log drain, with its derived health (panel admin)
+ */
+export const listLogDrains = async ( options?: RequestInit): Promise<LogDrain[]> => {
+
+  return apiFetch<LogDrain[]>(getListLogDrainsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListLogDrainsQueryKey = () => {
+    return [
+    `/api/v1/log-drains`
+    ] as const;
+    }
+
+
+export const getListLogDrainsQueryOptions = <TData = Awaited<ReturnType<typeof listLogDrains>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLogDrains>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListLogDrainsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listLogDrains>>> = ({ signal }) => listLogDrains({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listLogDrains>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListLogDrainsQueryResult = NonNullable<Awaited<ReturnType<typeof listLogDrains>>>
+export type ListLogDrainsQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useListLogDrains<TData = Awaited<ReturnType<typeof listLogDrains>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLogDrains>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listLogDrains>>,
+          TError,
+          Awaited<ReturnType<typeof listLogDrains>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListLogDrains<TData = Awaited<ReturnType<typeof listLogDrains>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLogDrains>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listLogDrains>>,
+          TError,
+          Awaited<ReturnType<typeof listLogDrains>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListLogDrains<TData = Awaited<ReturnType<typeof listLogDrains>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLogDrains>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Every log drain, with its derived health (panel admin)
+ */
+
+export function useListLogDrains<TData = Awaited<ReturnType<typeof listLogDrains>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLogDrains>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListLogDrainsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getCreateLogDrainUrl = () => {
+
+
+
+
+  return `/api/v1/log-drains`
+}
+
+/**
+ * Panel admin, because a drain spends the panel's stream, CPU and egress — and a project-scoped drain still ships lines out of the install.
+ *
+ * The WHOLE config is sealed under the master key, not just its secret field: which half of a Loki config is a secret changes per deployment, since `X-Scope-OrgID` is a tenant id at one site and an access boundary at another. It is never returned; the API answers with a masked `config_hint` instead.
+ *
+ * An S3 drain names an existing Backup Target rather than carrying its own keys. A second sealed S3 credential would mean rotating a key in two places and finding the second one at 02:00 on the night the batch fails.
+ * @summary Add a log drain (panel admin)
+ */
+export const createLogDrain = async (logDrainRequest: LogDrainRequest, options?: RequestInit): Promise<LogDrain> => {
+
+  return apiFetch<LogDrain>(getCreateLogDrainUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(logDrainRequest)
+  }
+);}
+
+
+
+
+
+export const getCreateLogDrainMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createLogDrain>>, TError,{data: LogDrainRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createLogDrain>>, TError,{data: LogDrainRequest}, TContext> => {
+
+const mutationKey = ['createLogDrain'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createLogDrain>>, {data: LogDrainRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createLogDrain(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateLogDrainMutationResult = NonNullable<Awaited<ReturnType<typeof createLogDrain>>>
+    export type CreateLogDrainMutationBody = LogDrainRequest
+    export type CreateLogDrainMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error
+
+    /**
+ * @summary Add a log drain (panel admin)
+ */
+export const useCreateLogDrain = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createLogDrain>>, TError,{data: LogDrainRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof createLogDrain>>,
+        TError,
+        {data: LogDrainRequest},
+        TContext
+      > => {
+      return useMutation(getCreateLogDrainMutationOptions(options), queryClient);
+    }
+    export const getUpdateLogDrainUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/log-drains/${id}`
+}
+
+/**
+ * A body carrying `config` replaces it — a config is one object, and a field left out is a field cleared. Sealed values (a token, a key) are write-only: a `config` that carries NONE of them keeps the stored ones, so an edit that only moves an endpoint does not need the secret typed again. An EMPTY `config` (`{}`) keeps the whole stored config. Send just `enabled` to pause or resume without touching anything else; an edit that says nothing about `enabled` leaves it as it is.
+ * @summary Replace a drain's config, or just pause it (panel admin)
+ */
+export const updateLogDrain = async (id: string,
+    logDrainRequest: LogDrainRequest, options?: RequestInit): Promise<LogDrain> => {
+
+  return apiFetch<LogDrain>(getUpdateLogDrainUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(logDrainRequest)
+  }
+);}
+
+
+
+
+
+export const getUpdateLogDrainMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateLogDrain>>, TError,{id: string;data: LogDrainRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateLogDrain>>, TError,{id: string;data: LogDrainRequest}, TContext> => {
+
+const mutationKey = ['updateLogDrain'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateLogDrain>>, {id: string;data: LogDrainRequest}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateLogDrain(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateLogDrainMutationResult = NonNullable<Awaited<ReturnType<typeof updateLogDrain>>>
+    export type UpdateLogDrainMutationBody = LogDrainRequest
+    export type UpdateLogDrainMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Replace a drain's config, or just pause it (panel admin)
+ */
+export const useUpdateLogDrain = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateLogDrain>>, TError,{id: string;data: LogDrainRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof updateLogDrain>>,
+        TError,
+        {id: string;data: LogDrainRequest},
+        TContext
+      > => {
+      return useMutation(getUpdateLogDrainMutationOptions(options), queryClient);
+    }
+    export const getDeleteLogDrainUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/log-drains/${id}`
+}
+
+/**
+ * The durable consumer goes with it. Leaving it behind would hold the log stream's ack floor at the drain's last position forever — a retention window that stops sliding, which is the disk fill arrived at by a different road.
+ * @summary Remove a drain and its cursor (panel admin)
+ */
+export const deleteLogDrain = async (id: string, options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getDeleteLogDrainUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteLogDrainMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteLogDrain>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteLogDrain>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['deleteLogDrain'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteLogDrain>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteLogDrain(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteLogDrainMutationResult = NonNullable<Awaited<ReturnType<typeof deleteLogDrain>>>
+
+    export type DeleteLogDrainMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Remove a drain and its cursor (panel admin)
+ */
+export const useDeleteLogDrain = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteLogDrain>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteLogDrain>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getDeleteLogDrainMutationOptions(options), queryClient);
+    }
+    export const getListAlertRulesUrl = () => {
+
+
+
+
+  return `/api/v1/alert-rules`
+}
+
+/**
+ * A rule has no name: the SENTENCE names it, rendered from the row, so this list, the modal, the Discord message and this response all say the same words and no label typed in March can drift from what the rule now does.
+ *
+ * All four states appear, including the two that deliver nothing — `no_data` and `flapping`. A rule quiet for a bad reason must not look like one quiet for a good reason.
+ * @summary Every threshold rule, with its current state (member+)
+ */
+export const listAlertRules = async ( options?: RequestInit): Promise<AlertRule[]> => {
+
+  return apiFetch<AlertRule[]>(getListAlertRulesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAlertRulesQueryKey = () => {
+    return [
+    `/api/v1/alert-rules`
+    ] as const;
+    }
+
+
+export const getListAlertRulesQueryOptions = <TData = Awaited<ReturnType<typeof listAlertRules>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAlertRules>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAlertRulesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAlertRules>>> = ({ signal }) => listAlertRules({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAlertRules>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListAlertRulesQueryResult = NonNullable<Awaited<ReturnType<typeof listAlertRules>>>
+export type ListAlertRulesQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useListAlertRules<TData = Awaited<ReturnType<typeof listAlertRules>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAlertRules>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listAlertRules>>,
+          TError,
+          Awaited<ReturnType<typeof listAlertRules>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListAlertRules<TData = Awaited<ReturnType<typeof listAlertRules>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAlertRules>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listAlertRules>>,
+          TError,
+          Awaited<ReturnType<typeof listAlertRules>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListAlertRules<TData = Awaited<ReturnType<typeof listAlertRules>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAlertRules>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Every threshold rule, with its current state (member+)
+ */
+
+export function useListAlertRules<TData = Awaited<ReturnType<typeof listAlertRules>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAlertRules>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListAlertRulesQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getCreateAlertRuleUrl = () => {
+
+
+
+
+  return `/api/v1/alert-rules`
+}
+
+/**
+ * The condition is not "the value is above the threshold". It is: every bucket covering the last `window_seconds` breached, with no gaps in that span. A four-second spike moves a five-minute mean by about a percent and does not fire, and a bucket the agent barely covered is `unknown` — neither high nor low — so an agent restart never reads as a breach.
+ *
+ * `p95_latency_ms` and `requests_per_second` are refused on a SERVER, and the refusal is substantive: a server's request buckets are the traffic that matched no route, so "p95 on this node" would silently mean "p95 of what hit nothing".
+ * @summary Add a threshold rule (panel admin)
+ */
+export const createAlertRule = async (createAlertRuleRequest: CreateAlertRuleRequest, options?: RequestInit): Promise<AlertRule> => {
+
+  return apiFetch<AlertRule>(getCreateAlertRuleUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(createAlertRuleRequest)
+  }
+);}
+
+
+
+
+
+export const getCreateAlertRuleMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAlertRule>>, TError,{data: CreateAlertRuleRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createAlertRule>>, TError,{data: CreateAlertRuleRequest}, TContext> => {
+
+const mutationKey = ['createAlertRule'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAlertRule>>, {data: CreateAlertRuleRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createAlertRule(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateAlertRuleMutationResult = NonNullable<Awaited<ReturnType<typeof createAlertRule>>>
+    export type CreateAlertRuleMutationBody = CreateAlertRuleRequest
+    export type CreateAlertRuleMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error
+
+    /**
+ * @summary Add a threshold rule (panel admin)
+ */
+export const useCreateAlertRule = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAlertRule>>, TError,{data: CreateAlertRuleRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof createAlertRule>>,
+        TError,
+        {data: CreateAlertRuleRequest},
+        TContext
+      > => {
+      return useMutation(getCreateAlertRuleMutationOptions(options), queryClient);
+    }
+    export const getBacktestAlertRuleUrl = () => {
+
+
+
+
+  return `/api/v1/alert-rules/backtest`
+}
+
+/**
+ * Every alerting product treats "what number should I type" as the operator's problem and hands them nothing to solve it with. This panel already keeps a fortnight of exactly the series the rule reads, so the answer is one range scan over data already on disk — and it runs before Create does anything.
+ *
+ * It counts EPISODES, not evaluations: an hour above the line is one alert, and counting ticks would make every rule look catastrophic. It uses the same evaluator the loop uses, because two implementations would be two answers to one question. `had_data: false` means the series has too many gaps to say anything, which is more useful than a confident 0.
+ * @summary What this rule would have done over the last week (panel admin)
+ */
+export const backtestAlertRule = async (createAlertRuleRequest: CreateAlertRuleRequest, options?: RequestInit): Promise<AlertBacktest> => {
+
+  return apiFetch<AlertBacktest>(getBacktestAlertRuleUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(createAlertRuleRequest)
+  }
+);}
+
+
+
+
+
+export const getBacktestAlertRuleMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof backtestAlertRule>>, TError,{data: CreateAlertRuleRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof backtestAlertRule>>, TError,{data: CreateAlertRuleRequest}, TContext> => {
+
+const mutationKey = ['backtestAlertRule'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof backtestAlertRule>>, {data: CreateAlertRuleRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  backtestAlertRule(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type BacktestAlertRuleMutationResult = NonNullable<Awaited<ReturnType<typeof backtestAlertRule>>>
+    export type BacktestAlertRuleMutationBody = CreateAlertRuleRequest
+    export type BacktestAlertRuleMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary What this rule would have done over the last week (panel admin)
+ */
+export const useBacktestAlertRule = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof backtestAlertRule>>, TError,{data: CreateAlertRuleRequest}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof backtestAlertRule>>,
+        TError,
+        {data: CreateAlertRuleRequest},
+        TContext
+      > => {
+      return useMutation(getBacktestAlertRuleMutationOptions(options), queryClient);
+    }
+    export const getSetAlertRuleEnabledUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/alert-rules/${id}`
+}
+
+/**
+ * Pausing keeps the rule, its history and its notifier and stops it delivering — which is what an operator wants during a migration, and is not what deleting does.
+ * @summary Pause or resume a rule (panel admin)
+ */
+export const setAlertRuleEnabled = async (id: string,
+    setAlertRuleEnabledBody: SetAlertRuleEnabledBody, options?: RequestInit): Promise<AlertRule> => {
+
+  return apiFetch<AlertRule>(getSetAlertRuleEnabledUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(setAlertRuleEnabledBody)
+  }
+);}
+
+
+
+
+
+export const getSetAlertRuleEnabledMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setAlertRuleEnabled>>, TError,{id: string;data: SetAlertRuleEnabledBody}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setAlertRuleEnabled>>, TError,{id: string;data: SetAlertRuleEnabledBody}, TContext> => {
+
+const mutationKey = ['setAlertRuleEnabled'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setAlertRuleEnabled>>, {id: string;data: SetAlertRuleEnabledBody}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  setAlertRuleEnabled(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetAlertRuleEnabledMutationResult = NonNullable<Awaited<ReturnType<typeof setAlertRuleEnabled>>>
+    export type SetAlertRuleEnabledMutationBody = SetAlertRuleEnabledBody
+    export type SetAlertRuleEnabledMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Pause or resume a rule (panel admin)
+ */
+export const useSetAlertRuleEnabled = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setAlertRuleEnabled>>, TError,{id: string;data: SetAlertRuleEnabledBody}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setAlertRuleEnabled>>,
+        TError,
+        {id: string;data: SetAlertRuleEnabledBody},
+        TContext
+      > => {
+      return useMutation(getSetAlertRuleEnabledMutationOptions(options), queryClient);
+    }
+    export const getDeleteAlertRuleUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/alert-rules/${id}`
+}
+
+/**
+ * @summary Remove a rule and its history (panel admin)
+ */
+export const deleteAlertRule = async (id: string, options?: RequestInit): Promise<void> => {
+
+  return apiFetch<void>(getDeleteAlertRuleUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteAlertRuleMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAlertRule>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteAlertRule>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['deleteAlertRule'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteAlertRule>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteAlertRule(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteAlertRuleMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAlertRule>>>
+
+    export type DeleteAlertRuleMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary Remove a rule and its history (panel admin)
+ */
+export const useDeleteAlertRule = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAlertRule>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteAlertRule>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getDeleteAlertRuleMutationOptions(options), queryClient);
+    }
+    export const getListAlertEventsUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/alert-rules/${id}/events`
+}
+
+/**
+ * One row per EPISODE, not per evaluation — an hour above the line is one row. `delivered: false` marks an episode the flap guard held: it still happened and is still counted, it just was not sent.
+ * @summary This rule's episodes, newest first (member+)
+ */
+export const listAlertEvents = async (id: string, options?: RequestInit): Promise<AlertEvent[]> => {
+
+  return apiFetch<AlertEvent[]>(getListAlertEventsUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAlertEventsQueryKey = (id: string,) => {
+    return [
+    `/api/v1/alert-rules/${id}/events`
+    ] as const;
+    }
+
+
+export const getListAlertEventsQueryOptions = <TData = Awaited<ReturnType<typeof listAlertEvents>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAlertEvents>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAlertEventsQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAlertEvents>>> = ({ signal }) => listAlertEvents(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAlertEvents>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListAlertEventsQueryResult = NonNullable<Awaited<ReturnType<typeof listAlertEvents>>>
+export type ListAlertEventsQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useListAlertEvents<TData = Awaited<ReturnType<typeof listAlertEvents>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAlertEvents>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listAlertEvents>>,
+          TError,
+          Awaited<ReturnType<typeof listAlertEvents>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListAlertEvents<TData = Awaited<ReturnType<typeof listAlertEvents>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAlertEvents>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listAlertEvents>>,
+          TError,
+          Awaited<ReturnType<typeof listAlertEvents>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListAlertEvents<TData = Awaited<ReturnType<typeof listAlertEvents>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAlertEvents>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary This rule's episodes, newest first (member+)
+ */
+
+export function useListAlertEvents<TData = Awaited<ReturnType<typeof listAlertEvents>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAlertEvents>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListAlertEventsQueryOptions(id,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getGetUsageUrl = (params?: GetUsageParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/usage?${stringifiedParams}` : `/api/v1/usage`
+}
+
+/**
+ * The capacity question — which project forces the next server — not a billing one. There is no price, no rate and no currency anywhere in this feature, and NOTHING IN IT EVER REFUSES AN ACTION: usage is reported, and it never gates a deploy.
+ *
+ * `cpu_share` needs a stated denominator or it is a tenancy leak: showing "38% of fleet CPU" to a member of one team would silently disclose the size of every other team's load. So the denominator is the total of what the CALLER can see, `denominator` says which in words, and a project the caller cannot see contributes to neither numerator nor denominator.
+ * @summary Per-project attribution for a month (member+)
+ */
+export const getUsage = async (params?: GetUsageParams, options?: RequestInit): Promise<Usage> => {
+
+  return apiFetch<Usage>(getGetUsageUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetUsageQueryKey = (params?: GetUsageParams,) => {
+    return [
+    `/api/v1/usage`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetUsageQueryOptions = <TData = Awaited<ReturnType<typeof getUsage>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(params?: GetUsageParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getUsage>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetUsageQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getUsage>>> = ({ signal }) => getUsage(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getUsage>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetUsageQueryResult = NonNullable<Awaited<ReturnType<typeof getUsage>>>
+export type GetUsageQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+
+
+export function useGetUsage<TData = Awaited<ReturnType<typeof getUsage>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ params: undefined |  GetUsageParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getUsage>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getUsage>>,
+          TError,
+          Awaited<ReturnType<typeof getUsage>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetUsage<TData = Awaited<ReturnType<typeof getUsage>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ params?: GetUsageParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getUsage>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getUsage>>,
+          TError,
+          Awaited<ReturnType<typeof getUsage>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetUsage<TData = Awaited<ReturnType<typeof getUsage>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ params?: GetUsageParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getUsage>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Per-project attribution for a month (member+)
+ */
+
+export function useGetUsage<TData = Awaited<ReturnType<typeof getUsage>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ params?: GetUsageParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getUsage>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetUsageQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getExportUsageUrl = (params?: ExportUsageParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/usage/export?${stringifiedParams}` : `/api/v1/usage/export`
+}
+
+/**
+ * Same scope as the page: the export can never contain a row the caller could not already read. It carries the ownership chain and the measures and stops there — the CSV ends where a spreadsheet begins.
+ * @summary One CSV row per resource (member+)
+ */
+export const exportUsage = async (params?: ExportUsageParams, options?: RequestInit): Promise<Blob> => {
+
+  return apiFetch<Blob>(getExportUsageUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getExportUsageQueryKey = (params?: ExportUsageParams,) => {
+    return [
+    `/api/v1/usage/export`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getExportUsageQueryOptions = <TData = Awaited<ReturnType<typeof exportUsage>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(params?: ExportUsageParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportUsage>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getExportUsageQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof exportUsage>>> = ({ signal }) => exportUsage(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof exportUsage>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ExportUsageQueryResult = NonNullable<Awaited<ReturnType<typeof exportUsage>>>
+export type ExportUsageQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+
+
+export function useExportUsage<TData = Awaited<ReturnType<typeof exportUsage>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ params: undefined |  ExportUsageParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportUsage>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof exportUsage>>,
+          TError,
+          Awaited<ReturnType<typeof exportUsage>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useExportUsage<TData = Awaited<ReturnType<typeof exportUsage>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ params?: ExportUsageParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportUsage>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof exportUsage>>,
+          TError,
+          Awaited<ReturnType<typeof exportUsage>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useExportUsage<TData = Awaited<ReturnType<typeof exportUsage>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ params?: ExportUsageParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportUsage>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary One CSV row per resource (member+)
+ */
+
+export function useExportUsage<TData = Awaited<ReturnType<typeof exportUsage>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse>(
+ params?: ExportUsageParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportUsage>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getExportUsageQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getGetMetricsSettingsUrl = () => {
+
+
+
+
+  return `/api/v1/settings/metrics`
+}
+
+/**
+ * @summary Panel-wide metrics collection policy (panel admin)
+ */
+export const getMetricsSettings = async ( options?: RequestInit): Promise<MetricsSettings> => {
+
+  return apiFetch<MetricsSettings>(getGetMetricsSettingsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetMetricsSettingsQueryKey = () => {
+    return [
+    `/api/v1/settings/metrics`
+    ] as const;
+    }
+
+
+export const getGetMetricsSettingsQueryOptions = <TData = Awaited<ReturnType<typeof getMetricsSettings>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMetricsSettings>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMetricsSettingsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMetricsSettings>>> = ({ signal }) => getMetricsSettings({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMetricsSettings>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetMetricsSettingsQueryResult = NonNullable<Awaited<ReturnType<typeof getMetricsSettings>>>
+export type GetMetricsSettingsQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useGetMetricsSettings<TData = Awaited<ReturnType<typeof getMetricsSettings>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMetricsSettings>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getMetricsSettings>>,
+          TError,
+          Awaited<ReturnType<typeof getMetricsSettings>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMetricsSettings<TData = Awaited<ReturnType<typeof getMetricsSettings>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMetricsSettings>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getMetricsSettings>>,
+          TError,
+          Awaited<ReturnType<typeof getMetricsSettings>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetMetricsSettings<TData = Awaited<ReturnType<typeof getMetricsSettings>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMetricsSettings>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Panel-wide metrics collection policy (panel admin)
+ */
+
+export function useGetMetricsSettings<TData = Awaited<ReturnType<typeof getMetricsSettings>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMetricsSettings>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetMetricsSettingsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getSetMetricsSettingsUrl = () => {
+
+
+
+
+  return `/api/v1/settings/metrics`
+}
+
+/**
+ * Three knobs, not one per dimension. `enabled` and `request_analytics` are the two an operator has a real reason to change — cost, and privacy about paths — and `bucket_seconds` is load-bearing for the write budget: an operator with 500 containers raises it to 900 and cuts the stored row count by a factor of three.
+ *
+ * Turning `request_analytics` on changes the Proxy's static configuration, which RECREATES the Proxy container on each node once — a few seconds with no routing there.
+ * @summary Change the collection policy (panel admin)
+ */
+export const setMetricsSettings = async (metricsSettings: MetricsSettings, options?: RequestInit): Promise<MetricsSettings> => {
+
+  return apiFetch<MetricsSettings>(getSetMetricsSettingsUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(metricsSettings)
+  }
+);}
+
+
+
+
+
+export const getSetMetricsSettingsMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setMetricsSettings>>, TError,{data: MetricsSettings}, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setMetricsSettings>>, TError,{data: MetricsSettings}, TContext> => {
+
+const mutationKey = ['setMetricsSettings'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setMetricsSettings>>, {data: MetricsSettings}> = (props) => {
+          const {data} = props ?? {};
+
+          return  setMetricsSettings(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetMetricsSettingsMutationResult = NonNullable<Awaited<ReturnType<typeof setMetricsSettings>>>
+    export type SetMetricsSettingsMutationBody = MetricsSettings
+    export type SetMetricsSettingsMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse
+
+    /**
+ * @summary Change the collection policy (panel admin)
+ */
+export const useSetMetricsSettings = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setMetricsSettings>>, TError,{data: MetricsSettings}, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setMetricsSettings>>,
+        TError,
+        {data: MetricsSettings},
+        TContext
+      > => {
+      return useMutation(getSetMetricsSettingsMutationOptions(options), queryClient);
     }

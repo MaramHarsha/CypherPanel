@@ -13,8 +13,18 @@
 // A custom domain stays possible, because someone will always have a zone
 // managed elsewhere. It is a deliberate second choice, and it says plainly and
 // permanently that it is not verified — never a silent acceptance.
+//
+// TWO ADDITIONS, both from an operator's report. The field now works WITHOUT an
+// application id, because the create dialog had no id to give and so kept a
+// plain text box — the one moment the picker is most useful was the one place
+// it was missing. And it now says when a hostname is ALREADY SERVED on the
+// chosen server: two applications cannot share one, the proxy picks a winner,
+// and the loser stops answering with no error anywhere. That operator lost a
+// working site to it.
 import { useEffect, useMemo, useState } from "react";
 import { useGetApplicationDNS } from "@/api/gen/applications/applications";
+import { useListDNSZones } from "@/api/gen/panel/panel";
+import { useListServerDomains } from "@/api/gen/servers/servers";
 import { DomainVerification } from "@/components/domain-verification";
 import { StatusDot } from "@/components/status-badge";
 import { Field } from "@/components/ui/field";
@@ -39,15 +49,47 @@ export function splitDomain(domain: string, zones: string[]): { sub: string; zon
 
 export function DomainField({
   applicationId,
+  serverId,
+  selfDomain,
   value,
   onChange,
 }: {
-  applicationId: string;
+  /** Absent while creating: there is no application yet to ask about. */
+  applicationId?: string;
+  /**
+   * Which server will serve this. A hostname collision is per SERVER — one
+   * node, one proxy, one rule table — so the warning needs to know which.
+   */
+  serverId?: string;
+  /** The value already saved, so an application does not conflict with itself. */
+  selfDomain?: string;
   value: string;
   onChange: (next: string) => void;
 }) {
-  const { data } = useGetApplicationDNS(applicationId);
-  const zones = useMemo(() => data?.available_zones ?? [], [data]);
+  // Two sources for the same list. An existing application asks about itself,
+  // which also carries the verification state; a new one has no id yet, so it
+  // asks the panel. Both hooks are called unconditionally and the unused one is
+  // disabled — hooks cannot be conditional, and a picker that only appears
+  // after the first save is the gap this closes.
+  const served = useListServerDomains(serverId ?? "", {
+    query: { enabled: (serverId ?? "") !== "" },
+  });
+  const { data } = useGetApplicationDNS(applicationId ?? "", {
+    query: { enabled: (applicationId ?? "") !== "" },
+  });
+  const panelZones = useListDNSZones({ query: { enabled: (applicationId ?? "") === "" } });
+  const zones = useMemo(
+    () => (applicationId ? (data?.available_zones ?? []) : (panelZones.data ?? []).map((z) => z.name)),
+    [applicationId, data, panelZones.data],
+  );
+  // Hostnames already routed by the chosen server, so the form can warn before
+  // it is refused. Asked only once a server is known.
+  const inUse = useMemo(
+    () => (served.data?.domains ?? []).map((d) => d.toLowerCase()),
+    [served.data],
+  );
+  const host = value.trim().toLowerCase().replace(/\.$/, "");
+  const taken = host !== "" && host !== (selfDomain ?? "").trim().toLowerCase() && inUse.includes(host);
   const parsed = useMemo(() => splitDomain(value, zones), [value, zones]);
 
   // Custom mode is sticky once chosen, and starts on when the current value is
@@ -61,8 +103,12 @@ export function DomainField({
 
   // No provider connected: nothing is enforced, so nothing changes. This is the
   // whole reason the feature is safe to add to an existing install.
-  if (!data?.enforced || zones.length === 0) {
+  // Without an application there is no `enforced` flag to read, so the zone
+  // list itself is the condition: zones means a provider is connected.
+  const enforced = applicationId ? data?.enforced === true : zones.length > 0;
+  if (!enforced || zones.length === 0) {
     return (
+      <div>
       <Field label="Domain" hint="Where the app is reachable.">
         {(id) => (
           <Input
@@ -75,6 +121,8 @@ export function DomainField({
           />
         )}
       </Field>
+        <DomainTaken taken={taken} host={host} zone="" />
+      </div>
     );
   }
 
@@ -114,6 +162,7 @@ export function DomainField({
             </button>
           </span>
         </p>
+        <DomainTaken taken={taken} host={host} zone="" />
       </div>
     );
   }
@@ -164,7 +213,8 @@ export function DomainField({
           </span>
         )}
       </Field>
-      <DomainVerification applicationId={applicationId} />
+      <DomainTaken taken={taken} host={host} zone={zone} />
+      {applicationId && <DomainVerification applicationId={applicationId} />}
       <p className="mt-1.5 text-[11.5px] leading-relaxed text-text-faint">
         Leave the first box empty to use <span className="mono">{zone}</span> itself. Need a domain managed elsewhere?{" "}
         <button
@@ -180,5 +230,35 @@ export function DomainField({
         .
       </p>
     </div>
+  );
+}
+
+/**
+ * The hostname is already served here.
+ *
+ * The API refuses this too — the collision is physical, and a screen is not a
+ * security control — but meeting the refusal only on save means filling the
+ * form in twice. It names what to do instead of what the rule is, because an
+ * operator can act on a subdomain and cannot act on a rule.
+ *
+ * It says "another application" and never which one: naming an application in
+ * a team the viewer may not belong to would make this form an enumeration
+ * tool, which is exactly what the server-side refusal withholds.
+ */
+function DomainTaken({ taken, host, zone }: { taken: boolean; host: string; zone: string }) {
+  if (!taken) return null;
+  const apex = zone !== "" && host === zone;
+  return (
+    <p role="alert" className="mt-1.5 text-[12px] leading-[1.5] text-status-degraded-text">
+      <span className="mono">{host}</span> is already served by another application on this server.{" "}
+      {apex ? (
+        <>
+          Put this one on a subdomain — <span className="mono">app.{zone}</span> — or pick another domain.
+        </>
+      ) : (
+        <>Choose a different subdomain, or another domain.</>
+      )}{" "}
+      Two applications on one server cannot share a hostname: the proxy serves one and the other stops answering.
+    </p>
   );
 }

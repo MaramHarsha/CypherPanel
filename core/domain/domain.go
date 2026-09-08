@@ -54,6 +54,20 @@ type Server struct {
 	// DiskLow is whether the server is currently below the threshold. Stored so
 	// the alert can fire on the transition rather than on every heartbeat.
 	DiskLow bool
+	// AgentChannel is which release channel this server follows
+	// (agent-updates.md §2). Its desired version is that channel's; there is no
+	// per-server version, so promotion is one write rather than a bulk edit.
+	AgentChannel string
+	// The observed half of ADR-010, from heartbeats. Phase is a STRING rather
+	// than a typed enum so an agent newer than this plane can report a phase
+	// this plane does not know without its whole heartbeat being dropped.
+	AgentUpdatePhase  string
+	AgentUpdateTarget string
+	AgentUpdateDetail string
+	// SubsystemHealth is WHICH parts of the agent are unhealthy, as of the last
+	// heartbeat. Empty means nothing is — or that the agent predates the field
+	// and is degraded for a reason it cannot name; Status distinguishes them.
+	SubsystemHealth []SubsystemHealth
 	// LastSeenAt is the time of the most recent heartbeat, nil if never seen.
 	LastSeenAt *time.Time
 	CreatedAt  time.Time
@@ -62,6 +76,72 @@ type Server struct {
 
 // Enrolled reports whether an agent has completed enrollment for this server.
 func (s Server) Enrolled() bool { return s.EnrolledAt != nil }
+
+// SubsystemHealth is one unhealthy part of an agent, as its heartbeat reported
+// it. Subsystem is the agent's own stable name ("proxy", "updater"); Message is
+// its error text, which is a diagnosis and never a value (ENGINEERING rule 20).
+type SubsystemHealth struct {
+	Subsystem string `json:"subsystem"`
+	Message   string `json:"message"`
+}
+
+// GitHubApp is the panel's single GitHub App credential (github-app.md §2).
+// The sealed half never leaves the store layer's hands except through
+// githubapp.Service, which is the one place it is opened.
+type GitHubApp struct {
+	AppID       int64
+	Slug        string
+	ConfigCT    []byte
+	ConfigNonce []byte
+	UpdatedAt   time.Time
+}
+
+// GitHubInstallation is one place the App is installed, as GitHub reports it.
+// Observed, never authored: an operator-entered list would be a second place to
+// lie about what access exists (§3).
+type GitHubInstallation struct {
+	ID             string
+	InstallationID int64
+	AccountLogin   string
+	AccountType    string
+	RepoSelection  string
+	RefreshedAt    time.Time
+}
+
+// Release channel vocabulary (agent-updates.md §2). Two, and closed: `canary`
+// is opt-in per server and `stable` is the default, so a fleet with nothing on
+// canary has one channel and no gate.
+const (
+	ChannelStable = "stable"
+	ChannelCanary = "canary"
+)
+
+// ValidChannel reports whether c names a release channel.
+func ValidChannel(c string) bool { return c == ChannelStable || c == ChannelCanary }
+
+// Agent update phases as they are stored and rendered. They mirror the proto
+// enum's names in lower snake case; an unrecognised value from a newer agent is
+// stored and shown verbatim rather than dropped.
+const (
+	AgentPhaseIdle        = "idle"
+	AgentPhasePending     = "pending"
+	AgentPhaseDownloading = "downloading"
+	AgentPhaseVerifying   = "verifying"
+	AgentPhaseSwapping    = "swapping"
+	AgentPhaseRolledBack  = "rolled_back"
+	AgentPhaseFailed      = "failed"
+	AgentPhaseDisabled    = "disabled"
+)
+
+// AgentChannelRow is one channel's desired state (agent-updates.md §2).
+type AgentChannelRow struct {
+	Channel        string
+	DesiredVersion string
+	ArtifactBase   string
+	Rollback       bool
+	UpdatedAt      time.Time
+	UpdatedBy      *string
+}
 
 // Server role vocabulary (builder-role-and-relay.md §1).
 const (

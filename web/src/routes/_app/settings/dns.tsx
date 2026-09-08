@@ -26,9 +26,9 @@ import {
 } from "@/api/gen/panel/panel";
 import { useGetMe } from "@/api/gen/auth/auth";
 import { ConfirmDestructive } from "@/components/confirm-destructive";
-import { EmptyState } from "@/components/empty-state";
 import { Eyebrow } from "@/components/eyebrow";
 import { PageState } from "@/components/page-state";
+import { PanelRoleRefusal } from "@/components/role-refusal";
 import { StatusDot } from "@/components/status-badge";
 import { ActionButton, useMutationActionState } from "@/components/ui/action-button";
 import { Field } from "@/components/ui/field";
@@ -47,14 +47,10 @@ function DNSTab() {
   const canManage = atLeast(me.data?.role as Role | undefined, "admin");
   const dns = useGetPanelDNS({ query: { enabled: canManage } });
 
-  if (!canManage) {
-    return (
-      <EmptyState
-        glyph="⌁"
-        title="DNS settings need an admin"
-        hint="A DNS provider is shared infrastructure — one credential that can write records for every project — so it is managed by panel admins and owners. Ask one if a domain is not verifying."
-      />
-    );
+  // Gated on the answer, not on its absence: a refusal painted while /auth/me
+  // is still in flight would flash a 403 at the owner who is allowed here.
+  if (me.isSuccess && !canManage) {
+    return <PanelRoleRefusal action="Managing the panel's DNS provider" needs="admin" />;
   }
 
   return (

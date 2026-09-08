@@ -2,13 +2,18 @@ package templates
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"regexp"
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/MaramHarsha/cypherpanel/core/applications"
+	"github.com/MaramHarsha/cypherpanel/core/compose"
 	"github.com/MaramHarsha/cypherpanel/core/databases"
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 )
@@ -463,7 +468,41 @@ func TestBundledImagesArePinnedToAnExactVersion(t *testing.T) {
 				t.Errorf("%s: image %q is not pinned to an exact version — a moving tag makes installs from one release non-reproducible", tpl.Slug, app.Image)
 			}
 		}
+		// A COMPOSE template's images are in its file, and the rule applies to
+		// them identically. Without this the pinning discipline would have a
+		// hole the shape of every stack — and the first stack shipped is one
+		// whose upstream publishes a `:latest` for half of it.
+		for _, st := range tpl.Resources.Stacks {
+			for _, img := range composeImages(st.Compose) {
+				tag := ""
+				if i := strings.LastIndex(img, ":"); i > strings.LastIndex(img, "/") {
+					tag = img[i+1:]
+				}
+				if !digest.MatchString(img) && !patch.MatchString(tag) {
+					t.Errorf("%s: stack %q image %q is not pinned — a moving tag changes a stack underneath the operator", tpl.Slug, st.Name, img)
+				}
+			}
+		}
 	}
+}
+
+// composeImages pulls every `image:` out of a compose file.
+func composeImages(file string) []string {
+	var parsed struct {
+		Services map[string]struct {
+			Image string `yaml:"image"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal([]byte(file), &parsed); err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(parsed.Services))
+	for _, svc := range parsed.Services {
+		if svc.Image != "" {
+			out = append(out, svc.Image)
+		}
+	}
+	return out
 }
 
 // The placeholder grammar allows whitespace, so `{{ domain }}` is a valid
@@ -624,5 +663,165 @@ func TestInstallReportsAnUpstreamDefaultAsNotGenerated(t *testing.T) {
 	fl := res.FirstLogin
 	if fl == nil || fl.Generated || fl.Username != "admin" || fl.Password != "admin" {
 		t.Fatalf("first_login = %+v; want Grafana's documented admin/admin, not generated", fl)
+	}
+}
+
+// ─── Compose templates (compose-templates.md) ───────────────────────────────
+
+type fakeStacks struct {
+	created  []compose.Input
+	deployed []string
+	deleted  []string
+	failOn   string
+	nextID   int
+}
+
+func (f *fakeStacks) Create(_ context.Context, _ string, in compose.Input) (domain.ComposeStack, error) {
+	f.created = append(f.created, in)
+	if f.failOn != "" && strings.Contains(in.Name, f.failOn) {
+		return domain.ComposeStack{}, errors.New("stack create failed")
+	}
+	f.nextID++
+	return domain.ComposeStack{ID: fmt.Sprintf("cs_%d", f.nextID), Name: in.Name}, nil
+}
+
+func (f *fakeStacks) Deploy(_ context.Context, id string) (domain.ComposeStack, error) {
+	f.deployed = append(f.deployed, id)
+	return domain.ComposeStack{ID: id}, nil
+}
+
+func (f *fakeStacks) Delete(_ context.Context, id string, _ bool) error {
+	f.deleted = append(f.deleted, id)
+	return nil
+}
+
+// OpenClaw is the entry compose templates were added for: the importer refused
+// it four times over, and every refusal was something compose does natively.
+func TestOpenClawInstallsAsAStack(t *testing.T) {
+	stacks := &fakeStacks{}
+	s := newTestService(t, &fakeApps{}, &fakeDbs{}, &fakeDeployer{}).WithStacks(stacks)
+
+	res, err := s.Install(context.Background(), "openclaw", InstallInput{
+		EnvironmentID: "env_1", ServerID: "srv_1", Domain: "claw.example.com",
+	})
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if len(stacks.created) != 1 {
+		t.Fatalf("created %d stacks, want 1", len(stacks.created))
+	}
+	in := stacks.created[0]
+	if len(res.StackIDs) != 1 || len(stacks.deployed) != 1 {
+		t.Errorf("the stack was created but not deployed: ids=%v deployed=%v", res.StackIDs, stacks.deployed)
+	}
+	// The route is what makes it answer at the operator's domain: a stack
+	// cannot use the file's own Traefik labels (ADR-004), so the plane needs
+	// telling which service and port.
+	if in.Route.Domain != "claw.example.com" || in.Route.Service != "openclaw" || in.Route.Port != 8080 {
+		t.Errorf("route = %+v, want claw.example.com -> openclaw:8080", in.Route)
+	}
+
+	// THE SECRET DISCIPLINE. A generated credential must reach the containers
+	// through the sealed env, never through the stored compose file — the
+	// stack's own page displays that file.
+	pw := in.EnvVars["AUTH_PASSWORD"]
+	if pw == "" {
+		t.Fatal("AUTH_PASSWORD was not generated into the stack's env")
+	}
+	if strings.Contains(in.ComposeYAML, pw) {
+		t.Error("the generated password was resolved INTO the compose file, which the stack's page shows")
+	}
+	if strings.Contains(in.ComposeYAML, "{{") {
+		t.Errorf("an unresolved placeholder survived into the compose file:\n%s", in.ComposeYAML)
+	}
+	// And the file still references it, or the container never sees it.
+	if !strings.Contains(in.ComposeYAML, "${AUTH_PASSWORD}") {
+		t.Error("the compose file does not reference ${AUTH_PASSWORD}")
+	}
+
+	// The operator is told the password once, in the install response.
+	if res.FirstLogin == nil || res.FirstLogin.Password != pw || !res.FirstLogin.Generated {
+		t.Errorf("first_login did not carry the generated password: %+v", res.FirstLogin)
+	}
+	if res.FirstLogin.StackID == "" {
+		t.Error("first_login points at no stack, so the screen cannot link to what it installed")
+	}
+}
+
+// A secret placeholder inside `compose:` is refused at LOAD time, because
+// resolving one would write a live credential into a file the panel displays.
+func TestASecretInsideAComposeFileIsRefused(t *testing.T) {
+	tpl := Template{
+		Schema: "v1", Slug: "bad", Name: "Bad", Category: "ai",
+		Resources: TplResources{Stacks: []TplStack{{
+			Name:    "s",
+			Compose: "services:\n  a:\n    image: nginx:1.27.0\n    environment:\n      P: \"{{secret.16}}\"\n",
+		}}},
+	}
+	err := tpl.Validate()
+	if err == nil || !strings.Contains(err.Error(), "env:") {
+		t.Fatalf("a {{secret}} in compose must be refused pointing at env:, got %v", err)
+	}
+}
+
+// A failed install takes its stack with it, volumes included: they are minutes
+// old and belong to the install that failed.
+func TestAFailedInstallRemovesItsStack(t *testing.T) {
+	stacks := &fakeStacks{failOn: "openclaw"}
+	s := newTestService(t, &fakeApps{}, &fakeDbs{}, &fakeDeployer{}).WithStacks(stacks)
+
+	if _, err := s.Install(context.Background(), "openclaw", InstallInput{
+		EnvironmentID: "env_1", ServerID: "srv_1", Domain: "claw.example.com",
+	}); err == nil {
+		t.Fatal("Install succeeded despite the stack create failing")
+	}
+	if len(stacks.deployed) != 0 {
+		t.Error("a stack that failed to create was deployed")
+	}
+}
+
+// A panel wired without the compose service refuses the template with a
+// sentence, rather than installing the half it can.
+func TestAComposeTemplateNeedsTheComposeService(t *testing.T) {
+	s := newTestService(t, &fakeApps{}, &fakeDbs{}, &fakeDeployer{})
+	_, err := s.Install(context.Background(), "openclaw", InstallInput{
+		EnvironmentID: "env_1", ServerID: "srv_1", Domain: "claw.example.com",
+	})
+	if err == nil || !strings.Contains(err.Error(), "compose stacks") {
+		t.Fatalf("want a refusal naming compose stacks, got %v", err)
+	}
+}
+
+// Optional collections are empty arrays on the wire, never null.
+//
+// A compose template declares no applications, and `applications: null` made
+// the catalog screen throw on `null.length` the moment its install dialog
+// opened — a blank error page for a template whose every other layer was
+// correct. Parse's own comment already promised this ("optional YAML
+// collections are represented as empty arrays/objects, never null"); it covered
+// one of the three.
+func TestOptionalCollectionsAreNeverNullOnTheWire(t *testing.T) {
+	s := newTestService(t, &fakeApps{}, &fakeDbs{}, &fakeDeployer{})
+	for _, tpl := range s.List() {
+		raw, err := json.Marshal(tpl)
+		if err != nil {
+			t.Fatalf("%s: marshal: %v", tpl.Slug, err)
+		}
+		var back struct {
+			Resources map[string]json.RawMessage `json:"resources"`
+		}
+		if err := json.Unmarshal(raw, &back); err != nil {
+			t.Fatalf("%s: unmarshal: %v", tpl.Slug, err)
+		}
+		for _, key := range []string{"applications", "databases", "stacks"} {
+			v, ok := back.Resources[key]
+			if !ok {
+				t.Errorf("%s: resources.%s is absent; a client reading it gets undefined", tpl.Slug, key)
+				continue
+			}
+			if string(v) == "null" {
+				t.Errorf("%s: resources.%s serialized as null — the screen does .length on it", tpl.Slug, key)
+			}
+		}
 	}
 }

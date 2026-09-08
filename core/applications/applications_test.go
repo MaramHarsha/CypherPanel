@@ -7,6 +7,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MaramHarsha/cypherpanel/core/domain"
 	"github.com/MaramHarsha/cypherpanel/core/store"
@@ -20,6 +21,12 @@ func (fakeSealer) Seal(pt []byte) (ct, nonce []byte, err error) {
 	return append([]byte("sealed:"), pt...), []byte("nonce"), nil
 }
 
+// domainClaim pairs a hostname with the application already serving it.
+type domainClaim struct {
+	Domain string
+	Claim  domain.DomainClaim
+}
+
 type fakeStore struct {
 	envs    map[string]bool
 	servers map[string]bool
@@ -30,6 +37,10 @@ type fakeStore struct {
 	sharedKeys []string
 	// registries the panel knows about, by id (registries.md §5).
 	registries map[string]domain.Registry
+	// installations is the panel's GitHub App cache; empty means none connected.
+	installations []domain.GitHubInstallation
+	// claims are the domains already served, by whom.
+	claims []domainClaim
 	// registryLookups counts GetRegistry calls, so "an application that names
 	// no registry pays no lookup" is provable rather than assumed.
 	registryLookups int
@@ -82,6 +93,43 @@ func (f *fakeStore) UpdateApplicationConfig(_ context.Context, a domain.Applicat
 	return a, nil
 }
 
+func (f *fakeStore) SetApplicationMaintenance(_ context.Context, id string, on bool) (domain.Application, error) {
+	app := f.apps[id]
+	app.Access.MaintenanceMode = on
+	if on {
+		if app.Access.MaintenanceSince == nil {
+			now := time.Now()
+			app.Access.MaintenanceSince = &now
+		}
+	} else {
+		app.Access.MaintenanceSince = nil
+	}
+	f.apps[id] = app
+	return app, nil
+}
+
+func (f *fakeStore) SetApplicationAllowlist(_ context.Context, id string, enabled bool, cidrs []string) (domain.Application, error) {
+	a, ok := f.apps[id]
+	if !ok {
+		return domain.Application{}, store.ErrNotFound
+	}
+	a.Access.IPAllowlistEnabled = enabled
+	a.Access.IPAllowlist = cidrs
+	f.apps[id] = a
+	return a, nil
+}
+
+func (f *fakeStore) SetApplicationPreviewPassword(_ context.Context, id string, enabled bool, hash string) (domain.Application, error) {
+	a, ok := f.apps[id]
+	if !ok {
+		return domain.Application{}, store.ErrNotFound
+	}
+	a.Access.PreviewPasswordEnabled = enabled
+	a.Access.PreviewPasswordHash = hash
+	f.apps[id] = a
+	return a, nil
+}
+
 func (f *fakeStore) ListApplicationsByEnvironment(_ context.Context, envID string) ([]domain.Application, error) {
 	var out []domain.Application
 	for _, a := range f.apps {
@@ -118,6 +166,47 @@ func (f *fakeStore) GetRegistry(_ context.Context, id string) (domain.Registry, 
 		return domain.Registry{}, store.ErrNotFound
 	}
 	return reg, nil
+}
+
+// ListGitHubInstallations backs the check that an attached App installation is
+// one the panel actually has (github-app.md §3). Seeded per test via
+// fakeStore.installations; empty means the panel has no App connected.
+func (f *fakeStore) ListGitHubInstallations(_ context.Context) ([]domain.GitHubInstallation, error) {
+	return f.installations, nil
+}
+
+// ApplicationsByRouteDomain backs the refusal of a domain another application
+// on the same server already serves. Seeded per test via fakeStore.claims.
+func (f *fakeStore) ApplicationsByRouteDomain(_ context.Context, routeDomain string) ([]domain.DomainClaim, error) {
+	var out []domain.DomainClaim
+	for _, c := range f.claims {
+		if strings.EqualFold(c.Domain, routeDomain) {
+			out = append(out, c.Claim)
+		}
+	}
+	return out, nil
+}
+
+// ListRouteDomainsByServer backs the "already in use" warning.
+func (f *fakeStore) ListRouteDomainsByServer(_ context.Context, serverID string) ([]string, error) {
+	var out []string
+	for _, c := range f.claims {
+		if c.Claim.ServerID == serverID {
+			out = append(out, strings.ToLower(c.Domain))
+		}
+	}
+	return out, nil
+}
+
+// SetApplicationWebhookSecret backs push-webhook secret rotation.
+func (f *fakeStore) SetApplicationWebhookSecret(_ context.Context, id string, ct, nonce []byte) (domain.Application, error) {
+	return domain.Application{ID: id, WebhookSecretCT: ct, WebhookSecretNonce: nonce}, nil
+}
+
+// ListServerWorkloads backs "what runs on this host". Empty here; the tests
+// that care seed it.
+func (f *fakeStore) ListServerWorkloads(_ context.Context, _ string) ([]domain.ServerWorkload, error) {
+	return nil, nil
 }
 
 func (f *fakeStore) ListSharedVariableKeysInScope(_ context.Context, _, _ string) ([]string, error) {
@@ -165,7 +254,7 @@ func (f *fakeStore) DeleteEnvVar(_ context.Context, appID, key string) error {
 func validInput() CreateInput {
 	return CreateInput{
 		Name:    "web",
-		Source:  domain.AppSource{Kind: "github", Repo: "acme/web"},
+		Source:  domain.AppSource{Kind: "github", Repo: "https://github.com/acme/web"},
 		Runtime: domain.AppRuntime{ServerID: "srv_1", Port: 8080},
 		Route:   domain.AppRoute{Domain: "web.example.com", HTTPS: true},
 		EnvVars: map[string]string{"DATABASE_URL": "postgres://secret"},
@@ -234,11 +323,22 @@ func TestCreateValidation(t *testing.T) {
 		// A kind outside the closed set. "nixpacks" used to sit here and is
 		// now supported (pack-builds.md), which is exactly why the assertion
 		// has to name something that is not.
-		"bad build":    func(in *CreateInput) { in.Build.Kind = "buildpacks" },
-		"zero port":    func(in *CreateInput) { in.Runtime.Port = 0 },
-		"huge port":    func(in *CreateInput) { in.Runtime.Port = 70000 },
-		"two replicas": func(in *CreateInput) { in.Runtime.Replicas = 2 },
-		"no server":    func(in *CreateInput) { in.Runtime.ServerID = "" },
+		"bad build":         func(in *CreateInput) { in.Build.Kind = "buildpacks" },
+		"zero port":         func(in *CreateInput) { in.Runtime.Port = 0 },
+		"huge port":         func(in *CreateInput) { in.Runtime.Port = 70000 },
+		"too many replicas": func(in *CreateInput) { in.Runtime.Replicas = 21 },
+		// The two refusals of app-scaling.md §3. Both are refusals rather than
+		// warnings because in each case there is no correct behaviour to fall
+		// back to, only two different ways to be wrong.
+		"replicas with a volume": func(in *CreateInput) {
+			in.Runtime.Replicas = 3
+			in.Volumes = []domain.VolumeMount{{Name: "uploads", Path: "/data"}}
+		},
+		"replicas with a raw port": func(in *CreateInput) {
+			in.Runtime.Replicas = 3
+			in.Ports = []domain.PortMapping{{HostPort: 25565, ContainerPort: 25565, Protocol: "tcp"}}
+		},
+		"no server": func(in *CreateInput) { in.Runtime.ServerID = "" },
 		// Health kind must be a known gate (feature-matrix V1: non-HTTP apps).
 		"bad health kind": func(in *CreateInput) { in.Health.Kind = "grpc" },
 		// Raw port publishes (feature-matrix V1): valid ranges, protocol, uniqueness.

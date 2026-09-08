@@ -35,7 +35,7 @@ func (r *fakeRelay) PushImage(ctx context.Context, deploymentID, _ string) error
 	return r.pushErr
 }
 
-func (r *fakeRelay) PullImage(_ context.Context, deploymentID, _ string) error {
+func (r *fakeRelay) PullImage(_ context.Context, deploymentID, _, _ string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.pulls = append(r.pulls, deploymentID)

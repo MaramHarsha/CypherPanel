@@ -11,9 +11,16 @@
 // confirm says so — a "permanently removes" that does not remove would be the
 // wrong kind of surprise.
 //
-// Not drawn, because the plane cannot see them: the canvas's per-volume size
-// ("3.2 GB") and the "in backups ✓" chip. AppVolume is {name, path}; volume
-// backups have no endpoint and no spec (feature-matrix.md, V1.x).
+// The canvas's "in backups ✓" chip is the toggle on each row: it flips the
+// volume's `backed_up` flag, which is what the application's volume backup
+// schedule (the card below this list) fans out over. Per-volume rather than
+// per-application because a cache directory and an uploads directory have
+// opposite answers, and archiving the cache costs storage for data whose whole
+// point is being disposable.
+//
+// Still not drawn, because the plane cannot see it: the canvas's per-volume
+// size ("3.2 GB"). Nothing reports a volume's bytes to the plane, and a number
+// this page invented would be worse than its absence.
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
@@ -30,7 +37,9 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { VolumeBackupCard } from "@/components/volume-backup-card";
 import { toastFailed, toastSuccess } from "@/lib/toast";
+import { cn } from "@/lib/utils";
 
 // The server's own rules (core/applications validateVolumes), checked here so
 // the operator keeps their typing instead of bouncing off a toast.
@@ -77,9 +86,23 @@ export function VolumesEditor({ app, projectId }: { app: Application; projectId:
     mutation: {
       onSuccess: (_a, vars) => {
         void qc.invalidateQueries({ queryKey: getGetApplicationQueryKey(app.id) });
-        setChangedAt(Date.now());
-        const grew = (vars.data.volumes?.length ?? 0) > volumes.length;
-        toastSuccess({ title: grew ? "Volume added" : "Volume removed", ...applied });
+        if ((vars.data.volumes?.length ?? 0) !== volumes.length) setChangedAt(Date.now());
+        const next = vars.data.volumes ?? [];
+        // Same length = a backed_up flag moved, not a mount. That change lands
+        // on the next scheduled run rather than the next deploy, so it does
+        // NOT get the redeploy nudge — saying "deploy to apply" for something
+        // already applied trains the operator to ignore the badge.
+        const title =
+          next.length === volumes.length
+            ? "Backup selection saved"
+            : next.length > volumes.length
+              ? "Volume added"
+              : "Volume removed";
+        if (next.length === volumes.length) {
+          toastSuccess({ title, detail: "The next volume backup run picks it up — no deploy needed." });
+          return;
+        }
+        toastSuccess({ title, ...applied });
       },
       onError: (e: unknown, vars) =>
         toastFailed("Could not save the volumes", e, { retry: () => update.mutate(vars) }),
@@ -130,6 +153,13 @@ export function VolumesEditor({ app, projectId }: { app: Application; projectId:
                   → {v.path}
                 </div>
               </div>
+              <BackupChip
+                volume={v}
+                pending={update.isPending}
+                onToggle={() =>
+                  save(volumes.map((x) => (x.name === v.name ? { ...x, backed_up: !x.backed_up } : x)))
+                }
+              />
               <ConfirmDestructive
                 trigger={
                   <Button size="sm" variant="ghost" aria-label={`Remove ${v.name}`} className="-mr-2 px-2 text-danger">
@@ -157,7 +187,51 @@ export function VolumesEditor({ app, projectId }: { app: Application; projectId:
         Removing a volume detaches its mount on the next deploy; the data stays on the server until someone reclaims
         the Docker volume by hand.
       </p>
+
+      <VolumeBackupCard appId={app.id} volumes={volumes} />
     </div>
+  );
+}
+
+/**
+ * The canvas's "in backups ✓" chip, as a toggle rather than a read-out — there
+ * is nowhere else to set the flag, and a chip that only reports would need a
+ * second control beside it saying the same thing.
+ *
+ * It is a button rather than a checkbox because the row already reads as a
+ * list of things, not a form: aria-pressed carries the state to a screen
+ * reader without the row growing a second interaction model.
+ */
+function BackupChip({
+  volume,
+  pending,
+  onToggle,
+}: {
+  volume: AppVolume;
+  pending: boolean;
+  onToggle: () => void;
+}) {
+  const on = volume.backed_up === true;
+  return (
+    <button
+      type="button"
+      disabled={pending}
+      aria-pressed={on}
+      onClick={onToggle}
+      title={
+        on
+          ? "Archived by this application's volume backup schedule. Click to exclude it."
+          : "Not archived. Click to include it in this application's volume backup schedule."
+      }
+      className={cn(
+        "shrink-0 rounded-full border px-2 py-[3px] font-mono text-[10.5px] transition-colors disabled:opacity-50",
+        on
+          ? "border-status-running/40 bg-status-running/10 text-status-running"
+          : "border-border text-text-faint hover:border-border-strong hover:text-text-mid",
+      )}
+    >
+      {on ? "in backups ✓" : "in backups"}
+    </button>
   );
 }
 

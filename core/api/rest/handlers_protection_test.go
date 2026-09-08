@@ -821,7 +821,7 @@ func TestProtectionRoutesWithoutTheService(t *testing.T) {
 func postWebhookPush(t *testing.T, ts *httptest.Server) (int, string) {
 	t.Helper()
 	token := login(t, ts)
-	create := `{"name":"web-hook","source":{"kind":"github","repo":"acme/web"},` +
+	create := `{"name":"web-hook","source":{"kind":"github","repo": "https://github.com/acme/web"},` +
 		`"runtime":{"server_id":"srv_test","port":8080},"route":{"domain":"hook.example.com"}}`
 	status, _, resp := doJSON(t, "POST", ts.URL+"/api/v1/environments/env_test/applications", token, create)
 	if status != http.StatusCreated {

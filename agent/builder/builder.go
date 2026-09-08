@@ -75,6 +75,50 @@ func (b *Builder) availablePacks() map[string]bool {
 	return out
 }
 
+// cloneFailure turns git's exit status into something an operator can act on.
+//
+// The panel had every piece of information needed to explain this and threw it
+// away: a private repository cloned with no credential fails with "could not
+// read Username for 'https://github.com'", which reads like a terminal problem,
+// and the deployment then showed "git clone failed: exit status 128". The most
+// common cause by far is a deploy key that exists in the panel and was never
+// attached to the application — so say that, with the remedy.
+func cloneFailure(output string, credentialled bool, err error) string {
+	lower := strings.ToLower(output)
+	authFailed := strings.Contains(lower, "could not read username") ||
+		strings.Contains(lower, "authentication failed") ||
+		strings.Contains(lower, "repository not found") ||
+		strings.Contains(lower, "permission denied") ||
+		strings.Contains(lower, "please make sure you have the correct access rights")
+
+	// git's answer to a schemeless remote. `git clone github.com/acme/web` treats
+	// the string as a LOCAL directory, and the only thing that reaches the
+	// deployment row otherwise is `exit status 128` — which names neither the
+	// field nor the mistake. The API refuses this shape now; this is what an
+	// application configured before it did still gets to read.
+	notARemote := strings.Contains(lower, "does not exist") ||
+		strings.Contains(lower, "does not appear to be a git repository")
+
+	switch {
+	case notARemote:
+		return "the repository is not a git remote git could reach — set it to a full " +
+			"https:// URL, or the SSH form git@host:owner/repo.git. A value with no " +
+			"scheme is read as a directory on the builder, which is why this says " +
+			"the repository does not exist"
+	case authFailed && !credentialled:
+		return "the repository needs a credential and none was attached — " +
+			"if it is private, attach a deploy key to this application (Settings → Source), " +
+			"or connect the panel's GitHub App and pick the repository"
+	case authFailed:
+		return "the credential was refused — check the deploy key is still on the repository, " +
+			"or that the GitHub App is still installed on it"
+	default:
+		// Anything else is git's own problem to describe, and its output is
+		// already in the build log above.
+		return err.Error()
+	}
+}
+
 // sshCloneURL rewrites an https://github.com/ repository URL to its SSH form
 // so the deploy key — an SSH credential — can authenticate the clone
 // (deploy-key-private-repos.md §4). Every other URL passes through unchanged:
@@ -113,7 +157,38 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 	}
 
 	cloneEnv := gitEnv
-	if work.DeployKeyPem != "" {
+	// Whether this clone carried ANY credential. It is what turns "exit status
+	// 128" into a sentence naming the likely cause: git's own message for a
+	// private repository reached anonymously is "could not read Username",
+	// which reads like a terminal problem rather than a missing key.
+	credentialled := false
+	if cred := work.GetGitCredential(); cred.GetPassword() != "" {
+		credentialled = true
+		// An HTTPS clone credential — a GitHub App installation token, minted
+		// for this build and valid about an hour (github-app.md §4).
+		//
+		// It goes in an ASKPASS helper, never in the URL. A credential in the
+		// remote URL is written into .git/config inside the build context, and
+		// that directory becomes the Docker build context moments later — so
+		// the token would be baked into an image layer. It would also reach
+		// `ps` and any git error message that echoes the remote.
+		askpass := filepath.Join(b.workDir, ".git-askpass-"+work.DeploymentId)
+		script := "#!/bin/sh\ncase \"$1\" in\n*Username*) printf '%s' \"$GIT_CRED_USER\" ;;\n*) printf '%s' \"$GIT_CRED_PASS\" ;;\nesac\n"
+		if err := os.WriteFile(askpass, []byte(script), 0o700); err != nil {
+			return "", fmt.Errorf("writing the git credential helper: %w", err)
+		}
+		defer func() { _ = os.Remove(askpass) }()
+
+		cloneEnv = append(append([]string(nil), gitEnv...),
+			"GIT_ASKPASS="+askpass,
+			"GIT_CRED_USER="+cred.GetUsername(),
+			"GIT_CRED_PASS="+cred.GetPassword(),
+			// Refuse an interactive prompt: without this a rejected token
+			// hangs the build on a terminal read nobody is watching.
+			"GIT_TERMINAL_PROMPT=0",
+		)
+		onLog(fmt.Sprintf("Cloning %s at %s through the GitHub App...", displayURL, work.CommitSha))
+	} else if work.DeployKeyPem != "" {
 		// The key lives beside (not inside) the clone target — git needs an
 		// empty destination — under 0600, and is removed on every exit path
 		// (deploy-key-private-repos.md §4). The PEM itself is never logged
@@ -124,6 +199,7 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 		}
 		defer func() { _ = os.Remove(keyFile) }()
 
+		credentialled = true
 		repoURL = sshCloneURL(repoURL)
 
 		// accept-new with no persistent known_hosts: the agent keeps no
@@ -141,7 +217,7 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		onLog(string(out))
-		return "", fmt.Errorf("git clone failed: %w", err)
+		return "", fmt.Errorf("git clone failed: %s", cloneFailure(string(out), credentialled, err))
 	}
 
 	// Check out the requested ref (a commit SHA, or a branch name when the
@@ -314,14 +390,27 @@ func (b *Builder) Build(ctx context.Context, work *agentv1.BuildWork, onLog func
 		// itself. It is still closed by the deferred Close above, which stops
 		// the walking goroutine.
 		if b.buildKit == nil {
-			return "", ErrRailpackUnavailable
+			if plan.Frontend != "" {
+				return "", ErrRailpackUnavailable
+			}
+			return "", ErrBuildKitUnavailable
+		}
+		// A frontend plan names its own file; a Dockerfile that merely needs
+		// BuildKit is built from the Dockerfile the pack wrote.
+		planFile := plan.PlanFile
+		if planFile == "" {
+			planFile = dockerfilePath
 		}
 		if err := b.buildKit.Build(ctx, BuildKitRequest{
 			ContextDir: contextDir,
-			PlanFile:   plan.PlanFile,
-			Frontend:   plan.Frontend,
-			Tag:        work.Image,
-			Labels:     labels,
+			// Under the agent's own work directory, which is writable by
+			// construction — the one place this process is certain to be able
+			// to write on a host it does not own.
+			StateDir: filepath.Join(b.workDir, ".docker"),
+			PlanFile: planFile,
+			Frontend: plan.Frontend,
+			Tag:      work.Image,
+			Labels:   labels,
 		}, onLog); err != nil {
 			return "", fmt.Errorf("build failed: %w", err)
 		}

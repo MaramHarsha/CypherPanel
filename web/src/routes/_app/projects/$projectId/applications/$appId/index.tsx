@@ -10,12 +10,15 @@ import {
   getGetApplicationQueryKey,
   useCheckApplicationDomain,
   useGetApplication,
+  useGetApplicationMetrics,
+  useGetApplicationTraffic,
   useRestartApplication,
 } from "@/api/gen/applications/applications";
-import { getHandleGithubWebhookUrl } from "@/api/gen/deployments/deployments";
 import { useGetServer } from "@/api/gen/servers/servers";
 import type { Application } from "@/api/gen/model";
-import { CopyField } from "@/components/copy-field";
+import { MetricsCard, useMetricsWindow } from "@/components/metrics-card";
+import { ReplicaCard } from "@/components/replica-card";
+import { TrafficCard } from "@/components/traffic-card";
 import { DomainLink } from "@/components/domain-link";
 import { Fact, FactCard } from "@/components/fact-card";
 import { PageState } from "@/components/page-state";
@@ -57,13 +60,12 @@ function buildSentence(a: Application): string {
 }
 
 function OverviewTab() {
-  const { appId } = Route.useParams();
+  const { projectId, appId } = Route.useParams();
   const app = useGetApplication(appId);
 
   return (
     <PageState query={app} isEmpty={() => false}>
       {(a) => {
-        const webhookUrl = new URL(getHandleGithubWebhookUrl(a.webhook_id), window.location.origin).toString();
         // Desired and observed are allowed to differ (ADR-005), and the gap is
         // the only interesting thing about them: while it is open the agent is
         // still working, and while it is closed there is nothing to say. So the
@@ -128,7 +130,7 @@ function OverviewTab() {
                 </Fact>
                 <Fact label="Container port">{a.runtime.port}</Fact>
                 <Fact label="Domain">
-                  <DomainLink applicationId={appId} domain={a.route.domain ?? ""} https={a.route.https} />
+                  <DomainLink applicationId={appId} domain={a.route.domain ?? ""} https={a.route.https} tlsState={a.tls_state} />
                 </Fact>
                 {a.route.domain && a.route.path_prefix && a.route.path_prefix !== "/" && (
                   <Fact label="Path">{a.route.path_prefix}</Fact>
@@ -166,6 +168,13 @@ function OverviewTab() {
               </FactCard>
             </div>
 
+            {/* Resources and traffic sit under the facts, not above them: the
+                question "is it running and what is it serving" is answered by
+                the cards above, and this is the follow-up. */}
+            <ReplicaCard app={a} />
+
+            <AppMetrics appId={appId} routed={Boolean(a.route.domain)} />
+
             {a.route.domain && <DomainCheck appId={appId} domain={a.route.domain} serverId={a.runtime.server_id} />}
 
             {/* An image-source app has no repository to hang a webhook on, and
@@ -182,20 +191,50 @@ function OverviewTab() {
                 </p>
               </section>
             ) : (
+              // One home for the setup, and it is Settings — this tab reports
+              // state, and an operator looking to CONFIGURE push-to-deploy went
+              // to Settings and to Project → Settings → Webhooks before ever
+              // thinking to look at an overview.
               <section className="rounded-lg border border-border bg-surface p-4.5">
                 <h2 className="eyebrow">Push to deploy</h2>
                 <p className="mt-3 max-w-2xl text-[12.5px] leading-relaxed text-text-dim">
-                  Add this webhook to the GitHub repository (Settings → Webhooks, content type JSON) and every push
-                  to <span className="font-mono text-[12px] text-text">{a.source.branch}</span> deploys
-                  automatically.
+                  A push to <span className="font-mono text-[12px] text-text">{a.source.branch}</span> deploys
+                  automatically once this application&rsquo;s webhook is on the repository. Set it up in{" "}
+                  <Link
+                    to="/projects/$projectId/applications/$appId/settings"
+                    params={{ projectId, appId }}
+                    className="font-semibold underline underline-offset-2"
+                  >
+                    Settings
+                  </Link>
+                  , under the repository.
                 </p>
-                <CopyField value={webhookUrl} className="mt-2.5" />
               </section>
             )}
           </div>
         );
       }}
     </PageState>
+  );
+}
+
+/**
+ * CPU, memory and disk, plus traffic when the application actually has a public
+ * route. An application with no route has no traffic to show and is not offered
+ * an empty card that implies it should — the Proxy never sees it at all.
+ *
+ * One window control drives both, because "the last six hours" is one question
+ * and two pickers that can disagree is two answers to it.
+ */
+function AppMetrics({ appId, routed }: { appId: string; routed: boolean }) {
+  const [win, setWin] = useMetricsWindow();
+  const metrics = useGetApplicationMetrics(appId, { window: win });
+  const traffic = useGetApplicationTraffic(appId, { window: win }, { query: { enabled: routed } });
+  return (
+    <div className="space-y-3.5">
+      <MetricsCard query={metrics} window={win} onWindow={setWin} />
+      {routed && <TrafficCard query={traffic} window={win} onWindow={setWin} />}
+    </div>
   );
 }
 

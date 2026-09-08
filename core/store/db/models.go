@@ -22,6 +22,42 @@ type AccessRequest struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
+type AgentChannel struct {
+	Channel        string
+	DesiredVersion string
+	ArtifactBase   string
+	Rollback       bool
+	UpdatedAt      pgtype.Timestamptz
+	UpdatedBy      pgtype.Text
+}
+
+type AlertEvent struct {
+	ID         string
+	RuleID     string
+	StartedAt  pgtype.Timestamptz
+	ResolvedAt pgtype.Timestamptz
+	PeakValue  float64
+	Delivered  bool
+}
+
+type AlertRule struct {
+	ID              string
+	TargetKind      string
+	TargetID        string
+	Signal          string
+	Threshold       float64
+	ThresholdUnit   string
+	WindowSeconds   int32
+	NotifierID      string
+	Enabled         bool
+	State           string
+	StateSince      pgtype.Timestamptz
+	RearmUntil      pgtype.Timestamptz
+	QuietNotifiedAt pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type ApiToken struct {
 	ID         string
 	UserID     string
@@ -43,50 +79,59 @@ type AppEnvVar struct {
 }
 
 type Application struct {
-	ID                    string
-	EnvironmentID         string
-	Name                  string
-	SourceKind            string
-	SourceRepo            string
-	SourceBranch          string
-	SourceDeployKeyID     pgtype.Text
-	BuildKind             string
-	BuildDockerfilePath   string
-	BuildContext          string
-	RuntimeServerID       string
-	RuntimePort           int32
-	RuntimeReplicas       int32
-	RouteDomain           string
-	RouteHttps            bool
-	RoutePathPrefix       string
-	HealthPath            string
-	HealthIntervalSeconds int32
-	HealthTimeoutSeconds  int32
-	HealthRetries         int32
-	WebhookID             string
-	WebhookSecretCt       []byte
-	WebhookSecretNonce    []byte
-	DesiredRevisionID     pgtype.Text
-	CreatedAt             pgtype.Timestamptz
-	UpdatedAt             pgtype.Timestamptz
-	Status                string
-	StatusDetail          string
-	ObservedRevisionID    string
-	StatusObservedAt      pgtype.Timestamptz
-	PreviewEnabled        bool
-	PreviewBaseDomain     string
-	PreviewTtlHours       int32
-	CpuLimit              pgtype.Float4
-	MemoryLimitMb         pgtype.Int4
-	Volumes               []byte
-	Ports                 []byte
-	HealthKind            string
-	SourceImage           string
-	EnvAppliedAt          pgtype.Timestamptz
-	SourceRegistryID      pgtype.Text
-	BuildPushRegistryID   pgtype.Text
-	BuildPushRepository   string
-	RestartToken          string
+	ID                     string
+	EnvironmentID          string
+	Name                   string
+	SourceKind             string
+	SourceRepo             string
+	SourceBranch           string
+	SourceDeployKeyID      pgtype.Text
+	BuildKind              string
+	BuildDockerfilePath    string
+	BuildContext           string
+	RuntimeServerID        string
+	RuntimePort            int32
+	RuntimeReplicas        int32
+	RouteDomain            string
+	RouteHttps             bool
+	RoutePathPrefix        string
+	HealthPath             string
+	HealthIntervalSeconds  int32
+	HealthTimeoutSeconds   int32
+	HealthRetries          int32
+	WebhookID              string
+	WebhookSecretCt        []byte
+	WebhookSecretNonce     []byte
+	DesiredRevisionID      pgtype.Text
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
+	Status                 string
+	StatusDetail           string
+	ObservedRevisionID     string
+	StatusObservedAt       pgtype.Timestamptz
+	PreviewEnabled         bool
+	PreviewBaseDomain      string
+	PreviewTtlHours        int32
+	CpuLimit               pgtype.Float4
+	MemoryLimitMb          pgtype.Int4
+	Volumes                []byte
+	Ports                  []byte
+	HealthKind             string
+	SourceImage            string
+	EnvAppliedAt           pgtype.Timestamptz
+	SourceRegistryID       pgtype.Text
+	BuildPushRegistryID    pgtype.Text
+	BuildPushRepository    string
+	RestartToken           string
+	IpAllowlistEnabled     bool
+	IpAllowlist            []byte
+	PreviewPasswordEnabled bool
+	PreviewPasswordHash    string
+	PreviewPasswordSetAt   pgtype.Timestamptz
+	ReplicaStatus          []byte
+	MaintenanceMode        bool
+	MaintenanceSince       pgtype.Timestamptz
+	GithubInstallationID   pgtype.Int8
 }
 
 type AuditEvent struct {
@@ -274,6 +319,7 @@ type Deployment struct {
 	FinishedAt      pgtype.Timestamptz
 	BuilderServerID pgtype.Text
 	EnvResolvedAt   pgtype.Timestamptz
+	StartedAt       pgtype.Timestamptz
 }
 
 type DnsProvider struct {
@@ -347,6 +393,24 @@ type FreezeWindow struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type GithubApp struct {
+	ID          int16
+	AppID       int64
+	Slug        string
+	ConfigCt    []byte
+	ConfigNonce []byte
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type GithubInstallation struct {
+	ID             string
+	InstallationID int64
+	AccountLogin   string
+	AccountType    string
+	RepoSelection  string
+	RefreshedAt    pgtype.Timestamptz
+}
+
 type InboxItem struct {
 	ID         string
 	UserID     string
@@ -383,6 +447,57 @@ type JoinToken struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+type LogDrain struct {
+	ID            string
+	Name          string
+	Kind          string
+	ProjectID     pgtype.Text
+	TargetID      pgtype.Text
+	ConfigCt      []byte
+	ConfigNonce   []byte
+	Enabled       bool
+	LastShippedAt pgtype.Timestamptz
+	LastError     string
+	LastErrorAt   pgtype.Timestamptz
+	DroppedLines  int64
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
+type MailDomain struct {
+	ID               string
+	Domain           string
+	RecordsWrittenAt pgtype.Timestamptz
+	LastError        string
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+type MailProvider struct {
+	ID          int32
+	Kind        string
+	ConfigCt    []byte
+	ConfigNonce []byte
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type MailboxLink struct {
+	ID        string
+	DomainID  string
+	Address   string
+	UserID    pgtype.Text
+	CreatedAt pgtype.Timestamptz
+}
+
+type MetricsSetting struct {
+	ID               int32
+	Enabled          bool
+	RequestAnalytics bool
+	BucketSeconds    int32
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type Notifier struct {
 	ID          string
 	ProjectID   string
@@ -403,11 +518,35 @@ type PanelMail struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
+type PanelSnapshot struct {
+	ID        string
+	Version   string
+	Path      string
+	SizeBytes int64
+	CreatedAt pgtype.Timestamptz
+	ExpiresAt pgtype.Timestamptz
+	Pinned    bool
+}
+
 type PanelTl struct {
 	ID           int32
 	AcmeEmail    string
 	AcmeCaServer string
 	UpdatedAt    pgtype.Timestamptz
+}
+
+type PanelUpgrade struct {
+	ID          string
+	FromVersion string
+	ToVersion   string
+	Phase       string
+	Detail      string
+	Actor       string
+	Rollback    bool
+	SnapshotID  pgtype.Text
+	StartedAt   pgtype.Timestamptz
+	FinishedAt  pgtype.Timestamptz
+	ExpiresAt   pgtype.Timestamptz
 }
 
 type PlaneCa struct {
@@ -416,6 +555,38 @@ type PlaneCa struct {
 	EncryptedKey []byte
 	KeyNonce     []byte
 	CreatedAt    pgtype.Timestamptz
+}
+
+type PlaneDrConfig struct {
+	ID                  int32
+	TargetID            string
+	PathPrefix          string
+	Schedule            string
+	RetentionCount      int32
+	Recipient           string
+	RecipientMode       string
+	RecipientVerifiedAt pgtype.Timestamptz
+	LastRunAt           pgtype.Timestamptz
+	LastStatus          string
+	LastDetail          string
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}
+
+type PlaneSnapshot struct {
+	ID            string
+	ObjectKey     string
+	PanelVersion  string
+	SchemaVersion int64
+	SizeBytes     int64
+	Sha256        string
+	RowCount      int64
+	Recipient     string
+	Status        string
+	Detail        string
+	StartedAt     pgtype.Timestamptz
+	FinishedAt    pgtype.Timestamptz
+	PrunedAt      pgtype.Timestamptz
 }
 
 type Preview struct {
@@ -443,6 +614,14 @@ type Project struct {
 	LastActivityAt       pgtype.Timestamptz
 }
 
+type QuotaState struct {
+	ScopeKind string
+	ScopeID   string
+	Dimension string
+	State     string
+	ChangedAt pgtype.Timestamptz
+}
+
 type Registry struct {
 	ID             string
 	TeamID         string
@@ -460,13 +639,98 @@ type Registry struct {
 	UpdatedAt      pgtype.Timestamptz
 }
 
+type RequestMetric struct {
+	ResourceKind     string
+	ResourceID       string
+	BucketStart      pgtype.Timestamptz
+	ServerID         string
+	Requests         int64
+	RedirectCount    int64
+	Status2xx        int64
+	Status3xx        int64
+	Status4xx        int64
+	Status5xx        int64
+	ResponseBytes    int64
+	LatencyBuckets   []int64
+	HistogramVersion int32
+	SampleRate       int32
+}
+
+type RequestPath struct {
+	ResourceKind     string
+	ResourceID       string
+	BucketStart      pgtype.Timestamptz
+	Path             string
+	Requests         int64
+	Status5xx        int64
+	LatencyBuckets   []int64
+	HistogramVersion int32
+}
+
+type ResourceDiskUsage struct {
+	ResourceKind   string
+	ResourceID     string
+	BucketStart    pgtype.Timestamptz
+	ServerID       string
+	ImageBytes     int64
+	VolumeBytes    int64
+	ContainerBytes int64
+}
+
+type ResourceMetric struct {
+	ResourceKind      string
+	ResourceID        string
+	BucketStart       pgtype.Timestamptz
+	ServerID          string
+	CpuCoreMs         int64
+	CpuPercentPeak    float64
+	MemoryByteSeconds int64
+	MemoryBytesPeak   int64
+	MemoryLimitBytes  int64
+	SampleCount       int32
+	CoveredSeconds    int32
+}
+
+type ResourceQuota struct {
+	ID               string
+	ProjectID        pgtype.Text
+	TeamID           pgtype.Text
+	MemoryLimitBytes pgtype.Int8
+	DiskLimitBytes   pgtype.Int8
+	PreviewLimit     pgtype.Int4
+	UpdatedBy        string
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+type ResourceUsageDaily struct {
+	ResourceKind      string
+	ResourceID        string
+	Day               pgtype.Date
+	TeamID            string
+	ProjectID         string
+	ProjectName       string
+	EnvironmentID     string
+	EnvironmentName   string
+	ResourceName      string
+	CpuCoreSeconds    int64
+	MemoryByteSeconds int64
+	MemoryBytesPeak   int64
+	DiskBytes         int64
+	Requests          int64
+	Status5xx         int64
+	DeployCount       int32
+	DeploySeconds     int64
+}
+
 type Revision struct {
-	ID             string
-	ApplicationID  string
-	Image          string
-	SourceCommit   string
-	ConfigSnapshot []byte
-	CreatedAt      pgtype.Timestamptz
+	ID                     string
+	ApplicationID          string
+	Image                  string
+	SourceCommit           string
+	ConfigSnapshot         []byte
+	CreatedAt              pgtype.Timestamptz
+	PromotedFromRevisionID pgtype.Text
 }
 
 type ScheduledTask struct {
@@ -492,21 +756,26 @@ type ScheduledTaskRun struct {
 }
 
 type Server struct {
-	ID             string
-	Name           string
-	Status         string
-	Driver         string
-	AgentVersion   string
-	Hostname       string
-	EnrolledAt     pgtype.Timestamptz
-	LastSeenAt     pgtype.Timestamptz
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
-	Role           string
-	PublicAddress  string
-	DiskTotalBytes int64
-	DiskFreeBytes  int64
-	DiskLow        bool
+	ID                string
+	Name              string
+	Status            string
+	Driver            string
+	AgentVersion      string
+	Hostname          string
+	EnrolledAt        pgtype.Timestamptz
+	LastSeenAt        pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	Role              string
+	PublicAddress     string
+	DiskTotalBytes    int64
+	DiskFreeBytes     int64
+	DiskLow           bool
+	AgentChannel      string
+	AgentUpdatePhase  string
+	AgentUpdateTarget string
+	AgentUpdateDetail string
+	SubsystemHealth   []byte
 }
 
 type Session struct {
@@ -526,6 +795,43 @@ type SharedVariable struct {
 	ValueNonce    []byte
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
+}
+
+type StatusEvaluation struct {
+	ID          string
+	EvaluatedAt pgtype.Timestamptz
+}
+
+type StatusInterval struct {
+	ID          string
+	ComponentID string
+	State       string
+	StartedAt   pgtype.Timestamptz
+	EndedAt     pgtype.Timestamptz
+	Message     string
+}
+
+type StatusPage struct {
+	ID            string
+	ProjectID     string
+	Slug          string
+	Title         string
+	Enabled       bool
+	Domain        string
+	Https         bool
+	RouteServerID pgtype.Text
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
+type StatusPageComponent struct {
+	ID            string
+	StatusPageID  string
+	ResourceKind  string
+	ResourceID    string
+	Label         string
+	Position      int32
+	TrackingSince pgtype.Timestamptz
 }
 
 type Team struct {
@@ -584,6 +890,32 @@ type UserAvatar struct {
 	Bytes       []byte
 	Etag        string
 	UpdatedAt   pgtype.Timestamptz
+}
+
+type VolumeBackup struct {
+	ID             string
+	ApplicationID  string
+	TargetID       string
+	Schedule       string
+	RetentionCount int32
+	Enabled        bool
+	LastRunAt      pgtype.Timestamptz
+	LastStatus     string
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type VolumeBackupRecord struct {
+	ID             string
+	VolumeBackupID string
+	VolumeName     string
+	ObjectKey      string
+	SizeBytes      int64
+	Status         string
+	Detail         string
+	StartedAt      pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
 }
 
 type WebhookDelivery struct {

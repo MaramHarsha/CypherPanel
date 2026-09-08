@@ -97,6 +97,71 @@ func (s *Service) SyncApplication(ctx context.Context, app domain.Application, s
 	return nil
 }
 
+// EnsureStaticRecord writes one record straight at the provider, with no row in
+// dns_records and no reconciler behind it (managed-email.md §4).
+//
+// That is deliberate rather than a shortcut. dns_records.application_id is NOT
+// NULL, and the reaper's whole rule rests on it — "a record with no application
+// has no reason to exist" — so putting a mail record there would mean making
+// that owner polymorphic, which is a change to a shipped feature's central
+// invariant and belongs in its own PR.
+//
+// It is also the right shape for what a mail record IS. An application's A
+// record follows a server address that can move, so it needs a converger; an
+// MX or a DKIM key is fixed by the provider and does not follow anything, so
+// there is nothing for a reconciler to converge toward.
+func (s *Service) EnsureStaticRecord(ctx context.Context, host, recordType, content string, ttl, priority int) error {
+	token, cfg, _, err := s.load(ctx)
+	if err != nil {
+		return err
+	}
+	zones, err := s.store.ListDNSZones(ctx)
+	if err != nil {
+		return fmt.Errorf("dns: listing zones: %w", err)
+	}
+	zone, ok := MatchZone(host, zones)
+	if !ok {
+		return fmt.Errorf("dns: no connected zone covers %s", host)
+	}
+	_ = cfg
+	cli := s.newCli(token)
+
+	// Content carries the priority for an MX, because that is how the provider
+	// takes it and splitting it into a field the Record type does not have
+	// would be inventing a shape for one caller.
+	value := content
+	if recordType == "MX" && priority > 0 {
+		value = fmt.Sprintf("%d %s", priority, content)
+	}
+
+	existing, found, err := cli.FindRecord(ctx, zone.ProviderZoneID, host, recordType)
+	if err != nil {
+		return fmt.Errorf("dns: looking for the existing record: %w", err)
+	}
+	rec := Record{Type: recordType, Name: host, Content: value, TTL: ttl}
+	if found {
+		if existing.Content == value {
+			return nil // already what it should be
+		}
+		_, err = cli.UpdateRecord(ctx, zone.ProviderZoneID, existing.ProviderID, rec)
+		return err
+	}
+	_, err = cli.CreateRecord(ctx, zone.ProviderZoneID, rec)
+	return err
+}
+
+// CanManage reports whether a connected zone covers this host — the check that
+// stops mail being "enabled" on a domain where the panel can only print
+// instructions.
+func (s *Service) CanManage(ctx context.Context, host string) (bool, error) {
+	zones, err := s.store.ListDNSZones(ctx)
+	if err != nil {
+		return false, err
+	}
+	_, ok := MatchZone(host, zones)
+	return ok, nil
+}
+
 // ForgetApplication marks every record of one application for deletion. Called
 // when the application is deleted — BEFORE the row goes, so application_id is
 // still readable.

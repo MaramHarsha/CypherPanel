@@ -25,12 +25,15 @@ import (
 	"github.com/MaramHarsha/cypherpanel/agent/driver"
 	"github.com/MaramHarsha/cypherpanel/agent/driver/docker"
 	"github.com/MaramHarsha/cypherpanel/agent/driver/docker/engine"
+	"github.com/MaramHarsha/cypherpanel/agent/driver/docker/metricsource"
 	"github.com/MaramHarsha/cypherpanel/agent/driver/docker/prober"
 	"github.com/MaramHarsha/cypherpanel/agent/heartbeat"
 	"github.com/MaramHarsha/cypherpanel/agent/identity"
+	"github.com/MaramHarsha/cypherpanel/agent/metrics"
 	"github.com/MaramHarsha/cypherpanel/agent/proxy"
 	"github.com/MaramHarsha/cypherpanel/agent/relay"
 	"github.com/MaramHarsha/cypherpanel/agent/stream"
+	"github.com/MaramHarsha/cypherpanel/agent/updater"
 	"github.com/MaramHarsha/cypherpanel/agent/worker"
 )
 
@@ -121,6 +124,20 @@ func runAgent(args []string, log *slog.Logger) error {
 		// on non-positive intervals.
 		return fmt.Errorf("--heartbeat must be a positive duration (got %s)", *interval)
 	}
+	// The self-updater comes FIRST, before identity is loaded and before any
+	// network I/O, and that ordering is the whole design (agent-updates.md §4c).
+	// The failure it survives is "the new binary cannot dial home", so its
+	// probation timer has to be armed by code that runs before anything which
+	// could hang — loading a certificate, resolving the plane, dialling the bus.
+	upd := updater.New(updater.Config{
+		Version:   version,
+		StateDir:  *stateDir,
+		Disabled:  os.Getenv("CYPHER_UPDATE_DISABLE") != "",
+		Probation: envDuration("CYPHER_UPDATE_PROBATION", updater.DefaultProbation, log),
+		Jitter:    envDuration("CYPHER_UPDATE_JITTER", updater.DefaultJitter, log),
+		Log:       log,
+	})
+
 	id, err := identity.Load(*stateDir)
 	if err != nil {
 		return err
@@ -137,6 +154,15 @@ func runAgent(args []string, log *slog.Logger) error {
 	defer stop()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	// Recover reads the boot marker: it rolls back a binary that already had
+	// its one attempt, and otherwise arms the probation timer. It returns
+	// immediately for an ordinary start, which is every start.
+	upd.Recover(ctx)
+	// And a note left by a process that rolled back is folded in here, so the
+	// binary that came back knows it is the survivor and the panel's amber row
+	// has something to say.
+	upd.ReadRolledBack()
 
 	nc, err := conn.ConnectBus(keeper, log)
 	if err != nil {
@@ -183,16 +209,31 @@ func runAgent(args []string, log *slog.Logger) error {
 	// deploy fails.
 	health := &heartbeat.Health{}
 	hb := heartbeat.NewPublisher(nc, id.ServerID, version, *drvName, *role, *interval, health, log)
+	hb.SetUpdateReporter(upd)
+	// A rolled-back update raises the agent's own status to degraded, so the
+	// server goes amber in the ordinary vocabulary and not only in this
+	// feature's column (agent-updates.md §7).
+	health.Set("agent-update", upd.Degraded())
 	go hb.Run(ctx)
+
+	// The bus connection is up and the first heartbeat is out, which is what
+	// clears the probation — deliberately NOT the desired-state sync. ADR-005
+	// requires the plane to answer nothing rather than a partial set, so a plane
+	// briefly unable to assemble desired state would look, to every agent at
+	// once, exactly like a bad binary and would roll back a good release
+	// fleet-wide. Dial-home is the signal; convergence is not.
+	upd.DialedHome()
 
 	if *drvName == "docker" {
 		eng := engine.New("")
 		// Report free space on the filesystem the daemon actually uses. A
 		// failure here costs the disk report and nothing else, so it is logged
 		// rather than fatal (disk-management.md §4).
+		dataRoot := ""
 		if root, rerr := eng.DataRoot(ctx); rerr != nil {
 			log.Warn("reading the docker data root; disk usage will not be reported", "error", rerr)
 		} else {
+			dataRoot = root
 			hb.SetDataRoot(root)
 		}
 
@@ -213,8 +254,10 @@ func runAgent(args []string, log *slog.Logger) error {
 		// everything except builder-role agents, which run nothing and must
 		// not bind :80/:443 (builder-role-and-relay.md §1).
 		var drv driver.Reconciler
-		var dockerDrv *docker.Driver // concrete handle for the cron executor
-		var proxyTLS worker.ProxyTLS // the Proxy's ACME sink, on app-role nodes
+		var dockerDrv *docker.Driver            // concrete handle for the cron executor
+		var proxyTLS worker.ProxyTLS            // the Proxy's ACME sink, on app-role nodes
+		var staticRouter worker.StaticRouter    // non-container fragments (status pages)
+		var proxyAccessLog worker.AccessLogSink // the Proxy's own access log
 		var composeRec driver.ComposeReconciler
 		if *role != "builder" {
 			// The Proxy owns this host directory (routing-and-tls.md §5):
@@ -228,6 +271,11 @@ func runAgent(args []string, log *slog.Logger) error {
 			prx := proxy.New(proxy.Config{
 				Dir:   proxyDir,
 				Image: envOr("CYPHER_PROXY_IMAGE", "traefik:v3.3"),
+				// The maintenance responder's image (app-access-control.md §7).
+				// Named here rather than assumed because it is this feature's one
+				// external dependency, and an operator with a mirror has to be
+				// able to point at it.
+				MaintenanceImage: envOr("CYPHER_MAINTENANCE_IMAGE", proxy.DefaultMaintenanceImage),
 				// Host-local overrides. Empty is the normal case: the panel's
 				// ACME account arrives in desired state and is applied through
 				// SetACME below (agent-identity-and-tls.md §4).
@@ -237,11 +285,13 @@ func runAgent(args []string, log *slog.Logger) error {
 				Log:          log,
 			})
 			proxyTLS = prx
+			staticRouter = prx
+			proxyAccessLog = prx
 			prb := prober.New()
 			strm := stream.NewStreamer(nc, eng, id.ServerID)
 			go strm.Start(ctx, 10*time.Second)
 			dockerDrv = docker.New(eng, prx, prb, log)
-			dockerDrv.OnProxyHealth(health.Set)
+			dockerDrv.OnProxyHealth(health.Reporter("proxy"))
 			drv = dockerDrv
 			// Compose Stacks converge over the same Proxy and engine client:
 			// a stack's route is the same fragment an Application gets,
@@ -275,8 +325,31 @@ func runAgent(args []string, log *slog.Logger) error {
 			return err
 		}
 		w := worker.New(wbus, id.ServerID, drv, dbRec, backupRunner, bld, imgRelay, log)
+		// The updater waits on the work loop going quiet before it replaces the
+		// binary underneath a running build (agent-updates.md §3.1).
+		upd.SetQuiet(w.Quiet)
+		w.SetUpdater(upd)
 		if proxyTLS != nil {
 			w.SetProxyTLS(proxyTLS)
+		}
+		if staticRouter != nil {
+			w.SetStaticRouter(staticRouter)
+		}
+		// Metrics: one collector per node, sampling containers, folding the
+		// Proxy's access log and publishing one report per bucket. Only on
+		// nodes that run containers — a builder-role agent has nothing to
+		// measure (metrics-and-usage.md §4).
+		if dockerDrv != nil {
+			mc := metrics.New(metricsource.New(eng), wbus, id.ServerID, log.With("component", "metrics"))
+			// The host's own filesystem, not the sum of its containers': a
+			// threshold rule on "the box is nearly full" must see what the box
+			// sees (threshold-alerts.md §3.2).
+			mc.SetDataRoot(dataRoot)
+			w.SetMetrics(mc)
+			if proxyAccessLog != nil {
+				w.SetProxyAccessLog(proxyAccessLog)
+			}
+			go mc.Run(ctx)
 		}
 		if dockerDrv != nil {
 			// Scheduled tasks run only on app-role nodes (they need a container
@@ -328,6 +401,22 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// envDuration reads a Go duration from the environment. A value that does not
+// parse is a warning and the default, never a fatal: an agent must not refuse
+// to start over a typo in a tuning knob — the host would be off the bus for it.
+func envDuration(key string, fallback time.Duration, log *slog.Logger) time.Duration {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		log.Warn("ignoring an unreadable duration", "key", key, "value", raw, "using", fallback)
+		return fallback
+	}
+	return d
 }
 
 func defaultHostname() string {

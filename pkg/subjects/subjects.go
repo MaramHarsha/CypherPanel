@@ -179,6 +179,13 @@ func DbBackupState(serverID string) string      { return StatePrefix + serverID 
 func DbRestoreState(serverID string) string     { return StatePrefix + serverID + ".dbrestore" }
 func DbBackupPruneState(serverID string) string { return StatePrefix + serverID + ".dbbackupprune" }
 
+// Volume backup subjects (volume-backups.md §4). Additive and inside the
+// existing per-server work.<server>.> / state.<server>.> grants, so no new
+// authorization is needed. The ".volume.backup" suffix is disjoint from every
+// ".db.*" one, so the worker routes it independently.
+func VolumeBackup(serverID string) string      { return WorkPrefix + serverID + ".volume.backup" }
+func VolumeBackupState(serverID string) string { return StatePrefix + serverID + ".volumebackup" }
+
 // V1: Compose Stack subjects (docs/features/compose-stacks.md §4). Additive
 // (rule 14), inside the existing work.<server>.> / state.<server>.> scope, so
 // no new per-agent grant is needed.
@@ -191,6 +198,13 @@ func ComposeState(serverID, stackID string) string {
 	return StatePrefix + serverID + ".compose." + stackID
 }
 
+// Metrics is one server's aggregated bucket (metrics-and-usage.md §4.6). It
+// rides the memory-backed STATE stream alongside heartbeats: a durable stream
+// would put this write volume on the plane's disk to protect data whose entire
+// purpose is to be approximately right. A plane down for more than an hour has
+// a GAP in its charts, drawn as a gap and never interpolated across.
+func Metrics(serverID string) string { return StatePrefix + serverID + ".metrics" }
+
 // Plane-side consumption wildcards.
 const (
 	ComposeStateAll       = "state.*.compose.>"
@@ -198,5 +212,7 @@ const (
 	DbBackupStateAll      = "state.*.dbbackup"
 	DbRestoreStateAll     = "state.*.dbrestore"
 	DbBackupPruneStateAll = "state.*.dbbackupprune"
+	VolumeBackupStateAll  = "state.*.volumebackup"
 	TaskStateAll          = "state.*.task"
+	MetricsStateAll       = "state.*.metrics"
 )

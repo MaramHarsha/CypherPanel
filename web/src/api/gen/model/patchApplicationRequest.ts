@@ -16,7 +16,7 @@ import type { AppVolume } from './appVolume.ts';
 import type { PatchApplicationRequestRuntime } from './patchApplicationRequestRuntime.ts';
 
 /**
- * Absent sections stay unchanged; a present section replaces that section wholesale. The runtime server and replicas are not patchable.
+ * Absent sections stay unchanged; a present section replaces that section wholesale. The runtime server is not patchable.
  */
 export interface PatchApplicationRequest {
   name?: string;

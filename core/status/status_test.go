@@ -32,7 +32,11 @@ type fakeStore struct {
 	diskLow  []bool
 	diskErr  error
 	lastDisk [2]uint64
+	updates  []agentUpdateCall
+	health   [][]domain.SubsystemHealth
 }
+
+type agentUpdateCall struct{ phase, target, detail string }
 
 func (f *fakeStore) RecordHeartbeat(_ context.Context, id string, st domain.ServerStatus, _, driver, role string, diskTotal, diskFree uint64) (domain.Server, error) {
 	f.records = append(f.records, recordCall{id: id, status: st, driver: driver, role: role})
@@ -48,6 +52,16 @@ func (f *fakeStore) SetServerDiskLow(_ context.Context, _ string, low bool) erro
 		return f.diskErr
 	}
 	f.diskLow = append(f.diskLow, low)
+	return nil
+}
+
+func (f *fakeStore) SetServerAgentUpdate(_ context.Context, _, phase, target, detail string) error {
+	f.updates = append(f.updates, agentUpdateCall{phase: phase, target: target, detail: detail})
+	return nil
+}
+
+func (f *fakeStore) SetServerSubsystemHealth(_ context.Context, _ string, health []domain.SubsystemHealth) error {
+	f.health = append(f.health, health)
 	return nil
 }
 
@@ -158,6 +172,17 @@ func (s *recordingSink) AnnounceServerDisk(_ context.Context, _ domain.Server, k
 	s.kinds = append(s.kinds, kind)
 	s.details = append(s.details, detail)
 	return s.err
+}
+
+// marshalHeartbeat encodes a heartbeat for Record, which takes raw bytes
+// because that is what arrives off the bus.
+func marshalHeartbeat(t *testing.T, hb *agentv1.Heartbeat) []byte {
+	t.Helper()
+	data, err := proto.Marshal(hb)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	return data
 }
 
 // heartbeatWithDisk builds a heartbeat carrying a filesystem measurement.
@@ -283,5 +308,136 @@ func TestTheThresholdIsInclusive(t *testing.T) {
 	r.Record(context.Background(), heartbeatWithDisk(t, 100, 15))
 	if len(sink.kinds) != 1 {
 		t.Fatalf("announced %v at exactly the threshold, want one", sink.kinds)
+	}
+}
+
+// A rollback is announced ONCE, on the transition into rolled_back — never on
+// every heartbeat. A heartbeat arrives every few seconds, and a channel that
+// repeats itself gets muted, taking the next real alert with it.
+func TestARolledBackUpdateIsAnnouncedOnTheTransitionOnly(t *testing.T) {
+	fs := &fakeStore{server: domain.Server{ID: "srv_1", Name: "web-1"}}
+	sink := &recordingSink{}
+	r := NewRecorder(fs, quietLog())
+	r.WatchDisk(0, sink) // disk alerting off; this is the update path only
+
+	rolled := &agentv1.AgentUpdateStatus{
+		Phase:         agentv1.AgentUpdateStatus_PHASE_ROLLED_BACK,
+		TargetVersion: "v1.1.0",
+		Detail:        "the new binary did not reach the bus",
+	}
+	r.Record(context.Background(), marshalHeartbeat(t, &agentv1.Heartbeat{
+		ServerId: "srv_1", Status: agentv1.AgentStatus_AGENT_STATUS_DEGRADED, AgentUpdate: rolled,
+	}))
+	if len(sink.kinds) != 1 {
+		t.Fatalf("announcements = %v, want 1", sink.kinds)
+	}
+	if sink.kinds[0] != domain.InboxAgentUpdateFailed {
+		t.Fatalf("kind = %q", sink.kinds[0])
+	}
+
+	// The same phase again, now that the row records it, must be silent.
+	fs.server.AgentUpdatePhase = domain.AgentPhaseRolledBack
+	fs.server.AgentUpdateTarget = "v1.1.0"
+	fs.server.AgentUpdateDetail = rolled.GetDetail()
+	r.Record(context.Background(), marshalHeartbeat(t, &agentv1.Heartbeat{
+		ServerId: "srv_1", Status: agentv1.AgentStatus_AGENT_STATUS_DEGRADED, AgentUpdate: rolled,
+	}))
+	if len(sink.kinds) != 1 {
+		t.Fatalf("announced again on an unchanged phase: %v", sink.kinds)
+	}
+	if len(fs.updates) != 1 {
+		t.Fatalf("wrote the unchanged phase again: %d", len(fs.updates))
+	}
+}
+
+// An agent from before ADR-010 carries no update status at all. Absence is
+// silence, not "idle": overwriting a rolled_back row with a blank would erase
+// the one row an operator has to act on.
+func TestAnAgentWithNoUpdateStatusLeavesTheStoredPhaseAlone(t *testing.T) {
+	fs := &fakeStore{server: domain.Server{
+		ID: "srv_1", AgentUpdatePhase: domain.AgentPhaseRolledBack, AgentUpdateTarget: "v1.1.0",
+	}}
+	r := NewRecorder(fs, quietLog())
+	r.Record(context.Background(), marshalHeartbeat(t, &agentv1.Heartbeat{ServerId: "srv_1"}))
+	if len(fs.updates) != 0 {
+		t.Fatalf("an old agent's heartbeat wrote the update phase: %+v", fs.updates)
+	}
+}
+
+// A degraded server must be able to SAY which part of it failed. Before this
+// the heartbeat carried one status word, so the panel showed amber and an
+// operator's only next step was to read the agent's log on the host — in an
+// architecture whose first decision is that there is no way in (ADR-002).
+func TestDegradedHeartbeatRecordsWhichSubsystemFailed(t *testing.T) {
+	fs := &fakeStore{}
+	r := NewRecorder(fs, quietLog())
+
+	data, err := proto.Marshal(&agentv1.Heartbeat{
+		ServerId: "srv_1",
+		Driver:   "docker",
+		Status:   agentv1.AgentStatus_AGENT_STATUS_DEGRADED,
+		SubsystemHealth: []*agentv1.SubsystemHealth{
+			{Subsystem: "proxy", Message: "binding :80: address already in use"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	r.Record(context.Background(), data)
+
+	if len(fs.health) != 1 || len(fs.health[0]) != 1 {
+		t.Fatalf("SetServerSubsystemHealth calls = %v, want one call with one entry", fs.health)
+	}
+	got := fs.health[0][0]
+	if got.Subsystem != "proxy" || !strings.Contains(got.Message, "address already in use") {
+		t.Fatalf("stored health = %+v, want the proxy's own message", got)
+	}
+}
+
+// The write happens on CHANGE, not on arrival: heartbeats come every few
+// seconds and an unchanged finding must not be a write per beat.
+func TestUnchangedSubsystemHealthIsNotRewritten(t *testing.T) {
+	fs := &fakeStore{server: domain.Server{
+		SubsystemHealth: []domain.SubsystemHealth{{Subsystem: "proxy", Message: "binding :80"}},
+	}}
+	r := NewRecorder(fs, quietLog())
+
+	data, err := proto.Marshal(&agentv1.Heartbeat{
+		ServerId: "srv_1",
+		Status:   agentv1.AgentStatus_AGENT_STATUS_DEGRADED,
+		SubsystemHealth: []*agentv1.SubsystemHealth{
+			{Subsystem: "proxy", Message: "binding :80"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	r.Record(context.Background(), data)
+
+	if len(fs.health) != 0 {
+		t.Fatalf("wrote %v for an unchanged finding; want no write", fs.health)
+	}
+}
+
+// Recovery clears it. A READY agent has nothing wrong with it whether or not it
+// knows about this field, so a finding from ten minutes ago must not stay on
+// screen beside a green status.
+func TestReadyHeartbeatClearsSubsystemHealth(t *testing.T) {
+	fs := &fakeStore{server: domain.Server{
+		SubsystemHealth: []domain.SubsystemHealth{{Subsystem: "proxy", Message: "binding :80"}},
+	}}
+	r := NewRecorder(fs, quietLog())
+
+	data, err := proto.Marshal(&agentv1.Heartbeat{
+		ServerId: "srv_1",
+		Status:   agentv1.AgentStatus_AGENT_STATUS_READY,
+	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	r.Record(context.Background(), data)
+
+	if len(fs.health) != 1 || len(fs.health[0]) != 0 {
+		t.Fatalf("SetServerSubsystemHealth calls = %v, want one call clearing it", fs.health)
 	}
 }

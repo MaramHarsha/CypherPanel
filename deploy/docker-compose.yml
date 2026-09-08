@@ -5,7 +5,14 @@
 # of this file.
 #
 #   cp cypherd.env.example cypherd.env    # then edit it — see the doc
-#   docker compose up -d
+#   docker compose --env-file cypherd.env up -d
+#
+# --env-file is not optional and the reason is not obvious: `env_file:` below
+# only injects variables INTO a container, while ${POSTGRES_PASSWORD} in this
+# file is interpolated by Compose itself before any container exists. Without
+# the flag, Compose reads only `.env` and refuses with "required variable
+# POSTGRES_PASSWORD is missing a value" — which reads like the file was not
+# filled in rather than not loaded.
 #
 # See docs/dev/deployment.md for the full walkthrough, TLS, and DNS.
 name: cypherpanel

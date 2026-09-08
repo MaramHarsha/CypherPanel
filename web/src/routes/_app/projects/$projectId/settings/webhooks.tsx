@@ -52,12 +52,24 @@ export const Route = createFileRoute("/_app/projects/$projectId/settings/webhook
   component: WebhooksTab,
 });
 
-/** The board's four subscribable events, in the order it lists them. */
+/**
+ * Every subscribable event, in documentation order.
+ *
+ * It listed four while the plane fires eight — app.crashed, app.recovered,
+ * alert.firing and alert.resolved were emitted by the panel and could not be
+ * asked for. Half of what an endpoint exists to carry was unreachable, and both
+ * parity scripts were blind to it: the `events` FIELD was there, its values
+ * were not.
+ */
 const EVENTS = [
   { key: "deploy.succeeded", label: "Deploy succeeded" },
   { key: "deploy.failed", label: "Deploy failed" },
   { key: "backup.succeeded", label: "Backup succeeded" },
   { key: "backup.failed", label: "Backup failed" },
+  { key: "app.crashed", label: "App crashed" },
+  { key: "app.recovered", label: "App recovered" },
+  { key: "alert.firing", label: "Alert firing" },
+  { key: "alert.resolved", label: "Alert resolved" },
 ] as const;
 
 /** Endpoint health maps onto the shared status vocabulary rather than inventing
@@ -177,7 +189,7 @@ function EndpointCard({ projectId, endpoint: e }: { projectId: string; endpoint:
           </span>
           {!e.enabled && <span className="mono shrink-0 text-[11px] text-text-faint">paused</span>}
           <span className="flex shrink-0 items-center gap-1.5">
-            <StatusDot status={health} className="h-2 w-2" />
+            <StatusDot status={health} decorative className="h-2 w-2" />
             <StatusWord status={health} className="text-[10.5px]">
               {e.health}
             </StatusWord>
@@ -211,6 +223,11 @@ function EndpointCard({ projectId, endpoint: e }: { projectId: string; endpoint:
             >
               {e.enabled ? "Pause" : "Resume"}
             </ActionButton>
+            {/* Editing, which PATCH has always accepted. Without it a moved
+                receiver meant delete-and-re-add, and re-adding mints a NEW
+                signing secret — so changing a URL forced a redeploy of
+                whatever was verifying the old one. */}
+            <NewEndpointDialog projectId={projectId} endpoint={e} />
             <ActionButton
               size="sm"
               variant="ghost"
@@ -371,13 +388,40 @@ function OneTimeSecret({ secret, lead, onDismiss }: { secret: string; lead: stri
   );
 }
 
-function NewEndpointDialog({ projectId, primary }: { projectId: string; primary?: boolean }) {
+/**
+ * Adding an endpoint, and editing one.
+ *
+ * Editing was missing entirely: PATCH accepts url and events, the row renders
+ * both, and the only control was Pause. A receiver that moved, or a project
+ * that wanted one more event, meant deleting the endpoint and adding another —
+ * which mints a NEW signing secret, so every change forced a redeploy of
+ * whatever was verifying it.
+ *
+ * The secret is untouched by an edit, which is the point.
+ */
+function NewEndpointDialog({
+  projectId,
+  primary,
+  endpoint,
+}: {
+  projectId: string;
+  primary?: boolean;
+  endpoint?: WebhookEndpoint;
+}) {
+  const editing = endpoint != null;
   const qc = useQueryClient();
-  const [url, setUrl] = useState("");
-  const [events, setEvents] = useState<Set<string>>(new Set(["deploy.failed"]));
+  const [url, setUrl] = useState(endpoint?.url ?? "");
+  const [events, setEvents] = useState<Set<string>>(
+    new Set(endpoint?.events ?? ["deploy.failed"]),
+  );
   const [error, setError] = useState<string | null>(null);
   const [secret, setSecret] = useState<string | null>(null);
   const [createdUrl, setCreatedUrl] = useState("");
+  // Controlled, so a successful EDIT can close the dialog. Creating stays open
+  // on purpose — its success screen is the one showing of the signing secret —
+  // but an edit has nothing to show, and a dialog that stays open after "Saved"
+  // reads as a save that did not happen.
+  const [open, setOpen] = useState(false);
 
   const create = useCreateWebhookEndpoint({
     mutation: {
@@ -391,11 +435,23 @@ function NewEndpointDialog({ projectId, primary }: { projectId: string; primary?
     },
   });
 
-  const addState = useMutationActionState(create);
+  const update = useUpdateWebhookEndpoint({
+    mutation: {
+      onSuccess: () => {
+        void qc.invalidateQueries({ queryKey: getListWebhookEndpointsQueryKey(projectId) });
+        setError(null);
+        toastSuccess({ title: "Endpoint updated", detail: "Its signing secret is unchanged." });
+        setOpen(false);
+      },
+      onError: (e: unknown) => setError(e instanceof Error ? e.message : "Could not update the endpoint"),
+    },
+  });
+
+  const addState = useMutationActionState(editing ? update : create);
 
   const reset = () => {
-    setUrl("");
-    setEvents(new Set(["deploy.failed"]));
+    setUrl(endpoint?.url ?? "");
+    setEvents(new Set(endpoint?.events ?? ["deploy.failed"]));
     setError(null);
     setSecret(null);
     setCreatedUrl("");
@@ -408,17 +464,33 @@ function NewEndpointDialog({ projectId, primary }: { projectId: string; primary?
       setError("Pick at least one event to send");
       return;
     }
+    if (editing) {
+      update.mutate({ id: endpoint.id, data: { url, events: [...events] as never[] } });
+      return;
+    }
     create.mutate({ id: projectId, data: { url, events: [...events] as never[] } });
   };
 
   return (
-    <Dialog onOpenChange={(open) => !open && reset()}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) reset();
+      }}
+    >
       <DialogTrigger asChild>
-        <Button size="sm" variant={primary ? "primary" : "secondary"}>
-          <Plus className="h-3.5 w-3.5" /> Add endpoint
-        </Button>
+        {editing ? (
+          <Button size="sm" variant="ghost">
+            Edit
+          </Button>
+        ) : (
+          <Button size="sm" variant={primary ? "primary" : "secondary"}>
+            <Plus className="h-3.5 w-3.5" /> Add endpoint
+          </Button>
+        )}
       </DialogTrigger>
-      <DialogContent title={secret ? "Endpoint added" : "Add an endpoint"}>
+      <DialogContent title={secret ? "Endpoint added" : editing ? "Edit endpoint" : "Add an endpoint"}>
         {secret ? (
           // Success is a different screen, not a toast: the secret is the whole
           // point of the interaction and it can never be shown again.
@@ -480,8 +552,14 @@ function NewEndpointDialog({ projectId, primary }: { projectId: string; primary?
                   Cancel
                 </Button>
               </DialogClose>
-              <ActionButton variant="primary" type="submit" state={addState} busyLabel="Adding…" successLabel="Added">
-                Add endpoint
+              <ActionButton
+                variant="primary"
+                type="submit"
+                state={addState}
+                busyLabel={editing ? "Saving…" : "Adding…"}
+                successLabel={editing ? "Saved" : "Added"}
+              >
+                {editing ? "Save changes" : "Add endpoint"}
               </ActionButton>
             </div>
           </form>

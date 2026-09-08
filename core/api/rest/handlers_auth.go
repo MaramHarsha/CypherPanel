@@ -1,8 +1,10 @@
 package rest
 
 import (
+	"crypto/subtle"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/MaramHarsha/cypherpanel/core/audit"
 	"github.com/MaramHarsha/cypherpanel/core/auth"
@@ -14,6 +16,10 @@ import (
 // or the login screen (first-run-setup.md §3).
 type setupStatusResponse struct {
 	NeedsSetup bool `json:"needs_setup"`
+	// RequiresToken is whether claiming the panel needs the code the
+	// installer printed. Stated up front so the screen can ask for it,
+	// rather than discovered as a 403.
+	RequiresToken bool `json:"requires_token"`
 }
 
 // handleSetupStatus is public: it reveals only whether the panel has any
@@ -29,12 +35,13 @@ func (a *API) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not check setup status")
 		return
 	}
-	writeJSON(w, http.StatusOK, setupStatusResponse{NeedsSetup: needs})
+	writeJSON(w, http.StatusOK, setupStatusResponse{NeedsSetup: needs, RequiresToken: a.deps.SetupToken != ""})
 }
 
 type setupRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email      string `json:"email"`
+	Password   string `json:"password"`
+	SetupToken string `json:"setup_token"`
 }
 
 // handleSetup creates the first owner account when the panel has none, and
@@ -48,6 +55,16 @@ func (a *API) handleSetup(w http.ResponseWriter, r *http.Request) {
 	var req setupRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	// The claim window. install.sh opens the panel's port to the world the
+	// moment it finishes, and "reach your own box first" is a race the
+	// operator can lose to a scanner. The installer prints a code that only
+	// someone who can read the host's console holds; when one is configured,
+	// the claim needs it. Compared in constant time, and never logged.
+	if a.deps.SetupToken != "" &&
+		subtle.ConstantTimeCompare([]byte(strings.TrimSpace(req.SetupToken)), []byte(a.deps.SetupToken)) != 1 {
+		writeError(w, http.StatusForbidden, "the setup code does not match — it was printed at the end of the install, and is in /etc/cypherpanel/cypherd.env on the panel's host")
 		return
 	}
 	owner, err := a.deps.Onboarding.CreateFirstOwner(r.Context(), req.Email, req.Password)
