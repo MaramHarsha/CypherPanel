@@ -51,6 +51,10 @@ export function normalizeStatus(s: string | undefined | null): Status {
     // call "deploying" — one visual vocabulary (ui-principles §5).
     case "provisioning":
       return "deploying";
+    // A restore in flight is the same kind of in-progress state: the database
+    // is being rewritten and will answer again. It rendered as UNKNOWN.
+    case "restoring":
+      return "deploying";
     default:
       return "unknown";
   }
