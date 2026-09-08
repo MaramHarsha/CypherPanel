@@ -37,8 +37,27 @@ type ShellRunner struct{}
 func (ShellRunner) Run(ctx context.Context, script string, env []string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "sh", "-s")
 	cmd.Stdin = strings.NewReader(script)
-	cmd.Env = append(os.Environ(), env...)
+	// A MINIMAL environment. The helper runs from a unit whose EnvironmentFile
+	// is cypherd.env — the master key, the database password, the setup code —
+	// and the first version handed all of that to the installer and to every
+	// process it spawns (systemctl, curl, the agent it starts). The installer
+	// needs a PATH and the join variables, and nothing else.
+	cmd.Env = append(minimalEnv(), env...)
 	return cmd.CombinedOutput()
+}
+
+// minimalEnv carries over only what a shell script needs to find its tools.
+func minimalEnv() []string {
+	var out []string
+	for _, key := range []string{"PATH", "HOME", "LANG", "LC_ALL", "TMPDIR"} {
+		if v, ok := os.LookupEnv(key); ok {
+			out = append(out, key+"="+v)
+		}
+	}
+	if len(out) == 0 || !strings.HasPrefix(out[0], "PATH=") {
+		out = append([]string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}, out...)
+	}
+	return out
 }
 
 // Options wires the helper.

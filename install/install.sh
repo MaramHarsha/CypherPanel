@@ -356,7 +356,11 @@ if [ -n "${CYPHERD_SHA256:-}" ]; then
 fi
 
 chmod 0755 "$TMP/cypherd"
-"$TMP/cypherd" --version >/dev/null 2>&1 || true
+# It has to RUN before it is installed over the binary a service depends on:
+# an HTML error page with a .sh-shaped name, or a build for the wrong
+# architecture, would otherwise replace a working panel with a crash loop.
+"$TMP/cypherd" version >/dev/null 2>&1 \
+    || fail "the downloaded cypherd does not run on this host ($(uname -m)) — is $URL the right asset?"
 install -m 0755 "$TMP/cypherd" "$BIN"
 ok "installed $BIN"
 

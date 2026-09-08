@@ -1,6 +1,7 @@
 package localjoin
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -30,5 +31,21 @@ func TestLastLineIsTheErrorNotTheAdvice(t *testing.T) {
 	}
 	if got := lastLine("", errors.New("exit status 1")); got != "exit status 1" {
 		t.Fatalf("empty = %q, want the exit status", got)
+	}
+}
+
+// The installer must not inherit the helper's environment: the unit's
+// EnvironmentFile is cypherd.env, which holds the master key.
+func TestTheInstallerDoesNotInheritTheMasterKey(t *testing.T) {
+	t.Setenv("CYPHERD_MASTER_KEY", "not-for-the-installer")
+	t.Setenv("POSTGRES_PASSWORD", "nor-this")
+	out, err := ShellRunner{}.Run(context.Background(),
+		`printf '%s|%s|%s' "$CYPHERD_MASTER_KEY" "$POSTGRES_PASSWORD" "$CYPHER_TOKEN"`,
+		[]string{"CYPHER_TOKEN=jt_1.secret"})
+	if err != nil {
+		t.Fatalf("Run: %v (%s)", err, out)
+	}
+	if got := string(out); got != "||jt_1.secret" {
+		t.Fatalf("installer environment = %q, want only the join variables", got)
 	}
 }
