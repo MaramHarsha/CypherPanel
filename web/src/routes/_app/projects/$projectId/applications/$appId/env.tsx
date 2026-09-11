@@ -1,0 +1,262 @@
+// Application · Env vars: write-only values (ui-principles §6) — keys listed,
+// values never returned. Changes apply on the next deploy.
+//
+// A value may reference a project shared variable as {{shared.KEY}}
+// (shared-variables.md §7). The reference is shown under its key as cleartext
+// key names — that is not a reveal, it is the wiring, and the same names are
+// already in this response. When one of those shared values changes, the app
+// reads "redeploy to apply" until it is deployed again (§5), and the action
+// that resolves it is the one already on this screen.
+import { useQueryClient } from "@tanstack/react-query";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { Plus, Trash2 } from "lucide-react";
+import { useRef, useState, type FormEvent } from "react";
+import {
+  getGetApplicationQueryKey,
+  getListEnvVarKeysQueryKey,
+  useDeleteEnvVar,
+  useGetApplication,
+  useListEnvVarKeys,
+  useSetEnvVar,
+} from "@/api/gen/applications/applications";
+import { getListDeploymentsQueryKey, useDeployApplication } from "@/api/gen/deployments/deployments";
+import { EmptyState } from "@/components/empty-state";
+import { Eyebrow } from "@/components/eyebrow";
+import { PageState } from "@/components/page-state";
+import { RedeployPending } from "@/components/redeploy-pending";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { toastFailed, toastSuccess } from "@/lib/toast";
+
+export const Route = createFileRoute("/_app/projects/$projectId/applications/$appId/env")({
+  component: EnvTab,
+});
+
+function EnvTab() {
+  const { projectId, appId } = Route.useParams();
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const keys = useListEnvVarKeys(appId);
+  const app = useGetApplication(appId);
+  const [newKey, setNewKey] = useState("");
+  const [newValue, setNewValue] = useState("");
+  // The empty state's verb lands here: the form is the next step and it is
+  // already on the page, so the pill moves focus to it rather than opening a
+  // second one (15a — never a dead end).
+  const keyField = useRef<HTMLInputElement>(null);
+
+  const invalidate = () => {
+    void qc.invalidateQueries({ queryKey: getListEnvVarKeysQueryKey(appId) });
+    // The drift marker rides on the application, so a write that adds or drops
+    // a {{shared.KEY}} reference changes it too.
+    void qc.invalidateQueries({ queryKey: getGetApplicationQueryKey(appId) });
+  };
+
+  const deploy = useDeployApplication({
+    mutation: {
+      onSuccess: (d) => {
+        // The deployments tab renders its list from cache, and the deploy we
+        // just started is not in it — so drop the list before we send the
+        // operator there to watch it.
+        void qc.invalidateQueries({ queryKey: getListDeploymentsQueryKey(appId) });
+        void navigate({
+          to: "/projects/$projectId/applications/$appId/deployments",
+          params: { projectId, appId },
+          search: { dep: d.id },
+        });
+      },
+      onError: (e: unknown, vars) => toastFailed("Deploy failed to start", e, { retry: () => deploy.mutate(vars) }),
+    },
+  });
+
+  // A saved variable changes nothing until the container is replaced, so the
+  // toast carries the verb that makes it true rather than leaving the operator
+  // to find it (canvas 10c).
+  const applied = {
+    detail: "Applies on the next deploy",
+    actions: [{ label: "Deploy now", onClick: () => deploy.mutate({ id: appId, data: {} }) }],
+  };
+
+  const setVar = useSetEnvVar({
+    mutation: {
+      onSuccess: () => {
+        invalidate();
+        setNewKey("");
+        setNewValue("");
+        toastSuccess({ title: "Env var saved", ...applied });
+      },
+      onError: (e: unknown, vars) => toastFailed("Could not save the variable", e, { retry: () => setVar.mutate(vars) }),
+    },
+  });
+  const deleteVar = useDeleteEnvVar({
+    mutation: {
+      onSuccess: () => {
+        invalidate();
+        toastSuccess({ title: "Env var removed", ...applied });
+      },
+      onError: (e: unknown, vars) => toastFailed("Could not remove the variable", e, { retry: () => deleteVar.mutate(vars) }),
+    },
+  });
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (newKey.trim() === "") return;
+    setVar.mutate({ id: appId, key: newKey.trim(), data: { value: newValue } });
+  };
+
+  return (
+    <div className="max-w-xl space-y-4">
+      <div>
+        <Eyebrow>Env vars</Eyebrow>
+        <p className="mt-1 text-[13px] text-text-mid">
+          Injected into the container at deploy time. Values are sealed and write-only — they can be replaced, never read
+          back. A value may reference a project shared variable as{" "}
+          <code className="mono text-[11.5px] text-text">{"{{shared.KEY}}"}</code>.
+        </p>
+      </div>
+
+      {app.data?.redeploy_pending && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-status-degraded/35 bg-status-degraded/[0.06] px-3 py-2">
+          <span className="flex items-center gap-2 text-[13px] text-text">
+            <RedeployPending />
+            <span>A shared variable this app reads has changed since its last deploy.</span>
+          </span>
+          <Button size="sm" variant="primary" disabled={deploy.isPending} onClick={() => deploy.mutate({ id: appId, data: {} })}>
+            Deploy now
+          </Button>
+        </div>
+      )}
+
+      <PageState
+        query={keys}
+        isEmpty={(d) => d.keys.length === 0}
+        empty={
+          <EmptyState
+            title="No env vars"
+            hint="Anything your app reads from the environment — API keys, connection strings — goes here."
+            action={
+              <Button variant="secondary" onClick={() => keyField.current?.focus()}>
+                <Plus className="h-3.5 w-3.5" /> Add a variable
+              </Button>
+            }
+          />
+        }
+      >
+        {(d) => (
+          <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-surface">
+            {d.keys.map((k) => (
+              <EnvRow
+                key={k}
+                name={k}
+                refs={d.shared_refs?.[k] ?? []}
+                onSave={(value) => setVar.mutate({ id: appId, key: k, data: { value } })}
+                onDelete={() => deleteVar.mutate({ id: appId, key: k })}
+              />
+            ))}
+          </ul>
+        )}
+      </PageState>
+
+      <form onSubmit={submit} className="flex items-end gap-2">
+        <div className="flex-1 space-y-1">
+          <label htmlFor="new-env-key" className="eyebrow block">
+            key
+          </label>
+          <Input
+            ref={keyField}
+            id="new-env-key"
+            value={newKey}
+            onChange={(e) => setNewKey(e.target.value.toUpperCase())}
+            placeholder="DATABASE_URL"
+            className="mono"
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </div>
+        <div className="flex-1 space-y-1">
+          <label htmlFor="new-env-value" className="eyebrow block">
+            value
+          </label>
+          <Input
+            id="new-env-value"
+            type="password"
+            value={newValue}
+            onChange={(e) => setNewValue(e.target.value)}
+            className="mono"
+            autoComplete="off"
+          />
+        </div>
+        <Button type="submit" variant="primary" disabled={setVar.isPending || newKey.trim() === ""}>
+          <Plus className="h-3.5 w-3.5" /> Add
+        </Button>
+      </form>
+    </div>
+  );
+}
+
+function EnvRow({
+  name,
+  refs,
+  onSave,
+  onDelete,
+}: {
+  name: string;
+  refs: string[];
+  onSave: (value: string) => void;
+  onDelete: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState("");
+
+  return (
+    <li className="flex items-center justify-between gap-3 px-3 py-2">
+      <span className="flex min-w-0 flex-col gap-0.5">
+        <span className="mono truncate text-[13px] text-text">{name}</span>
+        {refs.length > 0 && (
+          <span className="mono truncate text-[11px] text-text-faint">
+            reads {refs.map((r) => `{{shared.${r}}}`).join(" ")}
+          </span>
+        )}
+      </span>
+      <span className="flex shrink-0 items-center gap-1.5">
+        {editing ? (
+          <>
+            <Input
+              type="password"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              placeholder="new value"
+              aria-label={`New value for ${name}`}
+              className="mono h-7 w-44"
+              autoFocus
+            />
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => {
+                onSave(value);
+                setEditing(false);
+                setValue("");
+              }}
+            >
+              Save
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
+              Cancel
+            </Button>
+          </>
+        ) : (
+          <>
+            <span className="mono text-xs text-text-faint">••••••••</span>
+            <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
+              Replace
+            </Button>
+            <Button size="sm" variant="ghost" aria-label={`Remove ${name}`} onClick={onDelete}>
+              <Trash2 className="h-3.5 w-3.5 text-danger" />
+            </Button>
+          </>
+        )}
+      </span>
+    </li>
+  );
+}

@@ -1,0 +1,48 @@
+# Build output
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+
+# Go workspace sum (kept per-module go.sum instead)
+go.work.sum
+
+# Local dev state — agent identity material, plane CA, secrets
+/.dev/
+# The real panel env, beside its committed .example. It carries the master key
+# that seals every secret in the database, so it must never be committed.
+/deploy/cypherd.env
+*.pem
+*.key
+*.crt
+*.csr
+
+# Web build artifacts (Phase 1: React app not yet scaffolded)
+/web/node_modules/
+/web/dist/
+
+# Local secrets — never commit
+.env
+.env.*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Harness agent worktrees (scratch, never committed)
+.claude/worktrees/
+
+# Build-tool scratch (coolify-import registry answers — regenerable)
+/.cache/
+
+# scripts/e2e.sh scratch: binaries, panel state and Playwright artefacts.
+.e2e/
+web/e2e/node_modules/
+web/e2e/test-results/
+web/e2e/package-lock.json
+web/e2e/package.json
+# scripts/release-rehearsal.sh: throwaway binaries and run state.
+/.rehearsal/

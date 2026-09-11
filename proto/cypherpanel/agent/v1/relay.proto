@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package cypherpanel.agent.v1;
+
+option go_package = "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1;agentv1";
+
+// Image relay for multi-server deploys (ADR-008 path 2,
+// docs/features/builder-role-and-relay.md §3): a built image streams
+// builder → control plane → target over the enrollment listener's mTLS
+// channel as a transient relay — bounded buffers, never on plane disk.
+//
+// Both RPCs require a verified agent client certificate; the caller's server
+// identity is its certificate CN, authorized per-deployment against the
+// persisted builder/target (spec §5). Enroll (agent.proto) stays
+// certificate-free on the same listener — it is the first contact that
+// issues the certificate.
+
+service ImageRelayService {
+  // PushImage streams one deployment's docker-save tar from its builder to
+  // the plane. If the deployment no longer needs the relay (already past
+  // distributing), the plane responds immediately and the builder treats the
+  // item as complete.
+  rpc PushImage(stream PushImageRequest) returns (PushImageResponse);
+  // PullImage streams that tar back out to the deployment's target server.
+  rpc PullImage(PullImageRequest) returns (stream PullImageResponse);
+}
+
+// PushImageRequest is one bounded slice of the image tar. deployment_id must
+// be set on the first chunk (it selects the relay session); data is at most
+// 1 MiB so flow control, not message size, is the memory bound.
+message PushImageRequest {
+  string deployment_id = 1;
+  bytes data = 2;
+}
+
+message PushImageResponse {}
+
+message PullImageRequest {
+  string deployment_id = 1;
+}
+
+// PullImageResponse is one bounded slice of the image tar, ≤1 MiB.
+message PullImageResponse {
+  bytes data = 1;
+}

@@ -1,0 +1,58 @@
+# CypherPanel control plane (cypherd) as a systemd service — the
+# binary-on-host install path (docs/dev/deployment.md, path B).
+#
+# THIS IS THE SAME UNIT install.sh WRITES, and a test holds the two together:
+# an operator who installed by hand and one who ran the script must be running
+# the same sandbox, the same restart policy and the same upgrade handoff.
+#
+#   sudo cp cypherd /usr/local/bin/
+#   sudo cp install/cypherd.service /etc/systemd/system/
+#   sudo groupadd -f cypherpanel-upgrade
+#   sudo install -d -m 0770 -o root -g cypherpanel-upgrade /var/lib/cypherpanel/upgrade /var/lib/cypherpanel/upgrade/slots
+#   sudo mkdir -p /etc/cypherpanel && sudo cp deploy/cypherd.env.example /etc/cypherpanel/cypherd.env
+#   sudo $EDITOR /etc/cypherpanel/cypherd.env      # set MASTER_KEY, DATABASE_URL, PUBLIC_HOST
+#   sudo systemctl enable --now cypherd
+#
+# The group is not optional: SupplementaryGroups= names it, and systemd refuses
+# to start a service whose supplementary group does not exist. Postgres is a
+# separate dependency (managed, system package, or a container); point
+# CYPHERD_DATABASE_URL at it.
+
+[Unit]
+Description=CypherPanel control plane
+Documentation=https://github.com/MaramHarsha/CypherPanel
+After=network-online.target docker.service
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/cypherpanel/cypherd.env
+ExecStart=/usr/local/bin/cypherd
+Restart=always
+RestartSec=5
+
+StateDirectory=cypherd
+Environment=CYPHERD_DATA_DIR=/var/lib/cypherd
+
+# The upgrade handoff. Joining the group rather than naming a UID is what makes
+# this work regardless of which UID DynamicUser picked this boot.
+SupplementaryGroups=cypherpanel-upgrade
+ReadWritePaths=-/var/lib/cypherpanel/upgrade
+Environment=CYPHERD_UPGRADE_DIR=/var/lib/cypherpanel/upgrade
+
+# cypherd is a network service with a data directory and needs nothing else.
+DynamicUser=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,1121 @@
+// Package worker consumes work items from the control plane, maintains the
+// local desired-application set, and drives the orchestrator reconciler to
+// converge reality — reporting only what it observes (ADR-005).
+//
+// The worker talks to the data plane through the small consumer-defined Bus
+// seam (ENGINEERING rule 6), never a concrete NATS type: the production
+// implementation (natsBus) wraps the agent's *nats.Conn and its JetStream
+// pull subscription, and tests drive the full dispatch/ack logic against a
+// fake — so the agent module never depends on the NATS *server*.
+package worker
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	"github.com/MaramHarsha/cypherpanel/agent/builder"
+	"github.com/MaramHarsha/cypherpanel/agent/driver"
+	"github.com/MaramHarsha/cypherpanel/agent/metrics"
+	agentv1 "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1"
+	"github.com/MaramHarsha/cypherpanel/pkg/subjects"
+)
+
+// ErrNoWork is what a Bus returns from FetchWork when the fetch deadline
+// elapsed with nothing delivered — a normal idle, not a failure.
+var ErrNoWork = errors.New("worker: no work available")
+
+// Message is one delivered work item. The worker decides its fate: Ack on
+// success, NakWithDelay to retry after a backoff, Term to drop it for good
+// (poison message). InProgress resets the redelivery timer during long work.
+type Message interface {
+	Subject() string
+	Data() []byte
+	Ack() error
+	Term() error
+	NakWithDelay(delay time.Duration) error
+	InProgress() error
+	// NumDelivered is how many times this item has been delivered (1 on the
+	// first try); it drives the poison-message cutoff.
+	NumDelivered() uint64
+}
+
+// ImageRelay moves images through the plane's transient relay for
+// multi-server deployments (consumer-defined; *relay.Client satisfies it —
+// builder-role-and-relay.md §3). Both operations are idempotent under
+// redelivery. A worker without one (no plane address persisted) fails relay
+// work items with a clear error instead of guessing.
+type ImageRelay interface {
+	PushImage(ctx context.Context, deploymentID, image string) error
+	// PullImage fetches the deployment's image and, when targetImage is set,
+	// gives it the name it must RUN under here (revision-promotion.md §5).
+	PullImage(ctx context.Context, deploymentID, image, targetImage string) error
+}
+
+// BackupRunner executes one database backup or restore and returns the terminal
+// event to report (consumer-defined; *docker.BackupExecutor satisfies it —
+// managed-databases.md §7). Nil on nodes that run no databases.
+type BackupRunner interface {
+	ExecuteBackup(ctx context.Context, work *agentv1.DbBackupWork) *agentv1.DbBackupEvent
+	// ExecuteVolumeBackup archives a named volume rather than dumping an
+	// engine (volume-backups.md). Same transport, same S3 client, no exec.
+	ExecuteVolumeBackup(ctx context.Context, work *agentv1.VolumeBackupWork) *agentv1.VolumeBackupEvent
+	// ExecuteRestore reports each step it reaches through progress before
+	// returning the terminal event. A restore takes the database offline, so
+	// how far along it is is the answer someone is waiting for.
+	ExecuteRestore(ctx context.Context, work *agentv1.DbRestoreWork, progress func(*agentv1.DbRestoreEvent)) *agentv1.DbRestoreEvent
+	ExecutePrune(ctx context.Context, work *agentv1.DbBackupPruneWork) *agentv1.DbBackupPruneEvent
+}
+
+// Bus is everything the worker needs from the data-plane connection
+// (consumer-defined). natsBus is the production implementation.
+type Bus interface {
+	// Request performs a request/reply — the desired-state sync on connect.
+	Request(ctx context.Context, subject string, data []byte) ([]byte, error)
+	// Publish sends a fire-and-forget message (app statuses, deploy events,
+	// build/runtime logs).
+	Publish(subject string, data []byte) error
+	// FetchWork blocks up to an internal deadline for the next work item,
+	// returning ErrNoWork on an idle timeout so the caller can loop.
+	FetchWork(ctx context.Context) (Message, error)
+}
+
+// maxDeliveries is the poison-message cutoff: a work item that fails to
+// reconcile this many times is Term'd rather than redelivered forever.
+const maxDeliveries = 3
+
+// errNoRelay marks a host that cannot reach the plane's relay (no persisted
+// plane address). Redelivery cannot fix a missing address, so the item fails
+// immediately with the remedy in the detail.
+var errNoRelay = errors.New("no relay configured: set CYPHER_PLANE_ADDR or re-enroll the agent")
+
+// relayTransferTimeout caps one relay attempt end to end; an expired attempt
+// redelivers and retries with a fresh session (builder-role-and-relay.md §6).
+const relayTransferTimeout = 15 * time.Minute
+
+// defaultDriftInterval bounds how stale the node may drift between work items:
+// with no work arriving, the worker still re-converges (retrying failed GC and
+// drains) and re-publishes observed statuses this often, so the plane's view
+// of an app never fossilizes at deploy time (ADR-005: status is observation).
+const defaultDriftInterval = 60 * time.Second
+
+// Worker consumes work items, manages the local desired state, and invokes the
+// orchestrator driver to converge reality.
+type Worker struct {
+	bus            Bus
+	serverID       string
+	driver         driver.Reconciler
+	dbReconciler   driver.DbReconciler
+	composeRec     driver.ComposeReconciler
+	backup         BackupRunner
+	builder        *builder.Builder
+	relay          ImageRelay
+	log            *slog.Logger
+	driftInterval  time.Duration
+	cron           CronRunner
+	proxyTLS       ProxyTLS
+	staticRouter   StaticRouter
+	metrics        MetricsSink
+	proxyAccessLog AccessLogSink
+	updater        SelfUpdater
+
+	// working is true while a work item is being handled. It is the quiescence
+	// signal the self-updater waits on: a restart mid-build throws away ten
+	// minutes of CPU and a restart mid-restore interrupts a database that is
+	// already offline (agent-updates.md §3.1). The work loop is single
+	// threaded, so this is exact rather than approximate.
+	working atomic.Bool
+
+	mu           sync.Mutex
+	state        map[string]*agentv1.AppSpec     // map[app_id]spec
+	dbState      map[string]*agentv1.DbSpec      // map[db_id]spec
+	composeState map[string]*agentv1.ComposeSpec // map[stack_id]spec
+	// retain is the plane's garbage-collection instruction: which revisions'
+	// images must survive (disk-management.md §2). Held beside the specs and
+	// replaced wholesale on every sync, like them.
+	retain []*agentv1.RetainSpec
+	// staticRoutes are proxy fragments for upstreams that are not containers
+	// (status-pages.md §4). Replaced wholesale on every sync like the specs,
+	// with the same absence-means-remove contract.
+	staticRoutes map[string]*agentv1.StaticRouteSpec
+}
+
+// SelfUpdater converges the agent's own binary onto the version desired state
+// names (consumer-defined; *updater.Updater satisfies it). Optional: a nil one
+// makes a node behave exactly as it did before agent updates existed.
+type SelfUpdater interface {
+	Apply(ctx context.Context, spec *agentv1.AgentUpdateSpec)
+}
+
+// MetricsSink receives the panel-wide collection policy. Consumer-defined and
+// optional: a node without a collector simply reports nothing, and the panel
+// shows "no data yet" with the reason rather than a flat line at 0%.
+type MetricsSink interface {
+	Apply(s metrics.Settings)
+}
+
+// AccessLogSink is the Proxy's own access-log switch, which is part of its
+// static config and therefore of its container identity.
+type AccessLogSink interface {
+	SetAccessLog(on bool)
+}
+
+// StaticRouter writes and removes proxy fragments whose upstream is not a
+// container. Consumer-defined and optional: a node whose agent was built
+// without a Proxy driver simply carries no status routes.
+type StaticRouter interface {
+	SetStaticRoute(ctx context.Context, routeID string, route *agentv1.RouteSpec, upstreamURL, addPrefix string) error
+	RemoveRoute(ctx context.Context, routeID string) error
+}
+
+// CronRunner arms scheduled tasks from desired state and fires them on schedule
+// (consumer-defined; *cron.Runner satisfies it — scheduled-tasks.md, ADR-011).
+// Optional: nil on builder-role agents and when the feature is unwired.
+type CronRunner interface {
+	Sync(specs []*agentv1.AppSpec)
+	Run(ctx context.Context)
+}
+
+// ProxyTLS receives the panel's ACME account from desired state
+// (consumer-defined; *proxy.Traefik satisfies it — agent-identity-and-tls.md
+// §4). Deliberately not part of driver.Reconciler: the account is node-wide,
+// not per-application, and it is the Proxy — not the orchestrator driver — that
+// acts on it. Optional: nil on builder-role agents, which run no Proxy.
+type ProxyTLS interface {
+	// SetACME records the account. Called on every desired-state sync, so it
+	// must be idempotent and must not block.
+	SetACME(acmeEmail, acmeCAServer string)
+}
+
+// New creates a new Worker. drv is nil on builder-role agents (nothing runs
+// there — builder-role-and-relay.md §1); dbRec/bkp are nil when the agent runs
+// no databases; bld is nil on worker-role agents; rly is nil when the agent has
+// no plane relay address.
+func New(bus Bus, serverID string, drv driver.Reconciler, dbRec driver.DbReconciler, bkp BackupRunner, bld *builder.Builder, rly ImageRelay, log *slog.Logger) *Worker {
+	return &Worker{
+		bus:           bus,
+		serverID:      serverID,
+		driver:        drv,
+		dbReconciler:  dbRec,
+		backup:        bkp,
+		builder:       bld,
+		relay:         rly,
+		log:           log,
+		driftInterval: defaultDriftInterval,
+		state:         make(map[string]*agentv1.AppSpec),
+		dbState:       make(map[string]*agentv1.DbSpec),
+		composeState:  make(map[string]*agentv1.ComposeSpec),
+		staticRoutes:  make(map[string]*agentv1.StaticRouteSpec),
+	}
+}
+
+// SetComposeReconciler attaches the Compose Stack reconciler. Kept out of New
+// for the reason cron is: it is an opt-in add-on wired only on app-role agents,
+// and a node without it behaves exactly as it did before the feature existed
+// (compose-stacks.md §4).
+func (w *Worker) SetComposeReconciler(c driver.ComposeReconciler) { w.composeRec = c }
+
+// SetCron attaches the scheduled-task runner. Kept out of New so cron stays an
+// opt-in add-on wired only on app-role agents (scheduled-tasks.md §5).
+func (w *Worker) SetCron(c CronRunner) { w.cron = c }
+
+// SetProxyTLS attaches the Proxy's TLS settings sink, wired only on nodes that
+// run a Proxy (agent-identity-and-tls.md §4).
+func (w *Worker) SetProxyTLS(p ProxyTLS) { w.proxyTLS = p }
+
+// SetStaticRouter attaches the writer for non-container proxy fragments,
+// wired only on nodes that run a Proxy (status-pages.md §4).
+func (w *Worker) SetStaticRouter(r StaticRouter) { w.staticRouter = r }
+
+// SetMetrics attaches the metrics collector (metrics-and-usage.md §5).
+func (w *Worker) SetMetrics(m MetricsSink) { w.metrics = m }
+
+// SetUpdater wires the self-updater. Without it an AgentUpdateSpec in desired
+// state is simply ignored, which is what a builder-role agent and every unit
+// test want.
+func (w *Worker) SetUpdater(u SelfUpdater) { w.updater = u }
+
+// Quiet reports that no work item is in flight. It is what the updater waits
+// on before replacing the binary underneath a running build.
+func (w *Worker) Quiet() bool { return !w.working.Load() }
+
+// SetProxyAccessLog attaches the Proxy's access-log switch.
+func (w *Worker) SetProxyAccessLog(a AccessLogSink) { w.proxyAccessLog = a }
+
+// Run performs an initial desired-state sync, converges once on boot, then
+// processes work items until the context is canceled. Between work items it
+// runs a periodic drift reconcile on the same goroutine (the driver is not
+// built for concurrent convergence), so idle nodes still self-heal.
+func (w *Worker) Run(ctx context.Context) error {
+	if err := w.sync(ctx); err != nil {
+		return fmt.Errorf("worker: initial sync failed: %w", err)
+	}
+	if w.cron != nil {
+		go w.cron.Run(ctx) // fires scheduled tasks on its own clock (ADR-011)
+	}
+	lastConverge := time.Now()
+
+	w.log.Info("worker consuming work items", "consumer", subjects.WorkConsumer(w.serverID))
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+
+		msg, err := w.bus.FetchWork(ctx)
+		if err != nil {
+			// Shutdown is not idleness: a drift reconcile against a canceled
+			// context would only fail and log noise, so leave immediately.
+			if errors.Is(err, context.Canceled) {
+				return nil
+			}
+			if errors.Is(err, ErrNoWork) {
+				if time.Since(lastConverge) >= w.driftInterval {
+					if rerr := w.reconcile(ctx, "", "", agentv1.DeployEvent_STAGE_UNSPECIFIED, ""); rerr != nil {
+						w.log.Error("worker: drift reconcile", "error", rerr)
+					}
+					lastConverge = time.Now()
+				}
+				continue
+			}
+			w.log.Error("worker: fetching work", "error", err)
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(time.Second): // backoff
+			}
+			continue
+		}
+		w.working.Store(true)
+		w.handleMsg(ctx, msg)
+		w.working.Store(false)
+		lastConverge = time.Now()
+	}
+}
+
+// sync fetches the desired set and converges on it, retrying the convergence
+// until it succeeds. It is the boot path: an agent that cannot reach desired
+// state has nothing else to do, so it keeps trying.
+func (w *Worker) sync(ctx context.Context) error {
+	if err := w.syncState(ctx); err != nil {
+		return err
+	}
+	// Converge once with no trigger to reach desired state on boot.
+	for {
+		if err := w.reconcile(ctx, "", "", agentv1.DeployEvent_STAGE_UNSPECIFIED, ""); err == nil {
+			return nil
+		}
+		w.log.Error("worker: initial reconcile failed, retrying in 2s")
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
+// syncState fetches the authoritative desired set from the plane and replaces
+// what this agent holds. It does not converge — the caller decides whether a
+// failed convergence should be retried in place (boot) or handed back to the
+// work item that asked for it (a resync nudge).
+func (w *Worker) syncState(ctx context.Context) error {
+	data, err := w.bus.Request(ctx, subjects.Sync(w.serverID), nil)
+	if err != nil {
+		return err
+	}
+	var ds agentv1.DesiredState
+	if err := proto.Unmarshal(data, &ds); err != nil {
+		return fmt.Errorf("unmarshaling desired state: %w", err)
+	}
+
+	// The sync reply is the COMPLETE desired set, so it replaces what is held
+	// rather than merging into it (ADR-005: absence means removal). On boot the
+	// maps are empty and the two are the same; on a re-sync — a resync nudge —
+	// merging would resurrect an application the plane has since removed.
+	state := make(map[string]*agentv1.AppSpec, len(ds.Specs))
+	for _, spec := range ds.Specs {
+		state[spec.AppId] = spec
+	}
+	dbState := make(map[string]*agentv1.DbSpec, len(ds.DbSpecs))
+	for _, spec := range ds.DbSpecs {
+		dbState[spec.DbId] = spec
+	}
+	composeState := make(map[string]*agentv1.ComposeSpec, len(ds.ComposeSpecs))
+	for _, spec := range ds.ComposeSpecs {
+		composeState[spec.StackId] = spec
+	}
+	staticState := make(map[string]*agentv1.StaticRouteSpec, len(ds.StaticRoutes))
+	for _, sr := range ds.StaticRoutes {
+		if sr.GetRouteId() != "" {
+			staticState[sr.GetRouteId()] = sr
+		}
+	}
+
+	w.mu.Lock()
+	var gone []string
+	for id := range w.staticRoutes {
+		if _, still := staticState[id]; !still {
+			gone = append(gone, id)
+		}
+	}
+	w.state, w.dbState, w.composeState = state, dbState, composeState
+	w.retain = ds.Retain
+	w.staticRoutes = staticState
+	w.mu.Unlock()
+
+	// Absence means remove, and it is done here rather than in reconcile
+	// because this is the only place that knows what USED to be present.
+	if w.staticRouter != nil {
+		for _, id := range gone {
+			if err := w.staticRouter.RemoveRoute(ctx, id); err != nil {
+				w.log.Error("worker: removing static route", "route_id", id, "error", err)
+			}
+		}
+	}
+
+	// Node-wide TLS settings ride along with the desired set: one panel, one
+	// ACME account, every node (agent-identity-and-tls.md §4). An empty
+	// acme_email is a meaningful value — "no certificate resolver" — so it is
+	// applied exactly like a non-empty one.
+	if w.proxyTLS != nil {
+		w.proxyTLS.SetACME(ds.GetTls().GetAcmeEmail(), ds.GetTls().GetAcmeCaServer())
+	}
+
+	// Metrics settings ride along the same way. An ABSENT metrics block means
+	// the defaults rather than "off": an old plane that does not send one must
+	// not silently stop a node collecting, and a nil message's getters give
+	// exactly the zero values, so the absence is read explicitly.
+	ms := metrics.Settings{Enabled: true, BucketSeconds: metrics.DefaultBucketSeconds}
+	if m := ds.GetMetrics(); m != nil {
+		ms = metrics.Settings{
+			Enabled:          m.GetEnabled(),
+			RequestAnalytics: m.GetRequestAnalytics(),
+			BucketSeconds:    int(m.GetBucketSeconds()),
+		}
+	}
+	if w.metrics != nil {
+		w.metrics.Apply(ms)
+	}
+	if w.proxyAccessLog != nil {
+		w.proxyAccessLog.SetAccessLog(ms.Enabled && ms.RequestAnalytics)
+	}
+
+	// The agent's own version rides along with the desired set like the ACME
+	// account and the metrics policy do. It runs on its own goroutine because
+	// converging it means WAITING — for the jitter, and for this very work loop
+	// to go quiet — and a sync that blocked on that would deadlock the loop it
+	// is waiting for. Apply is re-entrant-safe, so a second nudge during a
+	// download is a no-op rather than a second download.
+	if w.updater != nil {
+		spec := ds.GetAgentUpdate()
+		go w.updater.Apply(ctx, spec)
+	}
+
+	w.log.Info("worker: desired-state sync complete",
+		"apps", len(ds.Specs),
+		"databases", len(ds.DbSpecs),
+		"compose_stacks", len(ds.ComposeSpecs),
+		"tls_configured", ds.GetTls().GetAcmeEmail() != "",
+		"metrics", ms.Enabled,
+		"request_analytics", ms.RequestAnalytics,
+	)
+	return nil
+}
+
+func (w *Worker) handleMsg(ctx context.Context, msg Message) {
+	subject := msg.Subject()
+	w.log.Info("worker: received work item", "subject", subject)
+
+	var deploymentID string
+	var appID string
+	var stage agentv1.DeployEvent_Stage
+	var commitSha string
+
+	switch {
+	case strings.HasSuffix(subject, ".rollout"):
+		var work agentv1.RolloutWork
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
+			w.log.Error("worker: unmarshaling rollout work", "error", err)
+			_ = msg.Term()
+			return
+		}
+		if work.Spec == nil {
+			w.log.Error("worker: rollout work missing spec")
+			_ = msg.Term()
+			return
+		}
+		deploymentID = work.DeploymentId
+		appID = work.Spec.AppId
+		stage = agentv1.DeployEvent_STAGE_ROLLOUT
+
+		w.mu.Lock()
+		w.state[appID] = work.Spec
+		w.mu.Unlock()
+
+	case strings.HasSuffix(subject, ".compose.converge"):
+		// A stack's desired state, re-declared so a deploy lands promptly.
+		// Carries no command verb: the reconciler owns its own invocation and
+		// this only says which file to converge toward (compose-stacks.md §4).
+		var work agentv1.ComposeConvergeWork
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil || work.Spec == nil {
+			w.log.Error("worker: unmarshaling compose converge work", "error", err)
+			_ = msg.Term()
+			return
+		}
+		if w.composeRec == nil {
+			w.log.Error("worker: received compose work but no compose reconciler is wired")
+			_ = msg.Term()
+			return
+		}
+		w.mu.Lock()
+		if w.composeState == nil {
+			w.composeState = map[string]*agentv1.ComposeSpec{}
+		}
+		w.composeState[work.Spec.StackId] = work.Spec
+		w.mu.Unlock()
+		if err := w.reconcileCompose(ctx); err != nil {
+			w.log.Error("worker: compose converge reconcile", "stack_id", work.Spec.StackId, "error", err)
+			_ = msg.NakWithDelay(5 * time.Second)
+			return
+		}
+		_ = msg.Ack()
+		return
+
+	case strings.HasSuffix(subject, ".compose.remove"):
+		var work agentv1.ComposeRemoveWork
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
+			w.log.Error("worker: unmarshaling compose remove work", "error", err)
+			_ = msg.Term()
+			return
+		}
+		if w.composeRec == nil {
+			_ = msg.Term()
+			return
+		}
+		w.mu.Lock()
+		delete(w.composeState, work.StackId)
+		w.mu.Unlock()
+		if err := w.composeRec.Remove(ctx, work.StackId, work.DeleteVolumes); err != nil {
+			w.log.Error("worker: compose remove", "stack_id", work.StackId, "error", err)
+			_ = msg.NakWithDelay(5 * time.Second)
+			return
+		}
+		_ = msg.Ack()
+		return
+
+	case strings.HasSuffix(subject, ".converge"):
+		// Re-declared desired state without a deployment (ConvergeWork): update
+		// the spec and reconcile silently — no deploy event. Propagates a
+		// scheduled-task change; the container reconcile is a no-op
+		// (scheduled-tasks.md §4).
+		var work agentv1.ConvergeWork
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil || work.Spec == nil {
+			w.log.Error("worker: unmarshaling converge work", "error", err)
+			_ = msg.Term()
+			return
+		}
+		w.mu.Lock()
+		w.state[work.Spec.AppId] = work.Spec
+		w.mu.Unlock()
+		if err := w.reconcile(ctx, "", "", agentv1.DeployEvent_STAGE_UNSPECIFIED, ""); err != nil {
+			w.log.Error("worker: converge reconcile", "error", err)
+			_ = msg.NakWithDelay(5 * time.Second)
+			return
+		}
+		_ = msg.Ack()
+		return
+
+	case strings.HasSuffix(subject, ".resync"):
+		// Re-read the authoritative desired set and converge. Idempotent by
+		// construction: it is the same thing the agent does on connect, so a
+		// redelivered nudge costs one request and changes nothing
+		// (agent-identity-and-tls.md §4).
+		var work agentv1.ResyncWork
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
+			w.log.Error("worker: unmarshaling resync work", "error", err)
+			_ = msg.Term()
+			return
+		}
+		w.log.Info("worker: re-reading desired state", "reason", work.GetReason())
+		if err := w.syncState(ctx); err != nil {
+			w.log.Error("worker: resync failed", "error", err)
+			if msg.NumDelivered() >= maxDeliveries {
+				_ = msg.Term()
+				return
+			}
+			_ = msg.NakWithDelay(5 * time.Second)
+			return
+		}
+		if err := w.reconcile(ctx, "", "", agentv1.DeployEvent_STAGE_UNSPECIFIED, ""); err != nil {
+			// The new desired state is already held; only the convergence
+			// failed, and the drift loop retries that every cycle anyway. NAK
+			// so the nudge is redelivered and the node converges sooner.
+			w.log.Error("worker: resync reconcile", "error", err)
+			if msg.NumDelivered() >= maxDeliveries {
+				_ = msg.Term()
+				return
+			}
+			_ = msg.NakWithDelay(5 * time.Second)
+			return
+		}
+		_ = msg.Ack()
+		return
+
+	case strings.HasSuffix(subject, ".remove") && !strings.HasSuffix(subject, ".db.remove"):
+		// The app-remove suffix ".remove" is also a suffix of the database
+		// work subject ".db.remove" — exclude it so database removes reach
+		// their own case below, not the app reconciler.
+		var work agentv1.RemoveWork
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
+			w.log.Error("worker: unmarshaling remove work", "error", err)
+			_ = msg.Term()
+			return
+		}
+		deploymentID = work.DeploymentId
+		appID = work.AppId
+		stage = agentv1.DeployEvent_STAGE_REMOVE
+
+		w.mu.Lock()
+		delete(w.state, appID)
+		w.mu.Unlock()
+
+	case strings.HasSuffix(subject, ".push"):
+		var work agentv1.PushImageWork
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
+			w.log.Error("worker: unmarshaling push work", "error", err)
+			_ = msg.Term()
+			return
+		}
+		w.handleRelay(ctx, msg, work.DeploymentId, work.AppId, "push", func(ctx context.Context) error {
+			if w.relay == nil {
+				return errNoRelay
+			}
+			return w.relay.PushImage(ctx, work.DeploymentId, work.Image)
+		})
+		return
+
+	case strings.HasSuffix(subject, ".distribute"):
+		var work agentv1.DistributeWork
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
+			w.log.Error("worker: unmarshaling distribute work", "error", err)
+			_ = msg.Term()
+			return
+		}
+		w.handleRelay(ctx, msg, work.DeploymentId, work.AppId, "distribute", func(ctx context.Context) error {
+			if w.relay == nil {
+				return errNoRelay
+			}
+			return w.relay.PullImage(ctx, work.DeploymentId, work.Image, work.TargetImage)
+		})
+		return
+
+	case strings.HasSuffix(subject, ".build"):
+		var work agentv1.BuildWork
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
+			w.log.Error("worker: unmarshaling build work", "error", err)
+			_ = msg.Term()
+			return
+		}
+		deploymentID = work.DeploymentId
+		appID = work.AppId
+		stage = agentv1.DeployEvent_STAGE_BUILD
+		commitSha = work.CommitSha
+
+		// Stream build logs to the plane; keep the message alive across a long
+		// build (msg.InProgress) so the WORK consumer's AckWait can't redeliver
+		// it and trigger a concurrent rebuild.
+		logSubject := subjects.BuildLog(w.serverID, deploymentID)
+		onLog := func(line string) {
+			_ = w.bus.Publish(logSubject, []byte(line))
+			_ = msg.InProgress()
+		}
+
+		if w.builder == nil {
+			w.log.Warn("worker: received build work but builder is nil")
+			w.emitEvent(deploymentID, appID, stage, agentv1.DeployEvent_OUTCOME_FAILED, "builder is nil", commitSha)
+			_ = msg.Ack()
+			return
+		}
+		resolvedSha, err := w.builder.Build(ctx, &work, onLog)
+		if err != nil {
+			w.log.Error("worker: build failed", "error", err)
+			w.emitEvent(deploymentID, appID, stage, agentv1.DeployEvent_OUTCOME_FAILED, err.Error(), commitSha)
+			_ = msg.Ack()
+			return
+		}
+		w.emitEvent(deploymentID, appID, stage, agentv1.DeployEvent_OUTCOME_SUCCEEDED, "", resolvedSha)
+		_ = msg.Ack()
+		return
+
+	case strings.HasSuffix(subject, ".db.provision"):
+		var work agentv1.DbProvisionWork
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
+			w.log.Error("worker: unmarshaling db provision work", "error", err)
+			_ = msg.Term()
+			return
+		}
+		if work.Spec == nil {
+			w.log.Error("worker: db provision work missing spec")
+			_ = msg.Term()
+			return
+		}
+		w.mu.Lock()
+		w.dbState[work.Spec.DbId] = work.Spec
+		w.mu.Unlock()
+
+		if w.dbReconciler == nil {
+			w.log.Error("worker: received db provision work but dbReconciler is nil")
+			_ = msg.Term()
+			return
+		}
+		// Database provisioning is independent of the app driver: converge the
+		// database set directly and return, so a database-only node (no app
+		// driver) is not caught by the driver-nil guard below.
+		if err := w.reconcileDatabases(ctx); err != nil {
+			w.log.Error("worker: db provision reconcile failed", "db_id", work.Spec.DbId, "error", err)
+			if msg.NumDelivered() >= maxDeliveries {
+				_ = msg.Term()
+			} else {
+				_ = msg.NakWithDelay(5 * time.Second)
+			}
+			return
+		}
+		_ = msg.Ack()
+		return
+
+	case strings.HasSuffix(subject, ".db.remove"):
+		var work agentv1.DbRemoveWork
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
+			w.log.Error("worker: unmarshaling db remove work", "error", err)
+			_ = msg.Term()
+			return
+		}
+		w.mu.Lock()
+		delete(w.dbState, work.DbId)
+		w.mu.Unlock()
+
+		if w.dbReconciler == nil {
+			w.log.Error("worker: received db remove work but dbReconciler is nil")
+			_ = msg.Term()
+			return
+		}
+
+		if err := w.dbReconciler.RemoveDatabase(ctx, work.DbId, work.DeleteVolume); err != nil {
+			w.log.Error("worker: failed to remove database", "db_id", work.DbId, "error", err)
+			_ = msg.NakWithDelay(5 * time.Second)
+			return
+		}
+
+		// Once successfully removed, publish final stopped status.
+		status := &agentv1.DbStatus{
+			DbId:       work.DbId,
+			State:      "stopped",
+			ObservedAt: timestamppb.Now(),
+		}
+		if data, err := proto.Marshal(status); err == nil {
+			_ = w.bus.Publish(subjects.DbState(w.serverID, work.DbId), data)
+		}
+		_ = msg.Ack()
+		return
+
+	case strings.HasSuffix(subject, ".db.backup.prune"):
+		// Retention sweep: delete specific S3 objects. Idempotent, so redelivery
+		// is safe. Reports which keys were removed; the plane deletes only those
+		// rows (self-healing — failures retry on the next prune).
+		var work agentv1.DbBackupPruneWork
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
+			w.log.Error("worker: unmarshaling db backup prune work", "error", err)
+			_ = msg.Term()
+			return
+		}
+		if w.backup == nil {
+			w.log.Error("worker: received db backup prune work but no backup runner")
+			_ = msg.Term()
+			return
+		}
+		event := w.runWithHeartbeat(ctx, msg, func(ctx context.Context) proto.Message {
+			return w.backup.ExecutePrune(ctx, &work)
+		})
+		if data, err := proto.Marshal(event); err == nil {
+			_ = w.bus.Publish(subjects.DbBackupPruneState(w.serverID), data)
+		}
+		_ = msg.Ack()
+		return
+
+	case strings.HasSuffix(subject, ".volume.backup"):
+		var work agentv1.VolumeBackupWork
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
+			w.log.Error("worker: unmarshaling volume backup work", "error", err)
+			_ = msg.Term()
+			return
+		}
+		if w.backup == nil {
+			w.log.Error("worker: received volume backup work but no backup runner")
+			_ = msg.Term()
+			return
+		}
+		// Held in-flight across the archive and upload, exactly as a database
+		// backup is. Idempotent by record id: redelivery re-uploads to the same
+		// key, and S3 PUT is last-writer-wins.
+		event := w.runWithHeartbeat(ctx, msg, func(ctx context.Context) proto.Message {
+			return w.backup.ExecuteVolumeBackup(ctx, &work)
+		})
+		if data, err := proto.Marshal(event); err == nil {
+			_ = w.bus.Publish(subjects.VolumeBackupState(w.serverID), data)
+		}
+		_ = msg.Ack()
+		return
+
+	case strings.HasSuffix(subject, ".db.backup"):
+		var work agentv1.DbBackupWork
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
+			w.log.Error("worker: unmarshaling db backup work", "error", err)
+			_ = msg.Term()
+			return
+		}
+		if w.backup == nil {
+			w.log.Error("worker: received db backup work but no backup runner")
+			_ = msg.Term()
+			return
+		}
+		// Keep the item in-flight across a long dump/upload, then report the
+		// terminal outcome the plane records; the run itself is idempotent
+		// (overwrites the same S3 key and in-container temp file).
+		event := w.runWithHeartbeat(ctx, msg, func(ctx context.Context) proto.Message {
+			return w.backup.ExecuteBackup(ctx, &work)
+		})
+		if data, err := proto.Marshal(event); err == nil {
+			_ = w.bus.Publish(subjects.DbBackupState(w.serverID), data)
+		}
+		_ = msg.Ack()
+		return
+
+	case strings.HasSuffix(subject, ".db.restore"):
+		var work agentv1.DbRestoreWork
+		if err := proto.Unmarshal(msg.Data(), &work); err != nil {
+			w.log.Error("worker: unmarshaling db restore work", "error", err)
+			_ = msg.Term()
+			return
+		}
+		if w.backup == nil {
+			w.log.Error("worker: received db restore work but no backup runner")
+			_ = msg.Term()
+			return
+		}
+		event := w.runWithHeartbeat(ctx, msg, func(ctx context.Context) proto.Message {
+			return w.backup.ExecuteRestore(ctx, &work, func(ev *agentv1.DbRestoreEvent) {
+				// Best-effort: a dropped progress event costs the screen a
+				// step, never the restore. The terminal event is what the
+				// record is closed on.
+				if data, err := proto.Marshal(ev); err == nil {
+					_ = w.bus.Publish(subjects.DbRestoreState(w.serverID), data)
+				}
+			})
+		})
+		if data, err := proto.Marshal(event); err == nil {
+			_ = w.bus.Publish(subjects.DbRestoreState(w.serverID), data)
+		}
+		_ = msg.Ack()
+		return
+
+	default:
+		w.log.Warn("worker: unknown work subject", "subject", subject)
+		_ = msg.Term()
+		return
+	}
+
+	if w.driver == nil {
+		// Runtime work routed to a builder-role agent is a plane-side routing
+		// bug, not a transient fault: report it and drop the item.
+		w.log.Error("worker: runtime work on an agent with no driver (role builder)", "subject", subject)
+		w.emitEvent(deploymentID, appID, stage, agentv1.DeployEvent_OUTCOME_FAILED, "agent has role builder: it runs no applications", commitSha)
+		_ = msg.Term()
+		return
+	}
+	if err := w.reconcile(ctx, deploymentID, appID, stage, commitSha); err != nil {
+		w.log.Error("worker: reconcile failed completely", "error", err)
+		if stage != agentv1.DeployEvent_STAGE_UNSPECIFIED {
+			w.emitEvent(deploymentID, appID, stage, agentv1.DeployEvent_OUTCOME_FAILED, err.Error(), commitSha)
+		}
+		if msg.NumDelivered() >= maxDeliveries {
+			w.log.Error("worker: reconcile failed persistently, terminating message", "deliveries", msg.NumDelivered())
+			_ = msg.Term()
+		} else {
+			_ = msg.NakWithDelay(5 * time.Second)
+		}
+		return
+	}
+	_ = msg.Ack()
+}
+
+func (w *Worker) reconcile(ctx context.Context, triggerDeploymentID, triggerAppID string, stage agentv1.DeployEvent_Stage, commitSha string) error {
+	// Applications: only on nodes that run them (builder-role agents have no
+	// app driver — builder-role-and-relay.md §1). Databases converge
+	// separately below, so a database-only node still self-heals.
+	var statuses []*agentv1.AppStatus
+	if w.driver != nil {
+		w.mu.Lock()
+		desired := make([]*agentv1.AppSpec, 0, len(w.state))
+		for _, spec := range w.state {
+			desired = append(desired, spec)
+		}
+		retain := w.retain
+		w.mu.Unlock()
+
+		// Re-arm the scheduled-task set from the same desired state, so
+		// create/edit/delete changes (carried on AppSpec) take effect
+		// (scheduled-tasks.md §5). Cheap and lock-free from the driver's view.
+		if w.cron != nil {
+			w.cron.Sync(desired)
+		}
+
+		var err error
+		statuses, err = w.driver.Reconcile(ctx, desired, retain)
+		if err != nil {
+			return err // total orchestrator failure
+		}
+
+		// Publish observed statuses (ADR-005: the plane asserts outcomes only
+		// from these observations).
+		for _, status := range statuses {
+			data, err := proto.Marshal(status)
+			if err != nil {
+				w.log.Error("worker: marshaling app status", "error", err)
+				continue
+			}
+			if err := w.bus.Publish(subjects.AppState(w.serverID, status.AppId), data); err != nil {
+				w.log.Error("worker: publishing app status", "app_id", status.AppId, "error", err)
+			}
+		}
+	}
+
+	// Phase 3: Managed Databases (managed-databases.md §6). Independent of the
+	// app driver; a no-op when this node runs no databases.
+	if err := w.reconcileDatabases(ctx); err != nil {
+		w.log.Error("worker: database reconcile failed", "error", err)
+	}
+
+	// V1: Compose Stacks (compose-stacks.md §4). Also independent of the app
+	// driver, and a no-op when this node runs no stacks.
+	if err := w.reconcileCompose(ctx); err != nil {
+		w.log.Error("worker: compose reconcile failed", "error", err)
+	}
+
+	// V1: static routes (status-pages.md §4). One fragment each, rewritten
+	// every cycle — the writer skips an identical write, so this costs a
+	// stat and a compare rather than a Traefik reload.
+	w.reconcileStaticRoutes(ctx)
+
+	// Publish the terminal outcome for the triggering app work item, if any. A
+	// failed rollout or teardown surfaces as the triggered app's 'error'
+	// AppStatus; anything else is success.
+	if stage != agentv1.DeployEvent_STAGE_UNSPECIFIED {
+		outcome := agentv1.DeployEvent_OUTCOME_SUCCEEDED
+		var detail string
+		for _, st := range statuses {
+			if st.AppId == triggerAppID {
+				if st.State == "error" {
+					outcome = agentv1.DeployEvent_OUTCOME_FAILED
+					detail = st.Detail
+				}
+				break
+			}
+		}
+		w.emitEvent(triggerDeploymentID, triggerAppID, stage, outcome, detail, commitSha)
+	}
+
+	return nil
+}
+
+// reconcileStaticRoutes converges the node's non-container proxy fragments.
+// A failure on one route is logged and the rest still converge: a status page
+// that will not route is not a reason to leave an application's route stale.
+func (w *Worker) reconcileStaticRoutes(ctx context.Context) {
+	if w.staticRouter == nil {
+		return
+	}
+	w.mu.Lock()
+	desired := make([]*agentv1.StaticRouteSpec, 0, len(w.staticRoutes))
+	for _, sr := range w.staticRoutes {
+		desired = append(desired, sr)
+	}
+	w.mu.Unlock()
+
+	for _, sr := range desired {
+		if err := w.staticRouter.SetStaticRoute(ctx, sr.GetRouteId(), sr.GetRoute(), sr.GetUpstreamUrl(), sr.GetAddPrefix()); err != nil {
+			w.log.Error("worker: writing static route", "route_id", sr.GetRouteId(), "error", err)
+		}
+	}
+}
+
+// reconcileDatabases converges the local database set toward w.dbState and
+// publishes each observed DbStatus. A no-op when this node has no database
+// reconciler. The returned error is reserved for a total daemon failure; the
+// caller decides whether to retry the triggering work item.
+func (w *Worker) reconcileDatabases(ctx context.Context) error {
+	if w.dbReconciler == nil {
+		return nil
+	}
+	w.mu.Lock()
+	desiredDbs := make([]*agentv1.DbSpec, 0, len(w.dbState))
+	for _, spec := range w.dbState {
+		desiredDbs = append(desiredDbs, spec)
+	}
+	w.mu.Unlock()
+
+	dbStatuses, err := w.dbReconciler.ReconcileDatabases(ctx, desiredDbs)
+	if err != nil {
+		return err
+	}
+	for _, status := range dbStatuses {
+		data, err := proto.Marshal(status)
+		if err != nil {
+			w.log.Error("worker: marshaling db status", "error", err)
+			continue
+		}
+		if err := w.bus.Publish(subjects.DbState(w.serverID, status.DbId), data); err != nil {
+			w.log.Error("worker: publishing db status", "db_id", status.DbId, "error", err)
+		}
+	}
+	return nil
+}
+
+// reconcileCompose converges the local Compose Stack set toward
+// w.composeState and reports what it observed (compose-stacks.md §4).
+func (w *Worker) reconcileCompose(ctx context.Context) error {
+	if w.composeRec == nil {
+		return nil
+	}
+	w.mu.Lock()
+	desired := make([]*agentv1.ComposeSpec, 0, len(w.composeState))
+	for _, spec := range w.composeState {
+		desired = append(desired, spec)
+	}
+	w.mu.Unlock()
+
+	statuses, err := w.composeRec.Reconcile(ctx, desired)
+	if err != nil {
+		return err
+	}
+	for _, status := range statuses {
+		data, merr := proto.Marshal(status)
+		if merr != nil {
+			w.log.Error("worker: marshaling compose status", "error", merr)
+			continue
+		}
+		if perr := w.bus.Publish(subjects.ComposeState(w.serverID, status.StackId), data); perr != nil {
+			w.log.Error("worker: publishing compose status", "stack_id", status.StackId, "error", perr)
+		}
+	}
+	return nil
+}
+
+// runWithHeartbeat runs a backup/restore to completion while keeping the work
+// item in-flight (periodic InProgress), so a long dump/upload can't be
+// redelivered mid-run. The goroutine is fully stopped before the caller acks.
+func (w *Worker) runWithHeartbeat(ctx context.Context, msg Message, run func(context.Context) proto.Message) proto.Message {
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		t := time.NewTicker(10 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				_ = msg.InProgress()
+			}
+		}
+	}()
+	event := run(ctx)
+	close(stop)
+	<-done
+	return event
+}
+
+// handleRelay runs one relay work item (push on builders, distribute on
+// targets) with the worker's standard delivery discipline: InProgress
+// heartbeats across the transfer, NAK-with-backoff on transient failure, a
+// terminal STAGE_DISTRIBUTE failure at the poison cutoff. Only a target's
+// success emits an event — it alone proves the image is where it must run
+// (builder-role-and-relay.md §2).
+func (w *Worker) handleRelay(ctx context.Context, msg Message, deploymentID, appID, kind string, run func(context.Context) error) {
+	w.log.Info("worker: relay work", "kind", kind, "deployment_id", deploymentID)
+	tctx, cancel := context.WithTimeout(ctx, relayTransferTimeout)
+	defer cancel()
+
+	// Keep the item alive across a long transfer so AckWait can't redeliver
+	// it mid-stream and race the active session. The goroutine must be fully
+	// stopped before the item is acked/termed/naked below — an InProgress
+	// racing a terminal disposition would reset a cursor we just settled.
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		t := time.NewTicker(10 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				_ = msg.InProgress()
+			}
+		}
+	}()
+	err := run(tctx)
+	close(stop)
+	<-done
+
+	if err != nil {
+		if errors.Is(err, errNoRelay) {
+			w.log.Error("worker: relay unavailable", "kind", kind, "error", err)
+			w.emitEvent(deploymentID, appID, agentv1.DeployEvent_STAGE_DISTRIBUTE, agentv1.DeployEvent_OUTCOME_FAILED, err.Error(), "")
+			_ = msg.Term()
+			return
+		}
+		w.log.Error("worker: relay transfer failed", "kind", kind, "deployment_id", deploymentID, "error", err)
+		if msg.NumDelivered() >= maxDeliveries {
+			w.emitEvent(deploymentID, appID, agentv1.DeployEvent_STAGE_DISTRIBUTE, agentv1.DeployEvent_OUTCOME_FAILED, err.Error(), "")
+			_ = msg.Term()
+			return
+		}
+		_ = msg.NakWithDelay(5 * time.Second)
+		return
+	}
+	if kind == "distribute" {
+		w.emitEvent(deploymentID, appID, agentv1.DeployEvent_STAGE_DISTRIBUTE, agentv1.DeployEvent_OUTCOME_SUCCEEDED, "", "")
+	}
+	_ = msg.Ack()
+}
+
+func (w *Worker) emitEvent(deploymentID, appID string, stage agentv1.DeployEvent_Stage, outcome agentv1.DeployEvent_Outcome, detail, commitSha string) {
+	ev := &agentv1.DeployEvent{
+		DeploymentId: deploymentID,
+		AppId:        appID,
+		Stage:        stage,
+		Outcome:      outcome,
+		Detail:       detail,
+		CommitSha:    commitSha,
+	}
+	data, err := proto.Marshal(ev)
+	if err != nil {
+		w.log.Error("worker: marshaling deploy event", "error", err)
+		return
+	}
+	if err := w.bus.Publish(subjects.DeployState(w.serverID), data); err != nil {
+		w.log.Error("worker: publishing deploy event", "deployment_id", deploymentID, "error", err)
+	}
+}

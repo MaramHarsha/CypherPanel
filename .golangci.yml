@@ -1,0 +1,28 @@
+# golangci-lint v2 configuration — the arbiter for ENGINEERING.md rule 1.
+# Generated code (proto stubs, sqlc output) is excluded; it is not ours to lint.
+version: "2"
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - bodyclose # HTTP/response bodies must be closed
+    - misspell
+    - unconvert
+    - nilerr # returning nil after a non-nil error is a real bug class here
+  exclusions:
+    generated: strict
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck # test setup teardown often ignores errs deliberately
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/MaramHarsha/cypherpanel
+  exclusions:
+    generated: strict

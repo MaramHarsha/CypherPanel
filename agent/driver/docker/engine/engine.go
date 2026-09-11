@@ -1,0 +1,850 @@
+// Package engine is the real Docker Engine API client behind the docker
+// driver's Client interface (and the builder's image builds). It speaks the
+// Engine's HTTP API directly over the local socket — no docker CLI, no SDK
+// dependency — keeping the agent a single static binary within its footprint
+// budget (vision.md non-negotiable 1).
+//
+// Only this package (and the proxy writer) may touch orchestrator specifics
+// (ENGINEERING rule 11); everything is invoked through the interfaces the
+// reconciler and builder define.
+package engine
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"slices"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/MaramHarsha/cypherpanel/agent/driver"
+	"github.com/MaramHarsha/cypherpanel/agent/driver/docker"
+)
+
+// DefaultSocket is the standard Docker daemon socket.
+const DefaultSocket = "/var/run/docker.sock"
+
+// Client talks to one Docker daemon. Construct with New (socket) or
+// NewWithHTTP (tests).
+type Client struct {
+	http *http.Client
+	base string
+}
+
+// New connects over the unix socket at path (DefaultSocket when empty).
+func New(socketPath string) *Client {
+	if socketPath == "" {
+		socketPath = DefaultSocket
+	}
+	return &Client{
+		// The host in the URL is a placeholder; the transport dials the socket.
+		base: "http://docker",
+		http: &http.Client{
+			Transport: &http.Transport{
+				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+					var d net.Dialer
+					return d.DialContext(ctx, "unix", socketPath)
+				},
+			},
+		},
+	}
+}
+
+// NewWithHTTP wires the client against an arbitrary base URL and HTTP client —
+// the seam unit tests use (httptest servers speak the same API shape).
+func NewWithHTTP(base string, hc *http.Client) *Client {
+	return &Client{base: base, http: hc}
+}
+
+// apiError is the daemon's error body.
+type apiError struct {
+	Message string `json:"message"`
+}
+
+func (c *Client) do(ctx context.Context, method, path string, query url.Values, body io.Reader, contentType string) (*http.Response, error) {
+	return c.doAuth(ctx, method, path, query, body, contentType, "")
+}
+
+// doAuth is do with a registry credential attached. The credential rides in a
+// header rather than the query so it stays out of anything that logs a URL —
+// the daemon's own request log included (ENGINEERING rule 20).
+func (c *Client) doAuth(ctx context.Context, method, path string, query url.Values, body io.Reader, contentType, registryAuth string) (*http.Response, error) {
+	u := c.base + path
+	if len(query) > 0 {
+		u += "?" + query.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u, body)
+	if err != nil {
+		return nil, fmt.Errorf("engine: building request: %w", err)
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	if registryAuth != "" {
+		req.Header.Set("X-Registry-Auth", registryAuth)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("engine: %s %s: %w", method, path, err)
+	}
+	if resp.StatusCode >= 400 {
+		defer func() { _ = resp.Body.Close() }()
+		var e apiError
+		msg := resp.Status
+		if json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&e) == nil && e.Message != "" {
+			msg = e.Message
+		}
+		return nil, &StatusError{Code: resp.StatusCode, Message: fmt.Sprintf("engine: %s %s: %s", method, path, msg)}
+	}
+	return resp, nil
+}
+
+// doBuild posts a build context. /build reads its credentials from
+// X-Registry-Config rather than X-Registry-Auth, because one build may pull
+// from several registries.
+func (c *Client) doBuild(ctx context.Context, query url.Values, body io.Reader, registryConfig string) (*http.Response, error) {
+	u := c.base + "/build"
+	if len(query) > 0 {
+		u += "?" + query.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, body)
+	if err != nil {
+		return nil, fmt.Errorf("engine: building request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-tar")
+	if registryConfig != "" {
+		req.Header.Set("X-Registry-Config", registryConfig)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("engine: POST /build: %w", err)
+	}
+	if resp.StatusCode >= 400 {
+		defer func() { _ = resp.Body.Close() }()
+		var e apiError
+		msg := resp.Status
+		if json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&e) == nil && e.Message != "" {
+			msg = e.Message
+		}
+		return nil, &StatusError{Code: resp.StatusCode, Message: fmt.Sprintf("engine: POST /build: %s", msg)}
+	}
+	return resp, nil
+}
+
+// StatusError carries the daemon's HTTP status for callers that branch on it.
+type StatusError struct {
+	Code    int
+	Message string
+}
+
+func (e *StatusError) Error() string { return e.Message }
+
+func (c *Client) doJSON(ctx context.Context, method, path string, query url.Values, in, out any) error {
+	var body io.Reader
+	contentType := ""
+	if in != nil {
+		data, err := json.Marshal(in)
+		if err != nil {
+			return fmt.Errorf("engine: marshaling body: %w", err)
+		}
+		body = strings.NewReader(string(data))
+		contentType = "application/json"
+	}
+	resp, err := c.do(ctx, method, path, query, body, contentType)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if out != nil {
+		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+			return fmt.Errorf("engine: decoding %s response: %w", path, err)
+		}
+		return nil
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
+}
+
+func labelFilter(extra ...string) url.Values {
+	labels := append([]string{driver.LabelManaged + "=docker"}, extra...)
+	f, _ := json.Marshal(map[string][]string{"label": labels})
+	v := url.Values{}
+	v.Set("filters", string(f))
+	return v
+}
+
+// ─── docker.Client implementation ───────────────────────────────────────────
+
+// EnsureNetwork creates the named network if absent (idempotent: the daemon's
+// duplicate-name conflict counts as success).
+func (c *Client) EnsureNetwork(ctx context.Context, name string, labels map[string]string) error {
+	err := c.doJSON(ctx, http.MethodPost, "/networks/create", nil, map[string]any{
+		"Name":   name,
+		"Driver": "bridge",
+		"Labels": labels,
+	}, nil)
+	var se *StatusError
+	if err != nil && asStatus(err, &se) && se.Code == http.StatusConflict {
+		return nil //nolint:nilerr // a name conflict means the network already exists (idempotent)
+	}
+	return err
+}
+
+func asStatus(err error, target **StatusError) bool {
+	se, ok := err.(*StatusError)
+	if ok {
+		*target = se
+	}
+	return ok
+}
+
+type containerSummary struct {
+	ID     string            `json:"Id"`
+	Names  []string          `json:"Names"`
+	State  string            `json:"State"`
+	Labels map[string]string `json:"Labels"`
+}
+
+// ListManaged returns every container carrying this driver's managed label.
+func (c *Client) ListManaged(ctx context.Context) ([]docker.Container, error) {
+	q := labelFilter()
+	q.Set("all", "true")
+	var list []containerSummary
+	if err := c.doJSON(ctx, http.MethodGet, "/containers/json", q, nil, &list); err != nil {
+		return nil, err
+	}
+	out := make([]docker.Container, 0, len(list))
+	for _, s := range list {
+		name := ""
+		if len(s.Names) > 0 {
+			name = strings.TrimPrefix(s.Names[0], "/")
+		}
+		out = append(out, docker.Container{
+			ID:           s.ID,
+			Name:         name,
+			AppID:        s.Labels[driver.LabelAppID],
+			RevisionID:   s.Labels[driver.LabelRevisionID],
+			RestartToken: s.Labels[driver.LabelRestartToken],
+			ReplicaIndex: replicaIndex(s.Labels),
+			Running:      s.State == "running",
+		})
+	}
+	return out, nil
+}
+
+// replicaIndex reads the container's replica index. An absent label is index 1
+// — every container that existed before replicas did — which is what stops an
+// agent upgrade from reading a whole fleet as drift.
+//
+// The label is DATA ON A CONTAINER, so it is parsed with a bounded parser and a
+// ceiling rather than with Atoi and a nil check. Atoi returns an int, which is
+// 64-bit here, and narrowing that to the uint32 the wire and the maps use is a
+// silent truncation: a label of "4294967297" would read as index 1 and collide
+// with a real replica. ParseUint with a bit size cannot produce a value the
+// destination type will not hold, and anything outside the range is read as
+// index 1 — the same answer an unrecognised label gets.
+func replicaIndex(labels map[string]string) uint32 {
+	raw := labels[driver.LabelReplicaIndex]
+	if raw == "" {
+		return 1
+	}
+	n, err := strconv.ParseUint(raw, 10, 32)
+	if err != nil || n < 1 || n > driver.MaxReplicaIndex {
+		return 1
+	}
+	return uint32(n)
+}
+
+// CreateContainer creates (does not start) a container per the driver's spec:
+// attached to the app's deterministic network, restart unless-stopped so a
+// host reboot restores workloads without the plane.
+func (c *Client) CreateContainer(ctx context.Context, spec docker.ContainerSpec) (string, error) {
+	env := make([]string, 0, len(spec.Env))
+	for k, v := range spec.Env {
+		env = append(env, k+"="+v)
+	}
+	hostConfig := map[string]any{
+		"NetworkMode":   spec.Network,
+		"RestartPolicy": map[string]any{"Name": "unless-stopped"},
+	}
+	// Resource limits (noisy-neighbor control); 0 = no limit. Same mapping as
+	// managed databases.
+	if spec.CPULimit > 0 {
+		hostConfig["NanoCpus"] = int64(spec.CPULimit * 1e9)
+	}
+	if spec.MemoryLimitMB > 0 {
+		hostConfig["Memory"] = int64(spec.MemoryLimitMB) * 1024 * 1024
+	}
+	if len(spec.Binds) > 0 {
+		hostConfig["Binds"] = spec.Binds
+	}
+	body := map[string]any{
+		"Image":      spec.Image,
+		"Env":        env,
+		"Labels":     spec.Labels,
+		"HostConfig": hostConfig,
+	}
+	// Raw host-port publishes (tcp/udp): the container config declares the
+	// exposed ports and the HostConfig binds each to its host port. Mirrors the
+	// managed-database expose_port mapping.
+	if len(spec.Ports) > 0 {
+		exposed := map[string]any{}
+		bindings := map[string]any{}
+		for _, p := range spec.Ports {
+			key := strconv.Itoa(int(p.ContainerPort)) + "/" + p.Protocol
+			exposed[key] = struct{}{}
+			bindings[key] = []map[string]any{{"HostPort": strconv.Itoa(int(p.HostPort))}}
+		}
+		body["ExposedPorts"] = exposed
+		hostConfig["PortBindings"] = bindings
+	}
+	q := url.Values{}
+	q.Set("name", spec.Name)
+	var resp struct {
+		ID string `json:"Id"`
+	}
+	if err := c.doJSON(ctx, http.MethodPost, "/containers/create", q, body, &resp); err != nil {
+		return "", err
+	}
+	return resp.ID, nil
+}
+
+// StartContainer starts a created container ("already started" is success).
+func (c *Client) StartContainer(ctx context.Context, id string) error {
+	err := c.doJSON(ctx, http.MethodPost, "/containers/"+id+"/start", nil, nil, nil)
+	var se *StatusError
+	if asStatus(err, &se) && se.Code == http.StatusNotModified {
+		return nil
+	}
+	return err
+}
+
+// StopContainer stops with the drain timeout ("already stopped" is success).
+func (c *Client) StopContainer(ctx context.Context, id string, timeout time.Duration) error {
+	q := url.Values{}
+	q.Set("t", strconv.Itoa(int(timeout.Seconds())))
+	err := c.doJSON(ctx, http.MethodPost, "/containers/"+id+"/stop", q, nil, nil)
+	var se *StatusError
+	if asStatus(err, &se) && se.Code == http.StatusNotModified {
+		return nil
+	}
+	return err
+}
+
+// RemoveContainer deletes a container; force covers a container that resisted
+// its stop, and a missing container removes idempotently.
+func (c *Client) RemoveContainer(ctx context.Context, id string) error {
+	q := url.Values{}
+	q.Set("force", "true")
+	err := c.doJSON(ctx, http.MethodDelete, "/containers/"+id, q, nil, nil)
+	var se *StatusError
+	if asStatus(err, &se) && se.Code == http.StatusNotFound {
+		return nil
+	}
+	return err
+}
+
+// StreamLogs attaches to the container's log stream and copies it to out.
+func (c *Client) StreamLogs(ctx context.Context, id string, out io.Writer) error {
+	q := url.Values{}
+	q.Set("stdout", "1")
+	q.Set("stderr", "1")
+	q.Set("follow", "1")
+	q.Set("tail", "100")
+
+	resp, err := c.do(ctx, http.MethodGet, "/containers/"+id+"/logs", q, nil, "")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	_, err = io.Copy(out, resp.Body)
+	return err
+}
+
+// ContainerIP returns the container's address on the given network.
+func (c *Client) ContainerIP(ctx context.Context, id, network string) (string, error) {
+	var info struct {
+		NetworkSettings struct {
+			Networks map[string]struct {
+				IPAddress string `json:"IPAddress"`
+			} `json:"Networks"`
+		} `json:"NetworkSettings"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/containers/"+id+"/json", nil, nil, &info); err != nil {
+		return "", err
+	}
+	n, ok := info.NetworkSettings.Networks[network]
+	if !ok || n.IPAddress == "" {
+		return "", fmt.Errorf("engine: container %s has no address on network %s", id, network)
+	}
+	return n.IPAddress, nil
+}
+
+// DataRoot reports where the daemon stores its images, containers and volumes.
+//
+// Read from the daemon rather than assumed to be /var/lib/docker: an operator
+// who moved it onto a bigger disk is exactly the one who would otherwise get
+// disk alerts about the wrong filesystem (disk-management.md §4).
+func (c *Client) DataRoot(ctx context.Context) (string, error) {
+	var info struct {
+		DockerRootDir string `json:"DockerRootDir"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/info", nil, nil, &info); err != nil {
+		return "", fmt.Errorf("engine: reading daemon info: %w", err)
+	}
+	return info.DockerRootDir, nil
+}
+
+// ContainerNetwork reports a network the container is attached to, and its
+// address there — what a Compose Stack's route needs (compose-stacks.md §5).
+//
+// A compose file names its own networks, so unlike an Application there is no
+// network the plane can predict. Picking the alphabetically first is arbitrary
+// but DETERMINISTIC, which is what matters: the same container resolves to the
+// same upstream on every reconcile, so a converged stack does not re-write its
+// route fragment on every pass. `host` is skipped — a container on host
+// networking has no address of its own to route to.
+func (c *Client) ContainerNetwork(ctx context.Context, id string) (network, ip string, err error) {
+	var info struct {
+		NetworkSettings struct {
+			Networks map[string]struct {
+				IPAddress string `json:"IPAddress"`
+			} `json:"Networks"`
+		} `json:"NetworkSettings"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/containers/"+id+"/json", nil, nil, &info); err != nil {
+		return "", "", err
+	}
+	names := make([]string, 0, len(info.NetworkSettings.Networks))
+	for n := range info.NetworkSettings.Networks {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		if n == "host" || info.NetworkSettings.Networks[n].IPAddress == "" {
+			continue
+		}
+		return n, info.NetworkSettings.Networks[n].IPAddress, nil
+	}
+	return "", "", fmt.Errorf("engine: container %s has no routable network address", id)
+}
+
+type imageSummary struct {
+	ID       string            `json:"Id"`
+	Labels   map[string]string `json:"Labels"`
+	RepoTags []string          `json:"RepoTags"`
+}
+
+// ListManagedImages returns every image this driver has an association with,
+// each carrying all of its references.
+//
+// Managed images arrive by two routes, and only one of them can carry labels:
+//
+//   - **Built** images are labelled at build time.
+//   - **Pulled** images cannot be — labels are baked in by whoever built the
+//     image — so they are tagged into `cypher/<app>:<revision>` at rollout,
+//     which is also the reference their container runs from.
+//
+// Every reference is returned because reclaiming disk means dropping all of
+// them: a pulled image keeps its layers for as long as the registry reference
+// it arrived under exists, no matter how many managed aliases are removed.
+// Grouping by image (not by name) is also what lets GC keep an image two apps
+// share when only one of them is deleted.
+//
+// The registry reference a pull arrived under is reported separately, as
+// Pending, and only when a marker reference proves our own pull created it
+// (driver.PullMarkerRef). That distinction is the whole reason the marker
+// exists: an image can equally carry a tag the operator made, and untagging
+// one of those on an app's deletion would be the driver reaching outside its
+// own managed set.
+func (c *Client) ListManagedImages(ctx context.Context) ([]docker.Image, error) {
+	var all []imageSummary
+	if err := c.doJSON(ctx, http.MethodGet, "/images/json", nil, nil, &all); err != nil {
+		return nil, err
+	}
+	out := make([]docker.Image, 0, len(all))
+	for _, s := range all {
+		appIDs := make([]string, 0, 1)
+		if s.Labels[driver.LabelManaged] != "" {
+			if id := s.Labels[driver.LabelAppID]; id != "" {
+				appIDs = append(appIDs, id)
+			}
+		}
+		for _, tag := range s.RepoTags {
+			appID, _, ok := parseManagedTag(tag)
+			if !ok {
+				// A marker alone is enough to own an image: a rollout can die
+				// between recording the reference and tagging the alias, and
+				// that image must still be reclaimable.
+				appID, _, ok = driver.ParsePullMarker(tag)
+			}
+			if ok && !slices.Contains(appIDs, appID) {
+				appIDs = append(appIDs, appID)
+			}
+		}
+		if len(appIDs) == 0 {
+			continue // not ours: never touched
+		}
+		// Only references CypherPanel created are reclaimable. An image can
+		// also carry tags an operator or another tool made — deleting an app
+		// must never untag those (reconciler contract: never touch what is not
+		// ours).
+		managed := make([]string, 0, len(s.RepoTags))
+		var managedRefs []docker.ManagedRef
+		var pending []docker.PendingRef
+		for _, tag := range s.RepoTags {
+			if _, source, ok := driver.ParsePullMarker(tag); ok {
+				pending = append(pending, docker.PendingRef{Source: source, Marker: tag})
+				continue
+			}
+			if appID, revID, ok := parseManagedTag(tag); ok {
+				managed = append(managed, tag)
+				managedRefs = append(managedRefs, docker.ManagedRef{Reference: tag, AppID: appID, RevisionID: revID})
+			}
+		}
+		out = append(out, docker.Image{ID: s.ID, AppIDs: appIDs, References: managed, Pending: pending, Managed: managedRefs})
+	}
+	return out, nil
+}
+
+// managedImagePrefix is the repository namespace every managed image reference
+// lives under — the same convention the build path tags into.
+const managedImagePrefix = "cypher/"
+
+// parseManagedTag splits `cypher/<app_id>:<revision_id>` into its parts.
+func parseManagedTag(tag string) (appID, revisionID string, ok bool) {
+	rest, found := strings.CutPrefix(tag, managedImagePrefix)
+	if !found {
+		return "", "", false
+	}
+	appID, revisionID, found = strings.Cut(rest, ":")
+	if !found || appID == "" || revisionID == "" || strings.Contains(appID, "/") {
+		return "", "", false
+	}
+	return appID, revisionID, true
+}
+
+// TagImage points a managed reference at an existing local image, so a pulled
+// image becomes discoverable by desired-state GC (see ListManagedImages).
+// Idempotent: re-tagging the same image is a no-op to the daemon.
+func (c *Client) TagImage(ctx context.Context, source, target string) error {
+	repo, tag, found := strings.Cut(target, ":")
+	if !found {
+		return fmt.Errorf("engine: managed image reference %q has no tag", target)
+	}
+	q := url.Values{}
+	q.Set("repo", repo)
+	q.Set("tag", tag)
+	if err := c.doJSON(ctx, http.MethodPost, "/images/"+url.PathEscape(source)+"/tag", q, nil, nil); err != nil {
+		return fmt.Errorf("engine: tagging %s as %s: %w", source, target, err)
+	}
+	return nil
+}
+
+// RemoveImage deletes an image (missing removes idempotently; in-use is the
+// caller's error to log — desired-state GC retries next reconcile). The id may
+// be an image ID or a name:tag reference; the Docker API expects it literal in
+// the path (a namespaced name keeps its slashes), so it is not URL-escaped.
+func (c *Client) RemoveImage(ctx context.Context, id string) error {
+	err := c.doJSON(ctx, http.MethodDelete, "/images/"+id, nil, nil, nil)
+	var se *StatusError
+	if asStatus(err, &se) && se.Code == http.StatusNotFound {
+		return nil
+	}
+	return err
+}
+
+// ─── builder support ────────────────────────────────────────────────────────
+
+// HasImage reports whether the exact image reference exists locally — the
+// builder's idempotency check under work redelivery. The reference is placed
+// literally in the path: the Docker API treats the slashes of a namespaced
+// name (cypher/<app>:<rev>) as part of the name, so URL-escaping them would
+// query for an image that can never exist and always report false.
+func (c *Client) HasImage(ctx context.Context, ref string) (bool, error) {
+	err := c.doJSON(ctx, http.MethodGet, "/images/"+ref+"/json", nil, nil, nil)
+	if err == nil {
+		return true, nil
+	}
+	var se *StatusError
+	if asStatus(err, &se) && se.Code == http.StatusNotFound {
+		return false, nil
+	}
+	return false, err
+}
+
+// SaveImage exports one image (manifest + layers) as a docker-save tar
+// stream — the relay's source on a builder (builder-role-and-relay.md §3).
+// The image reference goes into the path literally: registry namespaces
+// contain "/" the daemon expects unescaped. The caller must Close the stream.
+func (c *Client) SaveImage(ctx context.Context, ref string) (io.ReadCloser, error) {
+	resp, err := c.do(ctx, http.MethodGet, "/images/"+ref+"/get", nil, nil, "")
+	if err != nil {
+		return nil, err
+	}
+	return resp.Body, nil
+}
+
+// LoadImage imports a docker-save tar into the local daemon — the relay's
+// sink on a target. A truncated or corrupt tar fails here and yields no tag,
+// so HasImage stays false and a retry is honest (spec §6).
+func (c *Client) LoadImage(ctx context.Context, tar io.Reader) error {
+	q := url.Values{}
+	q.Set("quiet", "1")
+	resp, err := c.do(ctx, http.MethodPost, "/images/load", q, tar, "application/x-tar")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// The daemon streams JSON-lines progress; an error mid-stream (bad tar)
+	// arrives as an error record after a 200 header, same as pulls.
+	dec := json.NewDecoder(resp.Body)
+	for {
+		var line struct {
+			Error string `json:"error"`
+		}
+		if err := dec.Decode(&line); err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return fmt.Errorf("engine: reading load stream: %w", err)
+		}
+		if line.Error != "" {
+			return fmt.Errorf("engine: loading image: %s", line.Error)
+		}
+	}
+}
+
+// buildLine is one JSON-lines record of the daemon's build progress stream.
+type buildLine struct {
+	Stream string `json:"stream"`
+	Error  string `json:"error"`
+}
+
+// BuildImage runs a daemon-side image build from the tar context, tagging the
+// result and stamping the managed labels. Every progress line is handed to
+// onLog (verbose by default — no hidden progress, feature-matrix row); a
+// build error in the stream is returned as the error.
+// registryConfig is the encoded credential map for private base images
+// (pkg/registryauth.EncodeConfig); empty builds with anonymous pulls.
+func (c *Client) BuildImage(ctx context.Context, buildContext io.Reader, tag, dockerfile string, labels map[string]string, registryConfig string, onLog func(line string)) error {
+	q := url.Values{}
+	q.Set("t", tag)
+	if dockerfile != "" {
+		q.Set("dockerfile", dockerfile)
+	}
+	lbl, _ := json.Marshal(labels)
+	q.Set("labels", string(lbl))
+
+	resp, err := c.doBuild(ctx, q, buildContext, registryConfig)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	dec := json.NewDecoder(resp.Body)
+	for {
+		var line buildLine
+		if err := dec.Decode(&line); err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return fmt.Errorf("engine: reading build stream: %w", err)
+		}
+		if line.Error != "" {
+			return fmt.Errorf("engine: build failed: %s", strings.TrimSpace(line.Error))
+		}
+		if line.Stream != "" && onLog != nil {
+			onLog(strings.TrimRight(line.Stream, "\n"))
+		}
+	}
+}
+
+// ─── metrics collection (metrics-and-usage.md §4) ───────────────────────────
+
+// ContainerStat is one container's cumulative CPU and current memory, as the
+// daemon reports them right now. Cumulative on purpose: the collector keeps the
+// previous counter itself and folds the DELTA into the open bucket, so a slow
+// or retried read shifts nothing. Trusting the daemon's own precpu window would
+// make a late read silently misattribute CPU to the wrong bucket.
+type ContainerStat struct {
+	ID               string
+	Labels           map[string]string
+	CPUTotalNanos    uint64
+	SystemTotalNanos uint64
+	OnlineCPUs       int
+	MemoryBytes      uint64
+	MemoryLimitBytes uint64
+}
+
+// SampleContainers reads one stats snapshot per running container.
+//
+// It lists every RUNNING container rather than only labelled ones, and leaves
+// attribution to the caller — a container carrying none of our labels is not
+// ours and is not sampled, the same rule disk management follows. An operator's
+// own containers on a shared box therefore never appear in a project's figures.
+func (c *Client) SampleContainers(ctx context.Context) ([]ContainerStat, error) {
+	q := url.Values{}
+	q.Set("all", "false")
+	var list []containerSummary
+	if err := c.doJSON(ctx, http.MethodGet, "/containers/json", q, nil, &list); err != nil {
+		return nil, err
+	}
+	out := make([]ContainerStat, 0, len(list))
+	for _, s := range list {
+		st, err := c.containerStat(ctx, s.ID)
+		if err != nil {
+			// One unreadable container is not a reason to lose the node's
+			// whole bucket: it is skipped and the rest are reported.
+			continue
+		}
+		st.Labels = s.Labels
+		out = append(out, st)
+	}
+	return out, nil
+}
+
+func (c *Client) containerStat(ctx context.Context, id string) (ContainerStat, error) {
+	q := url.Values{}
+	q.Set("stream", "false")
+	q.Set("one-shot", "true")
+	var raw struct {
+		CPUStats struct {
+			CPUUsage struct {
+				TotalUsage uint64 `json:"total_usage"`
+			} `json:"cpu_usage"`
+			SystemCPUUsage uint64 `json:"system_cpu_usage"`
+			OnlineCPUs     int    `json:"online_cpus"`
+		} `json:"cpu_stats"`
+		MemoryStats struct {
+			Usage uint64            `json:"usage"`
+			Limit uint64            `json:"limit"`
+			Stats map[string]uint64 `json:"stats"`
+		} `json:"memory_stats"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/containers/"+id+"/stats", q, nil, &raw); err != nil {
+		return ContainerStat{}, err
+	}
+	// The daemon's `usage` includes the page cache, which makes an idle
+	// container that once read a large file look permanently near its limit.
+	// Subtracting inactive_file is what `docker stats` itself does.
+	mem := raw.MemoryStats.Usage
+	if inactive, ok := raw.MemoryStats.Stats["inactive_file"]; ok && inactive < mem {
+		mem -= inactive
+	}
+	return ContainerStat{
+		ID:               id,
+		CPUTotalNanos:    raw.CPUStats.CPUUsage.TotalUsage,
+		SystemTotalNanos: raw.CPUStats.SystemCPUUsage,
+		OnlineCPUs:       raw.CPUStats.OnlineCPUs,
+		MemoryBytes:      mem,
+		MemoryLimitBytes: raw.MemoryStats.Limit,
+	}, nil
+}
+
+// DiskUsage is the daemon's own accounting, in the verbose form that reports
+// volume sizes. It is the expensive call in this whole feature — it walks the
+// graph driver and can take seconds on a host with many layers — which is why
+// it runs hourly, is disableable, and is never on the sampling path.
+type DiskUsage struct {
+	Images     []DiskImage
+	Containers []DiskContainer
+	Volumes    []DiskVolume
+}
+
+type DiskImage struct {
+	ID       string
+	Labels   map[string]string
+	RepoTags []string
+	Size     int64
+}
+
+type DiskContainer struct {
+	ID     string
+	Labels map[string]string
+	Image  string
+	SizeRw int64
+	Mounts []string
+}
+
+type DiskVolume struct {
+	Name string
+	Size int64
+}
+
+func (c *Client) DiskUsage(ctx context.Context) (DiskUsage, error) {
+	var raw struct {
+		Images []struct {
+			ID       string            `json:"Id"`
+			Labels   map[string]string `json:"Labels"`
+			RepoTags []string          `json:"RepoTags"`
+			Size     int64             `json:"Size"`
+		} `json:"Images"`
+		Containers []struct {
+			ID     string            `json:"Id"`
+			Labels map[string]string `json:"Labels"`
+			Image  string            `json:"Image"`
+			SizeRw int64             `json:"SizeRw"`
+			Mounts []struct {
+				Name string `json:"Name"`
+			} `json:"Mounts"`
+		} `json:"Containers"`
+		Volumes []struct {
+			Name      string `json:"Name"`
+			UsageData struct {
+				Size int64 `json:"Size"`
+			} `json:"UsageData"`
+		} `json:"Volumes"`
+	}
+	q := url.Values{}
+	q.Set("verbose", "1")
+	if err := c.doJSON(ctx, http.MethodGet, "/system/df", q, nil, &raw); err != nil {
+		return DiskUsage{}, err
+	}
+	out := DiskUsage{}
+	for _, i := range raw.Images {
+		out.Images = append(out.Images, DiskImage{ID: i.ID, Labels: i.Labels, RepoTags: i.RepoTags, Size: i.Size})
+	}
+	for _, ct := range raw.Containers {
+		dc := DiskContainer{ID: ct.ID, Labels: ct.Labels, Image: ct.Image, SizeRw: ct.SizeRw}
+		for _, m := range ct.Mounts {
+			if m.Name != "" {
+				dc.Mounts = append(dc.Mounts, m.Name)
+			}
+		}
+		out.Containers = append(out.Containers, dc)
+	}
+	for _, v := range raw.Volumes {
+		out.Volumes = append(out.Volumes, DiskVolume{Name: v.Name, Size: v.UsageData.Size})
+	}
+	return out, nil
+}
+
+// StreamLogsFrom follows a container's stdout WITHOUT the historical tail, for
+// a consumer that counts lines rather than showing them. `tail=0` matters: the
+// access-log reader must not re-count a hundred requests every time it
+// reconnects.
+func (c *Client) StreamLogsFrom(ctx context.Context, id string, out io.Writer) error {
+	q := url.Values{}
+	q.Set("stdout", "1")
+	q.Set("stderr", "0")
+	q.Set("follow", "1")
+	q.Set("tail", "0")
+
+	resp, err := c.do(ctx, http.MethodGet, "/containers/"+id+"/logs", q, nil, "")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	_, err = io.Copy(out, resp.Body)
+	return err
+}

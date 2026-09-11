@@ -1,0 +1,917 @@
+syntax = "proto3";
+
+package cypherpanel.agent.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1;agentv1";
+
+// Work-item and desired-state contracts for the Phase 2 deploy slice
+// (docs/features/application-deploy.md). These messages ARE the wire contract
+// between scheduler and agent (work.<server_id>.* subjects, ADR-003) and the
+// schema the driver interface consumes (agent/driver) — one source of truth,
+// no parallel Go structs to drift.
+//
+// Contract rules (ENGINEERING 12, 14, 18): field numbers are never reused or
+// renumbered; changes are additive only; every work item carries an
+// idempotency key and every consumer is safe under redelivery. Threat-model
+// §5.1 / §8 req 4 (refined by ADR-011): these messages describe STATE to
+// converge on — never an imperative "run this now" exec verb. A command that is
+// declarative workload config (a container HEALTHCHECK, or a ScheduledTask the
+// agent runs inside the app's own sandbox) is desired state and permitted; a
+// general host/privileged/cross-container exec verb is not.
+
+// AppSpec is an Application's desired state as one server's reconciler sees
+// it: run this revision's image with this config, route it, keep it healthy.
+message AppSpec {
+  string app_id = 1;
+  string environment_id = 2;
+  // revision_id names the immutable revision this spec belongs to; rollback is
+  // a spec whose revision_id points at an older revision (ADR-005).
+  string revision_id = 3;
+  // Image reference, present in the local daemon by the time rollout work
+  // arrives (ADR-008: local build or completed relay — never a registry pull
+  // the reconciler must perform).
+  string image = 4;
+  // Container port the app serves on.
+  uint32 port = 5;
+  // Decrypted env for injection at container create. Sealed at rest on the
+  // plane; never logged (rule 20). Transported only over mTLS (rule 23).
+  map<string, string> env = 6;
+  // Deterministic network name (cypher-<environment_id>) — the agent creates
+  // it by name and references it by name everywhere, never Docker auto-naming
+  // (research/coolify.md lesson 5).
+  string network = 7;
+  HealthCheck health = 8;
+  RouteSpec route = 9;
+  // Declarative cron tasks the agent runs inside this app's own container
+  // (scheduled-tasks.md, ADR-011). This is desired-state workload config, not
+  // an exec verb: the agent owns the clock and execution is confined to the
+  // app's container. command is argv (never a shell string).
+  repeated ScheduledTask scheduled_tasks = 10;
+  // Resource limits (noisy-neighbor control, feature-matrix V1). Mirror DbSpec:
+  // the agent maps these onto the container's HostConfig (NanoCpus / Memory).
+  double cpu_limit = 11;       // fractional cores; 0 = no limit
+  uint32 memory_limit_mb = 12; // 0 = no limit
+  // Persistent volume mounts (feature-matrix V1). Each is a named Docker volume
+  // (deterministic name, plane-computed) bound at an absolute path in the
+  // container; survives container recreation, never touched by desired-state GC.
+  repeated VolumeMount volumes = 13;
+  // Raw host-port publishes (feature-matrix V1). Each maps a container port to a
+  // host port on tcp or udp — for services reached directly, not through the
+  // HTTP proxy (databases-as-apps, game servers, brokers). Independent of route.
+  repeated PortMapping ports = 14;
+  // pull marks image as a registry reference the reconciler fetches itself
+  // (source.kind=image apps — deploy-from-container-image, feature-matrix V1).
+  // False keeps the ADR-008 contract: the image is already in the local daemon
+  // via local build or completed relay. The fetch happens only in the create
+  // branch and only when the image is absent locally, so converge-twice stays
+  // zero-mutation. Carried per revision (config snapshot), so rollback of an
+  // image revision pulls correctly even after the app's source changed kind.
+  bool pull = 15;
+  // registry_auth authenticates the pull when image lives in a private
+  // registry (registries.md; ADR-008 path 3). Unset is the ordinary case — a
+  // public image, or one that arrived by local build or relay — and it stays
+  // unset unless pull is true, because there is nothing to authenticate to.
+  // Assembled per work item from the plane's sealed credential, carried only
+  // over mTLS (rule 23) and never logged or written to disk (rule 20).
+  RegistryAuth registry_auth = 16;
+  // restart_token expresses "restart this container" as desired state rather
+  // than as a verb the agent obeys (deployment-control.md §3; ADR-005). It is
+  // part of the container's config hash, so a NEW value is a difference the
+  // existing recreate path already closes — and converging twice after the
+  // recreate still mutates nothing, because the running container then carries
+  // the token the spec names. Empty is every application's birth value.
+  string restart_token = 17;
+  // V1: which replica indexes THIS server runs (app-scaling.md §2). Empty
+  // means [1], which is every application that exists today — an agent that
+  // predates this ignores the field and runs exactly one container under
+  // exactly the name it runs now, which is what makes rolling this feature out
+  // safe.
+  repeated uint32 replica_indexes = 18;
+}
+
+// RetainSpec names the revisions of one Application whose images must be kept
+// (disk-management.md §2).
+//
+// It is what turns garbage collection from a heuristic into a reconciler: the
+// plane knows exactly which revisions it wants to be able to run — the deployed
+// one, plus the recent ones a rollback could name — so everything else is, by
+// definition, not referenced. A prune job cannot know that, which is why every
+// prune job either spares too much or breaks rollback.
+message RetainSpec {
+  string app_id = 1;
+  // Newest first, including the desired revision. Never empty: an application
+  // with nothing to keep is omitted from the list entirely.
+  repeated string revision_ids = 2;
+}
+
+// RegistryAuth is one credential for one registry, as the daemon wants it.
+//
+// It is deliberately a value on the work item rather than agent configuration:
+// an agent holds no registry credentials of its own, so revoking one on the
+// plane revokes it everywhere at the next work item, and a captured agent disk
+// yields nothing.
+message RegistryAuth {
+  // The registry host, matching the image reference's own prefix — ghcr.io,
+  // registry.example.com, registry:5000.
+  string server_address = 1;
+  // Empty for a registry that takes a bearer identity token rather than a
+  // username and password.
+  string username = 2;
+  // Password or access token. Never logged (rule 20).
+  string token = 3;
+}
+
+// RegistryPush is the optional second home for a completed build (ADR-008
+// path 3). Nothing in the deploy path depends on it: the rollout still runs
+// the local image or the relayed one, and this is an additional copy pushed
+// where the operator already runs a registry.
+message RegistryPush {
+  // The full reference to push, already namespaced by the plane —
+  // ghcr.io/acme/web:<revision_id>. The builder tags its local build as this
+  // and pushes that reference.
+  string image = 1;
+  RegistryAuth auth = 2;
+}
+
+// PortMapping publishes a container port to a host port on one protocol. The
+// agent maps it onto the container's ExposedPorts + HostConfig.PortBindings.
+message PortMapping {
+  uint32 host_port = 1;
+  uint32 container_port = 2;
+  string protocol = 3;  // "tcp" or "udp"
+}
+
+// VolumeMount binds one named Docker volume into the app container.
+message VolumeMount {
+  string volume_name = 1; // deterministic managed volume name (cypher-appvol-<app>-<name>)
+  string path = 2;        // absolute mount path inside the container
+}
+
+// ScheduledTask is one cron entry on an Application's desired state. The agent's
+// cron reconciler evaluates schedule against the host clock and execs command
+// (argv, ADR-011 — never parsed as a shell string) in the running app container.
+message ScheduledTask {
+  string id = 1;
+  string schedule = 2;         // standard 5-field cron
+  repeated string command = 3; // argv passed straight to exec
+}
+
+// HealthCheck gates rollout: the new container must pass before the route
+// flips and the old container drains (zero-downtime invariant).
+message HealthCheck {
+  // HTTP path probed inside the container ("/" default).
+  string path = 1;
+  uint32 interval_seconds = 2;
+  uint32 timeout_seconds = 3;
+  uint32 retries = 4;
+  // Gate kind: "http" (GET path, default when empty) probes an HTTP endpoint;
+  // "tcp" dials the container port; "none" is liveness-only (the container is
+  // running) for raw UDP services that expose no readiness signal. The probe is
+  // always internal (agent → container), independent of any public route.
+  string kind = 5;
+}
+
+// RouteSpec is what the proxy driver (agent/proxy) turns into a Traefik
+// dynamic-config fragment (ADR-004).
+message RouteSpec {
+  string domain = 1;
+  bool https = 2;
+  string path_prefix = 3;
+  // Who may reach this route at all (app-access-control.md §4). Absent means
+  // no restriction, which is what every route was before this existed.
+  AccessSpec access = 4;
+}
+
+// AccessSpec is the front-door policy the Proxy enforces. It carries no
+// passphrase — only the bcrypt htpasswd line Traefik needs — because the
+// plaintext exists in the operator's clipboard and nowhere else (§3).
+message AccessSpec {
+  // Empty means no allowlist middleware at all, rather than an allowlist that
+  // matches nothing: a spec field that silently locks everyone out when a
+  // writer forgets to set it is the wrong default.
+  repeated string allow_cidrs = 1;
+  // "user:<bcrypt>" htpasswd lines. Repeated although exactly one is emitted
+  // today: it is Traefik's own shape, and widening a singular string later is
+  // the kind of change `buf breaking` refuses.
+  repeated string basic_auth_users = 2;
+  // Serve the node's maintenance responder instead of this application's own
+  // containers (app-access-control.md §7). It is a SERVICE SWAP, not a
+  // middleware: Traefik cannot return a body of ours, so the route's rule, TLS,
+  // allowlist and basic auth are all unchanged and only the load balancer's
+  // server moves. The app keeps running and keeps passing its health gate.
+  bool maintenance = 3;
+}
+
+// RolloutWork commands one server's reconciler to converge an Application
+// onto a spec. Idempotent: converging twice equals converging once (rule 13);
+// redelivery after a crash re-runs the same convergence.
+message RolloutWork {
+  // Idempotency key: the deployment this rollout belongs to.
+  string deployment_id = 1;
+  AppSpec spec = 2;
+}
+
+// RemoveWork commands desired absence: container gone, route fragment gone,
+// unreferenced images GC-eligible (threat-model §5.9 desired-state GC).
+message RemoveWork {
+  string deployment_id = 1;
+  string app_id = 2;
+}
+
+// ConvergeWork re-declares an Application's desired state without a deployment:
+// the agent updates its in-memory spec and reconciles silently (no deploy
+// event). Used to propagate a scheduled-task change (scheduled-tasks.md §4)
+// promptly — the container reconcile is a no-op (idempotent, rule 13) and the
+// cron reconciler re-arms. Carries no command verb; the spec is state.
+message ConvergeWork {
+  AppSpec spec = 1;
+}
+
+// BuildWork commands a builder-role agent to produce an image from source.
+message BuildWork {
+  string deployment_id = 1;
+  string app_id = 2;
+  // Git clone URL; private repos use the deploy key referenced by
+  // deploy_key_id, resolved agent-side from material delivered over mTLS.
+  string repo_url = 3;
+  // Exact commit SHA — builds are of revisions, not moving branches.
+  string commit_sha = 4;
+  string dockerfile_path = 5;
+  string build_context = 6;
+  // Tag for the built image: cypher/<app_id>:<revision_id>.
+  string image = 7;
+  // Decrypted deploy-key PEM for SSH-based git clone of private repos.
+  // Sealed at rest on the plane; transported only over mTLS (rule 23).
+  // Empty when the repo is public. Never logged (rule 20).
+  string deploy_key_pem = 8;
+  // How to turn the checkout into an image: "dockerfile" builds the file at
+  // dockerfile_path; "static" serves the context as a static site; "auto"
+  // picks between them by looking at what the repository actually contains.
+  //
+  // Detection belongs here rather than on the plane because this is where the
+  // source is: the control plane never fetches a repository (ADR-001, and no
+  // builds on the panel). Empty means "dockerfile", so agents that predate
+  // this field keep their behaviour.
+  string build_kind = 9;
+  // The port the app's route and health check expect. A synthesized static
+  // image has to listen on it — otherwise "it just works" would depend on the
+  // operator having guessed the web server's default.
+  uint32 runtime_port = 10;
+  // source_auth authenticates against the registry the app's INPUTS come from:
+  // here, the base image a private Dockerfile FROM names. Unset for the
+  // ordinary public base image. Same credential the app's image source would
+  // use, because "where this app's bits come from" is one answer.
+  RegistryAuth source_auth = 11;
+  // push, when set, is where the completed image is pushed in addition to
+  // staying in the builder's local daemon. A failed push fails the deployment
+  // rather than reporting success for an image that is not where it was
+  // promised to be.
+  RegistryPush push = 12;
+  // An HTTPS clone credential, for a repository reached through the panel's
+  // GitHub App (github-app.md §4). Additive beside deploy_key_pem rather than
+  // replacing it: a GitLab, Gitea or self-hosted repository has no App and must
+  // keep working through its deploy key exactly as it does.
+  //
+  // It is a ONE-HOUR token minted for this build and never stored, which is the
+  // security argument for the whole feature: a deploy key is a long-lived
+  // credential sitting in the database, and this does not exist until a build
+  // needs it. Transported only over mTLS (rule 23), never logged (rule 20).
+  GitCredential git_credential = 13;
+}
+
+// GitCredential is an HTTPS username/password pair for `git clone`. GitHub's
+// installation tokens take this shape — the username is fixed and the token is
+// the password — and so does every other forge's PAT, which is why it is not
+// named after GitHub.
+message GitCredential {
+  string username = 1;
+  string password = 2;
+}
+
+// PushImageWork commands a builder-role agent to stream a built image to the
+// plane's relay for a multi-server deployment (builder-role-and-relay.md §2).
+// Published on work.<builder_id>.push alongside the target's DistributeWork.
+message PushImageWork {
+  string deployment_id = 1;
+  string app_id = 2;
+  // Image reference present in the builder's local daemon (the build's tag).
+  string image = 3;
+}
+
+// DistributeWork commands a target agent to obtain a deployment's image from
+// the plane's relay. Idempotent: an agent that already has the image reports
+// success without pulling (the redelivery/crash-recovery anchor, spec §6).
+message DistributeWork {
+  string deployment_id = 1;
+  string app_id = 2;
+  string image = 3;
+  // V1: the name the image must run under on THIS host (revision-promotion.md
+  // §5). Empty means it already has it, which is every deploy today.
+  //
+  // A promotion moves a tested artifact rather than rebuilding it, so the image
+  // arrives under the SOURCE application's managed tag and has to be renamed
+  // to the target's. This is not cosmetic: the agent parses ownership out of
+  // the tag, and gcImages reclaims every managed reference whose application is
+  // absent from this server's desired set — so an image left under the source's
+  // name would be reclaimed on the first reconcile after the rollout, while
+  // production was serving from it.
+  string target_image = 4;
+}
+
+// DesiredState is the full desired set for one server: the reply to the
+// agent's sync request on state.<server_id>.sync. An agent reconciles from
+// this baseline on every (re)connect — work items are per-deployment triggers,
+// but the reconciler contract is always the full set (absence means remove),
+// so a crashed agent converges a host it has never seen without replaying
+// history.
+message DesiredState {
+  repeated AppSpec specs = 1;
+  // Phase 3: Managed Database desired state (managed-databases.md §5).
+  // Databases whose db_id is absent from db_specs are removed (same
+  // absence-means-remove contract as apps).
+  repeated DbSpec db_specs = 2;
+  // V1: Compose Stack desired state (compose-stacks.md §4). Stacks whose
+  // stack_id is absent from compose_specs are brought down — the same
+  // absence-means-remove contract apps and databases follow.
+  repeated ComposeSpec compose_specs = 4;
+  // V1: which revisions' images must survive garbage collection
+  // (disk-management.md §2). Unlike specs, ABSENCE MEANS NO INSTRUCTION here,
+  // not removal: an application the plane could not read revisions for is
+  // omitted and left alone. The two mistakes do not cost the same.
+  repeated RetainSpec retain = 5;
+  // Node-wide TLS settings for the managed Proxy (agent-identity-and-tls.md
+  // §4). Desired state, not configuration: the panel owns the ACME account and
+  // every node it schedules onto gets the same one, so a fresh install gets
+  // certificates without anyone editing a unit file on each host. Absent (or
+  // an empty acme_email) means "no certificate resolver" — the Proxy then
+  // serves plain HTTP and says so, rather than pointing routes at a resolver
+  // that does not exist.
+  TLSSettings tls = 3;
+  // V1: routes to upstreams that are not containers (status-pages.md §4).
+  // Today that is exactly one thing — a Status Page served by the control
+  // plane. Absence means remove, the same contract apps and databases follow.
+  repeated StaticRouteSpec static_routes = 6;
+  // V1: metrics collection settings (metrics-and-usage.md §5). Panel-wide,
+  // carried to every node the way TLSSettings is. Absent means the defaults,
+  // which is collection on and request analytics off.
+  MetricsSettings metrics = 7;
+  // V1: which agent binary this server should be running (agent-updates.md §7,
+  // ADR-010). Absent — or an empty version — means NO INSTRUCTION, never
+  // "downgrade to nothing": upgrading a panel must not start replacing binaries
+  // across a fleet nobody asked it to touch.
+  AgentUpdateSpec agent_update = 8;
+}
+
+// AgentUpdateSpec is the desired agent version for one server, resolved from
+// the channel that server follows (agent-updates.md §2).
+//
+// The plane names a version and never stores or serves a byte of the binary
+// (ADR-010 §2): artifact_base is a PREFIX the agent fetches three fixed file
+// names under — the binary for its own GOARCH, SHA256SUMS, and SHA256SUMS.sig
+// — so a mirror mirrors the prefix and the plane never guesses the host's
+// architecture, which it has never needed to know.
+message AgentUpdateSpec {
+  string version = 1;
+  string artifact_base = 2;
+  // rollback permits a version BELOW the running one. Without it the agent
+  // refuses to go backwards (ADR-010 §3), which stops an accident — a stale
+  // desired set, a mistyped tag, a restored database snapshot walking the fleet
+  // backwards. It does not stop a compromised plane, and does not pretend to:
+  // that bound is the signature, and it is the one threat-model §5.1 states.
+  bool rollback = 3;
+}
+
+// MetricsSettings is what the operator can change about collection. Three
+// fields, not a knob per dimension: `enabled` and `request_analytics` are the
+// two an operator has a real reason to change (cost, and privacy about paths),
+// and `bucket_seconds` is load-bearing for the write budget — an operator with
+// 500 containers raises it to 900 and cuts the row count by a factor of three.
+//
+// Sample interval, path cap and the rate ceiling stay agent-side, because they
+// protect the NODE's memory and CPU and the node is where that is known.
+message MetricsSettings {
+  bool enabled = 1;            // container CPU / memory / disk collection
+  bool request_analytics = 2;  // Proxy access-log aggregation
+  uint32 bucket_seconds = 3;   // 0 = the default, 300; must divide an hour
+}
+
+// MetricsReport is ONE message per server per bucket, carrying every resource
+// on the node (metrics-and-usage.md §4.6). Not one message per resource, and
+// emphatically not one per sample: the whole write budget rests on the agent
+// aggregating into a fixed bucket and publishing the bucket.
+//
+// The bucket identity (resource_kind, resource_id, bucket_start) IS the
+// idempotency key, so JetStream redelivery and the agent's own replay are both
+// no-ops and no separate key needs inventing (ENGINEERING rule 12).
+message MetricsReport {
+  string server_id = 1;
+  google.protobuf.Timestamp bucket_start = 2;
+  uint32 bucket_seconds = 3;
+  repeated ResourceMetricBucket resources = 4;
+  repeated RequestBucket requests = 5;
+  repeated RequestPathBucket paths = 6;  // hourly only
+  repeated ResourceDiskBucket disk = 7;  // hourly only
+}
+
+// EVERY STORED FIELD MERGES. Counters merge by sum, peaks by max, histograms
+// element-wise — so the answer for any window is exact and does not depend on
+// the bucket size we happened to pick. That is why there are no averages here:
+// cpu_core_ms and memory_byte_seconds are accumulators, and a mean is derived
+// by dividing by covered_seconds. Storing a mean would make a longer window's
+// mean an average-of-averages, which is wrong whenever the buckets are not
+// equally covered — and after an agent restart they are not.
+message ResourceMetricBucket {
+  string resource_kind = 1;  // application | compose_stack | database
+  string resource_id = 2;
+  uint64 cpu_core_ms = 3;
+  double cpu_percent_peak = 4;
+  uint64 memory_byte_seconds = 5;
+  uint64 memory_bytes_peak = 6;
+  uint64 memory_limit_bytes = 7;
+  uint32 sample_count = 8;
+  // Coverage is STORED, not assumed: an agent that restarted at 12:03
+  // publishes a 12:00 bucket covering 120 seconds, and the chart draws it as
+  // partial rather than as a dip. Without this every agent restart, every
+  // proxy recreate and every deploy reads as an outage on the graph.
+  uint32 covered_seconds = 9;
+}
+
+// RequestBucket carries a 16-slot latency histogram rather than a percentile,
+// because PERCENTILES DO NOT AVERAGE: two 5-minute buckets with p95 = 100 ms
+// and p95 = 2000 ms have an hour-p95 that is neither the mean nor the max of
+// them, and no arithmetic on the two numbers recovers it. Histograms add, so
+// p50/p95/p99 over any window are computed once from the summed histogram.
+message RequestBucket {
+  string resource_kind = 1;  // application | compose_stack | server
+  string resource_id = 2;
+  uint64 requests = 3;
+  // A routed application with HTTPS gets two routers, and a visitor arriving
+  // over HTTP produces a 308 before the real request. Counting both would
+  // double every visit and drag p95 toward the 1 ms redirect, so redirects are
+  // counted here and excluded from the histogram and the path table.
+  uint64 redirect_count = 4;
+  uint64 status_2xx = 5;
+  uint64 status_3xx = 6;
+  uint64 status_4xx = 7;
+  uint64 status_5xx = 8;
+  uint64 response_bytes = 9;
+  repeated uint64 latency_buckets = 10;
+  // The boundary set, so the constants can change later without silently
+  // reinterpreting old rows.
+  uint32 histogram_version = 11;
+  // 1 normally; N when the node fell back to deterministic 1-in-N sampling
+  // past its line-rate ceiling. The plane scales counters back up on read and
+  // the UI SAYS the number is an estimate rather than presenting it as exact.
+  uint32 sample_rate = 12;
+}
+
+message RequestPathBucket {
+  string resource_kind = 1;
+  string resource_id = 2;
+  string path = 3;  // normalised: no query string, ≤3 segments, ids as :id
+  uint64 requests = 4;
+  uint64 status_5xx = 5;
+  repeated uint64 latency_buckets = 6;
+  uint32 histogram_version = 7;
+}
+
+// Per-resource disk figures DO NOT SUM to the host's usage: image layers are
+// shared, and a base layer used by four applications is counted for each of
+// them, because the question the number answers is "what is this resource
+// responsible for", not "how would the host shrink if I deleted it".
+message ResourceDiskBucket {
+  string resource_kind = 1;
+  string resource_id = 2;
+  uint64 image_bytes = 3;
+  uint64 volume_bytes = 4;
+  uint64 container_bytes = 5;
+}
+
+// StaticRouteSpec routes a domain to an upstream that is not a container.
+//
+// It carries no command and no credential — a hostname, an absolute URL and a
+// path prefix. upstream_url is filled by the PLANE from its own configuration
+// and is NEVER operator input, which is what keeps this from being a way to
+// aim a node's Proxy at an address someone typed.
+message StaticRouteSpec {
+  string route_id = 1;      // fragment identity on the node (sp_…)
+  RouteSpec route = 2;      // domain + https, exactly as an Application's route
+  string upstream_url = 3;  // absolute http(s) URL of the control plane
+  string add_prefix = 4;    // prepended to the request path before forwarding
+}
+
+// TLSSettings is the panel's ACME account as the Proxy driver needs it. It
+// carries no secret: an account email and a directory URL are both public, and
+// the ACME account KEY is generated and kept by Traefik on the serving node,
+// which is what keeps certificate private keys off the control plane (ADR-004).
+message TLSSettings {
+  // ACME account email. Empty means the node configures no resolver.
+  string acme_email = 1;
+  // ACME directory URL override (e.g. Let's Encrypt staging). Empty means
+  // Let's Encrypt production.
+  string acme_ca_server = 2;
+}
+
+// ResyncWork tells one agent to re-read its full desired state from
+// state.<server_id>.sync and converge on it. It carries no state of its own —
+// it is a nudge, published when something node-wide changed that is not
+// attached to any single Application (today: the panel's TLS settings).
+//
+// Idempotent by construction (rule 12): the agent's response is to ask for the
+// authoritative desired set and converge, which is exactly what it does on
+// connect, so a redelivered nudge costs one request and changes nothing.
+message ResyncWork {
+  // Free-text reason, logged by the agent so an operator reading agent logs can
+  // see why the node re-read its desired state. Never load-bearing.
+  string reason = 1;
+}
+
+// AppStatus is one Application's observed state, reported on
+// state.<server_id>.app.<app_id>. The plane asserts "deploy succeeded" only
+// from these reports — never from work-item completion (ADR-005).
+// ReplicaStatus is one container of a multi-replica Application.
+message ReplicaStatus {
+  uint32 index = 1;
+  string container_id = 2;  // short id
+  string revision_id = 3;
+  string state = 4;         // the ui-principles §5 vocabulary
+  string detail = 5;
+}
+
+message AppStatus {
+  string app_id = 1;
+  // revision_id actually serving traffic right now (empty if none).
+  string revision_id = 2;
+  // One of the ui-principles §5 vocabulary values the plane maps onto the
+  // Application: running, deploying, stopped, error, degraded.
+  string state = 3;
+  // Human-readable detail for error/degraded (never contains secrets).
+  string detail = 4;
+  google.protobuf.Timestamp observed_at = 5;
+  // resolved_image is the immutable digest reference of the image this
+  // revision is actually running (repo@sha256:…), reported for registry-sourced
+  // apps once they converge. A revision created from a mutable tag records the
+  // tag, which no longer identifies the artifact after that tag moves — so
+  // rolling back to it would re-pull and start something newer while claiming
+  // to restore the old revision. The plane pins the revision to this observed
+  // digest, which is the only way it can know it (ADR-001: the control plane
+  // never talks to a registry; ADR-005: status is observation).
+  string resolved_image = 6;
+  // V1: one observation per replica (app-scaling.md §8), reported by the node
+  // that owns them. The aggregate `state` above is DERIVED from these: running
+  // iff every desired index is running, degraded if some but not all, error if
+  // none. Losing one replica of three is a degradation, not a crash — so a
+  // partial loss pages nobody, which is correct, because the application is
+  // still serving.
+  repeated ReplicaStatus replicas = 7;
+}
+
+// DeployEvent reports a work item's terminal outcome for a deployment,
+// published on state.<server_id>.deploy. Progress (non-terminal) is visible
+// through logs.* streams; the state transition of record is this event plus
+// the AppStatus that follows it.
+message DeployEvent {
+  string deployment_id = 1;
+  string app_id = 2;
+
+  enum Stage {
+    STAGE_UNSPECIFIED = 0;
+    STAGE_BUILD = 1;
+    STAGE_DISTRIBUTE = 2;
+    STAGE_ROLLOUT = 3;
+    STAGE_REMOVE = 4;
+  }
+  Stage stage = 3;
+
+  enum Outcome {
+    OUTCOME_UNSPECIFIED = 0;
+    OUTCOME_SUCCEEDED = 1;
+    OUTCOME_FAILED = 2;
+  }
+  Outcome outcome = 4;
+
+  // Failure detail (never contains secrets — rule 20).
+  string detail = 5;
+  google.protobuf.Timestamp occurred_at = 6;
+
+  // For STAGE_BUILD success: the exact commit SHA the builder resolved and
+  // built (BuildWork may name a branch head; the revision of record needs the
+  // SHA). Empty on other stages.
+  string commit_sha = 7;
+}
+
+// ─── Phase 3: Managed Databases (docs/features/managed-databases.md §5) ───
+//
+// Same contract rules as Application work items above (ENGINEERING 12, 14, 18):
+// field numbers never reused, changes additive, every work item idempotent.
+
+// DbSpec is a Database's desired state as one server's reconciler sees it.
+// The agent's database reconciler converges the local Docker daemon toward
+// this spec — creating/replacing the container, volume, and network as needed.
+message DbSpec {
+  string db_id = 1;
+  string environment_id = 2;
+  string revision_id = 3;
+  string engine = 4;           // 'postgresql', 'mysql', 'mariadb', 'mongodb', 'redis', 'valkey'
+  string image = 5;            // 'postgres:16', 'mysql:8.4', etc.
+  string volume_name = 6;      // 'cypher-db-<id>'
+  string data_path = 7;        // engine-specific mount target inside the container
+  string network = 8;          // 'cypher-<environment_id>'
+  // Decrypted env for injection at container create. Sealed at rest on the
+  // plane; never logged (rule 20). Transported only over mTLS (rule 23).
+  map<string, string> env = 9;
+  string health_cmd = 10;      // shell command for Docker HEALTHCHECK
+  uint32 expose_port = 11;     // 0 = private only
+  double cpu_limit = 12;       // fractional cores; 0 = no limit
+  uint32 memory_limit_mb = 13; // 0 = no limit
+}
+
+// DbProvisionWork commands an agent to converge a database container
+// toward the desired spec. Idempotent: if the container already matches
+// the spec, no recreation occurs.
+message DbProvisionWork {
+  string idempotency_key = 1;  // database_id + revision_id
+  DbSpec spec = 2;
+}
+
+// DbRemoveWork commands absence of a database container.
+message DbRemoveWork {
+  string idempotency_key = 1;
+  string db_id = 2;
+  // Explicit opt-in for data destruction. When false, the named volume is
+  // preserved (the conservative default — accidental data loss is worse
+  // than orphaned volumes).
+  bool delete_volume = 3;
+}
+
+// DbStatus is one Database's observed state, reported on
+// state.<server_id>.db.<db_id>. The plane asserts provisioning success only
+// from these reports — never from work-item completion (ADR-005).
+message DbStatus {
+  string db_id = 1;
+  string revision_id = 2;
+  // One of: running, provisioning, stopped, error.
+  string state = 3;
+  // Human-readable detail for error state (never contains secrets).
+  string detail = 4;
+  google.protobuf.Timestamp observed_at = 5;
+}
+
+// ComposeSpec is a Compose Stack's desired state as one server's reconciler
+// sees it (compose-stacks.md).
+//
+// The FILE is the desired state, not a command: the agent has one fixed
+// invocation of its own (`docker compose up -d --remove-orphans --wait`) and
+// this message only says what it should be converging toward. That is the same
+// line work.proto draws everywhere — declarative workload config is desired
+// state and permitted; a command verb is not.
+message ComposeSpec {
+  string stack_id = 1;
+  string environment_id = 2;
+  // revision_id names the immutable version of the file this spec carries;
+  // rollback is a spec whose revision_id points at an older one (ADR-005).
+  string revision_id = 3;
+  // The compose file, verbatim, exactly as the operator wrote it.
+  string compose_yaml = 4;
+  // Decrypted env for compose's ${VAR} interpolation. The agent writes it to an
+  // env file mode 0600 and removes it on every exit path, so a secret never has
+  // to live in the file itself. Sealed at rest on the plane; never logged
+  // (rule 20); transported only over mTLS (rule 23).
+  map<string, string> env = 5;
+  // Deterministic environment network the stack joins, so its services can
+  // reach the environment's applications and databases by name.
+  string network = 6;
+  // Which service the managed Proxy publishes, and where. A compose file's own
+  // Traefik labels cannot work: the Proxy runs the file provider only and no
+  // docker provider (ADR-004), so the route is declared here and the agent
+  // points the same fragment an Application gets at the named service.
+  ComposeRoute route = 7;
+}
+
+// ComposeRoute names the service a domain reaches. An empty domain means the
+// stack publishes nothing through the Proxy.
+message ComposeRoute {
+  string domain = 1;
+  bool https = 2;
+  string path_prefix = 3;
+  // The compose service that answers, and the port it listens on inside the
+  // container.
+  string service = 4;
+  uint32 port = 5;
+}
+
+// ComposeRemoveWork commands absence of a whole stack.
+message ComposeRemoveWork {
+  string idempotency_key = 1;
+  string stack_id = 2;
+  // Explicit opt-in for data destruction. False preserves the stack's volumes,
+  // the conservative default a database removal already uses: orphaned volumes
+  // are better than data nobody meant to lose.
+  bool delete_volumes = 3;
+}
+
+// ComposeConvergeWork re-declares one stack's desired state so a deploy takes
+// effect promptly rather than at the next sync. Carries no command verb; the
+// spec is state.
+message ComposeConvergeWork {
+  ComposeSpec spec = 1;
+}
+
+// ComposeStatus is one stack's observed state, reported on
+// state.<server_id>.compose.<stack_id>. The plane records what the agent
+// reports and never asserts success from a work item (ADR-005).
+message ComposeStatus {
+  string stack_id = 1;
+  string revision_id = 2;
+  // One of: running, degraded, stopped, error — the same vocabulary an
+  // Application uses (ui-principles §5). `degraded` is some but not all of the
+  // services compose was asked for.
+  string state = 3;
+  // Compose's own last words on failure. Never contains secrets: the env file
+  // is not echoed, and compose reports service names, not values.
+  string detail = 4;
+  google.protobuf.Timestamp observed_at = 5;
+}
+
+// DbBackupWork commands a database's host agent to dump the database and upload
+// it to an S3-compatible target (managed-databases.md §7). The wire carries the
+// engine (the agent derives the dump command from its own matrix — never a
+// shell command, threat-model §8 req 4); database credentials are read from the
+// container's own environment inside the exec, so no db password crosses the
+// wire. The S3 credentials are unsealed on the plane and travel only over mTLS
+// (rule 23); never logged (rule 20).
+message DbBackupWork {
+  string backup_record_id = 1;  // idempotency key
+  string db_id = 2;
+  string container_name = 3;
+  string engine = 4;            // postgresql|mysql|mariadb|mongodb|redis|valkey
+  string data_path = 5;         // engine data dir (RDB copy for redis/valkey)
+  string s3_endpoint = 6;
+  string s3_bucket = 7;
+  string s3_region = 8;
+  string s3_key = 9;            // object key: <prefix>/<db_id>/<ts>.gz
+  string s3_access_key = 10;
+  string s3_secret_key = 11;
+}
+
+// VolumeBackupWork archives one named volume out of a running container and
+// uploads it, exactly the way DbBackupWork does — minus the dump. There is no
+// engine and no command: a volume has nothing to ask for a consistent view, so
+// the agent tars the mount path as it stands (volume-backups.md §2).
+//
+// The artefact is CRASH-CONSISTENT: the same thing you would have if the power
+// had been cut at that instant. That is stated on the wire because it is the
+// property a caller has to reason about, not an implementation detail.
+message VolumeBackupWork {
+  string backup_record_id = 1;  // idempotency key
+  string application_id = 2;
+  string container_name = 3;
+  string volume_name = 4;       // the operator's label, for the event
+  string mount_path = 5;        // absolute path inside the container
+  string s3_endpoint = 6;
+  string s3_bucket = 7;
+  string s3_region = 8;
+  string s3_key = 9;            // <prefix>/<app_id>/<volume>/<ts>.tar.gz
+  string s3_access_key = 10;
+  string s3_secret_key = 11;
+}
+
+// VolumeBackupEvent is the observed outcome. Deliberately its own message
+// rather than a reused DbBackupEvent: the ids differ, and a message whose
+// db_id field is empty half the time is a message nobody can read.
+message VolumeBackupEvent {
+  string backup_record_id = 1;
+  string application_id = 2;
+  string volume_name = 3;
+  enum Outcome {
+    OUTCOME_UNSPECIFIED = 0;
+    OUTCOME_SUCCEEDED = 1;
+    OUTCOME_FAILED = 2;
+  }
+  Outcome outcome = 4;
+  string object_key = 5;
+  int64 size_bytes = 6;
+  string detail = 7;
+  google.protobuf.Timestamp occurred_at = 8;
+}
+
+// DbRestoreWork commands the host agent to download a backup and restore it into
+// the database container. Same wire discipline as DbBackupWork (engine, not a
+// command; S3 creds over mTLS only).
+message DbRestoreWork {
+  string restore_id = 1;        // idempotency key
+  string db_id = 2;
+  string container_name = 3;
+  string engine = 4;
+  string data_path = 5;
+  string s3_endpoint = 6;
+  string s3_bucket = 7;
+  string s3_region = 8;
+  string s3_key = 9;            // the backup object to restore
+  string s3_access_key = 10;
+  string s3_secret_key = 11;
+}
+
+// DbBackupEvent reports a backup's terminal outcome, published on
+// state.<server>.db.backup. object_key/size_bytes are set on success.
+message DbBackupEvent {
+  string backup_record_id = 1;
+  string db_id = 2;
+
+  enum Outcome {
+    OUTCOME_UNSPECIFIED = 0;
+    OUTCOME_SUCCEEDED = 1;
+    OUTCOME_FAILED = 2;
+  }
+  Outcome outcome = 3;
+
+  string detail = 4;            // failure reason (never contains secrets)
+  string object_key = 5;
+  int64 size_bytes = 6;
+  google.protobuf.Timestamp occurred_at = 7;
+}
+
+// DbRestoreEvent reports a restore's progress and its terminal outcome, both on
+// state.<server>.db.restore.
+//
+// A restore takes a database offline, so "it is running" is not a detail — it is
+// the whole answer someone staring at the screen needs. OUTCOME_RUNNING carries
+// the step the agent is on; the terminal outcomes end it. Progress events are
+// additive: a plane that does not know OUTCOME_RUNNING sees an unrecognised
+// enum value and ignores the event, exactly as it did before this existed.
+message DbRestoreEvent {
+  string restore_id = 1;
+  string db_id = 2;
+
+  enum Outcome {
+    OUTCOME_UNSPECIFIED = 0;
+    OUTCOME_SUCCEEDED = 1;
+    OUTCOME_FAILED = 2;
+    OUTCOME_RUNNING = 3;
+  }
+  Outcome outcome = 3;
+
+  string detail = 4;
+  google.protobuf.Timestamp occurred_at = 5;
+
+  // Step names where a running restore has got to. Set only with
+  // OUTCOME_RUNNING; a terminal event leaves it unspecified because the outcome
+  // already says where it ended up.
+  enum Step {
+    STEP_UNSPECIFIED = 0;
+    STEP_FETCHING = 1;    // downloading and decompressing the backup object
+    STEP_STOPPING = 2;    // stopping the container (engines that reload on boot)
+    STEP_APPLYING = 3;    // writing the dump in and running the engine restore
+    STEP_RESTARTING = 4;  // starting again and waiting for health
+  }
+  Step step = 6;
+
+  // Bytes of the decompressed dump handled so far, and in total. Zero when the
+  // step has no meaningful byte count — an engine restart is not measured in
+  // bytes, and pretending otherwise would draw a bar that does not move.
+  int64 bytes_done = 7;
+  int64 bytes_total = 8;
+}
+
+// DbBackupPruneWork commands a database's host agent to delete specific backup
+// objects from the S3 target — the retention sweep the plane computes (never
+// agent guesswork; retention is desired state the plane owns). Idempotent:
+// deleting an already-absent key is a no-op, so redelivery is safe. Same
+// credential discipline as DbBackupWork (S3 creds over mTLS only, never logged).
+message DbBackupPruneWork {
+  string db_id = 1;
+  string s3_endpoint = 2;
+  string s3_bucket = 3;
+  string s3_region = 4;
+  repeated string s3_keys = 5;  // objects to delete
+  string s3_access_key = 6;
+  string s3_secret_key = 7;
+}
+
+// DbBackupPruneEvent reports which objects the agent actually removed, published
+// on state.<server>.dbbackupprune. The plane deletes only the BackupRecords for
+// deleted_keys; failed_keys keep their rows and are retried on the next prune —
+// self-healing, with no silent S3 orphans (ADR-005: act on observation).
+message DbBackupPruneEvent {
+  string db_id = 1;
+  repeated string deleted_keys = 2;
+  repeated string failed_keys = 3;
+  google.protobuf.Timestamp occurred_at = 4;
+}
+
+// ScheduledTaskRun is one execution's terminal observation, published on
+// state.<server>.task (scheduled-tasks.md §3). The plane records run history
+// from these reports and asserts nothing from work-item completion (ADR-005).
+// output_tail is a capped diagnostic slice of the task's stdout+stderr; it
+// never carries plane secrets (it is the task's own output).
+message ScheduledTaskRun {
+  string task_id = 1;
+  string run_id = 2;          // agent-minted idempotency key for the run row
+  google.protobuf.Timestamp started_at = 3;
+  google.protobuf.Timestamp finished_at = 4;
+  int32 exit_code = 5;
+  bool failed = 6;            // exec error or non-zero exit
+  string output_tail = 7;     // capped stdout+stderr tail
+}

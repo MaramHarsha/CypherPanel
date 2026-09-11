@@ -1,0 +1,436 @@
+package audit
+
+import (
+	"sort"
+
+	"github.com/MaramHarsha/cypherpanel/core/store"
+)
+
+// The audit vocabulary (audit-log.md §3).
+//
+// An action is a dotted verb: the family before the dot, the past-tense event
+// after it. The families are the nouns an operator reasons about, which is what
+// makes `action=deploy` a useful filter on its own — the query matches a whole
+// family by prefix, so three coarse choices in a filter menu cover the log
+// without enumerating every verb.
+//
+// The set is CLOSED and validated: Record refuses an action outside it, because
+// a typo'd verb would make its rows unfindable by the very filter that exists to
+// find them. Adding a verb is a one-line change here plus a call site — never a
+// migration, since the column is text.
+//
+// Failure is not a verb. `auth.login` with `outcome: failure` is the refused
+// sign-in, so "everything that was refused" stays a single predicate over the
+// whole vocabulary (canvas 13t).
+const (
+	// Sign-in and account credentials. These are the rows that make an account
+	// takeover reconstructable, so the whole of core/auth's surface is here.
+	ActionLogin                = "auth.login"
+	ActionLogout               = "auth.logout"
+	ActionPasswordChanged      = "auth.password_changed"
+	ActionEmailChangeRequested = "auth.email_change_requested"
+	ActionEmailChangeConfirmed = "auth.email_change_confirmed"
+	ActionEmailChangeCancelled = "auth.email_change_cancelled"
+	ActionTOTPEnabled          = "auth.totp_enabled"
+	ActionTOTPDisabled         = "auth.totp_disabled"
+	ActionSessionRevoked       = "auth.session_revoked"
+
+	// Personal access tokens: the credential a leak turns into durable access.
+	ActionTokenCreated = "token.created"
+	ActionTokenRevoked = "token.revoked"
+
+	// Panel accounts.
+	ActionUserCreated     = "user.created"
+	ActionUserRoleChanged = "user.role_changed"
+	ActionUserDeleted     = "user.deleted"
+
+	// Tenancy. A membership change is recorded against the TEAM, so a team's
+	// timeline answers "who was let in, by whom, when".
+	ActionTeamCreated           = "team.created"
+	ActionTeamRenamed           = "team.renamed"
+	ActionTeamDeleted           = "team.deleted"
+	ActionTeamMemberAdded       = "team.member_added"
+	ActionTeamMemberRoleChanged = "team.member_role_changed"
+	ActionTeamMemberRemoved     = "team.member_removed"
+
+	// Getting into a team from outside it
+	// (invitations-and-access-requests.md §6). Recorded against the TEAM like
+	// every other membership change, so one timeline answers "who was let in,
+	// by whom, when" whichever door they came through. The detail carries the
+	// address and the role; it never carries the invitation's token, and the
+	// write path's secret-key stripping refuses a `token` key besides.
+	ActionInviteCreated  = "invite.created"
+	ActionInviteRevoked  = "invite.revoked"
+	ActionInviteAccepted = "invite.accepted"
+
+	ActionAccessRequested = "access.requested"
+	ActionAccessGranted   = "access.granted"
+	ActionAccessDenied    = "access.denied"
+
+	// Servers. `server.enrolled` is the one the threat model names by hand
+	// (§5.3, §8.1): a new server appearing must be a first-class, audited
+	// event, not a log line.
+	ActionServerCreated = "server.created"
+	ActionServerUpdated = "server.updated"
+	// An owner installed an agent on the CONTROL PLANE's own host, rather than
+	// generating a join command someone runs elsewhere (local-server.md §7).
+	// Different acts with different blast radii; an audit log that cannot tell
+	// them apart is not much of one.
+	ActionServerLocalJoin = "server.local_join_requested"
+	ActionServerDeleted   = "server.deleted"
+	ActionServerEnrolled  = "server.enrolled"
+
+	// Deploy keys — the same class of credential as a token.
+	ActionDeployKeyCreated = "deploy_key.created"
+	ActionDeployKeyDeleted = "deploy_key.deleted"
+
+	// Projects and environments. A transfer has its own verb because moving a
+	// project between teams moves who can see everything inside it.
+	ActionProjectCreated     = "project.created"
+	ActionProjectUpdated     = "project.updated"
+	ActionProjectTransferred = "project.transferred"
+	ActionProjectDeleted     = "project.deleted"
+	// A bulk read of a project's whole configuration, recorded before the
+	// stream starts so an abandoned download is still on the record.
+	ActionProjectExported = "project.exported"
+	// Status pages (status-pages.md §8). Publishing and unpublishing are their
+	// own actions rather than details on `.updated`, because "we made this
+	// project's health public, on this date, and this person did it" is
+	// precisely the fact an audit read exists to find.
+	ActionStatusPageCreated           = "status_page.created"
+	ActionStatusPageUpdated           = "status_page.updated"
+	ActionStatusPageDeleted           = "status_page.deleted"
+	ActionStatusPagePublished         = "status_page.published"
+	ActionStatusPageUnpublished       = "status_page.unpublished"
+	ActionStatusPageIncidentAnnotated = "status_page.incident_annotated"
+	// Metrics collection policy. Turning request analytics on changes what is
+	// aggregated about an operator's visitors, so it is a recorded decision
+	// rather than a preference (metrics-and-usage.md §9).
+	ActionMetricsSettingsChanged = "panel.metrics_settings_changed"
+	// Threshold alert rules. Who is told what, and when, is configuration
+	// worth a record: a rule quietly deleted is an alarm quietly disabled.
+	ActionAlertRuleCreated = "alert_rule.created"
+	ActionAlertRuleChanged = "alert_rule.changed"
+	ActionAlertRuleDeleted = "alert_rule.deleted"
+	// Guided panel upgrades. What code the control plane runs, and who decided
+	// it should — the single most consequential change in the install.
+	ActionPanelUpgradeStarted   = "panel.upgrade_started"
+	ActionPanelUpgradeCancelled = "panel.upgrade_cancelled"
+	// The two agent-update decisions (agent-updates.md §7). A channel's version
+	// is the one control in the panel that changes what CODE runs on every
+	// server, so both edges are recorded: who named the version, and who
+	// promoted it to the fleet. The per-server channel move rides the existing
+	// server.updated.
+	// The panel's GitHub App was connected or disconnected. Recorded by the
+	// FACT and by the app's public id, never by the key (threat-model §5.15).
+	ActionGitHubAppConnected    = "github_app.connected"
+	ActionGitHubAppDisconnected = "github_app.disconnected"
+	ActionAgentVersionSet       = "agent.version_set"
+	ActionAgentPromoted         = "agent.promoted"
+	ActionPanelSnapshotDeleted  = "panel.snapshot_deleted"
+	ActionPanelSnapshotRestored = "panel.snapshot_restored"
+	// Log drains (log-drains.md §9). Where an install's logs go is a
+	// disclosure decision, so the record names the kind and the scope — never
+	// the config, which holds the credential.
+	ActionLogDrainCreated = "log_drain.created"
+	ActionLogDrainChanged = "log_drain.changed"
+	ActionLogDrainDeleted = "log_drain.deleted"
+	// The plane's own disaster recovery. Where a complete copy of the panel —
+	// master key included — is written is the most consequential destination
+	// in the install, so the record names the destination and the mode. Never
+	// the key: the public half is harmless and the private half is not ours.
+	ActionPlaneDRArmed       = "panel.dr_armed"
+	ActionPlaneDRDisarmed    = "panel.dr_disarmed"
+	ActionPlaneDRVerified    = "panel.dr_verified"
+	ActionPlaneSnapshotTaken = "panel.snapshot_taken"
+	// Provider-backed mail (managed-email.md). Where a domain's mail is
+	// delivered is decided by records this panel writes, so the decision is on
+	// the record. Never the credential, and never a mailbox password — the
+	// panel does not have the second one at all.
+	ActionMailProviderConnected    = "mail.provider_connected"
+	ActionMailProviderDisconnected = "mail.provider_disconnected"
+	ActionMailDomainEnabled        = "mail.domain_enabled"
+	ActionMailDomainDisabled       = "mail.domain_disabled"
+	ActionMailboxCreated           = "mail.mailbox_created"
+	ActionMailboxDeleted           = "mail.mailbox_deleted"
+	ActionMailboxPasswordReset     = "mail.mailbox_password_reset"
+	// Resource quotas (ADR-012). The quota row cascades with its project or
+	// team; the audit row is what survives that, and is therefore the evidence
+	// that a cap existed at all.
+	ActionQuotaSet     = "quota.set"
+	ActionQuotaRemoved = "quota.removed"
+	// A revision's ARTIFACT shipped to another environment without a rebuild
+	// (revision-promotion.md). Recorded against the target, which is where the
+	// change landed, naming the revision it came from.
+	ActionRevisionPromoted   = "application.revision_promoted"
+	ActionEnvironmentCreated = "environment.created"
+	ActionEnvironmentRenamed = "environment.renamed"
+	ActionEnvironmentDeleted = "environment.deleted"
+	// A template install creates several applications and databases in one
+	// action, so it is recorded ONCE against the environment that received
+	// them — six silent creates is not an answer to "where did these come
+	// from?".
+	ActionTemplateInstalled = "environment.template_installed"
+
+	// Applications. An env-var change is recorded against the APPLICATION with
+	// the KEY in the detail — never the value (§6) — so the application's own
+	// timeline shows what was rewired.
+	ActionApplicationCreated = "application.created"
+	ActionApplicationUpdated = "application.updated"
+	ActionApplicationDeleted = "application.deleted"
+	// A restart is not a deploy — no revision, no build — but it is a
+	// production action with a visible effect (deployment-control.md §3).
+	ActionApplicationRestarted = "application.restarted"
+	// Who may reach an application through the Proxy changed. Recorded by the
+	// FACT of the change and never by content: a list of the networks that
+	// reach a private admin panel is not something to copy into a second table
+	// (threat-model §5.15).
+	ActionApplicationAccessChanged = "application.access_changed"
+	// Maintenance mode is downtime ON PURPOSE (app-access-control.md §10), which
+	// is exactly why both edges are recorded: the question an incident review
+	// asks is who raised the holding page and who was left to notice it was
+	// still up.
+	ActionApplicationMaintenanceStarted = "application.maintenance_started"
+	ActionApplicationMaintenanceEnded   = "application.maintenance_ended"
+	// Volume backup schedule changed, and a run started.
+	ActionVolumeBackupChanged = "application.volume_backup_changed"
+	ActionVolumeBackupRan     = "application.volume_backup_ran"
+	ActionEnvVarSet           = "application.env_var_set"
+	ActionEnvVarRemoved       = "application.env_var_removed"
+
+	// Compose Stacks (compose-stacks.md §7). The detail records THAT the file
+	// changed, never its content: a compose file can carry an inline secret an
+	// operator put there, and the audit log is not where it becomes permanent.
+	ActionComposeStackCreated    = "compose_stack.created"
+	ActionComposeStackUpdated    = "compose_stack.updated"
+	ActionComposeStackDeleted    = "compose_stack.deleted"
+	ActionComposeStackDeployed   = "compose_stack.deployed"
+	ActionComposeStackRolledBack = "compose_stack.rolled_back"
+
+	// Managed databases.
+	ActionDatabaseCreated       = "database.created"
+	ActionDatabaseUpdated       = "database.updated"
+	ActionDatabaseDeleted       = "database.deleted"
+	ActionDatabaseStopped       = "database.stopped"
+	ActionDatabaseStarted       = "database.started"
+	ActionDatabasePasswordReset = "database.password_reset"
+	ActionDatabaseRestored      = "database.restore_requested"
+
+	// The pipeline.
+	ActionDeployStarted = "deploy.started"
+	ActionRollback      = "deploy.rolled_back"
+	// The operator stopped waiting on a deploy (deployment-control.md §2).
+	ActionDeployCancelled = "deploy.cancelled"
+
+	// Deploy protection: the decisions the deploy-protection spec deferred to
+	// this log (deploy-protection.md §10).
+	ActionProtectionSet    = "protection.policy_set"
+	ActionDeployApproved   = "protection.approved"
+	ActionDeployRejected   = "protection.rejected"
+	ActionBreakGlassOpened = "protection.break_glass_opened"
+
+	// Backups.
+	ActionBackupTargetCreated   = "backup_target.created"
+	ActionBackupTargetUpdated   = "backup_target.updated"
+	ActionBackupTargetDeleted   = "backup_target.deleted"
+	ActionBackupScheduleCreated = "backup_schedule.created"
+	ActionBackupScheduleUpdated = "backup_schedule.updated"
+	ActionBackupScheduleDeleted = "backup_schedule.deleted"
+	ActionBackupRunRequested    = "backup.run_requested"
+
+	// Project shared variables — sealed values, so only key and scope are ever
+	// recorded.
+	ActionSharedVariableCreated = "shared_variable.created"
+	ActionSharedVariableUpdated = "shared_variable.updated"
+	ActionSharedVariableDeleted = "shared_variable.deleted"
+
+	// The two outbound channels.
+	ActionNotifierCreated      = "notifier.created"
+	ActionNotifierUpdated      = "notifier.updated"
+	ActionNotifierDeleted      = "notifier.deleted"
+	ActionWebhookCreated       = "webhook_endpoint.created"
+	ActionWebhookUpdated       = "webhook_endpoint.updated"
+	ActionWebhookDeleted       = "webhook_endpoint.deleted"
+	ActionWebhookSecretRotated = "webhook_endpoint.secret_rotated"
+
+	// Container registry credentials. The token is never in a detail — only
+	// whether it was rotated (registries.md §6).
+	ActionRegistryCreated = "registry.created"
+	ActionRegistryUpdated = "registry.updated"
+	ActionRegistryDeleted = "registry.deleted"
+
+	// Panel-wide settings. Each one changes how the whole panel behaves, and
+	// none belongs to a team — these are the rows a panel admin reads.
+	ActionPanelSetupCompleted = "panel.setup_completed"
+	ActionPanelMailUpdated    = "panel.mail_updated"
+	ActionPanelMailDeleted    = "panel.mail_deleted"
+	ActionPanelDNSUpdated     = "panel.dns_updated"
+	ActionPanelDNSDeleted     = "panel.dns_deleted"
+	ActionPanelTLSUpdated     = "panel.tls_updated"
+)
+
+// Resource kinds — the glossary noun the action was performed on. A resource
+// kind is not a table name: an env-var change names the APPLICATION, and a
+// membership change names the TEAM, because that is the timeline an operator
+// reads them from.
+const (
+	ResourceUser            = "user"
+	ResourceSession         = "session"
+	ResourceAPIToken        = "api_token"
+	ResourceTeam            = "team"
+	ResourceTeamInvite      = "team_invite"
+	ResourceAccessRequest   = "access_request"
+	ResourceServer          = "server"
+	ResourceDeployKey       = "deploy_key"
+	ResourceProject         = "project"
+	ResourceEnvironment     = "environment"
+	ResourceApplication     = "application"
+	ResourceDatabase        = "database"
+	ResourceDeployment      = "deployment"
+	ResourceBackupTarget    = "backup_target"
+	ResourceBackupSchedule  = "backup_schedule"
+	ResourceSharedVariable  = "shared_variable"
+	ResourceNotifier        = "notifier"
+	ResourceWebhookEndpoint = "webhook_endpoint"
+	ResourceRegistry        = "registry"
+	ResourceComposeStack    = "compose_stack"
+	ResourcePanel           = "panel"
+	// ActionPanelRestored is written by the restore itself, inside its own
+	// transaction (store.BackupTx.RecordRestore) — the evidence that the audit
+	// log was rewound lands inside the rewound audit log.
+	ActionPanelRestored = store.RestoreAuditAction
+)
+
+// actions is the closed set Record validates against.
+var actions = map[string]bool{
+	ActionLogin: true, ActionLogout: true, ActionPasswordChanged: true,
+	ActionEmailChangeRequested: true, ActionEmailChangeConfirmed: true,
+	ActionEmailChangeCancelled: true, ActionTOTPEnabled: true,
+	ActionTOTPDisabled: true, ActionSessionRevoked: true,
+
+	ActionTokenCreated: true, ActionTokenRevoked: true,
+
+	ActionUserCreated: true, ActionUserRoleChanged: true, ActionUserDeleted: true,
+
+	ActionTeamCreated: true, ActionTeamRenamed: true, ActionTeamDeleted: true,
+	ActionTeamMemberAdded: true, ActionTeamMemberRoleChanged: true,
+	ActionTeamMemberRemoved: true,
+
+	ActionInviteCreated: true, ActionInviteRevoked: true,
+	ActionInviteAccepted: true, ActionAccessRequested: true,
+	ActionAccessGranted: true, ActionAccessDenied: true,
+
+	ActionServerCreated: true, ActionServerUpdated: true,
+	ActionServerLocalJoin: true,
+	ActionServerDeleted:   true, ActionServerEnrolled: true,
+
+	ActionDeployKeyCreated: true, ActionDeployKeyDeleted: true,
+
+	ActionProjectCreated: true, ActionProjectUpdated: true,
+	ActionProjectTransferred: true, ActionProjectDeleted: true,
+	ActionEnvironmentCreated: true, ActionEnvironmentRenamed: true,
+	ActionEnvironmentDeleted: true, ActionTemplateInstalled: true,
+
+	ActionApplicationCreated: true, ActionApplicationUpdated: true,
+	ActionApplicationDeleted: true, ActionEnvVarSet: true,
+	ActionEnvVarRemoved: true, ActionApplicationRestarted: true,
+
+	ActionDatabaseCreated: true, ActionDatabaseUpdated: true,
+	ActionDatabaseDeleted: true, ActionDatabaseStopped: true,
+	ActionDatabaseStarted: true, ActionDatabasePasswordReset: true,
+	ActionDatabaseRestored: true,
+
+	ActionDeployStarted: true, ActionRollback: true,
+	ActionDeployCancelled: true,
+
+	ActionProtectionSet: true, ActionDeployApproved: true,
+	ActionDeployRejected: true, ActionBreakGlassOpened: true,
+
+	ActionBackupTargetCreated: true, ActionBackupTargetUpdated: true,
+	ActionBackupTargetDeleted: true, ActionBackupScheduleCreated: true,
+	ActionBackupScheduleUpdated: true, ActionBackupScheduleDeleted: true,
+	ActionBackupRunRequested: true,
+
+	ActionSharedVariableCreated: true, ActionSharedVariableUpdated: true,
+	ActionSharedVariableDeleted: true,
+
+	ActionNotifierCreated: true, ActionNotifierUpdated: true,
+	ActionNotifierDeleted: true, ActionWebhookCreated: true,
+	ActionWebhookUpdated: true, ActionWebhookDeleted: true,
+	ActionWebhookSecretRotated: true,
+
+	ActionApplicationAccessChanged:      true,
+	ActionApplicationMaintenanceStarted: true,
+	ActionApplicationMaintenanceEnded:   true,
+	ActionVolumeBackupChanged:           true, ActionVolumeBackupRan: true,
+
+	ActionProjectExported: true,
+
+	ActionStatusPageCreated:   true,
+	ActionStatusPageUpdated:   true,
+	ActionStatusPageDeleted:   true,
+	ActionStatusPagePublished: true, ActionStatusPageUnpublished: true,
+	ActionStatusPageIncidentAnnotated: true,
+
+	ActionMetricsSettingsChanged: true,
+
+	ActionAlertRuleCreated: true,
+	ActionAlertRuleChanged: true,
+	ActionAlertRuleDeleted: true,
+
+	ActionPanelUpgradeStarted:   true,
+	ActionPanelUpgradeCancelled: true,
+	ActionGitHubAppConnected:    true,
+	ActionGitHubAppDisconnected: true,
+	ActionAgentVersionSet:       true,
+	ActionAgentPromoted:         true,
+	ActionPanelSnapshotDeleted:  true,
+	ActionPanelSnapshotRestored: true,
+
+	ActionLogDrainCreated: true,
+	ActionLogDrainChanged: true,
+	ActionLogDrainDeleted: true,
+
+	ActionPlaneDRArmed:       true,
+	ActionPlaneDRDisarmed:    true,
+	ActionPlaneDRVerified:    true,
+	ActionPlaneSnapshotTaken: true,
+
+	ActionMailProviderConnected:    true,
+	ActionMailProviderDisconnected: true,
+	ActionMailDomainEnabled:        true,
+	ActionMailDomainDisabled:       true,
+	ActionMailboxCreated:           true,
+	ActionMailboxDeleted:           true,
+	ActionMailboxPasswordReset:     true,
+
+	ActionQuotaSet:     true,
+	ActionQuotaRemoved: true,
+
+	ActionRevisionPromoted: true,
+
+	ActionRegistryCreated: true, ActionRegistryUpdated: true,
+	ActionRegistryDeleted: true,
+
+	ActionComposeStackCreated: true, ActionComposeStackUpdated: true,
+	ActionComposeStackDeleted: true, ActionComposeStackDeployed: true,
+	ActionComposeStackRolledBack: true,
+
+	ActionPanelSetupCompleted: true, ActionPanelMailUpdated: true,
+	ActionPanelMailDeleted: true, ActionPanelDNSUpdated: true,
+	ActionPanelDNSDeleted: true, ActionPanelTLSUpdated: true,
+}
+
+// ValidAction reports whether action is in the closed vocabulary.
+func ValidAction(action string) bool { return actions[action] }
+
+// Actions returns the whole vocabulary, sorted — what a filter menu offers and
+// what the spec's action table is checked against.
+func Actions() []string {
+	out := make([]string, 0, len(actions))
+	for a := range actions {
+		out = append(out, a)
+	}
+	sort.Strings(out)
+	return out
+}

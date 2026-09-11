@@ -1,0 +1,38 @@
+# The upgrade helper (panel-updates.md §3).
+#
+# ROOT, one-shot, and started only by cypherd-upgrade.path when the plane
+# leaves a request file. It is the ONLY thing on this host allowed to replace
+# the cypherd binary: the plane runs with DynamicUser and ProtectSystem=strict
+# and cannot write its own binary — which is deliberate, because relaxing that
+# would turn any remote-code-execution bug in the API into persistence on the
+# control-plane host.
+#
+# It runs the same binary under a different entry point, so there stays one
+# artifact to sign and ship.
+#
+#   sudo groupadd -f cypherpanel-upgrade
+#   sudo install -d -m 0770 -o root -g cypherpanel-upgrade /var/lib/cypherpanel/upgrade
+#   sudo cp install/cypherd-upgrade.service install/cypherd-upgrade.path /etc/systemd/system/
+#   sudo systemctl enable --now cypherd-upgrade.path
+
+[Unit]
+Description=CypherPanel control-plane upgrade helper
+Documentation=https://github.com/MaramHarsha/cypherpanel
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Read-only: this file holds the master key, and destroying it is exactly the
+# failure this whole design exists to not repeat.
+EnvironmentFile=/etc/cypherpanel/cypherd.env
+Environment=CYPHERD_UPGRADE_DIR=/var/lib/cypherpanel/upgrade
+ExecStart=/usr/local/bin/cypherd upgrade
+# Deliberately NOT hardened the way cypherd.service is: this process exists to
+# write /usr/local/bin/cypherd and to call systemctl, which is the whole point.
+# What bounds it is not the sandbox but the signature — it verifies every
+# artifact against the release public key baked into its own binary and
+# installs nothing else.
+TimeoutStartSec=1800
+
+[Install]
+WantedBy=multi-user.target

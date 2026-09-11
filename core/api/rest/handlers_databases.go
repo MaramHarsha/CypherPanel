@@ -1,0 +1,440 @@
+package rest
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/MaramHarsha/cypherpanel/core/audit"
+	"github.com/MaramHarsha/cypherpanel/core/databases"
+	"github.com/MaramHarsha/cypherpanel/core/domain"
+	"github.com/MaramHarsha/cypherpanel/core/store"
+)
+
+// --- DTOs ---
+
+type databaseDTO struct {
+	ID              string   `json:"id"`
+	EnvironmentID   string   `json:"environment_id"`
+	Name            string   `json:"name"`
+	Engine          string   `json:"engine"`
+	Version         string   `json:"version"`
+	ServerID        string   `json:"server_id"`
+	CPULimit        *float64 `json:"cpu_limit,omitempty"`
+	MemoryLimitMB   *int     `json:"memory_limit_mb,omitempty"`
+	VolumeName      string   `json:"volume_name"`
+	ExposePort      *int     `json:"expose_port,omitempty"`
+	Network         string   `json:"network"`
+	RootUser        string   `json:"root_user"`
+	RootPassword    string   `json:"root_password,omitempty"` // only on create / reset
+	RequirePassword bool     `json:"require_password"`
+	// InitialDatabase is the application database the engine created on first
+	// boot; empty means the engine's own default (managed-databases.md §2).
+	InitialDatabase string `json:"initial_database,omitempty"`
+	Status          string `json:"status"`
+	StatusDetail    string `json:"status_detail,omitempty"`
+	// What the operator asked for, as distinct from Status (what the agent
+	// observes). Clients need both: gating a Start button on the observed
+	// status offers the action whenever reality lags intent, and the call then
+	// fails because Start is guarded on the desired state.
+	DesiredState       string    `json:"desired_state"`
+	DesiredRevisionID  *string   `json:"desired_revision_id,omitempty"`
+	ObservedRevisionID string    `json:"observed_revision_id,omitempty"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
+}
+
+func toDatabaseDTO(d domain.Database) databaseDTO {
+	return databaseDTO{
+		ID:                 d.ID,
+		EnvironmentID:      d.EnvironmentID,
+		Name:               d.Name,
+		Engine:             string(d.Engine),
+		Version:            d.Version,
+		ServerID:           d.ServerID,
+		CPULimit:           d.CPULimit,
+		MemoryLimitMB:      d.MemoryLimitMB,
+		VolumeName:         d.VolumeName,
+		ExposePort:         d.ExposePort,
+		Network:            d.Network,
+		RootUser:           d.RootUser,
+		RootPassword:       "[sealed]", // never expose — rule 20
+		RequirePassword:    d.RequirePassword,
+		InitialDatabase:    d.InitialDatabase,
+		Status:             d.Status,
+		DesiredState:       d.DesiredState,
+		StatusDetail:       d.StatusDetail,
+		DesiredRevisionID:  d.DesiredRevisionID,
+		ObservedRevisionID: d.ObservedRevisionID,
+		CreatedAt:          d.CreatedAt,
+		UpdatedAt:          d.UpdatedAt,
+	}
+}
+
+// --- Request/Response types ---
+
+type createDatabaseRequest struct {
+	Name            string   `json:"name"`
+	Engine          string   `json:"engine"`
+	Version         string   `json:"version"`
+	ServerID        string   `json:"server_id"`
+	CPULimit        *float64 `json:"cpu_limit,omitempty"`
+	MemoryLimitMB   *int     `json:"memory_limit_mb,omitempty"`
+	ExposePort      *int     `json:"expose_port,omitempty"`
+	RequirePassword bool     `json:"require_password"`
+	// InitialDatabase is creation-only by design: the engine images read it
+	// while initializing an empty data directory and ignore it on every later
+	// start, so PATCH deliberately has no counterpart (managed-databases.md §2).
+	InitialDatabase string `json:"initial_database,omitempty"`
+}
+
+type createDatabaseResponse struct {
+	Database     databaseDTO `json:"database"`
+	RootPassword string      `json:"root_password"` // shown once
+}
+
+type patchDatabaseRequest struct {
+	Name          *string  `json:"name,omitempty"`
+	Version       *string  `json:"version,omitempty"`
+	CPULimit      *float64 `json:"cpu_limit,omitempty"`
+	MemoryLimitMB *int     `json:"memory_limit_mb,omitempty"`
+	ExposePort    *int     `json:"expose_port,omitempty"`
+}
+
+type resetPasswordResponse struct {
+	RootPassword string `json:"root_password"`
+}
+
+type connectionInfoResponse struct {
+	Host         string `json:"host"`
+	Port         int    `json:"port"`
+	User         string `json:"user,omitempty"`
+	PasswordHint string `json:"password_hint"`
+	InternalHost string `json:"internal_host"`
+}
+
+// --- Handlers ---
+
+func (a *API) handleCreateDatabase(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForEnvironment(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
+	envID := r.PathValue("id")
+	var req createDatabaseRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	db, rootPwd, err := a.deps.Databases.Create(r.Context(), envID, databases.CreateInput{
+		Name:            req.Name,
+		Engine:          req.Engine,
+		Version:         req.Version,
+		ServerID:        req.ServerID,
+		CPULimit:        req.CPULimit,
+		MemoryLimitMB:   req.MemoryLimitMB,
+		ExposePort:      req.ExposePort,
+		RequirePassword: req.RequirePassword,
+		InitialDatabase: req.InitialDatabase,
+	})
+	if err != nil {
+		handleDatabaseError(a, w, err, "creating database")
+		return
+	}
+
+	// The engine and where it runs, never the generated root password beside it
+	// (§6) — it is shown once to the operator and the audit log is not a second
+	// place to find it.
+	a.audit(r, audit.Entry{
+		Action:        audit.ActionDatabaseCreated,
+		Resource:      audit.Resource(audit.ResourceDatabase, db.ID, db.Name),
+		EnvironmentID: db.EnvironmentID,
+		Detail:        map[string]any{"engine": db.Engine, "version": db.Version, "server_id": db.ServerID},
+	})
+	dto := toDatabaseDTO(db)
+	dto.RootPassword = rootPwd // show once
+	writeJSON(w, http.StatusCreated, createDatabaseResponse{
+		Database:     dto,
+		RootPassword: rootPwd,
+	})
+}
+
+func (a *API) handleListDatabases(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForEnvironment(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
+	envID := r.PathValue("id")
+	dbs, err := a.deps.Databases.List(r.Context(), envID)
+	if err != nil {
+		a.deps.Log.Error("listing databases", "error", err)
+		writeError(w, http.StatusInternalServerError, "could not list databases")
+		return
+	}
+	out := make([]databaseDTO, 0, len(dbs))
+	for _, d := range dbs {
+		out = append(out, toDatabaseDTO(d))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (a *API) handleGetDatabase(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForDatabase(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
+	db, err := a.deps.Databases.Get(r.Context(), r.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "database not found")
+			return
+		}
+		a.deps.Log.Error("getting database", "error", err)
+		writeError(w, http.StatusInternalServerError, "could not get database")
+		return
+	}
+	writeJSON(w, http.StatusOK, toDatabaseDTO(db))
+}
+
+func (a *API) handlePatchDatabase(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForDatabase(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
+	var req patchDatabaseRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	db, err := a.deps.Databases.Update(r.Context(), r.PathValue("id"), databases.UpdateInput{
+		Name:          req.Name,
+		Version:       req.Version,
+		CPULimit:      req.CPULimit,
+		MemoryLimitMB: req.MemoryLimitMB,
+		ExposePort:    req.ExposePort,
+	})
+	if err != nil {
+		handleDatabaseError(a, w, err, "updating database")
+		return
+	}
+	a.audit(r, audit.Entry{
+		Action:        audit.ActionDatabaseUpdated,
+		Resource:      audit.Resource(audit.ResourceDatabase, db.ID, db.Name),
+		EnvironmentID: db.EnvironmentID,
+	})
+	writeJSON(w, http.StatusOK, toDatabaseDTO(db))
+}
+
+func (a *API) handleDeleteDatabase(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForDatabase(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
+	deleteVolume := r.URL.Query().Get("delete_volume") == "true"
+	before, _ := a.deps.Databases.Get(r.Context(), r.PathValue("id"))
+	if err := a.deps.Databases.Delete(r.Context(), r.PathValue("id"), deleteVolume); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "database not found")
+			return
+		}
+		a.deps.Log.Error("deleting database", "error", err)
+		writeError(w, http.StatusInternalServerError, "could not delete database")
+		return
+	}
+	// delete_volume is the difference between "the container is gone" and "the
+	// data is gone", so it belongs in the record of the decision.
+	a.audit(r, audit.Entry{
+		Action:        audit.ActionDatabaseDeleted,
+		Resource:      audit.Resource(audit.ResourceDatabase, r.PathValue("id"), before.Name),
+		EnvironmentID: before.EnvironmentID,
+		Detail:        map[string]any{"delete_volume": deleteVolume},
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) handleStopDatabase(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForDatabase(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
+	if err := a.deps.Databases.Stop(r.Context(), r.PathValue("id")); err != nil {
+		handleDatabaseError(a, w, err, "stopping database")
+		return
+	}
+	a.auditDatabase(r, audit.ActionDatabaseStopped, r.PathValue("id"))
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (a *API) handleStartDatabase(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForDatabase(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
+	if err := a.deps.Databases.Start(r.Context(), r.PathValue("id")); err != nil {
+		handleDatabaseError(a, w, err, "starting database")
+		return
+	}
+	a.auditDatabase(r, audit.ActionDatabaseStarted, r.PathValue("id"))
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (a *API) handleResetDatabasePassword(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForDatabase(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
+	pwd, err := a.deps.Databases.ResetPassword(r.Context(), r.PathValue("id"))
+	if err != nil {
+		handleDatabaseError(a, w, err, "resetting password")
+		return
+	}
+	a.auditDatabase(r, audit.ActionDatabasePasswordReset, r.PathValue("id"))
+	writeJSON(w, http.StatusOK, resetPasswordResponse{RootPassword: pwd})
+}
+
+func (a *API) handleDatabaseConnectionInfo(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForDatabase(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
+	db, err := a.deps.Databases.Get(r.Context(), r.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "database not found")
+			return
+		}
+		a.deps.Log.Error("getting database for connection info", "error", err)
+		writeError(w, http.StatusInternalServerError, "could not get database")
+		return
+	}
+
+	containerName := "cypher-db-" + db.ID
+	defaults := domain.EngineDefaults(db.Engine, db.Version)
+	port := defaultPort(db.Engine)
+
+	resp := connectionInfoResponse{
+		InternalHost: containerName + "." + db.Network,
+		Port:         port,
+		User:         defaults.RootUser,
+		PasswordHint: "[use the password from create or reset-password]",
+	}
+	if db.ExposePort != nil {
+		// The operator needs an address they can dial, which is the server's
+		// public address (what DNS for its applications points at), falling
+		// back to the hostname the agent reported. The server id was never an
+		// address at all (control-plane-hardening.md §8).
+		resp.Host = a.serverAddress(r.Context(), db.ServerID)
+		resp.Port = *db.ExposePort
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// serverAddress is the address an operator dials to reach a server: the
+// public address they set for DNS, else the hostname the agent reported. Empty
+// when neither is known — an honest "we do not know where this is" rather than
+// a plausible value that is not an address.
+func (a *API) serverAddress(ctx context.Context, serverID string) string {
+	if a.deps.Servers == nil {
+		return ""
+	}
+	srv, err := a.deps.Servers.Get(ctx, serverID)
+	if err != nil {
+		a.deps.Log.Error("resolving server address for connection info", "server_id", serverID, "error", err)
+		return ""
+	}
+	if srv.PublicAddress != "" {
+		return srv.PublicAddress
+	}
+	return srv.Hostname
+}
+
+// defaultPort returns the well-known port for a database engine.
+func defaultPort(engine domain.DbEngine) int {
+	switch engine {
+	case domain.EnginePostgreSQL:
+		return 5432
+	case domain.EngineMySQL, domain.EngineMariaDB:
+		return 3306
+	case domain.EngineMongoDB:
+		return 27017
+	case domain.EngineRedis, domain.EngineValkey:
+		return 6379
+	default:
+		return 0
+	}
+}
+
+// handleDatabaseError maps service errors to HTTP responses.
+func handleDatabaseError(a *API, w http.ResponseWriter, err error, action string) {
+	var ve *databases.ValidationError
+	switch {
+	case errors.As(err, &ve):
+		writeError(w, http.StatusBadRequest, ve.Msg)
+	case errors.Is(err, databases.ErrServerNotFound):
+		writeError(w, http.StatusBadRequest, "server not found")
+	case errors.Is(err, databases.ErrEnvironmentNotFound):
+		writeError(w, http.StatusNotFound, "environment not found")
+	case errors.Is(err, store.ErrNotFound):
+		writeError(w, http.StatusNotFound, "database not found")
+	default:
+		a.deps.Log.Error(action, "error", err)
+		writeError(w, http.StatusInternalServerError, "could not complete "+action)
+	}
+}
+
+// strconv import needed by other handlers in this package.
+var _ = strconv.Itoa
+
+// auditDatabase records a lifecycle action on a database the handler addressed
+// by id, resolving its name and environment for the snapshot.
+func (a *API) auditDatabase(r *http.Request, action, dbID string) {
+	if a.deps.Audit == nil || a.deps.Databases == nil {
+		return
+	}
+	db, _ := a.deps.Databases.Get(r.Context(), dbID)
+	a.audit(r, audit.Entry{
+		Action:        action,
+		Resource:      audit.Resource(audit.ResourceDatabase, dbID, db.Name),
+		EnvironmentID: db.EnvironmentID,
+	})
+}
+
+// auditScopeForDatabase resolves the environment a database lives in, for the
+// actions that happen NEAR a database rather than to it — its backup schedules
+// and backup runs. Without it the row carries no ownership chain at all, so
+// team_id resolves to NULL and the entry becomes PANEL-scoped: unreadable by
+// the team that owns the database and readable by every panel admin, which is
+// the opposite of what §5 promises. A failed lookup returns "" and the row is
+// still written; a mis-scoped entry is better than a missing one.
+func (a *API) auditScopeForDatabase(ctx context.Context, dbID string) string {
+	if a.deps.Databases == nil {
+		return ""
+	}
+	db, err := a.deps.Databases.Get(ctx, dbID)
+	if err != nil {
+		return ""
+	}
+	return db.EnvironmentID
+}

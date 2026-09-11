@@ -1,0 +1,188 @@
+syntax = "proto3";
+
+package cypherpanel.agent.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/MaramHarsha/cypherpanel/pkg/proto/cypherpanel/agent/v1;agentv1";
+
+// EnrollmentService is the agent's first contact with the control plane.
+//
+// It is served over server-authenticated TLS (the agent has no client
+// certificate yet — this is the bootstrap) and authenticated by a
+// single-use, short-lived join token (ADR-002; threat-model.md §5.3).
+//
+// The agent generates its own private key locally and transmits only a
+// certificate signing request. The control plane never sees, stores, or
+// transmits the agent's private key — this is what makes a control-plane
+// compromise unable to yield agent identities (threat-model.md §5.1).
+service EnrollmentService {
+  // Enroll exchanges a valid join token + CSR for a signed client
+  // certificate. The token is consumed on success (single-use).
+  rpc Enroll(EnrollRequest) returns (EnrollResponse);
+
+  // Renew re-signs an already-enrolled agent's certificate before it expires.
+  //
+  // Unlike Enroll it carries no join token: the caller authenticates with the
+  // certificate it already holds, over the same mTLS listener, and the plane
+  // takes the identity from the verified peer chain rather than from anything
+  // in the request (threat-model.md §5.2 — "short-lived agent certificates
+  // with rotation, renewed over the authenticated channel"). The agent
+  // generates a FRESH key pair for each renewal and sends only the CSR, so the
+  // property Enroll establishes — the private key never crosses the wire —
+  // holds for the whole lifetime of the identity, not just its first day.
+  //
+  // Idempotent in the only sense that matters here: calling it twice issues
+  // two certificates for the same CommonName, both valid, and the agent keeps
+  // whichever it stored last. Nothing is consumed.
+  rpc Renew(RenewRequest) returns (RenewResponse);
+}
+
+message EnrollRequest {
+  // Single-use join token issued by the control plane operator.
+  string join_token = 1;
+  // PEM-encoded PKCS#10 certificate signing request. The agent holds the
+  // corresponding private key; it never leaves the agent host.
+  bytes csr_pem = 2;
+  // Agent build version, for the fleet-version visibility ADR-010 will need.
+  string agent_version = 3;
+  // Reported hostname, advisory only (used for display; identity is the cert).
+  string hostname = 4;
+}
+
+message EnrollResponse {
+  // Stable server identifier the agent uses in its subjects (state.*.<id>).
+  string server_id = 1;
+  // PEM-encoded client certificate signed by the control-plane CA.
+  bytes certificate_pem = 2;
+  // PEM-encoded CA certificate the agent pins to verify the control plane.
+  bytes ca_pem = 3;
+  // URL the agent dials for the NATS data-plane connection (mTLS).
+  string nats_url = 4;
+}
+
+// RenewRequest asks the plane to re-sign this agent's identity.
+message RenewRequest {
+  // The server id the caller believes it is. It is NOT what authorizes the
+  // call — the verified client certificate's CommonName is — but the plane
+  // refuses a request whose claim disagrees with the peer identity, so an
+  // agent can never renew (or accidentally overwrite) another server's
+  // certificate, and a mismatch is a loud failure instead of a silent
+  // re-issue under the wrong name.
+  string server_id = 1;
+  // PEM-encoded PKCS#10 certificate signing request for the agent's new key
+  // pair. As with Enroll, the plane signs the key and dictates the subject.
+  bytes csr_pem = 2;
+  // Agent build version, recorded the same way Enroll records it so fleet
+  // version visibility survives re-enrollment-free lifetimes (ADR-010).
+  string agent_version = 3;
+}
+
+// RenewResponse carries the re-signed identity. The server id, the NATS URL
+// and the CA are unchanged by a renewal — only the certificate is new — so the
+// agent rewrites its certificate and nothing else.
+message RenewResponse {
+  // PEM-encoded client certificate signed by the control-plane CA, with the
+  // same CommonName the caller already had.
+  bytes certificate_pem = 1;
+  // PEM-encoded CA certificate, echoed so an agent that renews across a CA
+  // rotation is not left pinning material the plane no longer uses.
+  bytes ca_pem = 2;
+  // Expiry of the new certificate. The agent derives its next renewal from the
+  // certificate itself; this field is for logging and for an agent that wants
+  // to check the plane agreed with its own parse.
+  google.protobuf.Timestamp not_after = 3;
+}
+
+// AgentStatus is the agent's self-reported liveness, carried on heartbeats.
+// It is distinct from the resource/server status vocabulary in ui-principles
+// §5 — the control plane derives `running`/`unknown` from heartbeat recency,
+// never trusting the agent to assert its own reachability.
+enum AgentStatus {
+  AGENT_STATUS_UNSPECIFIED = 0;
+  AGENT_STATUS_READY = 1;
+  AGENT_STATUS_DEGRADED = 2;
+}
+
+// Heartbeat is published by the agent to the NATS subject
+// `state.heartbeat.<server_id>` (ADR-003, subject family state.*).
+//
+// It is transient coordination traffic: Postgres remains the single state of
+// record (ENGINEERING rule 15). The plane updates a server's observed status
+// and last-seen time from these; absence of heartbeats is what drives the
+// `unknown` status, never a stale cached value (ui-principles §10).
+message Heartbeat {
+  string server_id = 1;
+  google.protobuf.Timestamp emitted_at = 2;
+  string agent_version = 3;
+  // Active orchestrator driver on this agent (e.g. "docker"). Phase 1 agents
+  // report their configured driver without yet reconciling workloads.
+  string driver = 4;
+  AgentStatus status = 5;
+  // Role the agent runs with: "all" (default), "builder", or "worker"
+  // (builder-role-and-relay.md §1). Routing input only — relay operations are
+  // authorized per-deployment, never from this claim.
+  string role = 6;
+  // V1: the Docker data root's filesystem (disk-management.md §4). Read from
+  // the daemon's own /info (DockerRootDir) rather than assumed, because an
+  // operator who moved it is exactly the one who will not have moved an alert
+  // with it. Zero means "could not read", which the plane treats as unknown
+  // and never as full.
+  uint64 disk_total_bytes = 7;
+  uint64 disk_free_bytes = 8;
+  // V1: what this agent is doing about its own binary (agent-updates.md §7).
+  // Observed state like everything else in a heartbeat — the plane asserts a
+  // version was adopted from `agent_version` above, never from a phase.
+  AgentUpdateStatus agent_update = 9;
+  // V1: WHICH subsystem is unhealthy when `status` is DEGRADED. The agent has
+  // keyed its health by subsystem since ADR-010, but the wire carried only the
+  // collapsed status word, so a degraded server could say nothing about what
+  // was wrong with it — an operator saw amber and had to go read the agent's
+  // log on the host to find out that the Proxy could not bind :80.
+  //
+  // Additive, so an agent older than this field keeps working: `repeated` has
+  // no presence, so an empty list is BOTH "healthy" and "old agent". The plane
+  // resolves that with `status` — a READY agent has nothing wrong with it
+  // either way, and a DEGRADED agent sending no entries is one too old to say.
+  repeated SubsystemHealth subsystem_health = 10;
+}
+
+// SubsystemHealth names one failing part of an agent and what it said.
+//
+// The message is an error string from a subsystem that fails in a LOOP rather
+// than crashing — the Proxy and the self-updater — so it is the agent's own
+// diagnosis, never a secret: nothing that unseals a value reports through here
+// (ENGINEERING rule 20).
+message SubsystemHealth {
+  // Stable identifier the agent chose: "proxy", "updater".
+  string subsystem = 1;
+  string message = 2;
+}
+
+// AgentUpdateStatus is the observed half of ADR-010: which phase the updater is
+// in, what it is moving to, and what went wrong if anything did.
+//
+// PHASE_ROLLED_BACK also raises the agent's own AgentStatus to degraded, so the
+// server goes amber in the ordinary status vocabulary rather than only in this
+// feature's column.
+message AgentUpdateStatus {
+  enum Phase {
+    PHASE_UNSPECIFIED = 0;
+    PHASE_IDLE = 1;
+    PHASE_PENDING = 2;
+    PHASE_DOWNLOADING = 3;
+    PHASE_VERIFYING = 4;
+    PHASE_SWAPPING = 5;
+    PHASE_ROLLED_BACK = 6;
+    PHASE_FAILED = 7;
+    // PHASE_DISABLED is a host that is visibly EXCLUDED rather than failing
+    // forever: CYPHER_UPDATE_DISABLE is set, the binary path is not writable,
+    // or this build trusts no release key and so can verify nothing.
+    PHASE_DISABLED = 8;
+  }
+  Phase phase = 1;
+  string target_version = 2;
+  string previous_version = 3;
+  // detail is operator-facing prose and never a secret (ENGINEERING rule 20).
+  string detail = 4;
+}

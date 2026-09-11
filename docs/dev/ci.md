@@ -1,0 +1,89 @@
+# CypherPanel — CI/CD Workflow Inventory
+
+> GitHub Actions workflows, listed by **when each file should first exist**. Workflows are created just-in-time like every other artifact — a workflow with nothing real to check is a stub, and stubs are banned ([project-structure.md](../project-structure.md) rule 3).
+
+## Phase 1 — created with the first Go code
+
+### `.github/workflows/ci.yml` — every PR and push to main
+- **Go:** `gofmt` check, `golangci-lint`, unit tests for `core/`, `agent/`, `pkg/` with `-race`, build check for linux/amd64 **and** linux/arm64 (cross-compile is cheap; catching ARM breakage in CI beats catching it on a user's Raspberry Pi).
+- **Proto:** `buf lint` + `buf breaking` against main — mechanically enforces ENGINEERING.md rule 18 (never break the agent wire protocol).
+- **Web:** pnpm install, typecheck, lint, tests, production build. Path-filtered so backend-only PRs skip it.
+- **Generated-code drift:** regenerate sqlc, buf, and the OpenAPI client, then `git diff --exit-code`. Enforces "the spec is the source of truth" (ENGINEERING.md rule 19) — hand-edited generated files and forgotten regeneration both fail loudly.
+
+### `.github/workflows/integration.yml`
+Dockerized Postgres via `services:`, boots a real `cypherd` and real `cypher-agent`. Jobs:
+- **handshake** — enrolls a containerized agent; verifies the mTLS handshake, heartbeat-driven status, a plane-outage reconvergence, and revocation-on-delete. This **is** Phase 1's acceptance test, automated.
+- **installer** — the `curl | sh` join under 60 s on a fresh Ubuntu container, that a pasted command with no `CYPHER_AGENT_URL` reaches for the project's latest release asset instead of dead-ending, plus tampered-CA-fingerprint refusal.
+- **store-tests** — the store layer against a real Postgres (ENGINEERING rule 29).
+- **deploy** — Phase 2 acceptance: a host-run agent (real Docker + git) clones a repo, builds a Dockerfile image, health-gates the rollout, the container actually serves, then a rollback re-ships the revision with the build skipped.
+- **deploy-resilience** — Phase 2 acceptance gate 2: a deploy triggered while the agent is down waits in the file-backed WORK stream; on restart the agent drains it and converges to the new revision with no manual step.
+
+Also in `integration.yml`: the **deploy** job routes the built application
+through the real managed Proxy (Traefik) and checks the body at its domain, and
+the **browser regression** job drives the built panel through a real browser
+(`web/e2e/`). The two-agent build-relay scenario (ADR-008) is proven live rather
+than in CI.
+
+### `.github/dependabot.yml`
+Weekly grouped updates: Go modules, pnpm, and Actions versions. Every new runtime dependency still requires PR justification per [tech-stack.md](../tech-stack.md).
+
+## Releases
+
+### `.github/workflows/release.yml` — on version tag
+Builds `cypherd` (web UI embedded via `go:embed`) and `cypher-agent` for linux
+amd64/arm64 with `-trimpath` and the exact toolchain named in `go.work`, writes
+`release.json`, `SHA256SUMS`, and publishes a **draft**. It never signs: the
+release key is offline, and `make release-sign` rebuilds the tag from source,
+compares byte for byte, signs the manifest and publishes
+([release-signing.md](release-signing.md)). The artifact names are a
+compatibility contract — `install.sh`, the panel's guided upgrade and the
+agent's self-update all download by them.
+
+### `.github/workflows/security.yml` — scheduled + on PR
+`govulncheck` (Go CVEs), CodeQL, `gitleaks` (leaked secrets in history), Trivy scan of release images. For a product whose compromise means fleet compromise, this workflow is part of the trust story, not hygiene.
+
+## Phase 4 — created with the catalog and public community
+
+### `.github/workflows/templates.yml`
+Path-filtered to `templates/`: schema-validates template YAML, lints compose syntax, verifies referenced images exist. The supply-chain gate for the catalog (malicious-template scenario in the threat model).
+
+### `.github/workflows/docs.yml`
+Link-checks the docs tree (our docs are dense with relative links; rot is otherwise inevitable). Later: deploys the user-facing docs site.
+
+### Community hygiene (only once the repo is public)
+PR labeler, stale-issue policy, `CODEOWNERS`, issue templates. Before that they're noise.
+
+## Conventions
+
+- **Path-filter aggressively** — both reference repos do; contributors deserve fast feedback.
+- **Read Coolify's Actions before writing `release.yml`** — their multi-arch Docker build setup is battle-tested and worth mining (extraction rules in [research/coolify.md](../../research/coolify.md) apply).
+- A red main branch blocks all merges; there is no "merge anyway" culture (ENGINEERING.md rule 30).
+
+## Browser regression (`integration.yml` → `browser`)
+
+The newest job, and the one with a different failure mode from every other:
+**it fails when a control is missing**, where the rest fail when an endpoint is
+wrong.
+
+It exists because an external review on 2026-09-07 found five defects on a
+branch whose sixteen jobs were all green. Four were the same shape — a
+capability the database, the store, the scheduler and the agent all supported,
+with no way to reach it from a screen. No API test can see that, because the API
+was working; the gap was between the API and the UI.
+
+`scripts/e2e.sh` boots a throwaway PostgreSQL, a real `cypherd` with the built UI
+embedded, and a real enrolled agent, then drives the panel with Playwright.
+Nothing is mocked. CI and a laptop run the same script — the job deliberately
+has no `services:` block, because a database provided one way in CI and another
+way locally is a second thing to keep working, and the CI-only path is the one
+that quietly rots.
+
+It does **not** run a deploy: the `deploy` job already proves that against real
+Docker and real Traefik, and a slower, flakier copy of a passing test is worth
+nothing.
+
+Retries are set to **0**. A flaky browser test is worse than no browser test,
+because it teaches people to re-run until green; if one of these is unstable
+that is a bug in the test.
+
+What the suite covers is in [web/e2e/README.md](../../web/e2e/README.md).

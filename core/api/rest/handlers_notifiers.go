@@ -1,0 +1,348 @@
+package rest
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"time"
+
+	"github.com/MaramHarsha/cypherpanel/core/audit"
+	"github.com/MaramHarsha/cypherpanel/core/domain"
+	"github.com/MaramHarsha/cypherpanel/core/notify"
+	"github.com/MaramHarsha/cypherpanel/core/store"
+)
+
+// notifierDTO never carries the raw channel config (rule 20) — only a masked
+// hint derived from its non-secret fields (notifications.md §7).
+type notifierDTO struct {
+	ID         string    `json:"id"`
+	ProjectID  string    `json:"project_id"`
+	Name       string    `json:"name"`
+	Channel    string    `json:"channel"`
+	Events     []string  `json:"events"`
+	Enabled    bool      `json:"enabled"`
+	ConfigHint string    `json:"config_hint"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// toNotifierDTO builds the response. The hint needs the non-secret config
+// fields, so it unseals in-process and immediately discards the plaintext; a
+// failure to unseal degrades to the channel name, never an error.
+func (a *API) toNotifierDTO(n domain.Notifier) notifierDTO {
+	hint := n.Channel
+	if cfg, err := a.deps.Opener.Open(n.ConfigCT, n.ConfigNonce); err == nil {
+		hint = notify.ConfigHint(n.Channel, cfg)
+	}
+	return notifierDTO{
+		ID:         n.ID,
+		ProjectID:  n.ProjectID,
+		Name:       n.Name,
+		Channel:    n.Channel,
+		Events:     n.Events,
+		Enabled:    n.Enabled,
+		ConfigHint: hint,
+		CreatedAt:  n.CreatedAt,
+		UpdatedAt:  n.UpdatedAt,
+	}
+}
+
+type createNotifierRequest struct {
+	Name    string          `json:"name"`
+	Channel string          `json:"channel"`
+	Config  json.RawMessage `json:"config"`
+	Events  []string        `json:"events"`
+	Enabled *bool           `json:"enabled"` // default true when omitted
+}
+
+func (a *API) handleCreateNotifier(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.requireProjectRole(w, r, user, r.PathValue("id"), domain.RoleMember) {
+		return
+	}
+	if a.deps.Notifiers == nil {
+		writeError(w, http.StatusNotImplemented, "notifications are not enabled")
+		return
+	}
+	var req createNotifierRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+	n, err := a.deps.Notifiers.Create(r.Context(), r.PathValue("id"), notify.CreateInput{
+		Name:    req.Name,
+		Channel: req.Channel,
+		Config:  req.Config,
+		Events:  req.Events,
+		Enabled: enabled,
+	})
+	if err != nil {
+		a.writeNotifierError(w, "creating notifier", err)
+		return
+	}
+	// The channel and the events it subscribes to, never the config that holds
+	// the webhook URL or the bot token (§6).
+	a.audit(r, audit.Entry{
+		Action:    audit.ActionNotifierCreated,
+		Resource:  audit.Resource(audit.ResourceNotifier, n.ID, n.Name),
+		ProjectID: n.ProjectID,
+		Detail:    map[string]any{"channel": n.Channel, "events": n.Events, "enabled": n.Enabled},
+	})
+	writeJSON(w, http.StatusCreated, a.toNotifierDTO(n))
+}
+
+func (a *API) handleListNotifiers(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.requireProjectRole(w, r, user, r.PathValue("id"), domain.RoleMember) {
+		return
+	}
+	if a.deps.Notifiers == nil {
+		writeJSON(w, http.StatusOK, []notifierDTO{})
+		return
+	}
+	list, err := a.deps.Notifiers.List(r.Context(), r.PathValue("id"))
+	if err != nil {
+		a.deps.Log.Error("listing notifiers", "error", err)
+		writeError(w, http.StatusInternalServerError, "could not list notifiers")
+		return
+	}
+	out := make([]notifierDTO, 0, len(list))
+	for _, n := range list {
+		out = append(out, a.toNotifierDTO(n))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (a *API) handleGetNotifier(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForNotifier(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
+	if a.deps.Notifiers == nil {
+		writeError(w, http.StatusNotFound, "notifier not found")
+		return
+	}
+	n, err := a.deps.Notifiers.Get(r.Context(), r.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "notifier not found")
+			return
+		}
+		a.deps.Log.Error("getting notifier", "error", err)
+		writeError(w, http.StatusInternalServerError, "could not get notifier")
+		return
+	}
+	writeJSON(w, http.StatusOK, a.toNotifierDTO(n))
+}
+
+type patchNotifierRequest struct {
+	Name    string          `json:"name"`
+	Events  []string        `json:"events"`
+	Enabled *bool           `json:"enabled"`
+	Config  json.RawMessage `json:"config"` // omit to keep the sealed value
+}
+
+func (a *API) handlePatchNotifier(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForNotifier(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
+	if a.deps.Notifiers == nil {
+		writeError(w, http.StatusNotFound, "notifier not found")
+		return
+	}
+	cur, err := a.deps.Notifiers.Get(r.Context(), r.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "notifier not found")
+			return
+		}
+		a.deps.Log.Error("getting notifier", "error", err)
+		writeError(w, http.StatusInternalServerError, "could not get notifier")
+		return
+	}
+	var req patchNotifierRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	// PATCH semantics: unspecified fields keep their current value.
+	in := notify.UpdateInput{Name: cur.Name, Events: cur.Events, Enabled: cur.Enabled, Config: req.Config}
+	if req.Name != "" {
+		in.Name = req.Name
+	}
+	if req.Events != nil {
+		in.Events = req.Events
+	}
+	if req.Enabled != nil {
+		in.Enabled = *req.Enabled
+	}
+	n, err := a.deps.Notifiers.Update(r.Context(), r.PathValue("id"), in)
+	if err != nil {
+		a.writeNotifierError(w, "updating notifier", err)
+		return
+	}
+	a.audit(r, audit.Entry{
+		Action:    audit.ActionNotifierUpdated,
+		Resource:  audit.Resource(audit.ResourceNotifier, n.ID, n.Name),
+		ProjectID: n.ProjectID,
+		Detail:    map[string]any{"enabled": n.Enabled, "events": n.Events, "config_replaced": req.Config != nil},
+	})
+	writeJSON(w, http.StatusOK, a.toNotifierDTO(n))
+}
+
+func (a *API) handleDeleteNotifier(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForNotifier(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
+	if a.deps.Notifiers == nil {
+		writeError(w, http.StatusNotFound, "notifier not found")
+		return
+	}
+	before, _ := a.deps.Notifiers.Get(r.Context(), r.PathValue("id"))
+	if err := a.deps.Notifiers.Delete(r.Context(), r.PathValue("id")); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "notifier not found")
+			return
+		}
+		// A notifier that vanishes leaves alert rules that evaluate and
+		// deliver nothing, so the refusal names how many still point here.
+		var inUse *notify.InUseError
+		if errors.As(err, &inUse) {
+			writeError(w, http.StatusConflict, inUse.Msg)
+			return
+		}
+		a.deps.Log.Error("deleting notifier", "error", err)
+		writeError(w, http.StatusInternalServerError, "could not delete notifier")
+		return
+	}
+	a.audit(r, audit.Entry{
+		Action:    audit.ActionNotifierDeleted,
+		Resource:  audit.Resource(audit.ResourceNotifier, r.PathValue("id"), before.Name),
+		ProjectID: before.ProjectID,
+		Detail:    map[string]any{"channel": before.Channel},
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleTestNotifier delivers a synthetic event through one notifier so an
+// operator can confirm wiring at setup time (notifications.md §7). Delivery is
+// synchronous here (unlike real events) so the 202 means "attempted"; a channel
+// failure is logged, not surfaced, to avoid leaking endpoint details.
+func (a *API) handleTestNotifier(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	if !a.authorizeResolved(w, r, user, domain.RoleMember, func(ctx context.Context) (string, error) {
+		return a.projectIDForNotifier(ctx, r.PathValue("id"))
+	}) {
+		return
+	}
+	if a.deps.Notifiers == nil || a.deps.NotifyDelivery == nil {
+		writeError(w, http.StatusNotFound, "notifier not found")
+		return
+	}
+	n, err := a.deps.Notifiers.Get(r.Context(), r.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "notifier not found")
+			return
+		}
+		a.deps.Log.Error("getting notifier", "error", err)
+		writeError(w, http.StatusInternalServerError, "could not get notifier")
+		return
+	}
+	// The result is the answer, not a receipt. This used to return 202 without
+	// looking, so a notifier with a stale webhook URL reported success and the
+	// operator learned the truth from a notification that never arrived.
+	if err := a.deps.NotifyDelivery.Deliver(r.Context(), n, notify.TestEvent()); err != nil {
+		a.deps.Log.Warn("test notification failed", "notifier_id", n.ID, "channel", n.Channel, "error", err)
+		writeJSON(w, http.StatusOK, connectionTestDTO{OK: false, Detail: err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, connectionTestDTO{OK: true, Detail: "Delivered a test message to " + n.Channel + "."})
+}
+
+// connectionTestDTO is the one shape every "test this connection" route answers
+// with. ok is the verdict; detail is what the far end said, verbatim, because
+// "connection refused" is the whole answer and paraphrasing it makes an operator
+// guess. A failed test is a 200 with ok:false — the request succeeded, the
+// connection did not, and conflating the two costs the caller the distinction.
+type connectionTestDTO struct {
+	OK     bool   `json:"ok"`
+	Detail string `json:"detail"`
+}
+
+// testNotifierConfigRequest carries an unsaved channel configuration.
+type testNotifierConfigRequest struct {
+	Channel string          `json:"channel"`
+	Config  json.RawMessage `json:"config"`
+}
+
+// handleTestNotifierConfig proves a configuration before it is saved.
+//
+// A dialog that can only test what it has already stored teaches operators to
+// save broken credentials and find out later. Nothing is persisted here: the
+// config is validated exactly as Create would, used once, and dropped.
+func (a *API) handleTestNotifierConfig(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	projectID := r.PathValue("id")
+	if !a.requireProjectRole(w, r, user, projectID, domain.RoleMember) {
+		return
+	}
+	if a.deps.NotifyDelivery == nil {
+		writeError(w, http.StatusNotImplemented, "notifications are not enabled")
+		return
+	}
+	var req testNotifierConfigRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "could not read the request body")
+		return
+	}
+	err := a.deps.NotifyDelivery.TestConfig(r.Context(), req.Channel, req.Config)
+	var ve *notify.ValidationError
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, connectionTestDTO{OK: true, Detail: "Delivered a test message to " + req.Channel + "."})
+	case errors.Is(err, notify.ErrTestRequiresSave):
+		// Not a failed test: there is nothing to retry here, only a different
+		// route to take. Say which one.
+		writeError(w, http.StatusBadRequest,
+			"save the email notifier first, then send a test through it — an unsaved email test would relay a message through an arbitrary server")
+	case errors.As(err, &ve):
+		// A config the panel would refuse to store is a 400, not a failed test:
+		// there is nothing to retry until the operator changes the form.
+		writeError(w, http.StatusBadRequest, ve.Msg)
+	default:
+		a.deps.Log.Warn("test notification failed", "project_id", projectID, "channel", req.Channel, "error", err)
+		writeJSON(w, http.StatusOK, connectionTestDTO{OK: false, Detail: err.Error()})
+	}
+}
+
+// writeNotifierError maps service errors to status codes.
+func (a *API) writeNotifierError(w http.ResponseWriter, op string, err error) {
+	var ve *notify.ValidationError
+	switch {
+	case errors.As(err, &ve):
+		writeError(w, http.StatusBadRequest, ve.Msg)
+	case errors.Is(err, notify.ErrProjectNotFound):
+		writeError(w, http.StatusNotFound, "project not found")
+	case errors.Is(err, store.ErrNotFound):
+		writeError(w, http.StatusNotFound, "notifier not found")
+	case errors.Is(err, store.ErrConflict):
+		writeError(w, http.StatusConflict, "a notifier with that name already exists in the project")
+	default:
+		a.deps.Log.Error(op, "error", err)
+		writeError(w, http.StatusInternalServerError, "could not "+op)
+	}
+}

@@ -1,0 +1,161 @@
+package rest
+
+import (
+	"errors"
+	"net/http"
+	"strings"
+
+	"github.com/MaramHarsha/cypherpanel/core/applications"
+	"github.com/MaramHarsha/cypherpanel/core/audit"
+	"github.com/MaramHarsha/cypherpanel/core/domain"
+	"github.com/MaramHarsha/cypherpanel/core/templates"
+)
+
+type installTemplateRequest struct {
+	EnvironmentID string `json:"environment_id"`
+	ServerID      string `json:"server_id"`
+	Domain        string `json:"domain"`
+	Name          string `json:"name"`
+}
+
+type installTemplateResponse struct {
+	Applications []string `json:"applications"`
+	Databases    []string `json:"databases"`
+	// Stacks are the Compose Stacks installed (compose-templates.md). A compose
+	// template installs no application, so this is what the screen navigates to.
+	Stacks []string `json:"stacks,omitempty"`
+	// FirstLogin is how to get into what was just installed. Returned ONCE — a
+	// generated password appears here and nowhere else, ever (managed-databases
+	// §9's discipline). Absent when the template declares nothing.
+	FirstLogin *firstLoginDTO `json:"first_login,omitempty"`
+}
+
+type firstLoginDTO struct {
+	// Kind: "credentials" (sign in with these), "setup" (the app makes you
+	// create the account), "none" (nothing to sign into).
+	Kind          string `json:"kind"`
+	ApplicationID string `json:"application_id,omitempty"`
+	// StackID is set instead, for a compose template.
+	StackID  string `json:"stack_id,omitempty"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+	// Generated distinguishes a password the panel invented — shown once and
+	// unrecoverable — from a documented upstream default, which is public
+	// knowledge and can be shown at any time.
+	Generated bool   `json:"generated"`
+	Note      string `json:"note,omitempty"`
+}
+
+func (a *API) handleListTemplates(w http.ResponseWriter, _ *http.Request) {
+	if a.deps.Templates == nil {
+		writeError(w, http.StatusServiceUnavailable, "template catalog is not configured")
+		return
+	}
+	writeJSON(w, http.StatusOK, a.deps.Templates.List())
+}
+
+func (a *API) handleGetTemplate(w http.ResponseWriter, r *http.Request) {
+	if a.deps.Templates == nil {
+		writeError(w, http.StatusServiceUnavailable, "template catalog is not configured")
+		return
+	}
+	tpl, ok := a.deps.Templates.Get(r.PathValue("slug"))
+	if !ok {
+		writeError(w, http.StatusNotFound, "template not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, tpl)
+}
+
+func (a *API) handleInstallTemplate(w http.ResponseWriter, r *http.Request) {
+	if a.deps.Templates == nil {
+		writeError(w, http.StatusServiceUnavailable, "template catalog is not configured")
+		return
+	}
+	var req installTemplateRequest
+	if err := decodeJSON(r, &req); err != nil || req.EnvironmentID == "" || req.ServerID == "" {
+		writeError(w, http.StatusBadRequest, "environment_id and server_id are required")
+		return
+	}
+	user, _ := userFromContext(r.Context())
+	projectID, err := a.projectIDForEnvironment(r.Context(), req.EnvironmentID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "environment not found")
+		return
+	}
+	if !a.requireProjectRole(w, r, user, projectID, domain.RoleMember) {
+		return
+	}
+	result, err := a.deps.Templates.Install(r.Context(), r.PathValue("slug"), templates.InstallInput{
+		EnvironmentID: req.EnvironmentID,
+		ServerID:      req.ServerID,
+		Domain:        req.Domain,
+		Name:          req.Name,
+	})
+	var validation *templates.ValidationError
+	var partial *templates.PartialInstallError
+	var inUse *applications.DomainInUseError
+	switch {
+	case errors.Is(err, templates.ErrNotFound):
+		writeError(w, http.StatusNotFound, "template not found")
+	case errors.As(err, &validation):
+		writeError(w, http.StatusBadRequest, validation.Error())
+	case errors.As(err, &partial):
+		// The install failed *and* left resources behind. Still a 500 — the
+		// operator did nothing wrong — but the response has to name what
+		// survived, or those resources are unfindable.
+		a.deps.Log.Error("installing template: rollback incomplete", "slug", r.PathValue("slug"),
+			"environment_id", req.EnvironmentID, "remaining", partial.Remaining, "error", partial.Cause)
+		writeError(w, http.StatusInternalServerError,
+			"could not install template, and rolling it back left resources behind: "+strings.Join(partial.Remaining, ", "))
+	case errors.As(err, &inUse):
+		// The same 409 the application path answers. A template install
+		// creates applications through the same checks, so a hostname another
+		// application already serves is refused the same way — named, with the
+		// application that holds it — rather than as a blank 500.
+		writeError(w, http.StatusConflict, a.domainConflictMessage(r, inUse))
+	case writeIfFrozen(w, err):
+		// A template install deploys, so it passes the same gate a deploy
+		// does (deploy-protection.md §1). Placed after the partial branch: a
+		// refusal that also stranded resources has to name them first, or they
+		// are unfindable. A clean refusal answers 409 naming the window, so the
+		// operator retries after it rather than reading a blank 500.
+	case err != nil:
+		a.deps.Log.Error("installing template", "slug", r.PathValue("slug"), "environment_id", req.EnvironmentID, "error", err)
+		writeError(w, http.StatusInternalServerError, "could not install template")
+	default:
+		// One row for the install, naming what it created: a template install
+		// is several creates in one action, and the operator who wonders where
+		// six applications came from should find one entry, not six silent
+		// ones.
+		a.audit(r, audit.Entry{
+			Action:        audit.ActionTemplateInstalled,
+			Resource:      audit.Resource(audit.ResourceEnvironment, req.EnvironmentID, req.Name),
+			ProjectID:     projectID,
+			EnvironmentID: req.EnvironmentID,
+			Detail: map[string]any{
+				"template":     r.PathValue("slug"),
+				"server_id":    req.ServerID,
+				"applications": result.ApplicationIDs,
+				"databases":    result.DatabaseIDs,
+				"stacks":       result.StackIDs,
+			},
+		})
+		writeJSON(w, http.StatusAccepted, installTemplateResponse{
+			Applications: result.ApplicationIDs, Databases: result.DatabaseIDs,
+			Stacks:     result.StackIDs,
+			FirstLogin: firstLoginToDTO(result.FirstLogin),
+		})
+	}
+}
+
+func firstLoginToDTO(fl *templates.FirstLogin) *firstLoginDTO {
+	if fl == nil {
+		return nil
+	}
+	return &firstLoginDTO{
+		Kind: fl.Kind, ApplicationID: fl.ApplicationID, StackID: fl.StackID,
+		Username: fl.Username, Password: fl.Password,
+		Generated: fl.Generated, Note: fl.Note,
+	}
+}

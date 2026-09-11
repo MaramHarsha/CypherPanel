@@ -1,0 +1,21 @@
+[Unit]
+Description=CypherPanel local agent install
+Documentation=https://github.com/MaramHarsha/CypherPanel/blob/main/docs/features/local-server.md
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+# Read-only, like the upgrade helper's: this file holds the master key and the
+# helper has no business writing it.
+EnvironmentFile=/etc/cypherpanel/cypherd.env
+Environment=CYPHERD_UPGRADE_DIR=/var/lib/cypherpanel/upgrade
+ExecStart=/usr/local/bin/cypherd join-local
+# Deliberately not sandboxed the way cypherd.service is: this process exists to
+# install a binary and a unit on this host, which is precisely what the plane's
+# own sandbox forbids it (local-server.md §2). What bounds it is that it acts
+# only on a request the plane placed, only on THIS machine — the request has no
+# field naming another — and only within two minutes of a person clicking.
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,23 @@
+# Weekly grouped dependency updates (docs/dev/ci.md). Every new runtime
+# dependency still requires PR justification per docs/tech-stack.md — these
+# PRs update existing ones. The npm ecosystem is added with web/ in Phase 4.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directories:
+      - /pkg
+      - /core
+      - /agent
+    schedule:
+      interval: weekly
+    groups:
+      go-dependencies:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

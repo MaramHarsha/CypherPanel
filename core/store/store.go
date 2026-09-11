@@ -1,0 +1,1189 @@
+// Package store is the only writer to PostgreSQL, the single state of record
+// (ADR-001/ADR-003). It wraps sqlc-generated queries and confines all pgx and
+// pgtype types to this package; the rest of the control plane speaks in
+// domain types. Migrations are embedded and applied on boot.
+package store
+
+import (
+	"context"
+	"embed"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"time"
+
+	"database/sql"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
+	_ "github.com/jackc/pgx/v5/stdlib" // registers "pgx" for database/sql (goose)
+	"github.com/pressly/goose/v3"
+
+	"github.com/MaramHarsha/cypherpanel/core/domain"
+	"github.com/MaramHarsha/cypherpanel/core/store/db"
+)
+
+//go:embed migrations/*.sql
+var migrationsFS embed.FS
+
+// ErrNotFound is returned when a lookup matches no row. Callers match it with
+// errors.Is, never by string (ENGINEERING rule 3).
+var ErrNotFound = errors.New("store: not found")
+
+// ErrConflict is returned when an insert or update violates a uniqueness
+// constraint (a duplicate name within its scope). Handlers map it to 409.
+var ErrConflict = errors.New("store: already exists")
+
+// ErrInUse is returned when a delete is refused because other rows still
+// reference the target through a RESTRICT foreign key (e.g. a server that
+// still runs applications). Handlers map it to 409 with the reason.
+var ErrInUse = errors.New("store: still referenced")
+
+// Store is the control plane's persistence layer.
+type Store struct {
+	pool *pgxpool.Pool
+	q    *db.Queries
+}
+
+// Open connects to PostgreSQL and verifies the connection.
+func Open(ctx context.Context, databaseURL string) (*Store, error) {
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("store: opening pool: %w", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("store: pinging database: %w", err)
+	}
+	return &Store{pool: pool, q: db.New(pool)}, nil
+}
+
+// Close releases the connection pool.
+func (s *Store) Close() { s.pool.Close() }
+
+// Ping verifies the database is reachable, for readiness checks.
+func (s *Store) Ping(ctx context.Context) error {
+	if err := s.pool.Ping(ctx); err != nil {
+		return fmt.Errorf("store: ping: %w", err)
+	}
+	return nil
+}
+
+// WithSetupLock runs fn while holding the panel's first-run lock, so two
+// setup requests that arrive together cannot both count zero users and both
+// create an owner. A transaction-scoped advisory lock: released on commit,
+// on rollback, and on a dropped connection, so a crashed caller never leaves
+// the panel unclaimable.
+func (s *Store) WithSetupLock(ctx context.Context, fn func(context.Context) error) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("store: starting the setup lock: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(7203911)"); err != nil {
+		return fmt.Errorf("store: taking the setup lock: %w", err)
+	}
+	if err := fn(ctx); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// LatestMigration is the highest embedded migration number — the schema
+// version a build of this binary carries. release.json records it so a panel
+// can tell, before downloading anything, which way a version change moves the
+// schema.
+func LatestMigration() int {
+	entries, err := fs.ReadDir(migrationsFS, "migrations")
+	if err != nil {
+		return 0
+	}
+	latest := 0
+	for _, e := range entries {
+		n := 0
+		for _, c := range e.Name() {
+			if c < '0' || c > '9' {
+				break
+			}
+			n = n*10 + int(c-'0')
+		}
+		if n > latest {
+			latest = n
+		}
+	}
+	return latest
+}
+
+// Migrate applies all embedded migrations to the database at databaseURL. It
+// opens its own database/sql handle because goose operates on that interface;
+// the handle is closed before returning.
+func Migrate(ctx context.Context, databaseURL string) error {
+	sqldb, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		return fmt.Errorf("store: opening sql handle for migrations: %w", err)
+	}
+	defer func() { _ = sqldb.Close() }()
+
+	sub, err := fs.Sub(migrationsFS, "migrations")
+	if err != nil {
+		return fmt.Errorf("store: locating migrations: %w", err)
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, sqldb, sub)
+	if err != nil {
+		return fmt.Errorf("store: building migration provider: %w", err)
+	}
+	if _, err := provider.Up(ctx); err != nil {
+		return fmt.Errorf("store: applying migrations: %w", err)
+	}
+	return nil
+}
+
+// RestoreMigrator replays the embedded migrations for a plane restore
+// (plane-disaster-recovery.md §6).
+//
+// The schema is rebuilt from THIS BINARY's migrations rather than carried in
+// the archive: the binary already replays them on every boot, so a restore uses
+// the mechanism exercised daily instead of a second one exercised on the worst
+// day of the year. UpTo lands the schema at the snapshot's own version, and Up
+// carries it forward afterwards.
+type RestoreMigrator struct {
+	provider *goose.Provider
+	closeDB  func() error
+}
+
+// NewRestoreMigrator opens its own handle, because goose operates on
+// database/sql and a restore runs with no Store around it.
+func NewRestoreMigrator(databaseURL string) (*RestoreMigrator, error) {
+	sqldb, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("store: opening sql handle for migrations: %w", err)
+	}
+	sub, err := fs.Sub(migrationsFS, "migrations")
+	if err != nil {
+		_ = sqldb.Close()
+		return nil, fmt.Errorf("store: locating migrations: %w", err)
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, sqldb, sub)
+	if err != nil {
+		_ = sqldb.Close()
+		return nil, fmt.Errorf("store: building migration provider: %w", err)
+	}
+	return &RestoreMigrator{provider: provider, closeDB: sqldb.Close}, nil
+}
+
+func (m *RestoreMigrator) Close() error { return m.closeDB() }
+
+func (m *RestoreMigrator) UpTo(ctx context.Context, version int64) error {
+	_, err := m.provider.UpTo(ctx, version)
+	return err
+}
+
+func (m *RestoreMigrator) Up(ctx context.Context) error {
+	_, err := m.provider.Up(ctx)
+	return err
+}
+
+// Current is the newest migration this binary carries. A snapshot needing more
+// than this cannot be restored by this build, and saying so by number is the
+// honest one-line answer.
+func (m *RestoreMigrator) Current() int64 {
+	sources := m.provider.ListSources()
+	var newest int64
+	for _, src := range sources {
+		if src.Version > newest {
+			newest = src.Version
+		}
+	}
+	return newest
+}
+
+// ─── Users ──────────────────────────────────────────────────────────────────
+
+// CountEnrolledServers, CountProjects and CountSucceededDeployments are guided
+// onboarding's derived progress (guided-onboarding.md §2). Counts rather than
+// lists: the band shows how many, and loading every application to learn there
+// is one would be a strange way to ask.
+func (s *Store) CountEnrolledServers(ctx context.Context) (int64, error) {
+	n, err := s.q.CountEnrolledServers(ctx)
+	if err != nil {
+		return 0, wrap("counting enrolled servers", err)
+	}
+	return n, nil
+}
+
+func (s *Store) CountProjects(ctx context.Context) (int64, error) {
+	n, err := s.q.CountProjects(ctx)
+	if err != nil {
+		return 0, wrap("counting projects", err)
+	}
+	return n, nil
+}
+
+func (s *Store) CountSucceededDeployments(ctx context.Context) (int64, error) {
+	n, err := s.q.CountSucceededDeployments(ctx)
+	if err != nil {
+		return 0, wrap("counting succeeded deployments", err)
+	}
+	return n, nil
+}
+
+func (s *Store) CountUsers(ctx context.Context) (int64, error) {
+	n, err := s.q.CountUsers(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("store: counting users: %w", err)
+	}
+	return n, nil
+}
+
+func (s *Store) CreateUser(ctx context.Context, id, email, passwordHash, role string) (domain.User, error) {
+	row, err := s.q.CreateUser(ctx, db.CreateUserParams{
+		ID:           id,
+		Email:        email,
+		PasswordHash: passwordHash,
+		Role:         role,
+	})
+	if err != nil {
+		return domain.User{}, wrapCreate("creating user", err)
+	}
+	return userFromRow(row), nil
+}
+
+func (s *Store) GetUserByEmail(ctx context.Context, email string) (domain.User, error) {
+	row, err := s.q.GetUserByEmail(ctx, email)
+	if err != nil {
+		return domain.User{}, wrap("getting user by email", err)
+	}
+	return userFromRow(row), nil
+}
+
+// ─── Control-plane CA ───────────────────────────────────────────────────────
+
+// PlaneCA is the persisted CA material: cert is public, the key is stored
+// encrypted with a nonce (threat-model §5.1).
+type PlaneCA struct {
+	CertPEM      []byte
+	EncryptedKey []byte
+	KeyNonce     []byte
+}
+
+func (s *Store) GetPlaneCA(ctx context.Context) (PlaneCA, error) {
+	row, err := s.q.GetPlaneCA(ctx)
+	if err != nil {
+		return PlaneCA{}, wrap("getting plane CA", err)
+	}
+	return PlaneCA{CertPEM: row.CertPem, EncryptedKey: row.EncryptedKey, KeyNonce: row.KeyNonce}, nil
+}
+
+func (s *Store) InsertPlaneCA(ctx context.Context, ca PlaneCA) error {
+	err := s.q.InsertPlaneCA(ctx, db.InsertPlaneCAParams{
+		CertPem:      ca.CertPEM,
+		EncryptedKey: ca.EncryptedKey,
+		KeyNonce:     ca.KeyNonce,
+	})
+	if err != nil {
+		return fmt.Errorf("store: inserting plane CA: %w", err)
+	}
+	return nil
+}
+
+// ─── Servers ────────────────────────────────────────────────────────────────
+
+func (s *Store) CreateServer(ctx context.Context, id, name string) (domain.Server, error) {
+	row, err := s.q.CreateServer(ctx, db.CreateServerParams{ID: id, Name: name})
+	if err != nil {
+		return domain.Server{}, fmt.Errorf("store: creating server: %w", err)
+	}
+	return serverFromRow(row), nil
+}
+
+// CreateServerWithToken creates a server and its first join token in a single
+// transaction, so an operator never sees a server that has no way to enroll.
+func (s *Store) CreateServerWithToken(ctx context.Context, serverID, name, tokenID string, tokenHash []byte, tokenExpiresAt time.Time) (domain.Server, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return domain.Server{}, fmt.Errorf("store: beginning tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
+
+	qtx := s.q.WithTx(tx)
+	row, err := qtx.CreateServer(ctx, db.CreateServerParams{ID: serverID, Name: name})
+	if err != nil {
+		return domain.Server{}, fmt.Errorf("store: creating server: %w", err)
+	}
+	if _, err := qtx.CreateJoinToken(ctx, db.CreateJoinTokenParams{
+		ID:        tokenID,
+		ServerID:  serverID,
+		TokenHash: tokenHash,
+		ExpiresAt: tsFromTime(tokenExpiresAt),
+	}); err != nil {
+		return domain.Server{}, fmt.Errorf("store: creating join token: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Server{}, fmt.Errorf("store: committing server creation: %w", err)
+	}
+	return serverFromRow(row), nil
+}
+
+func (s *Store) GetServer(ctx context.Context, id string) (domain.Server, error) {
+	row, err := s.q.GetServer(ctx, id)
+	if err != nil {
+		return domain.Server{}, wrap("getting server", err)
+	}
+	return serverFromRow(row), nil
+}
+
+func (s *Store) ListServers(ctx context.Context) ([]domain.Server, error) {
+	rows, err := s.q.ListServers(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing servers: %w", err)
+	}
+	out := make([]domain.Server, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, serverFromRow(r))
+	}
+	return out, nil
+}
+
+func (s *Store) MarkServerEnrolled(ctx context.Context, id, hostname, agentVersion string) (domain.Server, error) {
+	row, err := s.q.MarkServerEnrolled(ctx, db.MarkServerEnrolledParams{
+		ID:           id,
+		Hostname:     hostname,
+		AgentVersion: agentVersion,
+	})
+	if err != nil {
+		return domain.Server{}, wrap("marking server enrolled", err)
+	}
+	return serverFromRow(row), nil
+}
+
+func (s *Store) RecordHeartbeat(ctx context.Context, id string, status domain.ServerStatus, agentVersion, driver, role string, diskTotal, diskFree uint64) (domain.Server, error) {
+	row, err := s.q.RecordHeartbeat(ctx, db.RecordHeartbeatParams{
+		ID:           id,
+		Status:       string(status),
+		AgentVersion: agentVersion,
+		Driver:       driver,
+		Role:         role,
+		//nolint:gosec // a filesystem larger than 8 EiB is not a real host
+		DiskTotalBytes: int64(diskTotal),
+		//nolint:gosec // ditto
+		DiskFreeBytes: int64(diskFree),
+	})
+	if err != nil {
+		return domain.Server{}, wrap("recording heartbeat", err)
+	}
+	return serverFromRow(row), nil
+}
+
+// SetServerSubsystemHealth records which subsystems the agent last reported
+// unhealthy. Empty clears the column, which is what a healthy heartbeat means.
+func (s *Store) SetServerSubsystemHealth(ctx context.Context, id string, health []domain.SubsystemHealth) error {
+	if health == nil {
+		health = []domain.SubsystemHealth{}
+	}
+	encoded, err := json.Marshal(health)
+	if err != nil {
+		return fmt.Errorf("store: encoding subsystem health: %w", err)
+	}
+	if err := s.q.SetServerSubsystemHealth(ctx, db.SetServerSubsystemHealthParams{
+		ID: id, SubsystemHealth: encoded,
+	}); err != nil {
+		return wrapUpdate("recording subsystem health", err)
+	}
+	return nil
+}
+
+// decodeSubsystemHealth reads the stored column back. A row written before the
+// column existed, or one somehow holding something else, reads as nothing
+// rather than failing the whole server load: this is diagnostic detail beside
+// a status word that stands on its own.
+func decodeSubsystemHealth(raw []byte) []domain.SubsystemHealth {
+	if len(raw) == 0 {
+		return nil
+	}
+	var out []domain.SubsystemHealth
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+// SetServerAgentUpdate records what the agent last said about its own binary.
+func (s *Store) SetServerAgentUpdate(ctx context.Context, id, phase, target, detail string) error {
+	if err := s.q.SetServerAgentUpdate(ctx, db.SetServerAgentUpdateParams{
+		ID: id, AgentUpdatePhase: phase, AgentUpdateTarget: target, AgentUpdateDetail: detail,
+	}); err != nil {
+		return wrapUpdate("recording the agent update phase", err)
+	}
+	return nil
+}
+
+// SetServerAgentChannel moves one server onto a release channel.
+func (s *Store) SetServerAgentChannel(ctx context.Context, id, channel string) (domain.Server, error) {
+	row, err := s.q.SetServerAgentChannel(ctx, db.SetServerAgentChannelParams{ID: id, AgentChannel: channel})
+	if err != nil {
+		return domain.Server{}, wrapUpdate("setting the agent channel", err)
+	}
+	return serverFromRow(row), nil
+}
+
+// ListAgentChannels returns both channels, always — the rows are seeded by the
+// migration, so a missing one is a corrupt database rather than a first run.
+func (s *Store) ListAgentChannels(ctx context.Context) ([]domain.AgentChannelRow, error) {
+	rows, err := s.q.ListAgentChannels(ctx)
+	if err != nil {
+		return nil, wrap("listing agent channels", err)
+	}
+	out := make([]domain.AgentChannelRow, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, agentChannelFromRow(r))
+	}
+	return out, nil
+}
+
+// GetAgentChannel reads one channel.
+func (s *Store) GetAgentChannel(ctx context.Context, channel string) (domain.AgentChannelRow, error) {
+	row, err := s.q.GetAgentChannel(ctx, channel)
+	if err != nil {
+		return domain.AgentChannelRow{}, wrap("reading an agent channel", err)
+	}
+	return agentChannelFromRow(row), nil
+}
+
+// SetAgentChannel writes one channel's desired version wholesale.
+func (s *Store) SetAgentChannel(ctx context.Context, channel, version, artifactBase string, rollback bool, by string) (domain.AgentChannelRow, error) {
+	row, err := s.q.SetAgentChannel(ctx, db.SetAgentChannelParams{
+		Channel: channel, DesiredVersion: version, ArtifactBase: artifactBase,
+		Rollback: rollback, UpdatedBy: textOrNull(by),
+	})
+	if err != nil {
+		return domain.AgentChannelRow{}, wrapUpdate("setting an agent channel", err)
+	}
+	return agentChannelFromRow(row), nil
+}
+
+func agentChannelFromRow(r db.AgentChannel) domain.AgentChannelRow {
+	out := domain.AgentChannelRow{
+		Channel:        r.Channel,
+		DesiredVersion: r.DesiredVersion,
+		ArtifactBase:   r.ArtifactBase,
+		Rollback:       r.Rollback,
+		UpdatedAt:      r.UpdatedAt.Time,
+	}
+	if r.UpdatedBy.Valid {
+		v := r.UpdatedBy.String
+		out.UpdatedBy = &v
+	}
+	return out
+}
+
+// SetServerDiskLow records whether a server is currently below the disk
+// threshold — a transition the plane decides, not a measurement the agent
+// reports (disk-management.md §5).
+func (s *Store) SetServerDiskLow(ctx context.Context, id string, low bool) error {
+	if err := s.q.SetServerDiskLow(ctx, db.SetServerDiskLowParams{ID: id, DiskLow: low}); err != nil {
+		return wrapUpdate("recording server disk state", err)
+	}
+	return nil
+}
+
+// MarkStaleServersUnknown flips every enrolled server not seen since cutoff to
+// Unknown, returning the IDs it changed. This is how a silently-gone agent
+// stops showing a stale Running status (ui-principles §10).
+func (s *Store) MarkStaleServersUnknown(ctx context.Context, cutoff time.Time) ([]string, error) {
+	ids, err := s.q.MarkStaleServersUnknown(ctx, tsFromTime(cutoff))
+	if err != nil {
+		return nil, fmt.Errorf("store: marking stale servers unknown: %w", err)
+	}
+	return ids, nil
+}
+
+func (s *Store) DeleteServer(ctx context.Context, id string) error {
+	if err := s.q.DeleteServer(ctx, id); err != nil {
+		return wrapDelete("deleting server", err)
+	}
+	return nil
+}
+
+// AgentEnrolled reports whether id names a server that exists and has
+// completed enrollment. It satisfies bus.AgentAuthorizer: the bus refuses
+// connections from identities this returns false for (threat-model §8 req 6).
+func (s *Store) AgentEnrolled(ctx context.Context, id string) (bool, error) {
+	ok, err := s.q.ServerIsEnrolled(ctx, id)
+	if err != nil {
+		return false, fmt.Errorf("store: checking enrollment of %s: %w", id, err)
+	}
+	return ok, nil
+}
+
+// ─── Join tokens ────────────────────────────────────────────────────────────
+
+func (s *Store) CreateJoinToken(ctx context.Context, id, serverID string, tokenHash []byte, expiresAt time.Time) (domain.JoinToken, error) {
+	row, err := s.q.CreateJoinToken(ctx, db.CreateJoinTokenParams{
+		ID:        id,
+		ServerID:  serverID,
+		TokenHash: tokenHash,
+		ExpiresAt: tsFromTime(expiresAt),
+	})
+	if err != nil {
+		return domain.JoinToken{}, fmt.Errorf("store: creating join token: %w", err)
+	}
+	return joinTokenFromRow(row), nil
+}
+
+func (s *Store) GetJoinToken(ctx context.Context, id string) (domain.JoinToken, error) {
+	row, err := s.q.GetJoinToken(ctx, id)
+	if err != nil {
+		return domain.JoinToken{}, wrap("getting join token", err)
+	}
+	return joinTokenFromRow(row), nil
+}
+
+// ConsumeJoinToken atomically consumes the token, returning ErrNotFound if it
+// was already consumed or has expired (the single-use guarantee, threat-model
+// §5.3). Callers must verify the secret hash before calling this.
+func (s *Store) ConsumeJoinToken(ctx context.Context, id string) (domain.JoinToken, error) {
+	row, err := s.q.ConsumeJoinToken(ctx, id)
+	if err != nil {
+		return domain.JoinToken{}, wrap("consuming join token", err)
+	}
+	return joinTokenFromRow(row), nil
+}
+
+// ─── Sessions ───────────────────────────────────────────────────────────────
+
+func (s *Store) CreateSession(ctx context.Context, id, userID string, tokenHash []byte, expiresAt time.Time) error {
+	_, err := s.q.CreateSession(ctx, db.CreateSessionParams{
+		ID:        id,
+		UserID:    userID,
+		TokenHash: tokenHash,
+		ExpiresAt: tsFromTime(expiresAt),
+	})
+	if err != nil {
+		return fmt.Errorf("store: creating session: %w", err)
+	}
+	return nil
+}
+
+// UserForSessionToken returns the user owning a live (unexpired) session whose
+// token hashes to tokenHash, or ErrNotFound.
+func (s *Store) UserForSessionToken(ctx context.Context, tokenHash []byte) (domain.User, error) {
+	user, _, err := s.SessionForToken(ctx, tokenHash)
+	return user, err
+}
+
+// SessionForToken returns the owning user and the session's id in one query.
+// Authentication needs both — the id marks "this device" in the session list —
+// and the join already selects both rows, so resolving them separately would
+// double the query traffic on every authenticated request for nothing.
+func (s *Store) SessionForToken(ctx context.Context, tokenHash []byte) (domain.User, string, error) {
+	row, err := s.q.GetSessionByTokenHash(ctx, tokenHash)
+	if err != nil {
+		return domain.User{}, "", wrap("getting session", err)
+	}
+	return userFromRow(row.User), row.Session.ID, nil
+}
+
+func (s *Store) DeleteSession(ctx context.Context, tokenHash []byte) error {
+	if err := s.q.DeleteSession(ctx, tokenHash); err != nil {
+		return fmt.Errorf("store: deleting session: %w", err)
+	}
+	return nil
+}
+
+// DeleteExpiredSessions removes every session whose expiry is at or before
+// the cutoff and reports how many it removed (control-plane-hardening.md §7).
+// The cutoff is the caller's clock, not now(), so the purge is deterministic
+// under test.
+func (s *Store) DeleteExpiredSessions(ctx context.Context, before time.Time) (int64, error) {
+	n, err := s.q.DeleteExpiredSessions(ctx, tsFromTime(before))
+	if err != nil {
+		return 0, fmt.Errorf("store: deleting expired sessions: %w", err)
+	}
+	return n, nil
+}
+
+// ListSessionsByUser returns a user's live sessions, newest first.
+func (s *Store) ListSessionsByUser(ctx context.Context, userID string) ([]domain.Session, error) {
+	rows, err := s.q.ListSessionsByUser(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing sessions: %w", err)
+	}
+	out := make([]domain.Session, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, domain.Session{
+			ID:        r.ID,
+			UserID:    r.UserID,
+			ExpiresAt: r.ExpiresAt.Time,
+			CreatedAt: r.CreatedAt.Time,
+		})
+	}
+	return out, nil
+}
+
+// DeleteSessionForUser revokes one session, but only if it belongs to userID.
+// Reports whether a row was actually removed — a foreign or unknown id removes
+// nothing and is indistinguishable to the caller.
+func (s *Store) DeleteSessionForUser(ctx context.Context, sessionID, userID string) (bool, error) {
+	n, err := s.q.DeleteSessionForUser(ctx, db.DeleteSessionForUserParams{ID: sessionID, UserID: userID})
+	if err != nil {
+		return false, fmt.Errorf("store: deleting session: %w", err)
+	}
+	return n > 0, nil
+}
+
+// DeleteOtherSessionsForUser revokes every session of a user except the one
+// presenting keepTokenHash, returning how many were removed.
+func (s *Store) DeleteOtherSessionsForUser(ctx context.Context, userID string, keepTokenHash []byte) (int64, error) {
+	n, err := s.q.DeleteOtherSessionsForUser(ctx, db.DeleteOtherSessionsForUserParams{
+		UserID: userID, TokenHash: keepTokenHash,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("store: revoking other sessions: %w", err)
+	}
+	return n, nil
+}
+
+// ─── API tokens ─────────────────────────────────────────────────────────────
+
+// CreateAPIToken persists a personal access token (only its hash) and returns
+// the stored record.
+func (s *Store) CreateAPIToken(ctx context.Context, id, userID, name string, abilities []domain.Ability, tokenHash []byte, expiresAt *time.Time, projectID string) (domain.APIToken, error) {
+	var scope pgtype.Text
+	if projectID != "" {
+		scope = pgtype.Text{String: projectID, Valid: true}
+	}
+	row, err := s.q.CreateAPIToken(ctx, db.CreateAPITokenParams{
+		ID:        id,
+		UserID:    userID,
+		Name:      name,
+		TokenHash: tokenHash,
+		ExpiresAt: tsFromPtr(expiresAt),
+		Abilities: abilityStrings(abilities),
+		ProjectID: scope,
+	})
+	if err != nil {
+		return domain.APIToken{}, wrapCreate("creating api token", err)
+	}
+	return apiTokenFromRow(row), nil
+}
+
+// APITokenByHash returns the user owning a live (unexpired) token whose secret
+// hashes to tokenHash, together with the token's id and abilities, or
+// ErrNotFound.
+func (s *Store) APITokenByHash(ctx context.Context, tokenHash []byte) (domain.User, string, []domain.Ability, string, error) {
+	row, err := s.q.APITokenByHash(ctx, tokenHash)
+	if err != nil {
+		return domain.User{}, "", nil, "", wrap("getting api token", err)
+	}
+	var scope string
+	if row.ProjectID.Valid {
+		scope = row.ProjectID.String
+	}
+	return userFromRow(row.User), row.TokenID, abilitiesFromStrings(row.Abilities), scope, nil
+}
+
+// abilityStrings and abilitiesFromStrings convert between the domain vocabulary
+// and the text[] column. Unknown stored values are dropped rather than trusted:
+// authority must come from the vocabulary this binary knows.
+func abilityStrings(in []domain.Ability) []string {
+	out := make([]string, 0, len(in))
+	for _, a := range in {
+		out = append(out, string(a))
+	}
+	return out
+}
+
+func abilitiesFromStrings(in []string) []domain.Ability {
+	out := make([]domain.Ability, 0, len(in))
+	for _, s := range in {
+		if a := domain.Ability(s); domain.ValidAbility(a) {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// TouchAPIToken records that a token was just used (best-effort last_used_at).
+func (s *Store) TouchAPIToken(ctx context.Context, tokenHash []byte) error {
+	if err := s.q.TouchAPIToken(ctx, tokenHash); err != nil {
+		return fmt.Errorf("store: touching api token: %w", err)
+	}
+	return nil
+}
+
+// ListAPITokensByUser returns a user's tokens, newest first (never the secret).
+func (s *Store) ListAPITokensByUser(ctx context.Context, userID string) ([]domain.APIToken, error) {
+	rows, err := s.q.ListAPITokensByUser(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing api tokens: %w", err)
+	}
+	out := make([]domain.APIToken, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, domain.APIToken{
+			ID:         r.ID,
+			UserID:     r.UserID,
+			Name:       r.Name,
+			Abilities:  abilitiesFromStrings(r.Abilities),
+			ProjectID:  textOrEmpty(r.ProjectID),
+			LastUsedAt: ptrTime(r.LastUsedAt),
+			ExpiresAt:  ptrTime(r.ExpiresAt),
+			CreatedAt:  r.CreatedAt.Time,
+		})
+	}
+	return out, nil
+}
+
+// GetAPIToken returns a token's metadata by id (for ownership checks on delete).
+func (s *Store) GetAPIToken(ctx context.Context, id string) (domain.APIToken, error) {
+	r, err := s.q.GetAPIToken(ctx, id)
+	if err != nil {
+		return domain.APIToken{}, wrap("getting api token by id", err)
+	}
+	return domain.APIToken{
+		ID:         r.ID,
+		UserID:     r.UserID,
+		Name:       r.Name,
+		Abilities:  abilitiesFromStrings(r.Abilities),
+		ProjectID:  textOrEmpty(r.ProjectID),
+		LastUsedAt: ptrTime(r.LastUsedAt),
+		ExpiresAt:  ptrTime(r.ExpiresAt),
+		CreatedAt:  r.CreatedAt.Time,
+	}, nil
+}
+
+// DeleteAPIToken revokes a token by id.
+func (s *Store) DeleteAPIToken(ctx context.Context, id string) error {
+	if err := s.q.DeleteAPIToken(ctx, id); err != nil {
+		return fmt.Errorf("store: deleting api token: %w", err)
+	}
+	return nil
+}
+
+// ─── TOTP two-factor auth ─────────────────────────────────────────────────────
+
+// TOTPSecret is the stored second-factor material for a user.
+type TOTPSecret struct {
+	CT      []byte
+	Nonce   []byte
+	Enabled bool
+}
+
+// SetUserAvatar replaces the caller's photo. The bytes arrive already validated
+// — the store's job is the row, not the policy.
+func (s *Store) SetUserAvatar(ctx context.Context, userID, contentType string, data []byte, etag string) error {
+	if err := s.q.SetUserAvatar(ctx, db.SetUserAvatarParams{UserID: userID, ContentType: contentType, Bytes: data, Etag: etag}); err != nil {
+		return fmt.Errorf("store: setting avatar: %w", err)
+	}
+	return nil
+}
+
+// GetUserAvatar returns a user's photo, or ErrNotFound when they have none.
+func (s *Store) GetUserAvatar(ctx context.Context, userID string) (domain.Avatar, error) {
+	row, err := s.q.GetUserAvatar(ctx, userID)
+	if err != nil {
+		return domain.Avatar{}, wrap("getting avatar", err)
+	}
+	return domain.Avatar{ContentType: row.ContentType, Bytes: row.Bytes, ETag: row.Etag, UpdatedAt: row.UpdatedAt.Time}, nil
+}
+
+// DeleteUserAvatar removes the photo; the initials come back in its place.
+func (s *Store) DeleteUserAvatar(ctx context.Context, userID string) error {
+	if err := s.q.DeleteUserAvatar(ctx, userID); err != nil {
+		return fmt.Errorf("store: deleting avatar: %w", err)
+	}
+	return nil
+}
+
+// ─── panel mail (docs/features/panel-mail.md) ───────────────────────────────
+
+// GetPanelMail returns the sealed SMTP configuration, or ErrNotFound when the
+// panel has never been given one.
+func (s *Store) GetPanelMail(ctx context.Context) (ct, nonce []byte, updatedAt time.Time, err error) {
+	row, err := s.q.GetPanelMail(ctx)
+	if err != nil {
+		return nil, nil, time.Time{}, wrap("getting panel mail", err)
+	}
+	return row.ConfigCt, row.ConfigNonce, row.UpdatedAt.Time, nil
+}
+
+// SetPanelMail replaces the configuration wholesale — there is no partial
+// update, for the reason notifiers refuse one: half-writing a credential.
+func (s *Store) SetPanelMail(ctx context.Context, ct, nonce []byte) error {
+	if err := s.q.SetPanelMail(ctx, db.SetPanelMailParams{ConfigCt: ct, ConfigNonce: nonce}); err != nil {
+		return fmt.Errorf("store: setting panel mail: %w", err)
+	}
+	return nil
+}
+
+// DeletePanelMail forgets the configuration; the panel can no longer send.
+func (s *Store) DeletePanelMail(ctx context.Context) error {
+	if err := s.q.DeletePanelMail(ctx); err != nil {
+		return fmt.Errorf("store: deleting panel mail: %w", err)
+	}
+	return nil
+}
+
+// ─── panel TLS (the panel's ACME account) ───────────────────────────────────
+
+// GetPanelTLS returns the panel's ACME account, or ErrNotFound when TLS has
+// never been configured (which is the same thing as "no certificate resolver
+// on any node" — agent-identity-and-tls.md §4).
+func (s *Store) GetPanelTLS(ctx context.Context) (domain.PanelTLS, error) {
+	row, err := s.q.GetPanelTLS(ctx)
+	if err != nil {
+		return domain.PanelTLS{}, wrap("getting panel tls", err)
+	}
+	return domain.PanelTLS{
+		ACMEEmail:    row.AcmeEmail,
+		ACMECAServer: row.AcmeCaServer,
+		UpdatedAt:    row.UpdatedAt.Time,
+	}, nil
+}
+
+// SetPanelTLS replaces the settings wholesale. There is no partial update: the
+// email and the directory URL are one account, and half-changing them would
+// point an existing account at a different CA.
+func (s *Store) SetPanelTLS(ctx context.Context, t domain.PanelTLS) error {
+	if err := s.q.SetPanelTLS(ctx, db.SetPanelTLSParams{
+		AcmeEmail:    t.ACMEEmail,
+		AcmeCaServer: t.ACMECAServer,
+	}); err != nil {
+		return fmt.Errorf("store: setting panel tls: %w", err)
+	}
+	return nil
+}
+
+// DeletePanelTLS forgets the ACME account. Certificates already issued keep
+// working until they expire — they live on the serving nodes, not here — but no
+// new ones are obtained and new https routes fall back to plain HTTP.
+func (s *Store) DeletePanelTLS(ctx context.Context) error {
+	if err := s.q.DeletePanelTLS(ctx); err != nil {
+		return fmt.Errorf("store: deleting panel tls: %w", err)
+	}
+	return nil
+}
+
+// ─── email changes ──────────────────────────────────────────────────────────
+
+// CreateEmailChange records a pending move and the hash of the secret that will
+// authorise it.
+func (s *Store) CreateEmailChange(ctx context.Context, id, userID, newEmail string, tokenHash []byte, expiresAt time.Time) (domain.EmailChange, error) {
+	row, err := s.q.CreateEmailChange(ctx, db.CreateEmailChangeParams{
+		ID: id, UserID: userID, NewEmail: newEmail, TokenHash: tokenHash,
+		ExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
+	})
+	if err != nil {
+		return domain.EmailChange{}, wrapCreate("creating email change", err)
+	}
+	return emailChangeFromRow(row), nil
+}
+
+// EmailChangeTokenHash returns the stored hash for a pending change, so the
+// caller can compare the presented secret before spending anything.
+func (s *Store) EmailChangeTokenHash(ctx context.Context, id string) (domain.EmailChange, []byte, error) {
+	row, err := s.q.GetEmailChange(ctx, id)
+	if err != nil {
+		return domain.EmailChange{}, nil, wrap("getting email change", err)
+	}
+	return emailChangeFromRow(row), row.TokenHash, nil
+}
+
+// ConsumeEmailChange spends the change. No row back means it was already used or
+// has expired — the only race-free answer, which is why it is one statement.
+func (s *Store) ConsumeEmailChange(ctx context.Context, id string) (domain.EmailChange, error) {
+	row, err := s.q.ConsumeEmailChange(ctx, id)
+	if err != nil {
+		return domain.EmailChange{}, wrap("consuming email change", err)
+	}
+	return emailChangeFromRow(row), nil
+}
+
+// PendingEmailChange returns the change the user can still confirm. ErrNotFound
+// means there is none, which is an answer rather than a failure: the profile
+// screen asks on every visit and usually gets exactly that.
+func (s *Store) PendingEmailChange(ctx context.Context, userID string) (domain.EmailChange, error) {
+	row, err := s.q.PendingEmailChangeForUser(ctx, userID)
+	if err != nil {
+		return domain.EmailChange{}, wrap("reading pending email change", err)
+	}
+	return emailChangeFromRow(row), nil
+}
+
+// CancelPendingEmailChanges spends every outstanding change for the user without
+// applying it, and reports how many died. Cancelling one link must kill them all:
+// otherwise "this wasn't me" leaves a second link, requested in the same breath,
+// still live.
+func (s *Store) CancelPendingEmailChanges(ctx context.Context, userID string) (int64, error) {
+	n, err := s.q.CancelPendingEmailChanges(ctx, userID)
+	if err != nil {
+		return 0, wrap("cancelling email changes", err)
+	}
+	return n, nil
+}
+
+func emailChangeFromRow(r db.EmailChange) domain.EmailChange {
+	ec := domain.EmailChange{
+		ID: r.ID, UserID: r.UserID, NewEmail: r.NewEmail,
+		ExpiresAt: r.ExpiresAt.Time, CreatedAt: r.CreatedAt.Time,
+	}
+	if r.ConsumedAt.Valid {
+		t := r.ConsumedAt.Time
+		ec.ConsumedAt = &t
+	}
+	return ec
+}
+
+// GetUserByID loads one account. Used where the caller already holds an id and
+// must re-read the row — proving a current password, for instance, where the
+// session's cached copy is not enough.
+func (s *Store) GetUserByID(ctx context.Context, id string) (domain.User, error) {
+	row, err := s.q.GetUserByID(ctx, id)
+	if err != nil {
+		return domain.User{}, wrap("getting user by id", err)
+	}
+	return userFromRow(row), nil
+}
+
+// UpdateUserEmail moves an account to a new sign-in address. The uniqueness
+// constraint on users.email is the last word here, so a race between two
+// changes resolves in the database rather than in a check-then-write.
+func (s *Store) UpdateUserEmail(ctx context.Context, userID, email string) (domain.User, error) {
+	row, err := s.q.UpdateUserEmail(ctx, db.UpdateUserEmailParams{ID: userID, Email: email})
+	if err != nil {
+		return domain.User{}, wrapUpdate("updating email", err)
+	}
+	return userFromRow(row), nil
+}
+
+// UpdateUserProfile writes the fields a person sets about themselves. Both are
+// stored verbatim after the caller has validated them: the store's job is the
+// row, not the policy.
+func (s *Store) UpdateUserProfile(ctx context.Context, userID, displayName, timezone string) (domain.User, error) {
+	row, err := s.q.UpdateUserProfile(ctx, db.UpdateUserProfileParams{ID: userID, DisplayName: displayName, Timezone: timezone})
+	if err != nil {
+		return domain.User{}, wrapUpdate("updating profile", err)
+	}
+	return userFromRow(row), nil
+}
+
+// UpdateUserPassword replaces the stored hash. Revoking the sessions that were
+// opened with the old password is the caller's decision, not this one's.
+func (s *Store) UpdateUserPassword(ctx context.Context, userID, passwordHash string) error {
+	if err := s.q.UpdateUserPassword(ctx, db.UpdateUserPasswordParams{ID: userID, PasswordHash: passwordHash}); err != nil {
+		return fmt.Errorf("store: updating password: %w", err)
+	}
+	return nil
+}
+
+// SetTOTPSecret stores (or replaces) the enrolling secret; it does not activate
+// two-factor — EnableTOTP does, after a code is verified.
+func (s *Store) SetTOTPSecret(ctx context.Context, userID string, ct, nonce []byte) error {
+	if err := s.q.SetTOTPSecret(ctx, db.SetTOTPSecretParams{ID: userID, TotpSecretEnc: ct, TotpSecretNonce: nonce}); err != nil {
+		return fmt.Errorf("store: setting totp secret: %w", err)
+	}
+	return nil
+}
+
+// EnableTOTP activates two-factor for a user (after successful verification).
+func (s *Store) EnableTOTP(ctx context.Context, userID string) error {
+	if err := s.q.EnableTOTP(ctx, userID); err != nil {
+		return fmt.Errorf("store: enabling totp: %w", err)
+	}
+	return nil
+}
+
+// DisableTOTP clears the secret and deactivates two-factor.
+func (s *Store) DisableTOTP(ctx context.Context, userID string) error {
+	if err := s.q.DisableTOTP(ctx, userID); err != nil {
+		return fmt.Errorf("store: disabling totp: %w", err)
+	}
+	return nil
+}
+
+// GetTOTPSecret returns a user's stored second-factor material.
+func (s *Store) GetTOTPSecret(ctx context.Context, userID string) (TOTPSecret, error) {
+	row, err := s.q.GetTOTPSecret(ctx, userID)
+	if err != nil {
+		return TOTPSecret{}, wrap("getting totp secret", err)
+	}
+	return TOTPSecret{CT: row.TotpSecretEnc, Nonce: row.TotpSecretNonce, Enabled: row.TotpEnabled}, nil
+}
+
+// AddRecoveryCode stores one hashed single-use recovery code.
+func (s *Store) AddRecoveryCode(ctx context.Context, id, userID string, codeHash []byte) error {
+	if err := s.q.AddRecoveryCode(ctx, db.AddRecoveryCodeParams{ID: id, UserID: userID, CodeHash: codeHash}); err != nil {
+		return fmt.Errorf("store: adding recovery code: %w", err)
+	}
+	return nil
+}
+
+// ConsumeRecoveryCode marks the matching unused code used, returning true if a
+// code was actually spent (false ⇒ wrong or already-used code).
+func (s *Store) ConsumeRecoveryCode(ctx context.Context, userID string, codeHash []byte) (bool, error) {
+	_, err := s.q.ConsumeRecoveryCode(ctx, db.ConsumeRecoveryCodeParams{UserID: userID, CodeHash: codeHash})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("store: consuming recovery code: %w", err)
+	}
+	return true, nil
+}
+
+// CountUnusedRecoveryCodes returns how many recovery codes remain.
+func (s *Store) CountUnusedRecoveryCodes(ctx context.Context, userID string) (int, error) {
+	n, err := s.q.CountUnusedRecoveryCodes(ctx, userID)
+	if err != nil {
+		return 0, fmt.Errorf("store: counting recovery codes: %w", err)
+	}
+	return int(n), nil
+}
+
+// DeleteRecoveryCodes removes all of a user's recovery codes (on re-enroll or
+// disable).
+func (s *Store) DeleteRecoveryCodes(ctx context.Context, userID string) error {
+	if err := s.q.DeleteRecoveryCodes(ctx, userID); err != nil {
+		return fmt.Errorf("store: deleting recovery codes: %w", err)
+	}
+	return nil
+}
+
+// ─── mapping helpers ────────────────────────────────────────────────────────
+
+func wrap(op string, err error) error {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("store: %s: %w", op, ErrNotFound)
+	}
+	return fmt.Errorf("store: %s: %w", op, err)
+}
+
+// PostgreSQL error codes (Appendix A) matched in wrapCreate/wrapDelete.
+const (
+	pgUniqueViolation     = "23505"
+	pgForeignKeyViolation = "23503"
+)
+
+// wrapCreate maps constraint violations on inserts: a unique violation is a
+// caller-visible conflict; a foreign-key violation means a referenced parent
+// vanished between the service's existence check and the insert — not found.
+func wrapCreate(op string, err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		switch pgErr.Code {
+		case pgUniqueViolation:
+			return fmt.Errorf("store: %s: %w", op, ErrConflict)
+		case pgForeignKeyViolation:
+			return fmt.Errorf("store: %s: %w", op, ErrNotFound)
+		}
+	}
+	return fmt.Errorf("store: %s: %w", op, err)
+}
+
+// wrapUpdate maps a unique violation on update (e.g. renaming onto a taken
+// name) to ErrConflict, and no-rows to ErrNotFound.
+func wrapUpdate(op string, err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
+		return fmt.Errorf("store: %s: %w", op, ErrConflict)
+	}
+	return wrap(op, err)
+}
+
+// wrapDelete maps a foreign-key violation on delete — the row is still
+// referenced through a RESTRICT constraint — to ErrInUse.
+func wrapDelete(op string, err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == pgForeignKeyViolation {
+		return fmt.Errorf("store: %s: %w", op, ErrInUse)
+	}
+	return fmt.Errorf("store: %s: %w", op, err)
+}
+
+func serverFromRow(r db.Server) domain.Server {
+	return domain.Server{
+		ID:            r.ID,
+		Name:          r.Name,
+		Status:        domain.ServerStatus(r.Status),
+		Driver:        r.Driver,
+		Role:          r.Role,
+		AgentVersion:  r.AgentVersion,
+		Hostname:      r.Hostname,
+		PublicAddress: r.PublicAddress,
+		//nolint:gosec // stored from a uint64 that no real filesystem overflows
+		DiskTotalBytes: uint64(r.DiskTotalBytes),
+		//nolint:gosec // ditto
+		DiskFreeBytes:     uint64(r.DiskFreeBytes),
+		DiskLow:           r.DiskLow,
+		AgentChannel:      r.AgentChannel,
+		AgentUpdatePhase:  r.AgentUpdatePhase,
+		AgentUpdateTarget: r.AgentUpdateTarget,
+		AgentUpdateDetail: r.AgentUpdateDetail,
+		SubsystemHealth:   decodeSubsystemHealth(r.SubsystemHealth),
+		EnrolledAt:        ptrTime(r.EnrolledAt),
+		LastSeenAt:        ptrTime(r.LastSeenAt),
+		CreatedAt:         r.CreatedAt.Time,
+		UpdatedAt:         r.UpdatedAt.Time,
+	}
+}
+
+func userFromRow(r db.User) domain.User {
+	return domain.User{
+		ID:           r.ID,
+		Email:        r.Email,
+		PasswordHash: r.PasswordHash,
+		Role:         r.Role,
+		DisplayName:  r.DisplayName,
+		Timezone:     r.Timezone,
+		TOTPEnabled:  r.TotpEnabled,
+		CreatedAt:    r.CreatedAt.Time,
+		UpdatedAt:    r.UpdatedAt.Time,
+	}
+}
+
+func apiTokenFromRow(r db.ApiToken) domain.APIToken {
+	return domain.APIToken{
+		ID:         r.ID,
+		UserID:     r.UserID,
+		Name:       r.Name,
+		Abilities:  abilitiesFromStrings(r.Abilities),
+		ProjectID:  textOrEmpty(r.ProjectID),
+		LastUsedAt: ptrTime(r.LastUsedAt),
+		ExpiresAt:  ptrTime(r.ExpiresAt),
+		CreatedAt:  r.CreatedAt.Time,
+	}
+}
+
+// textOrEmpty renders a nullable text column as a string, with SQL NULL and the
+// empty string meaning the same thing to the caller: absent.
+func textOrEmpty(t pgtype.Text) string {
+	if t.Valid {
+		return t.String
+	}
+	return ""
+}
+
+func joinTokenFromRow(r db.JoinToken) domain.JoinToken {
+	return domain.JoinToken{
+		ID:         r.ID,
+		ServerID:   r.ServerID,
+		TokenHash:  r.TokenHash,
+		ExpiresAt:  r.ExpiresAt.Time,
+		ConsumedAt: ptrTime(r.ConsumedAt),
+		CreatedAt:  r.CreatedAt.Time,
+	}
+}
+
+func ptrTime(ts pgtype.Timestamptz) *time.Time {
+	if !ts.Valid {
+		return nil
+	}
+	t := ts.Time
+	return &t
+}
+
+func tsFromTime(t time.Time) pgtype.Timestamptz {
+	return pgtype.Timestamptz{Time: t, Valid: true}
+}
