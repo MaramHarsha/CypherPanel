@@ -117,10 +117,10 @@ jobs:
       #
       # `pnpm build` is byte-reproducible for identical input, so a rebuild that
       # differs means the committed bundle is out of date.
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
